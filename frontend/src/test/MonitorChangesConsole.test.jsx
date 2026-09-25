@@ -490,7 +490,7 @@ describe('MonitorChangesConsole — takim suzgeci', () => {
     const trigger = await screen.findByLabelText('Filter by team')
     api.monitoring.getRecentChanges.mockClear()
     fireEvent.mouseDown(trigger)
-    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')]
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')]
       .find(el => el.textContent.includes('Takım B')))
 
     await waitFor(() => expect(lastCall().teamId).toBe('7'))

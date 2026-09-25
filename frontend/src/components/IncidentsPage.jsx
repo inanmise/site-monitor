@@ -10,6 +10,7 @@ import { useDialog } from './ui/Dialog.jsx'
 import { rcMeta, durationMs, formatDuration, formatIncidentTime } from '../utils/incidentMeta.js'
 import { Siren, RefreshCw, Trash2, MessageSquare, X, ExternalLink,
   CheckCircle2, Send, Info, ArrowUp, ArrowDown } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 const BANNER_KEY = 'incidents-banner-dismissed'
 const SORTABLE = { started: 'started', status: 'status', severity: 'severity', rootCause: 'type' }
@@ -169,7 +170,7 @@ export default function IncidentsPage({ systemRole }) {
           <p className="upt-subtitle">{t('incov.subtitle')}</p>
         </div>
         <div className="upt-header-right">
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('incov.refresh')}</button>
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('incov.refresh')}</Button>
         </div>
       </div>
 
@@ -200,9 +201,9 @@ export default function IncidentsPage({ systemRole }) {
         <input className="filter-input inc-date" type="date" value={filters.until} title={t('incov.until')}
           onChange={e => patchFilters({ until: e.target.value })} />
         {hasFilters && (
-          <button className="btn btn-sm btn-secondary" onClick={() => { resetFilters(); if (searchRef.current) searchRef.current.value = '' }}>
+          <Button variant="secondary" size="sm" onClick={() => { resetFilters(); if (searchRef.current) searchRef.current.value = '' }}>
             {t('incov.clearFilters')}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -270,7 +271,9 @@ export default function IncidentsPage({ systemRole }) {
                     <td onClick={e => e.stopPropagation()}>{(inc.team_name || inc.team_id != null) ? <TeamBadge teamId={inc.team_id} teamName={inc.team_name} /> : <span className="inv-muted">—</span>}</td>
                     <td>{rootCauseCell(inc.root_cause)}</td>
                     <td>
-                      <button className="inc-comments-btn" onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>
+                      <button className="inc-comments-btn"
+                        aria-label={t('a11y.rowAction', `${inc.monitor?.name || '—'} · ${formatIncidentTime(inc.started_at, dateLocale)}`, t('incov.comments', inc.comment_count ?? 0))}
+                        onClick={e => { e.stopPropagation(); setCommentsFor(inc) }}>
                         <MessageSquare size={13} />{t('incov.comments', inc.comment_count ?? 0)}
                       </button>
                     </td>
@@ -285,7 +288,11 @@ export default function IncidentsPage({ systemRole }) {
                     </td>
                     <td className="inc-th-actions">
                       {isAdmin && (
-                        <button className="inc-del-btn" title={t('incov.delete')} onClick={e => { e.stopPropagation(); del(inc) }}><Trash2 size={13} /></button>
+                        <button className="inc-del-btn" title={t('incov.delete')}
+                          // Ad olayı ayırır (izleme + başlangıç): silme onayı hedefi ADIYLA söylemiyor,
+                          // her satırda aynı "Sil" duyuluyordu (2026-09-25, R15).
+                          aria-label={t('a11y.rowAction', `${inc.monitor?.name || '—'} · ${formatIncidentTime(inc.started_at, dateLocale)}`, t('incov.delete'))}
+                          onClick={e => { e.stopPropagation(); del(inc) }}><Trash2 size={13} /></button>
                       )}
                     </td>
                   </tr>
@@ -379,10 +386,10 @@ function CommentThread({ incident, onClose, onChanged }) {
         <div className="inc-cmt-add">
           <textarea rows={2} value={body} placeholder={t('incov.commentPlaceholder')}
             onChange={e => setBody(e.target.value)} />
-          <button className="btn btn-primary" disabled={saving || !body.trim()} onClick={add}><Send size={14} />{t('incov.addComment')}</button>
+          <Button disabled={saving || !body.trim()} onClick={add}><Send size={14} />{t('incov.addComment')}</Button>
         </div>
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('incov.close')}</button>
+          <Button variant="secondary" onClick={onClose}>{t('incov.close')}</Button>
         </div>
       </div>
     </div>

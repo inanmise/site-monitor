@@ -112,10 +112,10 @@ describe('UserActivityPanel', () => {
     expect(screen.getByText('90%')).toBeInTheDocument()
     expect(document.querySelectorAll('.uact-chip').length).toBeGreaterThan(10)   // 35 sekme − 2 kullanılan
     // takım süzgeci: SearchableSelect (mousedown ile açılır)
-    const trig = document.querySelectorAll('.uact-filters .ss-trigger')[0]
+    const trig = document.querySelectorAll('.uact-filters button[role="combobox"]')[0]
     fireEvent.mouseDown(trig)
-    await waitFor(() => expect(document.querySelector('.ss-option')).not.toBeNull())
-    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')].find((el) => el.textContent === 'Takım B'))
+    await waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((el) => el.textContent === 'Takım B'))
     await waitFor(() => expect(window.location.search).toContain('u_team=9'))
     const table = document.querySelector('.uact-table--sessions')
     expect(within(table).queryByText('Yönetici')).toBeNull()
@@ -169,7 +169,8 @@ describe('UserActivityPanel', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Detay|Details/ })[0])
     const dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText('E-1')).toBeInTheDocument()
-    fireEvent.click(within(dlg).getByRole('button', { name: /Kapat|Close|Dismiss/i }))
+    // Altlıktaki kapat düğmesi: başlıktaki X de artık adlı (i18n "Kapat/Close") — altlığa daraltılır.
+    fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /Kapat|Close|Dismiss/i }))
     fireEvent.click(screen.getByRole('button', { name: /Dışa aktar|Export/ }))
     fireEvent.click(screen.getByRole('button', { name: /Oturumlar \(CSV\)|Sessions \(CSV\)/ }))
     fireEvent.click(screen.getByRole('button', { name: /Bağlantıyı kopyala|Copy link/ }))

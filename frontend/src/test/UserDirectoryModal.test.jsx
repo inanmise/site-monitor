@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import UserDirectoryModal, { mergeDirectory, directoryMatches, directoryCsv } from '../components/admin/useractivity/UserDirectoryModal.jsx'
 import UserActivityPanel from '../components/admin/useractivity/UserActivityPanel.jsx'
 
@@ -79,7 +80,7 @@ describe('UserDirectoryModal', () => {
     return { onUser, onTerminate, onRefresh, onClose, dlg: screen.getByRole('dialog') }
   }
   const rowsOf = (dlg) => within(within(dlg).getByTestId('udir-table')).getAllByRole('row').slice(1)
-  const pop = () => within(document.querySelector('.wr-menu-pop'))   // KebabMenu portal
+  const pop = () => within(screen.getByRole('menu'))   // KebabMenu portal (shadcn DropdownMenu)
 
   it('tüm kullanıcılar listelenir, çevrimiçi başta; sütunlarda e-posta, rol, takım, kaynak, oluşturulma, tur, hesap', () => {
     const { dlg } = open()
@@ -117,19 +118,19 @@ describe('UserDirectoryModal', () => {
     api.admin.resetUserTour.mockResolvedValue({ success: true })
     const rows = rowsOf(dlg)
     // bob (çevrimiçi, başkası)
-    fireEvent.click(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
-    fireEvent.click(pop().getByRole('button', { name: /Detay|Detail/ }))
+    pressMenuTrigger(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
+    fireEvent.click(pop().getByRole('menuitem', { name: /Detay|Detail/ }))
     expect(onUser).toHaveBeenCalledWith(expect.objectContaining({ username: 'bob', online: true }))
-    fireEvent.click(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
-    fireEvent.click(pop().getByRole('button', { name: /^Sonlandır$|^Terminate$/ }))
+    pressMenuTrigger(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
+    fireEvent.click(pop().getByRole('menuitem', { name: /^Sonlandır$|^Terminate$/ }))
     expect(onTerminate).toHaveBeenCalledWith('bob')
-    fireEvent.click(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
-    fireEvent.click(pop().getByRole('button', { name: /Turu sıfırla|Reset the tour/ }))
+    pressMenuTrigger(within(rows[1]).getByRole('button', { name: /İşlem|Action/ }))
+    fireEvent.click(pop().getByRole('menuitem', { name: /Turu sıfırla|Reset the tour/ }))
     await waitFor(() => expect(api.admin.resetUserTour).toHaveBeenCalledWith(2))
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
     // admin (kendisi): sonlandırma yok
-    fireEvent.click(within(rows[0]).getByRole('button', { name: /İşlem|Action/ }))
-    expect(pop().queryByRole('button', { name: /^Sonlandır$|^Terminate$/ })).toBeNull()
+    pressMenuTrigger(within(rows[0]).getByRole('button', { name: /İşlem|Action/ }))
+    expect(pop().queryByRole('menuitem', { name: /^Sonlandır$|^Terminate$/ })).toBeNull()
     fireEvent.keyDown(document, { key: 'Escape' })
   })
   it('kilitli hesapta global admin "Kilidi aç" görür ve API çağrılır; "Kullanıcı yönetiminde aç" admin sekmesine g_q ile gider', async () => {
@@ -137,11 +138,11 @@ describe('UserDirectoryModal', () => {
     const { dlg, onClose } = open()
     api.admin.unlockUser.mockResolvedValue({ success: true })
     const rows = rowsOf(dlg)
-    fireEvent.click(within(rows[3]).getByRole('button', { name: /İşlem|Action/ }))
-    fireEvent.click(pop().getByRole('button', { name: /Kilidi aç|Unlock/ }))
+    pressMenuTrigger(within(rows[3]).getByRole('button', { name: /İşlem|Action/ }))
+    fireEvent.click(pop().getByRole('menuitem', { name: /Kilidi aç|Unlock/ }))
     await waitFor(() => expect(api.admin.unlockUser).toHaveBeenCalledWith(4))
-    fireEvent.click(within(rows[2]).getByRole('button', { name: /İşlem|Action/ }))
-    fireEvent.click(pop().getByRole('button', { name: /Kullanıcı yönetiminde aç|Open in user management/ }))
+    pressMenuTrigger(within(rows[2]).getByRole('button', { name: /İşlem|Action/ }))
+    fireEvent.click(pop().getByRole('menuitem', { name: /Kullanıcı yönetiminde aç|Open in user management/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'admin', params: { g_tab: 'users', g_q: 'carol' } })
     expect(onClose).toHaveBeenCalled()
     window.removeEventListener('sm:navigate', nav)
@@ -169,7 +170,8 @@ describe('UserDirectoryModal', () => {
     expect(rowsOf(dlg)).toHaveLength(4)
     // başlıktaki seçici: Pasif
     fireEvent.mouseDown(within(th).getByLabelText(/^Hesap$|^Account$/))
-    fireEvent.mouseDown((within(dlg).getAllByText(/^Pasif$|^Inactive$/)).find((el) => el.closest('.ss-option')))
+    // Liste body'ye portal'lanır — seçenek diyaloğun DIŞINDA, belge genelinde aranır.
+    fireEvent.mouseDown(screen.getAllByText(/^Pasif$|^Inactive$/).find((el) => el.closest('[role="option"]')))
     expect(rowsOf(dlg)).toHaveLength(1)
   })
 
@@ -195,7 +197,8 @@ describe('UserActivityPanel — dizin bağlantıları ve takım sütunları', ()
     fireEvent.click(document.querySelector('.uact-hero-live'))
     let dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText(/Kullanıcı Dizini · 4|User Directory · 4/)).toBeInTheDocument()
-    fireEvent.click(within(dlg).getByRole('button', { name: /^Kapat$|^Dismiss$|^Close$/ }))
+    // Altlıktaki kapat düğmesi: başlıktaki X de artık adlı (i18n "Kapat/Close") — altlığa daraltılır.
+    fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /^Kapat$|^Dismiss$|^Close$/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.click(document.querySelectorAll('.uact-kpi--btn')[0])   // Turu tamamlayan karti
     dlg = await screen.findByRole('dialog')

@@ -184,7 +184,7 @@ describe('PageSpeedMonitorPage', () => {
     // Ihlal anlari artik tek tek dugme DEGIL, tek bir secici: birikince (20'ye kadar) tablonun
     // ustunu iki-uc sira dolduruyorlardi. SearchableSelect mouseDown dinler (click DEGIL).
     await screen.findByText(/threshold breaches on record|eşik ihlali kayıtlı/i)
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
     fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
     await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: 77 }))
   })
@@ -250,10 +250,10 @@ describe('PageSpeedMonitorPage', () => {
     await screen.findByText('https://x.com/ILK.js')
 
     // Ihlal anlik goruntusune gec (2. istek HAVADA kalir)...
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
     fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
     // ...ve daha o donmeden son olcume geri don (3. istek HEMEN doner).
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row .ss-trigger'))
+    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
     fireEvent.mouseDown(await screen.findByText(/^Son ölçüm$|^Latest measurement$/))
     expect(await screen.findByText('https://x.com/YENI.js')).toBeInTheDocument()
 

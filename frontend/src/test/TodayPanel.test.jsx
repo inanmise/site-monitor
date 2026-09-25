@@ -69,7 +69,7 @@ describe('TodayPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Tümünü gör|See all/ }))
     const modal = await screen.findByRole('dialog')
     await waitFor(() => expect(modal.querySelectorAll('.today-modal-row')).toHaveLength(10))
-    expect(modal.querySelector('.pg-nav')).not.toBeNull()
+    expect(within(modal).getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
     expect(modal.textContent).toMatch(/1[–-]10 (\/|of) 23/)
     fireEvent.change(modal.querySelector('input[type=text]'), { target: { value: 'c2' } })
     await waitFor(() => expect(modal.querySelectorAll('.today-modal-row')).toHaveLength(3))   // c20, c21, c22

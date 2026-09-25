@@ -246,18 +246,20 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           {hasActions && (
             <span className="cc-footer-actions" onClick={(e) => e.stopPropagation()}>
               <CheckRunningStrip running={!!checking} />
+              {/* Adlar kartı ayırır (alan adı + eylem); ipucu kısa kalır — MonitorCardActions ile aynı
+                  (2026-09-25, R15). */}
               {onCheckNow && (
-                <CheckNowButton running={!!checking} onClick={onCheckNow} title={t('app.checkNow')} />
+                <CheckNowButton running={!!checking} onClick={onCheckNow} title={t('app.checkNow')} rowLabel={cert.domain} />
               )}
               {onEdit && (
                 <button type="button" className="mon-act mon-act--edit"
-                  onClick={onEdit} title={t('inv.edit')} aria-label={t('inv.edit')}>
+                  onClick={onEdit} title={t('inv.edit')} aria-label={t('a11y.rowAction', cert.domain, t('inv.edit'))}>
                   <Pencil size={13} />
                 </button>
               )}
               {onDuplicate && (
                 <button type="button" className="mon-act mon-act--copy"
-                  onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}>
+                  onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('a11y.rowAction', cert.domain, t('mon.duplicate'))}>
                   <Copy size={13} />
                 </button>
               )}
@@ -268,7 +270,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                   detay modalini da görürdü (Düzenle'de düzeltilen kusurun yıkıcı eylemdeki hâli). */}
               {onDelete && (
                 <button type="button" className="mon-act mon-act--danger" disabled={deleting}
-                  onClick={onDelete} title={t('inv.delete')} aria-label={t('inv.delete')}>
+                  onClick={onDelete} title={t('inv.delete')} aria-label={t('a11y.rowAction', cert.domain, t('inv.delete'))}>
                   <Trash2 size={13} />
                 </button>
               )}

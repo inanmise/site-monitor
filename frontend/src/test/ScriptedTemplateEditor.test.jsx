@@ -49,7 +49,7 @@ function draw(props = {}) {
 
 /** SearchableSelect hem açılışta hem seçimde mouseDown dinler (click DEĞİL). */
 function openScopeSelect() {
-  fireEvent.mouseDown(document.querySelector('.ss-trigger'))
+  fireEvent.mouseDown(document.querySelector('button[role="combobox"]'))
 }
 function pickOption(label) {
   fireEvent.mouseDown(screen.getByText(label))
@@ -123,7 +123,8 @@ describe('ScriptedTemplateEditor — yeni şablon', () => {
     // yazilanlarin hepsini gotururdu. Kapanis yalniz bilincli yollardan.
     const onClose = vi.fn()
     draw({ onClose })
-    fireEvent.click(document.querySelector('.modal-shell-overlay'))
+    // Scrim rolsüz dekoratif yüzey: shadcn örtüsünün data-slot'u ile bulunur.
+    fireEvent.click(document.querySelector('[data-slot="dialog-overlay"]'))
     expect(onClose).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByText('tpl.cancel'))
@@ -148,16 +149,17 @@ describe('ScriptedTemplateEditor — yeni şablon', () => {
 
   it('Kaydet/İptal kaydırılan gövdenin DIŞINDA, sabit altlıkta durur', () => {
     // jsdom yerlesim hesaplamaz — bu yuzden "gorunuyor mu" degil, YAPI pinleniyor: dugmeler
-    // .modal-shell-footer icinde ve .modal-shell-body (kaydirilan alan) icinde DEGIL.
+    // altlikta (shadcn DialogFooter) ve kaydirilan govdenin icinde DEGIL.
     // Gorsel dogrulama tarayicida yapilmali.
     draw()
-    const footer = document.querySelector('.modal-shell-footer')
-    const body = document.querySelector('.modal-shell-body')
+    const dlg = screen.getByRole('dialog')
+    const footer = dlg.querySelector('[data-slot="dialog-footer"]')
+    const body = dlg.querySelector('[data-slot="modal-shell-body"]')
     expect(footer).not.toBeNull()
     expect(footer.contains(screen.getByText('tpl.save'))).toBe(true)
     expect(footer.contains(screen.getByText('tpl.cancel'))).toBe(true)
     expect(body.contains(screen.getByText('tpl.save'))).toBe(false)
-    expect(document.querySelector('.modal-box').className).toContain('modal-shell--scroll')
+    expect(dlg).toHaveAttribute('data-scroll-body', 'true')
   })
 })
 

@@ -14,10 +14,14 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  * daha kötüsü, tıklanabilir ama ODAKLANAMAYAN kartlar — klavye kullanıcısı hiçbir monitörün
  * detayını açamıyordu. Düzeltme örneği kapatır, SINIFI kapatmaz; bu kapı sınıfı kapatır.
  *
- * <p>İki kural taranır:
+ * <p>Kurallar:
  *   (1) `aria-label` sabit bir İngilizce dizeye bağlanamaz — ad i18n'den gelmeli. Sabit dize
  *       hem TR arayüzde İngilizce okunur hem de tanımı gereği her satırda AYNIdır.
  *   (2) Tıklanabilir izleme kartı (`upt-card` + `onClick`) `role="button"` + `tabIndex` taşımalı.
+ *   (3) Tıklanabilir her öğe klavyeyle de kullanılabilir (tabIndex + onKeyDown).
+ *   (4) Seçim kümesine bağlı kutu (`checked={x.has(…)}`) satır argümanlı i18n adı taşır (R5, 09-25).
+ *   (5) Seçici (`SearchableSelect`/`MultiTeamSelect`, tetik role="combobox") adlandırılır:
+ *       ariaLabel ya da bağlı etiket (R17, 09-25).
  *
  * <p>Kapsam bilinçli olarak dar ve statiktir: yalnız düz `aria-label="..."` biçimi yakalanır.
  * "Bu ad satırı gerçekten ayırt ediyor mu" sorusu statik olarak çözülemez (ad çalışma anında
@@ -57,14 +61,18 @@ const NON_INTERACTIVE = new Set(['div', 'span', 'li', 'tr', 'th', 'td', 'section
  */
 const EXEMPT_CLICK = new Map([
   ['components/ui/Toast.jsx:<div>',
-    'role="status" CANLI BÖLGE: odaklanabilir yapmak erişilebilirlik anti-deseni (ekran okuyucu ' +
-    'zaten okur). Tıklama yalnız erken kapatma kısayolu; bildirim kendiliğinden kayboluyor.'],
+    'Sonner bildirim listesinin olay-yetkisi sarmalayıcısı (display: contents, kendisi kutu değil): ' +
+    'gövdeye tıklamak yalnız erken kapatma kısayolu, bildirim kendiliğinden kayboluyor. Klavyeyle ' +
+    'kapatma her kutudaki Sonner X düğmesinde (adı i18n\'den); liste aria-live ile zaten okunur.'],
   ['components/admin/AuditLogViewer.jsx:<tr>',
     'DOLAŞAN TABINDEX ızgarası: tabIndex satırda, ok/Home/End/Escape tuşları tbody üzerinde ' +
     '(daha gelişmiş kalıp). Kapı ikisini aynı etikette aradığı için burada yanlış ısırıyor.'],
   ['components/ScriptedMonitorPage.jsx:<span>',
     'Satırın açma kontrolü BİLİNÇLİ olarak tek hücrede (zaman): dört hücrenin dördü de ' +
     'odaklanabilir olsaydı satır başına dört durak olurdu. Diğer hücreler yalnız fare kolaylığı.'],
+  ['components/shadcn/input-group.jsx:<div>',
+    'shadcn InputGroupAddon: eke (ikon/metin) tıklamak yalnız içteki alana odak kısayolu; alanın ' +
+    'kendisi klavyeyle tam erişilebilir, ekin içinde düğme varsa (InputGroupButton) o zaten odaklanır.'],
   ['components/ui/CodeEditor.jsx:<span>',
     'Satır numarası oluğu: düzenleyicinin kendisi (textarea) klavyeyle tam erişilebilir ve satır ' +
     'seçimi orada yapılır; oluk yalnız fare kısayolu.'],
@@ -88,6 +96,8 @@ function isPassiveClick(tagText) {
   // Modal örtüsü: kapatma ayrıca gerçek düğme + Escape ile sağlanır; örtüye odak vermek
   // ekran okuyucu kullanıcısını çıkmaza sokar.
   if (/classList\.contains\(/.test(handler)) return true
+  // shadcn örtüsü legacy sınıf adıyla değil `data-slot` ile tanınır (ui/ModalShell scrim'i).
+  if (/data-slot="(alert-)?dialog-overlay"/.test(tagText)) return true
   return /className="[^"]*(overlay|backdrop|mask)/.test(tagText)
 }
 
@@ -99,11 +109,11 @@ function isPassiveClick(tagText) {
  * kapı sessizce yanlış cevap veriyor. Bu yüzden süslü parantez derinliği ve tırnak durumu
  * izlenerek etiket sonu gerçekten bulunur.
  */
-function openingTags(src) {
+function openingTags(src, nameRe = /^<([a-z][a-z0-9]*)[\s/>]/) {
   const tags = []
   for (let i = 0; i < src.length; i++) {
     if (src[i] !== '<') continue
-    const m = /^<([a-z][a-z0-9]*)[\s/>]/.exec(src.slice(i, i + 24))
+    const m = nameRe.exec(src.slice(i, i + 40))
     if (!m) continue
     let depth = 0
     let quote = null
@@ -120,12 +130,34 @@ function openingTags(src) {
       else if (c === '>' && depth === 0) break
     }
     if (j < src.length) {
-      tags.push({ name: m[1], text: src.slice(i, j + 1) })
+      tags.push({ name: m[1], text: src.slice(i, j + 1), start: i })
       i = j
     }
   }
   return tags
 }
+
+/** Satır numarası (kapı çıktısında dosya:satır göstermek için). */
+const lineOf = (src, pos) => src.slice(0, pos).split('\n').length
+
+/**
+ * Konum bir `<label>` öğesinin İÇİNDE mi? Etiketler iç içe geçemediği için açılış/kapanış
+ * sayısı yeter. Sarmalayan etiket, içindeki düğmeye (ve role="combobox" tetiğine) adını verir.
+ */
+function insideLabel(src, pos) {
+  const before = src.slice(0, pos)
+  const opens = (before.match(/<label[\s>]/g) || []).length
+  const closes = (before.match(/<[/]label>/g) || []).length
+  return opens > closes
+}
+
+/** Seçim kümesine bağlı kutu: `checked={selected.has(…)}` (başında olumsuzlama YOK — o, alıcı listesi gibi etiketli satırlar). */
+const SELECTION_CHECKED = /\bchecked=\{\s*[A-Za-z_$][\w$.]*[.]has\(/
+/** Satır argümanlı i18n adı: aria-label={t('anahtar', <satır>…)}. */
+const ROW_ARG_NAME = /aria-label=\{t\(\s*'[^']+'\s*,\s*[^)\s]/
+
+/** Seçici bileşenleri — tetikleri role="combobox" ve adını İÇERİKTEN almaz (PickerPopover.jsx). */
+const PICKER_TAG = /^<(SearchableSelect|MultiTeamSelect)[\s/>]/
 
 describe('satır kontrolleri — erişilebilir ad ve klavye erişimi', () => {
   it('tarama vakum değil — kayda değer sayıda kaynak dosya okunuyor', () => {
@@ -192,6 +224,65 @@ describe('satır kontrolleri — erişilebilir ad ve klavye erişimi', () => {
       'ui/TeamBadge (role="button" tabIndex={0} + Enter/Space). Gerçekten pasif bir sarmalayıcıysa',
       '(yalnız stopPropagation / modal örtüsü) kural onu zaten atlar; başka bir zorunluluk varsa',
       'EXEMPT_CLICK listesine GEREKÇESİYLE ekleyin.',
+    ].join(' ')).toEqual([])
+  })
+
+  /**
+   * 2026-09-25 (R5): toplu seçim kutusu SATIRI ayırmalı. Toplu onayla/çöz/aktar/"onayla ve gönder"
+   * onay diyalogları yalnız ADET söylüyor — kutunun adı yoksa ya da her satırda aynıysa ("Bu alarmı
+   * seç") ekran okuyucu kullanıcısı yanlış alarmı çözer, yanlış haftanın raporunu gönderir. F2
+   * düzeltmesi dokuz ızgarayı kapatmıştı; üç kardeşi (AlertHistory, IncidentHistory, WeeklyReports)
+   * süpürmeden kaçtı. Bu kural sınıfı kapatır.
+   */
+  it('seçim kümesine bağlı kutu satır argümanlı i18n adı taşır (checked={x.has(…)} → t(key, satır))', () => {
+    const offenders = []
+    let seen = 0
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8')
+      for (const tag of openingTags(src, /^<(input|Checkbox)[\s/>]/)) {
+        if (tag.name === 'input' && !/type="checkbox"/.test(tag.text)) continue
+        if (!SELECTION_CHECKED.test(tag.text)) continue
+        seen++
+        if (ROW_ARG_NAME.test(tag.text) || /aria-labelledby=/.test(tag.text)) continue
+        offenders.push(`${rel(f)}:${lineOf(src, tag.start)} — ${tag.text.slice(0, 90).replace(/\s+/g, ' ')}…`)
+      }
+    }
+    // Vakum koruması: tarama hiçbir kutu bulmazsa kural sessizce "yeşil" kalırdı.
+    expect(seen, 'seçim kutusu taraması vakum — desen kod tabanıyla uyuşmuyor').toBeGreaterThan(10)
+    expect(offenders, [
+      'Toplu seçim kutusunun adı satırı ayırmıyor (ya da hiç yok): toplu işlem onayı yalnız ADET',
+      'söylediği için ekran okuyucu kullanıcısı yanlış kaydı seçip işleme sokabilir. Kalıp:',
+      "aria-label={t('bulk.selectOneFor', satır.ad)} (CertificatesTable, HttpMonitorPage).",
+    ].join(' ')).toEqual([])
+  })
+
+  /**
+   * 2026-09-25 (R17): seçici tetiği `role="combobox"` ve adını İÇERİKTEN ALMAZ — shadcn geçişinde
+   * düz düğmeden combobox'a dönünce 70'ten fazla seçici sessizce adsız kaldı (ekran okuyucu yalnız
+   * "combobox" der; süzgeç satırındaki 15 seçici birbirinden ayırt edilemez). Ad yolları:
+   * `ariaLabel`, `ariaLabelledBy`, `id` + bağlı etiket (`<label htmlFor>` ya da Field render-prop'u),
+   * ya da seçiciyi saran bir `<label>`.
+   */
+  it('seçici (role="combobox") erişilebilir ad taşır — ariaLabel ya da bağlı etiket', () => {
+    const offenders = []
+    let seen = 0
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8')
+      for (const tag of openingTags(src, PICKER_TAG)) {
+        seen++
+        if (/\bariaLabel=/.test(tag.text) || /\bariaLabelledBy=/.test(tag.text)) continue
+        const id = /\bid=("[^"]*"|\{[^}]*\})/.exec(tag.text)
+        // id tek başına ad değildir: aynı değerle bir htmlFor (ya da Field'ın FieldLabel'ı) şart.
+        if (id && (src.includes(`htmlFor=${id[1]}`) || /<Field[\s>]/.test(src))) continue
+        if (insideLabel(src, tag.start)) continue
+        offenders.push(`${rel(f)}:${lineOf(src, tag.start)} — ${tag.text.slice(0, 90).replace(/\s+/g, ' ')}…`)
+      }
+    }
+    expect(seen, 'seçici taraması vakum — desen kod tabanıyla uyuşmuyor').toBeGreaterThan(100)
+    expect(offenders, [
+      'Adsız seçici: tetik role="combobox" ve adını içerikten almaz, ekran okuyucu yalnız "combobox"',
+      "der. ariaLabel={t('flt.team')} verin, ya da görünür etiketi bağlayın: <label htmlFor=\"x\"> +",
+      '<SearchableSelect id="x" …> (Field render-prop\'u id\'yi zaten verir).',
     ].join(' ')).toEqual([])
   })
 

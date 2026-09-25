@@ -11,6 +11,7 @@ import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
 import { BookOpen, Sparkles, Compass } from 'lucide-react'
 import whitepaperTr from '../assets/whitepaper.md?raw'
 import whitepaperEn from '../assets/whitepaper.en.md?raw'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kılavuz dile göre seçilir — monitorGuides.js'teki {tr, en} deseniyle aynı.
@@ -117,21 +118,18 @@ export default function HelpPage() {
         </div>
         <div className="help-header-right">
           {/* Ürün turu (2026-09-13): Yardım'dan da başlatılabilir */}
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => { try { window.dispatchEvent(new CustomEvent('sm:tour-start', { detail: { kind: 'main' } })) } catch { /* yoksay */ } }}><Compass size={13} /> {t('tour.restart')}</button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { try { window.dispatchEvent(new CustomEvent('sm:tour-start', { detail: { kind: 'main' } })) } catch { /* yoksay */ } }}><Compass size={13} /> {t('tour.restart')}</Button>
           <SegmentedControl value={view} onChange={setView} ariaLabel={t('help.title')}
             options={[
               { value: 'guide', label: t('help.view.guide'), icon: BookOpen },
               { value: 'releases', label: t('help.view.releases'), icon: Sparkles },
             ]} />
           {view === 'guide' && (
-            <a
-              href={guide.pdf}
-              download={guide.file}
-              title={t('help.downloadTitle')}
-              className="btn btn-sm help-download-btn"
-            >
-              {t('help.download')}
-            </a>
+            <Button asChild variant="outline" size="sm">
+              <a href={guide.pdf} download={guide.file} title={t('help.downloadTitle')}>
+                {t('help.download')}
+              </a>
+            </Button>
           )}
         </div>
       </div>

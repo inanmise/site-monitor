@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Network, Maximize2, Minimize2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const NODE_W = 158
 const NODE_H = 30
@@ -90,7 +91,7 @@ export default function SchemaDiagramModal({ data, loading, onClose }) {
           {isolatedCount > 0 && (
             <span className="sqlpg-diag-isolated">{t('sql.diag.isolated', isolatedCount)}</span>
           )}
-          <button className="btn btn-secondary" onClick={onClose}>{t('sql.closeRowDetails')}</button>
+          <Button variant="secondary" onClick={onClose}>{t('sql.closeRowDetails')}</Button>
         </div>
       </div>
     </div>

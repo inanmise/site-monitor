@@ -1,21 +1,55 @@
-import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { createContext, useContext, useCallback, useEffect, useId, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, X, AlertCircle } from 'lucide-react'
+import { toast as sonner } from 'sonner'
+import { Toaster } from '@/components/shadcn/sonner'
+import { Badge } from '@/components/shadcn/badge'
+import { useT } from '@/i18n/index.jsx'
 
 const ToastCtx = createContext(null)
 
-let _id = 0
+let _seq = 0
 
 /** Aynı anda ekranda durabilecek en fazla bildirim — üstü en ESKİsini düşürür. */
 const MAX_VISIBLE = 4
 
+/**
+ * Sonner'a verilen başlık: mesaj + tekrar sayacı ("×N").
+ *
+ * <p>{@code data-toast-id} kutuyu bizim kimliğimize bağlar: Sonner'ın `<li>`'si kimlik taşımıyor,
+ * gövdeye tıklayınca kapatma (aşağıda) hangi kaydı düşüreceğini buradan okur.
+ */
+function ToastBody({ id, message, count }) {
+  return (
+    <span data-toast-id={id} className="flex items-center gap-2">
+      <span className="min-w-0">{message}</span>
+      {count > 1 && (
+        <Badge variant="outline" className="border-current/30 text-current tabular-nums">×{count}</Badge>
+      )}
+    </span>
+  )
+}
+
+/**
+ * Bildirim sağlayıcısı — görünüm shadcn Sonner, KARAR bu dosyada.
+ *
+ * <p>Sonner'ın kendi zamanlayıcısı ({@code duration}) KULLANILMIYOR ({@code Infinity}): tekrarda
+ * süreyi baştan başlatmak, tavanda düşen kutunun zamanlayıcısını öldürmek ve unmount'ta hepsini
+ * iptal etmek aşağıdaki sözleşmeler; bunlar Sonner'ın iç zamanlayıcısına bırakılsaydı ne
+ * gözlenebilir ne de test edilebilirdi. Sonner yalnız çizer ve kapanış animasyonunu oynatır.
+ */
 export function ToastProvider({ children }) {
-  const [toasts, setToasts] = useState([])
+  const t = useT()
+  /**
+   * Bu sağlayıcının Sonner kimliği. Sonner'ın durum deposu MODÜL düzeyinde tek (global); yeni
+   * abone olan Toaster o an etkin olan HER bildirimi yeniden oynatır. Kimlikle süzülmezse başka
+   * bir sağlayıcının (iç içe sarmalayan test/araç) kutuları burada da çizilirdi.
+   */
+  const toasterId = useId()
   /**
    * Açık otomatik-kapanma zamanlayıcıları (id → timeout).
    *
    * Neden gerekli: bunlar temizlenmediğinde, sağlayıcı unmount olduktan SONRA da çalışıp
-   * `setToasts` çağırıyorlar. Tarayıcıda bu yalnız sessiz bir "unmounted component" güncellemesi;
+   * güncelleme tetikliyorlar. Tarayıcıda bu yalnız sessiz bir "unmounted component" güncellemesi;
    * ama jsdom kapatıldıktan sonra React'in `getCurrentEventPriority`'si `window`'a dokunduğu için
    * **yakalanmamış `ReferenceError: window is not defined`** fırlıyor ve vitest tüm koşuyu
    * 1 çıkış koduyla düşürüyor (2026-08-14'te CI'ı bu kırdı: 673 test geçti, koşu yine kırmızı).
@@ -23,30 +57,41 @@ export function ToastProvider({ children }) {
   const timers = useRef(new Map())
 
   /**
-   * Görünen listenin EŞ ZAMANLI aynası. Karar burada verilir; {@code toasts} yalnız çizim içindir.
+   * Görünen bildirimlerin EŞ ZAMANLI defteri ({id, type, message, count}). Karar burada verilir;
+   * çizim Sonner'ın işi.
    *
-   * <p><b>Neden ref, neden güncelleyicinin içi değil.</b> {@code setToasts(prev => …)} güncelleyicisi
-   * React'te her zaman anında çalışmaz: aynı partideki İKİNCİ çağrıda render'a ertelenir. Bu yüzden
-   * güncelleyicinin içinde id üretmek ya da "aynısı zaten var mı" diye bakmak o an yanlış cevap
-   * verir — ve arıza tam da bu özelliğin çözmeye çalıştığı senaryoda çıkıyordu: sayfanın paralel
-   * yükleyicileri aynı turda arka arkaya toast açtığında ikinci kutunun zamanlayıcısı BİRİNCİnin
-   * id'sine yazılıyor, ikinci kutu hiç kapanmadan ekranda kalıyordu. (StrictMode güncelleyiciyi
-   * bilerek iki kez çağırdığı için {@code _id} sayacı da orada kayıyordu.)
+   * <p><b>Neden ref, neden React durumu değil.</b> Sayfanın paralel yükleyicileri aynı turda arka
+   * arkaya toast açtığında "aynısı zaten var mı" sorusunun cevabı ANINDA doğru olmalı. Eskiden
+   * karar {@code setToasts(prev => …)} güncelleyicisinin içindeydi; React aynı partideki İKİNCİ
+   * güncelleyiciyi render'a ertelediği için ikinci kutunun zamanlayıcısı BİRİNCİnin id'sine
+   * yazılıyor, ikinci kutu hiç kapanmadan ekranda kalıyordu. (StrictMode güncelleyiciyi bilerek
+   * iki kez çağırdığı için id sayacı da orada kayıyordu.) Durum da tutulmuyor: sağlayıcı her
+   * bildirimde yeniden çizilmez, altındaki uygulama ağacı da.
    */
   const visible = useRef([])
 
-  const commit = useCallback((next) => { visible.current = next; setToasts(next) }, [])
-
   const clearTimer = useCallback((id) => {
-    const t = timers.current.get(id)
-    if (t) { clearTimeout(t); timers.current.delete(id) }
+    const tm = timers.current.get(id)
+    if (tm) { clearTimeout(tm); timers.current.delete(id) }
   }, [])
 
+  /** Bizim kapattığımız bildirim: defterden düşer, Sonner'a kapanış animasyonu söylenir. */
   const remove = useCallback((id) => {
     clearTimer(id)
-    const next = visible.current.filter(x => x.id !== id)
-    if (next.length !== visible.current.length) commit(next)
-  }, [clearTimer, commit])
+    const cur = visible.current
+    if (!cur.some(x => x.id === id)) return
+    visible.current = cur.filter(x => x.id !== id)
+    sonner.dismiss(id)
+  }, [clearTimer])
+
+  /**
+   * Sonner'ın KENDİ kapattığı bildirim (X düğmesi, kaydırma) — ve bizim {@link remove}'umuzun
+   * ardından da çağrılır (idempotent). Yalnız defteri senkronlar: Sonner kutuyu zaten kaldırıyor.
+   */
+  const forget = useCallback((id) => {
+    clearTimer(id)
+    visible.current = visible.current.filter(x => x.id !== id)
+  }, [clearTimer])
 
   /**
    * Bildirim gösterir.
@@ -56,7 +101,8 @@ export function ToastProvider({ children }) {
    * 30 sn'lik oto-yenilemesi aynı hatayı arka arkaya raporluyor, ekranın sağı 15–20 özdeş
    * "Sunucu hatası (HTTP 500)" kutusuyla kaplanıyor ve altındaki içerik görünmez oluyordu
    * (kullanıcı bildirimi 2026-09-01). Bilgi bir kez gösterilir; tekrar sayısı "×N" olarak
-   * eklenir ve süre yeniden başlar.
+   * eklenir ve süre yeniden başlar. Sonner'a AYNI kimlikle yapılan çağrı yeni kutu açmaz,
+   * mevcut kutuyu günceller.
    *
    * <p>Tavan da var: farklı mesajlar da olsa aynı anda {@code MAX_VISIBLE} kutudan fazlası
    * ekranı kaplar — en eskisi düşer (zamanlayıcısıyla birlikte).
@@ -64,35 +110,65 @@ export function ToastProvider({ children }) {
   const show = useCallback((type, message, duration = 3500) => {
     const cur = visible.current
     const same = cur.find(x => x.type === type && x.message === message)
-    let id
-    let next
+    let entry
     if (same) {
-      id = same.id
-      next = cur.map(x => (x.id === id ? { ...x, count: (x.count || 1) + 1 } : x))
+      entry = { ...same, count: same.count + 1 }
+      visible.current = cur.map(x => (x.id === same.id ? entry : x))
     } else {
-      id = ++_id
-      next = [...cur, { id, type, message, count: 1 }]
+      entry = { id: `sm-toast-${++_seq}`, type, message, count: 1 }
+      const next = [...cur, entry]
       // Düşen kutunun zamanlayıcısı da ölmeli: kalsaydı ekranda olmayan bir kutu için işleyip
       // haritayı şişirirdi (unmount temizliğinin kapsamı da gereksiz yere büyürdü).
-      while (next.length > MAX_VISIBLE) clearTimer(next.shift().id)
+      while (next.length > MAX_VISIBLE) {
+        const dropped = next.shift()
+        clearTimer(dropped.id)
+        sonner.dismiss(dropped.id)
+      }
+      visible.current = next
     }
-    commit(next)
-    clearTimer(id)                          // tekrar geldi → süre baştan
-    if (duration > 0) timers.current.set(id, setTimeout(() => remove(id), duration))
-    return id
-  }, [clearTimer, commit, remove])
+    sonner[type](<ToastBody id={entry.id} message={message} count={entry.count} />, {
+      id: entry.id,
+      toasterId,
+      duration: Infinity,
+      onDismiss: (st) => forget(st.id),
+    })
+    clearTimer(entry.id)                    // tekrar geldi → süre baştan
+    if (duration > 0) timers.current.set(entry.id, setTimeout(() => remove(entry.id), duration))
+    return entry.id
+  }, [clearTimer, forget, remove, toasterId])
 
   // Unmount: bekleyen her zamanlayıcı iptal edilir — sağlayıcı gittikten sonra hiçbir
-  // güncelleme tetiklenmemeli.
+  // güncelleme tetiklenmemeli. Görünen bildirimler Sonner'ın global deposunda da kapatılır:
+  // kalsalardı sonra abone olan bir Toaster (yeniden mount, sıradaki test) onları geri çizerdi.
   useEffect(() => {
     const pending = timers.current
-    return () => { for (const t of pending.values()) clearTimeout(t); pending.clear() }
+    const ledger = visible
+    return () => {
+      for (const tm of pending.values()) clearTimeout(tm)
+      pending.clear()
+      for (const x of ledger.current) sonner.dismiss(x.id)
+      ledger.current = []
+    }
   }, [])
+
+  /**
+   * Kutunun gövdesine tıklamak kapatır (eski davranış). Sonner'ın `<li>`'si tıklama almıyor;
+   * olay sarmalayıcıda yakalanıp kutudaki {@code data-toast-id}'den kayda bağlanır. X düğmesi
+   * burada ATLANIR: onu Sonner'ın kendisi kapatır ve {@code onDismiss} defteri senkronlar —
+   * ikisi birden çalışsa kapanış iki kez tetiklenirdi.
+   */
+  const dismissFromClick = useCallback((e) => {
+    const el = e.target instanceof Element ? e.target : null
+    if (!el || el.closest('[data-close-button]')) return
+    const id = el.closest('[data-sonner-toast]')?.querySelector('[data-toast-id]')?.getAttribute('data-toast-id')
+    if (id) remove(id)
+  }, [remove])
 
   /**
    * Kimliği SABİT tutulur: tüketiciler bu nesneyi bağımlılık dizisine koyuyor
    * (CertInventoryReportSettings, RetentionSettings, SqlPlayground). Her render'da yeniden
-   * kurulsaydı, her bildirim o sayfalarda yeniden yükleme tetiklerdi.
+   * kurulsaydı, her bildirim o sayfalarda yeniden yükleme tetiklerdi. (Dil `t` bilinçli olarak
+   * burada değil: dil değişimi de kimliği değiştirmemeli.)
    */
   const api = useMemo(() => ({
     success: (msg, d) => show('success', msg, d),
@@ -101,25 +177,29 @@ export function ToastProvider({ children }) {
     dismiss: remove,
   }), [show, remove])
 
+  const toastOptions = useMemo(() => ({
+    closeButtonAriaLabel: t('toast.close'),
+    className: 'cursor-pointer',
+  }), [t])
+
+  // Portal document.body'ye: sağlayıcının atası bir yığın bağlamı (transform/z-index) kursa bile
+  // bildirim modal/dialog'ların (onlar da body'ye portal'lanır) üstünde kalsın.
+  // `expand`: tavan kadar (4) kutu üst üste katlanmadan, hepsi okunur halde durur — eski liste gibi.
   return (
     <ToastCtx.Provider value={api}>
       {children}
       {createPortal(
-        <div className="toast-container">
-          {toasts.map(t => (
-            <div key={t.id} className={`toast toast-${t.type}`} role="status"
-                 onClick={() => remove(t.id)}>
-              <span className="toast-icon">
-                {t.type === 'success' && <Check size={16} strokeWidth={3} />}
-                {t.type !== 'success' && <AlertCircle size={16} />}
-              </span>
-              <span className="toast-msg">{t.message}</span>
-              {t.count > 1 && <span className="toast-count">×{t.count}</span>}
-              <button className="toast-close" onClick={(e) => { e.stopPropagation(); remove(t.id) }}>
-                <X size={14} />
-              </button>
-            </div>
-          ))}
+        <div className="contents" onClick={dismissFromClick}>
+          <Toaster
+            id={toasterId}
+            position="top-right"
+            richColors
+            expand
+            closeButton
+            visibleToasts={MAX_VISIBLE}
+            containerAriaLabel={t('toast.region')}
+            toastOptions={toastOptions}
+          />
         </div>,
         document.body
       )}

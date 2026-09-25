@@ -244,7 +244,16 @@ public class MonitorSparklineService {
         return out;
     }
 
-    private static Double pct(int n, int fail) { return n == 0 ? null : Math.round(10000.0 * (n - fail) / n) / 100.0; }
+    /**
+     * Yüzde (2 hane). Hata varken ASLA 100 gösterilmez (regresyon R6): 30 günde 43.200 kontrolde tek hata
+     * %100,00'e yuvarlanıyor, ipucu aynı anda "1 hata · %100,00" diyordu. Kardeş kural
+     * {@code MonitoringController.uptimePct}.
+     */
+    static Double pct(int n, int fail) {
+        if (n == 0) return null;
+        double p = Math.round(10000.0 * (n - fail) / n) / 100.0;
+        return (p >= 100.0 && fail > 0) ? 99.99 : p;
+    }
 
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> windowsOf(Map<String, Object> m) { return (List<Map<String, Object>>) m.get("windows"); }

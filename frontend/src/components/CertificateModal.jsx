@@ -17,6 +17,7 @@ import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { Button } from '@/components/shadcn/button'
 
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
@@ -31,7 +32,7 @@ function categoryStripe(cat) {
     case 'DEPLOYMENT': return '#2563eb'
     case 'INCIDENT':   return '#dc2626'
     case 'RENEWAL':    return '#10b981'
-    default:           return '#94a3b8'
+    default:           return '#a1a1aa'
   }
 }
 
@@ -216,9 +217,9 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
           />
           <div className="cert-note-form-footer">
             <span className="cert-note-charcount">{newNote.length} / {NOTE_MAX_LENGTH}</span>
-            <button className="btn btn-primary" onClick={addNote} disabled={saving || !newNote.trim()}>
+            <Button onClick={addNote} disabled={saving || !newNote.trim()}>
               {saving ? t('notes.saving') : t('notes.add')}
-            </button>
+            </Button>
           </div>
           {error && <div className="cert-note-error">{error}</div>}
         </div>
@@ -261,7 +262,7 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
             const revs       = revisions[n.id] ?? []
             return (
               <div key={n.id} className={`alert-history-card cert-note-card${isDeleted ? ' cert-note-deleted' : ''}`}>
-                <div className="ahc-stripe" style={{ background: isDeleted ? '#9ca3af' : categoryStripe(cat) }} />
+                <div className="ahc-stripe" style={{ background: isDeleted ? '#a1a1aa' : categoryStripe(cat) }} />
                 <div className="ahc-body">
                   {isDeleted && (
                     <div className="cert-note-deleted-banner">
@@ -324,12 +325,12 @@ function NotesTab({ domain, t, currentUser, isAdmin }) {
                       />
                       <div className="cert-note-form-footer">
                         <span className="cert-note-charcount">{editBody.length} / {NOTE_MAX_LENGTH}</span>
-                        <button className="btn btn-secondary btn-sm-p" onClick={cancelEdit} disabled={editSaving}>
+                        <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={editSaving}>
                           {t('notes.cancel')}
-                        </button>
-                        <button className="btn btn-primary btn-sm-p" onClick={saveEdit} disabled={editSaving || !editBody.trim()}>
+                        </Button>
+                        <Button size="sm" onClick={saveEdit} disabled={editSaving || !editBody.trim()}>
                           {editSaving ? t('notes.saving') : t('notes.save')}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   ) : (

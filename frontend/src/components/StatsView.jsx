@@ -6,14 +6,15 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import ExecutiveSummary from './ExecutiveSummary.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // ── Tier meta ────────────────────────────────────────────────────────────────
 const TIER_META = {
   1: { color: '#4f46e5', label: 'T1', descKey: 'tier.desc1' },
   2: { color: '#0284c7', label: 'T2', descKey: 'tier.desc2' },
   3: { color: '#0891b2', label: 'T3', descKey: 'tier.desc3' },
-  4: { color: '#6b7280', label: 'T4', descKey: 'tier.desc4' },
-  0: { color: '#94a3b8', label: '?',  descKey: 'tier.descNone' },
+  4: { color: '#71717a', label: 'T4', descKey: 'tier.desc4' },
+  0: { color: '#a1a1aa', label: '?',  descKey: 'tier.descNone' },
 }
 
 const CELL_STATUSES = [
@@ -368,7 +369,7 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
             <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
               onChange={e => { setFilterDomain(e.target.value); pager.setPage(1) }} />
             {canAddDomain && onAddDomain && (
-              <button className="btn btn-success sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</button>
+              <Button variant="success" className="sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</Button>
             )}
           </div>
         </div>
@@ -378,16 +379,18 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
             onChange={e => { setFilterIssuer(e.target.value); pager.setPage(1) }} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.colStatus')}</label>
+          <label htmlFor="stats-f-status">{t('tbl.colStatus')}</label>
           <SearchableSelect
+            id="stats-f-status"
             value={filterStatus}
             onChange={v => { setFilterStatus(v); pager.setPage(1) }}
             options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
           />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.sort')}</label>
+          <label htmlFor="stats-f-sort">{t('tbl.sort')}</label>
           <SearchableSelect
+            id="stats-f-sort"
             value={sortBy}
             onChange={v => { setSortBy(v); pager.setPage(1) }}
             options={[
@@ -403,9 +406,9 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           />
         </div>
         {hasTableFilter && (
-          <button className="btn btn-secondary" style={{ marginTop: 24 }} onClick={resetAll}>
+          <Button variant="secondary" style={{ marginTop: 24 }} onClick={resetAll}>
             {t('tbl.reset')}
-          </button>
+          </Button>
         )}
       </div>
 

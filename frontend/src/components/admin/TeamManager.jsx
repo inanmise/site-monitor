@@ -21,6 +21,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { resolveTeamManager } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { Button } from '@/components/shadcn/button'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
@@ -305,13 +306,13 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       <div className="admin-section-header">
         <h3>{t('team.title')}</h3>
         <div className="hdr-actions">
-          <button className="btn btn-secondary" title={t('team.exportCsv')} onClick={() => {
+          <Button variant="secondary" title={t('team.exportCsv')} onClick={() => {
             const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
               tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? ''] })
             downloadCsv(stampedName('takimlar'), toCsv([t('team.colName'), t('team.colEmail'), t('team.colLeader'), t('team.colManager'), t('team.colActive'),
               t('team.stat.members', '').trim(), t('team.stat.domains', '').trim(), t('team.stat.monitors', '').trim(), t('team.stat.open_alerts', '').trim(), t('team.stat.contacts', '').trim(), t('team.stat.groups', '').trim()], rows))
-          }}><Download size={14} /> {t('team.exportCsv')}</button>
-          {isAdmin && <button className="btn btn-success" onClick={openAdd}>{t('team.addBtn')}</button>}
+          }}><Download size={14} /> {t('team.exportCsv')}</Button>
+          {isAdmin && <Button variant="success" onClick={openAdd}>{t('team.addBtn')}</Button>}
         </div>
       </div>
       {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
@@ -327,12 +328,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('team.searchPlaceholder')} aria-label={t('team.searchLabel')} />
             {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
           </label>
-          <button type="button" className={`btn btn-sm ${filtersOpen || filterActive ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'secondary'} size="sm" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
-          </button>
+          </Button>
           <span className="invtb-count">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
           <div className="invtb-spacer" />
-          {(filterActive || q) && <button type="button" className="btn btn-sm btn-secondary" onClick={clearFilters}>{t('inv.filterClear')}</button>}
+          {(filterActive || q) && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
         </div>
         {filtersOpen && (
           <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
@@ -359,14 +360,14 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       {canManage && selected.size > 0 && (
         <div className="um-bulk" data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}>
           <span className="um-bulk-count">{t('team.selected', selected.size)}</span>
-          <button className="btn btn-sm-p btn-secondary" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</button>
-          <button className="btn btn-sm-p btn-danger" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</button>
+          <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</Button>
+          <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</Button>
           <SearchableSelect value="" onChange={(v) => v && runBulk(v)} placeholder={t('team.bulkWeekly')} ariaLabel={t('team.bulkWeekly')} searchThreshold={99}
             options={[{ value: '', label: t('team.bulkWeekly') }, { value: 'weekly_reminder_on', label: t('team.bulkReminderOn') }, { value: 'weekly_reminder_off', label: t('team.bulkReminderOff') },
               { value: 'weekly_availability_on', label: t('team.bulkAvailOn') }, { value: 'weekly_availability_off', label: t('team.bulkAvailOff') }]} />
           {isAdmin && <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : Number(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
             options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />}
-          <button className="btn btn-sm-p btn-secondary" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</button>
+          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
@@ -535,10 +536,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
               </div>
             )}
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={closeModal}>{t('team.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving || !canSave}>
+              <Button variant="secondary" onClick={closeModal}>{t('team.cancel')}</Button>
+              <Button onClick={save} disabled={saving || !canSave}>
                 {saving ? t('team.saving') : t('team.save')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

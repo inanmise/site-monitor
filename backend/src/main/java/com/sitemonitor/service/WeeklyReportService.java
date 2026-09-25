@@ -162,6 +162,12 @@ public class WeeklyReportService {
          * kullanıcısı gibi davranır (takım eşleşmesi + düzenleme penceresi).
          */
         public boolean isAdmin() { return globalAdmin && "ADMIN".equals(systemRole); }
+        /**
+         * ADMIN ROLÜ (global ya da takım-kapsamlı müdür): Haftalık Raporlar modül bayrağına TAKILMAZ
+         * (2026-09-25 kullanıcı kararı: "ADMIN yetkisine sahip bir user her zaman haftalık raporu görmeli").
+         * Veri KAPSAMI değişmez — o {@link #isAdmin()}'in işi: kapsamlı müdür yine yalnız kendi takımını görür.
+         */
+        public boolean hasAdminRole() { return "ADMIN".equals(systemRole); }
         public boolean isAudit() { return "AUDIT".equals(systemRole); }
         public boolean isTeamAdmin() { return "TEAM_ADMIN".equals(systemRole); }
         public String display() {
@@ -175,7 +181,11 @@ public class WeeklyReportService {
     //
     // Varsayılan KAPALI. Kapalı takım: sayfayı görmez (arayüz), uçlar 403 (SecurityException),
     // pano/şerit/hatırlatma o takımı saymaz. Yönetici Ayarlar → Haftalık Raporlar'dan açar.
-    // Global admin/AUDIT kapalı takımın verisini de GÖRMEZ — "kapalı" tek anlama gelsin.
+    // İSTİSNA (2026-09-25): ADMIN ROLÜ bayrağa takılmaz — menüyü her zaman görür, kapalı takımın raporunu
+    // okur/listeler/açar (kendi kapsamı içinde). Eskiden "yönetici de görmez" kuralı, modül hiçbir takımda
+    // açık değilken menüyü adminden de gizliyordu: raporlar duruyor ama admin nereden açılacağını bile
+    // göremiyordu. AUDIT ve diğer roller için "kapalı" hâlâ tek anlama gelir. Pano/şerit/hatırlatma
+    // değişmedi — onlar "rapor BEKLENEN takımlar" kümesidir, kapalı takımdan rapor beklenmez.
 
     /** Takıma açık mı? (null takım = kapalı) */
     public boolean featureEnabled(Long teamId) {
@@ -194,6 +204,12 @@ public class WeeklyReportService {
     /** Kullanıcı modülü görebilir mi? Kendi takımlarından biri açıksa evet; yönetici/denetçi için
      *  en az bir takım açıksa evet (yönetim ekranları boş sayfaya düşmesin). */
     public boolean visibleFor(java.util.Collection<Long> teamIds, boolean adminOrAudit) {
+        return visibleFor(teamIds, adminOrAudit, false);
+    }
+
+    /** {@code adminRole}: ADMIN rolü (global ya da kapsamlı) — bayraktan bağımsız HER ZAMAN görür (2026-09-25). */
+    public boolean visibleFor(java.util.Collection<Long> teamIds, boolean adminOrAudit, boolean adminRole) {
+        if (adminRole) return true;
         java.util.Set<Long> enabled = enabledTeamIds();
         if (enabled.isEmpty()) return false;
         if (adminOrAudit) return true;
@@ -220,8 +236,9 @@ public class WeeklyReportService {
         return t;
     }
 
-    /** Kapalı takım için erişim reddi (controller 403'e çevirir). */
-    void requireFeature(Long teamId) {
+    /** Kapalı takım için erişim reddi (controller 403'e çevirir). ADMIN rolü bayrağa takılmaz (2026-09-25). */
+    void requireFeature(Long teamId, Actor actor) {
+        if (actor != null && actor.hasAdminRole()) return;
         if (!featureEnabled(teamId)) throw new SecurityException("WEEKLY_REPORTS_DISABLED");
     }
 
@@ -231,13 +248,14 @@ public class WeeklyReportService {
                 ? requestedTeamId
                 : actor.teamId(); // non-ADMIN kendi takımına zorlanır
         if (teamId == null) {
+            if (actor.isAdmin()) return reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(y);   // bayrak süzmez
             java.util.Set<Long> enabled = enabledTeamIds();
-            return actor.isAdmin() || actor.isAudit()
+            return actor.isAudit()
                     ? reportRepo.findByReportYearOrderByTeamIdAscWeekNoDesc(y).stream()
                             .filter(r -> enabled.contains(r.getTeamId())).toList()
                     : List.of();
         }
-        if (!featureEnabled(teamId)) return List.of();
+        if (!actor.hasAdminRole() && !featureEnabled(teamId)) return List.of();
         return reportRepo.findByTeamIdAndReportYearOrderByWeekNoDesc(teamId, y);
     }
 
@@ -336,7 +354,7 @@ public class WeeklyReportService {
         if (weekNo < 1 || weekNo > 53) throw new IllegalArgumentException("Geçersiz hafta numarası: " + weekNo);
         Team team = teamRepo.findById(teamId)
                 .orElseThrow(() -> new NoSuchElementException("Team not found: " + teamId));
-        requireFeature(teamId);   // modül kapalı takıma rapor açılamaz (2026-09-16)
+        requireFeature(teamId, actor);   // modül kapalı takıma rapor açılamaz (2026-09-16) — ADMIN rolü hariç (2026-09-25)
         if (!actor.isAdmin() && !Objects.equals(actor.teamId(), teamId)) {
             throw new SecurityException("Başka takım için rapor oluşturulamaz");
         }
@@ -1234,7 +1252,7 @@ public class WeeklyReportService {
     // ── Yetkiler / doğrulama ─────────────────────────────────────────────────
 
     private void requireCanRead(WeeklyReport r, Actor a) {
-        requireFeature(r.getTeamId());   // modül o takımda kapalıysa kimse (yönetici dâhil) okuyamaz
+        requireFeature(r.getTeamId(), a);   // modül o takımda kapalıysa ADMIN rolü dışında kimse okuyamaz (2026-09-25)
         if (a.isAdmin() || a.isAudit()) return;
         if (!Objects.equals(a.teamId(), r.getTeamId())) {
             throw new SecurityException("Bu rapora erişim yetkiniz yok");

@@ -51,19 +51,29 @@ describe('CSS hijyeni', () => {
     // stilsiz, uyarılar YEŞİL "başarı" kutusu olarak çıkıyordu).
     // Seçici bir kural başlatıyor mu? Gruplu tanımlarda ".form-field," biçiminde de olabilir.
     const defined = (sel) => CSS.includes(`${sel} {`) || CSS.includes(`${sel}{`) || CSS.includes(`${sel},`)
-    for (const sel of ['.hint', '.form-group', '.alert-msg--warn', '.form-field', '.field-error']) {
+    // `.field-error` listeden çıktı: tek kullanıcısı ui/Field'dı ve artık shadcn FieldError çiziyor
+    // (sınıf hiçbir JSX'te geçmiyor — tanımlı kalmasını şart koşmak ölü kuralı zorunlu kılardı).
+    for (const sel of ['.hint', '.form-group', '.alert-msg--warn', '.form-field']) {
       expect(defined(sel), `${sel} tanımlı değil`).toBe(true)
     }
   })
 
-  it('.pg-bar yalnız Progress ailesine ait — PaginationBar .pgn-bar kullanır', () => {
+  it('.pg-bar yalnız Progress ailesine ait — PaginationBar onu kullanmaz (shadcn Pagination)', () => {
     // İki bileşen aynı seçiciyi paylaşıyordu; App.css'te sonra gelen pagination kuralı
     // Progress'inkini eziyor ve her <ProgressBar>'a flex + margin-top bindiriyordu.
+    // PaginationBar artık shadcn Pagination + Tailwind ile çizilir; Progress sınıfına dönmemeli.
     const paginationSrc = FILES.find(([f]) => f.endsWith(path.join('ui', 'PaginationBar.jsx')))[1]
-    expect(paginationSrc).toContain('pgn-bar')
+    expect(paginationSrc).toContain('@/components/shadcn/pagination')
+    expect(paginationSrc).not.toMatch(/\bpg-bar\b/)
     expect(paginationSrc).not.toMatch(/className=\{`pg-bar/)
-    // App.css'te tek bir top-level `.pg-bar {` kuralı kalmalı
-    expect(CSS.match(/^\.pg-bar \{/gm) ?? []).toHaveLength(1)
+    // ProgressBar da artık shadcn Progress: çubuğun kendisi `.pg-bar` sınıfı TAŞIMAZ (yalnız
+    // tüketici yerleşim kancası `pg-bar-wrap` sarmalayıcıda kalır) — iki bileşenin aynı seçiciyi
+    // paylaşıp birbirini ezmesi yapısal olarak kapandı.
+    const progressSrc = FILES.find(([f]) => f.endsWith(path.join('ui', 'Progress.jsx')))[1]
+    expect(progressSrc).toContain('@/components/shadcn/progress')
+    expect(progressSrc).not.toMatch(/className=["'`{][^\n]*\bpg-bar(?![\w-])/)
+    // App.css'te en fazla bir top-level `.pg-bar {` kuralı (legacy kural silinince sıfır) — çift tanım olmaz
+    expect((CSS.match(/^\.pg-bar \{/gm) ?? []).length).toBeLessThanOrEqual(1)
   })
 
   it('.form-grid alan geometrisi tik/radyo kutusunu KAPSAMAZ', () => {
@@ -107,23 +117,69 @@ describe('CSS hijyeni', () => {
     for (const tok of ['--z-modal', '--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
       expect(CSS, `${tok} tanımlı değil`).toContain(`${tok}:`)
     }
+    // Kullanım CSS'te YA DA bir bileşenin satır içi stilinde olabilir: kendi stil sayfasını
+    // enjekte eden kütüphaneler (shadcn Sonner — Toaster'ın z-index'i) katmana JSX `style`'ından
+    // bağlanır; App.css'te o token'ı okuyan bir kural kalmaz. Yorumdaki anma kullanım sayılmaz.
     for (const tok of ['--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
-      expect(CSS, `${tok} hiç kullanılmıyor`).toContain(`var(${tok})`)
+      const used = CSS.includes(`var(${tok})`) || FILES.some(([, src]) => src.includes(`var(${tok})`))
+      expect(used, `${tok} hiç kullanılmıyor`).toBe(true)
     }
   })
 
-  it('animasyonlu her aile prefers-reduced-motion kapsamında', () => {
-    const blocks = CSS.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n\}/g) ?? []
-    const all = blocks.join('\n')
-    for (const sel of ['.pg-spinner', '.toast', '.dlg-box']) {
-      expect(all, `${sel} reduced-motion bloğunda yok`).toContain(sel)
+  it('animasyonlu her aile prefers-reduced-motion kapsamında — Progress ailesi (shadcn Spinner)', () => {
+    // Spinner artık shadcn Spinner (lucide ikon + Tailwind `animate-spin`): kapsam App.css'teki
+    // .pg-spinner kuralında değil, bileşenin sınıf dizesinde. Ayrıntılı tarama progress-guard'da.
+    for (const rel of [['shadcn', 'spinner.jsx'], ['ui', 'Progress.jsx']]) {
+      const src = FILES.find(([f]) => f.endsWith(path.join('components', ...rel)))[1]
+      const spinning = [...src.matchAll(/"[^"\n]*\banimate-spin\b[^"\n]*"|'[^'\n]*\banimate-spin\b[^'\n]*'/g)].map(m => m[0])
+      expect(spinning.length, `${rel.join('/')}: animate-spin bulunamadı (tarama vakumda)`).toBeGreaterThan(0)
+      for (const cls of spinning) {
+        expect(cls, `${rel.join('/')}: reduced-motion muafiyeti yok`).toMatch(/motion-reduce:animate-(none|pulse)\b/)
+      }
     }
+  })
+
+  it('pencere (shadcn Dialog/AlertDialog + ModalShell scrim) animasyonu da prefers-reduced-motion kapsamında', () => {
+    // ui/Dialog.jsx ve ui/ModalShell.jsx artık shadcn AlertDialog/Dialog: giriş animasyonu App.css'teki
+    // `.dlg-box` ailesinde değil, bileşen sınıflarında (tw-animate-css `animate-in`). Kapsam da ORADA
+    // olmalı: `animate-in` taşıyan her sınıf dizesi `motion-reduce:animate-none` da taşır.
+    for (const rel of [['shadcn', 'dialog.jsx'], ['shadcn', 'alert-dialog.jsx'], ['ui', 'ModalShell.jsx']]) {
+      const src = FILES.find(([f]) => f.endsWith(path.join('components', ...rel)))[1]
+      const animated = [...src.matchAll(/"[^"\n]*\banimate-in\b[^"\n]*"/g)].map(m => m[0])
+      expect(animated.length, `${rel.join('/')}: animate-in bulunamadı (tarama vakumda)`).toBeGreaterThan(0)
+      for (const cls of animated) {
+        expect(cls, `${rel.join('/')}: reduced-motion muafiyeti yok`).toContain('motion-reduce:animate-none')
+      }
+    }
+  })
+
+  it('bildirim (toast) animasyonu da prefers-reduced-motion kapsamında — Sonner\'ın enjekte ettiği stil', async () => {
+    // Toast artık shadcn Sonner: giriş/çıkış animasyonu App.css'te değil, `sonner` paketinin modül
+    // yüklenirken <head>'e enjekte ettiği stilde. Kapsam da ORADA olmalı — bir paket güncellemesi
+    // kuralı düşürürse bu kırmızı olur (çalışma anındaki stil okunur, dosya kopyası değil).
+    await import('sonner')
+    const injected = [...document.head.querySelectorAll('style')].map(s => s.textContent).join('\n')
+    const rules = [...injected.matchAll(/@media \(prefers-reduced-motion(?::\s*reduce)?\)\s*\{([^{}]*)\{([^}]*)\}/g)]
+    const toastRule = rules.find(([, sel]) => sel.split(',').map(s => s.trim()).includes('[data-sonner-toast]'))
+    expect(toastRule, 'Sonner stilinde [data-sonner-toast] için reduced-motion kuralı yok').toBeTruthy()
+    expect(toastRule[2]).toMatch(/animation:\s*none/)
+    expect(toastRule[2]).toMatch(/transition:\s*none/)
   })
 
   it('yeni durum yüzeylerinin her tonu koyu tema karşılığına sahip', () => {
+    // AlertBanner artık shadcn Alert: dört ton alert.jsx'in cva proje varyantlarıdır. Koyu tema
+    // App.css'te `[data-theme="dark"] .alert-banner--*` değil, aynı varyant dizesinde `dark:`
+    // karşılıklarıdır (globals.css: dark varyantı = [data-theme="dark"]). Zemin, kenar ve
+    // mürekkep ÜÇÜ de koyu temada ezilmeli — biri eksik kalırsa açık zemin koyu sayfada parlar.
+    const alertSrc = FILES.find(([f]) => f.endsWith(path.join('shadcn', 'alert.jsx')))[1]
+    const bannerSrc = FILES.find(([f]) => f.endsWith(path.join('ui', 'AlertBanner.jsx')))[1]
+    expect(bannerSrc).toContain('@/components/shadcn/alert')
     for (const tone of ['info', 'success', 'warning', 'danger']) {
-      expect(CSS, `.alert-banner--${tone} koyu tema karşılığı yok`)
-        .toContain(`[data-theme="dark"] .alert-banner--${tone}`)
+      const m = alertSrc.match(new RegExp(`\\b${tone}:\\s*"([^"]*)"`))
+      expect(m, `alert.jsx'te "${tone}" varyantı yok`).not.toBeNull()
+      for (const part of ['bg-', 'border-', 'text-']) {
+        expect(m[1], `"${tone}" tonunun koyu tema ${part}* karşılığı yok`).toMatch(new RegExp(`(^|\\s)dark:${part}`))
+      }
     }
   })
 

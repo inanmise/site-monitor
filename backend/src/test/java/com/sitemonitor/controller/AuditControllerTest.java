@@ -76,15 +76,110 @@ class AuditControllerTest {
     @Test
     @DisplayName("listAudit: AUDIT 200 + sayfalı sonuç; USER 403")
     void listAudit_access() throws Exception {
-        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(new AuditLog()), PageRequest.of(0, 50), 1));
 
         mvc.perform(get("/api/admin/audit").session(session("AUDIT")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(1));
-
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.scope").value("ALL"));
+        verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(true), any(), any(), any(), any());
+        // 2026-09-25 kullanıcı kararı: kapsamı olmayan kullanıcı artık 403 almaz — ekip kapsamı KUKLA
+        // listelerle sorgulanır (sonuç boş döner). Eski "USER 403" iddiası bilinçli olarak ters çevrildi.
         mvc.perform(get("/api/admin/audit").session(session("USER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("TEAM"));
+        verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("")), any());
+    }
+
+    // ── Ekip kapsamı (2026-09-25, "ekip üyeleri görebilsin — tüm olaylar, tam ayrıntı") ──────────────
+
+    private MockHttpSession teamUser(long teamId) {
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", List.of(teamId));
+        return s;
+    }
+
+    private void stubTeamMate(long teamId, long id, String username) {
+        // Projeksiyon satırı: [id, küçük harf kullanıcı adı] (regresyon R9)
+        when(appUserRepo.findMemberIdentities(List.of(teamId)))
+                .thenReturn(List.<Object[]>of(new Object[]{id, username.toLowerCase(java.util.Locale.ROOT)}));
+    }
+
+    private static AuditLog auditRow(long id, Long actorTeamId, Long actorId, String actor) {
+        AuditLog r = new AuditLog();
+        r.setId(id); r.setEventType("LOGIN"); r.setActorTeamId(actorTeamId); r.setActorId(actorId); r.setActor(actor);
+        r.setIpAddress("10.0.0." + id);
+        return r;
+    }
+
+    @Test
+    @DisplayName("ekip kapsamı: liste + dışa aktarma takım + üye kimliği + küçük harf üye adıyla sorgular, audit_log.read aramaz")
+    void teamScope_listAndExportCarryMembers() throws Exception {
+        stubTeamMate(5L, 41L, "N11111");
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
+                .thenReturn(new PageImpl<>(List.of(auditRow(1, 5L, 41L, "N11111")), PageRequest.of(0, 50), 1));
+
+        mvc.perform(get("/api/admin/audit").session(teamUser(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                // tam ayrıntı: IP dâhil satırın tamamı döner
+                .andExpect(jsonPath("$.data[0].ip_address").value("10.0.0.1"));
+        mvc.perform(get("/api/admin/audit/export?format=csv").session(teamUser(5L)))
+                .andExpect(status().isOk());
+
+        verify(permissionService, org.mockito.Mockito.never())
+                .require(any(HttpSession.class), eq("audit_log.read"), anyString());
+    }
+
+    @Test
+    @DisplayName("ekip kapsamı: tekil kayıt / kaynak / korelasyon ekip DIŞI satırı göstermez (tekilde 404)")
+    void teamScope_inMemoryFilters() throws Exception {
+        stubTeamMate(5L, 41L, "N11111");
+        AuditLog mine = auditRow(10, 5L, 41L, "N11111");
+        AuditLog byName = auditRow(11, null, null, "n11111");       // kimliksiz giriş olayı, ad eşleşir
+        AuditLog stranger = auditRow(12, 9L, 99L, "N99999");
+        when(auditLogRepo.findById(10L)).thenReturn(java.util.Optional.of(mine));
+        when(auditLogRepo.findById(12L)).thenReturn(java.util.Optional.of(stranger));
+        AuditLog adminMate = auditRow(13, 5L, 41L, "N11111");
+        adminMate.setActorRole("ADMIN");                                 // takımı olan yönetici — ekip kapsamına GİRMEZ (R2)
+        when(auditLogRepo.findById(13L)).thenReturn(java.util.Optional.of(adminMate));
+        when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("USER"), eq("5"), any()))
+                .thenReturn(List.of(mine, byName, stranger));
+        // Ekip kapsamında kaynak geçmişi SORGUDA kapsamlanır (R7): findAdvanced kaynak süzgeci + kapsam listeleriyle.
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), eq("USER"), eq("5"), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
+                .thenReturn(new PageImpl<>(List.of(mine, byName)));
+        when(auditLogRepo.findByCorrelationIdOrderBySeqAsc("c1")).thenReturn(List.of(stranger, mine, adminMate));
+
+        mvc.perform(get("/api/admin/audit/10").session(teamUser(5L))).andExpect(status().isOk());
+        mvc.perform(get("/api/admin/audit/12").session(teamUser(5L))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/admin/audit/13").session(teamUser(5L))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/admin/audit/resource/USER/5").session(teamUser(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2));
+        verify(auditLogRepo, org.mockito.Mockito.never())
+                .findByResourceTypeAndResourceIdOrderByEventTimeDesc(any(), any(), any());
+        mvc.perform(get("/api/admin/audit/correlation/c1").session(teamUser(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value(10));
+        // Tam kapsam aynı satırları süzmeden görür.
+        mvc.perform(get("/api/admin/audit/resource/USER/5").session(session("AUDIT")))
+                .andExpect(jsonPath("$.total").value(3));
+    }
+
+    @Test
+    @DisplayName("ekip kapsamı: sistem-geneli yüzeyler (bütünlük, özet, cihaz geçmişi) admin/AUDIT'te kalır")
+    void teamScope_systemWideSurfacesStayAdminOnly() throws Exception {
+        mvc.perform(get("/api/admin/audit/integrity").session(teamUser(5L))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/audit/stats").session(teamUser(5L))).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/users/5/devices").session(teamUser(5L))).andExpect(status().isForbidden());
+        // Kapsamlı müdür (rol ADMIN ama takım-kapsamlı) de ekip kapsamındadır, sistem-geneli değil.
+        mvc.perform(get("/api/admin/audit/stats").session(scopedAdmin(5L))).andExpect(status().isForbidden());
     }
 
     @Test
@@ -100,8 +195,12 @@ class AuditControllerTest {
                 .andExpect(jsonPath("$.data[?(@.type == 'LOGIN')].category").value("AUTH"))
                 .andExpect(jsonPath("$.categories").isArray());
 
+        // Ekip kapsamı: katalog döner (süzgeç listesi için) ama sistem-geneli SAYIMLAR dönmez.
         mvc.perform(get("/api/admin/audit/event-types").session(session("USER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.type == 'LOGIN')].category").value("AUTH"))
+                .andExpect(jsonPath("$.data[?(@.type == 'LOGIN')].count").doesNotExist());
+        verify(auditService, org.mockito.Mockito.times(1)).eventTypeCounts();
     }
 
     @Test
@@ -120,20 +219,26 @@ class AuditControllerTest {
         mvc.perform(get("/api/admin/audit/999").session(session("AUDIT")))
                 .andExpect(status().isNotFound());
 
+        // Kapsamı olmayan kullanıcı: satır VAR ama ekibinden değil → 404 (varlığı da sızmaz).
         mvc.perform(get("/api/admin/audit/77").session(session("USER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
     }
 
     @Test
-    @DisplayName("resourceHistory: AUDIT 200 + kayıt sayısı; USER 403 (izolasyon)")
+    @DisplayName("resourceHistory: AUDIT 200 + kayıt sayısı; ekip DIŞI satır kapsamlı kullanıcıya dönmez (izolasyon)")
     void resourceHistory_access() throws Exception {
         when(auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(eq("PORT_MONITOR"), eq("7"), any()))
                 .thenReturn(List.of(new AuditLog()));
         mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("AUDIT")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));
+        // Kapsamı olmayan kullanıcı: kukla listelerle sorgulanır (R7: kapsam sorguda), sonuç boş.
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), eq("PORT_MONITOR"), eq("7"), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("")), any()))
+                .thenReturn(new PageImpl<>(List.of()));
         mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("USER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
     }
 
     @Test
@@ -159,7 +264,7 @@ class AuditControllerTest {
     @Test
     @DisplayName("export: CSV döner + dışa aktarma İŞLEMİ AUDIT_EXPORT olarak denetlenir (denetimin denetimi)")
     void export_selfAudited() throws Exception {
-        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(new AuditLog()), PageRequest.of(0, 1), 1));
         mvc.perform(get("/api/admin/audit/export?format=csv").session(session("AUDIT")))
                 .andExpect(status().isOk());

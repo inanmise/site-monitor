@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import ModalShell from '../components/ui/ModalShell.jsx'
+import { useDialog } from '../components/ui/Dialog.jsx'
+
+// Scrim (shadcn örtüsü) rolsüz dekoratif bir yüzey: legacy sınıf yerine shadcn `data-slot` ile bulunur.
+const scrims = () => [...document.body.querySelectorAll('[data-slot="dialog-overlay"]')]
 
 /**
  * Modal kabuğunun davranış sözleşmesi. Bu testler "modal açıldı mı" değil, IssueReportModal'da
@@ -42,7 +46,7 @@ describe('ModalShell', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
 
-    fireEvent.click(document.body.querySelector('.modal-shell-overlay'))
+    fireEvent.click(scrims()[0])
     expect(onClose).not.toHaveBeenCalled()
 
     expect(screen.getByRole('button', { name: 'Kapat' }).disabled).toBe(true)
@@ -54,7 +58,7 @@ describe('ModalShell', () => {
     render(<ModalShell open onClose={onClose} title="x" closeLabel="Kapat">gövde</ModalShell>)
     fireEvent.click(screen.getByRole('dialog'))
     expect(onClose).not.toHaveBeenCalled()
-    fireEvent.click(document.body.querySelector('.modal-shell-overlay'))
+    fireEvent.click(scrims()[0])
     expect(onClose).toHaveBeenCalledOnce()
   })
 
@@ -110,13 +114,12 @@ describe('ModalShell', () => {
     // Katman DOM sırasına göre DEĞİL, başlığa göre eşleştiriliyor: iç içe portal'larda
     // body'ye ekleme sırası React'in commit düzenine bağlı ve tersine dönebilir — z-index'in
     // gerekli olmasının sebebi de tam olarak bu.
-    const overlays = [...document.body.querySelectorAll('.modal-shell-overlay')]
-    expect(overlays.length).toBe(2)
-    const zOf = (label) => Number(
-      overlays.find(o => o.querySelector('.modal-shell-title').textContent.includes(label))
-        .style.getPropertyValue('--modal-z')
-    )
+    // Kutu ve scrim ayrı portal'lar: iç kabuğun scrim'i dış kabuğun KUTUSUNUN da üstünde olmalı.
+    expect(scrims().length).toBe(2)
+    const zOf = (label) => Number(screen.getByRole('dialog', { name: label }).style.zIndex)
     expect(zOf('İç')).toBeGreaterThan(zOf('Dış'))
+    const scrimZ = scrims().map(s => Number(s.style.zIndex))
+    expect(Math.max(...scrimZ)).toBeGreaterThan(zOf('Dış'))
   })
 
   it('iç içe kabuklardan biri kapanınca scroll kilidi ERKEN açılmaz', async () => {
@@ -134,7 +137,7 @@ describe('ModalShell', () => {
     expect(document.body.style.overflow).toBe('hidden')
     fireEvent.click(screen.getByRole('button', { name: 'İçi kapat' }))
     // Dış kabuk hâlâ açık → kilit sürmeli
-    await waitFor(() => expect(document.body.querySelectorAll('.modal-shell-overlay').length).toBe(1))
+    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
     expect(document.body.style.overflow).toBe('hidden')
   })
 
@@ -157,16 +160,27 @@ describe('ModalShell', () => {
     expect(document.activeElement).toBe(iki)
   })
 
-  it('Dialog (showConfirm) açıkken Escape kabuğu kapatmaz', () => {
+  it('Dialog (showConfirm) açıkken Escape kabuğu kapatmaz', async () => {
+    // Eskiden `.dlg-overlay` taklit ediliyordu; artık GERÇEK onay penceresi açılır (Radix katman
+    // yığını: tuşu yalnız en üstteki katman alır).
     const onClose = vi.fn()
-    render(<ModalShell open onClose={onClose} title="x" closeLabel="Kapat">gövde</ModalShell>)
-    // DialogProvider'ın açtığı overlay'i taklit et
-    const dlg = document.createElement('div')
-    dlg.className = 'dlg-overlay'
-    document.body.appendChild(dlg)
+    function Host() {
+      const { showConfirm } = useDialog()
+      return (
+        <ModalShell open onClose={onClose} title="x" closeLabel="Kapat">
+          <button type="button" onClick={() => showConfirm({ title: 'Emin misin?' })}>Sor</button>
+        </ModalShell>
+      )
+    }
+    render(<Host />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sor' }))
+    await screen.findByRole('dialog', { name: 'Emin misin?' })
+
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
-    dlg.remove()
+    // Escape onay penceresini kapattı (İptal), kabuk yerinde.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Emin misin?' })).toBeNull())
+    expect(screen.getByRole('dialog', { name: 'x' })).toBeInTheDocument()
   })
 
   it('footer verilirse altlıkta render edilir', () => {
@@ -175,7 +189,24 @@ describe('ModalShell', () => {
         gövde
       </ModalShell>
     )
-    const footer = document.body.querySelector('.modal-shell-footer')
-    expect(footer.textContent).toContain('Gönder')
+    const footer = screen.getByRole('dialog').querySelector('[data-slot="dialog-footer"]')
+    expect(within(footer).getByRole('button', { name: 'Gönder' })).toBeInTheDocument()
+  })
+
+  it('closeLabel verilmezse X düğmesinin adı i18n\'den gelir (adsız düğme kalmaz)', () => {
+    render(<ModalShell open title="x">gövde</ModalShell>)
+    expect(screen.getByRole('button', { name: /^(Kapat|Close)$/ })).toBeInTheDocument()
+  })
+
+  it('boyut ve scrollBody kutuya işlenir (lg/xl legacy özgüllüğe takılmaz)', () => {
+    render(<ModalShell open title="x" size="xl" scrollBody footer={<button type="button">Kaydet</button>}>gövde</ModalShell>)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg).toHaveAttribute('data-size', 'xl')
+    expect(dlg).toHaveAttribute('data-scroll-body', 'true')
+    // Legacy kutu sınıfları shadcn öğesinin üstünde KALMAZ (App.css katmansız, Tailwind'i ezerdi).
+    expect(dlg.className).not.toMatch(/modal-box|modal-shell/)
+    // Kaydet kaydırılan gövdede değil, altlıkta.
+    const body = dlg.querySelector('[data-slot="modal-shell-body"]')
+    expect(body.contains(screen.getByRole('button', { name: 'Kaydet' }))).toBe(false)
   })
 })

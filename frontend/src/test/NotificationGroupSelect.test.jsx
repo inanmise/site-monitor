@@ -40,7 +40,7 @@ describe('NotificationGroupSelect', () => {
     rerender(<NotificationGroupSelect teamId="2" value="" onChange={() => {}} />)
     await waitFor(() => expect(api.notificationGroups.list).toHaveBeenCalledWith('2', true))
 
-    fireEvent.mouseDown(screen.getByRole('button'))
+    fireEvent.mouseDown(screen.getByRole('combobox'))
     expect(await screen.findByText('Infra')).toBeTruthy()
     expect(screen.queryByText('Payments')).toBeNull()
   })
@@ -59,7 +59,7 @@ describe('NotificationGroupSelect', () => {
     render(<NotificationGroupSelect teamId="1" value="" onChange={() => {}} />)
     await waitFor(() => expect(api.notificationGroups.list).toHaveBeenCalled())
 
-    fireEvent.mouseDown(screen.getByRole('button'))
+    fireEvent.mouseDown(screen.getByRole('combobox'))
     expect(await screen.findByText('Güncel')).toBeTruthy()
     expect(screen.queryByText(/Eski Nöbet/)).toBeNull()
   })
@@ -69,7 +69,7 @@ describe('NotificationGroupSelect', () => {
     render(<NotificationGroupSelect teamId="1" value="" onChange={() => {}} />)
     await waitFor(() => expect(api.notificationGroups.list).toHaveBeenCalled())
 
-    fireEvent.mouseDown(screen.getByRole('button'))
+    fireEvent.mouseDown(screen.getByRole('combobox'))
     expect(await screen.findByText('Nöbet ★')).toBeTruthy()
   })
 

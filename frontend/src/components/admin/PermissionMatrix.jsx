@@ -5,6 +5,9 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { ShieldCheck, Lock, Eye, Pencil, Zap, RotateCcw, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
+import { Switch } from '@/components/shadcn/switch'
+import AlertBanner from '../ui/AlertBanner.jsx'
 
 const ROLES = [
   { key: 'ADMIN',      colorClass: 'perm-role-admin' },
@@ -29,6 +32,13 @@ export default function PermissionMatrix() {
   const [grants, setGrants]   = useState([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState(null)
+  // Salt okunur kip (2026-09-25, kullanıcı kararı): matrisi herkes görür, yalnız global admin değiştirir.
+  // Kaynak sunucunun `can_edit` alanı (kapsamlı müdür de false) — arayüz kendi rol tahminini yapmaz.
+  const [canEdit, setCanEdit] = useState(false)
+  // R10 (2026-09-25): yükleme hatası AYRI bir durum. Eskiden success:false'ta canEdit false kalıyor,
+  // global admin "salt okunur" bandını ve boş tabloyu görüyordu ("bilinmiyor" = "yetkin yok");
+  // istek fırlatırsa da işlenmeyen ret oluşuyordu.
+  const [loadError, setLoadError] = useState(false)
   // Akordiyon: aynı anda tek grup açık — varsayılan "certificates" (Sertifika Yönetimi).
   // Bir gruba tıklayınca o açılır, diğer açık olanlar kapanır; açık olana tıklayınca kapanır.
   const [openGroup, setOpenGroup] = useState('certificates')
@@ -48,7 +58,15 @@ export default function PermissionMatrix() {
       if (res?.success) {
         setCatalog(res.catalog || [])
         setGrants(res.grants || [])
+        setCanEdit(res.can_edit === true)
+        setLoadError(false)
+      } else {
+        setLoadError(true)
+        setCanEdit(false)   // bayat veriyle anahtar çevrilmesin
       }
+    } catch {
+      setLoadError(true)
+      setCanEdit(false)
     } finally {
       setLoading(false)
     }
@@ -61,6 +79,7 @@ export default function PermissionMatrix() {
   }
 
   async function toggle(role, resourceKey, action, current, sensitive) {
+    if (!canEdit) return
     if (sensitive && !current) {
       const ok = await showConfirm({
         title: t('perm.sensitiveTitle'),
@@ -122,18 +141,27 @@ export default function PermissionMatrix() {
           <ShieldCheck size={20} />
           <span>{t('perm.title')}</span>
         </h3>
-        <button className="btn btn-secondary perm-reset-btn" onClick={resetDefaults}>
-          <RotateCcw size={14} />
-          <span>{t('perm.resetBtn')}</span>
-        </button>
+        {canEdit && (
+          <Button variant="secondary" className="perm-reset-btn" onClick={resetDefaults}>
+            <RotateCcw size={14} />
+            <span>{t('perm.resetBtn')}</span>
+          </Button>
+        )}
       </div>
 
       <p className="section-desc">{t('perm.desc')}</p>
 
-      <div className="perm-notice">
-        <Lock size={14} />
-        <span>{t('perm.adminLockedNote')}</span>
-      </div>
+      {!loading && loadError && (
+        <AlertBanner tone="danger" title={t('perm.loadErrorTitle')}
+          actions={<Button variant="outline" size="sm" onClick={load}>{t('perm.retry')}</Button>}>
+          {t('perm.loadErrorText')}
+        </AlertBanner>
+      )}
+      {/* Salt okunur bandı YALNIZ başarılı yüklemeden sonra: sunucu can_edit=false dedi demektir. */}
+      {!loading && !loadError && !canEdit && (
+        <AlertBanner tone="info" icon={Eye} title={t('perm.readOnlyTitle')}>{t('perm.readOnlyText')}</AlertBanner>
+      )}
+      <AlertBanner tone="info" icon={Lock}>{t('perm.adminLockedNote')}</AlertBanner>
 
       <div className="perm-rolemodel">
         <button type="button" className="perm-group-toggle"
@@ -160,11 +188,11 @@ export default function PermissionMatrix() {
         <div className="perm-legend-title">{t('perm.legendTitle')}</div>
         <div className="perm-legend-items">
           <div className="perm-legend-item">
-            <span className="perm-pill perm-pill-on" aria-hidden="true"><span className="perm-pill-knob" /></span>
+            <Switch checked tabIndex={-1} aria-hidden="true" className="pointer-events-none" />
             <span>{t('perm.legendOn')}</span>
           </div>
           <div className="perm-legend-item">
-            <span className="perm-pill perm-pill-off" aria-hidden="true"><span className="perm-pill-knob" /></span>
+            <Switch checked={false} tabIndex={-1} aria-hidden="true" className="pointer-events-none" />
             <span>{t('perm.legendOff')}</span>
           </div>
           <div className="perm-legend-item">
@@ -210,7 +238,7 @@ export default function PermissionMatrix() {
                 {t('perm.loading')}
               </td></tr>
             )}
-            {!loading && grouped.map(([groupName, items]) => {
+            {!loading && !loadError && grouped.map(([groupName, items]) => {
               const open = openGroup === groupName
               return (
               <Fragment key={groupName}>
@@ -243,24 +271,30 @@ export default function PermissionMatrix() {
                           return (
                             <td key={r.key + '-' + key} className="perm-locked-cell" title={t('perm.adminLocked')}>
                               <span className="perm-locked-badge">
-                                <Lock size={11} />
+                                <Lock size={11} aria-hidden="true" />
                               </span>
+                              {/* title ekran okuyucuda güvenilir değil ve ikon gizli: hücre BOŞ okunuyordu
+                                  (2026-09-25, R16). Metin görsel olarak gizli, erişilebilirlik ağacında. */}
+                              <span className="sr-only">{t('perm.adminLocked')}</span>
                             </td>
                           )
                         }
                         const allowed = isAllowed(r.key, item.resource_key, key)
                         const sensitive = item.sensitive?.includes(key)
+                        const hint = canEdit
+                          ? t(allowed ? 'perm.clickRevoke' : 'perm.clickGrant')
+                          : t(allowed ? 'perm.legendOn' : 'perm.legendOff')
                         return (
                           <td key={r.key + '-' + key} className="perm-toggle-cell">
-                            <button
-                              type="button"
-                              className={`perm-pill ${allowed ? 'perm-pill-on' : 'perm-pill-off'}`}
-                              onClick={() => toggle(r.key, item.resource_key, key, allowed, sensitive)}
-                              title={t(allowed ? 'perm.clickRevoke' : 'perm.clickGrant')}
-                              aria-pressed={allowed}
-                            >
-                              <span className="perm-pill-knob" />
-                            </button>
+                            <Switch
+                              checked={allowed}
+                              disabled={!canEdit}
+                              onCheckedChange={() => toggle(r.key, item.resource_key, key, allowed, sensitive)}
+                              aria-label={`${r.key} · ${item.resource_key} · ${t(ACTIONS.find(a => a.key === key).labelKey)}`}
+                              title={hint}
+                              // Salt okunurda soluk DEĞİL: durum okunabilir kalsın, yalnız etkileşim kapalı
+                              className="disabled:cursor-default disabled:opacity-100"
+                            />
                           </td>
                         )
                       })

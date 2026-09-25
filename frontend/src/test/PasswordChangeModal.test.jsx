@@ -52,13 +52,13 @@ describe('PasswordChangeModal', () => {
   it('kısa parolada gönder düğmesi KAPALI (istek atılmaz)', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
     fill(container, { next: 'kisa', confirm: 'kisa' })
-    expect(container.querySelector('.btn-primary')).toBeDisabled()
+    expect(container.querySelector('[data-slot="button"][data-variant="default"]')).toBeDisabled()
   })
 
   it('onay eşleşmiyorsa gönder düğmesi KAPALI', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
     fill(container, { next: 'yeni12', confirm: 'baska1' })
-    expect(container.querySelector('.btn-primary')).toBeDisabled()
+    expect(container.querySelector('[data-slot="button"][data-variant="default"]')).toBeDisabled()
   })
 
   it('geçerli girdide parola değiştirilir ve modal kapanır', async () => {
@@ -68,7 +68,7 @@ describe('PasswordChangeModal', () => {
       <PasswordChangeModal mode="self" targetUser={USER} onClose={onClose} onSuccess={onSuccess} />)
 
     fill(container)
-    fireEvent.click(container.querySelector('.btn-primary'))
+    fireEvent.click(container.querySelector('[data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.me.changePassword).toHaveBeenCalledWith('eski123', 'yeni12'))
     await waitFor(() => expect(onSuccess).toHaveBeenCalled())
@@ -80,7 +80,7 @@ describe('PasswordChangeModal', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
 
     fill(container)
-    fireEvent.click(container.querySelector('.btn-primary'))
+    fireEvent.click(container.querySelector('[data-slot="button"][data-variant="default"]'))
 
     // Ham "FORBIDDEN" gösterilmemeli — kullanıcı nedeni anlayamaz.
     await waitFor(() => expect(container.textContent).not.toContain('FORBIDDEN'))
@@ -92,7 +92,7 @@ describe('PasswordChangeModal', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
 
     fill(container)
-    fireEvent.click(container.querySelector('.btn-primary'))
+    fireEvent.click(container.querySelector('[data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.me.changePassword).toHaveBeenCalled())
     expect(container.textContent).not.toContain('Password was recently used')
@@ -103,7 +103,7 @@ describe('PasswordChangeModal', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={() => {}} />)
 
     fill(container)
-    fireEvent.click(container.querySelector('.btn-primary'))
+    fireEvent.click(container.querySelector('[data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(container.textContent).toContain('beklenmeyen sunucu hatasi'))
   })
@@ -130,7 +130,7 @@ describe('PasswordChangeModal', () => {
     const { container } = render(<PasswordChangeModal mode="self" targetUser={USER} onClose={onClose} />)
 
     fill(container)
-    fireEvent.click(container.querySelector('.btn-primary'))
+    fireEvent.click(container.querySelector('[data-slot="button"][data-variant="default"]'))
 
     await waitFor(() => expect(api.me.changePassword).toHaveBeenCalled())
     expect(onClose).not.toHaveBeenCalled()

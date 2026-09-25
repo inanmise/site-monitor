@@ -97,6 +97,8 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;
     @MockitoBean com.sitemonitor.service.MonitoringOutageService monitoringOutageService;   // canlı teyit endpoint'i (2026-08-03)
     @MockitoBean AlertEventRepository alertEventRepo;
+    // Değişiklik geçmişi kapsamı ekip ÜYELERİNİ de sorar (TeamActorScope, 2026-09-25).
+    @MockitoBean com.sitemonitor.repository.AppUserRepository appUserRepo;
 
     // 9. tür (sayfa-bütünlüğü) — controller alan-enjekte eder → @WebMvcTest slice'ında mock zorunlu.
     @MockitoBean com.sitemonitor.service.SchedulerService schedulerService;
@@ -2401,10 +2403,10 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Toplu akış: admin TÜM takımları görür (kapsam süzgeci uygulanmaz)")
         void recent_globalAdmin_seesAll() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
-                    eq(true), any(), any()))
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
-            when(changeLogRepo.countByEventType(any(), any(), any(), eq(true), any()))
+            when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
                     .thenReturn(List.<Object[]>of(new Object[]{"CREATE", 4L}));
 
             mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
@@ -2416,15 +2418,44 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Toplu akış: takım kullanıcısı KENDİ kapsamıyla sorgular")
         void recent_teamUser_isScoped() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
-                    eq(false), eq(List.of(5L)), any()))
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
-            when(changeLogRepo.countByEventType(any(), any(), any(), eq(false), eq(List.of(5L))))
+            when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(false), eq(List.of(5L)), any(), any()))
                     .thenReturn(List.<Object[]>of());
 
             mvc.perform(get("/api/monitoring/changes/recent").session(memberOf(5L)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.changes[0].team_id").value(5));
+        }
+
+        @Test
+        @DisplayName("Toplu akış: takım kapsamı ekip ÜYELERİNİN kimlik + küçük harf adlarını da taşır")
+        void recent_teamUser_scopeCarriesTeamMembers() throws Exception {
+            when(appUserRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(new Object[]{41L, "n11111"}));
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    // takımı boş satır (envanter türevi / sentetik) ekip arkadaşının değişikliği olarak gelir
+                    .andExpect(jsonPath("$.data.changes[0].resource_name").value("Ödeme portu"));
+            verify(changeLogRepo).countByEventType(any(), any(), org.mockito.ArgumentMatchers.isNull(),
+                    any(), any(), eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")));
+        }
+
+        @Test
+        @DisplayName("Takım SÜZGECİ o takımın üyelerini de sorar (üye değişikliği takım süzgecinde görünür)")
+        void recent_teamFilter_carriesFilterTeamMembers() throws Exception {
+            when(appUserRepo.findMemberIdentities(List.of(9L))).thenReturn(List.<Object[]>of(new Object[]{77L, "n77777"}));
+            when(changeLogRepo.search(any(), any(), any(), eq(9L), eq(List.of(77L)), eq(List.of("n77777")),
+                    any(), any(), any(), eq(true), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
+
+            mvc.perform(get("/api/monitoring/changes/recent").param("teamId", "9").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.changes[0].resource_name").value("Ödeme portu"));
         }
 
         @Test
@@ -2437,25 +2468,25 @@ class MonitoringControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.total").value(0));
 
-            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(),
-                    org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any());
         }
 
         @Test
         @DisplayName("kind yol anahtarı BÜYÜK/küçük harften bağımsız çözülür")
         void recent_kindIsCaseInsensitive() throws Exception {
-            when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(),
-                    eq(true), any(), any()))
+            when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
-            when(changeLogRepo.countByEventType(any(), any(), any(), eq(true), any()))
+            when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
                     .thenReturn(List.<Object[]>of());
 
             mvc.perform(get("/api/monitoring/changes/recent").param("kind", "Scripted")
                             .session(session("ADMIN")))
                     .andExpect(status().isOk());
 
-            verify(changeLogRepo).search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(),
-                    eq(true), any(), any());
+            verify(changeLogRepo).search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any());
         }
 
         // ── Takım süzgeci (ekran tüm takım kullanıcılarına açıldı) ──────────
@@ -2472,8 +2503,8 @@ class MonitoringControllerTest {
                             .session(memberOf(5L)))
                     .andExpect(status().isForbidden());
 
-            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(),
-                    org.mockito.ArgumentMatchers.anyBoolean(), any(), any());
+            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any());
         }
 
         /**
@@ -2484,23 +2515,23 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Kapsam İÇİ takım süzgeci listeye VE iki sayıma birden geçer")
         void teamFilter_inScope_reachesCountsToo() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), eq(5L), any(), any(), any(),
-                    eq(false), eq(List.of(5L)), any()))
+            when(changeLogRepo.search(any(), any(), any(), eq(5L), any(), any(), any(), any(), any(),
+                    eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
 
             mvc.perform(get("/api/monitoring/changes/recent").param("teamId", "5")
                             .session(memberOf(5L)))
                     .andExpect(status().isOk());
 
-            verify(changeLogRepo).countByEventType(any(), any(), eq(5L), eq(false), eq(List.of(5L)));
-            verify(changeLogRepo).countByKindAndEventType(any(), any(), eq(5L), eq(false), eq(List.of(5L)));
+            verify(changeLogRepo).countByEventType(any(), any(), eq(5L), any(), any(), eq(false), eq(List.of(5L)), any(), any());
+            verify(changeLogRepo).countByKindAndEventType(any(), any(), eq(5L), any(), any(), eq(false), eq(List.of(5L)), any(), any());
         }
 
         @Test
         @DisplayName("Global yönetici herhangi bir takımı süzebilir")
         void teamFilter_globalViewer_anyTeam() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), eq(9L), any(), any(), any(),
-                    eq(true), any(), any()))
+            when(changeLogRepo.search(any(), any(), any(), eq(9L), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
 
             mvc.perform(get("/api/monitoring/changes/recent").param("teamId", "9")
@@ -2508,22 +2539,22 @@ class MonitoringControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.changes[0].team_id").value(9));
 
-            verify(changeLogRepo).countByEventType(any(), any(), eq(9L), eq(true), any());
+            verify(changeLogRepo).countByEventType(any(), any(), eq(9L), any(), any(), eq(true), any(), any(), any());
         }
 
         /** Süzgeç VERİLMEZSE sayımlar da süzgeçsiz kalmalı — kapsam yine uygulanır. */
         @Test
         @DisplayName("Takım süzgeci yokken sayımlara null geçer (kapsam yine uygulanır)")
         void noTeamFilter_passesNullToCounts() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(),
-                    eq(false), eq(List.of(5L)), any()))
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
 
             mvc.perform(get("/api/monitoring/changes/recent").session(memberOf(5L)))
                     .andExpect(status().isOk());
 
-            verify(changeLogRepo).countByEventType(any(), any(), org.mockito.ArgumentMatchers.isNull(),
-                    eq(false), eq(List.of(5L)));
+            verify(changeLogRepo).countByEventType(any(), any(), org.mockito.ArgumentMatchers.isNull(), any(), any(),
+                    eq(false), eq(List.of(5L)), any(), any());
         }
 
         // ── Geri döndürme (K6) ──────────────────────────────────────────────

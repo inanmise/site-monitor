@@ -9,6 +9,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import { formatBytes, formatBytesAxis } from '../utils/formatBytes.js'
 import StatusBlock from './ui/StatusBlock.jsx'
 import { BarChart3 } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 // Saatlik on ayarlar: en kucuk pencere 24 saatti ve 10 dakikalik kova yuzunden olcumler
 // ortalamaya karisiyordu — "az once ne oldu" sorusu grafikten cevaplanamiyordu. <= 6 saatte
@@ -179,12 +180,12 @@ export default function ResponseTimeChart({ monitorId, kind, metric, unit = 'ms'
     <div>
       <div className="upt-range-btns" style={{ flexWrap: 'wrap' }}>
         {PRESETS.map(p => (
-          <button key={p.key} type="button"
-            className={`btn btn-sm ${!custom && preset === p.key ? 'btn-primary' : 'btn-secondary'}`}
-            onClick={() => pickPreset(p.key)}>{t(`chart.range${p.key}`)}</button>
+          <Button key={p.key} type="button"
+            variant={!custom && preset === p.key ? 'default' : 'secondary'} size="sm"
+            onClick={() => pickPreset(p.key)}>{t(`chart.range${p.key}`)}</Button>
         ))}
-        <button type="button" className={`btn btn-sm ${custom ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setShowCustom(s => !s)}>{t('chart.custom')}</button>
+        <Button type="button" variant={custom ? 'default' : 'secondary'} size="sm"
+          onClick={() => setShowCustom(s => !s)}>{t('chart.custom')}</Button>
       </div>
 
       {showCustom && (

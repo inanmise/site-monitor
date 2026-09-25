@@ -236,7 +236,8 @@ describe('DomainMonitorPage', () => {
       render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
 
-      const runBtn = document.querySelector('.mon-act--check')
+      // Kartın kontrol düğmesi (modal da aynı adlı düğmeyi taşır; DOM sırasında kart önce gelir)
+      const runBtn = screen.getAllByRole('button', { name: /^(Şimdi kontrol et|Check now)$/i })[0]
       expect(runBtn).not.toBeNull()
       fireEvent.click(runBtn)
 

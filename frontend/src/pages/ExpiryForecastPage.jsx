@@ -30,6 +30,7 @@ import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, applyFilters, computeKpis, dailySeries, byTeam, teamBucketCerts, batches, coverage, byIssuer,
   upcoming, nextExpiry, expiryKey, classify, isHoliday, isWeekend, lastBusinessDay, icsEvents, csvRows, todayKey, dayDiff,
 } from './forecastModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Vade Takvimi (Expiry Forecast) — 2026-09-12 zenginleştirme, 14 madde:
@@ -129,11 +130,11 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
     const s = q.trim().toLowerCase()
     return s ? modal.certs.filter((c) => (c.domain || '').toLowerCase().includes(s) || (c.team_name || '').toLowerCase().includes(s)) : modal.certs
   }, [modal.certs, q])
-  const pager = usePagination(rows, { listKey: 'forecast-day', defaultSize: 10, resetDeps: [q, modal] })
+  const pager = usePagination(rows, { listKey: 'forecast-day', defaultSize: 10, sizeOptions: [10, 25, 50], resetDeps: [q, modal] })
   const title = modal.title ?? t('forecast.dayModalTitle', formatDateOnly(modal.key), modal.certs.length)
   return (
     <ModalShell open onClose={onClose} title={title} icon={Calendar} size="lg" scrollBody
-      footer={<button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>}>
+      footer={<Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>}>
       {modal.certs.length > 5 && (
         <input className="input fc-day-search" type="text" placeholder={t('forecast.daySearch')} value={q} onChange={(e) => setQ(e.target.value)} />
       )}
@@ -146,11 +147,11 @@ function DayListModal({ modal, th, t, onClose, onSelectDomain, onPlan }) {
             {c.tier && <span className={`tier-badge tier-badge-${c.tier}`}>T{c.tier}</span>}
             {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} />}
             <span className="inv-dim">{c.days_remaining} {t('forecast.daysLeft')}{rb ? ` · ${t('forecast.renewBy')} ${formatDateOnly(rb)}` : ''}{c.issuer_cn ? ` · ${c.issuer_cn}` : ''}</span>
-            <span className="fc-exp-actions"><button type="button" className="btn btn-sm btn-secondary" onClick={() => onPlan(c, rb)}><CalendarPlus size={11} /> {t('forecast.planBtn')}</button></span>
+            <span className="fc-exp-actions"><Button type="button" variant="secondary" size="sm" onClick={() => onPlan(c, rb)}><CalendarPlus size={11} /> {t('forecast.planBtn')}</Button></span>
           </li>)
       })}</ul>
       {rows.length === 0 && <div className="fc-no-data">{t('empty.hintFilter')}</div>}
-      <PaginationBar {...pager} sizeOptions={[10, 25, 50]} />
+      <PaginationBar {...pager} />
     </ModalShell>
   )
 }
@@ -247,7 +248,7 @@ function CalendarHeatmap({ certs, th, t, today, rangeDays, setRangeDays, onOpenD
 }
 
 // ── Yenileme yükü — 12 ay (korundu) ──────────────────────────────────────────────────────────────
-const LOAD_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#94a3b8']
+const LOAD_COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#a1a1aa']
 function computeRenewalLoad(certs, locale) {
   const now = new Date(); const months = []
   for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() + i, 1); months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleDateString(locale, { month: 'short', year: '2-digit' }) }) }
@@ -432,7 +433,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
             <label className="fc-f"><span>{t('inv.filterTier')}</span><SearchableSelect value={filters.tier} onChange={(v) => setFilters((f) => ({ ...f, tier: v }))} options={[{ value: '', label: t('inv.filterAny') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('inv.tierNone') }]} /></label>
             <label className="fc-f"><span>{t('inv.filterGroup')}</span><SearchableSelect value={filters.group} onChange={(v) => setFilters((f) => ({ ...f, group: v }))} options={[{ value: '', label: t('inv.filterAny') }, ...groupOpts]} /></label>
             <span className="fc-f-count">{t('inv.shownOf', certs.length, allCerts.length)}</span>
-            {filterActive && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</button>}
+            {filterActive && <Button type="button" variant="secondary" size="sm" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('inv.filterClear')}</Button>}
             <span className="invtb-spacer" />
             <span className="fc-th-note" title={t('forecast.thresholdTip')}>{t('forecast.thresholdNote', th.critical, th.high, th.warning)} · {t('forecast.leadNote', data.lead_days?.default ?? 14)}</span>
           </div>
@@ -469,8 +470,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                     <ComposedChart data={chartData} margin={{ top: 4, right: 20, bottom: 0, left: 0 }} style={{ cursor: 'pointer' }}
                       onClick={(st) => { const i = [st?.activeTooltipIndex, st?.activeIndex].map(Number).find(Number.isInteger); openChartDay(st?.activePayload?.[0]?.payload ?? (i != null ? chartData[i] : null)) }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#1e3a5f" />
-                      <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
-                      <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 10 }} width={26} />
+                      <XAxis dataKey="label" tick={{ fill: '#71717a', fontSize: 10 }} interval={Math.max(0, Math.floor(chartRange / 6))} />
+                      <YAxis yAxisId="left" allowDecimals={false} tick={{ fill: '#a1a1aa', fontSize: 10 }} width={26} />
                       <YAxis yAxisId="right" orientation="right" allowDecimals={false} tick={{ fill: '#3b82f6', fontSize: 10 }} width={36} />
                       <RTooltip content={<BarTooltip t={t} />} cursor={{ fill: 'rgba(255,255,255,.04)' }} />
                       {/* Recharts 3: grafik-seviyesi onClick her tıklamada activePayload vermiyor (kullanıcı bildirimi
@@ -494,9 +495,9 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                     <PieChart>
                       <Pie data={teams.map((r) => ({ name: r.name || t('inv.teamNoTeam'), value: r.total }))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={64} innerRadius={36} paddingAngle={2}>
                         {teams.map((_, i) => <Cell key={i} fill={LOAD_COLORS[i % LOAD_COLORS.length]} />)}
-                        <Label value={teams.reduce((n, r) => n + r.total, 0)} position="center" fill="#e2e8f0" fontSize={18} fontWeight={800} />
+                        <Label value={teams.reduce((n, r) => n + r.total, 0)} position="center" fill="#e4e4e7" fontSize={18} fontWeight={800} />
                       </Pie>
-                      <RTooltip formatter={(v, n) => [v, n]} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 6, color: '#e2e8f0', fontSize: 12 }} />
+                      <RTooltip formatter={(v, n) => [v, n]} contentStyle={{ background: '#18181b', border: '1px solid #3f3f46', borderRadius: 6, color: '#e4e4e7', fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
                   {/* Hücreler tıklanır (2026-09-18): sayı → o takım+kova sertifika listesi (gün modaliyle aynı yüzey) */}
@@ -531,7 +532,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                           {cell('later', r.later, 'inv-dim')}
                           {cell('late', r.late, r.late > 0 ? 'is-warn' : '')}
                           {cell('total', r.total, 'is-total')}
-                          <td>{r.id !== 'none' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</button>}</td>
+                          <td>{r.id !== 'none' && <Button type="button" variant="secondary" size="sm" onClick={() => setFilters((f) => ({ ...f, team: f.team === r.id ? '' : r.id }))}>{filters.team === r.id ? t('inv.filterClear') : t('forecast.teamFilter')}</Button>}</td>
                         </tr>)
                     })}</tbody>
                   </table>
@@ -565,10 +566,10 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
               <span className="fc-sec-badge">{t('forecast.certCount', list.length)}</span>
               <div className="fc-range-filter">{RANGE_OPTIONS.map((d) => <button key={d} type="button" className={`fc-range-btn${listRange === d ? ' active' : ''}`} onClick={() => setListRange(d)}>{t('forecast.chartDays', d)}</button>)}</div>
               <div className="fc-actions no-print">
-                <button type="button" className="btn btn-sm btn-secondary" disabled={!list.length} onClick={exportIcs} title={t('renewal.icsTip')}><Download size={12} /> ICS</button>
-                <button type="button" className="btn btn-sm btn-secondary" disabled={!list.length} onClick={exportCsv}><Download size={12} /> CSV</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={copyLink}><Link2 size={12} /> {t('inv.copyLink')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => window.print()}><Printer size={12} /> {t('forecast.print')}</button>
+                <Button type="button" variant="secondary" size="sm" disabled={!list.length} onClick={exportIcs} title={t('renewal.icsTip')}><Download size={12} /> ICS</Button>
+                <Button type="button" variant="secondary" size="sm" disabled={!list.length} onClick={exportCsv}><Download size={12} /> CSV</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={copyLink}><Link2 size={12} /> {t('inv.copyLink')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => window.print()}><Printer size={12} /> {t('forecast.print')}</Button>
               </div>
             </div>
             {batchList.length > 0 && (
@@ -591,15 +592,15 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
                   {r.renewal_plan_state === 'planned' && <span className="fc-exp-plan is-planned" title={r.renewal_planned_note || ''}>{t('forecast.planned', formatDateOnly(r.renewal_planned_at))}</span>}
                   {r.renewal_plan_state === 'done' && <span className="fc-exp-plan is-done">{t('forecast.planDone')}</span>}
                   <span className="fc-exp-actions no-print">
-                    <button type="button" className="btn btn-sm btn-secondary" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')}
-                      aria-label={`${r.domain} — ${t('inv.checkNow')}`}><Play size={11} /></button>
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)}
-                      aria-label={t('forecast.planTitle', r.domain)}><CalendarPlus size={11} /></button>
+                    <Button type="button" variant="secondary" size="sm" disabled={busyDomain === r.domain} onClick={() => checkNow(r.domain)} title={t('inv.checkNow')}
+                      aria-label={`${r.domain} — ${t('inv.checkNow')}`}><Play size={11} /></Button>
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setPlanRow(r)} title={t('forecast.planTitle', r.domain)}
+                      aria-label={t('forecast.planTitle', r.domain)}><CalendarPlus size={11} /></Button>
                   </span>
                 </div>
               ))}
               {!showAll && list.length > 15 && <button type="button" className="fc-show-more" onClick={() => setShowAll(true)}>+{list.length - 15} {t('forecast.showMore')}</button>}
-              {list.length === 0 && <StatusBlock tone="success" title={t('forecast.noneInRange', listRange)} description={hintNext} actions={next && next.days >= listRange ? <button type="button" className="btn btn-sm btn-secondary" onClick={() => setListRange(90)}>{t('forecast.widen', 90)}</button> : null} />}
+              {list.length === 0 && <StatusBlock tone="success" title={t('forecast.noneInRange', listRange)} description={hintNext} actions={next && next.days >= listRange ? <Button type="button" variant="secondary" size="sm" onClick={() => setListRange(90)}>{t('forecast.widen', 90)}</Button> : null} />}
             </div>
           </div>
 

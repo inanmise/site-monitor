@@ -1,17 +1,26 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { PAGE_SIZE_OPTIONS } from '../../hooks/usePagination.js'
+import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem } from '@/components/shadcn/pagination'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { cn } from '@/lib/utils'
 
 /**
  * Tüm liste görünümlerinin TEK sayfalama barı — hem client-side (usePagination ile) hem
  * server-side (sayfanın kendi state'iyle, 1-tabanlı değerler geçirilerek) kullanılır.
+ * İç uygulama shadcn: Pagination (gezinme) + ToggleGroup (sayfa boyutu) + Input ("Sayfaya git").
  *
  * - totalItems === 0 → hiç render edilmez.
  * - totalPages === 1 → gezinme gizli, boyut seçici + kayıt bilgisi görünür.
  * - totalPages > 10 → "Sayfaya git" girişi (Enter ile, clamp'li).
  * - compact: modal içi küçük varyant (boyut seçici + ‹ x/y › + Git).
  * - scrollTargetRef verilirse sayfa değişiminde kapsayıcının başına yumuşak scroll.
+ *
+ * Sayfa öğeleri <a href> DEĞİL düğmedir (shadcn PaginationLink yerine aynı görünümü veren
+ * Button): SPA'da sayfa değişimi state'tir, gezinme/yeniden yükleme OLMAMALI.
  */
 
 /** Pencereli sayfa numaraları: ilk, son, geçerli ±1; boşluklar '…' (tek doğruluk kaynağı). */
@@ -38,6 +47,7 @@ export default function PaginationBar({
   const t = useT()
   const locale = useDateLocale()
   const [gotoVal, setGotoVal] = useState('')
+  const sizerLabelId = useId()
 
   if (!totalItems) return null
 
@@ -63,51 +73,85 @@ export default function PaginationBar({
     setGotoVal('')
   }
 
+  const iconSize = compact ? 'icon-xs' : 'icon-sm'
+  const edgeBtn = (label, disabled, target, Icon) => (
+    <PaginationItem>
+      <Button type="button" variant="ghost" size={iconSize} disabled={disabled} aria-label={label}
+        onClick={() => go(target)}>
+        <Icon aria-hidden="true" />
+      </Button>
+    </PaginationItem>
+  )
+
+  // Numaralar ve '…' dar ekranda gizlenir; «‹›» + bilgi kalır (eski .pg-btn--num kuralı).
   const nav = totalPages > 1 && (
-    <nav className="pg-nav" aria-label={t('pg.nav')}>
-      <button type="button" className="pg-btn" disabled={page <= 1} aria-label={t('pg.first')}
-        onClick={() => go(1)}><ChevronsLeft size={15} /></button>
-      <button type="button" className="pg-btn" disabled={page <= 1} aria-label={t('pg.prev')}
-        onClick={() => go(page - 1)}><ChevronLeft size={15} /></button>
-      {!compact && pageNumbers(totalPages, page).map((p, i) => p === '…'
-        ? <span key={`e${i}`} className="pg-ellipsis" aria-hidden="true">…</span>
-        : <button key={p} type="button"
-            className={`pg-btn pg-btn--num${p === page ? ' pg-btn--active' : ''}`}
-            aria-label={t('pg.pageBtn', p)} aria-current={p === page ? 'page' : undefined}
-            onClick={() => go(p)}>{fmt(p)}</button>)}
-      {compact && <span className="pg-info-mini">{fmt(page)} / {fmt(totalPages)}</span>}
-      <button type="button" className="pg-btn" disabled={page >= totalPages} aria-label={t('pg.next')}
-        onClick={() => go(page + 1)}><ChevronRight size={15} /></button>
-      <button type="button" className="pg-btn" disabled={page >= totalPages} aria-label={t('pg.last')}
-        onClick={() => go(totalPages)}><ChevronsRight size={15} /></button>
-    </nav>
+    <Pagination aria-label={t('pg.nav')} className="mx-0 w-auto">
+      <PaginationContent className="gap-0.5">
+        {edgeBtn(t('pg.first'), page <= 1, 1, ChevronsLeft)}
+        {edgeBtn(t('pg.prev'), page <= 1, page - 1, ChevronLeft)}
+        {!compact && pageNumbers(totalPages, page).map((p, i) => p === '…'
+          ? <PaginationItem key={`e${i}`} className="max-sm:hidden"><PaginationEllipsis className="size-8" /></PaginationItem>
+          : (
+            <PaginationItem key={p} className="max-sm:hidden">
+              <Button type="button" variant={p === page ? 'outline' : 'ghost'} size="sm"
+                className="h-8 min-w-8 px-2 tabular-nums"
+                aria-label={t('pg.pageBtn', p)} aria-current={p === page ? 'page' : undefined}
+                onClick={() => go(p)}>{fmt(p)}</Button>
+            </PaginationItem>
+          ))}
+        {compact && (
+          <PaginationItem className="whitespace-nowrap px-1.5 tabular-nums text-muted-foreground">
+            {fmt(page)} / {fmt(totalPages)}
+          </PaginationItem>
+        )}
+        {edgeBtn(t('pg.next'), page >= totalPages, page + 1, ChevronRight)}
+        {edgeBtn(t('pg.last'), page >= totalPages, totalPages, ChevronsRight)}
+      </PaginationContent>
+    </Pagination>
   )
 
   const goto = totalPages > 10 && (
-    <form className="pg-goto" onSubmit={submitGoto}>
-      <input type="number" min="1" max={totalPages} value={gotoVal} placeholder={t('pg.gotoLabel')}
-        aria-label={t('pg.goto')} onChange={e => setGotoVal(e.target.value)} />
+    <form onSubmit={submitGoto}>
+      <Input type="number" min="1" max={totalPages} value={gotoVal} placeholder={t('pg.gotoLabel')}
+        aria-label={t('pg.goto')} onChange={e => setGotoVal(e.target.value)}
+        className={cn('w-16 px-2', compact ? 'h-7' : 'h-8')} />
     </form>
   )
 
-  return (
-    // .pgn-* öneki: .pg-bar, Progress.jsx'in <ProgressBar>'ıyla AYNI seçiciydi ve App.css'te
-    // sonra tanımlandığı için onu eziyordu (her ilerleme çubuğu istenmeyen flex+margin alıyordu).
-    <div className={`pgn-bar${compact ? ' pgn-bar--compact' : ''}`}>
-      <div className="pg-sizer">
-        <span className="pg-sizer-label">{t('pg.perPage')}</span>
-        {sizeOptions.map(n => (
-          <button key={n} type="button"
-            className={`pg-size-btn${pageSize === n ? ' pg-size-btn--active' : ''}`}
-            aria-pressed={pageSize === n}
-            onClick={() => onPageSizeChange?.(n)}>{n}</button>
+  // Boyut seçici: tek aktif seçim → ToggleGroup. Radix değerleri dize ister; boyutlar sayı olduğu
+  // için öğeler sıra numarasıyla anahtarlanır, çağırana orijinal sayı döner. Etkin boyuta yeniden
+  // basmak seçimi boşaltmaz ('' yok sayılır). Roller SegmentedControl'deki gibi düğme + aria-pressed.
+  const sizeIdx = sizeOptions.indexOf(pageSize)
+  const sizer = (
+    <div className="inline-flex items-center gap-1">
+      <span id={sizerLabelId} className="mr-0.5 whitespace-nowrap text-muted-foreground">{t('pg.perPage')}</span>
+      <ToggleGroup type="single" role="group" aria-labelledby={sizerLabelId} spacing={1}
+        value={sizeIdx >= 0 ? String(sizeIdx) : ''}
+        onValueChange={(v) => {
+          if (v === '') return
+          const n = sizeOptions[Number(v)]
+          if (n !== undefined && n !== pageSize) onPageSizeChange?.(n)
+        }}>
+        {sizeOptions.map((n, i) => (
+          <ToggleGroupItem key={n} value={String(i)} role="button" aria-pressed={pageSize === n}
+            aria-checked={undefined} size="sm"
+            className={cn('border border-transparent px-2 font-normal tabular-nums text-muted-foreground data-[state=on]:border-border data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-xs',
+              compact && 'h-6 min-w-6 px-1.5')}>
+            {n}
+          </ToggleGroupItem>
         ))}
-      </div>
+      </ToggleGroup>
+    </div>
+  )
+
+  return (
+    <div className={cn('flex flex-wrap items-center', compact ? 'mt-2.5 gap-2.5 text-[.85em]' : 'mt-3.5 gap-3.5 text-[.9em]')}>
+      {sizer}
       {nav}
       {goto}
-      <span className="pg-info">
-        {totalPages > 1 && <span className="pg-info-page">{t('pg.pageOf', fmt(page), fmt(totalPages))}</span>}
-        <span className="pg-info-range">{t('pg.range', fmt(rangeStart), fmt(rangeEnd), fmt(totalItems))}</span>
+      <span className="ml-auto inline-flex items-center gap-2.5 whitespace-nowrap tabular-nums text-muted-foreground max-sm:ml-0">
+        {totalPages > 1 && <span>{t('pg.pageOf', fmt(page), fmt(totalPages))}</span>}
+        <span>{t('pg.range', fmt(rangeStart), fmt(rangeEnd), fmt(totalItems))}</span>
       </span>
     </div>
   )

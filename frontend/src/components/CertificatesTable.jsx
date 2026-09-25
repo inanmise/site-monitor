@@ -21,6 +21,7 @@ import CertFilterRow from './certtable/CertFilterRow.jsx'   // kolon süzgeç sa
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_CLASS, LEVEL_TEXT, URL_KEYS,
   readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
+import { Button } from '@/components/shadcn/button'
 
 export { TABLE_COLUMNS }
 
@@ -238,7 +239,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
 
       {error && !certs.length ? (
         <StatusBlock tone="danger" icon={Inbox} title={t('tbl.loadError')} description={error}
-          actions={<button type="button" className="btn btn-sm btn-secondary" onClick={() => load()}>{t('tbl.retry')}</button>} />
+          actions={<Button type="button" variant="secondary" size="sm" onClick={() => load()}>{t('tbl.retry')}</Button>} />
       ) : !loaded ? (
         <LoadingBlock label={t('tbl.loading')} fullWidth />
       ) : certs.length === 0 && !colFilters ? (
@@ -246,7 +247,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
            tabloyu kaldırmak süzgeç satırını da götürüyor, kullanıcı ne yazdığını göremiyor ve o hücreyi
            temizleyemiyordu. Envanterde aynı bug 3284c40e ile düzeltilmişti — kardeş yüzeye taşındı. */
         <StatusBlock tone="neutral" icon={Inbox} title={t('tbl.noCerts')} description={hasFilters ? t('empty.hintFilter') : t('empty.hintCerts')}
-          actions={hasFilters ? <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button> : null} />
+          actions={hasFilters ? <Button type="button" variant="secondary" size="sm" onClick={reset}>{t('tbl.reset')}</Button> : null} />
       ) : (
         <div className={`table-scroll ct-scroll${loading ? ' is-loading' : ''}`} aria-busy={loading}>
           {loading && <div className="ct-loading-line" aria-hidden="true" />}
@@ -277,7 +278,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
                     <div className="inv-empty-inline">
                       <Inbox size={14} />
                       <span>{t('tbl.noMatch')}</span>
-                      {hasFilters && <button type="button" className="btn btn-sm btn-secondary" onClick={reset}>{t('tbl.reset')}</button>}
+                      {hasFilters && <Button type="button" variant="secondary" size="sm" onClick={reset}>{t('tbl.reset')}</Button>}
                     </div>
                   </td>
                 </tr>

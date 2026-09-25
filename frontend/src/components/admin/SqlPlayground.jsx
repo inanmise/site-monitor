@@ -11,6 +11,7 @@ import TableDetailsModal from './TableDetailsModal.jsx'
 import SchemaDiagramModal from './SchemaDiagramModal.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { csvCell } from '../../utils/csv.js'
+import { Button } from '@/components/shadcn/button'
 
 const DEFAULT_QUERY = ''
 
@@ -234,40 +235,40 @@ export default function SqlPlayground() {
 
       <div className="sqlpg-pane sqlpg-main">
         <div className="sqlpg-toolbar">
-          <button
-            className="btn btn-primary sqlpg-run"
+          <Button
+            className="sqlpg-run"
             onClick={run}
             disabled={running || !sql?.trim()}
           >
             {running ? <Spinner size={14} inline decorative /> : <Play size={14} />}
             {t('sql.run')}
             <kbd className="sqlpg-kbd">Ctrl+Enter</kbd>
-          </button>
-          <button
-            className="btn btn-secondary"
+          </Button>
+          <Button
+            variant="secondary"
             onClick={exportCsv}
             disabled={!result?.rows?.length}
           >
             <Download size={14} /> {t('sql.exportCsv')}
-          </button>
-          <button
-            className="btn btn-secondary"
+          </Button>
+          <Button
+            variant="secondary"
             onClick={clearEditor}
             disabled={!sql}
             title={t('sql.clear')}
           >
             <X size={14} /> {t('sql.clear')}
-          </button>
+          </Button>
 
           <div className="sqlpg-menu-wrap" ref={samplesBtnRef}>
-            <button
+            <Button
               type="button"
-              className={`btn btn-secondary sqlpg-menu-trigger${openMenu === 'samples' ? ' is-open' : ''}`}
+              variant="secondary" className={`sqlpg-menu-trigger ${openMenu === 'samples' ? ' is-open' : ''}`}
               onClick={() => setOpenMenu(m => m === 'samples' ? null : 'samples')}
             >
               <BookOpen size={14} /> {t('sql.samples')}
               <ChevronDown size={12} className="sqlpg-menu-chev" />
-            </button>
+            </Button>
             {openMenu === 'samples' && (
               <div className="sqlpg-menu sqlpg-menu-samples">
                 {samples.length === 0 && (
@@ -289,14 +290,14 @@ export default function SqlPlayground() {
           </div>
 
           <div className="sqlpg-menu-wrap" ref={historyBtnRef}>
-            <button
+            <Button
               type="button"
-              className={`btn btn-secondary sqlpg-menu-trigger${openMenu === 'history' ? ' is-open' : ''}`}
+              variant="secondary" className={`sqlpg-menu-trigger ${openMenu === 'history' ? ' is-open' : ''}`}
               onClick={() => setOpenMenu(m => m === 'history' ? null : 'history')}
             >
               <History size={14} /> {t('sql.history')}
               <ChevronDown size={12} className="sqlpg-menu-chev" />
-            </button>
+            </Button>
             {openMenu === 'history' && (
               <div className="sqlpg-menu sqlpg-menu-history">
                 {history.length === 0 && (

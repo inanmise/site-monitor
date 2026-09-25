@@ -7,6 +7,7 @@ import PaginationBar from '../../ui/PaginationBar.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
+import { Button } from '@/components/shadcn/button'
 
 const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
 
@@ -49,7 +50,7 @@ export default function AlertTeamCellModal({ cell, onClose, onOpenAlert }) {
   const title = `${cell.team.team_name || t('alhts.unassigned')} · ${t('alhts.bucket.' + cell.bucket)} (${cell.count})`
   return (
     <ModalShell open onClose={onClose} title={title} icon={AlertCircle} size="lg" scrollBody
-      footer={<button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>}>
+      footer={<Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>}>
       {state.loading && state.rows.length === 0 ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : null}
       {state.error && <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">{state.error}</AlertBanner>}
       {!state.error && !state.loading && state.rows.length === 0 && <div className="alh-ts-empty">{t('alhts.cellEmpty')}</div>}

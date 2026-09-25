@@ -119,7 +119,7 @@ export function buildYearSummaryCsv(data, t) {
   return csvRows([head, ...rows])
 }
 
-const YS_COLORS = { MISSING: '#e5e7eb', DRAFT: '#fde68a', PENDING_APPROVAL: '#bfdbfe', APPROVED: '#bbf7d0', REJECTED: '#fecaca' }
+const YS_COLORS = { MISSING: '#e4e4e7', DRAFT: '#fde68a', PENDING_APPROVAL: '#bfdbfe', APPROVED: '#bbf7d0', REJECTED: '#fecaca' }
 const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
 /** Yıl özetinin kendi başına yazdırılabilir HTML'i (gizli iframe → print → "PDF olarak kaydet").
@@ -146,13 +146,13 @@ export function buildYearSummaryHtml(data, t, { generatedAt = new Date() } = {})
 @page{size:A4 landscape;margin:12mm}
 body{font:11px/1.35 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:0}
 h1{font-size:16px;margin:0 0 2px}.sub{color:#555;font-size:10px;margin:0 0 10px}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:2px 3px;text-align:center}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #d4d4d8;padding:2px 3px;text-align:center}
 th.w{font-size:9px;width:16px}th.cur,td.cur{outline:2px solid #2563eb}
 td.tm{text-align:left;font-weight:600;white-space:nowrap}td.c{font-size:9px;font-variant-numeric:tabular-nums}
-td.sum{white-space:nowrap;font-weight:600}.mute{color:#999}
-.legend{margin-top:8px;font-size:10px;color:#333;display:flex;gap:12px;flex-wrap:wrap}
-.lg i{display:inline-block;width:10px;height:10px;border:1px solid #9ca3af;margin-right:3px;vertical-align:-1px}
-.note{margin-top:6px;font-size:9px;color:#666}
+td.sum{white-space:nowrap;font-weight:600}.mute{color:#a1a1aa}
+.legend{margin-top:8px;font-size:10px;color:#27272a;display:flex;gap:12px;flex-wrap:wrap}
+.lg i{display:inline-block;width:10px;height:10px;border:1px solid #a1a1aa;margin-right:3px;vertical-align:-1px}
+.note{margin-top:6px;font-size:9px;color:#71717a}
 </style></head><body>
 <h1>${title}</h1><p class="sub">${escHtml(t('wr.yearSummaryGenerated'))}: ${stamp} · ${escHtml(t('wrc.missing', data?.total_missing ?? 0))}</p>
 <table><thead><tr><th>${escHtml(t('wrc.team'))}</th>${head}<th>${escHtml(t('wrc.sum'))}</th></tr></thead><tbody>${rows}</tbody></table>

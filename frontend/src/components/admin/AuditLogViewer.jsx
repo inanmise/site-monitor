@@ -16,6 +16,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import AuditDetailPanel from './audit/AuditDetailPanel.jsx'
 import { eventClass, eventLabel, parseDetail, actionSentence } from './audit/auditFormat.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Sunucu kataloğu gelmezse kullanılacak YEDEK liste.
@@ -221,7 +222,13 @@ function TimeDensityChart({ data, title }) {
   )
 }
 
-export default function AuditLogViewer() {
+/**
+ * @param {boolean} [fullScope=true]  sistem-geneli denetçi (global admin / AUDIT). false = ekip kapsamı (2026-09-25,
+ *   kullanıcı kararı: ekip üyeleri takım arkadaşlarının kayıtlarını TAM ayrıntıyla görür). Ekip kapsamında sistem-geneli
+ *   yüzeyler (özet kartları, yoğunluk/dağılım, hash-zinciri bütünlüğü) çizilmez ve uçları hiç çağrılmaz — sunucu da
+ *   onları admin/AUDIT'e kapatır; liste/dışa aktarma sunucuda aktör üyeliğiyle süzülür.
+ */
+export default function AuditLogViewer({ fullScope = true }) {
   const t = useT()
   const outcomeText = outcomeLabels(t)
   const [eventCatalog, setEventCatalog] = useState(null)   // [{type, category, count}] | null
@@ -330,17 +337,26 @@ export default function AuditLogViewer() {
   }
 
   const loadStats = useCallback(() => {
+    if (!fullScope) return   // sistem-geneli özet: ekip kapsamında uç 403 verir, hiç çağrılmaz
     api.admin.getAuditStats().then(r => { if (r?.success) setStats(r.data) })
-  }, [])
+  }, [fullScope])
 
+  // R12 (2026-09-25): 15 sn'lik canlı tazeleme ile preset/kart/sayfa tetikleri üst üste binebiliyor;
+  // ESKİ süzgecin geç gelen yanıtı yeni preset çipinin altına yazılıyordu. Yalnız EN SON isteğin
+  // yanıtı ekrana yazar (PageSpeedMonitorPage resSeq deseni); bayat yanıt yükleme bayrağına da dokunmaz.
+  const logsSeq = useRef(0)
+  useEffect(() => () => { logsSeq.current++ }, [])   // sökülünce uçuştaki yanıt state'e yazmasın
   const loadLogs = useCallback((p = 0, f = filters, sz = size) => {
+    const seq = ++logsSeq.current
     setLoading(true)
     // Hata ARTIK SESSIZ DEGIL: eskiden `r.success` false ise hicbir sey olmuyordu ve
     // kullanici bos tabloya bakip "kayit yok" saniyordu.
     api.admin.getAuditLogs({ page: p, size: sz, ...f }).then(r => {
+      if (seq !== logsSeq.current) return   // daha yeni bir istek var → bu yanıtı AT
       if (r?.success) { setRows(r.data); setTotal(r.total); setPage(r.page); setLoadError(false) }
       else setLoadError(true)
-    }).catch(() => setLoadError(true)).finally(() => setLoading(false))
+    }).catch(() => { if (seq === logsSeq.current) setLoadError(true) })
+      .finally(() => { if (seq === logsSeq.current) setLoading(false) })
   }, [filters, size])
 
   useEffect(() => { loadStats(); loadLogs(readUrlInt('page', 1) - 1) }, [])
@@ -432,6 +448,9 @@ export default function AuditLogViewer() {
 
   return (
     <div className="audit-viewer">
+      {!fullScope && (
+        <AlertBanner tone="info" title={t('audit.teamScopeTitle')}>{t('audit.teamScopeText')}</AlertBanner>
+      )}
       {/* Stats cards */}
       {stats && (
         <div className="audit-stats-row">
@@ -488,7 +507,7 @@ export default function AuditLogViewer() {
             title={t('audit.autoRefreshHint')}>
             <span className={`audit-live-dot${autoRefresh ? ' on' : ''}`} />{t('audit.autoRefresh')}
           </button>
-          <button className="audit-filter-btn" onClick={checkIntegrity}>{t('audit.verifyIntegrity')}</button>
+          {fullScope && <button className="audit-filter-btn" onClick={checkIntegrity}>{t('audit.verifyIntegrity')}</button>}
           <button className="audit-filter-btn" onClick={() => exportAudit('csv')}>CSV</button>
           <button className="audit-filter-btn" onClick={() => exportAudit('json')}>JSON</button>
         </div>
@@ -552,6 +571,7 @@ export default function AuditLogViewer() {
           value={filters.eventType}
           onChange={v => setFilters(f => ({ ...f, eventType: v }))}
           placeholder={t('audit.allEvents')}
+          ariaLabel={t('flt.eventType')}
           options={[
             { value: '', label: t('audit.allEvents') },
             ...eventTypeOptions,
@@ -561,6 +581,7 @@ export default function AuditLogViewer() {
           value={filters.outcome}
           onChange={v => setFilters(f => ({ ...f, outcome: v }))}
           placeholder={t('audit.allOutcomes')}
+          ariaLabel={t('flt.outcome')}
           options={[
             { value: '', label: t('audit.allOutcomes') },
             ...OUTCOMES.map(o => ({ value: o, label: outcomeText[o] || o })),
@@ -602,7 +623,7 @@ export default function AuditLogViewer() {
         <div className="aud-list">
           {loadError && (
             <AlertBanner tone="danger" title={t('audit.loadErrorTitle')}
-              actions={<button className="btn btn-sm" onClick={() => loadLogs(page)}>{t('audit.retry')}</button>}>
+              actions={<Button variant="outline" size="sm" onClick={() => loadLogs(page)}>{t('audit.retry')}</Button>}>
               {t('audit.loadErrorBody')}
             </AlertBanner>
           )}
@@ -705,7 +726,7 @@ export default function AuditLogViewer() {
               hasActiveFilters ? (
                 <StatusBlock tone="neutral" title={t('audit.emptyFiltered')}
                   description={t('audit.emptyFilteredHint')}
-                  actions={<button className="btn btn-sm" onClick={clearFilters}>{t('audit.clear')}</button>} />
+                  actions={<Button variant="outline" size="sm" onClick={clearFilters}>{t('audit.clear')}</Button>} />
               ) : (
                 <StatusBlock tone="neutral" title={t('audit.empty')} />
               )

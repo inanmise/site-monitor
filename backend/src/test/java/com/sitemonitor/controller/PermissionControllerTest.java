@@ -44,16 +44,52 @@ class PermissionControllerTest {
         return s;
     }
 
+    private static PermissionGrant grant() {
+        PermissionGrant g = new PermissionGrant();
+        g.setRole("USER"); g.setResourceKey("inventory.list"); g.setAction("view"); g.setAllowed(true);
+        g.setUpdatedBy("N12345"); g.setUpdatedAt("2026-09-25T10:00:00");
+        return g;
+    }
+
     @Test
-    @DisplayName("GET matrix: ADMIN 200 + catalog; USER 403")
-    void getMatrix_adminOnly() throws Exception {
-        when(repo.findAll()).thenReturn(List.of());
+    @DisplayName("GET matrix: global ADMIN 200 + catalog + can_edit=true + tam satır (kim değiştirdi dahil)")
+    void getMatrix_globalAdminCanEdit() throws Exception {
+        when(repo.findAll()).thenReturn(List.of(grant()));
         mvc.perform(get("/api/admin/permissions").session(session("ADMIN")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.catalog").isArray());
+                .andExpect(jsonPath("$.catalog").isArray())
+                .andExpect(jsonPath("$.can_edit").value(true))
+                .andExpect(jsonPath("$.grants[0].updated_by").value("N12345"));
+    }
 
+    // 2026-09-25 kullanıcı kararı: admin dışındakiler matrisi OKUR ama değiştiremez. Eski "USER → 403"
+    // iddiası bilinçli olarak ters çevrildi; yazma uçlarının 403'ü aşağıdaki testlerde aynen duruyor.
+    @Test
+    @DisplayName("GET matrix: USER / kapsamlı müdür 200 SALT OKUNUR — can_edit=false, satırda yalnız rol/kaynak/eylem/izin")
+    void getMatrix_readOnlyForOthers() throws Exception {
+        when(repo.findAll()).thenReturn(List.of(grant()));
         mvc.perform(get("/api/admin/permissions").session(session("USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.can_edit").value(false))
+                .andExpect(jsonPath("$.grants[0].role").value("USER"))
+                .andExpect(jsonPath("$.grants[0].resource_key").value("inventory.list"))
+                .andExpect(jsonPath("$.grants[0].allowed").value(true))
+                .andExpect(jsonPath("$.grants[0].updated_by").doesNotExist())
+                .andExpect(jsonPath("$.grants[0].updated_at").doesNotExist());
+
+        MockHttpSession scoped = session("ADMIN");
+        scoped.setAttribute("viewTeamIds", List.of(5L));    // kapsamlı müdür: rol ADMIN ama global DEĞİL
+        mvc.perform(get("/api/admin/permissions").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.can_edit").value(false));
+        mvc.perform(put("/api/admin/permissions").session(scoped)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\":\"USER\",\"resource_key\":\"inventory.list\",\"action\":\"view\",\"allowed\":true}"))
                 .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/permissions/reset-to-defaults").session(scoped))
+                .andExpect(status().isForbidden());
+        verify(permissionService, never()).upsertGrant(any(), any(), any(), anyBoolean(), any());
+        verify(permissionService, never()).seedDefaults();
     }
 
     @Test

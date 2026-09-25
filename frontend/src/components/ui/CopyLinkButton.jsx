@@ -2,6 +2,7 @@ import { Link2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from './Toast.jsx'
 import { copyText } from '../../utils/copyText.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Bağlantıyı Kopyala". Kopyalama kademeleri utils/copyText'te (clipboard API →
@@ -17,7 +18,7 @@ import { copyText } from '../../utils/copyText.js'
  * kartın kendi onClick'i detay modalını açıyor; durdurulmazsa "bağlantıyı kopyala" aynı
  * anda modalı da açardı. Modal başlığındaki eski kullanımda zararsızdır.
  */
-export default function CopyLinkButton({ className = 'btn btn-secondary btn-sm', iconOnly = false, url = null }) {
+export default function CopyLinkButton({ className, variant = 'secondary', size, iconOnly = false, url = null }) {
   const t = useT()
   const toast = useToast()
 
@@ -29,9 +30,9 @@ export default function CopyLinkButton({ className = 'btn btn-secondary btn-sm',
   }
 
   return (
-    <button type="button" className={className} onClick={copy} data-icon-only={iconOnly || undefined}
+    <Button type="button" variant={variant} size={size ?? (iconOnly ? 'icon-sm' : 'sm')} className={className} onClick={copy}
       title={t('share.copyLink')} aria-label={t('share.copyLink')}>
       <Link2 size={14} />{iconOnly ? null : <> {t('share.copyLink')}</>}
-    </button>
+    </Button>
   )
 }

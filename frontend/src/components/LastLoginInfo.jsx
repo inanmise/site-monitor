@@ -171,17 +171,19 @@ export function LastLoginPopoverLines({ info }) {
   if (!info) return null
   const failed = Number(info.failed_before_login ?? 0)
   return (
-    <div className="sb-user-popover-meta">
-      <div className="sb-user-popover-meta-row">
-        <span>{t('lastLogin.popoverPrev')}</span>
-        <strong>{info.prev_login_at ? formatDate(info.prev_login_at) : t('lastLogin.never')}</strong>
+    // shadcn DropdownMenu içinde (kullanıcı menüsü): metin satırları, menü öğesi DEĞİL — etiket üstte küçük,
+    // değer altta (menü dar; yan yana dizilim taşıyordu).
+    <div className="px-2 pb-1.5 pt-0.5">
+      <div className="py-0.5">
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('lastLogin.popoverPrev')}</span>
+        <strong className="block text-xs font-semibold tabular-nums">{info.prev_login_at ? formatDate(info.prev_login_at) : t('lastLogin.never')}</strong>
       </div>
-      <div className="sb-user-popover-meta-row">
-        <span>{t('lastLogin.popoverFailed')}</span>
-        <strong>{info.last_failed_at ? formatDate(info.last_failed_at) : t('lastLogin.never')}</strong>
+      <div className="py-0.5">
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{t('lastLogin.popoverFailed')}</span>
+        <strong className="block text-xs font-semibold tabular-nums">{info.last_failed_at ? formatDate(info.last_failed_at) : t('lastLogin.never')}</strong>
       </div>
       {failed > 0 && (
-        <div className="sb-user-popover-meta-warn">
+        <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-warning">
           <ShieldAlert size={11} aria-hidden="true" />
           {t('lastLogin.failedShort', failed)}
         </div>

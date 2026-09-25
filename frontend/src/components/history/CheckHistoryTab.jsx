@@ -14,6 +14,7 @@ import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kontrol Geçmişi v2 — TÜM izleme türlerinin paylaşılan geçmiş sekmesi.
@@ -228,7 +229,7 @@ export default function CheckHistoryTab({
              ve "Yeniden dene"ye basınca ekranda HİÇBİR ŞEY değişmiyordu (spinner yok, hata bandı
              aynı) — kullanıcı düğmenin bozuk olduğunu sanıp basmaya devam ediyor, her basış
              gerçek bir istek atıyordu. */
-          actions={<button className="btn btn-sm btn-secondary" onClick={() => h.reload()}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={() => h.reload()}>{t('hist.retry')}</Button>}>
           {String(h.error)}
         </AlertBanner>
       ) : h.items.length === 0 ? (

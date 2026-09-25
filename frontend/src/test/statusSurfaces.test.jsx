@@ -11,9 +11,9 @@ import CopyableRef from '../components/ui/CopyableRef.jsx'
 describe('AlertBanner', () => {
   it('ton sınıfını uygular ve varsayılan rolü status\'tur', () => {
     const { container } = render(<AlertBanner tone="warning">dikkat</AlertBanner>)
-    const el = container.querySelector('.alert-banner')
-    expect(el.classList.contains('alert-banner--warning')).toBe(true)
-    expect(el.getAttribute('role')).toBe('status')
+    const el = container.querySelector('[data-slot="alert"]')
+    expect(el.getAttribute('data-tone')).toBe('warning')
+    expect(el.getAttribute('role')).toBe('status')   // shadcn Alert'in varsayılan role="alert"'i EZİLDİ
   })
 
   it('rol dışarıdan verilebilir (ekranda tek alert kuralı için)', () => {
@@ -23,7 +23,7 @@ describe('AlertBanner', () => {
 
   it('bilinmeyen ton info\'ya düşer, patlamaz', () => {
     const { container } = render(<AlertBanner tone="zzz">x</AlertBanner>)
-    expect(container.querySelector('.alert-banner--info')).toBeTruthy()
+    expect(container.querySelector('[data-slot="alert"]').getAttribute('data-tone')).toBe('info')
   })
 
   it('başlık ve özel ikon render edilir', () => {
@@ -31,7 +31,7 @@ describe('AlertBanner', () => {
       <AlertBanner tone="danger" title="Başlık" icon={ShieldAlert}>gövde</AlertBanner>
     )
     expect(screen.getByText('Başlık')).toBeDefined()
-    expect(container.querySelector('.alert-banner-icon')).toBeTruthy()
+    expect(container.querySelector('[data-slot="alert"] > svg')).toBeTruthy()
   })
 
   it('onDismiss verilirse kapatma butonu etiketiyle çıkar ve çağrılır', () => {
@@ -53,7 +53,7 @@ describe('StatusBlock', () => {
       <StatusBlock tone="danger" icon={ShieldAlert} title="Bir şey ters gitti"
         description="Ayrıntılar aşağıda" actions={<button type="button">Yenile</button>} />
     )
-    expect(container.querySelector('.status-block--danger')).toBeTruthy()
+    expect(container.querySelector('[data-slot="empty"]').getAttribute('data-tone')).toBe('danger')
     expect(screen.getByText('Bir şey ters gitti')).toBeDefined()
     expect(screen.getByText('Ayrıntılar aşağıda')).toBeDefined()
     expect(screen.getByRole('button', { name: 'Yenile' })).toBeDefined()
@@ -61,12 +61,25 @@ describe('StatusBlock', () => {
 
   it('varsayılan ton neutral — hata olmayan boş durumlar yeşil/kırmızı görünmez', () => {
     const { container } = render(<StatusBlock title="Kayıt yok" />)
-    expect(container.querySelector('.status-block--neutral')).toBeTruthy()
+    expect(container.querySelector('[data-slot="empty"]').getAttribute('data-tone')).toBe('neutral')
   })
 
   it('rol dışarıdan verilebilir', () => {
     render(<StatusBlock role="alert" title="patladı" />)
     expect(screen.getByRole('alert')).toBeDefined()
+  })
+
+  it('yükleme durumu: simge döner (reduced-motion muafiyetiyle)', () => {
+    // App.jsx ilk yüklemede `loading` prop'u veriyor (eski `status-block--loading` sınıfı kaldırıldı).
+    {
+      const { container, unmount } = render(<StatusBlock icon={ShieldAlert} title="yükleniyor" role="status" loading />)
+      const icon = container.querySelector('[data-slot="empty"] [data-slot="empty-icon"] svg')
+      expect(icon.getAttribute('class')).toContain('animate-spin')
+      expect(icon.getAttribute('class')).toContain('motion-reduce:')
+      unmount()
+    }
+    const { container } = render(<StatusBlock icon={ShieldAlert} title="boş" />)
+    expect(container.querySelector('[data-slot="empty-icon"] svg').getAttribute('class')).not.toContain('animate-spin')
   })
 })
 
@@ -82,11 +95,11 @@ describe('Field', () => {
 
   it('zorunluluk yıldızı ayrı bir eleman — etiket metnine gömülmez', () => {
     const { container } = render(<Field label="E-posta" required>{({ id }) => <input id={id} />}</Field>)
-    const star = container.querySelector('.req-star')
+    const star = container.querySelector('[data-slot="field-required"]')
     expect(star).toBeTruthy()
     expect(star.textContent).toBe('*')
     // Erişilebilir ad yıldızı içerse de etiketin KENDİ metni temiz kalmalı
-    expect(container.querySelector('.form-field-label').firstChild.textContent).toBe('E-posta')
+    expect(container.querySelector('[data-slot="field-label"]').firstChild.textContent).toBe('E-posta')
   })
 
   it('ipucu ve hata aria-describedby ile bağlanır, hata aria-invalid verir', () => {

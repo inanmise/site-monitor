@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 // CodeEditor prismjs'e bağlı ve jsdom'da ağır — sayfa testlerindeki desenle sadeleştirilir.
 vi.mock('../components/ui/CodeEditor.jsx', () => ({
@@ -85,14 +86,14 @@ function draw(props = {}) {
   return render(<ScriptedTemplatesTab t={t} lang="tr" teams={TEAMS} teamName="Kanal" {...props} />)
 }
 
-/** Kartın kebab menüsünü açar ve menü düğmelerini döndürür. Dalı kendisi açar. */
+/** Kartın kebab menüsünü açar ve menü öğelerinin (role=menuitem) metnini döndürür. Dalı kendisi açar. */
 async function openMenu(cardName) {
   await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
   await expandAll()
   const card = (await screen.findByText(cardName)).closest('.sc-tpl-card')
   // Kebab'ın adı artık şablon adını da taşıyor ("<ad> — tpl.actions").
-  fireEvent.click(within(card).getByLabelText(/tpl[.]actions$/))
-  return () => screen.queryAllByRole('button').map(b => b.textContent)
+  pressMenuTrigger(within(card).getByLabelText(/tpl[.]actions$/))
+  return () => screen.queryAllByRole('menuitem').map(b => b.textContent)
 }
 
 beforeEach(() => {

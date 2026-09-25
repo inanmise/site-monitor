@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Users, Play } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 export const TEAMS_KEY = 'sm.checkRun.teams'
 /** Takımsız sertifikalar için sanal anahtar (gerçek team_id null). */
@@ -134,10 +135,10 @@ export default function CheckTeamPicker({
 
         <div className="modal-actions">
           <span className="chk-team-total">{totalText ? totalText(total) : t('app.checkTeamTotal', total)}</span>
-          <button className="btn btn-secondary" onClick={onClose}>{t('app.cancel')}</button>
-          <button className="btn btn-primary" onClick={start} disabled={total === 0}>
+          <Button variant="secondary" onClick={onClose}>{t('app.cancel')}</Button>
+          <Button onClick={start} disabled={total === 0}>
             <Play size={14} />{t('app.checkTeamStart')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

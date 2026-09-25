@@ -18,6 +18,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
+import { Button } from '@/components/shadcn/button'
 
 const REFRESH_INTERVAL = 60
 
@@ -230,11 +231,11 @@ export default function UptimePage({ systemRole }) {
           <span className="upt-last-check">
             {t('uptime.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={fetchOverview}>
+          <Button variant="outline" size="sm" onClick={fetchOverview}>
             <RefreshCw size={14} />
             {t('uptime.refresh')}
-          </button>
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          </Button>
+          <CopyLinkButton iconOnly variant="outline" />
         </div>
       </div>
 
@@ -258,12 +259,12 @@ export default function UptimePage({ systemRole }) {
               <option value="incidents-desc">{t('uptime.sortIncidentsDesc')}</option>
             </select>
             {hasTeamOptions && (
-              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
             )}
-            {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} />}
-            {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} />}
+            {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+            {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
             {filtersActive && (
-              <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>{t('app.clearFilters')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('app.clearFilters')}</Button>
             )}
           </div>
           <input className="upt-search" type="text"
@@ -277,7 +278,7 @@ export default function UptimePage({ systemRole }) {
       ) : loadError && items.length === 0 ? (
         /* Hata bandi bos durumun ONUNDE: aksi halde yukleme hatasi "veri yok" gibi gorunur. */
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={fetchOverview}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={fetchOverview}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : items.length === 0 ? (
@@ -306,7 +307,7 @@ export default function UptimePage({ systemRole }) {
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">:{item.port}</span>
                   {/* Uptime kartının monitör id'si YOK — anahtarı alan adı, derin bağlantı da öyle. */}
-                  <CopyLinkButton iconOnly url={domainDeepLink('uptime', item.domain)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={domainDeepLink('uptime', item.domain)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
 
@@ -372,12 +373,12 @@ export default function UptimePage({ systemRole }) {
                   <span>{(item.uptime_checked_at || item.ssl_checked_at)
                     ? formatDate(item.uptime_checked_at || item.ssl_checked_at) : ''}</span>
                   {isAdmin && (
-                    <button
-                      className="btn-sm btn-show"
+                    <Button
+                      variant="outline" size="sm"
                       onClick={(e) => { e.stopPropagation(); setDiag({ domain: item.domain, port: item.port || 443 }) }}
                     >
                       {t('uptime.diagnose')}
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}

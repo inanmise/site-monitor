@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * KULLANICI YÖNETİMİ — kimin hangi takımı gördüğünü belirleyen ekran; kendi testi yoktu
@@ -67,7 +68,7 @@ const renderUm = (props = {}) => render(
 
 async function openRowMenu(username) {
   const row = (await screen.findByText(username)).closest('tr')
-  fireEvent.click(within(row).getByRole('button', { name: /işlem|actions/i }))
+  pressMenuTrigger(within(row).getByRole('button', { name: /işlem|actions/i }))
 }
 
 describe('UserManager', () => {

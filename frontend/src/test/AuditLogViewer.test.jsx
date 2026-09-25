@@ -42,6 +42,23 @@ describe('AuditLogViewer', () => {
     ] })
   })
 
+  // Ekip kapsamı (2026-09-25): ekip üyeleri takım arkadaşlarının kayıtlarını görür; sistem-geneli yüzeyler yok.
+  it('ekip kapsamı (fullScope=false): bilgi şeridi görünür, özet ucu HİÇ çağrılmaz, bütünlük düğmesi yok; liste çalışır', async () => {
+    render(<AuditLogViewer fullScope={false} />)
+    expect(await screen.findByTitle('USER_UPDATE')).toBeInTheDocument()
+    expect(screen.getByText(/Ekibinizin denetim kayıtları|Your team's audit records/)).toBeInTheDocument()
+    expect(api.admin.getAuditStats).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'CSV' })).toBeInTheDocument()   // dışa aktarma ekip kapsamını taşır
+  })
+
+  it('tam kapsam (varsayılan): özet çağrılır, bütünlük düğmesi var, ekip şeridi yok', async () => {
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditStats).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: /Bütünlüğü doğrula|Verify integrity/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Ekibinizin denetim kayıtları|Your team's audit records/)).toBeNull()
+  })
+
   it('satır ÇEVRİLMİŞ etiket gösterir, ham tür TITLE içinde kalır (denetçi onunla filtreler)', async () => {
     const { container } = render(<AuditLogViewer />)
     const badge = await screen.findByTitle('USER_UPDATE')
@@ -59,7 +76,7 @@ describe('AuditLogViewer', () => {
     expect(await screen.findByText(/Bütünlük zinciri|Integrity chain/)).toBeInTheDocument()
     expect(document.querySelector('.audit-diff-to')).not.toBeNull()
     expect(document.querySelector('.aud-detail'), 'dar ekranda yan panel OLMAMALI').toBeNull()
-    expect(document.querySelector('.modal-shell-overlay'), 'dar ekranda modal OLMAMALI').toBeNull()
+    expect(screen.queryByRole('dialog'), 'dar ekranda modal OLMAMALI').toBeNull()
 
     const inline = document.querySelector('.aud-inline')
     expect(inline, 'satır-içi ayrıntı satırı açılmalı').not.toBeNull()
@@ -195,8 +212,8 @@ describe('AuditLogViewer', () => {
 
     // Olay türü seçicisi filtre çubuğundaki ilk SearchableSelect. Gruplar kapalı başlar;
     // arama kutusuna yazmak tüm dalları açar (bileşenin sözleşmesi).
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'MAINTENANCE' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'MAINTENANCE' } })
 
     expect(await screen.findByText(/MAINTENANCE_CREATE/)).toBeInTheDocument()
   })
@@ -205,8 +222,8 @@ describe('AuditLogViewer', () => {
     const { container } = render(<AuditLogViewer />)
     await waitFor(() => expect(api.admin.getAuditEventTypes).toHaveBeenCalled())
 
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'LOGIN' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'LOGIN' } })
 
     expect(await screen.findByText(/LOGIN \(42\)/)).toBeInTheDocument()
   })
@@ -217,8 +234,8 @@ describe('AuditLogViewer', () => {
     const { container } = render(<AuditLogViewer />)
     await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalled())
 
-    fireEvent.mouseDown(container.querySelectorAll('.ss-trigger')[0])   // acilis onMouseDown ile
-    fireEvent.change(container.querySelector('.ss-search-input'), { target: { value: 'LOGIN_FAILED' } })
+    fireEvent.mouseDown(container.querySelectorAll('button[role="combobox"]')[0])   // acilis onMouseDown ile
+    fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'LOGIN_FAILED' } })
 
     expect(await screen.findByText('LOGIN_FAILED')).toBeInTheDocument()
   })
@@ -233,7 +250,7 @@ describe('AuditLogViewer', () => {
       fireEvent.click(await screen.findByTitle('USER_UPDATE'))
 
       expect(document.querySelector('.aud-detail'), 'yan panel açılmalı').not.toBeNull()
-      expect(document.querySelector('.modal-shell-overlay'), 'modal AÇILMAMALI').toBeNull()
+      expect(screen.queryByRole('dialog'), 'modal AÇILMAMALI').toBeNull()
       expect(document.querySelector('.aud-inline'), 'satır-içi gövde de AÇILMAMALI').toBeNull()
       // Yan panel bir diyalog DEĞİL: odak tabloda kalmalı ki ok tuşlarıyla gezinme sürsün.
       expect(document.querySelector('.aud-detail').getAttribute('role')).toBe('complementary')
@@ -292,8 +309,26 @@ describe('AuditLogViewer', () => {
     fireEvent.click(tlBtn)
     await waitFor(() => expect(api.admin.getAuditResourceHistory).toHaveBeenCalledWith('USER', '5', 100))
     // Drawer artık ModalShell: elle kurulmuş overlay'de role/aria-modal/ESC/focus trap yoktu.
-    expect(document.querySelector('.modal-shell-overlay'), 'ModalShell açılmalı').not.toBeNull()
+    expect(screen.getByRole('dialog'), 'ModalShell açılmalı').toHaveAttribute('aria-modal', 'true')
     expect(document.querySelector('.audit-timeline-list')).not.toBeNull()
     expect(await screen.findAllByTitle('MONITOR_UPDATE')).not.toHaveLength(0)
+  })
+
+  // R12 (2026-09-25): eski süzgecin GEÇ gelen yanıtı yeni preset'in sonucunu ezmemeli.
+  it('R12: sıra dışı yanıt — önce başlayan (eski süzgeç) istek SONRA dönerse ekrana yazılmaz', async () => {
+    let releaseStale
+    api.admin.getAuditLogs
+      .mockImplementationOnce(() => new Promise(r => { releaseStale = () => r({ success: true, data: [row()], total: 1, page: 0 }) }))
+      .mockResolvedValueOnce({ success: true, data: [row({ id: 9, event_type: 'LOGIN', outcome: 'BLOCKED' })], total: 1, page: 0 })
+    render(<AuditLogViewer />)
+    await waitFor(() => expect(api.admin.getAuditLogs).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByText(/Güvenlik olaylar|Security events/))
+    expect(await screen.findByTitle('LOGIN')).toBeInTheDocument()
+
+    releaseStale()                                   // ilk (süzgeçsiz) istek ŞİMDİ dönüyor
+    await new Promise(r => setTimeout(r, 0))
+    await waitFor(() => expect(screen.getByTitle('LOGIN')).toBeInTheDocument())
+    expect(screen.queryByTitle('USER_UPDATE')).toBeNull()
   })
 })

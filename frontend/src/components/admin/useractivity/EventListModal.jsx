@@ -11,6 +11,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
 import { toCsv, downloadCsv, stampedName } from '../../../utils/csvExport.js'
 import { splitFlags, FLAG_KEYS } from './uactModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Giriş / başarısız giriş / anomali KPI kartlarının drill-down'ı (2026-09-20, kullanıcı bildirimi: "login kartına
@@ -87,8 +88,8 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
   return (
     <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Icon} size="xl" scrollBody
       footer={<>
-        <button type="button" className="btn btn-secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t))}><Download size={14} /> {t('uact.exportEvents')}</button>
-        <button type="button" className="btn btn-primary" onClick={onClose}>{t('app.dismiss')}</button>
+        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t))}><Download size={14} /> {t('uact.exportEvents')}</Button>
+        <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
       </>}>
       <p className="field-hint">{winLabel}{all.length >= 500 ? ` · ${t('uact.eventsCapped', 500)}` : ''}</p>
       <div className="udir-stats" data-testid="evl-stats">
@@ -105,7 +106,7 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
         <label className="invtb-f"><span>{t('uact.colTeam')}</span><SearchableSelect ariaLabel={t('uact.colTeam')} value={f.team} onChange={(v) => patch({ team: v })} options={teamOptions} searchThreshold={6} /></label>
         {!isAnom && <label className="invtb-f"><span>{t('uact.colOutcome')}</span><SearchableSelect ariaLabel={t('uact.colOutcome')} value={f.outcome} onChange={(v) => patch({ outcome: v })} options={outcomeOptions} searchThreshold={99} /></label>}
         <label className="invtb-f"><span>{t('uact.colFlags')}</span><SearchableSelect ariaLabel={t('uact.colFlags')} value={f.flag} onChange={(v) => patch({ flag: v })} options={flagOptions} searchThreshold={99} /></label>
-        {(f.q || f.team || f.outcome || f.flag) && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setF({ q: '', team: '', outcome: '', flag: '' })}>{t('uact.filterClear')}</button>}
+        {(f.q || f.team || f.outcome || f.flag) && <Button type="button" variant="secondary" size="sm" onClick={() => setF({ q: '', team: '', outcome: '', flag: '' })}>{t('uact.filterClear')}</Button>}
       </div>
       {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noLogins')} /> : (
         <div className="health-table-wrap uact-table-wrap">

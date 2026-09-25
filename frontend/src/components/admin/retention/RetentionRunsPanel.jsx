@@ -11,6 +11,7 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import { readPageSize, writePageSize } from '../../../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../../hooks/useUrlQuerySync.js'
 import { fmtNum } from './PolicyRow.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Veri Saklama → Son çalışmalar: sunucu-taraflı sayfalama, süzgeç (tür / yalnız hatalı / politika /
@@ -139,11 +140,13 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
         )}
         <span className="ret-runs-spacer" />
         {!isDefaultView && (
-          <button type="button" className="btn btn-sm" onClick={backToLatest}><RotateCcw size={13} /> {t('ret.backToLatest')}</button>
+          <Button type="button" variant="outline" size="sm" onClick={backToLatest}><RotateCcw size={13} /> {t('ret.backToLatest')}</Button>
         )}
-        <a className="btn btn-sm" href={api.admin.getRetentionRunsCsvUrl({ ...params, page: undefined, size: undefined })} download>
-          <Download size={13} /> {t('ret.exportCsv')}
-        </a>
+        <Button asChild variant="outline" size="sm">
+          <a href={api.admin.getRetentionRunsCsvUrl({ ...params, page: undefined, size: undefined })} download>
+            <Download size={13} /> {t('ret.exportCsv')}
+          </a>
+        </Button>
       </div>
 
       {error && <AlertBanner tone="danger">{error}</AlertBanner>}

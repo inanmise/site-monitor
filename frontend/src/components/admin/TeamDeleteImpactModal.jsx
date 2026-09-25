@@ -7,6 +7,7 @@ import ModalShell from '../ui/ModalShell.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const SECTIONS = ['domains', 'monitors', 'users', 'contacts', 'groups']
 
@@ -54,16 +55,16 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
 
   const footer = (
     <>
-      <button className="btn btn-secondary" onClick={onClose} disabled={busy}>{t('team.deleteCancel')}</button>
+      <Button variant="secondary" onClick={onClose} disabled={busy}>{t('team.deleteCancel')}</Button>
       {impact && !empty && (
-        <button className="btn btn-secondary" onClick={() => moveThenDelete(false)} disabled={busy || !target} aria-busy={busy || undefined}>
+        <Button variant="secondary" onClick={() => moveThenDelete(false)} disabled={busy || !target} aria-busy={busy || undefined}>
           <ArrowRightLeft size={14} /> {t('team.moveOnly')}
-        </button>
+        </Button>
       )}
       {impact && (
-        <button className="btn btn-danger" onClick={() => moveThenDelete(true)} disabled={busy || (!empty && !target)} aria-busy={busy || undefined}>
+        <Button variant="destructive" onClick={() => moveThenDelete(true)} disabled={busy || (!empty && !target)} aria-busy={busy || undefined}>
           <Trash2 size={14} /> {empty ? t('team.deleteConfirm') : t('team.moveAndDelete')}
-        </button>
+        </Button>
       )}
     </>
   )

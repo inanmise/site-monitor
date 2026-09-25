@@ -3,6 +3,7 @@ import { dateLocale } from '../../i18n/dateLocale.js'
 import { RefreshCw, Check, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { ProgressBar, Spinner } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 // Date → "HH:mm:ss.SSS"
 export const fmtClock = (d) => (d instanceof Date
@@ -159,9 +160,9 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
 
         <div className="modal-actions">
           {!run.done && (
-            <button className="btn btn-secondary" onClick={onCancel}>{t('app.checkCancel')}</button>
+            <Button variant="secondary" onClick={onCancel}>{t('app.checkCancel')}</Button>
           )}
-          <button className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>
+          <Button variant="secondary" onClick={onClose}>{t('app.close')}</Button>
         </div>
       </div>
     </div>

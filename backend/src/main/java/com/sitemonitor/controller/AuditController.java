@@ -61,13 +61,13 @@ public class AuditController {
             @RequestParam(required = false)       String  q,           // serbest metin
             @RequestParam(defaultValue = "false") boolean anomalyOnly,
             HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
+        TeamActorScope scope = auditReadScope(session);
 
         Page<AuditLog> result = auditLogRepo.findAdvanced(
                 like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
                 nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
                 nil(since), nil(until), anomalyOnly, like(q),
+                scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -75,6 +75,8 @@ public class AuditController {
         body.put("total", result.getTotalElements());
         body.put("page", result.getNumber());
         body.put("total_pages", result.getTotalPages());
+        // Ön yüz sistem-geneli yüzeyleri (özet, bütünlük) buna göre gösterir/gizler.
+        body.put("scope", scope.all() ? "ALL" : "TEAM");
         return ok(body);
     }
 
@@ -83,10 +85,11 @@ public class AuditController {
     public ResponseEntity<Map<String, Object>> resourceHistory(
             @PathVariable String type, @PathVariable String id,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
-        var rows = auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
-                type, id, PageRequest.of(0, Math.max(1, Math.min(limit, 500))));
+        TeamActorScope scope = auditReadScope(session);
+        var rows = scope.all()
+                ? auditLogRepo.findByResourceTypeAndResourceIdOrderByEventTimeDesc(
+                        type, id, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
+                : scopedHistory(scope, null, type, id, limit);
         return ok(Map.of("data", rows, "total", rows.size()));
     }
 
@@ -95,19 +98,18 @@ public class AuditController {
     public ResponseEntity<Map<String, Object>> actorHistory(
             @PathVariable Long actorId,
             @RequestParam(defaultValue = "100") int limit, HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
-        var rows = auditLogRepo.findByActorIdOrderByEventTimeDesc(
-                actorId, PageRequest.of(0, Math.max(1, Math.min(limit, 500))));
+        TeamActorScope scope = auditReadScope(session);
+        var rows = scope.all()
+                ? auditLogRepo.findByActorIdOrderByEventTimeDesc(actorId, PageRequest.of(0, Math.max(1, Math.min(limit, 500))))
+                : scopedHistory(scope, actorId, null, null, limit);
         return ok(Map.of("data", rows, "total", rows.size()));
     }
 
     /** Aynı correlation ID'den doğan ilişkili olaylar (detay panelinde). */
     @GetMapping("/audit/correlation/{cid}")
     public ResponseEntity<Map<String, Object>> correlated(@PathVariable String cid, HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
-        return ok(Map.of("data", auditLogRepo.findByCorrelationIdOrderBySeqAsc(cid)));
+        TeamActorScope scope = auditReadScope(session);
+        return ok(Map.of("data", visible(auditLogRepo.findByCorrelationIdOrderBySeqAsc(cid), scope)));
     }
 
     /** Hash zinciri bütünlük doğrulaması — kurcalama tespiti. */
@@ -137,14 +139,15 @@ public class AuditController {
             @RequestParam(required = false)       String  q,
             @RequestParam(defaultValue = "false") boolean anomalyOnly,
             HttpSession session, HttpServletRequest request) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
+        // Dışa aktarma listeyle AYNI kapsamı taşır: ekip kullanıcısı yalnız ekip arkadaşlarının satırlarını indirir.
+        TeamActorScope scope = auditReadScope(session);
 
         int cap = 50_000;
         List<AuditLog> rows = auditLogRepo.findAdvanced(
                 like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
                 nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
                 nil(since), nil(until), anomalyOnly, like(q),
+                scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
                 PageRequest.of(0, cap)).getContent();
 
         boolean json = "json".equalsIgnoreCase(format);
@@ -183,16 +186,17 @@ public class AuditController {
      */
     @GetMapping("/audit/event-types")
     public ResponseEntity<Map<String, Object>> auditEventTypes(HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
+        // Katalog ekip kapsamındaki süzgeç listesi için de gerekli; SAYIMLAR ise sistem-geneli (tüm kullanıcıların
+        // son 90 günü) → yalnız admin/AUDIT'e döner. Ekip kullanıcısında `count` alanı hiç yoktur.
+        boolean full = auditReadScope(session).all();
 
-        Map<String, Long> counts = auditService.eventTypeCounts();
+        Map<String, Long> counts = full ? auditService.eventTypeCounts() : Map.of();
         List<Map<String, Object>> data = new ArrayList<>();
         for (com.sitemonitor.service.AuditEventCatalog.Event e : com.sitemonitor.service.AuditEventCatalog.all()) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("type", e.type());
             row.put("category", e.category());
-            row.put("count", counts.getOrDefault(e.type(), 0L));
+            if (full) row.put("count", counts.getOrDefault(e.type(), 0L));
             data.add(row);
         }
         return ok(Map.of("data", data,
@@ -207,10 +211,11 @@ public class AuditController {
      */
     @GetMapping("/audit/{id}")
     public ResponseEntity<Map<String, Object>> auditById(@PathVariable Long id, HttpSession session) {
-        requireAuditAccess(session);
-        permissionService.require(session, "audit_log.read", "view");
+        TeamActorScope scope = auditReadScope(session);
 
+        // Kapsam dışı satır 404 döner (403 değil): kaydın VARLIĞI da ekip dışına sızmasın.
         return auditLogRepo.findById(id)
+                .filter(row -> teamVisible(row, scope))
                 .map(row -> ok(Map.of("data", row)))
                 .orElseGet(() -> ResponseEntity.status(404)
                         .body(Map.of("success", false, "error", "Denetim kaydı bulunamadı")));
@@ -359,9 +364,60 @@ public class AuditController {
     }
 
     private void requireAuditAccess(HttpSession session) {
-        String role = (String) session.getAttribute("systemRole");
-        if (!SessionScope.isGlobalAdmin(session) && !"AUDIT".equals(role))
-            throw new SecurityException("Audit access required");
+        if (!hasFullAuditAccess(session)) throw new SecurityException("Audit access required");
+    }
+
+    /** Sistem-geneli denetçi: global admin ya da AUDIT rolü. */
+    private static boolean hasFullAuditAccess(HttpSession session) {
+        return SessionScope.isGlobalAdmin(session) || "AUDIT".equals(session.getAttribute("systemRole"));
+    }
+
+    /**
+     * Denetim KAYITLARININ okuma kapsamı (2026-09-25, kullanıcı kararı: "ekip üyeleri görebilsin — tüm olaylar,
+     * tam ayrıntı"). Global admin / AUDIT: sınırsız, {@code audit_log.read} izni aranır (değişmedi). Diğer herkes
+     * (USER, TEAM_ADMIN, kapsamlı müdür): yalnız görüş alanındaki takımların ÜYELERİNİN eylemleri — IP, konum ve
+     * cihaz dâhil tam satır. Ekip kapsamında {@code audit_log.read} ARANMAZ: kural "kendi ekibinin kaydı"dır ve
+     * satırlar zaten aktör üyeliğiyle sınırlanır ({@code NotificationGroupController#history} emsali). Kullanıcı
+     * kararı (2026-09-25, regresyon R8): ekip görünürlüğü HER ZAMAN açık, matristen kapatılmaz; matris satırı
+     * {@code audit_log.read} yalnız SİSTEM GENELİ denetimi (admin/AUDIT) anlatır. ADMIN/AUDIT aktörlerinin
+     * satırları ekip kapsamına girmez (R2).
+     *
+     * <p>Sistem-geneli yüzeyler (hash-zinciri bütünlüğü, özet istatistikler, olay türü sayımları, başka
+     * kullanıcının cihaz geçmişi) bu kapsamı KULLANMAZ — {@link #requireAuditAccess} ile admin/AUDIT'te kalır.
+     */
+    private TeamActorScope auditReadScope(HttpSession session) {
+        if (hasFullAuditAccess(session)) {
+            permissionService.require(session, "audit_log.read", "view");
+            return TeamActorScope.unrestricted();
+        }
+        return TeamActorScope.ofTeams(SessionScope.viewTeamIds(session), appUserRepo);
+    }
+
+    /** Ekip kapsamına HİÇ girmeyen aktör rolleri (kullanıcı kararı 2026-09-25, regresyon R2) — sorgudaki kuralla aynı. */
+    private static final Set<String> SYSTEM_WIDE_ROLES = Set.of("ADMIN", "AUDIT");
+
+    /** Satır bu kapsamda görünür mü? Sayfalanan liste AYNI kuralı sorguda uygular ({@code findAdvanced}). */
+    private static boolean teamVisible(AuditLog r, TeamActorScope scope) {
+        if (scope.all()) return true;
+        if (r.getActorRole() != null && SYSTEM_WIDE_ROLES.contains(r.getActorRole())) return false;
+        return scope.allows(r.getActorTeamId(), r.getActorId(), r.getActor());
+    }
+
+    /** Bellekte süzülen küçük listeler (korelasyon) için aynı kural. */
+    private static List<AuditLog> visible(List<AuditLog> rows, TeamActorScope scope) {
+        if (scope.all()) return rows;
+        return rows.stream().filter(r -> teamVisible(r, scope)).toList();
+    }
+
+    /**
+     * Ekip kapsamında kaynak/aktör geçmişi: kapsam SORGUDA uygulanır (regresyon R7). Önce ilk N satırı çekip
+     * sonra süzmek, son N olayı yabancı aktörlerinse zaman çizelgesini boş/eksik döndürüyordu.
+     */
+    private List<AuditLog> scopedHistory(TeamActorScope scope, Long actorId, String resourceType, String resourceId, int limit) {
+        return auditLogRepo.findAdvanced(null, actorId, false, typesOrDummy(null), resourceType, resourceId,
+                null, null, null, null, false, null,
+                false, scope.teamIds(), scope.actorIds(), scope.actorNames(),
+                PageRequest.of(0, Math.max(1, Math.min(limit, 500)))).getContent();
     }
 
     /**

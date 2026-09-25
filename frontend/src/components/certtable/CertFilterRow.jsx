@@ -1,6 +1,6 @@
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import { STATUS_OPTIONS, TIER_OPTIONS } from './certTableModel.js'
+import { COLUMN_BY_KEY, STATUS_OPTIONS, TIER_OPTIONS } from './certTableModel.js'
 
 /**
  * Tüm Sertifikalar tablosu — başlığın altındaki KOLON SÜZGEÇ SATIRI (2026-09-22, kullanıcı isteği: envanterdekiyle aynı).
@@ -13,7 +13,10 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
   const t = useT()
   const set = (k, v) => onFilter({ ...filters, [k]: v })
   const any = { value: '', label: t('inv.filterAny') }
-  const sel = (key, options) => <SearchableSelect value={filters[key] || ''} onChange={(v) => set(key, v)} options={[any, ...options]} searchThreshold={6} />
+  // Ad = KOLON: seçicinin tetiği role="combobox" ve içerikten ad almaz; hücrede görünür etiket de yok
+  // (başlık üstte). Adsızken 6 seçicinin hepsi "combobox" olarak duyuluyordu (2026-09-25, R17).
+  const colAria = (col) => t('flt.column', t(COLUMN_BY_KEY[col]?.labelKey ?? col))
+  const sel = (key, options, col) => <SearchableSelect value={filters[key] || ''} onChange={(v) => set(key, v)} options={[any, ...options]} searchThreshold={6} ariaLabel={colAria(col)} />
   const text = (key, ph, aria) => (
     <span className="inv-fr-text">
       <input type="search" className="input input-sm" value={filters[key] || ''} onChange={(e) => set(key, e.target.value)} placeholder={ph} aria-label={aria} />
@@ -33,16 +36,17 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
     switch (key) {
       case 'domain': return text('domain', t('inv.colFilterDomainPh'), t('inv.colFilterDomain'))
       case 'issuer': return text('issuer', t('tbl.issuerPh'), t('tbl.colIssuer'))
-      case 'team': return sel('team', teamOpts)
+      case 'team': return sel('team', teamOpts, 'team')
       case 'days': return sel('window', [
         { value: 'expired', label: t('tbl.winExpired') }, ...['7', '30', '60', '90'].map((d) => ({ value: d, label: t('tbl.winDays', d) })),
-      ])
-      case 'status': return sel('status', STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: `${o.icon} ${t(o.labelKey)}` })))
-      case 'tier': return sel('tier', TIER_OPTIONS.filter(Boolean).map((x) => ({ value: x, label: `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` })))
-      case 'port': return sel('port', portOpts)
+      ], 'days')
+      case 'status': return sel('status', STATUS_OPTIONS.filter((o) => o.value).map((o) => ({ value: o.value, label: `${o.icon} ${t(o.labelKey)}` })), 'status')
+      case 'tier': return sel('tier', TIER_OPTIONS.filter(Boolean).map((x) => ({ value: x, label: `T${x}${facets?.tiers?.[x] != null ? ` (${facets.tiers[x]})` : ''}` })), 'tier')
+      case 'port': return sel('port', portOpts, 'port')
       case 'trust': return (
         <SearchableSelect value={filters.insecure ? 'insecure' : ''} onChange={(v) => set('insecure', v === 'insecure')}
-          options={[any, { value: 'insecure', label: `${t('tbl.onlyInsecure')}${facets ? ` (${facets.insecure ?? 0})` : ''}` }]} />
+          options={[any, { value: 'insecure', label: `${t('tbl.onlyInsecure')}${facets ? ` (${facets.insecure ?? 0})` : ''}` }]}
+          ariaLabel={colAria('trust')} />
       )
       case 'fingerprint': return text('fp', t('tbl.colFingerprint'), t('tbl.colFingerprint'))
       default: return null

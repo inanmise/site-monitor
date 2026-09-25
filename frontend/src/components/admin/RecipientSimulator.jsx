@@ -7,6 +7,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
 
@@ -63,9 +64,9 @@ export default function RecipientSimulator({ teams = [], isAdmin, defaultTeamId 
           <h3><Users size={16} /> {t('sim.title')}</h3>
           <p className="section-desc">{t('sim.desc')}</p>
         </div>
-        <button className="btn btn-secondary" onClick={() => setOpen(o => !o)} aria-expanded={open}>
+        <Button variant="secondary" onClick={() => setOpen(o => !o)} aria-expanded={open}>
           {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {open ? t('sim.hide') : t('sim.show')}
-        </button>
+        </Button>
       </div>
 
       {open && (

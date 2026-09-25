@@ -15,6 +15,7 @@ import VersionTimeline from '../scripted/VersionTimeline.jsx'
 import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
 import { DEPLOY_KIND_STYLE, fmtDuration } from '../../utils/releaseUi.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Sistem Sağlığı → "Sürüm & Dağıtım" (K1, K8, K10). Dört blok: koşan sürüm kartı, özet şeridi,
@@ -66,11 +67,11 @@ function ManualEntryModal({ open, onClose, onSaved, defaultEnv, t }) {
   return (
     <ModalShell open={open} onClose={onClose} title={t('deploy.manualTitle')} icon={PenLine} size="sm" busy={saving}
       footer={<>
-        <button className="btn btn-secondary" onClick={onClose} disabled={saving}>{t('deploy.cancel')}</button>
-        <button className="btn btn-primary" onClick={save}
+        <Button variant="secondary" onClick={onClose} disabled={saving}>{t('deploy.cancel')}</Button>
+        <Button onClick={save}
           disabled={saving || !form.environment.trim() || !form.version.trim() || !form.at || !form.note.trim()}>
           {t('deploy.save')}
-        </button>
+        </Button>
       </>}>
       <div className="field-hint" style={{ marginBottom: 10 }}>{t('deploy.manualHint')}</div>
       {err && <AlertBanner tone="danger">{String(err)}</AlertBanner>}
@@ -249,16 +250,16 @@ export default function DeploymentHistoryPanel({ canEdit = false }) {
           options={SOURCES.map(s => ({ value: s, label: s === 'all' ? t('deploy.sourceAll') : t('version.source.' + s) }))} />
         <input className="input deploy-search" value={q} onChange={e => setQ(e.target.value)} placeholder={t('deploy.search')} />
         <div className="deploy-toolbar-right">
-          <button type="button" className="btn btn-sm btn-secondary" onClick={refresh} title={t('deploy.refresh')}><RefreshCw size={13} /></button>
-          <a className="btn btn-sm btn-secondary" href={csvUrl} download="deployment-history.csv"><Download size={13} /> {t('deploy.csv')}</a>
+          <Button type="button" variant="secondary" size="sm" onClick={refresh} title={t('deploy.refresh')}><RefreshCw size={13} /></Button>
+          <Button asChild variant="secondary" size="sm"><a href={csvUrl} download="deployment-history.csv"><Download size={13} /> {t('deploy.csv')}</a></Button>
           {canEdit && (
             <>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={backfill} disabled={busy}>
+              <Button type="button" variant="secondary" size="sm" onClick={backfill} disabled={busy}>
                 <History size={13} /> {t('deploy.backfill')}{timeline?.backfillCandidates ? ` (${timeline.backfillCandidates})` : ''}
-              </button>
-              <button type="button" className="btn btn-sm btn-primary" onClick={() => setManualOpen(true)}>
+              </Button>
+              <Button type="button" size="sm" onClick={() => setManualOpen(true)}>
                 <PenLine size={13} /> {t('deploy.manualAdd')}
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -336,7 +337,9 @@ export default function DeploymentHistoryPanel({ canEdit = false }) {
                     {canEdit && (
                       <td className="um-col-actions">
                         {r.source === 'MANUAL' && (
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => del(r)} title={t('deploy.delete')}><Trash2 size={13} /></button>
+                          <Button type="button" variant="destructive" size="sm" onClick={() => del(r)} title={t('deploy.delete')}
+                            // Ad kaydı ayırır (sürüm + başlangıç); ipucu kısa kalır (2026-09-25, R15).
+                            aria-label={t('a11y.rowAction', `${r.version ? `v${r.version}` : '?'} · ${formatDateSec(r.startedAt)}`, t('deploy.delete'))}><Trash2 size={13} /></Button>
                         )}
                       </td>
                     )}
@@ -377,7 +380,7 @@ export default function DeploymentHistoryPanel({ canEdit = false }) {
               </tbody>
             </table>
             {matrix.truncated && (
-              <div className="field-hint">{t('deploy.matrixTruncated')} · <button type="button" className="btn btn-sm btn-secondary" onClick={() => loadMatrix(true)}>{t('deploy.matrixShowAll')}</button></div>
+              <div className="field-hint">{t('deploy.matrixTruncated')} · <Button type="button" variant="secondary" size="sm" onClick={() => loadMatrix(true)}>{t('deploy.matrixShowAll')}</Button></div>
             )}
           </div>
         )}

@@ -15,12 +15,13 @@ function fmtDateHuman(iso) {
   return d.toLocaleString(dateLocale(), { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 function daysColor(d) {
-  if (d == null) return 'var(--text-muted, #64748b)'
+  if (d == null) return 'var(--text-muted, #71717a)'
   if (d < 0 || d <= 7) return '#C0392B'
   if (d <= 30) return '#D68910'
   return '#1E8449'
 }
 import { eppKey, eppLabel } from '../utils/domainEpp.js'
+import { Button } from '@/components/shadcn/button'
 
 function csv(v) {
   if (Array.isArray(v)) return v
@@ -79,9 +80,9 @@ export default function DomainRegistrationTab({ monitor }) {
     <div className="dreg">
       <div className="dreg-toolbar">
         {stale && <span className="dreg-stale">{t('dreg.stale').replace('{0}', formatDateSec(d.checked_at))}</span>}
-        <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }} onClick={() => load(true)} disabled={loading}>
+        <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }} onClick={() => load(true)} disabled={loading}>
           {loading ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />}{t('dreg.refresh')}
-        </button>
+        </Button>
       </div>
 
       {/* Registrar */}

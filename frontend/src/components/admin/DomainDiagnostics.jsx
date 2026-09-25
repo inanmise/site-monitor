@@ -5,6 +5,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { Search, Globe, ShieldCheck, Copy, Check } from 'lucide-react'
 import DomainExpiryTrace from '../DomainExpiryTrace.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Bağımsız admin paneli — alan adı süre bitişi tanılaması + proxy CA zinciri yakalama (yapıştırılmaya hazır PEM). */
 export default function DomainDiagnostics() {
@@ -89,10 +90,10 @@ export default function DomainDiagnostics() {
           onKeyDown={e => { if (e.key === 'Enter') run() }}
           disabled={loading}
         />
-        <button className="btn btn-primary" onClick={run} disabled={loading || !domain.trim()}>
+        <Button onClick={run} disabled={loading || !domain.trim()}>
           {loading ? <Spinner size={14} inline decorative /> : <Search size={14} />}
           {loading ? t('dexp.running') : t('dexp.query')}
-        </button>
+        </Button>
       </div>
 
       {error && <div className="alert-msg alert-msg--err" style={{ marginTop: 12 }}>{error}</div>}
@@ -103,10 +104,10 @@ export default function DomainDiagnostics() {
         <ShieldCheck size={18} /> <h3>{t('dexp.caTitle')}</h3>
       </div>
       <p className="dexp-desc">{t('dexp.caDesc')}</p>
-      <button className="btn btn-secondary" onClick={captureCa} disabled={caLoading}>
+      <Button variant="secondary" onClick={captureCa} disabled={caLoading}>
         {caLoading ? <Spinner size={14} inline decorative /> : <ShieldCheck size={14} />}
         {caLoading ? t('dexp.caCapturing') : t('dexp.caCapture')}
-      </button>
+      </Button>
 
       {ca && !ca.ok && (
         <div className="alert-msg alert-msg--err" style={{ marginTop: 12 }}>
@@ -141,9 +142,9 @@ export default function DomainDiagnostics() {
               <div className="dexp-step-head" style={{ marginBottom: 6 }}>
                 <strong>{t('dexp.caPem')}</strong>
                 <span className="dexp-step-ms">{t('dexp.caCount').replace('{0}', ca.ca_count)}</span>
-                <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }} onClick={copyPem}>
+                <Button variant="secondary" size="sm" style={{ marginLeft: 'auto' }} onClick={copyPem}>
                   {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? t('dexp.caCopied') : t('dexp.caCopy')}
-                </button>
+                </Button>
               </div>
               <textarea className="dexp-pem" readOnly rows={8} value={ca.ca_pem}
                 onFocus={e => e.target.select()} />

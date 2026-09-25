@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Search, X, CornerDownLeft, Globe, Activity, Users, LayoutGrid, UsersRound, FolderOpen, Tag } from 'lucide-react'
+import { Globe, Activity, Users, LayoutGrid, UsersRound, FolderOpen, Tag } from 'lucide-react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { Dialog, DialogContent, DialogTitle } from '@/components/shadcn/dialog'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/shadcn/command'
+import { Badge } from '@/components/shadcn/badge'
+import { Kbd } from '@/components/shadcn/kbd'
 
 /**
  * Komut paleti (2026-09-12, zenginleştirme #1): Ctrl/Cmd+K → tek kutu; sekme adları istemcide, alan /
@@ -20,8 +23,6 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
   const [q, setQ] = useState('')
   const [remote, setRemote] = useState([])
   const [loading, setLoading] = useState(false)
-  const [cursor, setCursor] = useState(0)
-  const inputRef = useRef(null)
   const seq = useRef(0)
 
   // Ctrl/Cmd+K aç-kapa; yazı alanında yazarken bile çalışır (tarayıcı adres çubuğu odağını ezer).
@@ -37,14 +38,17 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
   }, [])
 
   useEffect(() => {
-    if (open) { setQ(''); setRemote([]); setCursor(0); setTimeout(() => inputRef.current?.focus(), 0) }
+    // Odak: shadcn Dialog açılışta ilk alana (arama kutusu) kendisi verir.
+    if (open) { setQ(''); setRemote([]) }
   }, [open])
 
   // Sunucu araması — 200 ms debounce, geç gelen yanıt atılır (seq).
+  // R12 (2026-09-25): kısa sorgu ve kapanış dalları da seq'i ARTIRIR — artırmıyordu, uçuştaki "ab"
+  // yanıtı kullanıcı "a"ya döndükten (ya da paleti kapatıp açtıktan) sonra listeyi dolduruyordu.
   useEffect(() => {
-    if (!open) return undefined
+    if (!open) { seq.current++; return undefined }
     const needle = q.trim()
-    if (needle.length < 2) { setRemote([]); setLoading(false); return undefined }
+    if (needle.length < 2) { seq.current++; setRemote([]); setLoading(false); return undefined }
     const my = ++seq.current
     setLoading(true)
     const h = setTimeout(async () => {
@@ -71,7 +75,6 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
   }, [q, tabs, t])
 
   const items = useMemo(() => [...tabHits, ...remote], [tabHits, remote])
-  useEffect(() => { setCursor(0) }, [items.length])
 
   const go = useCallback((it) => {
     setOpen(false)
@@ -81,13 +84,6 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
     navigateTo(it.tab, it.params)
   }, [onTabChange])
 
-  function onInputKey(e) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setCursor((c) => Math.min(items.length - 1, c + 1)) }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor((c) => Math.max(0, c - 1)) }
-    else if (e.key === 'Enter') { e.preventDefault(); go(items[cursor]) }
-  }
-
-  if (!open) return null
 
   const kindLabel = (k) => t(`palette.kind.${MONITOR_KINDS.includes(k) ? 'monitor' : k}`)
   const groups = []
@@ -97,61 +93,54 @@ export default function CommandPalette({ tabs = [], onTabChange }) {
     if (!grp) { grp = { key: g, items: [] }; groups.push(grp) }
     grp.items.push(it)
   }
-  let flat = -1
 
-  return createPortal(
-    <div className="palette-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label={t('palette.title')}>
-        <div className="palette-input-row">
-          <Search size={16} aria-hidden="true" />
-          <input ref={inputRef} className="palette-input" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onInputKey}
-            placeholder={t('palette.placeholder')} aria-label={t('palette.title')} aria-activedescendant={items[cursor] ? `pal-${cursor}` : undefined} />
-          {loading && <span className="palette-loading">{t('palette.searching')}</span>}
-          <button type="button" className="palette-close" onClick={() => setOpen(false)} aria-label={t('app.close')}><X size={14} /></button>
-        </div>
-        <div className="palette-body" role="listbox">
-          {items.length === 0 && (
-            <div className="palette-empty">{q.trim().length >= 2 && !loading ? t('palette.noResults') : t('palette.hint')}</div>
-          )}
-          {groups.map((g) => (
-            <div key={g.key} className="palette-group">
-              <div className="palette-group-title">{t(`palette.kind.${g.key}`)}</div>
-              {g.items.map((it) => {
-                flat += 1
-                const idx = flat
-                const Icon = KIND_ICON[it.kind] || Activity
-                return (
-                  <button type="button" key={`${it.kind}-${it.id}`} id={`pal-${idx}`} role="option" aria-selected={idx === cursor}
-                    className={`palette-item${idx === cursor ? ' is-active' : ''}`}
-                    onMouseEnter={() => setCursor(idx)} onClick={() => go(it)}>
-                    <Icon size={14} aria-hidden="true" />
-                    <span className="palette-item-main">
-                      <span className="palette-item-label">{it.label}{it.sub ? <span className="palette-item-sub"> {it.sub}</span> : null}</span>
-                      {/* 2026-09-20: takım / grup / etiket / tier — "hangi takımın?" sorusu sonuçta cevaplansın */}
-                      {(it.team_name || it.group_name || it.tags || it.tier) && (
-                        <span className="palette-item-meta">
-                          {it.team_name && <span className="palette-chip palette-chip--team"><UsersRound size={10} aria-hidden="true" /> {it.team_name}</span>}
-                          {it.group_name && <span className="palette-chip"><FolderOpen size={10} aria-hidden="true" /> {it.group_name}</span>}
-                          {it.tier && <span className="palette-chip">T{it.tier}</span>}
-                          {it.tags && String(it.tags).split(',').map(x => x.trim()).filter(Boolean).slice(0, 4).map(tag => (
-                            <span key={tag} className="palette-chip palette-chip--tag"><Tag size={10} aria-hidden="true" /> {tag}</span>
-                          ))}
-                        </span>
-                      )}
-                    </span>
-                    {it.kind !== 'tab' && <span className="palette-item-kind">{kindLabel(it.kind)}{MONITOR_KINDS.includes(it.kind) ? ` · ${it.kind}` : ''}</span>}
-                    {idx === cursor && <CornerDownLeft size={12} className="palette-enter" aria-hidden="true" />}
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-        </div>
-        <div className="palette-foot">
-          <kbd>↑↓</kbd> {t('palette.navigate')} · <kbd>Enter</kbd> {t('palette.open')} · <kbd>Esc</kbd> {t('palette.close')}
-        </div>
-      </div>
-    </div>,
-    document.body,
+  // shadcn Command (cmdk) + Dialog: ok tuşları, Enter ve etkin öğe vurgusu cmdk'den; süzmeyi BİZ yapıyoruz
+  // (istemcide sekmeler + sunucuda /api/search) → shouldFilter={false}.
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent showCloseButton={false} aria-describedby={undefined}
+        className="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <DialogTitle className="sr-only">{t('palette.title')}</DialogTitle>
+        <Command shouldFilter={false} loop className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground">
+          <div className="relative">
+            <CommandInput value={q} onValueChange={setQ} placeholder={t('palette.placeholder')} aria-label={t('palette.title')} className="h-11 pr-24" />
+            {loading && <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground">{t('palette.searching')}</span>}
+          </div>
+          <CommandList className="max-h-[min(60vh,420px)]">
+            <CommandEmpty>{q.trim().length >= 2 && !loading ? t('palette.noResults') : t('palette.hint')}</CommandEmpty>
+            {groups.map((g) => (
+              <CommandGroup key={g.key} heading={t(`palette.kind.${g.key}`)}>
+                {g.items.map((it) => {
+                  const Icon = KIND_ICON[it.kind] || Activity
+                  return (
+                    <CommandItem key={`${it.kind}-${it.id}`} value={`${it.kind}-${it.id}`} onSelect={() => go(it)} className="gap-2.5">
+                      <Icon aria-hidden="true" />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate">{it.label}{it.sub ? <span className="text-muted-foreground"> {it.sub}</span> : null}</span>
+                        {/* 2026-09-20: takım / grup / etiket / tier — "hangi takımın?" sorusu sonuçta cevaplansın */}
+                        {(it.team_name || it.group_name || it.tags || it.tier) && (
+                          <span className="mt-0.5 flex flex-wrap gap-1">
+                            {it.team_name && <Badge variant="secondary" className="h-4 gap-0.5 px-1.5 text-[10px]"><UsersRound aria-hidden="true" /> {it.team_name}</Badge>}
+                            {it.group_name && <Badge variant="outline" className="h-4 gap-0.5 px-1.5 text-[10px]"><FolderOpen aria-hidden="true" /> {it.group_name}</Badge>}
+                            {it.tier && <Badge variant="outline" className="h-4 px-1.5 text-[10px]">T{it.tier}</Badge>}
+                            {it.tags && String(it.tags).split(',').map(x => x.trim()).filter(Boolean).slice(0, 4).map(tag => (
+                              <Badge key={tag} variant="outline" className="h-4 gap-0.5 px-1.5 text-[10px]"><Tag aria-hidden="true" /> {tag}</Badge>
+                            ))}
+                          </span>
+                        )}
+                      </span>
+                      {it.kind !== 'tab' && <span className="shrink-0 text-xs text-muted-foreground">{kindLabel(it.kind)}{MONITOR_KINDS.includes(it.kind) ? ` · ${it.kind}` : ''}</span>}
+                    </CommandItem>
+                  )
+                })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+          <div className="flex items-center gap-1.5 border-t px-3 py-2 text-xs text-muted-foreground">
+            <Kbd>↑↓</Kbd> {t('palette.navigate')} · <Kbd>Enter</Kbd> {t('palette.open')} · <Kbd>Esc</Kbd> {t('palette.close')}
+          </div>
+        </Command>
+      </DialogContent>
+    </Dialog>
   )
 }

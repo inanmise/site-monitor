@@ -113,7 +113,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
             onDuplicate={onDuplicate}
             onDelete={onDelete} deleting={deleting} deleteTitle={t('dns.delete')}
             onClose={onClose} closeLabel={t('dns.close')} closeClassName="dns-modal-close">
-            <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+            <CopyLinkButton iconOnly variant="outline" />
           </MonitorModalActions>
         </div>
 

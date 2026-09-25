@@ -16,6 +16,7 @@ import { autoDurationMinutes } from '../utils/incidentMeta.js'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../utils/mailPreview.js'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -534,7 +535,7 @@ export default function IncidentHistoryPage() {
     } else toast.error(res?.error || t('inc.saveError'))
   }
 
-  const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#64748b', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
+  const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#71717a', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
   const bySev = trends?.by_severity || {}
   const byStatus = trends?.by_status || {}
@@ -544,13 +545,13 @@ export default function IncidentHistoryPage() {
       <div className="admin-section-header">
         <h3>{t('inc.title')}</h3>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
+          <Button variant="secondary" size="sm" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
             <RefreshCcw size={13} /> {t('inc.refresh')}
-          </button>
+          </Button>
           {allowManage && (
-            <button className="btn btn-primary btn-sm-p" onClick={() => setModal({ mode: 'create', form: { ...EMPTY } })}>
+            <Button size="sm" onClick={() => setModal({ mode: 'create', form: { ...EMPTY } })}>
               <Plus size={14} /> {t('inc.new')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -692,14 +693,14 @@ export default function IncidentHistoryPage() {
       {/* Toplu transfer çubuğu — seçim varken */}
       {allowManage && selected.size > 0 && (
         <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
-          background: '#f1f5f9', padding: '8px 12px', borderRadius: 6 }}>
+          background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
           <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inc.selectedN', selected.size)}</span>
           <select className="filter-select" value={transferTeam} onChange={e => setTransferTeam(e.target.value)}>
             <option value="">{t('inc.transferTo')}</option>
             {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
           </select>
-          <button className="btn btn-primary btn-sm-p" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</button>
-          <button className="btn btn-secondary btn-sm-p" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</button>
+          <Button size="sm" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</Button>
+          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</Button>
         </div>
       )}
 
@@ -724,7 +725,9 @@ export default function IncidentHistoryPage() {
                   onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}
                   onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setModal({ mode: 'view', form: { ...EMPTY, ...r } }) } }}>
                   {allowManage && <td onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} />
+                    {/* Ad satırı ayırır: toplu takım aktarımı onayı yalnız ADET söylüyor (2026-09-25, R5). */}
+                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)}
+                      aria-label={t('bulk.selectOneFor', r.title || r.id)} />
                   </td>}
                   <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
                   <td>{r.title}</td>
@@ -737,10 +740,11 @@ export default function IncidentHistoryPage() {
                   <td>{r.sla_breached ? <span style={{ color: '#dc2626', fontWeight: 700 }}>✓</span> : '—'}</td>
                   <td onClick={e => e.stopPropagation()}>
                     {allowManage && (
-                      <button className="btn-sm btn-show" title={t('inc.edit')}
+                      <Button variant="outline" size="sm" title={t('inc.edit')}
+                              aria-label={t('a11y.rowAction', r.title || r.id, t('inc.edit'))}
                               onClick={() => setModal({ mode: 'edit', form: { ...EMPTY, ...r } })}>
                         <Pencil size={13} />
-                      </button>
+                      </Button>
                     )}
                   </td>
                 </tr>
@@ -846,7 +850,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
       {/* Dış tıklamada KAPANMAZ — giriş kaybını önlemek için yalnız İptal/Kaydet ile kapanır */}
       <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}>
         <div className="modal-icon-hdr">
-          <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#0f172a,#334155)', color: '#fff' }}>
+          <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#09090b,#3f3f46)', color: '#fff' }}>
             <ListChecks size={20} />
           </div>
           <h3>{t(titleKey)}</h3>
@@ -905,15 +909,15 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
               {t('inc.sendMail')}
             </label>
           )}
-          {editing && <button className="btn btn-secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</button>}
-          {editing && <button className="btn btn-primary" onClick={save} disabled={saving}>{t('inc.save')}</button>}
+          {editing && <Button variant="secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</Button>}
+          {editing && <Button onClick={save} disabled={saving}>{t('inc.save')}</Button>}
           {modal.mode === 'view' && (
             <>
-              {allowManage && <button className="btn btn-secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</button>}
-              {allowDelete && <button className="btn btn-danger" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</button>}
+              {allowManage && <Button variant="secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</Button>}
+              {allowDelete && <Button variant="destructive" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</Button>}
             </>
           )}
-          <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</button>
+          <Button variant="secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</Button>
         </div>
       </div>
     </div>
@@ -926,7 +930,7 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
           <iframe title="mail-preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox={MAIL_PREVIEW_SANDBOX}
             style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
           <div className="modal-actions">
-            <button className="btn btn-secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</button>
+            <Button variant="secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</Button>
           </div>
         </div>
       </div>

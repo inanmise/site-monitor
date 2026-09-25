@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useT, useLanguage, useDateLocale } from '../../i18n/index.jsx'
 import { MONTHS, monthGrid } from '../../utils/isoWeek'
+import { Button } from '@/components/shadcn/button'
 
 const DOW = {
   tr: ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'],
@@ -25,6 +26,7 @@ export default function WeekDatePicker({
   const locale = useDateLocale()
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
+  const triggerRef = useRef(null)
 
   const today = new Date()
   const todayStr = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
@@ -48,6 +50,10 @@ export default function WeekDatePicker({
   const months = MONTHS[lang] ?? MONTHS.tr
   const dow = DOW[lang] ?? DOW.tr
 
+  // Tetik `onClick` dinler: yalnız `onMouseDown` dinlerken Enter/Space seçiciyi AÇMIYORDU — klavye
+  // kullanıcısı haftaya atlayamıyor, önceki/sonraki hafta düğmeleriyle tek tek yürüyordu
+  // (2026-09-25, R14; F8'in kardeşi). Dış tık kapatıcısı `mousedown` dinler ve tetiği kapsar
+  // (ref sarmalayıcıda), yani fare basışı kapatıp tık yeniden açmaz.
   function toggle(e) {
     e.preventDefault()
     setOpen((p) => {
@@ -73,9 +79,10 @@ export default function WeekDatePicker({
 
   return (
     <div className="ss-wrap" ref={ref} title={hint}>
-      <button type="button"
+      <button type="button" ref={triggerRef}
         className={`ss-trigger${open ? ' ss-open' : ''}${value ? '' : ' ss-placeholder'}`}
-        onMouseDown={toggle}
+        aria-expanded={open}
+        onClick={toggle}
         onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false) }}>
         <span className="ss-label" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <Calendar size={14} />
@@ -87,14 +94,19 @@ export default function WeekDatePicker({
       </button>
 
       {open && (
-        <div className="ss-dropdown wdp-pop">
+        // Escape açılır içinden de kapatır ve odağı tetiğe geri verir (odak içerideyken tetiğin
+        // kendi Escape dinleyicisi hiç tetiklenmiyordu).
+        <div className="ss-dropdown wdp-pop"
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); triggerRef.current?.focus() } }}>
           <div className="wdp-head">
-            <button type="button" className="wdp-nav" onClick={() => shiftMonth(-1)}>
-              <ChevronLeft size={16} />
+            <button type="button" className="wdp-nav" onClick={() => shiftMonth(-1)}
+              aria-label={t('cal.prev')} title={t('cal.prev')}>
+              <ChevronLeft size={16} aria-hidden="true" />
             </button>
-            <span className="wdp-title">{months[view.m]} {view.y}</span>
-            <button type="button" className="wdp-nav" onClick={() => shiftMonth(1)}>
-              <ChevronRight size={16} />
+            <span className="wdp-title" aria-live="polite">{months[view.m]} {view.y}</span>
+            <button type="button" className="wdp-nav" onClick={() => shiftMonth(1)}
+              aria-label={t('cal.next')} title={t('cal.next')}>
+              <ChevronRight size={16} aria-hidden="true" />
             </button>
           </div>
 
@@ -131,14 +143,14 @@ export default function WeekDatePicker({
             <span className="wdp-legend"><span className="wdp-dot" /> {t('wr.weekHasReport')}</span>
             <span style={{ flex: 1 }} />
             {value && (
-              <button type="button" className="btn-sm" onClick={() => { onChange(''); setOpen(false) }}>
+              <Button type="button" variant="outline" size="sm" onClick={() => { onChange(''); setOpen(false) }}>
                 {t('wr.clear')}
-              </button>
+              </Button>
             )}
-            <button type="button" className="btn-sm btn-edit" onClick={() => pick(new Date(Date.UTC(
+            <Button type="button" variant="secondary" size="sm" onClick={() => pick(new Date(Date.UTC(
               today.getFullYear(), today.getMonth(), today.getDate(), 12)))}>
               {t('wr.today')}
-            </button>
+            </Button>
           </div>
         </div>
       )}

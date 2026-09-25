@@ -18,11 +18,11 @@ describe('CertFilterRow', () => {
     fireEvent.change(screen.getByPlaceholderText(/Domain ara|Search domain/), { target: { value: 'juz' } })
     expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, domain: 'juz' })
     // Kalan gün → window
-    fireEvent.mouseDown(row.querySelector('[data-col="days"] .ss-trigger'))
+    fireEvent.mouseDown(row.querySelector('[data-col="days"] button[role="combobox"]'))
     fireEvent.mouseDown(screen.getByText(/≤ 90/))
     expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, window: '90' })
     // Güven → insecure boolean
-    fireEvent.mouseDown(row.querySelector('[data-col="trust"] .ss-trigger'))
+    fireEvent.mouseDown(row.querySelector('[data-col="trust"] button[role="combobox"]'))
     fireEvent.mouseDown(screen.getByText(/güvensiz|insecure/i))
     expect(onFilter).toHaveBeenLastCalledWith({ ...EMPTY_FILTERS, insecure: true })
   })
@@ -30,10 +30,10 @@ describe('CertFilterRow', () => {
   it('takım seçenekleri facet\'ten (sayı ile) + Takımsız; port seçenekleri sayfadaki satırlardan', () => {
     render(<table><thead><CertFilterRow filters={EMPTY_FILTERS} onFilter={() => {}} cols={['domain', 'team', 'port']} facets={facets} showSelect={false} pageRows={[{ port: 443 }, { port: 8443 }]} /></thead></table>)
     const row = screen.getByTestId('ct-filter-row')
-    fireEvent.mouseDown(row.querySelector('[data-col="team"] .ss-trigger'))
+    fireEvent.mouseDown(row.querySelector('[data-col="team"] button[role="combobox"]'))
     expect(screen.getByText('Takım A (3)')).toBeInTheDocument()
     expect(screen.getByText(/Takımsız \(1\)|No team \(1\)/)).toBeInTheDocument()
-    fireEvent.mouseDown(row.querySelector('[data-col="port"] .ss-trigger'))
+    fireEvent.mouseDown(row.querySelector('[data-col="port"] button[role="combobox"]'))
     expect(screen.getByText('8443')).toBeInTheDocument()
   })
 })

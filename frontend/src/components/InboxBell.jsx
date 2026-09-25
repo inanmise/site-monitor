@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Bell, CheckCheck, X, Siren, CheckCircle2, Wrench, CalendarDays, ClipboardX, Activity, Trash2, History, ChevronLeft, ChevronRight, UsersRound } from 'lucide-react'
+import { Bell, CheckCheck, Siren, CheckCircle2, Wrench, CalendarDays, ClipboardX, Activity, Trash2, History, ChevronLeft, ChevronRight, UsersRound } from 'lucide-react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { SidebarMenuBadge, SidebarMenuButton } from '@/components/shadcn/sidebar'
+import { cn } from '@/lib/utils'
 
 /**
  * Bildirim kutusu (2026-09-12, zenginleştirme #2; v2 2026-09-20): Nav'daki zil — açık alarm, son 24 saatte çözülen,
@@ -35,7 +41,7 @@ export function fmtDuration(ms, t) {
   return t('inbox.durDay', Math.floor(h / 24), h % 24)
 }
 
-export default function InboxBell({ username, compact = false }) {
+export default function InboxBell({ username }) {
   const t = useT()
   const [items, setItems] = useState([])
   const [open, setOpen] = useState(false)
@@ -55,13 +61,6 @@ export default function InboxBell({ username, compact = false }) {
   }, [])
   useVisibleInterval(load, 60_000, true)
   useVisibleInterval(() => setTick(x => x + 1), open ? 60_000 : 0)
-
-  useEffect(() => {
-    if (!open) return undefined
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open])
 
   // Geçmiş sekmesi: açılınca / sayfa değişince yüklenir.
   useEffect(() => {
@@ -118,33 +117,56 @@ export default function InboxBell({ username, compact = false }) {
     return parts.join(' · ')
   }
 
+  // Uyarı seviyesi rozeti: shadcn Badge + seviye tonu (açık/koyu temada okunur)
+  const LEVEL_TONE = {
+    critical: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+    high: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
+    warning: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300',
+  }
+  const KIND_TONE = {
+    alert_open: 'text-destructive', alert_resolved: 'text-success', maintenance_active: 'text-amber-600',
+    maintenance_soon: 'text-amber-600', weekly_due: 'text-primary', exception_expired: 'text-amber-600',
+  }
+
   function renderItem(it, { selectable }) {
     const Icon = KIND_ICON[it.kind] || Bell
     const isNew = !seen.has(it.key)
     const isDismissed = dismissed.has(it.key)
     const sel = selected.has(it.key)
+    const lvl = String(it.level || '').toLowerCase()
     return (
-      <div key={it.key} className={`inbox-row inbox-item--${it.kind}${isNew && !isDismissed ? ' is-new' : ''}${isDismissed ? ' is-dismissed' : ''}${sel ? ' is-selected' : ''}`}>
+      // data-inbox-row / data-dismissed: test ve tur kancası (görünüm Tailwind'den)
+      <div key={it.key} data-inbox-row={it.kind} data-dismissed={isDismissed || undefined}
+           className={cn('flex items-center gap-1.5', isDismissed && 'opacity-55')}>
         {selectable && (
-          <input type="checkbox" className="inbox-check" checked={sel} onChange={() => toggleSel(it.key)} aria-label={t('inbox.select', it.title)} />
+          <Checkbox className="ml-1.5 shrink-0" checked={sel} onCheckedChange={() => toggleSel(it.key)} aria-label={t('inbox.select', it.title)} />
         )}
-        <button type="button" className="inbox-item" onClick={() => go(it, 'alert')} title={t('inbox.goAlert')}>
-          <Icon size={15} aria-hidden="true" />
-          <span className="inbox-item-main">
-            <span className="inbox-item-title">{t(`inbox.kind.${it.kind}`)} · <b>{it.title}</b></span>
-            <span className="inbox-item-meta">
-              {it.team_name && <span className="inbox-team"><UsersRound size={11} aria-hidden="true" /> {it.team_name}</span>}
-              {it.sub && <span className="inbox-item-sub">{it.sub}</span>}
-              {it.monitor_name && it.monitor_name !== it.title && <span className="inbox-item-sub">{it.monitor_name}</span>}
+        <Button type="button" variant="ghost" onClick={() => go(it, 'alert')} title={t('inbox.goAlert')}
+          className={cn('h-auto min-w-0 flex-1 justify-start gap-2.5 px-2.5 py-2 text-left font-normal whitespace-normal',
+            isNew && !isDismissed && 'bg-primary/8', sel && 'bg-primary/12')}>
+          <Icon aria-hidden="true" className={cn('size-4 shrink-0', KIND_TONE[it.kind])} />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className={cn('truncate text-sm', isNew && !isDismissed && 'font-semibold')}>{t(`inbox.kind.${it.kind}`)} · <b>{it.title}</b></span>
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              {it.team_name && (
+                <Badge variant="outline" className="h-4 gap-0.5 px-1.5 text-[10px]"><UsersRound aria-hidden="true" /> {it.team_name}</Badge>
+              )}
+              {it.sub && <span className="truncate text-xs text-muted-foreground">{it.sub}</span>}
+              {it.monitor_name && it.monitor_name !== it.title && <span className="truncate text-xs text-muted-foreground">{it.monitor_name}</span>}
             </span>
-            <span className="inbox-item-time">{timeline(it)}</span>
+            <span className="truncate text-[11px] text-muted-foreground">{timeline(it)}</span>
           </span>
-          {it.level && it.kind === 'alert_open' && <span className={`inbox-level inbox-level--${String(it.level).toLowerCase()}`}>{it.level}</span>}
-        </button>
+          {it.level && it.kind === 'alert_open' && (
+            <Badge variant="secondary" className={cn('shrink-0 text-[10px] font-bold', LEVEL_TONE[lvl])}>{it.level}</Badge>
+          )}
+        </Button>
         {it.monitor_tab && (
-          <button type="button" className="inbox-go-monitor" onClick={() => go(it, 'monitor')} title={t('inbox.goMonitor')} aria-label={t('inbox.goMonitor')}>
-            <Activity size={14} aria-hidden="true" />
-          </button>
+          <Button type="button" variant="outline" size="icon-sm" className="shrink-0" onClick={() => go(it, 'monitor')}
+            // Ad öğeyi ayırır: her satırda aynı "İzlemeye git" duyuluyordu — ActivityLog'daki F4
+            // düzeltmesinin birebir kardeşi (2026-09-25, R15). İpucu kısa kalır.
+            title={t('inbox.goMonitor')} aria-label={t('act.goMonitorFor', it.monitor_name || it.title || '')}>
+            <Activity aria-hidden="true" />
+          </Button>
         )}
       </div>
     )
@@ -155,80 +177,77 @@ export default function InboxBell({ username, compact = false }) {
 
   return (
     <>
-      <button ref={btnRef} type="button" className={`sb-bell${compact ? ' sb-bell--mini' : ''}`} onClick={() => setOpen((o) => !o)}
-        aria-label={t('inbox.title')} aria-expanded={open} title={unread ? t('inbox.unread', unread) : t('inbox.title')}>
-        <Bell size={15} aria-hidden="true" />
-        {!compact && <span className="sb-bell-text">{t('inbox.title')}</span>}
-        {unread > 0 && <span className="sb-bell-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span>}
-      </button>
-      {open && createPortal(
-        <div className="inbox-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}>
-          <div className="inbox inbox--v2" role="dialog" aria-modal="true" aria-label={t('inbox.title')}>
-            <div className="inbox-head">
-              <Bell size={16} aria-hidden="true" />
-              <span className="inbox-title">{t('inbox.title')}</span>
-              <span className="inbox-count">{unread > 0 ? t('inbox.unread', unread) : t('inbox.allRead')}</span>
-              {view === 'current' && (
-                <>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={markAll} disabled={!unread}><CheckCheck size={13} /> {t('inbox.markAll')}</button>
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={clearAll} disabled={visible.length === 0} title={t('inbox.clearAllTip')}><Trash2 size={13} /> {t('inbox.clearAll')}</button>
-                </>
-              )}
-              <button type="button" className="inbox-close" onClick={() => setOpen(false)} aria-label={t('app.close')}><X size={14} /></button>
-            </div>
-            <div className="inbox-tabs" role="tablist">
-              <button type="button" role="tab" aria-selected={view === 'current'} className={`inbox-tab${view === 'current' ? ' is-active' : ''}`} onClick={() => setView('current')}>
-                <Bell size={13} /> {t('inbox.tabCurrent')}{visible.length > 0 ? ` (${visible.length})` : ''}
-              </button>
-              <button type="button" role="tab" aria-selected={view === 'history'} className={`inbox-tab${view === 'history' ? ' is-active' : ''}`} onClick={() => setView('history')}>
-                <History size={13} /> {t('inbox.tabHistory')}
-              </button>
-            </div>
+      {/* Tetik: shadcn SidebarMenuButton (daraltılmış kenar çubuğunda ipucu), okunmamış sayısı SidebarMenuBadge */}
+      <SidebarMenuButton ref={btnRef} variant="outline" className="text-muted-foreground" onClick={() => setOpen((o) => !o)}
+        aria-label={t('inbox.title')} aria-expanded={open} tooltip={unread ? t('inbox.unread', unread) : t('inbox.title')}>
+        <Bell aria-hidden="true" />
+        <span>{t('inbox.title')}</span>
+      </SidebarMenuButton>
+      {unread > 0 && (
+        <SidebarMenuBadge aria-hidden="true" className="rounded-full bg-destructive text-white peer-hover/menu-button:text-white">
+          {unread > 99 ? '99+' : unread}
+        </SidebarMenuBadge>
+      )}
+      {/* Panel: shadcn Sheet (soldan; Escape / dış tıklama / odak tuzağı bileşenden) */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="left" className="w-full gap-0 p-0 sm:max-w-xl">
+          <SheetHeader className="gap-1 border-b px-4 py-3 pr-12">
+            <SheetTitle className="flex items-center gap-2"><Bell className="size-4" aria-hidden="true" /> {t('inbox.title')}</SheetTitle>
+            <SheetDescription>{unread > 0 ? t('inbox.unread', unread) : t('inbox.allRead')}</SheetDescription>
+            {view === 'current' && (
+              <div className="mt-1 flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" size="sm" onClick={markAll} disabled={!unread}><CheckCheck /> {t('inbox.markAll')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={clearAll} disabled={visible.length === 0} title={t('inbox.clearAllTip')}><Trash2 /> {t('inbox.clearAll')}</Button>
+              </div>
+            )}
+          </SheetHeader>
+          <Tabs value={view} onValueChange={setView} className="min-h-0 flex-1 gap-0">
+            <TabsList className="mx-3 mt-2">
+              <TabsTrigger value="current"><Bell /> {t('inbox.tabCurrent')}{visible.length > 0 ? ` (${visible.length})` : ''}</TabsTrigger>
+              <TabsTrigger value="history"><History /> {t('inbox.tabHistory')}</TabsTrigger>
+            </TabsList>
 
             {view === 'current' && selected.size > 0 && (
-              <div className="inbox-selbar" data-testid="inbox-selbar">
-                <span>{t('inbox.selected', selected.size)}</span>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={markSelected}><CheckCheck size={13} /> {t('inbox.markSelected')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => dismissKeys([...selected])}><Trash2 size={13} /> {t('inbox.clearSelected')}</button>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSelected(new Set())}>{t('inbox.cancelSelect')}</button>
+              <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-md bg-primary/8 px-2.5 py-1.5 text-xs" data-testid="inbox-selbar">
+                <span className="font-medium">{t('inbox.selected', selected.size)}</span>
+                <Button type="button" variant="secondary" size="sm" onClick={markSelected}><CheckCheck /> {t('inbox.markSelected')}</Button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => dismissKeys([...selected])}><Trash2 /> {t('inbox.clearSelected')}</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setSelected(new Set())}>{t('inbox.cancelSelect')}</Button>
               </div>
             )}
 
-            <div className="inbox-body">
-              {view === 'current' && (
-                <>
-                  {visible.length === 0 && <div className="inbox-empty">{dismissedCount > 0 ? t('inbox.emptyCleared', dismissedCount) : t('inbox.empty')}</div>}
-                  {visible.map((it) => renderItem(it, { selectable: true }))}
-                </>
+            <TabsContent value="current" className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1.5">
+              {visible.length === 0 && (
+                <p className="px-3 py-6 text-center text-sm text-muted-foreground">{dismissedCount > 0 ? t('inbox.emptyCleared', dismissedCount) : t('inbox.empty')}</p>
               )}
-              {view === 'history' && (
-                <>
-                  {histLoading && histItems.length === 0 && <div className="inbox-empty">{t('inbox.loading')}</div>}
-                  {!histLoading && histItems.length === 0 && <div className="inbox-empty">{t('inbox.historyEmpty')}</div>}
-                  {histItems.map((it) => renderItem(it, { selectable: false }))}
-                </>
-              )}
-            </div>
+              {visible.map((it) => renderItem(it, { selectable: true }))}
+            </TabsContent>
+            <TabsContent value="history" className="flex min-h-0 flex-col gap-0.5 overflow-y-auto p-1.5">
+              {histLoading && histItems.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{t('inbox.loading')}</p>}
+              {!histLoading && histItems.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{t('inbox.historyEmpty')}</p>}
+              {histItems.map((it) => renderItem(it, { selectable: false }))}
+            </TabsContent>
+          </Tabs>
 
-            <div className="inbox-foot">
+          {((view === 'current' && dismissedCount > 0) || (view === 'history' && hist) || view === 'history') && (
+            <div className="flex flex-wrap items-center gap-2.5 border-t px-4 py-2 text-xs text-muted-foreground">
               {view === 'current' && dismissedCount > 0 && (
-                <button type="button" className="inbox-link" onClick={() => setShowDismissed((v) => !v)}>
+                <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setShowDismissed((v) => !v)}>
                   {showDismissed ? t('inbox.hideCleared') : t('inbox.showCleared', dismissedCount)}
-                </button>
+                </Button>
               )}
               {view === 'history' && hist && (
-                <span className="inbox-pager">
-                  <button type="button" className="btn btn-sm btn-secondary" disabled={histPage <= 0} onClick={() => setHistPage((p) => p - 1)} aria-label={t('app.prevPage')}><ChevronLeft size={13} /></button>
+                <span className="inline-flex items-center gap-2">
+                  <Button type="button" variant="outline" size="icon-sm" disabled={histPage <= 0} onClick={() => setHistPage((p) => p - 1)} aria-label={t('app.prevPage')}><ChevronLeft /></Button>
                   <span>{t('inbox.pageInfo', histPage + 1, histPages, hist.total ?? 0)}</span>
-                  <button type="button" className="btn btn-sm btn-secondary" disabled={histPage + 1 >= histPages} onClick={() => setHistPage((p) => p + 1)} aria-label={t('app.nextPage')}><ChevronRight size={13} /></button>
+                  <Button type="button" variant="outline" size="icon-sm" disabled={histPage + 1 >= histPages} onClick={() => setHistPage((p) => p + 1)} aria-label={t('app.nextPage')}><ChevronRight /></Button>
                 </span>
               )}
-              {view === 'history' && <span className="inbox-foot-note">{t('inbox.historyNote')}</span>}
+              {view === 'history' && <span className="ml-auto">{t('inbox.historyNote')}</span>}
             </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+          )}
+        </SheetContent>
+      </Sheet>
     </>
   )
 }

@@ -76,7 +76,8 @@ describe('UserManager — zenginleştirme', () => {
   it('toplu işlem: vazgeçilirse istek yok; tek satır seçimi', async () => {
     render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
     await screen.findByText('Ali')
-    fireEvent.click(screen.getByLabelText('veli'))
+    // Ad satırı ayırır VE i18n'den gelir ("veli — toplu işlem için seç" / "Select veli for bulk action")
+    fireEvent.click(screen.getByRole('checkbox', { name: /^veli — toplu işlem için seç$|^Select veli for bulk action$/ }))
     const bar = await screen.findByTestId('bulk-bar')
     expect(bar).toHaveTextContent(/1 seçili|1 selected/)
     confirmMock.mockResolvedValueOnce(false)

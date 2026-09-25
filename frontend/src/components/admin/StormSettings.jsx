@@ -5,6 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Alert Settings" — Alarm fırtınası (alert storm) yapılandırması. Master toggle + eşik (sayı + birim)
@@ -164,9 +165,9 @@ export default function StormSettings() {
 
       {/* Save */}
       <div className="admin-section">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />} {t('storm.save')}
-        </button>
+        </Button>
       </div>
     </div>
   )

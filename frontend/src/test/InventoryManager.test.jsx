@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * ENVANTER YÖNETİMİ — uygulamanın GERİ ALINAMAZ eylemlerini barındıran ekran; buraya kadar kendi
@@ -68,7 +69,7 @@ const renderIm = (role = 'ADMIN') =>
 /** Domain adına göre o satırın kebab menüsünü açar. */
 async function openRowMenu(domain) {
   const row = (await screen.findByText(domain)).closest('tr')
-  fireEvent.click(within(row).getByRole('button', { name: /işlem|actions/i }))
+  pressMenuTrigger(within(row).getByRole('button', { name: /işlem|actions/i }))
 }
 
 // Satır SEÇİM kutuları (ilk hücre) — aktif/pasif anahtarı da checkbox (2026-09-12, satır-içi düzenleme), o sayılmaz
@@ -296,15 +297,63 @@ describe('InventoryManager — USER satır düzenleme kapısı', () => {
     expect(container.querySelector('thead input[type=checkbox]')).toBeNull()
 
     const own = screen.getByText('kendi.example.com').closest('tr')
-    fireEvent.click(own.querySelector('.kebab-trigger'))
-    let items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    pressMenuTrigger(within(own).getByRole('button', { name: /işlem|actions/i }))
+    let items = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     expect(items).toEqual(expect.arrayContaining([expect.stringMatching(/^(Düzenle|Edit)$/), expect.stringMatching(/Kopyala|Duplicate/i)]))
     expect(items.some((x) => /^(Sil|Delete)$/.test(x))).toBe(false)
     fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 
     const other = screen.getByText('baska.example.com').closest('tr')
-    fireEvent.click(other.querySelector('.kebab-trigger'))
-    items = [...document.querySelectorAll('.wr-menu-pop button')].map((b) => b.textContent.trim())
+    pressMenuTrigger(within(other).getByRole('button', { name: /işlem|actions/i }))
+    items = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     expect(items.some((x) => /^(Düzenle|Edit)$/.test(x))).toBe(false)
+  })
+
+  // 2026-09-25 kullanıcı bildirimi: USER "Domain Ekle"yi açabiliyordu ama form seçicileri (takım/grup/etiket)
+  // yalnız yöneticiye açıktı → takım seçilemediği için kayıt HİÇ açılamıyordu. Form artık ekleme yetkisiyle açılır.
+  it('USER: "Domain Ekle" formunda takım (tek takımı önseçili) ve grup seçicileri AÇIK', async () => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: [] })
+    render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} /></LangProvider>)
+    fireEvent.click(await screen.findByRole('button', { name: /Domain Ekle|Add Domain/i }))
+    const team = await screen.findByRole('combobox', { name: /Takım|Team/ })
+    expect(team).toBeEnabled()
+    await waitFor(() => expect(team).toHaveTextContent('SY-A'))
+    expect(screen.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
+  })
+})
+
+// ── R4 (2026-09-25): düzenleme formunda takım kutusu sunucu kuralına eşit — updateInventory takımı yalnız
+//    rol ADMIN'de yazar, TEAM_ADMIN'de mevcut takıma sabitler ("Kaydedildi" deyip bildirim grubunu düşürüyordu). ──
+describe('InventoryManager — düzenlemede takım aktarımı (R4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: ITEMS })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }, { id: 9, name: 'SY-B' }] })
+  })
+
+  /** Satırın Düzenle eylemiyle formu açar; sorgular FORMA kapsanır (listenin takım süzgeci de bir combobox). */
+  async function openEditForm(role) {
+    renderIm(role)
+    await openRowMenu('aktif-bir.example.com')
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^(Düzenle|Edit)$/ }))
+    const form = await waitFor(() => {
+      const el = document.querySelector('.modal-wide')
+      if (!el) throw new Error('form henüz açılmadı')
+      return el
+    })
+    return within(form)
+  }
+
+  it('ADMIN: düzenleme formunda takım kutusu AÇIK', async () => {
+    const form = await openEditForm('ADMIN')
+    expect(form.getByRole('combobox', { name: /Takım|Team/ })).toBeEnabled()
+  })
+
+  it('TEAM_ADMIN: düzenleme formunda takım kutusu KİLİTLİ, grup seçicisi açık', async () => {
+    const form = await openEditForm('TEAM_ADMIN')
+    expect(form.getByRole('combobox', { name: /Takım|Team/ })).toBeDisabled()
+    expect(form.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
   })
 })

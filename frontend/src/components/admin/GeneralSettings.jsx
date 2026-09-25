@@ -6,6 +6,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -25,7 +26,8 @@ export default function GeneralSettings({ focusKey = null }) {
     if (!el) return
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     el.classList.add('is-focus-target')
-    el.querySelector('input, select, textarea, .ss-trigger')?.focus?.({ preventScroll: true })
+    // SearchableSelect tetiği shadcn Button (role="combobox") — eski `.ss-trigger` sınıfı artık yok.
+    el.querySelector('input, select, textarea, button[role="combobox"]')?.focus?.({ preventScroll: true })
     const id = setTimeout(() => el.classList.remove('is-focus-target'), 2000)
     return () => clearTimeout(id)
   }, [focusKey, items])
@@ -190,9 +192,9 @@ export default function GeneralSettings({ focusKey = null }) {
       ))}
 
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? t('settings.saving') : t('settings.save')}
-        </button>
+        </Button>
       </div>
     </div>
   )

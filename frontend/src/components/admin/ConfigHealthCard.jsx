@@ -5,6 +5,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { Spinner } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Yapılandırma sağlığı kartı (2026-09-12, zenginleştirme #25): Ayarlar 12 sekmeye dağılmış — "kırmızı
@@ -79,14 +80,14 @@ export default function ConfigHealthCard({ onOpenSection }) {
                 <CI size={14} aria-hidden="true" />
                 <span className="cfg-row-name">{t(`cfg.check.${c.key}`)}</span>
                 <span className="cfg-row-detail">{detailText(c)}</span>
-                <button type="button" className="btn btn-sm btn-secondary cfg-row-go" onClick={() => go(c)}>
+                <Button type="button" variant="secondary" size="sm" className="cfg-row-go" onClick={() => go(c)}>
                   {t('cfg.go')} <ArrowRight size={12} aria-hidden="true" />
-                </button>
+                </Button>
               </li>
             )
           })}
           <li className="cfg-row cfg-row--foot">
-            <button type="button" className="btn btn-sm btn-secondary" onClick={load}><RefreshCw size={12} /> {t('cfg.refresh')}</button>
+            <Button type="button" variant="secondary" size="sm" onClick={load}><RefreshCw size={12} /> {t('cfg.refresh')}</Button>
           </li>
         </ul>
       )}

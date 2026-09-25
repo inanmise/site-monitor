@@ -18,7 +18,7 @@
 
 .guide-intro {
   margin: 0;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #71717a);
   font-size: .92rem;
   line-height: 1.5;
   max-width: 720px;
@@ -27,8 +27,8 @@
 .guide-empty {
   padding: 32px 16px;
   text-align: center;
-  color: var(--text-muted, #64748b);
-  border: 1px dashed var(--border, #cbd5e1);
+  color: var(--text-muted, #71717a);
+  border: 1px dashed var(--border, #d4d4d8);
   border-radius: 8px;
   background: var(--bg-surface);
 }
@@ -42,9 +42,9 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .04em;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #71717a);
   margin: 0 0 8px 2px;
-  border-bottom: 1px solid var(--border, #e2e8f0);
+  border-bottom: 1px solid var(--border, #e4e4e7);
   padding-bottom: 6px;
 }
 
@@ -62,7 +62,7 @@
   align-items: flex-start;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--border, #e2e8f0);
+  border: 1px solid var(--border, #e4e4e7);
   border-radius: 6px;
   background: var(--bg-card);
   transition: background .15s, border-color .15s;
@@ -97,7 +97,7 @@
   margin-top: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: .78rem;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #71717a);
   text-decoration: none;
   word-break: break-all;
 }
@@ -110,7 +110,7 @@
 .guide-desc {
   margin: 4px 0 0;
   font-size: .85rem;
-  color: var(--text-muted, #64748b);
+  color: var(--text-muted, #71717a);
   line-height: 1.45;
 }
 

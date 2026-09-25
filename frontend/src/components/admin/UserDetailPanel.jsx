@@ -7,6 +7,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Kullanıcı detay kartı (2026-09-20): "bu kişi ne görür, ne alır, son ne yaptı" tek ekranda.
@@ -63,8 +64,8 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, on
 
   const footer = (
     <>
-      <button className="btn btn-secondary" onClick={onClose}>{t('team.close')}</button>
-      {onEdit && <button className="btn btn-primary" onClick={onEdit}>{t('usr.edit')}</button>}
+      <Button variant="secondary" onClick={onClose}>{t('team.close')}</Button>
+      {onEdit && <Button onClick={onEdit}>{t('usr.edit')}</Button>}
     </>
   )
   const label = (k) => { const s = t(`perm.res.${k}`); return s === `perm.res.${k}` ? k : s }

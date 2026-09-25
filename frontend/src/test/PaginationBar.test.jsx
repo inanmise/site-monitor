@@ -26,6 +26,18 @@ describe('PaginationBar', () => {
     expect(screen.getByText('201–250 of 2,084 records')).toBeInTheDocument()   // en-GB toLocaleString
   })
 
+  it('gezinme i18n adlı bir <nav>; sayfa öğeleri BAĞLANTI değil düğme (SPA: sayfa değişimi gezinme yapmaz)', () => {
+    render(<PaginationBar {...base} />)
+    const nav = screen.getByRole('navigation', { name: 'Pagination' })
+    expect(nav).toBeInTheDocument()
+    expect(screen.queryAllByRole('link')).toHaveLength(0)
+    expect(nav.querySelector('a[href]')).toBeNull()
+    // Sayfa boyutu grubu görünür etiketiyle adlandırılır; etkin boyut basılı
+    const sizer = screen.getByRole('group', { name: 'Per page' })
+    expect(sizer).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '50' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('sayfa 1de İlk/Önceki disabled; son sayfada Sonraki/Son disabled', () => {
     const { unmount } = render(<PaginationBar {...base} page={1} />)
     expect(screen.getByRole('button', { name: 'First page' })).toBeDisabled()
@@ -48,6 +60,10 @@ describe('PaginationBar', () => {
     expect(onPage).toHaveBeenLastCalledWith(6)
     fireEvent.click(screen.getByRole('button', { name: '100' }))
     expect(onSize).toHaveBeenCalledWith(100)
+    // Etkin boyuta yeniden basmak seçimi boşaltmaz ve çağrı üretmez
+    onSize.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '50' }))
+    expect(onSize).not.toHaveBeenCalled()
   })
 
   it('Git girişi: 5 sayfada görünmez, 11de görünür; Enter → clamp; geçersiz → çağrı yok', () => {
@@ -71,7 +87,7 @@ describe('PaginationBar', () => {
 
   it('totalItems=0 → bar render edilmez; totalPages=1 → nav yok, sizer + kayıt bilgisi var', () => {
     const { container, unmount } = render(<PaginationBar {...base} totalItems={0} />)
-    expect(container.querySelector('.pgn-bar')).toBeNull()
+    expect(container).toBeEmptyDOMElement()
     unmount()
     render(<PaginationBar {...base} totalPages={1} page={1} totalItems={30} rangeStart={1} rangeEnd={30} />)
     expect(screen.queryByRole('button', { name: 'Previous' })).toBeNull()
@@ -80,10 +96,10 @@ describe('PaginationBar', () => {
   })
 
   it('compact varyant: numara butonları yerine x/y göstergesi + temel kontroller', () => {
-    const { container } = render(<PaginationBar {...base} compact />)
-    expect(container.querySelector('.pgn-bar--compact')).not.toBeNull()
+    render(<PaginationBar {...base} compact />)
     expect(screen.queryByRole('button', { name: 'Page 4' })).toBeNull()
     expect(screen.getByText('5 / 42')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument()
+    // Küçük varyant uygulandı: gezinme düğmeleri shadcn'in en küçük ikon boyutunda
+    expect(screen.getByRole('button', { name: 'Previous' })).toHaveAttribute('data-size', 'icon-xs')
   })
 })

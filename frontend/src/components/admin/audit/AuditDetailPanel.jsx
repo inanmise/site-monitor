@@ -98,7 +98,7 @@ export default function AuditDetailPanel({ row, scope = 'admin', onClose, onOpen
         <dt>{t('audit.colIp')}</dt>
         <dd className="audit-mono">
           {row.ip_address || '—'}
-          {row.ip_address && <CopyButton value={row.ip_address} className="btn btn-sm aud-copy" size={12} />}
+          {row.ip_address && <CopyButton value={row.ip_address} buttonSize="icon-xs" className="aud-copy" size={12} />}
           {row.ip_reverse_host && <div className="audit-sub">{row.ip_reverse_host}</div>}
           {(row.ip_country || row.ip_city) && (
             <div className="audit-sub">{[row.ip_country, row.ip_city].filter(Boolean).join(', ')}</div>
@@ -135,7 +135,7 @@ export default function AuditDetailPanel({ row, scope = 'admin', onClose, onOpen
             <dt>{t('audit.correlationId')}</dt>
             <dd className="audit-mono">
               {row.correlation_id}
-              <CopyButton value={row.correlation_id} className="btn btn-sm aud-copy" size={12} />
+              <CopyButton value={row.correlation_id} buttonSize="icon-xs" className="aud-copy" size={12} />
             </dd>
           </>
         )}
@@ -212,7 +212,7 @@ export default function AuditDetailPanel({ row, scope = 'admin', onClose, onOpen
       </button>
       {showRaw && (
         <div className="aud-raw">
-          <CopyButton value={JSON.stringify(row, null, 2)} className="btn btn-sm aud-raw-copy" size={12} />
+          <CopyButton value={JSON.stringify(row, null, 2)} buttonSize="icon-xs" className="aud-raw-copy" size={12} />
           <pre>{JSON.stringify(row, null, 2)}</pre>
         </div>
       )}

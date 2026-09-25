@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { render, screen, fireEvent, within } from './test-utils.jsx'
+import { withSidebar } from './helpers/sidebar.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import Nav from '../components/Nav.jsx'
+
+// shadcn Sidebar (feature/shadcn-ui): Nav artık SidebarProvider bağlamında çizilir (App.jsx sarar);
+// kullanıcı menüsü shadcn DropdownMenu (Radix: tetik pointerdown ile açılır, öğeler menuitem).
 
 const DEFAULT_PROPS = {
   activeTab: 'dashboard',
@@ -10,10 +15,11 @@ const DEFAULT_PROPS = {
 }
 
 describe('Nav — sürüm çipi (2026-09-11)', () => {
-  it('sürüm bir DÜĞME olarak çizilir (popover tetikleyici), iki marka dalında da aynı sınıf', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} />)
-    const chip = container.querySelector('button.sb-brand-version')
+  it('sürüm bir DÜĞME olarak çizilir (popover tetikleyici)', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    const chip = container.querySelector('[data-slot="popover-trigger"]')
     expect(chip).not.toBeNull()
+    expect(chip.tagName).toBe('BUTTON')
     expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
     expect(chip.getAttribute('aria-expanded')).toBe('false')
   })
@@ -21,7 +27,7 @@ describe('Nav — sürüm çipi (2026-09-11)', () => {
 
 describe('Nav', () => {
   it('renders all 6 tabs', () => {
-    render(<Nav {...DEFAULT_PROPS} />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
     expect(screen.getByText('Warnings')).toBeInTheDocument()
     expect(screen.getByText('All Certificates')).toBeInTheDocument()
@@ -39,46 +45,53 @@ describe('Nav', () => {
    * bu test kirilir.
    */
   it('shows Monitor Changes to a plain team user (no admin props)', () => {
-    render(<Nav {...DEFAULT_PROPS} />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     expect(screen.getByText('Monitor Changes')).toBeInTheDocument()
   })
 
-  /** Denetim Logu AYNI kapida DEGIL: sistem-geneli guvenlik kaydi, admin/AUDIT'te kalir. */
-  it('still hides the system audit log from a plain team user', () => {
-    render(<Nav {...DEFAULT_PROPS} />)
-    expect(screen.queryByText('Audit Log')).toBeNull()
+  /**
+   * Kullanici karari (2026-09-25): Denetim Logu da herkese acik — ekip uyeleri takim arkadaslarinin
+   * kayitlarini TAM ayrintiyla gorur (kapsami uc belirler). Eski "plain team user'dan gizli" iddiasi
+   * bilincli olarak TERS cevrildi; kapi geri kapatilirsa bu test kirilir.
+   */
+  it('shows the Audit Log to a plain team user (team-scoped on the server)', () => {
+    render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    expect(screen.getByText('Audit Log')).toBeInTheDocument()
   })
 
-  it('marks the active tab with the sb-active class', () => {
-    render(<Nav {...DEFAULT_PROPS} activeTab="warnings" />)
+  it('marks the active tab (shadcn SidebarMenuButton data-active)', () => {
+    render(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="warnings" />))
     const warningsBtn = screen.getByRole('button', { name: /Warnings/ })
-    expect(warningsBtn).toHaveClass('sb-active')
+    expect(warningsBtn).toHaveAttribute('data-active', 'true')
     const dashboardBtn = screen.getByRole('button', { name: /Dashboard/ })
-    expect(dashboardBtn).not.toHaveClass('sb-active')
+    expect(dashboardBtn).toHaveAttribute('data-active', 'false')
   })
 
   it('calls onTabChange with tab id when a tab is clicked', () => {
     const onTabChange = vi.fn()
-    render(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />))
     fireEvent.click(screen.getByRole('button', { name: /Dashboard/ }))
     expect(onTabChange).toHaveBeenCalledWith('dashboard')
   })
 
-  it('calls onTabChange with "admin" when Admin Panel is clicked', () => {
+  it('calls onTabChange with "admin" when Admin Panel is clicked (after opening its group)', () => {
     const onTabChange = vi.fn()
-    render(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} onTabChange={onTabChange} />))
+    // Kapalı grubun öğeleri erişilebilirlik ağacında YOK (hidden) — önce grup açılır
+    expect(screen.queryByRole('button', { name: /Admin Panel/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Management|Yönetim/i }))
     fireEvent.click(screen.getByRole('button', { name: /Admin Panel/ }))
     expect(onTabChange).toHaveBeenCalledWith('admin')
   })
 
   it('displays the username', () => {
-    render(<Nav {...DEFAULT_PROPS} username="alice" />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} username="alice" />))
     expect(screen.getByText(/alice/)).toBeInTheDocument()
   })
 
   it('calls onLogout when logout button is clicked', () => {
     const onLogout = vi.fn()
-    render(<Nav {...DEFAULT_PROPS} onLogout={onLogout} />)
+    render(withSidebar(<Nav {...DEFAULT_PROPS} onLogout={onLogout} />))
     fireEvent.click(screen.getByRole('button', { name: /Logout/ }))
     expect(onLogout).toHaveBeenCalledTimes(1)
   })
@@ -91,16 +104,16 @@ describe('Nav', () => {
    * bayrak yoksa girdi yok (isim, yetki kanıtı DEĞİLDİR).
    */
   function openUserMenu(container) {
-    fireEvent.click(container.querySelector('.sb-user-trigger'))
+    pressMenuTrigger(container.querySelector('[data-tour="nav-user"]'))
   }
 
   it('shows the Settings entry to a global admin whose username is NOT "admin"', () => {
     const onTabChange = vi.fn()
-    const { container } = render(
+    const { container } = render(withSidebar(
       <Nav {...DEFAULT_PROPS} username="ops.lead" systemRole="ADMIN" globalAdmin onTabChange={onTabChange} />
-    )
+    ))
     openUserMenu(container)
-    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
     expect(onTabChange).toHaveBeenCalledWith('settings')
   })
 
@@ -108,21 +121,23 @@ describe('Nav', () => {
     // globalAdmin YOK, rol ADMIN: kapsamlı müdür. Sır yüzeyleri AdminSettings içinde kilitli
     // (AdminSettings.test), backend GLOBAL_ONLY/requireNotScopedAdmin uygular; giriş görünür.
     const onTabChange = vi.fn()
-    const { container } = render(<Nav {...DEFAULT_PROPS} username="mudur" systemRole="ADMIN" onTabChange={onTabChange} />)
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} username="mudur" systemRole="ADMIN" onTabChange={onTabChange} />))
     openUserMenu(container)
-    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Settings/ }))
     expect(onTabChange).toHaveBeenCalledWith('settings')
   })
 
   it('hides the Settings entry from non-ADMIN roles, even if named "admin"', () => {
-    const { container, unmount } = render(<Nav {...DEFAULT_PROPS} username="admin" />)
+    const { container, unmount } = render(withSidebar(<Nav {...DEFAULT_PROPS} username="admin" />))
     openUserMenu(container)
-    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+    expect(screen.getAllByRole('menuitem').length).toBeGreaterThan(0)   // menü gerçekten açık (vakum değil)
+    expect(screen.queryByRole('menuitem', { name: /Settings/ })).toBeNull()
     unmount()
 
-    const r2 = render(<Nav {...DEFAULT_PROPS} username="admin" systemRole="TEAM_ADMIN" />)
+    const r2 = render(withSidebar(<Nav {...DEFAULT_PROPS} username="admin" systemRole="TEAM_ADMIN" />))
     openUserMenu(r2.container)
-    expect(screen.queryByRole('button', { name: /Settings/ })).toBeNull()
+    expect(screen.getAllByRole('menuitem').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('menuitem', { name: /Settings/ })).toBeNull()
   })
 })
 
@@ -130,44 +145,46 @@ describe('Nav', () => {
 describe('Nav — çok takımlı kullanıcı', () => {
   const TEAMS = [{ id: 5, name: 'Takım A' }, { id: 9, name: 'Takım B' }]
 
-  it('tek takım: takım adı aynen yazılır, "N takım" etiketi ve popup girişi YOK', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={[{ id: 5, name: 'Takım A' }]} />)
-    expect(container.querySelector('.sb-team-name').textContent).toBe('Takım A')
-    expect(container.querySelector('.sb-team-multi')).toBeNull()
-    fireEvent.click(container.querySelector('.sb-user-trigger'))
+  it('tek takım: takım adı aynen yazılır, "N takım" etiketi ve menü girişi YOK', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={[{ id: 5, name: 'Takım A' }]} />))
+    const trigger = container.querySelector('[data-tour="nav-user"]')
+    expect(within(trigger).getByText('Takım A')).toBeInTheDocument()
+    expect(within(trigger).queryByText(/\d+ (teams|takım)/)).toBeNull()
+    pressMenuTrigger(trigger)
     expect(screen.queryByText(/My teams|Dahil olduğum takımlar/i)).toBeNull()
   })
 
-  it('2+ takım: kutuda "2 teams" etiketi; popup girişi tüm takımları listeler ve birincili işaretler', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={TEAMS} />)
-    const label = container.querySelector('.sb-team-multi')
-    expect(label.textContent).toMatch(/2 (teams|takım)/)
+  it('2+ takım: kutuda "2 teams" etiketi; menü girişi tüm takımları listeler ve birincili işaretler', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} teamName="Takım A" myTeams={TEAMS} />))
+    const trigger = container.querySelector('[data-tour="nav-user"]')
+    const label = within(trigger).getByText(/2 (teams|takım)/)
     expect(label.title).toBe('Takım A, Takım B')
-    fireEvent.click(container.querySelector('.sb-user-trigger'))
-    fireEvent.click(screen.getByText(/My teams \(2\)|Dahil olduğum takımlar \(2\)/i))
-    const items = document.querySelectorAll('.sb-teams-item')
+    pressMenuTrigger(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /My teams \(2\)|Dahil olduğum takımlar \(2\)/i }))
+    const dialog = screen.getByRole('dialog')
+    const items = within(dialog).getAllByRole('listitem')
     expect(items).toHaveLength(2)
     expect(items[0].textContent).toContain('Takım A')
-    expect(items[0].textContent).toMatch(/PRIMARY|BİRİNCİL/)
+    expect(items[0].textContent).toMatch(/PRIMARY|BİRİNCİL/i)
     expect(items[1].textContent).toContain('Takım B')
-    expect(items[1].textContent).not.toMatch(/PRIMARY|BİRİNCİL/)
+    expect(items[1].textContent).not.toMatch(/PRIMARY|BİRİNCİL/i)
   })
 })
 
 describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
   it('üç ara başlık sırayla çizilir; her biri kendi ilk sekmesinin HEMEN önünde durur', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} />)
-    const heads = [...container.querySelectorAll('.sb-section')]
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    const heads = [...container.querySelectorAll('[data-nav-section]')]
     expect(heads.map((h) => h.textContent)).toEqual(
       [expect.stringMatching(/Erişilebilirlik|Availability/), expect.stringMatching(/Alan Adı ve DNS|Domains and DNS/), expect.stringMatching(/İçerik ve Deneyim|Content and experience/)])
-    expect(heads.map((h) => h.nextElementSibling.getAttribute('data-tour')))
+    expect(heads.map((h) => h.nextElementSibling.querySelector('[data-tour]').getAttribute('data-tour')))
       .toEqual(['nav-tab-http', 'nav-tab-dns', 'nav-tab-keyword'])
     // Başlık tıklanabilir bir kontrol DEĞİL — klavye odağına girmez
-    heads.forEach((h) => expect(h.tagName).toBe('DIV'))
+    heads.forEach((h) => { expect(h.tagName).not.toBe('BUTTON'); expect(h.getAttribute('role')).toBe('presentation') })
   })
 
   it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} />)
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     for (const id of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']) {
       expect(container.querySelector(`[data-tour="nav-tab-${id}"]`)).toBeTruthy()
     }
@@ -175,16 +192,50 @@ describe('Nav — İzleme ara başlıkları (2026-09-23)', () => {
 })
 
 describe('Nav — kullanıcı menüsü (2026-09-23)', () => {
-  it('tema, dil ve Sorun Bildir alt bilgide DEĞİL, kullanıcı popover\'ında; Sorun Bildir Ayarlar\'ın hemen altında', () => {
-    const { container } = render(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />)
-    const foot = container.querySelector('.sb-foot')
+  it('tema, dil ve Sorun Bildir alt bilgide DEĞİL, kullanıcı menüsünde; Sorun Bildir Ayarlar\'ın hemen altında', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />))
+    const foot = container.querySelector('[data-sidebar="footer"]')
+    expect(foot).not.toBeNull()
     expect(foot.textContent).not.toMatch(/Sorun Bildir|Report a Problem|Koyu Mod|Dark Mode|Açık Mod|Light Mode|Switch to English|Türkçeye Geç/)
-    fireEvent.click(container.querySelector('[data-tour="nav-user"]'))
-    const labels = [...document.querySelectorAll('.sb-user-popover .sb-user-popover-item')].map((b) => b.textContent)
+    pressMenuTrigger(container.querySelector('[data-tour="nav-user"]'))
+    const labels = screen.getAllByRole('menuitem').map((b) => b.textContent.trim())
     const settingsAt = labels.findIndex((l) => /^(Ayarlar|Settings)$/.test(l))
     expect(settingsAt).toBeGreaterThanOrEqual(0)
     expect(labels[settingsAt + 1]).toMatch(/Sorun Bildir|Report a Problem/)
     expect(labels.some((l) => /Koyu Mod|Dark Mode|Açık Mod|Light Mode/.test(l))).toBe(true)
     expect(labels.some((l) => /Switch to English|Türkçeye Geç/.test(l))).toBe(true)
+  })
+})
+
+/**
+ * 2026-09-25 (R17): daraltılmış (ikon) kipte grup başlıkları görünmez (opacity-0) ve bir şey yapmaz
+ * (onOpenChange yutulur) — ama odaklanabilir kalıyordu: klavye kullanıcısı Tab'la 7 görünmez, işlevsiz
+ * durakta dolaşıyordu. Daraltılınca Tab sırasından ve erişilebilirlik ağacından çıkmalı; genişken
+ * normal düğme olarak kalmalı (grup açma/kapama onlarla yapılıyor).
+ */
+describe('Nav — daraltılmış kenar çubuğu grup başlıkları (2026-09-25)', () => {
+  const groupTriggers = (container) => [...container.querySelectorAll('[data-sidebar="group-label"]')]
+
+  it('daraltılınca grup başlıkları Tab sırasından ve erişilebilirlik ağacından çıkar', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />, { open: false }))
+    const triggers = groupTriggers(container)
+    expect(triggers.length).toBeGreaterThan(3)
+    for (const b of triggers) {
+      expect(b.tagName).toBe('BUTTON')
+      expect(b).toHaveAttribute('tabindex', '-1')
+      expect(b).toHaveAttribute('aria-hidden', 'true')
+    }
+    // Sekmelerin kendisi (ikonlar) erişilebilir kalır.
+    expect(screen.getByRole('button', { name: /Dashboard/ })).toBeInTheDocument()
+  })
+
+  it('genişken grup başlıkları normal, odaklanabilir düğmedir', () => {
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} systemRole="ADMIN" />))
+    const triggers = groupTriggers(container)
+    expect(triggers.length).toBeGreaterThan(3)
+    for (const b of triggers) {
+      expect(b).not.toHaveAttribute('tabindex', '-1')
+      expect(b).not.toHaveAttribute('aria-hidden')
+    }
   })
 })

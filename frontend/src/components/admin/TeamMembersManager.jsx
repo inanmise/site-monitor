@@ -9,6 +9,7 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Takım üyelerini tek yerden yönet (2026-09-20): listele, ekle, çıkar. Eskiden üyelik yalnız kullanıcı
@@ -64,7 +65,7 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
 
   return (
     <ModalShell open onClose={onClose} title={t('team.membersTitle', team.name)} icon={Users} size="md" busy={busy}
-      footer={<button className="btn btn-secondary" onClick={onClose}>{t('team.close')}</button>}>
+      footer={<Button variant="secondary" onClick={onClose}>{t('team.close')}</Button>}>
       {error && <AlertBanner tone="danger" role="alert">{error}</AlertBanner>}
       {members == null && !error && <LoadingBlock label={t('team.membersLoading')} size={16} />}
       {members && (
@@ -74,7 +75,7 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
               <SearchableSelect value={pick} onChange={setPick} placeholder={t('team.memberPick')} ariaLabel={t('team.memberPick')}
                 searchThreshold={2}
                 options={[{ value: '', label: t('team.memberPick') }, ...candidates.map(u => ({ value: String(u.id), label: `${u.display_name || u.username} (${u.username})` }))]} />
-              <button className="btn btn-primary" onClick={add} disabled={!pick || busy}><UserPlus size={14} /> {t('team.memberAdd')}</button>
+              <Button onClick={add} disabled={!pick || busy}><UserPlus size={14} /> {t('team.memberAdd')}</Button>
             </div>
           )}
           {members.length === 0 ? <p className="field-hint">{t('team.membersEmpty')}</p> : (
@@ -87,9 +88,9 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
                     {u.team_id === team.id && <span className="field-hint">{t('team.memberPrimary')}</span>}
                   </span>
                   {canManage && (
-                    <button className="btn btn-sm-p btn-secondary tmm-remove" onClick={() => remove(u)} disabled={busy}
+                    <Button variant="secondary" size="sm" className="tmm-remove" onClick={() => remove(u)} disabled={busy}
                       title={t('team.memberRemove')}
-                      aria-label={`${u.display_name || u.username} — ${t('team.memberRemove')}`}><UserMinus size={13} /></button>
+                      aria-label={`${u.display_name || u.username} — ${t('team.memberRemove')}`}><UserMinus size={13} /></Button>
                   )}
                 </li>
               ))}

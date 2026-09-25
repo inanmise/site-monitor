@@ -1,6 +1,11 @@
 /**
  * Hafif inline-SVG sparkline — kütüphane yok. `data` sayı dizisi; renk CSS token'ından gelir (tema uyumlu).
  * Son nokta bir işaret dairesiyle vurgulanır. Genişlik/yükseklik viewBox ile ölçeklenir.
+ *
+ * Erişilebilirlik: `label` verilirse grafik bir görsel (`role="img"`, ad = label). Verilmezse
+ * DEKORATİF sayılır ve ağaçtan gizlenir — eskiden sabit İngilizce 'trend' adı her pano kartında
+ * (TR arayüzde de) okunuyor, üstelik kartın düğme adına ekleniyordu (2026-09-25, R16). Değer
+ * zaten yanındaki metinde (yüzde) yazılı olduğunda adsız bırakmak doğrusu.
  */
 export default function Sparkline({ data = [], width = 100, height = 28, color = 'var(--sb-accent, #3b82f6)', label }) {
   const nums = (Array.isArray(data) ? data : []).map((v) => (typeof v === 'number' && isFinite(v) ? v : 0))
@@ -19,7 +24,7 @@ export default function Sparkline({ data = [], width = 100, height = 28, color =
   const [lx, ly] = pts[pts.length - 1].split(',')
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="spark"
-      role="img" aria-label={label || 'trend'} preserveAspectRatio="none">
+      {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' })} preserveAspectRatio="none">
       <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5"
         strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={lx} cy={ly} r="2.2" fill={color} />

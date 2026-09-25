@@ -1,6 +1,9 @@
 import { Pencil, Copy, Trash2, X } from 'lucide-react'
-import { CheckNowButton, CheckRunningStrip } from './CheckRunning.jsx'
+import { CheckNowButton, CheckRunningStrip, MON_ACT, MON_ACT_TONE } from './CheckRunning.jsx'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
+import { Separator } from '@/components/shadcn/separator'
+import { cn } from '@/lib/utils'
 
 /**
  * Detay modalının sağ üstündeki hızlı eylemler — dokuz izleme türünde TEK yerden.
@@ -16,9 +19,10 @@ import { useT } from '../../i18n/index.jsx'
  * KENDİSİ de paylaşılmaz: tetikleyiciyi sayfa verir, burada yalnız sunum durur —
  * {@link MonitorCardActions} ile aynı bölüşüm.
  *
- * <p>Görsel dil kartlarınkiyle birebir (`mon-act` ikon düğmeleri, `CheckNowButton`), çünkü
- * detay modalının başlığı kartla AYNI açık yüzeyde duruyor. Sertifika modalı ayrı kalır: onun
- * başlığı koyu degrade ve kendi `modal-header-act` sınıfını kullanır — aynı DESEN, farklı zemin.
+ * <p>Görsel dil kartlarınkiyle birebir (shadcn Button + `MON_ACT` ikon düğmesi dili,
+ * `CheckNowButton`), çünkü detay modalının başlığı kartla AYNI açık yüzeyde duruyor. Sertifika
+ * modalı ayrı kalır: onun başlığı koyu degrade ve kendi `modal-header-act` sınıfını kullanır —
+ * aynı DESEN, farklı zemin.
  *
  * @param {boolean}  running       bu monitör şu anda kontrol ediliyor (şerit + düğme kilidi)
  * @param {Function} onCheck       "Şimdi kontrol et" — verilmezse düğme çizilmez
@@ -33,36 +37,36 @@ export default function MonitorModalActions({
   onDuplicate,
   onDelete, deleting = false, deleteTitle,
   onClose, closeLabel,
-  // DNS modalı kendi kapatma sınıfını taşıyor (`dns-modal-close`); geri kalan sekiz tür
-  // `upt-modal-close` kullanıyor. Tek fark bu olduğu için sınıf prop, bileşen değil.
-  closeClassName = 'upt-modal-close',
+  // `closeClassName` (DNS modalı `dns-modal-close` veriyordu) geriye uyum için hâlâ KABUL edilir
+  // ama yok sayılır: kapatma artık shadcn Button ve `.upt-modal-close`/`.dns-modal-close` App.css
+  // kuralları (katmansız) onun Tailwind stilini ezerdi. Dokuz türün kapatması da aynı görünür.
   children,
 }) {
   const t = useT()
   return (
-    <div className="upt-modal-actions">
+    <div data-slot="monitor-modal-actions" className="flex shrink-0 items-center gap-1.5">
       {/* Şerit düğmelerin SOLUNDA: göz zaten az önce tıklanan yerde. Koşmuyorken null döner. */}
       <CheckRunningStrip running={running} />
       {onCheck && (
         <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} />
       )}
       {onEdit && (
-        <button type="button" className="mon-act mon-act--edit" onClick={onEdit}
-          title={editTitle} aria-label={editTitle}><Pencil size={13} /></button>
+        <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, MON_ACT_TONE.edit)}
+          onClick={onEdit} title={editTitle} aria-label={editTitle}><Pencil size={13} /></Button>
       )}
       {onDuplicate && (
-        <button type="button" className="mon-act mon-act--copy" onClick={onDuplicate}
-          title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></button>
+        <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, MON_ACT_TONE.copy)}
+          onClick={onDuplicate} title={t('mon.duplicate')} aria-label={t('mon.duplicate')}><Copy size={13} /></Button>
       )}
       {onDelete && (
-        <button type="button" className="mon-act mon-act--danger" onClick={onDelete} disabled={deleting}
-          title={deleteTitle} aria-label={deleteTitle}><Trash2 size={13} /></button>
+        <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, MON_ACT_TONE.danger)}
+          onClick={onDelete} disabled={deleting} title={deleteTitle} aria-label={deleteTitle}><Trash2 size={13} /></Button>
       )}
       {children}
       {/* Kapatma kendi bölmesinde: sertifika modalında yıkıcı düğmeye değdiği görüldü. */}
-      <span className="upt-modal-actions-sep" aria-hidden="true" />
-      <button type="button" className={closeClassName} onClick={onClose}
-        aria-label={closeLabel || t('dns.close')}><X size={18} /></button>
+      <Separator orientation="vertical" className="mx-0.5 data-[orientation=vertical]:h-5" />
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground"
+        onClick={onClose} aria-label={closeLabel || t('dns.close')}><X className="size-[18px]" /></Button>
     </div>
   )
 }

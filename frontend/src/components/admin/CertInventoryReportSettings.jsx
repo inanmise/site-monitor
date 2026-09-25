@@ -10,6 +10,7 @@ import Field from '../ui/Field.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { Button } from '@/components/shadcn/button'
 
 const WEEKDAYS = [
   { v: 'MON', k: 'cir.mon' }, { v: 'TUE', k: 'cir.tue' }, { v: 'WED', k: 'cir.wed' },
@@ -308,34 +309,34 @@ export default function CertInventoryReportSettings() {
         )}
       </Field>
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={saveRecipients} disabled={!dirty || saving} aria-busy={saving}>
+        <Button onClick={saveRecipients} disabled={!dirty || saving} aria-busy={saving}>
           {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />}
           {t('settings.save')}
-        </button>
+        </Button>
       </div>
 
       {/* ── Aksiyonlar ── */}
       <div className="ldap-actions">
-        <button className="btn btn-secondary" onClick={preview} disabled={previewing} aria-busy={previewing}>
+        <Button variant="secondary" onClick={preview} disabled={previewing} aria-busy={previewing}>
           {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />}
           {t('cir.preview')}
-        </button>
-        <button className="btn btn-secondary" onClick={runNow} disabled={running || noRecipients}
+        </Button>
+        <Button variant="secondary" onClick={runNow} disabled={running || noRecipients}
           aria-busy={running} title={noRecipients ? t('cir.noRecipientsNote') : undefined}>
           {running ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
           {t('cir.runNow')}
-        </button>
+        </Button>
       </div>
 
       {/* ── Test gönderimi ── */}
       <div className="cir-test">
         <input className="input" type="email" value={testEmail} placeholder={t('cir.testPlaceholder')}
           onChange={e => setTestEmail(e.target.value)} />
-        <button className="btn btn-secondary" onClick={sendTest}
+        <Button variant="secondary" onClick={sendTest}
           disabled={sending || !testEmail.includes('@')} aria-busy={sending}>
           {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
           {t('cir.sendTest')}
-        </button>
+        </Button>
       </div>
 
       {result && (
@@ -388,7 +389,7 @@ export default function CertInventoryReportSettings() {
         icon={Eye}
         closeLabel={t('cir.close')}
         size="lg"
-        footer={<button className="btn btn-secondary" onClick={() => setViewer(null)}>{t('cir.close')}</button>}
+        footer={<Button variant="secondary" onClick={() => setViewer(null)}>{t('cir.close')}</Button>}
       >
         <iframe title="cert-inventory-preview" srcDoc={mailPreviewSrcDoc(viewer || '')}
           sandbox={MAIL_PREVIEW_SANDBOX} className="cir-preview-frame" />

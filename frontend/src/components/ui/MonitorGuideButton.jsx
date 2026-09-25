@@ -4,6 +4,7 @@ import { BookOpen, X } from 'lucide-react'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import MarkdownEditor from './MarkdownEditor.jsx'
 import { MONITOR_GUIDES } from '../monitorGuides.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Yeni monitör nasıl doldurulur?" — her izleme sayfasının başlığında, Yeni Monitör
@@ -20,16 +21,18 @@ export default function MonitorGuideButton({ type }) {
   const md = guide[lang] || guide.tr || guide.en
   return (
     <>
-      <button type="button" className="btn btn-sm btn-secondary mguide-btn" data-tour="mon-guide"
+      <Button type="button" variant="secondary" size="sm" className="mguide-btn" data-tour="mon-guide"
         title={t('guideForm.btn')} onClick={() => setOpen(true)}>
         <BookOpen size={14} /> {t('guideForm.btn')}
-      </button>
+      </Button>
       {open && createPortal(
         <div className="modal-overlay" onClick={() => setOpen(false)}>
           <div className="modal-box modal-wide mguide-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-head">
               <h3><BookOpen size={17} style={{ verticalAlign: '-3px', marginRight: 6, color: '#7c3aed' }} />{t('guideForm.title')}</h3>
-              <button type="button" className="icon-btn" onClick={() => setOpen(false)}><X size={18} /></button>
+              {/* İkon-yalnız düğme: adı i18n'den (dokuz sayfada adsız "düğme" duyuluyordu — 2026-09-25, R16). */}
+              <button type="button" className="icon-btn" onClick={() => setOpen(false)}
+                aria-label={t('app.close')} title={t('app.close')}><X size={18} aria-hidden="true" /></button>
             </div>
             <div className="mguide-body">
               <MarkdownEditor value={md} editable={false} />

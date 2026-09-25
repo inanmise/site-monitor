@@ -12,10 +12,11 @@ describe('BulkActionBar', () => {
   beforeEach(() => { vi.clearAllMocks(); confirmMock.mockResolvedValue(true); api = { update: vi.fn().mockResolvedValue({ success: true }), remove: vi.fn().mockResolvedValue({ success: true }) } })
 
   it('seçim yoksa çizilmez; "Duraklat" yalnız aktif seçilileri {active:false} ile günceller; sonra seçim temizlenir + yeniden yükleme', async () => {
-    const { container, rerender } = render(<BulkActionBar selected={new Set()} items={items} api={api} />)
-    expect(container.querySelector('.bulkbar')).toBeNull()
+    const { rerender } = render(<BulkActionBar selected={new Set()} items={items} api={api} />)
+    expect(screen.queryByRole('region', { name: /^(Toplu işlem|Bulk actions)$/ })).toBeNull()
     const onClear = vi.fn(), onDone = vi.fn()
     rerender(<BulkActionBar selected={new Set([1, 2])} items={items} api={api} onClear={onClear} onDone={onDone} />)
+    expect(screen.getByRole('region', { name: /^(Toplu işlem|Bulk actions)$/ })).toBeInTheDocument()
     expect(screen.getByText(/2 seçili|2 selected/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Duraklat|Pause/ }))
     await waitFor(() => expect(onDone).toHaveBeenCalled())

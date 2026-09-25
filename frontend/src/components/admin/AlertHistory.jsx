@@ -23,6 +23,7 @@ import {
   Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
   ChevronDown, ChevronRight, Mail, MailX, Clock, Users, Calendar
 } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 /** Seviye → CSS sınıfı eki. Renkler App.css'te (iki tema); burada yalnız eşleme. */
 const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
@@ -479,7 +480,7 @@ function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
         </div>
 
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('alh.notifModal.close')}</button>
+          <Button variant="secondary" onClick={onClose}>{t('alh.notifModal.close')}</Button>
         </div>
       </div>
     </div>
@@ -564,16 +565,16 @@ function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, on
         </div>
 
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose} disabled={sending}>
+          <Button variant="secondary" onClick={onClose} disabled={sending}>
             {t('alh.renotifyModal.cancel')}
-          </button>
-          <button
-            className="btn btn-warning"
+          </Button>
+          <Button
+            variant="warning"
             disabled={sending || selectedCount === 0}
             onClick={() => onSend([...uncheckedEmails], [...uncheckedUsers])}
           >
             {t('alh.renotifyModal.send')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -1213,9 +1214,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
             {t('alh.tabClosed')}
           </button>
         </div>
-        <button className="btn btn-secondary btn-sm-p" onClick={load} disabled={loading}>
+        <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
           <RefreshCcw size={13} /> {t('alh.refresh')}
-        </button>
+        </Button>
       </div>
 
       {/* ── İstatistik şeridi + filtre çubuğu — YALNIZ bağımsız sayfada ──
@@ -1237,17 +1238,17 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
             shownCount={alerts.length} />
 
           <div className="upt-toolbar alh-toolbar">
-            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} />
+            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} ariaLabel={t('flt.level')} />
             {teamOptions.length > 1 && (
-              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} />
+              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} ariaLabel={t('flt.team')} />
             )}
-            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} />
+            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} ariaLabel={t('flt.ack')} />
             <input className="upt-search" type="text" placeholder={t('alh.searchPlaceholder')}
               value={search} onChange={e => setSearch(e.target.value)} />
             {hasActiveFilters && (
-              <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>
+              <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>
                 {t('alh.clearFilters')}
-              </button>
+              </Button>
             )}
             {/* CSV: EKRANDAKİ filtrelerin aynısıyla. Ayrı bir filtre yüzeyi olsaydı
                 "ekranda 12 satır vardı, dosyada 800 çıktı" sürprizi kaçınılmazdı. */}
@@ -1355,10 +1356,10 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           </label>
           {selected.size > 0 && (
             <div className="alh-bulk-actions">
-              <button className="btn btn-secondary btn-sm-p" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>{t('alh.ack')}</button>
-              <button className="btn btn-warning btn-sm-p"   disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>{t('alh.renotify')}</button>
-              <button className="btn btn-primary btn-sm-p"   disabled={bulkBusy} onClick={() => bulkAction('resolve')}>{t('alh.resolve')}</button>
-              <button className="btn btn-secondary btn-sm-p" disabled={bulkBusy} onClick={() => setSelected(new Set())}>{t('alh.bulk.clear')}</button>
+              <Button variant="secondary" size="sm" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>{t('alh.ack')}</Button>
+              <Button variant="warning" size="sm"   disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>{t('alh.renotify')}</Button>
+              <Button size="sm"   disabled={bulkBusy} onClick={() => bulkAction('resolve')}>{t('alh.resolve')}</Button>
+              <Button variant="secondary" size="sm" disabled={bulkBusy} onClick={() => setSelected(new Set())}>{t('alh.bulk.clear')}</Button>
             </div>
           )}
         </div>
@@ -1378,7 +1379,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                     className="alh-card-check"
                     checked={selected.has(a.id)}
                     onChange={() => toggleSelect(a.id)}
-                    aria-label={t('alh.bulk.selectOne')}
+                    // Ad alarmı ayırır (alan adı + tür): toplu onayla/çöz/yeniden bildir onayı yalnız
+                    // ADET söylüyor — "Bu alarmı seç" her kartta aynıydı (2026-09-25, R5).
+                    aria-label={t('alh.bulk.selectOneFor', a.domain, alertTypeLabel(t, a.alert_type))}
                   />
                   <span className={`alert-level-badge alh-lvl-bg--${levelClass(a.alert_level)}`}>
                     {levelLabel[a.alert_level] || a.alert_level}
@@ -1437,27 +1440,27 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
                 <div className="alert-actions">
                   {!a.acknowledged && (
-                    <button className="btn btn-secondary btn-sm-p" onClick={() => ack(a.id)}>
+                    <Button variant="secondary" size="sm" onClick={() => ack(a.id)}>
                       {t('alh.ack')}
-                    </button>
+                    </Button>
                   )}
-                  <button
-                    className="btn btn-warning btn-sm-p"
+                  <Button
+                    variant="warning" size="sm"
                     onClick={() => reNotify(a.id)}
                     disabled={notifying === a.id}
                   >
                     {notifying === a.id ? t('alh.sending') : t('alh.renotify')}
-                  </button>
-                  <button
-                    className="btn btn-secondary btn-sm-p"
+                  </Button>
+                  <Button
+                    variant="secondary" size="sm"
                     onClick={() => openNotifyHistory(a.id)}
                     title={t('alh.notifHistory')}
                   >
                     {t('alh.history')}
-                  </button>
-                  <button className="btn btn-primary btn-sm-p" onClick={() => resolve(a.id)}>
+                  </Button>
+                  <Button size="sm" onClick={() => resolve(a.id)}>
                     {t('alh.resolve')}
-                  </button>
+                  </Button>
                 </div>
 
               </div>
@@ -1592,12 +1595,12 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                   </div>
 
                   <div className="ahc-footer">
-                    <button
-                      className="btn btn-secondary btn-sm-p"
+                    <Button
+                      variant="secondary" size="sm"
                       onClick={() => openNotifyHistory(a.id)}
                     >
                       {t('alh.notifHistory')}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               </div>

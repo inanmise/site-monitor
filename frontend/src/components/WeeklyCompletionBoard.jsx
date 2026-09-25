@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { buildYearSummaryCsv, buildYearSummaryHtml } from './weekly/weeklyModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Haftalık rapor takım tamamlama panosu (2026-09-12, zenginleştirme #21): takım × hafta ısı haritası.
@@ -103,12 +104,12 @@ export default function WeeklyCompletionBoard({ year, onPick }) {
           </div>
           <div className="wrc-tools">
             <span className="wrc-tools-label">{t('wr.yearSummary')}:</span>
-            <button type="button" className="btn btn-secondary btn-sm-p" onClick={printSummary} title={t('wr.yearSummaryPrintTitle')}>
+            <Button type="button" variant="secondary" size="sm" onClick={printSummary} title={t('wr.yearSummaryPrintTitle')}>
               <Printer size={13} /> {t('wr.yearSummaryPrint')}
-            </button>
-            <button type="button" className="btn btn-secondary btn-sm-p" onClick={downloadCsv} title={t('wr.yearSummaryCsvTitle')}>
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={downloadCsv} title={t('wr.yearSummaryCsvTitle')}>
               <Download size={13} /> CSV
-            </button>
+            </Button>
           </div>
         </div>
       )}

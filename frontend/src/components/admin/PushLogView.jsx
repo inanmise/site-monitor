@@ -21,6 +21,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import PushBreakdownPanel from './PushBreakdownPanel.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Webhook Push Gönderim Logu (2026-09-19, kullanıcı isteği: SMTP sayfasının push karşılığı) — Sistem Sağlığı →
@@ -50,7 +51,7 @@ const STATUS_META = {
   SKIPPED: { Icon: MinusCircle, cls: 'smtp-kind-skipped', key: 'health.statusSkipped' },
   UNKNOWN: { Icon: HelpCircle,  cls: 'smtp-kind-skipped', key: 'health.statusUnknown' },
 }
-const KPI_COLORS = { total: '#64748b', sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#94a3b8', rate: '#2563eb', users: '#b45309' }
+const KPI_COLORS = { total: '#71717a', sent: '#059669', failed: '#dc2626', pending: '#d97706', skipped: '#a1a1aa', rate: '#2563eb', users: '#b45309' }
 
 function toIso(d) { return d instanceof Date && !isNaN(d) ? d.toISOString().slice(0, 19) : null }
 function fromIso(s) { if (!s) return null; const d = new Date(s + 'Z'); return isNaN(d) ? null : d }
@@ -214,7 +215,7 @@ export default function PushLogView({ onBack, initial }) {
   return (
     <div className="sml">
       <div className="sml-head">
-        <button type="button" className="btn btn-secondary sml-back" onClick={onBack}><ArrowLeft size={14} /> {t('sml.back')}</button>
+        <Button type="button" variant="secondary" className="sml-back" onClick={onBack}><ArrowLeft size={14} /> {t('sml.back')}</Button>
         <div className="sml-title">
           <Webhook size={18} aria-hidden="true" />
           <div>
@@ -223,8 +224,8 @@ export default function PushLogView({ onBack, initial }) {
           </div>
         </div>
         <div className="sml-head-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => load()} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} /> {t('sml.refresh')}</button>
-          <button type="button" className="btn btn-secondary" onClick={exportCsv} disabled={busy || rows.total === 0}><Download size={14} /> {t('sml.exportCsv')}</button>
+          <Button type="button" variant="secondary" onClick={() => load()} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} /> {t('sml.refresh')}</Button>
+          <Button type="button" variant="secondary" onClick={exportCsv} disabled={busy || rows.total === 0}><Download size={14} /> {t('sml.exportCsv')}</Button>
         </div>
       </div>
 
@@ -257,7 +258,7 @@ export default function PushLogView({ onBack, initial }) {
               {f.monitorType && <button type="button" className="sml-chip" onClick={() => patch({ monitorType: '' })}>{t('pl.colMonitor')}: {f.monitorType} <X size={11} /></button>}
             </span>
           )}
-          {activeCount > 0 && <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearAll}>{t('app.clearFilters')} ({activeCount})</button>}
+          {activeCount > 0 && <Button type="button" variant="secondary" size="sm" onClick={clearAll}>{t('app.clearFilters')} ({activeCount})</Button>}
           <span className="rn-count">{t('sml.count', rows.total)}</span>
         </div>
       </div>
@@ -339,8 +340,14 @@ export default function PushLogView({ onBack, initial }) {
                     <td><span className={`smtp-trigger-badge pl-trigger-${(row.trigger || '').toLowerCase()}`}>{triggerLabel(row.trigger, t)}</span></td>
                     <td><PushStatusBadge row={row} t={t} />{row.error_class && <span className="sml-cls">{t(`pl.cls.${row.error_class}`)}</span>}</td>
                     <td className="sml-actions" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn btn-secondary btn-sm-p" title={t('pl.detail')} onClick={() => setDetailId(row.id)}><Eye size={13} /></button>
-                      {canRequeue && retryable(row) && <button type="button" className="btn btn-secondary btn-sm-p sml-resend" title={t('pl.requeue')} disabled={busy} onClick={() => requeue(row)}><RotateCcw size={13} /></button>}
+                      {/* Adlar kaydı ayırır (izleme/başlık + zaman): yeniden kuyruğa alma YAN ETKİLİ ve
+                          her satırda aynı adla duyuluyordu (2026-09-25, R15). İpucu kısa kalır. */}
+                      <Button type="button" variant="secondary" size="sm" title={t('pl.detail')}
+                        aria-label={t('a11y.rowAction', `${row.monitor_name || row.title || '—'} · ${formatDate(row.at)}`, t('pl.detail'))}
+                        onClick={() => setDetailId(row.id)}><Eye size={13} /></Button>
+                      {canRequeue && retryable(row) && <Button type="button" variant="secondary" size="sm" className="sml-resend" title={t('pl.requeue')}
+                        aria-label={t('a11y.rowAction', `${row.monitor_name || row.title || '—'} · ${formatDate(row.at)}`, t('pl.requeue'))}
+                        disabled={busy} onClick={() => requeue(row)}><RotateCcw size={13} /></Button>}
                     </td>
                   </tr>
                 ))}
@@ -357,9 +364,9 @@ export default function PushLogView({ onBack, initial }) {
       {detailId && (
         <ModalShell open onClose={() => setDetailId(null)} title={t('pl.detail')} icon={Webhook} size="xl" scrollBody
           footer={<>
-            {detail?.alert_event_id && <button type="button" className="btn btn-secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert_event_id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</button>}
-            {canRequeue && detail && retryable(detail) && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => requeue(detail)}><RotateCcw size={13} /> {t('pl.requeue')}</button>}
-            <button type="button" className="btn btn-secondary" onClick={() => setDetailId(null)}>{t('app.close')}</button>
+            {detail?.alert_event_id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert_event_id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
+            {canRequeue && detail && retryable(detail) && <Button type="button" disabled={busy} onClick={() => requeue(detail)}><RotateCcw size={13} /> {t('pl.requeue')}</Button>}
+            <Button type="button" variant="secondary" onClick={() => setDetailId(null)}>{t('app.close')}</Button>
           </>}>
           {!detail ? <LoadingBlock label={t('sys.loading')} fullWidth /> : (
             <div className="sml-detail">

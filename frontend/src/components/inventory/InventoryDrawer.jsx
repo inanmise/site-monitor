@@ -6,6 +6,7 @@ import { formatDate } from '../../api/client'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { InventoryDetails } from './InventoryDetails.jsx'
 import { CertCell } from './InventoryTable.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
 const CheckHistoryTab = lazy(() => import('../history/CheckHistoryTab.jsx'))
@@ -42,8 +43,8 @@ export default function InventoryDrawer({ record, records = [], teamMap, teamNam
             {record.tier && <span className={`tier-badge tier-badge-${record.tier}`}>T{record.tier}</span>}
             <CertCell r={record} t={t} />
           </span>
-          {!record.deleted_at && <button type="button" className="btn btn-sm btn-secondary" onClick={() => onCheckNow(record)} title={t('inv.checkNow')}><Play size={12} /></button>}
-          {canEditRow(record) && !record.deleted_at && <button type="button" className="btn btn-sm btn-primary" onClick={() => onEdit(record)}><Pencil size={12} /> {t('inv.edit')}</button>}
+          {!record.deleted_at && <Button type="button" variant="secondary" size="sm" onClick={() => onCheckNow(record)} title={t('inv.checkNow')}><Play size={12} /></Button>}
+          {canEditRow(record) && !record.deleted_at && <Button type="button" size="sm" onClick={() => onEdit(record)}><Pencil size={12} /> {t('inv.edit')}</Button>}
           <button type="button" className="helpd-close" onClick={onClose} aria-label={t('app.close')}><X size={14} /></button>
         </div>
         <div className="modal-tabs invdr-tabs">

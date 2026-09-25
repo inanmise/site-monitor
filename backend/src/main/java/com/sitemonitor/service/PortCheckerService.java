@@ -214,7 +214,9 @@ public class PortCheckerService {
                     + "\r\nUser-Agent: SiteMonitor-PortCheck\r\nConnection: close\r\n\r\n";
             s.getOutputStream().write(req.getBytes(StandardCharsets.US_ASCII));
             s.getOutputStream().flush();
-            String status = new java.io.BufferedReader(new java.io.InputStreamReader(s.getInputStream(), StandardCharsets.US_ASCII)).readLine();
+            // Tavanlı + süreli okuma (regresyon R3): hedef kullanıcının girdiği host; satır sonu göndermeden bayt
+            // damlatırsa tavansız readLine tamponu büyütür, okuma başına işleyen soTimeout da iş parçacığını süresiz tutardı.
+            String status = readStatusLine(s.getInputStream(), System.nanoTime() + Math.max(1, timeoutMs) * 1_000_000L);
             if (status == null || !status.startsWith("HTTP/") || status.length() < 12) throw new java.io.IOException("geçersiz HTTP yanıtı: " + status);
             int code = Integer.parseInt(status.substring(9, 12));
             boolean ok = httpStatusMatches(code, expect);
@@ -224,6 +226,27 @@ public class PortCheckerService {
         } finally {
             if (s != tunnel) s.close();
         }
+    }
+
+    /** Durum satırının tavanı — {@code ProxySettings.readTunnelLine} ile aynı (8 KB). */
+    static final int STATUS_LINE_MAX = 8192;
+
+    /**
+     * HTTP durum satırı: tek satır (CRLF/LF), {@link #STATUS_LINE_MAX} tavanlı ve TOPLAM süre tavanlı. Akış satırsız
+     * biterse null. Süre, satır tamamlanmadan dolarsa {@link java.net.SocketTimeoutException}.
+     */
+    static String readStatusLine(java.io.InputStream in, long deadlineNanos) throws java.io.IOException {
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        int b;
+        while ((b = in.read()) != -1) {
+            if (b == '\n') break;
+            if (buf.size() >= STATUS_LINE_MAX) throw new java.io.IOException("HTTP durum satırı çok uzun");
+            if (System.nanoTime() - deadlineNanos > 0) throw new java.net.SocketTimeoutException("HTTP durum satırı süre tavanını aştı");
+            buf.write(b);
+        }
+        if (b == -1 && buf.size() == 0) return null;
+        String line = buf.toString(StandardCharsets.US_ASCII);
+        return line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
     }
 
     private void doTcp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, Map<String, Object> result) throws Exception {

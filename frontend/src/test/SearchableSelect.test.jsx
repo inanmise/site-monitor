@@ -1,13 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, within } from './test-utils.jsx'
+import { render, screen, fireEvent, within, act } from './test-utils.jsx'
 import SearchableSelect from '../components/ui/SearchableSelect.jsx'
+import ModalShell from '../components/ui/ModalShell.jsx'
 
 function opts(n) {
   return Array.from({ length: n }, (_, i) => ({ value: String(i), label: `Option ${i}` }))
 }
-// Trigger açma — kapalıyken tek buton trigger'dır (onMouseDown ile toggle)
+// Trigger açma — tetik role="combobox" (shadcn Combobox deseni); açılış onMouseDown ile toggle
 function open() {
-  fireEvent.mouseDown(screen.getByRole('button'))
+  fireEvent.mouseDown(screen.getByRole('combobox'))
 }
 
 describe('SearchableSelect', () => {
@@ -83,7 +84,7 @@ describe('SearchableSelect', () => {
     expect(screen.queryByText('Login basarili')).toBeNull()
     // Grupsuz secenek her zaman gorunur (bos "Seciniz" satiri kaybolmamali). Sorgu LISTE ICINE
     // daraltiliyor: tetikleyici buton da ayni etiketi tasidigi icin genel arama iki eleman bulur.
-    const list = document.querySelector('.ss-options')
+    const list = screen.getByRole('listbox')
     expect(within(list).getByText('Seciniz')).toBeDefined()
   })
 
@@ -103,7 +104,7 @@ describe('SearchableSelect', () => {
     open()
 
     // Tetikleyici de secili etiketi tasir → sorgu liste icine daraltilir.
-    const list = document.querySelector('.ss-options')
+    const list = screen.getByRole('listbox')
     expect(within(list).getByText('Login hatali')).toBeDefined()
     expect(within(list).queryByText('Anasayfa 200')).toBeNull()
   })
@@ -139,7 +140,7 @@ describe('SearchableSelect', () => {
     render(<SearchableSelect value="" onChange={() => {}} options={withOpen} collapsibleGroups />)
     open()
 
-    const list = document.querySelector('.ss-options')
+    const list = screen.getByRole('listbox')
     expect(within(list).getByText('Kendi scriptim')).toBeDefined()   // isaretli dal ACIK
     expect(within(list).queryByText('Anasayfa 200')).toBeNull()      // isaretsiz dal KAPALI
   })
@@ -152,5 +153,136 @@ describe('SearchableSelect', () => {
     expect(screen.getByText('Erisilebilirlik')).toBeDefined()
     expect(screen.getByText('Anasayfa 200')).toBeDefined()
     expect(screen.getByText('Login basarili')).toBeDefined()
+  })
+
+  // ── shadcn Combobox (Popover + Command) sözleşmesi ─────────────────────────
+  //
+  // Liste artık body'ye PORTAL'lanıyor: ModalShell (shadcn Dialog) içinde eskiden kutunun alt
+  // kenarında kırpılıyordu. Portal'ın getirdiği riskler (Escape'in pencereyi kapatması, çift
+  // olay → çift onChange/onCreate) burada pinleniyor.
+
+  it('liste PORTAL üzerinde: tetiğin sarmalayıcısının dışında, body altında çizilir', () => {
+    const { container } = render(<SearchableSelect value="" onChange={() => {}} options={opts(4)} />)
+    const trigger = screen.getByRole('combobox')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    open()
+    const list = screen.getByRole('listbox')
+    expect(container.contains(list)).toBe(false)
+    expect(document.body.contains(list)).toBe(true)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('ModalShell içinde Escape YALNIZ listeyi kapatır — pencere açık kalır', () => {
+    const onClose = vi.fn()
+    render(
+      <ModalShell open onClose={onClose} title="Pencere">
+        <SearchableSelect value="" onChange={() => {}} options={opts(4)} ariaLabel="Seçici" />
+      </ModalShell>
+    )
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Seçici' }))
+    expect(screen.getByRole('listbox')).toBeDefined()
+
+    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeDefined()
+  })
+
+  it('klavye: ok tuşu + Enter vurgulanan seçeneği seçer ve listeyi kapatır', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect value="" onChange={onChange} options={opts(4)} />)
+    open()
+    const search = screen.getByPlaceholderText(/search/i)
+    fireEvent.keyDown(search, { key: 'ArrowDown' })   // ilk öğe vurguluydu → ikinciye iner
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('1')
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  // Not: jsdom animasyon yapmaz — liste basışta ANINDA söner ve click kopuk düğüme düşer. Kapanış
+  // animasyonu sürerken gelen click'in yutulduğunu (openRef koruması) ısıran kapı tarayıcıda:
+  // e2e/contact-modal.spec.js "change-count". Burası yalnız jsdom tarafındaki sözleşmeyi pinler.
+  it('basış + ardından gelen tık onChange çağrısını BİR kez yapar (kapanırken gelen click yutulur)', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelect value="" onChange={onChange} options={opts(4)} />)
+    open()
+    const opt = screen.getByRole('option', { name: 'Option 2' })
+    fireEvent.mouseDown(opt)
+    fireEvent.click(opt)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('2')
+  })
+
+  it('creatable: "+ Ekle" satırı değeri oluşturur — onCreate/onChange birer kez', async () => {
+    const onChange = vi.fn()
+    const onCreate = vi.fn(async () => {})
+    render(<SearchableSelect value="" onChange={onChange} options={opts(2)} creatable onCreate={onCreate} />)
+    open()
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: '  Yeni Grup ' } })
+    const add = screen.getByRole('option', { name: /Yeni Grup/ })
+    fireEvent.mouseDown(add)
+    fireEvent.click(add)
+    await act(async () => {})
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(onCreate).toHaveBeenCalledWith('Yeni Grup')
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange).toHaveBeenCalledWith('Yeni Grup')
+  })
+
+  it('silinebilir seçenek: × düğmesi seçmeden siler (basış da tık da seçime ulaşmaz)', () => {
+    const onChange = vi.fn()
+    const onDelete = vi.fn()
+    render(<SearchableSelect value="" onChange={onChange} onDelete={onDelete}
+      options={[{ value: '', label: '—' }, { value: 'a', label: 'Alfa' }]} />)
+    open()
+    // Boş değerli satır silinemez; yalnız gerçek seçeneğin düğmesi var ve adı seçeneği taşır.
+    const del = screen.getByRole('button', { name: /Alfa/ })
+    fireEvent.mouseDown(del)
+    fireEvent.click(del)
+    expect(onDelete).toHaveBeenCalledWith('a')
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('button', { name: /remove from the list/ })).toHaveLength(1)
+  })
+
+  it('eşleşme yoksa "sonuç yok" yazar', () => {
+    render(<SearchableSelect value="" onChange={() => {}} options={opts(4)} />)
+    open()
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'zzz' } })
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    expect(screen.getByText(/No results/)).toBeDefined()
+  })
+
+  it('seçili seçenek işaretlidir; tetik tekrar basılınca liste kapanır', () => {
+    render(<SearchableSelect value="2" onChange={() => {}} options={opts(4)} />)
+    const trigger = screen.getByRole('combobox')
+    fireEvent.mouseDown(trigger)
+    expect(screen.getByRole('option', { name: 'Option 2' })).toHaveAttribute('data-checked', 'true')
+    expect(screen.getByRole('option', { name: 'Option 1' })).not.toHaveAttribute('data-checked')
+    // Açıkken arama kutusu da role="combobox" taşır → tetik önceden alınmış referansla basılır.
+    fireEvent.mouseDown(trigger)
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
+  /**
+   * 2026-09-25 (R17): tetik role="combobox" ve adını İÇERİKTEN ALMAZ. Eski `.ss-trigger` düz
+   * düğmeydi (ad = görünen değer); rol değişince htmlFor'suz etiketli / ariaLabel'sız seçiciler
+   * sessizce adsız kaldı. Üç ad yolu da çalışmalı; hiçbiri yoksa ad BOŞ (kapı bunu yakalar).
+   */
+  it('ad yolları: ariaLabel, id + <label htmlFor>, ariaLabelledBy — içerik ad değildir', () => {
+    const { unmount } = render(<SearchableSelect value="1" onChange={() => {}} options={opts(3)} />)
+    expect(screen.getByRole('combobox')).toHaveAccessibleName('')   // "Option 1" görünür ama ad değil
+    unmount()
+
+    render(<>
+      <SearchableSelect value="1" onChange={() => {}} options={opts(3)} ariaLabel="Takıma göre süz" />
+      <label htmlFor="ss-sort">Sırala:</label>
+      <SearchableSelect id="ss-sort" value="1" onChange={() => {}} options={opts(3)} />
+      <span id="ss-yr">Yıl</span>
+      <SearchableSelect ariaLabelledBy="ss-yr" value="1" onChange={() => {}} options={opts(3)} />
+    </>)
+    expect(screen.getByRole('combobox', { name: 'Takıma göre süz' })).toBeDefined()
+    expect(screen.getByRole('combobox', { name: 'Sırala:' })).toBeDefined()
+    expect(screen.getByRole('combobox', { name: 'Yıl' })).toBeDefined()
   })
 })

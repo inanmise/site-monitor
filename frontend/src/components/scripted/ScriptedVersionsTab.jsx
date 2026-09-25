@@ -5,6 +5,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import CodeEditor from '../ui/CodeEditor.jsx'
 import VersionTimeline from './VersionTimeline.jsx'
 import { lineDiff, collapseContext, envNameDiff } from '../../utils/lineDiff.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Sentetik izleme — "Sürümler" sekmesi.
@@ -91,9 +92,9 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
                   onClick={() => setView('script')}>{t('scripted.verTabScript')}</button>
               </span>
               {canEdit && detail && (
-                <button className="btn btn-sm btn-primary" onClick={() => onLoadIntoEditor(sel, detail)}>
+                <Button size="sm" onClick={() => onLoadIntoEditor(sel, detail)}>
                   {t('scripted.versionLoad')}
-                </button>
+                </Button>
               )}
             </span>
           </div>

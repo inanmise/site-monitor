@@ -24,6 +24,7 @@ import {
   relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, FLAG_KEYS, splitFlags, sortRows,
   sessionsCsv, loginStatusCsv, anomaliesCsv, usageCsv, teamBars, STATUS_ORDER,
 } from './uactModel.js'
+import { Button } from '@/components/shadcn/button'
 
 const LoginActivityChart = lazy(() => import('../LoginActivityChart.jsx'))
 
@@ -161,7 +162,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
       await navigator.clipboard.writeText(u.toString()); toast.success(t('uact.copied'))
     } catch { toast.error(t('uact.copyFailed')) }
   }
-  if (error) return <StatusBlock tone="danger" icon={ShieldAlert} title={t('uact.loadError')} actions={<button type="button" className="btn btn-sm btn-secondary" onClick={onRefresh}>{t('uact.refresh')}</button>} />
+  if (error) return <StatusBlock tone="danger" icon={ShieldAlert} title={t('uact.loadError')} actions={<Button type="button" variant="secondary" size="sm" onClick={onRefresh}>{t('uact.refresh')}</Button>} />
   if (!data) return <div className="sys-muted sys-small" style={{ padding: 8 }}>…</div>
 
   const kpi = (key, Icon, val, label, sub, tone, onClick, spark, delta) => (
@@ -212,20 +213,20 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
           <button type="button" className={`seg-ctl-btn${!is7d ? ' active' : ''}`} onClick={() => setF({ range: '24h' })} aria-pressed={!is7d}>{t('uact.range24h')}</button>
           <button type="button" className={`seg-ctl-btn${is7d ? ' active' : ''}`} onClick={() => setF({ range: '7d' })} aria-pressed={is7d}>{t('uact.range7dShort')}</button>
         </div>
-        {hasActiveFilter(filters) && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('uact.filterClear')}</button>}
+        {hasActiveFilter(filters) && <Button type="button" variant="secondary" size="sm" onClick={() => setFilters({ ...EMPTY_FILTERS })}>{t('uact.filterClear')}</Button>}
         <div className="invtb-spacer" />
         <div className="colpick">
-          <button type="button" className="btn btn-sm btn-secondary" onClick={() => setExportOpen((o) => !o)} aria-expanded={exportOpen} aria-haspopup="true"><Download size={13} /> {t('uact.export')}</button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setExportOpen((o) => !o)} aria-expanded={exportOpen} aria-haspopup="true"><Download size={13} /> {t('uact.export')}</Button>
           {exportOpen && (
             <div className="colpick-menu" role="group" aria-label={t('uact.export')}>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => download('sessions.csv', sessionsCsv(active, t))}>{t('uact.exportSessions')}</button>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => download('login-status.csv', loginStatusCsv(loginRows, t))}>{t('uact.exportStatus')}</button>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => download('anomalies.csv', anomaliesCsv(anomalies.recent || [], t))}>{t('uact.exportAnomalies')}</button>
-              <button type="button" className="btn btn-sm btn-secondary" onClick={() => download('page-usage.csv', usageCsv(usage.pages || [], t))}>{t('uact.exportUsage')}</button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => download('sessions.csv', sessionsCsv(active, t))}>{t('uact.exportSessions')}</Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => download('login-status.csv', loginStatusCsv(loginRows, t))}>{t('uact.exportStatus')}</Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => download('anomalies.csv', anomaliesCsv(anomalies.recent || [], t))}>{t('uact.exportAnomalies')}</Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => download('page-usage.csv', usageCsv(usage.pages || [], t))}>{t('uact.exportUsage')}</Button>
             </div>
           )}
         </div>
-        <button type="button" className="btn btn-sm btn-secondary" onClick={copyLink}><Link2 size={13} /> {t('uact.copyLink')}</button>
+        <Button type="button" variant="secondary" size="sm" onClick={copyLink}><Link2 size={13} /> {t('uact.copyLink')}</Button>
       </div>
 
       {/* 01 KPI trend kartları (#4, #5) */}
@@ -316,8 +317,8 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                       <td data-label={t('uact.colLastTab')} className="sys-small">{u.last_tab ? <span title={u.last_tab_at ? formatDateSec(u.last_tab_at) : ''}>{tabLabel(u.last_tab, t)}</span> : '—'}</td>
                       <td data-label={t('uact.colLocation')} className="sys-small">{u.ip ? <span className="sys-mono">{u.ip}</span> : '—'}{u.city || u.country ? <span className="sys-muted"> {[u.city, u.country].filter(Boolean).join(', ')}</span> : null}</td>
                       <td data-label={t('uact.colAction')} className="uact-actions">
-                        <button type="button" className="btn btn-sm btn-secondary" onClick={() => setSessionDetail(u)}>{t('uact.openDetail')}</button>
-                        {isAdmin && !self && <button type="button" className="btn btn-sm btn-danger" disabled={busyUser === u.username} onClick={() => setTerminate({ username: u.username })}>{busyUser === u.username ? t('uact.terminating') : t('uact.terminate')}</button>}
+                        <Button type="button" variant="secondary" size="sm" onClick={() => setSessionDetail(u)}>{t('uact.openDetail')}</Button>
+                        {isAdmin && !self && <Button type="button" variant="destructive" size="sm" disabled={busyUser === u.username} onClick={() => setTerminate({ username: u.username })}>{busyUser === u.username ? t('uact.terminating') : t('uact.terminate')}</Button>}
                       </td>
                     </tr>
                   )
@@ -384,7 +385,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                   <td data-label={t('uact.colLastLogin')} className="sys-small">{r.last_login_at ? <span title={formatDateSec(r.last_login_at)}>{rel(r.last_login_at)}</span> : '—'}</td>
                   <td data-label={t('uact.detailLoginMethod')} className="sys-small">{r.last_login_method || '—'}</td>
                   <td data-label={t('uact.colFailedCount')} className={`dbtcol-num-cell${(r.failed_since_login || 0) > 0 ? ' sys-err-text' : ''}`}>{r.failed_since_login ?? 0}</td>
-                  <td data-label={t('uact.colAction')}><button type="button" className="btn btn-sm btn-secondary" onClick={() => setSessionDetail(r)}>{t('uact.openDetail')}</button></td>
+                  <td data-label={t('uact.colAction')}><Button type="button" variant="secondary" size="sm" onClick={() => setSessionDetail(r)}>{t('uact.openDetail')}</Button></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -458,7 +459,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
 
       {/* 09 Anomaliler (#3) */}
       <div className="fc-card fc-section-card">
-        {secHead('09', `${t('uact.anomaliesTitle')} (${anomalies.total ?? 0})`, <button type="button" className="btn btn-sm btn-secondary" onClick={() => setGlossaryOpen((o) => !o)} aria-expanded={glossaryOpen}><Info size={13} /> {t('uact.flagHelpTitle')}</button>)}
+        {secHead('09', `${t('uact.anomaliesTitle')} (${anomalies.total ?? 0})`, <Button type="button" variant="secondary" size="sm" onClick={() => setGlossaryOpen((o) => !o)} aria-expanded={glossaryOpen}><Info size={13} /> {t('uact.flagHelpTitle')}</Button>)}
         {glossaryOpen && (
           <dl className="uact-glossary">{FLAG_KEYS.map((k) => <div key={k}><dt><span className="uact-flag">{t(`uact.anom_${k}`)}</span></dt><dd>{t(`uact.flagHelp.${k}`)}</dd></div>)}</dl>
         )}
@@ -479,7 +480,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                   <td data-label={t('uact.colOutcome')} className="sys-small">{r.outcome === 'SUCCESS' ? <span className="sys-ok-text">{r.outcome}</span> : <span className="sys-err-text">{r.outcome || '—'}</span>}{r.reason ? <span className="sys-muted"> · {r.reason}</span> : null}</td>
                   <td data-label={t('uact.ackCol')}>{r.ack
                     ? <span className="uact-ack" title={r.ack.note || ''}><Check size={12} /> {r.ack.by} · {rel(r.ack.at)}{r.id && canAck && <button type="button" className="uact-link sys-small" disabled={ackBusy === r.id} onClick={() => doAck(r, false)}>{t('uact.unack')}</button>}</span>
-                    : (r.id && canAck ? <button type="button" className="btn btn-sm btn-secondary" disabled={ackBusy === r.id} onClick={() => setAckTarget(r)}>{t('uact.ack')}</button> : '—')}</td>
+                    : (r.id && canAck ? <Button type="button" variant="secondary" size="sm" disabled={ackBusy === r.id} onClick={() => setAckTarget(r)}>{t('uact.ack')}</Button> : '—')}</td>
                 </tr>
               ))}</tbody>
             </table>

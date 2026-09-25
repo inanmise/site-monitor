@@ -13,6 +13,7 @@ import DateTimeField from './ui/DateTimeField.jsx'
 import MonthCalendar from './ui/MonthCalendar.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw, History, CalendarDays } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -217,10 +218,10 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           <p className="upt-subtitle">{t('mw.subtitle')}</p>
         </div>
         <div className="upt-header-right">
-          <button className="btn btn-sm upt-refresh-btn" onClick={() => setCalOpen(v => { try { localStorage.setItem('mw-cal-open', String(!v)) } catch { /* yoksay */ } return !v })} aria-pressed={calOpen}><CalendarDays size={14} />{t('mw.calendar')}</button>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}><RefreshCw size={14} />{t('mw.refresh')}</button>
-          {canManage && <button className="btn btn-sm btn-secondary" onClick={openQuick}><Play size={14} />{t('mw.startNow')}</button>}
-          {canManage && <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('mw.create')}</button>}
+          <Button variant="outline" size="sm" onClick={() => setCalOpen(v => { try { localStorage.setItem('mw-cal-open', String(!v)) } catch { /* yoksay */ } return !v })} aria-pressed={calOpen}><CalendarDays size={14} />{t('mw.calendar')}</Button>
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('mw.refresh')}</Button>
+          {canManage && <Button variant="secondary" size="sm" onClick={openQuick}><Play size={14} />{t('mw.startNow')}</Button>}
+          {canManage && <Button size="sm" onClick={openNew}><Plus size={14} />{t('mw.create')}</Button>}
         </div>
       </div>
 
@@ -231,7 +232,7 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           <div className="mw-empty-art"><Wrench size={54} /></div>
           <h3 className="mw-empty-title">{t('mw.emptyTitle')}</h3>
           <p className="mw-empty-text">{t('mw.emptyText')}</p>
-          {canManage && <button className="btn btn-primary" onClick={openNew}><Plus size={15} />{t('mw.create')}</button>}
+          {canManage && <Button onClick={openNew}><Plus size={15} />{t('mw.create')}</Button>}
         </div>
       ) : (<>
         {/* Takvim görünümü (2026-09-12, #19): sıradaki oluşumlar ay ızgarasında; aynı güne çakışan pencereler yığılır */}
@@ -254,14 +255,16 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                   <td>{statusBadge(w.status)}</td>
                   <td className="mw-th-actions">
                     {canManage && <>
-                      <button className="mw-act" title={w.status === 'paused' ? t('mw.resume') : t('mw.pause')} onClick={() => togglePause(w)}>
+                      {/* Adlar satırı ayırır (pencere adı + eylem); ipucu kısa kalır (2026-09-25, R15). */}
+                      <button className="mw-act" title={w.status === 'paused' ? t('mw.resume') : t('mw.pause')}
+                        aria-label={t('a11y.rowAction', w.name, w.status === 'paused' ? t('mw.resume') : t('mw.pause'))} onClick={() => togglePause(w)}>
                         {w.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
                       </button>
-                      <button className="mw-act" title={t('mw.edit')} onClick={() => openEdit(w)}><Pencil size={13} /></button>
+                      <button className="mw-act" title={t('mw.edit')} aria-label={t('a11y.rowAction', w.name, t('mw.edit'))} onClick={() => openEdit(w)}><Pencil size={13} /></button>
                       {/* Pencerenin GEÇMİŞİ: planlı kesinti alarmları susturur, dolayısıyla
                           "bu pencereyi kim genişletti" sorusunun izlenebilir olması gerekir. */}
-                      <button className="mw-act" title={t('chg.tab')} onClick={() => setHistoryItem(w)}><History size={13} /></button>
-                      <button className="mw-act mw-act-danger" title={t('mw.delete')} onClick={() => del(w)}><Trash2 size={13} /></button>
+                      <button className="mw-act" title={t('chg.tab')} aria-label={t('a11y.rowAction', w.name, t('chg.tab'))} onClick={() => setHistoryItem(w)}><History size={13} /></button>
+                      <button className="mw-act mw-act-danger" title={t('mw.delete')} aria-label={t('a11y.rowAction', w.name, t('mw.delete'))} onClick={() => del(w)}><Trash2 size={13} /></button>
                     </>}
                   </td>
                 </tr>
@@ -333,8 +336,8 @@ export default function MaintenanceWindowsPage({ systemRole }) {
               </div>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={close}>{t('mw.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? '…' : t('mw.save')}</button>
+              <Button variant="secondary" onClick={close}>{t('mw.cancel')}</Button>
+              <Button onClick={save} disabled={saving}>{saving ? '…' : t('mw.save')}</Button>
             </div>
           </div>
         </div>, document.body)}
@@ -364,8 +367,8 @@ export default function MaintenanceWindowsPage({ systemRole }) {
                 <input type="number" min="1" value={quickForm.minutes} onChange={e => setQuickForm(f => ({ ...f, minutes: Number(e.target.value) }))} /></label>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={close}>{t('mw.cancel')}</button>
-              <button className="btn btn-primary" onClick={saveQuick} disabled={saving}><Play size={14} />{saving ? '…' : t('mw.startNow')}</button>
+              <Button variant="secondary" onClick={close}>{t('mw.cancel')}</Button>
+              <Button onClick={saveQuick} disabled={saving}><Play size={14} />{saving ? '…' : t('mw.startNow')}</Button>
             </div>
           </div>
         </div>, document.body)}

@@ -6,6 +6,7 @@ import { useToast } from './ui/Toast.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { isHoliday, isWeekend, lastBusinessDay } from '../pages/forecastModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Yenileme planı modalı — Vade Takvimi'nden (ExpiryForecastPage) ÇIKARILDI (2026-09-19): Genel Bakış kartının
@@ -34,9 +35,9 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
   return (
     <ModalShell open onClose={onClose} title={t('forecast.planTitle', row.domain)} icon={CalendarPlus}
       footer={<>
-        {row.renewal_planned_at && <button type="button" className="btn btn-danger" disabled={busy} onClick={clear}>{t('forecast.planClear')}</button>}
-        <button type="button" className="btn btn-secondary" onClick={onClose}>{t('inv.cancel')}</button>
-        <button type="button" className="btn btn-primary" disabled={busy || !date} onClick={save}>{t('forecast.planSave')}</button>
+        {row.renewal_planned_at && <Button type="button" variant="destructive" disabled={busy} onClick={clear}>{t('forecast.planClear')}</Button>}
+        <Button type="button" variant="secondary" onClick={onClose}>{t('inv.cancel')}</Button>
+        <Button type="button" disabled={busy || !date} onClick={save}>{t('forecast.planSave')}</Button>
       </>}>
       {/* hint: çağıran yüzey metni değiştirebilir (alan adında "yeni sertifika"/"en geç" anlamsız — 2026-09-22, H) */}
       <p className="field-hint">{hint || t('forecast.planHint', row.expiry_key ? formatDateOnly(row.expiry_key) : '—', row.renew_by_key ? formatDateOnly(row.renew_by_key) : '—')}</p>

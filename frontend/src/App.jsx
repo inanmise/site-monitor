@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2 } from 'lucide-react'
+import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2, Search, Layers } from 'lucide-react'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/shadcn/sidebar'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
@@ -13,6 +16,8 @@ import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFi
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
+import FacetedFilter from './components/ui/FacetedFilter.jsx'
+import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
 import Nav from './components/Nav'
 import BrandLogo from './components/BrandLogo.jsx'
@@ -76,6 +81,7 @@ import { TourProvider } from './components/tour/TourProvider.jsx'
 import OnboardingChecklist from './components/tour/OnboardingChecklist.jsx'
 import TourPageChip from './components/tour/TourPageChip.jsx'
 import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
+import { Button } from '@/components/shadcn/button'
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -158,6 +164,15 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16): sunucu /me + giriş yanıtında söyler.
   const [weeklyReportsVisible, setWeeklyReportsVisible] = useState(false)
+  // Kenar çubuğu açık/daraltılmış — shadcn SidebarProvider'a kontrollü verilir; eski anahtar ('sidebar-open')
+  // korunur ki kullanıcının tercihi geçişte kaybolmasın. Hook, auth erken-return'lerinden ÖNCE (kural).
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return localStorage.getItem('sidebar-open') !== 'false' } catch { return true }
+  })
+  const onSidebarOpenChange = useCallback((next) => {
+    setSidebarOpen(next)
+    try { localStorage.setItem('sidebar-open', String(next)) } catch { /* depolama yok */ }
+  }, [])
   const [teamId, setTeamId] = useState(null)
   const [teamName, setTeamName] = useState(null)
   // Kullanıcının TÜM takım üyelikleri (birincil takım ilk). Takım Yönetimi'ndeki haftalık e-posta
@@ -273,6 +288,11 @@ export default function App() {
   // Genel Bakış grup/etiket filtresi (2026-09-18, kullanıcı isteği): izleme sayfalarıyla aynı sözleşme.
   const [groupFilter, setGroupFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState('all')
+  // Genel Bakış platform süzgeci (2026-09-25, kullanıcı isteği): çoklu seçim (kod listesi; PLATFORM_NONE = girilmemiş).
+  // Derin link ?platform=IIS,OPENSHIFT — yalnız pano açılışında okunur (başka sekmeye gelen link panoyu süzmesin).
+  const [platformFilter, setPlatformFilter] = useState(() =>
+    (initialTabFromUrl() ?? 'dashboard') === 'dashboard' ? parsePlatformParam(readUrlParam(PLATFORM_URL_KEY, null)) : [])
+  const [platformCatalog, setPlatformCatalog] = useState([])   // Ayarlar → Platformlar (aktifler, sunucu sırası)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
   // Genel Bakış kartı zengin görünümü (2026-09-19): /card-extras haritası + Kompakt/Zengin anahtarı (localStorage)
@@ -472,6 +492,17 @@ export default function App() {
   useEffect(() => {
     if (!user) return
     api.admin.getWeakAlgorithms().then(r => { if (r?.success) setWeakAlgStats(r) })
+  }, [user])
+
+  // Platform kataloğu (pano platform süzgecinin seçenek adları/sırası): login'de BİR KEZ — aktif liste her oturuma
+  // açık (GET /admin/platforms). Okunamazsa süzgeç yine çalışır: seçenekler veriden türer, ad = platform_name ya da kod.
+  useEffect(() => {
+    if (!user) return
+    let alive = true
+    api.admin.listPlatforms()
+      .then(r => { if (alive && r?.success && Array.isArray(r.data)) setPlatformCatalog(r.data) })
+      .catch(() => { /* katalog yok → veriden türet */ })
+    return () => { alive = false }
   }, [user])
 
   // Süpersede edilen oturumu HIZLI yakala: kısa aralıklı hafif yoklama + sekmeye/pencereye
@@ -909,14 +940,16 @@ export default function App() {
   const hasTagOptions = tagOptions.length > 1
   // "Filtreleri temizle" (2026-09-18): herhangi bir daraltma varken görünür; hepsini varsayılana döndürür.
   const dashFiltersActive = !!search || sortOrder !== 'default' || statusFilter !== 'all' || expiryFilter !== 'all'
-    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter
+    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter || platformFilter.length > 0
   const clearDashFilters = () => {
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
-    setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null)
+    setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([])
     dashPager.setPage(1)
   }
 
-  const filtered = useMemo(() => certs.filter((c) => {
+  // Platform DIŞINDAKİ bütün süzgeçler (2026-09-25): platform seçeneklerinin sayıları buradan sayılır — her
+  // seçenek "diğer süzgeçler + bu platform" ile kaç kart kalacağını söyler (faset sayısı; seçim sayıları kaydırmaz).
+  const preFiltered = useMemo(() => certs.filter((c) => {
     if (statFn   && !statFn(c))   return false
     if (!statusFn(c))              return false
     if (!expiryFn(c))              return false
@@ -936,6 +969,17 @@ export default function App() {
   // Bağımlılıklar FİLTRE ANAHTARLARI: statusFn/expiryFn `?? (() => true)` ile her render'da YENİ
   // fonksiyon üretiyor; onları dep olarak vermek memo'yu tümüyle boşa çıkarırdı.
   }), [certs, statsFilter, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, search])
+  const platformCounts = useMemo(() => countPlatforms(preFiltered), [preFiltered])
+  const platformOptions = useMemo(() => buildPlatformOptions({
+    catalog: platformCatalog, certs, counts: platformCounts, selected: platformFilter, noneLabel: t('app.platformNone'),
+  }), [platformCatalog, certs, platformCounts, platformFilter, t])
+  // Katalog boş + hiçbir kartta platform yoksa süzgeç gizli (tek seçenek "Belirtilmemiş" olurdu); URL'den gelen seçim
+  // varsa HER ZAMAN görünür — kaldırılabilsin.
+  const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
+  // Pano boru hattının son halkası: platform (VEYA içinde) diğer süzgeçlerle VE. Sıralama/sayfalama/sayaçlar bunu izler.
+  const filtered = useMemo(
+    () => (platformFilter.length > 0 ? preFiltered.filter((c) => matchesPlatform(c, platformFilter)) : preFiltered),
+    [preFiltered, platformFilter])
 
   function defaultPriority(c) {
     const al = c.alert_level
@@ -976,6 +1020,7 @@ export default function App() {
     q: search.trim() || null,
     page: dashPager.page > 1 ? dashPager.page : null,
     ps: (dashPager.pageSize !== 50 || dashPager.page > 1) ? dashPager.pageSize : null,
+    [PLATFORM_URL_KEY]: serializePlatformParam(platformFilter),   // ?platform=IIS,__none__ (PAGE_STATE_PARAMS'ta)
   }, { enabled: tab === 'dashboard' })
 
   // KULLANICI KARARI (2026-08-06): marka logosu HER ZAMAN nötr yeşil ("ok") — navbar ve favicon
@@ -1014,7 +1059,7 @@ export default function App() {
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
     <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>
-    <div className="app-layout">
+    <SidebarProvider open={sidebarOpen} onOpenChange={onSidebarOpenChange} className="app-layout">
 
       {inactivityWarning && (
         <div className="inactivity-warning">
@@ -1035,7 +1080,13 @@ export default function App() {
         />
       )}
 
-      <main className="app-main">
+      {/* bg-transparent: sayfa zemini .app-layout'tan (--bg); kartlar beyaz kalsın */}
+      <SidebarInset className="app-main bg-transparent">
+        {/* Mobil (<768px): kenar çubuğu çekmece (Sheet) olur — açma düğmesi burada */}
+        <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background px-3 md:hidden print:hidden">
+          <SidebarTrigger />
+          <span className="text-sm font-semibold">SiteMonitor</span>
+        </header>
         {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
         <HelpDrawer tab={tab} />
         <TourPageChip tab={tab} />
@@ -1047,47 +1098,25 @@ export default function App() {
           {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
           {CERT_TABS.has(tab) && (
             <div className="controls">
-              <button className="btn btn-primary" data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
+              <Button data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
                 {refreshing
                   ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
                   : t('app.checkNow')}
-              </button>
+              </Button>
               {/* Domain Ekle "Şimdi Kontrol Et"in yanında (2026-09-19, kullanıcı isteği) — eskiden süzgeç satırının sağındaydı */}
               {tab === 'dashboard' && canAddInventory && (
-                <button type="button" className="btn btn-primary controls-add-domain"
+                <Button type="button" className="controls-add-domain"
                         onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
                   <Plus size={14} /> {t('inv.addBtn')}
-                </button>
-              )}
-              {/* Domain ara — Domain Ekle'nin yanında (2026-09-19, kullanıcı isteği); eskiden süzgeç satırının başındaydı */}
-              {tab === 'dashboard' && (
-                <span className="controls-search">
-                  <input
-                    className="sort-bar-search"
-                    type="text"
-                    placeholder={t('app.searchPlaceholder')}
-                    value={search}
-                    onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
-                  />
-                  {search && (
-                    <button
-                      type="button"
-                      className="sort-bar-search-clear"
-                      onClick={() => { setSearch(''); dashPager.setPage(1) }}
-                      title={t('app.clearFilter')}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </span>
+                </Button>
               )}
               <div className="add-domain-section" data-tour="add-domain">
                 <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
                   value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-                <button className="btn btn-success" onClick={handleAddDomain} disabled={checkLoading}>
+                <Button variant="success" onClick={handleAddDomain} disabled={checkLoading}>
                   {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -1148,8 +1177,11 @@ export default function App() {
               <div className="tab-content active">
                 <div className="sort-controls sort-bar" data-tour="dash-filters">
                   {/* Arama kutusu 2026-09-19'da üst kontrol satırına ("Domain Ekle"nin yanına) taşındı; burada yalnız sıralama/süzgeçler. */}
-                  <label>{t('app.sortLabel')}</label>
+                  {/* htmlFor ↔ id: seçici tetiği role="combobox" ve adını İÇERİKTEN almaz; bağsız
+                      etiket ekran okuyucuya adsız bir liste bırakıyordu (2026-09-25, R17). */}
+                  <label htmlFor="dash-f-sort">{t('app.sortLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-sort"
                     value={sortOrder}
                     onChange={v => { setSortOrder(v); dashPager.setPage(1) }}
                     options={[
@@ -1158,8 +1190,9 @@ export default function App() {
                       { value: 'desc',    label: t('app.sortDesc') },
                     ]}
                   />
-                  <label>{t('app.statusLabel')}</label>
+                  <label htmlFor="dash-f-status">{t('app.statusLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-status"
                     value={statusFilter}
                     onChange={v => { setStatusFilter(v); dashPager.setPage(1) }}
                     options={[
@@ -1169,8 +1202,9 @@ export default function App() {
                       { value: 'error',   label: t('app.error') },
                     ]}
                   />
-                  <label>{t('app.expiryLabel')}</label>
+                  <label htmlFor="dash-f-expiry">{t('app.expiryLabel')}</label>
                   <SearchableSelect
+                    id="dash-f-expiry"
                     value={expiryFilter}
                     onChange={v => { setExpiryFilter(v); dashPager.setPage(1) }}
                     options={[
@@ -1183,8 +1217,9 @@ export default function App() {
                   />
                   {hasTeamOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.teamLabel')}</label>
+                      <label htmlFor="dash-f-team">{t('app.teamLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-team"
                         value={teamFilter}
                         onChange={v => { setTeamFilter(v); dashPager.setPage(1) }}
                         options={teamOptions}
@@ -1193,8 +1228,9 @@ export default function App() {
                   )}
                   {hasGroupOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.groupLabel')}</label>
+                      <label htmlFor="dash-f-group">{t('app.groupLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-group"
                         value={groupFilter}
                         onChange={v => { setGroupFilter(v); dashPager.setPage(1) }}
                         options={groupOptions} searchThreshold={2}
@@ -1203,8 +1239,9 @@ export default function App() {
                   )}
                   {hasTagOptions && (
                     <span className="sort-bar-field">
-                      <label>{t('app.tagLabel')}</label>
+                      <label htmlFor="dash-f-tag">{t('app.tagLabel')}</label>
                       <SearchableSelect
+                        id="dash-f-tag"
                         value={tagFilter}
                         onChange={v => { setTagFilter(v); dashPager.setPage(1) }}
                         options={tagOptions} searchThreshold={2}
@@ -1212,9 +1249,9 @@ export default function App() {
                     </span>
                   )}
                   {dashFiltersActive && (
-                    <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearDashFilters}>
+                    <Button type="button" variant="secondary" size="sm" onClick={clearDashFilters}>
                       {t('app.clearFilters')}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}
@@ -1224,12 +1261,46 @@ export default function App() {
                 <div className="dashboard-header">
                   <div className="dashboard-title-row">
                     <h2>{t('app.dashTitle')}</h2>
-                    <div className="dash-card-mode-seg" role="group" aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
-                      <button type="button" className={`dash-card-mode-btn${cardMode === 'compact' ? ' is-active' : ''}`} aria-pressed={cardMode === 'compact'}
-                        onClick={() => cardMode !== 'compact' && toggleCardMode()}><LayoutGrid size={13} /> {t('ccx.modeCompact')}</button>
-                      <button type="button" className={`dash-card-mode-btn${cardMode === 'rich' ? ' is-active' : ''}`} aria-pressed={cardMode === 'rich'}
-                        onClick={() => cardMode !== 'rich' && toggleCardMode()}><LayoutList size={13} /> {t('ccx.modeRich')}</button>
-                    </div>
+                    {/* Kart görünümü — shadcn ToggleGroup (tek seçim; seçili öğe boşaltılamaz) */}
+                    <ToggleGroup type="single" variant="outline" size="sm" value={cardMode}
+                      onValueChange={(v) => { if (v && v !== cardMode) toggleCardMode() }}
+                      aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
+                      <ToggleGroupItem value="compact" className="px-2.5"><LayoutGrid /> {t('ccx.modeCompact')}</ToggleGroupItem>
+                      <ToggleGroupItem value="rich" className="px-2.5"><LayoutList /> {t('ccx.modeRich')}</ToggleGroupItem>
+                    </ToggleGroup>
+                    {/* Domain ara — kart görünümü seçicisinin yanında (2026-09-25, kullanıcı isteği; eskiden üst
+                        kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. */}
+                    <InputGroup className="h-8 w-64 max-w-full">
+                      <InputGroupAddon><Search /></InputGroupAddon>
+                      <InputGroupInput
+                        type="text"
+                        placeholder={t('app.searchPlaceholder')}
+                        aria-label={t('app.searchPlaceholder')}
+                        value={search}
+                        onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
+                      />
+                      {search && (
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupButton size="icon-xs" onClick={() => { setSearch(''); dashPager.setPage(1) }}
+                            title={t('app.clearFilter')} aria-label={t('app.clearFilter')}>
+                            <X />
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      )}
+                    </InputGroup>
+                    {/* Platform süzgeci (2026-09-25, kullanıcı isteği) — shadcn faset süzgeci; aramanın yanında, diğer
+                        süzgeçlerle VE. Seçenekler katalog + verideki kodlar + Belirtilmemiş, sayılar o anki süzgeçlerle. */}
+                    {showPlatformFilter && (
+                      <FacetedFilter
+                        title={t('app.platformFilter')}
+                        icon={Layers}
+                        tooltip={t('app.platformFilterTip')}
+                        searchPlaceholder={t('app.platformSearch')}
+                        options={platformOptions}
+                        value={platformFilter}
+                        onChange={(next) => { setPlatformFilter(next); dashPager.setPage(1) }}
+                      />
+                    )}
                   </div>
                   {statsFilter && (
                     <div className="stats-filter-bar">
@@ -1245,6 +1316,7 @@ export default function App() {
                           setExpiryFilter('all')
                           setGroupFilter('all')
                           setTagFilter('all')
+                          setPlatformFilter([])
                           setSearch('')
                           setSortOrder('default')
                           dashPager.setPage(1)
@@ -1259,9 +1331,9 @@ export default function App() {
                   /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
                      certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.
                      lastUpdate yalnız ilk başarılı yanıtta dolar — tur kapısındaki "veri geldi" sinyaliyle aynı. */
-                  <StatusBlock tone="neutral" icon={Loader2} className="status-block--loading" title={t('app.loadingCerts')} role="status" />
+                  <StatusBlock tone="neutral" icon={Loader2} loading title={t('app.loadingCerts')} role="status" />
                 ) : sorted.length === 0 ? (
-                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={statsFilter || search ? t('empty.hintFilter') : t('empty.hintCerts')} />
+                  <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={certs.length > 0 ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
                     <div className="cards-container">
@@ -1512,7 +1584,8 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'permissions' && globalAdmin && (
+            {/* Yetki Yönetimi (2026-09-25): herkese açık; düzenleme yalnız global admin (sunucunun can_edit'i). */}
+            {tab === 'permissions' && (
               <div className="tab-content active">
                 {/* Başlık PermissionMatrix kendi header'ında (ikon + Reset) — çift başlık olmasın */}
                 <PermissionMatrix />
@@ -1529,10 +1602,11 @@ export default function App() {
               </div>
             )}
 
-            {tab === 'system' && (globalAdmin || systemRole === 'AUDIT') && (
+            {/* Denetim Logu (2026-09-25): herkese açık; admin/AUDIT sistem geneli, diğerleri ekip arkadaşlarının kayıtları. */}
+            {tab === 'system' && (
               <div className="tab-content active">
                 <h2>{t('app.systemTitle')}</h2>
-                <AuditLogViewer />
+                <AuditLogViewer fullScope={globalAdmin || systemRole === 'AUDIT'} />
               </div>
             )}
 
@@ -1631,7 +1705,7 @@ export default function App() {
           </footer>
 
         </div>
-      </main>
+      </SidebarInset>
 
       {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
           kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
@@ -1660,6 +1734,11 @@ export default function App() {
             domain={invForm.domain}
             mode={invForm.mode}
             focus={invForm.focus || null}
+            // R4 (2026-09-25): InventoryManager yoluyla AYNI yetki sözleşmesi. canWrite sarmalayıcıda matristen
+            // okunur (usePermissions App gövdesinde çalışmaz). Takım aktarımı yalnız rol ADMIN'de: sunucu
+            // (updateInventory) TEAM_ADMIN ve USER için takımı mevcut değere sabitler.
+            canManage={canManageInventory}
+            canMoveTeam={systemRole === 'ADMIN'}
             onClose={() => setInvForm(null)}
             onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
           />
@@ -1680,7 +1759,7 @@ export default function App() {
         onCancel={() => { checkCancelRef.current = true }}
         onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
       />
-    </div>
+    </SidebarProvider>
     </TourProvider>
     </TeamDirectoryProvider>
     </UserDirectoryProvider>

@@ -8,6 +8,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, monitorRowKey } from './todayMonitorRows.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Sizin için — bugün" → "Tümünü gör" pop-up'ı (2026-09-18, kullanıcı isteği): kart yalnız ilk 5 satırı
@@ -40,7 +41,7 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
     if (!s) return all
     return all.filter((x) => [x.domain, x.type, x.team_name, x.level, x.name, x.target, x.registrar, x.channel, x.error, x.monitor_name, x.reason].some((v) => (v || '').toLowerCase().includes(s)))
   }, [all, q])
-  const pager = usePagination(rows, { listKey: 'today-' + section, defaultSize: 10, resetDeps: [q, all] })
+  const pager = usePagination(rows, { listKey: 'today-' + section, defaultSize: 10, sizeOptions: [10, 25, 50], resetDeps: [q, all] })
   const count = data?.[section]?.count ?? data?.[section]?.missing ?? all.length
 
   const row = (x) => {
@@ -74,8 +75,8 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
   return (
     <ModalShell open onClose={onClose} title={`${title} (${count})`} icon={icon} size="md" scrollBody
       footer={<>
-        {onGo && <button type="button" className="btn btn-primary" onClick={() => { onClose(); onGo() }}>{t('today.goPage')} <ArrowRight size={12} aria-hidden="true" /></button>}
-        <button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.close')}</button>
+        {onGo && <Button type="button" onClick={() => { onClose(); onGo() }}>{t('today.goPage')} <ArrowRight size={12} aria-hidden="true" /></Button>}
+        <Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>
       </>}>
       {!data && !error && <LoadingBlock label={t('tbl.loading')} fullWidth />}
       {error && <div className="alh-ts-empty">{error}</div>}
@@ -84,7 +85,7 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
       )}
       {data && <ul className="today-list today-modal-list">{pager.pageItems.map(row)}</ul>}
       {data && rows.length === 0 && <div className="alh-ts-empty">{t('empty.hintFilter')}</div>}
-      {data && rows.length > 0 && <PaginationBar {...pager} sizeOptions={[10, 25, 50]} />}
+      {data && rows.length > 0 && <PaginationBar {...pager} />}
     </ModalShell>
   )
 }

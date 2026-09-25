@@ -6,6 +6,7 @@ import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import { BookOpen, Plus, Pencil, Trash2, Save, ChevronRight, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Hedef-bazlı (type = KEYWORD|PING, target = url/host) "Rehber & Notlar":
@@ -101,20 +102,20 @@ export default function MonitorNotes({ type, target }) {
         <div className="mnote-sec-hdr">
           <span className="mnote-sec-title"><BookOpen size={15} /> {t('mnote.guideTitle')}</span>
           {!editingGuide && (
-            <button className="btn btn-sm btn-secondary"
+            <Button variant="secondary" size="sm"
               onClick={() => { setGuideDraft(guide?.guide || ''); setEditingGuide(true) }}>
               <Pencil size={12} /> {t('mnote.edit')}
-            </button>
+            </Button>
           )}
         </div>
         {editingGuide ? (
           <>
             <MarkdownEditor value={guideDraft} onChange={setGuideDraft} editable height={240} />
             <div className="mnote-form-actions">
-              <button className="btn btn-sm btn-secondary" onClick={() => setEditingGuide(false)}>{t('mnote.cancel')}</button>
-              <button className="btn btn-sm btn-primary" onClick={saveGuide} disabled={savingGuide}>
+              <Button variant="secondary" size="sm" onClick={() => setEditingGuide(false)}>{t('mnote.cancel')}</Button>
+              <Button size="sm" onClick={saveGuide} disabled={savingGuide}>
                 <Save size={12} /> {savingGuide ? t('mnote.saving') : t('mnote.save')}
-              </button>
+              </Button>
             </div>
           </>
         ) : guide?.guide ? (
@@ -134,9 +135,9 @@ export default function MonitorNotes({ type, target }) {
         <div className="mnote-sec-hdr">
           <span className="mnote-sec-title">{t('mnote.notesTitle')} ({notes.length})</span>
           {!adding && (
-            <button className="btn btn-sm btn-primary" onClick={startAdd}>
+            <Button size="sm" onClick={startAdd}>
               <Plus size={12} /> {t('mnote.addNote')}
-            </button>
+            </Button>
           )}
         </div>
 
@@ -152,10 +153,10 @@ export default function MonitorNotes({ type, target }) {
               onChange={v => setForm(f => ({ ...f, refs: v }))} />
             <div className="mnote-md-hint">{t('mnote.mdHint')}</div>
             <div className="mnote-form-actions">
-              <button className="btn btn-sm btn-secondary" onClick={cancelForm}>{t('mnote.cancel')}</button>
-              <button className="btn btn-sm btn-primary" onClick={saveNote} disabled={saving || !form.problem.trim()}>
+              <Button variant="secondary" size="sm" onClick={cancelForm}>{t('mnote.cancel')}</Button>
+              <Button size="sm" onClick={saveNote} disabled={saving || !form.problem.trim()}>
                 {saving ? t('mnote.saving') : (editId ? t('mnote.save') : t('mnote.addNote'))}
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -209,8 +210,8 @@ function NoteCard({ n, onEdit, onDelete }) {
           </span>
         </span>
         <span className="mnote-card-actions" onClick={e => e.stopPropagation()}>
-          <button className="btn btn-sm btn-secondary" title={t('mnote.edit')} onClick={() => onEdit(n)}><Pencil size={12} /></button>
-          <button className="btn btn-sm btn-danger" title={t('mnote.delete')} onClick={() => onDelete(n)}><Trash2 size={12} /></button>
+          <Button variant="secondary" size="sm" title={t('mnote.edit')} onClick={() => onEdit(n)}><Pencil size={12} /></Button>
+          <Button variant="destructive" size="sm" title={t('mnote.delete')} onClick={() => onDelete(n)}><Trash2 size={12} /></Button>
         </span>
       </div>
       {open && (

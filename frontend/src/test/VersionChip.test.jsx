@@ -41,36 +41,36 @@ describe('VersionChip', () => {
     render(<VersionChip onTabChange={vi.fn()} />)
     const chip = screen.getByRole('button', { name: /v20\.54\.0/ })
     expect(chip.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(document.querySelector('.sb-version-dot')).toBeNull()
+    expect(document.querySelector('[data-new-version]')).toBeNull()
     expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('20.54.0')
   })
 
   it('E1: eski damga farklıysa nokta çıkar; açınca sunucu verisi gelir, damga güncellenir, nokta söner', async () => {
     localStorage.setItem(LAST_SEEN_KEY, '20.53.2')
     render(<VersionChip onTabChange={vi.fn()} />)
-    expect(document.querySelector('.sb-version-dot')).not.toBeNull()
+    expect(document.querySelector('[data-new-version]')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
     await waitFor(() => expect(api.system.getVersion).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(document.querySelector('.sb-version-pop')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
     await screen.findByText(/prod/)
     expect(screen.getByText(/Yükseltme|Upgrade/)).toBeInTheDocument()
     expect(screen.getByText(/rev 42/)).toBeInTheDocument()
     // "son ziyaretten beri" şeridi eski damgayla çekilir
     await waitFor(() => expect(api.system.getReleaseNotes).toHaveBeenCalledWith('20.53.2'))
     expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('20.54.0')
-    expect(document.querySelector('.sb-version-dot')).toBeNull()
+    expect(document.querySelector('[data-new-version]')).toBeNull()
   })
 
   it('"Yenilikler" Yardım sekmesine view=releases ile, "Dağıtım geçmişi" Sağlık sekmesine sec=releases ile götürür', async () => {
     const onTabChange = vi.fn()
     render(<VersionChip onTabChange={onTabChange} />)
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
-    await waitFor(() => expect(document.querySelector('.sb-version-pop')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /Yenilikler|What's new/ }))
     expect(onTabChange).toHaveBeenCalledWith('help', { view: 'releases' })
-    expect(document.querySelector('.sb-version-pop')).toBeNull()   // gezinince kapanır
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()   // gezinince kapanır
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
-    await waitFor(() => expect(document.querySelector('.sb-version-pop')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: /Dağıtım geçmişi|Deployment history/ }))
     expect(onTabChange).toHaveBeenCalledWith('health', { sec: 'releases' })
   })
@@ -79,11 +79,11 @@ describe('VersionChip', () => {
     api.system.getVersion.mockResolvedValue({ success: false, error: 'boom' })
     render(<VersionChip onTabChange={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
-    await waitFor(() => expect(document.querySelector('.sb-version-pop')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
     expect(screen.getByText(/alınamadı|Could not load/)).toBeInTheDocument()
-    expect(document.querySelector('.sb-version-pop-ver').textContent).toBe('v20.54.0')
+    expect(document.querySelector('[data-version]').textContent).toBe('v20.54.0')
     await act(async () => { fireEvent.keyDown(document, { key: 'Escape' }) })
-    expect(document.querySelector('.sb-version-pop')).toBeNull()
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()
   })
 
   it('60 sn önbellek: iki açılış tek istek', async () => {
@@ -93,7 +93,7 @@ describe('VersionChip', () => {
     await waitFor(() => expect(api.system.getVersion).toHaveBeenCalledTimes(1))
     fireEvent.click(chip)   // kapat
     fireEvent.click(chip)   // tekrar aç
-    await waitFor(() => expect(document.querySelector('.sb-version-pop')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).not.toBeNull())
     expect(api.system.getVersion).toHaveBeenCalledTimes(1)
   })
 })

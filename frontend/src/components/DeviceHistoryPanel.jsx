@@ -8,6 +8,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Cihaz Geçmişi / Oturum Güvenliği.
@@ -364,16 +365,16 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
       {/* ── Güvenlik eylemleri ──────────────────────────────────────────── */}
       {!isAdminView && (
       <section className="dev-actions">
-        <button type="button" className="btn btn-sm btn-danger" onClick={logoutOthers}>
+        <Button type="button" variant="destructive" size="sm" onClick={logoutOthers}>
           <LogOut size={13} />{t('dev.logoutOthersAction')}
-        </button>
+        </Button>
         {/* Eskiden yalniz METINDI: "parolani da degistir" diyip kullaniciyi kendi basina
             birakiyordu. Akis App seviyesinde (selfPwdModalOpen) ve prop ile geliyor;
             gelmezse metne duseriz — panel her durumda calisir. */}
         {onChangePassword ? (
-          <button type="button" className="btn btn-sm btn-secondary" onClick={onChangePassword}>
+          <Button type="button" variant="secondary" size="sm" onClick={onChangePassword}>
             <KeyRound size={13} />{t('dev.changePasswordAction')}
-          </button>
+          </Button>
         ) : (
           <span className="dev-actions-hint">
             <KeyRound size={13} />{t('dev.passwordHint')}

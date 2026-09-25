@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import CertificatesTable from '../components/CertificatesTable.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 // Tüm Sertifikalar zenginleştirmesi (2026-09-13): tazeleme sinyali, facet'li durum menüsü, başlıktan sıralama,
 // URL derin bağlantı, satır seçimi + toplu işlem, satır menüsü, paylaşılan sertifika süzgeci, bayat rozeti,
@@ -50,7 +51,7 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     rerender(<CertificatesTable onRowClick={() => {}} refreshKey="t2" />)
     await waitFor(() => expect(api.getCertificatesPaginated).toHaveBeenCalledTimes(2))
     // Yükleniyor bloğu çizilmez, eski satır tazeleme boyunca ekranda kalır
-    expect(document.querySelector('.pg-block')).toBeNull()
+    expect(document.querySelector('[data-slot="loading-block"]')).toBeNull()
     await waitFor(() => expect(rows()).toEqual(['a.example.com']))
   })
 
@@ -115,8 +116,8 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     expect(tierBtn).toBeDisabled()
     // SearchableSelect: tetiği aç, seçeneğe mousedown
     const field = tierBtn.closest('.bulkbar-field')
-    fireEvent.mouseDown(field.querySelector('.ss-trigger'))   // SearchableSelect mousedown ile açılır
-    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')].find((o) => o.textContent.trim() === 'T2'))
+    fireEvent.mouseDown(field.querySelector('button[role="combobox"]'))   // SearchableSelect mousedown ile açılır
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'T2'))
     await waitFor(() => expect(tierBtn).not.toBeDisabled())
     fireEvent.click(tierBtn)
     await waitFor(() => expect(api.admin.bulkInventory).toHaveBeenCalledWith([], 'set-tier', { domains: ['a.example.com'], tier: 2 }))
@@ -129,8 +130,9 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     const row = document.querySelector('tr[data-domain="a.example.com"]')
     fireEvent.keyDown(row, { key: 'Enter' })
     expect(onRowClick).toHaveBeenCalledWith('a.example.com')
-    fireEvent.click(within(row).getByLabelText(/Satır işlemleri|Row actions/))
-    fireEvent.click(screen.getByText(/Alarm geçmişi|Alert history/))
+    // Satır menüsü shadcn DropdownMenu (Radix): tetik pointerdown ile açılır, öğe menuitem rolündedir
+    pressMenuTrigger(within(row).getByLabelText(/Satır işlemleri|Row actions/))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Alarm geçmişi|Alert history/ }))
     expect(onRowClick).toHaveBeenLastCalledWith('a.example.com', 'alerts')
   })
 
@@ -149,8 +151,8 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     window.history.replaceState({}, '', '/?tab=all&c_st=error')
     api.getCertificatesPaginated.mockResolvedValue(paged([]))
     render(<CertificatesTable onRowClick={() => {}} />)
-    await waitFor(() => expect(document.querySelector('.status-block')).not.toBeNull())
-    fireEvent.click(within(document.querySelector('.status-block')).getByRole('button'))
+    await waitFor(() => expect(document.querySelector('[data-slot="empty"]')).not.toBeNull())
+    fireEvent.click(within(document.querySelector('[data-slot="empty"]')).getByRole('button'))
     await waitFor(() => expect(lastQuery().filter_status).toBeUndefined())
   })
 

@@ -8,6 +8,7 @@ import { useTheme } from '../../i18n/theme.jsx'
 import { useToast } from './Toast.jsx'
 import { clipboardToMarkdownTable } from '../../utils/pasteTable'
 import { downscaleImage } from '../../utils/imageDownscale'
+import { Button } from '@/components/shadcn/button'
 
 const INDENT_ICON = (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -216,11 +217,11 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
                 onChange={(e) => setCaption(e.target.value)} />
             </label>
             <div className="modal-actions">
-              <button className="btn btn-secondary" disabled={uploading}
-                onClick={() => setPendingFile(null)}>{t('wr.cancel')}</button>
-              <button className="btn btn-primary" disabled={uploading || pendingFile.processing} onClick={doUpload}>
+              <Button variant="secondary" disabled={uploading}
+                onClick={() => setPendingFile(null)}>{t('wr.cancel')}</Button>
+              <Button disabled={uploading || pendingFile.processing} onClick={doUpload}>
                 {uploading ? t('wr.uploading') : t('wr.insertImage')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

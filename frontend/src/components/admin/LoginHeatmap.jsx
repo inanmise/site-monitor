@@ -83,7 +83,7 @@ export default function LoginHeatmap({
               })}
               {/* Gün sonu toplamı (sağ) */}
               <text x={leftPad + cols * cell + 6} y={baseline} fontSize={totFs}
-                fontWeight={isToday ? 700 : 600} fill={isToday ? '#b45309' : 'var(--chart-text, #64748b)'}>
+                fontWeight={isToday ? 700 : 600} fill={isToday ? '#b45309' : 'var(--chart-text, #71717a)'}>
                 {rowTotals[r] != null ? rowTotals[r] : ''}
               </text>
             </g>
@@ -94,7 +94,7 @@ export default function LoginHeatmap({
           <g key={c}>
             {c % hourStep === 0 && (
               <text x={leftPad + c * cell + (cell - gap) / 2} y={hourY}
-                textAnchor="middle" fontSize={hourFs} fontWeight="600" fill="#64748b">{c}</text>
+                textAnchor="middle" fontSize={hourFs} fontWeight="600" fill="#71717a">{c}</text>
             )}
             {colTotals[c] > 0 && (
               <text x={leftPad + c * cell + (cell - gap) / 2} y={colTotY}

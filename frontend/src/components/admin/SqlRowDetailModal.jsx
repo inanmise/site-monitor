@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Table, Copy, Check } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Vertical, label/value presentation of a single SQL Playground result row.
@@ -61,9 +62,9 @@ export default function SqlRowDetailModal({ row, cols, index, onClose }) {
           })}
         </div>
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             {t('sql.closeRowDetails')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

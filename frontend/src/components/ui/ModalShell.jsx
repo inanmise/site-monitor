@@ -1,9 +1,15 @@
-import { createContext, useContext, useEffect, useId, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { createContext, useContext, useEffect } from 'react'
 import { X } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/shadcn/button'
+import {
+  Dialog, DialogClose, DialogContent, DialogFooter, DialogHeader, DialogPortal, DialogTitle,
+} from '@/components/shadcn/dialog'
+import { useT } from '../../i18n/index.jsx'
 
 /**
  * Modal KABUĞU — davranış, içerik değil. Yeni modallar buradan kurulur.
+ * İç uygulama shadcn Dialog (Radix); dış API (prop'lar) değişmedi.
  *
  * Neden var: repodaki modallar `.modal-overlay` + `<div role="dialog">` elle kuruyor ve her
  * biri farklı bir alt küme uyguluyor — kimi Escape'i dinliyor, kimi dinlemiyor; hiçbirinde
@@ -11,12 +17,24 @@ import { X } from 'lucide-react'
  * tamamı eksikti (çökme sonrası açılan bir modaldan Tab ile arkadaki ölü ekrana düşülüyordu).
  *
  * Sağladıkları:
- *   • createPortal(document.body) — ağaçtaki yerine bağlı z-index/overflow sürprizi olmaz
- *   • role="dialog" + aria-modal + aria-labelledby (başlık otomatik bağlanır)
- *   • Escape — İÇ İÇE modallarda yalnız EN DERİNDEKİ kapanır
- *   • Odak — açılışta içeri, kapanışta tetikleyiciye geri; Tab/Shift+Tab döngüsü kabukta kalır
+ *   • body'ye portal (Radix Portal) — ağaçtaki yerine bağlı z-index/overflow sürprizi olmaz
+ *   • role="dialog" + aria-modal + aria-labelledby (DialogTitle otomatik bağlanır)
+ *   • Escape — Radix katman yığını: iç içe kabuklarda, üstte açılan onay penceresinde (useDialog)
+ *     ya da açık bir açılır menüde tuşu YALNIZ en üstteki katman alır. Eski `openShells` kayıt
+ *     defteri ve `.dlg-overlay` sınıf kontrolü bunun yerine geçti. İşlenen Escape
+ *     `preventDefault` ile işaretlenir → useEscapeKey'li eski detay modalları alttan kapanmaz.
+ *   • Odak — açılışta ilk odaklanabilir öğeye (X; `autoFocus` taşıyan alan varsa o), kapanışta
+ *     tetikleyiciye geri; Tab/Shift+Tab döngüsü kabukta kalır (FocusScope loop)
  *   • Arka plan scroll kilidi — sayaçlı (iç içe modalda erken açılmaz)
- *   • Katman — derinliğe göre --modal-z, lightbox parent modalın üstünde kalır
+ *   • Katman — derinliğe göre z-index, iç kabuk dıştakinin üstünde kalır
+ *
+ * NEDEN `modal={false}` + kendi scrim'imiz: Radix'in modal kipi body'ye `pointer-events: none`
+ * koyar ve odağı DOM kapsamına göre hapseder. Kabuğun içinden body'ye portal'lanan HAM öğeler
+ * (TeamMembersModal üstünde açılan UserEditModal, HelpTip balonu, takvim açılır penceresi,
+ * ng-mailpop) bu yüzden tıklanamaz ve odak alamaz hâle gelirdi — form yazılamazdı. Eski kabuğun
+ * sözleşmesi zaten "scrim sayfayı örter + Tab kabukta döner + aria-modal" idi; non-modal Radix +
+ * kendi scrim'imiz onu birebir korur. Dış tıklama/odak kaybı Radix'e kapattırılmaz
+ * (`onInteractOutside` yutulur); kapatma yolları scrim, X ve Escape'tir.
  *
  * `busy` iken kapatma yolları (Escape, scrim tıklaması, X) devre dışıdır — gönderim sürerken
  * yanlışlıkla kapatmayı önler.
@@ -27,11 +45,16 @@ import { X } from 'lucide-react'
  *
  * `scrollBody` uzun formlar içindir: kutuya yükseklik tavanı koyar, YALNIZ gövdeyi kaydırır ve
  * `footer`'ı daima görünür tutar. Düğmeler bu modda `footer` ile verilmeli — gövdenin içine
- * konursa onlar da kaydırma alanında kalır ve amaç boşa gider. İkisi de varsayılan olarak
- * KAPALI: mevcut modalların yerleşimi bu değişiklikten etkilenmesin.
+ * konursa onlar da kaydırma alanında kalır ve amaç boşa gider.
  *
- * Kapsam notu: mevcut ~12 modal bilinçli olarak taşınmadı; her biri kendi iç düzenini
- * `.modal-box`/`.modal-content` üstüne kurmuş ve toplu geçiş ayrı bir iş.
+ * Yerleşim notları (eski hatalar tekrarlanmasın):
+ *   • Genişlik sınıfları cn/twMerge ile shadcn'in `sm:max-w-lg`'sinin YERİNE geçer; kutuda artık
+ *     legacy `.modal-box` sınıfı YOK. Eskiden `.modal-box`'ın max-width'i aynı özgüllükte ve
+ *     sonra geldiği için lg/xl/full hiç uygulanmıyordu; App.css katmansız olduğundan legacy bir
+ *     sınıf bugün de Tailwind'i ezerdi.
+ *   • shadcn içeriği viewport'a SABİT ortalanır: tavansız uzun içerik ekranın üstünden/altından
+ *     taşar ve kaydırılamaz. Bu yüzden scrollBody kapalıyken de kutu viewport yüksekliğiyle
+ *     sınırlı ve kendi içinde kayar (eskiden bu işi `.modal-overlay`ın kaydırması görüyordu).
  */
 
 /**
@@ -41,72 +64,44 @@ import { X } from 'lucide-react'
  */
 const DepthCtx = createContext(0)
 
-// Açık kabuklar — Escape'i en derindeki alır (eşitlikte en son kaydolan).
-const openShells = []
+// Katman tabanı = App.css `--z-modal` (2000). SAYI olarak tutuluyor: derinlik başına +10 eklenir
+// (UserEditModal'ın `.modal-overlay--top` 2100'ü bu aralığın üstünde kalır). Scrim taban
+// değerde, kutu +1'de — iç içe portal'larda body'ye ekleme sırası tersine dönebilir.
+const MODAL_Z = 2000
+const DEPTH_STEP = 10
 
 // Scroll kilidi sayacı: iç içe modalda dıştaki hâlâ açıkken kilit açılmamalı.
 let scrollLocks = 0
 let savedOverflow = ''
 
-// [hidden] hariç tutuluyor: IssueReportModal'ın gizli <input type="file"> alanı seçiciye
-// uyar ama odaklanamaz; tuzağın döngüsünü sessizce kırardı. Görünürlüğü offsetParent ile
-// ölçmek DOĞRU DEĞİL — jsdom'da daima null, tarayıcıda ise position:fixed atalarda null.
-const FOCUSABLE = [
-  'a[href]', 'button', 'input', 'select', 'textarea', '[tabindex]',
-].map((s) => `${s}:not([disabled]):not([hidden]):not([tabindex="-1"]):not([type="hidden"])`).join(',')
+// Genişlikler eski kabukla aynı (460/620/900/1140/96vw); dar ekranda 1rem kenar payı korunur.
+const SIZE_CLASS = {
+  sm: 'sm:max-w-[min(460px,calc(100%-2rem))]',
+  md: 'sm:max-w-[min(620px,calc(100%-2rem))]',
+  lg: 'sm:max-w-[min(900px,calc(100%-2rem))]',
+  xl: 'sm:max-w-[min(1140px,calc(100%-2rem))]',
+  full: 'sm:max-w-[min(96vw,calc(100%-2rem))]',
+}
+
+// scrollBody: kutu sütun-flex + tavan; gövde `min-h-0` ŞART — flex öğesinin varsayılan
+// `min-height:auto`'su içeriğe göre büyür ve overflow hiç devreye girmez (altlık aşağı kaçar).
+const SCROLL_BOX = 'flex max-h-[min(88vh,calc(100dvh-2rem))] flex-col overflow-hidden'
+const SCROLL_BODY = '-mr-1 min-h-0 flex-1 overflow-y-auto pr-1'
+const PLAIN_BOX = 'max-h-[calc(100dvh-2rem)] overflow-y-auto'
 
 export default function ModalShell({
   open, onClose, title, icon: Icon, size = 'md', busy = false,
   dismissOnBackdrop = true, scrollBody = false,
   closeLabel, footer, children, className = '',
 }) {
+  const t = useT()
   const parentDepth = useContext(DepthCtx)
-  const boxRef = useRef(null)
-  const selfRef = useRef({})
-  const titleId = useId()
 
-  selfRef.current.depth = parentDepth
-
-  // Kayıt defteri + Escape. `busy`/`onClose` değişince yalnız dinleyici yenilenir.
-  useEffect(() => {
-    if (!open) return
-    const self = selfRef.current
-    openShells.push(self)
-    return () => {
-      const i = openShells.indexOf(self)
-      if (i !== -1) openShells.splice(i, 1)
-    }
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const self = selfRef.current
-
-    function onKeyDown(e) {
-      if (e.key !== 'Escape') return
-      // En derindeki kabuk; eşit derinlikte en son kaydolan (>=).
-      const top = openShells.reduce((a, b) => (b.depth >= a.depth ? b : a), openShells[0])
-      if (top !== self) return
-      // Dialog (showConfirm/showPrompt) kendi overlay'inde Escape'i zaten işliyor; o açıkken
-      // buradan da kapatırsak tek tuşla iki katman birden kapanır. Sınıf adına bağlı olması
-      // kırılgan — ortak bir katman yöneticisi bu işin kapsamı dışında bırakıldı.
-      if (document.querySelector('.dlg-overlay')) return
-      if (busy) return
-      e.stopPropagation()
-      onClose?.()
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [open, busy, onClose])
-
-  // Odak: açılışta içeri al, kapanışta tetikleyiciye iade et.
+  // Odak iadesi: kapanışta tetikleyiciye. Radix yalnız kendi DialogTrigger'ına döner (burada
+  // tetik yok), bu yüzden iade kabukta; açılıştaki odağı Radix FocusScope verir.
   useEffect(() => {
     if (!open) return
     const previous = document.activeElement
-    const box = boxRef.current
-    const first = box?.querySelector(FOCUSABLE)
-    ;(first ?? box)?.focus?.()
     return () => {
       if (previous && typeof previous.focus === 'function' && document.contains(previous)) {
         previous.focus()
@@ -130,53 +125,60 @@ export default function ModalShell({
 
   if (!open) return null
 
-  function onTrapKey(e) {
-    if (e.key !== 'Tab') return
-    const items = [...(boxRef.current?.querySelectorAll(FOCUSABLE) ?? [])]
-    if (items.length === 0) { e.preventDefault(); return }
-    const firstEl = items[0]
-    const lastEl = items[items.length - 1]
-    if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus() }
-    else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus() }
-  }
+  const z = MODAL_Z + parentDepth * DEPTH_STEP
 
-  return createPortal(
+  return (
     <DepthCtx.Provider value={parentDepth + 1}>
-      <div
-        className="modal-overlay modal-shell-overlay"
-        style={{ '--modal-z': 2000 + parentDepth * 10 }}
-        onClick={(e) => {
-          if (!dismissOnBackdrop || busy) return
-          if (e.target === e.currentTarget) onClose?.()
-        }}
-      >
-        <div
-          ref={boxRef}
-          className={['modal-box', `modal-shell--${size}`, scrollBody && 'modal-shell--scroll', className]
-            .filter(Boolean).join(' ')}
-          role="dialog"
+      <Dialog open modal={false} onOpenChange={(next) => { if (!next && !busy) onClose?.() }}>
+        {/* Scrim: Radix non-modal kipte DialogOverlay çizmez; görünüm shadcn örtüsüyle aynı.
+            Yalnız scrim'in KENDİSİNE tıklama kapatır (kutudan başlayan sürükleme kapatmaz). */}
+        <DialogPortal>
+          <div
+            data-slot="dialog-overlay"
+            aria-hidden="true"
+            className="fixed inset-0 bg-black/50 animate-in fade-in-0 motion-reduce:animate-none"
+            style={{ zIndex: z }}
+            onClick={(e) => {
+              if (!dismissOnBackdrop || busy) return
+              if (e.target === e.currentTarget) onClose?.()
+            }}
+          />
+        </DialogPortal>
+        <DialogContent
+          showCloseButton={false}
           aria-modal="true"
-          aria-labelledby={titleId}
-          tabIndex={-1}
-          onKeyDown={onTrapKey}
+          data-size={size}
+          data-scroll-body={scrollBody ? 'true' : undefined}
+          style={{ zIndex: z + 1 }}
+          className={cn(SIZE_CLASS[size] ?? SIZE_CLASS.md, scrollBody ? SCROLL_BOX : PLAIN_BOX, className)}
+          // Dış tıklama / odağın dışarı (toast, portal'lı menü, üstte açılan ham modal) kayması
+          // kabuğu KAPATMAZ — eski sözleşme: yalnız scrim, X ve Escape.
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => { if (busy) e.preventDefault() }}
+          // Radix tetiksiz kapanışta odağı hiçbir yere vermez; iade yukarıdaki effect'te.
+          onCloseAutoFocus={(e) => e.preventDefault()}
         >
-          <div className="modal-shell-hdr">
-            <h3 id={titleId} className="modal-shell-title">
-              {Icon && <Icon size={18} aria-hidden="true" />}
+          <DialogHeader className="shrink-0 flex-row items-center justify-between gap-3 text-left">
+            <DialogTitle className="flex min-w-0 items-center gap-2 leading-snug">
+              {Icon && <Icon size={18} aria-hidden="true" className="shrink-0" />}
               {title}
-            </h3>
-            <button type="button" className="modal-shell-close" onClick={() => onClose?.()}
-              aria-label={closeLabel} disabled={busy}>
-              <X size={18} />
-            </button>
+            </DialogTitle>
+            <DialogClose asChild>
+              <Button type="button" variant="ghost" size="icon-sm" disabled={busy}
+                className="-my-1 -mr-2 shrink-0 text-muted-foreground"
+                aria-label={closeLabel || t('app.close')}>
+                <X aria-hidden="true" />
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+
+          <div data-slot="modal-shell-body" className={cn('min-w-0', scrollBody && SCROLL_BODY)}>
+            {children}
           </div>
 
-          <div className="modal-shell-body">{children}</div>
-
-          {footer && <div className="modal-shell-footer">{footer}</div>}
-        </div>
-      </div>
-    </DepthCtx.Provider>,
-    document.body
+          {footer && <DialogFooter className="shrink-0 border-t pt-4">{footer}</DialogFooter>}
+        </DialogContent>
+      </Dialog>
+    </DepthCtx.Provider>
   )
 }

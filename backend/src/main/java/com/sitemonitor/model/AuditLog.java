@@ -14,7 +14,8 @@ import lombok.NoArgsConstructor;
     @Index(name = "idx_audit_actor_id",   columnList = "actor_id"),
     @Index(name = "idx_audit_resource",   columnList = "resource_type, resource_id"),
     @Index(name = "idx_audit_correlation", columnList = "correlation_id"),
-    @Index(name = "idx_audit_seq",        columnList = "seq")
+    @Index(name = "idx_audit_seq",        columnList = "seq"),
+    @Index(name = "idx_audit_actor_team_time", columnList = "actor_team_id, event_time")
 })
 @Data
 @NoArgsConstructor

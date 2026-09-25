@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { copyText } from '../../utils/copyText.js'
+import { Button, buttonVariants } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * Keyfi bir metni kopyalayan salt-ikon buton.
@@ -12,9 +14,10 @@ import { copyText } from '../../utils/copyText.js'
  * provider yoksa throw ediyor ve bu buton hata yüzeylerinde de kullanılıyor; kopyalama çoğu zaman
  * kullanıcının bozuk bir ekrandan bilgi çıkarmasının tek yolu, yeni bir çökme riski taşımamalı.
  *
- * Saf sunum: etiketler prop olarak gelir.
+ * Saf sunum: etiketler prop olarak gelir. Görünüm shadcn Button: `variant` / `buttonSize`
+ * (`size` geriye uyum için İKON pikselidir).
  */
-export default function CopyButton({ value, label, copiedLabel, className = 'btn btn-sm', size = 13, as = 'button' }) {
+export default function CopyButton({ value, label, copiedLabel, className, variant = 'outline', buttonSize = 'icon-sm', size = 13, as = 'button' }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef(null)
 
@@ -36,15 +39,15 @@ export default function CopyButton({ value, label, copiedLabel, className = 'btn
   // Enter/Space, stopPropagation.
   if (as === 'span') {
     return (
-      <span role="button" tabIndex={0} className={className} onClick={onCopy} aria-label={text} title={text}
+      <span role="button" tabIndex={0} className={cn(buttonVariants({ variant, size: buttonSize }), className)} onClick={onCopy} aria-label={text} title={text}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onCopy(e) } }}>
         {icon}
       </span>
     )
   }
   return (
-    <button type="button" className={className} onClick={onCopy} aria-label={text} title={text}>
+    <Button type="button" variant={variant} size={buttonSize} className={className} onClick={onCopy} aria-label={text} title={text}>
       {icon}
-    </button>
+    </Button>
   )
 }

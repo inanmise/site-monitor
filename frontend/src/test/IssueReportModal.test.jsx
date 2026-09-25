@@ -121,7 +121,7 @@ describe('IssueReportModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     const btn = await screen.findByRole('button', { name: /Sending/i })
     expect(btn.getAttribute('aria-busy')).toBe('true')
-    expect(btn.querySelector('.pg-spinner')).toBeTruthy()
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeTruthy()
   })
 
   it('odak açılışta modala girer, kapanışta tetikleyiciye döner', async () => {

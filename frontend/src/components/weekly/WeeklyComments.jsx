@@ -3,6 +3,7 @@ import { MessageSquare, Send, ArrowUpFromLine, CheckCircle, Undo2, RotateCcw } f
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Haftalık rapor yorum dizisi (2026-09-13, ikinci tur): PO ↔ takım gidiş-gelişi tek yerde.
@@ -82,9 +83,9 @@ export default function WeeklyComments({ reportId, canWrite, nonce = 0 }) {
             onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send() } }} />
           <div className="wr-cm-form-row">
             <span className="wr-cm-hint">{t('wr.cm.hint')} · {text.length}/{COMMENT_MAX}</span>
-            <button type="button" className="btn btn-primary btn-sm-p" onClick={send} disabled={busy || !text.trim()}>
+            <Button type="button" size="sm" onClick={send} disabled={busy || !text.trim()}>
               <Send size={13} /> {t('wr.cm.send')}
-            </button>
+            </Button>
           </div>
           {err && <div className="wr-cm-err" role="alert">{err}</div>}
         </div>

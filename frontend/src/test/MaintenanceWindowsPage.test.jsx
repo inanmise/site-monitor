@@ -45,4 +45,20 @@ describe('MaintenanceWindowsPage', () => {
     expect(await screen.findByText('DB bakımı')).toBeInTheDocument()
     expect(screen.getByText(/upcoming|Yaklaşan/i)).toBeInTheDocument()
   })
+
+  /**
+   * 2026-09-25 (R15): satır eylemleri yalnız ikon + title taşıyordu — her satırda aynı "Sil",
+   * "Düzenle"; ekran okuyucu hangi pencerenin silineceğini duymuyordu. Ad = pencere adı + eylem.
+   */
+  it('satır eylem düğmelerinin ADI pencereyi ayırır (iki satır, özdeş ad yok)', async () => {
+    api.monitoring.maintenance.list.mockResolvedValue({ success: true, data: [win, { ...win, id: 2, name: 'Ağ bakımı', status: 'paused' }] })
+    render(<MaintenanceWindowsPage systemRole="ADMIN" />)
+    await screen.findByText('Ağ bakımı')
+    for (const name of ['DB bakımı', 'Ağ bakımı']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^${name} — (Sil|Delete)`, 'i') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: new RegExp(`^${name} — (Düzenle|Edit)`, 'i') })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('button', { name: /^Ağ bakımı — (Sürdür|Devam|Resume)/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(Sil|Delete)$/i })).toBeNull()
+  })
 })

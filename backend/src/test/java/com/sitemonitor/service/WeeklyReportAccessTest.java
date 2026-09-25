@@ -31,7 +31,11 @@ import static org.mockito.Mockito.when;
 
 /**
  * Haftalık Raporlar modülünün TAKIM BAZLI görünürlüğü (2026-09-16, kullanıcı kararı):
- * varsayılan KAPALI, yalnız açılan takım görür — yönetici de kapalı takımın verisini görmez.
+ * varsayılan KAPALI, yalnız açılan takım görür.
+ *
+ * <p>2026-09-25 kullanıcı kararı: "ADMIN yetkisine sahip bir user her zaman haftalık raporu görmeli" —
+ * ADMIN ROLÜ (global ya da takım-kapsamlı müdür) bayrağa takılmaz; KAPSAM değişmez (müdür yine yalnız
+ * kendi takımı). AUDIT ve diğer roller için "kapalı" tek anlamda kalır; pano/şerit/hatırlatma değişmedi.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -55,6 +59,8 @@ class WeeklyReportAccessTest {
     private static final Actor AUDIT   = new Actor(2L, "audit", "Denetçi", null, "AUDIT");
     private static final Actor USER_ON = new Actor(10L, "acik", "Açık Takım", 2L, "USER");
     private static final Actor USER_OFF = new Actor(11L, "kapali", "Kapalı Takım", 7L, "USER");
+    /** AD kaynaklı takım-kapsamlı müdür: rol ADMIN ama global DEĞİL — kendi takımı (kapalı) 7. */
+    private static final Actor SCOPED_ADMIN_OFF = new Actor(12L, "mudur", "Müdür", 7L, "ADMIN", false);
 
     private static Team team(Long id, String name, boolean enabled) {
         Team t = new Team();
@@ -105,12 +111,22 @@ class WeeklyReportAccessTest {
         assertThat(service.visibleFor(null, false)).isFalse();
         assertThat(service.visibleFor(List.of(), true)).isTrue();          // bir takım açık
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(team(7L, "Kapali", false)));
-        assertThat(service.visibleFor(List.of(), true)).isFalse();         // hiçbiri açık değil → yönetici de görmez
+        assertThat(service.visibleFor(List.of(), true)).isFalse();         // hiçbiri açık değil → AUDIT görmez
         assertThat(service.visibleFor(List.of(7L), false)).isFalse();
     }
 
     @Test
-    @DisplayName("liste: kapalı takım boş döner; yönetici tüm takımları listelerken kapalı takımın raporları elenir")
+    @DisplayName("2026-09-25: ADMIN rolü (global ya da kapsamlı) HİÇBİR takım açık değilken de menüyü görür; AUDIT/kullanıcı görmez")
+    void adminRoleAlwaysSees() {
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(team(7L, "Kapali", false)));   // hepsi kapalı
+        assertThat(service.visibleFor(List.of(), true, true)).isTrue();        // global admin
+        assertThat(service.visibleFor(List.of(7L), false, true)).isTrue();     // kapsamlı müdür, kapalı takım
+        assertThat(service.visibleFor(List.of(), true, false)).isFalse();      // AUDIT değişmedi
+        assertThat(service.visibleFor(List.of(7L), false, false)).isFalse();   // kullanıcı değişmedi
+    }
+
+    @Test
+    @DisplayName("liste: kapalı takım üyesi/AUDIT için kapalı takım elenir; ADMIN rolü kapalı takımı da listeler (2026-09-25)")
     void listFiltersDisabled() {
         when(reportRepo.findByTeamIdAndReportYearOrderByWeekNoDesc(anyLong(), anyInt()))
                 .thenAnswer(i -> List.of(report(5L, i.getArgument(0))));
@@ -118,26 +134,31 @@ class WeeklyReportAccessTest {
                 .thenReturn(List.of(report(5L, 2L), report(6L, 7L)));
 
         assertThat(service.list(null, 2026, USER_OFF)).isEmpty();          // kapalı takım üyesi
-        assertThat(service.list(7L, 2026, ADMIN)).isEmpty();               // yönetici, kapalı takımı istedi
+        assertThat(service.list(7L, 2026, ADMIN)).hasSize(1);              // ADMIN, kapalı takımı istedi → görür
         assertThat(service.list(2L, 2026, USER_ON)).hasSize(1);
-        assertThat(service.list(null, 2026, ADMIN)).extracting(WeeklyReport::getTeamId).containsExactly(2L);
+        assertThat(service.list(null, 2026, ADMIN)).extracting(WeeklyReport::getTeamId).containsExactly(2L, 7L);
         assertThat(service.list(null, 2026, AUDIT)).extracting(WeeklyReport::getTeamId).containsExactly(2L);
+        assertThat(service.list(null, 2026, SCOPED_ADMIN_OFF)).hasSize(1);   // müdür: kendi (kapalı) takımı
     }
 
     @Test
-    @DisplayName("okuma/oluşturma: kapalı takımın raporu yönetici için de 403 (WEEKLY_REPORTS_DISABLED); kapalı takıma rapor açılamaz")
+    @DisplayName("okuma/oluşturma: kapalı takım AUDIT/kullanıcı için 403 (WEEKLY_REPORTS_DISABLED); ADMIN rolü okur ve açar, kapsam korunur")
     void readAndCreateBlocked() {
         when(reportRepo.findById(6L)).thenReturn(Optional.of(report(6L, 7L)));
         when(reportRepo.findById(5L)).thenReturn(Optional.of(report(5L, 2L)));
         when(reportRepo.findByTeamIdAndReportYearAndWeekNo(anyLong(), anyInt(), anyInt())).thenReturn(Optional.empty());
         when(reportRepo.findFirstByTeamIdOrderByReportYearDescWeekNoDesc(anyLong())).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.get(6L, ADMIN)).isInstanceOf(SecurityException.class).hasMessageContaining("WEEKLY_REPORTS_DISABLED");
-        assertThatThrownBy(() -> service.get(6L, AUDIT)).isInstanceOf(SecurityException.class);
+        assertThat(service.get(6L, ADMIN).getId()).isEqualTo(6L);                       // ADMIN: kapalı takımı okur
+        assertThat(service.get(6L, SCOPED_ADMIN_OFF).getId()).isEqualTo(6L);            // müdür: kendi kapalı takımı
+        assertThatThrownBy(() -> service.get(5L, SCOPED_ADMIN_OFF))                      // müdür: BAŞKA takım → kapsam dışı
+                .isInstanceOf(SecurityException.class).hasMessageNotContaining("WEEKLY_REPORTS_DISABLED");
+        assertThatThrownBy(() -> service.get(6L, AUDIT)).isInstanceOf(SecurityException.class).hasMessageContaining("WEEKLY_REPORTS_DISABLED");
         assertThatThrownBy(() -> service.get(6L, USER_OFF)).isInstanceOf(SecurityException.class);
         assertThat(service.get(5L, USER_ON).getId()).isEqualTo(5L);
 
-        assertThatThrownBy(() -> service.create(7L, 2026, 37, ADMIN)).isInstanceOf(SecurityException.class).hasMessageContaining("WEEKLY_REPORTS_DISABLED");
+        assertThat(service.create(7L, 2026, 37, ADMIN).getTeamId()).isEqualTo(7L);     // ADMIN: kapalı takıma açar
+        assertThatThrownBy(() -> service.create(7L, 2026, 37, USER_OFF)).isInstanceOf(SecurityException.class).hasMessageContaining("WEEKLY_REPORTS_DISABLED");
         assertThat(service.create(2L, 2026, 37, USER_ON).getTeamId()).isEqualTo(2L);
     }
 

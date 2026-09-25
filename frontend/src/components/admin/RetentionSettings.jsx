@@ -15,6 +15,7 @@ import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
 import RetentionRunsPanel from './retention/RetentionRunsPanel.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
 const CLASSES = [
@@ -282,20 +283,20 @@ export default function RetentionSettings() {
 
       {/* ── Aksiyonlar ── */}
       <div className="ldap-actions ret-actions">
-        <button className="btn btn-secondary" onClick={dryRun} disabled={busy != null}>
+        <Button variant="secondary" onClick={dryRun} disabled={busy != null}>
           {busy === 'dry' ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
           {t('ret.dryRun')}
-        </button>
-        <button className="btn btn-secondary" onClick={backfillHourly} disabled={busy != null}
+        </Button>
+        <Button variant="secondary" onClick={backfillHourly} disabled={busy != null}
           title={t('ret.backfillHint')}>
           {busy === 'backfill' ? <Spinner size={15} inline decorative /> : <DatabaseBackup size={15} />}
           {t('ret.backfill')}
-        </button>
-        <button className="btn btn-danger" onClick={runNow} disabled={busy != null || holdOn}
+        </Button>
+        <Button variant="destructive" onClick={runNow} disabled={busy != null || holdOn}
           title={holdOn ? t('ret.holdBlocks') : undefined}>
           {busy === 'run' ? <Spinner size={15} inline decorative /> : <Trash2 size={15} />}
           {t('ret.runNow')}
-        </button>
+        </Button>
       </div>
 
       {lastRun && (
@@ -375,7 +376,7 @@ export default function RetentionSettings() {
             <label><span className="help-label-row">{t('ret.invPurgeDays')}<HelpTip helpKey="help.set.site.monitor.inventory.auto-purge-days" label={t('ret.invPurgeDays')} /></span></label>
             <div className="ret-inline-field">
               <input className="input input-sm" type="number" min={0} max={3650} value={invPurge} onChange={e => setInvPurge(e.target.value)} aria-label={t('ret.invPurgeDays')} />
-              <button type="button" className="btn btn-sm btn-primary" disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)} onClick={saveInvPurge}>{t('ret.invPurgeApply')}</button>
+              <Button type="button" size="sm" disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)} onClick={saveInvPurge}>{t('ret.invPurgeApply')}</Button>
             </div>
             <span className="hint"><code>site.monitor.inventory.auto-purge-days</code></span>
           </div>
@@ -400,10 +401,10 @@ export default function RetentionSettings() {
           <span className="ret-sticky-count">
             <span className="ret-sticky-dot" />{t('ret.pendingCount', pending.length)}
           </span>
-          <button className="btn btn-secondary" onClick={() => setEdited({})}>{t('ret.discard')}</button>
-          <button className="btn btn-primary" onClick={() => setReview(pending)}>
+          <Button variant="secondary" onClick={() => setEdited({})}>{t('ret.discard')}</Button>
+          <Button onClick={() => setReview(pending)}>
             {t('ret.reviewOpen')}
-          </button>
+          </Button>
         </div>
       )}
 

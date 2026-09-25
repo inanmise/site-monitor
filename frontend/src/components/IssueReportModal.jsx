@@ -9,6 +9,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import Field from './ui/Field.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import { Spinner } from './ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Oturum içi "Sorun Bildir" modalı — iki giriş noktasından açılır:
@@ -176,14 +177,14 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   ]
 
   const footer = reference
-    ? <button type="button" className="btn btn-primary" onClick={onClose}>{t('issue.close')}</button>
+    ? <Button type="button" onClick={onClose}>{t('issue.close')}</Button>
     : (
       <>
-        <button type="button" className="btn" onClick={onClose} disabled={sending}>{t('issue.cancel')}</button>
-        <button type="button" className="btn btn-primary" onClick={submit} disabled={sending} aria-busy={sending}>
+        <Button type="button" variant="outline" onClick={onClose} disabled={sending}>{t('issue.cancel')}</Button>
+        <Button type="button" onClick={submit} disabled={sending} aria-busy={sending}>
           {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
           {sending ? t('issue.sending') : t('issue.submit')}
-        </button>
+        </Button>
       </>
     )
 
@@ -303,11 +304,11 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
               onDrop={onDrop}
             >
               <div className="issue-dropzone-row">
-                <button type="button" className="btn btn-sm" onClick={() => fileRef.current?.click()}
+                <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}
                         disabled={images.length >= MAX_IMAGES}>
                   <Camera size={15} style={{ marginRight: 6 }} />
                   {t('issue.addImage')} ({images.length}/{MAX_IMAGES})
-                </button>
+                </Button>
                 <span className="hint">{t('issue.dropHint')}</span>
               </div>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg" multiple hidden

@@ -164,7 +164,7 @@ describe('SystemHealth — ilerleme çubukları', () => {
 
     await user.click(collapseBars()[0])   // "Sistem"
 
-    const bars = document.querySelectorAll('progress')
+    const bars = document.querySelectorAll('[role="progressbar"]')
     expect(bars.length, 'pool + bellek + executor kuyruğu = 3 ilerleme çubuğu').toBeGreaterThanOrEqual(3)
   })
 
@@ -181,7 +181,7 @@ describe('SystemHealth — ilerleme çubukları', () => {
 
     await user.click(collapseBars()[0])
 
-    expect(document.querySelectorAll('progress').length).toBe(0)
+    expect(document.querySelectorAll('[role="progressbar"]').length).toBe(0)
   })
 })
 

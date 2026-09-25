@@ -20,6 +20,7 @@ import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock, ProgressBar } from '../ui/Progress.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * SMTP Gönderim Logu v2 (2026-09-19, kullanıcı isteği: "sistemi ancak bu sayfadan izleyebiliriz") —
@@ -43,7 +44,7 @@ const STATUS_META = {
   QUEUED:  { Icon: Clock,       cls: 'smtp-kind-skipped', key: 'sml.statusQueued' },
   UNKNOWN: { Icon: HelpCircle,  cls: 'smtp-kind-skipped', key: 'health.statusUnknown' },
 }
-const KPI_COLORS = { total: '#64748b', sent: '#059669', failed: '#dc2626', skipped: '#94a3b8', rate: '#2563eb', recipients: '#b45309' }
+const KPI_COLORS = { total: '#71717a', sent: '#059669', failed: '#dc2626', skipped: '#a1a1aa', rate: '#2563eb', recipients: '#b45309' }
 
 /** Yerel Date → sunucu UTC ISO (saniye, 'Z'siz). */
 function toIso(d) { return d instanceof Date && !isNaN(d) ? d.toISOString().slice(0, 19) : null }
@@ -221,7 +222,7 @@ export default function SmtpLogView({ onBack, initial }) {
     <div className="sml">
       {/* Başlık */}
       <div className="sml-head">
-        <button type="button" className="btn btn-secondary sml-back" onClick={onBack}><ArrowLeft size={14} /> {t('sml.back')}</button>
+        <Button type="button" variant="secondary" className="sml-back" onClick={onBack}><ArrowLeft size={14} /> {t('sml.back')}</Button>
         <div className="sml-title">
           <Mail size={18} aria-hidden="true" />
           <div>
@@ -230,8 +231,8 @@ export default function SmtpLogView({ onBack, initial }) {
           </div>
         </div>
         <div className="sml-head-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => load()} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} /> {t('sml.refresh')}</button>
-          <button type="button" className="btn btn-secondary" onClick={exportCsv} disabled={busy || rows.total === 0}><Download size={14} /> {t('sml.exportCsv')}</button>
+          <Button type="button" variant="secondary" onClick={() => load()} disabled={loading}><RefreshCw size={14} className={loading ? 'spin' : ''} /> {t('sml.refresh')}</Button>
+          <Button type="button" variant="secondary" onClick={exportCsv} disabled={busy || rows.total === 0}><Download size={14} /> {t('sml.exportCsv')}</Button>
         </div>
       </div>
 
@@ -268,7 +269,7 @@ export default function SmtpLogView({ onBack, initial }) {
               {f.recipient && <button type="button" className="sml-chip" onClick={() => patch({ recipient: '' })}>{t('health.smtpLogRecipient')}: {f.recipient} <X size={11} /></button>}
             </span>
           )}
-          {activeCount > 0 && <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearAll}>{t('app.clearFilters')} ({activeCount})</button>}
+          {activeCount > 0 && <Button type="button" variant="secondary" size="sm" onClick={clearAll}>{t('app.clearFilters')} ({activeCount})</Button>}
           <span className="rn-count">{t('sml.count', rows.total)}</span>
         </div>
       </div>
@@ -427,9 +428,9 @@ export default function SmtpLogView({ onBack, initial }) {
                       {row.error_class && <span className="sml-cls">{t(`sml.cls.${row.error_class}`)}</span>}
                     </td>
                     <td className="sml-actions" onClick={(e) => e.stopPropagation()}>
-                      <button type="button" className="btn btn-secondary btn-sm-p" title={t('health.emailDetail')} onClick={() => setDetailId(row.id)}><Eye size={13} /></button>
+                      <Button type="button" variant="secondary" size="sm" title={t('health.emailDetail')} onClick={() => setDetailId(row.id)}><Eye size={13} /></Button>
                       {canResend && row.kind === 'FAILED' && (
-                        <button type="button" className="btn btn-secondary btn-sm-p sml-resend" title={t('sml.resend')} disabled={busy} onClick={() => resend(row)}><Send size={13} /></button>
+                        <Button type="button" variant="secondary" size="sm" className="sml-resend" title={t('sml.resend')} disabled={busy} onClick={() => resend(row)}><Send size={13} /></Button>
                       )}
                     </td>
                   </tr>
@@ -449,9 +450,9 @@ export default function SmtpLogView({ onBack, initial }) {
       {detailId && (
         <ModalShell open onClose={() => setDetailId(null)} title={t('health.emailDetail')} icon={Mail} size="xl" scrollBody
           footer={<>
-            {detail?.alert?.id && <button type="button" className="btn btn-secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert.id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</button>}
-            {canResend && detail?.kind === 'FAILED' && !detail?.alert?.resolved && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => resend(detail)}><Send size={13} /> {t('sml.resend')}</button>}
-            <button type="button" className="btn btn-secondary" onClick={() => setDetailId(null)}>{t('app.close')}</button>
+            {detail?.alert?.id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert.id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
+            {canResend && detail?.kind === 'FAILED' && !detail?.alert?.resolved && <Button type="button" disabled={busy} onClick={() => resend(detail)}><Send size={13} /> {t('sml.resend')}</Button>}
+            <Button type="button" variant="secondary" onClick={() => setDetailId(null)}>{t('app.close')}</Button>
           </>}>
           {!detail ? <LoadingBlock label={t('sys.loading')} fullWidth /> : (
             <div className="sml-detail">
@@ -498,7 +499,7 @@ export default function SmtpLogView({ onBack, initial }) {
               )}
               <div className="smtp-detail-body-label">{t('health.emailDetailBody')}</div>
               <iframe className="smtp-detail-iframe" title={detail.subject || 'mail'} sandbox=""
-                srcDoc={mailPreviewSrcDoc(detail.message ?? `<p style="color:#9ca3af;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
+                srcDoc={mailPreviewSrcDoc(detail.message ?? `<p style="color:#a1a1aa;font-family:sans-serif">${t('health.emailDetailNoBody')}</p>`,
                   { logoVariant: mailLogoVariant({ trigger: detail.trigger, level: detail.alert_level }) })} />
             </div>
           )}

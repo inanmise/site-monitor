@@ -10,6 +10,7 @@ import UserDetailPanel from '../UserDetailPanel.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { navigateTo } from '../../../utils/navigate.js'
 import { splitFlags, relTime, splitDuration, tabLabel, loginStatus } from './uactModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /** Kullanıcı / Oturum paneli modalları (2026-09-13). Hepsi ModalShell (odak tuzağı, Escape, scroll kilidi). */
 
@@ -159,11 +160,11 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
   return (
     <ModalShell open onClose={onClose} title={u.username} icon={Users} size="lg" scrollBody
       footer={<>
-        <button type="button" className="btn btn-secondary" onClick={onClose}>{t('app.dismiss')}</button>
-        {isAdmin && u.user_id != null && <button type="button" className="btn btn-secondary" onClick={() => setFullCard(true)}><UserCog size={14} /> {t('uact.fullCard')}</button>}
-        {isAdmin && <button type="button" className="btn btn-secondary" onClick={() => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: u.username }) }}><ExternalLink size={14} /> {t('uact.actOpenAdmin')}</button>}
-        {isAdmin && u.user_id != null && (u.tour_status || 'none') !== 'none' && <button type="button" className="btn btn-secondary" disabled={tourBusy} onClick={resetTour}><Compass size={14} /> {tourBusy ? t('usr.saving') : t('usr.tourReset')}</button>}
-        {isAdmin && isLive && !self && <button type="button" className="btn btn-danger" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</button>}
+        <Button type="button" variant="secondary" onClick={onClose}>{t('app.dismiss')}</Button>
+        {isAdmin && u.user_id != null && <Button type="button" variant="secondary" onClick={() => setFullCard(true)}><UserCog size={14} /> {t('uact.fullCard')}</Button>}
+        {isAdmin && <Button type="button" variant="secondary" onClick={() => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: u.username }) }}><ExternalLink size={14} /> {t('uact.actOpenAdmin')}</Button>}
+        {isAdmin && u.user_id != null && (u.tour_status || 'none') !== 'none' && <Button type="button" variant="secondary" disabled={tourBusy} onClick={resetTour}><Compass size={14} /> {tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>}
+        {isAdmin && isLive && !self && <Button type="button" variant="destructive" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</Button>}
       </>}>
       {fullCard && <UserDetailPanel user={{ ...u, id: u.user_id, team_ids: u.team_ids || [] }} teams={teamList} isAdmin={globalAdmin} onClose={() => setFullCard(false)} />}
       <div className="uact-detail-head">
@@ -269,8 +270,8 @@ export function TerminateModal({ target, busy, onClose, onConfirm }) {
   return (
     <ModalShell open onClose={onClose} title={t('uact.terminateTitle', target)} icon={LogOut} busy={busy}
       footer={<>
-        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>{t('inv.cancel')}</button>
-        <button type="button" className="btn btn-danger" disabled={busy} onClick={() => onConfirm(reason.trim())}>{busy ? t('uact.terminating') : t('uact.terminate')}</button>
+        <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>{t('inv.cancel')}</Button>
+        <Button type="button" variant="destructive" disabled={busy} onClick={() => onConfirm(reason.trim())}>{busy ? t('uact.terminating') : t('uact.terminate')}</Button>
       </>}>
       <AlertBanner tone="warning">{t('uact.terminateConfirm', target)}</AlertBanner>
       <label className="full-width"><span>{t('uact.terminateReason')}</span><input className="input" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('uact.terminateReasonPh')} /></label>
@@ -286,8 +287,8 @@ export function AckModal({ row, busy, onClose, onConfirm }) {
   return (
     <ModalShell open onClose={onClose} title={t('uact.ackTitle')} icon={ShieldAlert} busy={busy}
       footer={<>
-        <button type="button" className="btn btn-secondary" disabled={busy} onClick={onClose}>{t('inv.cancel')}</button>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={() => onConfirm(note.trim())}><Check size={14} /> {t('uact.ack')}</button>
+        <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>{t('inv.cancel')}</Button>
+        <Button type="button" disabled={busy} onClick={() => onConfirm(note.trim())}><Check size={14} /> {t('uact.ack')}</Button>
       </>}>
       <p className="field-hint">{row.actor} · {row.time ? formatDateSec(row.time) : '—'} · {splitFlags(row.flags).map((f) => t(`uact.anom_${f}`)).join(', ')}</p>
       <label className="full-width"><span>{t('uact.ackNote')}</span><textarea className="input" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></label>

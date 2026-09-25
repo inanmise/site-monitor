@@ -151,9 +151,9 @@ describe('envanter formu eylem çubuğu', () => {
     renderEdit()
     const label = screen.getByText(/Kontrol sıklığı|Check frequency/)
     // SearchableSelect yerli <select> değil: tetiği mouseDown ile aç, seçeneği mouseDown ile seç.
-    const trigger = label.closest('label').querySelector('.ss-trigger')
+    const trigger = label.closest('label').querySelector('button[role="combobox"]')
     fireEvent.mouseDown(trigger)
-    fireEvent.mouseDown([...document.querySelectorAll('.ss-option')].find(el => /Günlük|Daily/.test(el.textContent)))
+    fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find(el => /Günlük|Daily/.test(el.textContent)))
     fireEvent.click(btn(/^(Kaydet|Save)$/))
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ check_interval_hours: 24 })

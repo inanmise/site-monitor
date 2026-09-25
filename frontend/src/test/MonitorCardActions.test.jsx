@@ -69,15 +69,15 @@ describe('MonitorCardActions', () => {
     expect(onCheck).not.toHaveBeenCalled()
 
     // Şerit: "Kontrol ediliyor… 0 sn" — ekran okuyucuya da duyurulur.
-    expect(document.querySelector('.mon-running')).not.toBeNull()
-    expect(document.querySelector('.mon-running-sec').textContent).toMatch(/^0\s/)
+    expect(screen.queryByRole('status')).not.toBeNull()
+    expect(document.querySelector('[data-slot="check-running-seconds"]').textContent).toMatch(/^0\s/)
   })
 
   it('kontrol BİTİNCE düğme geri açılır ve şerit kaybolur', () => {
     const { onCheck } = setup({ running: false })
     expect(byName(/^Kontrol Et$/).disabled).toBe(false)
     // Şerit çalışmıyorken HİÇBİR ŞEY render etmemeli: kart yüksekliği değişirse liste zıplar.
-    expect(document.querySelector('.mon-running')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
     fireEvent.click(byName(/^Kontrol Et$/))
     expect(onCheck).toHaveBeenCalledTimes(1)
   })
@@ -118,5 +118,28 @@ describe('MonitorCardActions', () => {
     expect(byName(/^Şimdi kontrol et$/).getAttribute('title')).toBe('Şimdi kontrol et')
     expect(byName(/^Kaydı düzenle$/).getAttribute('title')).toBe('Kaydı düzenle')
     expect(byName(/kopyala|duplicate/i)).toBeInTheDocument()
+  })
+
+  /**
+   * 2026-09-25 (R15): 50 kartlık ızgarada 50 özdeş "Sil" duyuluyordu — düğme listesinde hangi
+   * monitörün silineceği ayırt edilemiyordu. rowLabel verilince DÖRT düğmenin de adı kartı
+   * ayırır (KebabMenu `rowLabel` deseni); ipucu (title) kısa kalır.
+   */
+  it('rowLabel: dört düğmenin ADI kartı ayırır, ipucu kısa kalır — iki kart birbirinden ayrılır', () => {
+    render(
+      <LangProvider>
+        <MonitorCardActions running={false} onCheck={() => {}} onEdit={() => {}} onDuplicate={() => {}}
+          onDelete={() => {}} checkTitle="Kontrol Et" editTitle="Düzenle" deleteTitle="Sil" rowLabel="a.example.com" />
+        <MonitorCardActions running={false} onCheck={() => {}} onEdit={() => {}} onDuplicate={() => {}}
+          onDelete={() => {}} checkTitle="Kontrol Et" editTitle="Düzenle" deleteTitle="Sil" rowLabel="b.example.com" />
+      </LangProvider>)
+    for (const host of ['a.example.com', 'b.example.com']) {
+      expect(byName(new RegExp(`^${host} — Kontrol Et$`))).toHaveAttribute('title', 'Kontrol Et')
+      expect(byName(new RegExp(`^${host} — Düzenle$`))).toHaveAttribute('title', 'Düzenle')
+      expect(byName(new RegExp(`^${host} — (Kopyala|Duplicate)`, 'i'))).toBeInTheDocument()
+      expect(byName(new RegExp(`^${host} — Sil$`))).toHaveAttribute('title', 'Sil')
+    }
+    // Hiçbir düğme çıplak eylem adıyla kalmadı.
+    expect(screen.queryByRole('button', { name: /^Sil$/ })).toBeNull()
   })
 })

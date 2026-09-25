@@ -7,6 +7,7 @@ import { Spinner } from '../ui/Progress.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { api } from '../../api/client'
 import { buildSelectionCsv } from './certTableModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Tüm Sertifikalar toplu işlem çubuğu (2026-09-13).
@@ -90,19 +91,19 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
       </button>
       <span className="bulkbar-count">{t('bulk.selected', domains.length)}</span>
       <div className="bulkbar-actions">
-        <button type="button" className="btn btn-sm btn-primary" disabled={disabled} onClick={checkAll}>
+        <Button type="button" size="sm" disabled={disabled} onClick={checkAll}>
           {busy === 'check' ? <Spinner size={12} inline decorative /> : <Play size={13} />}
           {busy === 'check' && progress != null ? `${progress}/${domains.length}` : t('tbl.bulkCheck')}
-        </button>
+        </Button>
         {canManage && (
           <span className="bulkbar-field">
             <Layers size={13} />
             <SearchableSelect value={tier} onChange={setTier} ariaLabel={t('tbl.colTier')}
               options={[{ value: '', label: t('tbl.tierPick') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('tbl.tierClear') }]} />
-            <button type="button" className="btn btn-sm btn-secondary" disabled={disabled || !tier}
+            <Button type="button" variant="secondary" size="sm" disabled={disabled || !tier}
               onClick={() => bulk('tier', 'set-tier', tier === 'none' ? {} : { tier: Number(tier) })}>
               {busy === 'tier' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTier')}
-            </button>
+            </Button>
           </span>
         )}
         {globalAdmin && (
@@ -110,18 +111,18 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
             <Users size={13} />
             <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('app.teamLabel')}
               options={[{ value: '', label: t('tbl.teamPick') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
-            <button type="button" className="btn btn-sm btn-secondary" disabled={disabled || !teamId}
+            <Button type="button" variant="secondary" size="sm" disabled={disabled || !teamId}
               onClick={() => bulk('team', 'set-team', { team_id: Number(teamId) })}>
               {busy === 'team' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTeam')}
-            </button>
+            </Button>
           </span>
         )}
         {canManage && (
-          <button type="button" className="btn btn-sm btn-danger" disabled={disabled} onClick={deactivate}>
+          <Button type="button" variant="destructive" size="sm" disabled={disabled} onClick={deactivate}>
             {busy === 'deactivate' ? <Spinner size={12} inline decorative /> : <PowerOff size={13} />}{t('tbl.bulkDeactivate')}
-          </button>
+          </Button>
         )}
-        <button type="button" className="btn btn-sm btn-secondary" disabled={disabled} onClick={csv}><Download size={13} />CSV</button>
+        <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={csv}><Download size={13} />CSV</Button>
       </div>
       <button type="button" className="bulkbar-close" onClick={onClear} aria-label={t('bulk.unselectAll')}><X size={16} /></button>
     </div>

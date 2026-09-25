@@ -71,11 +71,11 @@ describe('IncidentsPage', () => {
     await screen.findByText('Takım A')
     expect(screen.getByRole('columnheader', { name: /Takım|Team/ })).toBeInTheDocument()
     const rows = document.querySelectorAll('tbody tr')
-    expect(rows[0].querySelector('.team-badge')).not.toBeNull()
-    expect(rows[1].querySelector('.team-badge')).toBeNull()
+    expect(rows[0].querySelector('[data-slot="team-badge"]')).not.toBeNull()
+    expect(rows[1].querySelector('[data-slot="team-badge"]')).toBeNull()
     expect(rows[1].textContent).toContain('—')
     const before = window.location.href
-    fireEvent.click(rows[0].querySelector('.team-badge'))
+    fireEvent.click(rows[0].querySelector('[data-slot="team-badge"]'))
     expect(window.location.href).toBe(before)   // satır "link"i devreye girmedi
   })
 
@@ -84,6 +84,9 @@ describe('IncidentsPage', () => {
     render(<IncidentsPage systemRole="ADMIN" />)
     await waitFor(() => expect(api.monitoring.incidents.list).toHaveBeenCalled())
     expect(await screen.findByTitle(/delete|sil/i)).toBeInTheDocument()
+    // 2026-09-25 (R15): ADI olayı ayırır (izleme + başlangıç) — onay diyaloğu hedefi adıyla söylemiyor.
+    expect(screen.getByRole('button', { name: /^https:\/\/x\.example\.com · .+ — (Sil|Delete)/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^https:\/\/x\.example\.com · .+ — (2 yorum|2 comments)$/i })).toBeInTheDocument()
   })
 
   it('başlık "Olaylar/Incidents" — Olay Geçmişi ile i18n çakışması yok (H1)', async () => {

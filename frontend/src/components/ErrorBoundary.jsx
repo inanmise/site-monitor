@@ -7,6 +7,7 @@ import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
 import CopyButton from './ui/CopyButton.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Çökme ekranı. İki kural bu yüzeyi diğerlerinden ayırır:
@@ -36,16 +37,16 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
         <>
           {/* Bildirim gidemediyse kullanıcının yapabileceği tek şey elle bildirmek —
               o buton öne çıkar, yenileme ikincil kalır. */}
-          <button type="button" className={reportFailed ? 'btn' : 'btn btn-primary'} onClick={onReload}>
+          <Button type="button" variant={reportFailed ? 'outline' : 'default'} onClick={onReload}>
             {t('err.reload')}
-          </button>
+          </Button>
           {/* Otomatik bildirim gittiyse bu buton AYNI kayda kullanıcı bağlamı ekler
               (linkedReference ile bağlanır — mükerrer çökme kaydı AÇILMAZ). */}
-          <button type="button" className={reportFailed ? 'btn btn-primary' : 'btn'}
+          <Button type="button" variant={reportFailed ? 'default' : 'outline'}
                   onClick={() => setReportOpen(true)}>
-            <Bug size={15} style={{ marginRight: 6 }} />
+            <Bug size={15} />
             {t('err.reportBtn')}
-          </button>
+          </Button>
         </>
       }
     >

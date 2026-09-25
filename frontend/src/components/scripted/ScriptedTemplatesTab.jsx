@@ -15,6 +15,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import ScriptedTemplateEditor from './ScriptedTemplateEditor.jsx'
 import ScriptedTemplateVersions from './ScriptedTemplateVersions.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Şablon kütüphanesi yönetim yüzeyi — Sentetik İzleme sayfasının "Şablonlar" görünümü.
@@ -170,13 +171,13 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
       <div className="upt-toolbar sc-tpl-toolbar">
         <SegmentedControl value={scope} onChange={setScope} options={scopeOptions} ariaLabel={t('tpl.scope')} />
         {tagOptions.length > 1 &&
-          <SearchableSelect value={tag} onChange={setTag} options={tagOptions} searchThreshold={6} />}
+          <SearchableSelect value={tag} onChange={setTag} options={tagOptions} searchThreshold={6} ariaLabel={t('flt.tag')} />}
         <input className="upt-search" type="text" placeholder={t('tpl.searchPlaceholder')}
           value={search} onChange={e => setSearch(e.target.value)} aria-label={t('tpl.searchPlaceholder')} />
         {canCreate &&
-          <button className="btn btn-sm btn-primary" onClick={() => setEditing({})}>
+          <Button size="sm" onClick={() => setEditing({})}>
             <Plus size={14} />{t('tpl.new')}
-          </button>}
+          </Button>}
       </div>
 
       {error && <AlertBanner tone="danger" title={t('tpl.loadError')}>{error}</AlertBanner>}
@@ -190,9 +191,9 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
               title={templates.length === 0 ? t('tpl.emptyTitle') : t('tpl.noMatchTitle')}
               description={templates.length === 0 ? t('tpl.emptyText') : t('tpl.noMatchText')}
               actions={templates.length === 0 && canCreate
-                ? <button className="btn btn-primary" onClick={() => setEditing({})}>
+                ? <Button onClick={() => setEditing({})}>
                     <Plus size={14} />{t('tpl.emptyCta')}
-                  </button>
+                  </Button>
                 : null} />
           : (<div className="sc-tpl-tree">
             {grouped.map(group => {
@@ -350,9 +351,9 @@ function DemoteModal({ t, row, teams, onClose, onConfirm }) {
           options={[{ value: '', label: t('tpl.scopePick') },
                     ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} /></label>
       <div className="modal-actions">
-        <button className="btn btn-secondary" onClick={onClose}>{t('tpl.cancel')}</button>
-        <button className="btn btn-primary" disabled={!teamId || busy}
-          onClick={() => { setBusy(true); onConfirm(teamId) }}>{t('tpl.demote')}</button>
+        <Button variant="secondary" onClick={onClose}>{t('tpl.cancel')}</Button>
+        <Button disabled={!teamId || busy}
+          onClick={() => { setBusy(true); onConfirm(teamId) }}>{t('tpl.demote')}</Button>
       </div>
     </ModalShell>
   )

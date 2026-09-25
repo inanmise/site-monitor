@@ -18,6 +18,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Envanter (sertifika) kayıt formu — InventoryManager'dan ÇIKARILDI ki dashboard kartındaki
@@ -116,12 +117,20 @@ function initialForm(mode, record) {
  * @param {'add'|'edit'|'duplicate'} mode
  * @param {object|null} record            edit/duplicate kaynağı
  * @param {Array}  [teams]                verilmezse bileşen kendisi çeker (dashboard yolu)
- * @param {boolean} [canManage=true]      takım/grup seçicilerinin disabled'ı
+ * @param {boolean} [canManage=true]      yönetici (admin / takım yöneticisi): tüm alanlar + takım değiştirme
+ * @param {boolean} [canWrite=false]      ekleme yetkili kullanıcı (USER, inventory.crud): alanlar AÇIK, takım yalnız
+ *                                        ekle/kopyala'da seçilir (düzenlemede sunucu mevcut takımı korur)
+ * @param {boolean} [canMoveTeam=false]   DÜZENLEMEDE takım aktarımı. Sunucu kuralının aynası (AdminController
+ *                                        updateInventory): takım yalnız rol ADMIN'de yazılır — global admin ya da
+ *                                        kapsamlı müdür (yönetim kapsamı = görüş kapsamı, açabildiği her kayıt
+ *                                        kapsamında); TEAM_ADMIN ve USER'da mevcut takıma SABİTLENİR. Varsayılan
+ *                                        KAPALI: bilmeyen çağıran kutuyu açıp "Kaydedildi" yalanına yol açmasın.
  * @param {Function} onClose
  * @param {Function} onSaved              (savedResponse) => void — çağıran kapatır + tazeler
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
-                                             canManage = true, onClose, onSaved, focus = null }) {
+                                             canManage = true, canWrite = false, canMoveTeam = false,
+                                             onClose, onSaved, focus = null }) {
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
@@ -141,6 +150,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
 
   const [form, setForm]   = useState(() => initialForm(mode, record))
   const [teams, setTeams] = useState(() => teamsProp ?? [])
+  // "Domain Ekle" her kullanıcı seviyesinde (2026-09-18 ürün kararı) ama seçiciler yalnız yöneticiye açıktı:
+  // USER takım/grup/etiket seçemediği için kayıt açamıyordu (2026-09-25 kullanıcı bildirimi). Artık ekleme
+  // yetkisi alanları açar; takım listesi zaten üyesi olduğu takımlar (çağıran geçer), sunucu üyeliği doğrular.
+  const fieldsEnabled = canManage || canWrite
+  // Düzenlemede takım değişikliği TEAM_ADMIN ve USER için sunucuda YOK SAYILIR (updateInventory mevcut takımı
+  // yazar; seçilen takımın bildirim grubu düşer, grup adı eski takımın altında yaratılır) ama ekran "Kaydedildi"
+  // diyordu → kutu yalnız sunucunun takımı gerçekten yazdığı rolde açık (R4, 2026-09-25).
+  const teamPickable = mode === 'edit' ? (canMoveTeam && fieldsEnabled) : fieldsEnabled
   const [teamGroups, setTeamGroups] = useState([])   // seçili takımın "cert" grupları (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [platforms, setPlatforms] = useState([])   // Ayarlar → Platformlar kataloğu (aktifler); düzenlenen kayıttaki pasif kod da listede kalır
@@ -185,6 +202,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     api.admin.getTeams().then(res => { if (alive && res?.success) setTeams(res.data) })
     return () => { alive = false }
   }, [teamsProp])
+
+  // Tek takımı olan kullanıcıda yeni kayıt o takımla açılır — seçilecek başka bir şey yok.
+  useEffect(() => {
+    if (mode === 'edit' || teams.length !== 1) return
+    setForm(prev => (prev.team_id ? prev : { ...prev, team_id: String(teams[0].id) }))
+  }, [mode, teams])
 
   useEffect(() => {
     const el = formGridRef.current
@@ -453,7 +476,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               value={form.team_id}
               onChange={v => f('team_id', v)}
               placeholder={t('inv.selectTeam')}
-              disabled={!canManage}
+              disabled={!teamPickable}
               searchThreshold={2}
               options={[
                 { value: '', label: t('inv.selectTeam') },
@@ -468,7 +491,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
               value={form.group_name}
               onChange={v => f('group_name', v)}
               placeholder={t('inv.noGroup')}
-              disabled={!canManage || !form.team_id}
+              disabled={!fieldsEnabled || !form.team_id}
               creatable
               onCreate={() => {}}
               searchThreshold={2}
@@ -483,7 +506,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             teamId={form.team_id}
             value={form.notification_group_id}
             onChange={v => f('notification_group_id', v)}
-            disabled={!canManage}
+            disabled={!fieldsEnabled}
           />
 
           {/* Platform (2026-09-22, kullanıcı isteği): site nerede koşuyor — sertifikayı KİM/NEREYE kuracak sorusunun cevabı.
@@ -492,13 +515,13 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <div className="inv-platform-field">
             <label>
               {t('inv.formPlatform')}
-              <SearchableSelect value={form.platform || ''} onChange={v => f('platform', v)} searchThreshold={6} disabled={!canManage}
+              <SearchableSelect value={form.platform || ''} onChange={v => f('platform', v)} searchThreshold={6} disabled={!fieldsEnabled}
                 options={[{ value: '', label: t('inv.platformNone') },
                   ...platforms.map(p => ({ value: p.code, label: p.name, title: p.description || undefined, hint: p.description || undefined })),   // açıklama: satır altı + tooltip (kullanıcı isteği)
                   ...(form.platform && !platforms.some(p => p.code === form.platform) ? [{ value: form.platform, label: form.platform }] : [])]} />
             </label>
             <input className="input input-sm" value={form.platform_detail} onChange={e => f('platform_detail', e.target.value)} maxLength={160}
-              placeholder={t('inv.formPlatformDetailPh')} aria-label={t('inv.formPlatformDetail')} disabled={!canManage} />
+              placeholder={t('inv.formPlatformDetailPh')} aria-label={t('inv.formPlatformDetail')} disabled={!fieldsEnabled} />
             <span className="field-hint">{t('inv.formPlatformHint')}</span>
           </div>
 
@@ -506,7 +529,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <div className="full-width http-tags-block">
             <div className="http-block-title">{t('inv.formTags')} <span className="req-star">*</span></div>
             <div className="field-hint" style={{ marginBottom: 6 }}>{t('inv.tagsHint')}</div>
-            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!canManage} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+            <TagInput value={form.tags} onChange={v => f('tags', v)} disabled={!fieldsEnabled} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
           </div>
 
           <label>
@@ -670,9 +693,9 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             title={testResult.status === 'error' ? t('inv.testFailed')
               : testResult.status === 'warning' ? t('inv.testExpiring') : t('inv.testValid')}
             actions={testResult.status === 'error' && canDiagnose
-              ? <button className="btn btn-sm btn-secondary" onClick={() => setShowDiag(true)}>
+              ? <Button variant="secondary" size="sm" onClick={() => setShowDiag(true)}>
                   {t('inv.diagnose')}
-                </button>
+                </Button>
               : null}>
             {testResult.status === 'error'
               ? (testResult.error || t('inv.testError'))
@@ -698,27 +721,27 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             koşuyor…" gibi uzayan metinler + araya giren şerit satırı 723 px'e taşırıyor ve Test et
             modalın dışına kayıyordu. Evre başlıktaki şeritte; düğme kilitli + aria-busy. */}
         <div className="modal-actions">
-          <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+          <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
             disabled={testing || !form.domain.trim()} aria-busy={testing || undefined}>
             <FlaskConical size={14} />{t('inv.test')}
-          </button>
+          </Button>
           {/* Çalıştır ve Sil YALNIZ kayıtlı kayıtta: yeni/kopya modunda henüz ortada bir kayıt yok. */}
           {savedDomain && (
-            <button className="btn btn-secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
+            <Button variant="secondary" onClick={runNow} disabled={running} aria-busy={running || undefined}
               title={t('inv.runTitle', savedDomain)}>
               <RefreshCw size={14} />{t('inv.run')}
-            </button>
+            </Button>
           )}
           {savedDomain && canDelete && (
-            <button className="btn btn-danger" onClick={del} disabled={deleting}>
+            <Button variant="destructive" onClick={del} disabled={deleting}>
               <Trash2 size={14} />{t('inv.delete')}
-            </button>
+            </Button>
           )}
-          <button className="btn btn-secondary" onClick={onClose} disabled={saving || firstRun}>{t('inv.cancel')}</button>
-          <button className="btn btn-primary" onClick={save} aria-busy={(saving || firstRun) || undefined}
+          <Button variant="secondary" onClick={onClose} disabled={saving || firstRun}>{t('inv.cancel')}</Button>
+          <Button onClick={save} aria-busy={(saving || firstRun) || undefined}
             disabled={saving || firstRun || !form.domain.trim() || !form.team_id}>
             {t('inv.save')}
-          </button>
+          </Button>
         </div>
       </div>
       {/* Tanılama YAZILAN değerle koşar — kaydetmeden deneme. */}
@@ -734,10 +757,16 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
  * Domain'den kaydı çözen sarmalayıcı — dashboard kartında envanter ID'si YOK (sertifikalar
  * domain-anahtarlı). Kayıt bulunamazsa (silinmiş / yetki kapsamı dışı) BOŞ FORM AÇILMAZ:
  * kullanıcı doldurup kaydeder ve mükerrer bir envanter kaydı doğardı.
+ *
+ * Yetki propları (R4, 2026-09-25): eskiden hiçbiri geçmiyordu, formun `canManage=true` varsayılanı yüzünden
+ * pano yolunda HERKES için takım kutusu açıktı. Burada varsayılanlar KAPALI; `canWrite` verilmezse matristen
+ * (inventory.crud/edit) okunur — sarmalayıcı PermissionsProvider'ın içinde çizilir, App gövdesi değil.
  */
-export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null }) {
+export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null,
+                                              canManage = false, canWrite, canMoveTeam = false }) {
   const t = useT()
   const toast = useToast()
+  const matrixCanWrite = usePermissions().canEdit('inventory.crud')
   const [record, setRecord] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -763,5 +792,6 @@ export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, on
       </div>
     )
   }
-  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus} />
+  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus}
+    canManage={canManage} canWrite={canWrite ?? matrixCanWrite} canMoveTeam={canMoveTeam} />
 }

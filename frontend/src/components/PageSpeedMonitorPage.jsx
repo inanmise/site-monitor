@@ -54,6 +54,7 @@ import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -609,7 +610,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
   // SLOW ayrı bir renk: kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
-  const STATUS_COLOR = { OK: '#15803d', SLOW: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#64748b' }
+  const STATUS_COLOR = { OK: '#15803d', SLOW: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#71717a' }
   function cardClass(m) {
     if (m.status === 'OK') return 'upt-card--up'
     if (m.status === 'DOWN') return 'upt-card--down'
@@ -651,18 +652,18 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           <span className="upt-last-check">
             {t('pspd.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('pspd.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="pagespeed" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('pspd.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -679,10 +680,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('pspd.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -690,7 +691,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -722,7 +723,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 {statusBadge(m)}
                 {alarmBadge(m)}<MaintenanceBadge target={m.url} />
                 <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('pagespeed', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('pagespeed', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -763,7 +764,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               <div className="upt-card-foot">
                 <span>{m.last_check ? formatDateSec(m.last_check) : ''}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.url}
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
@@ -802,7 +803,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 deleting={deleting === selected.id}
                 deleteTitle={t('pspd.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -875,12 +876,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       { value: '', label: t('pspd.resLatest') },
                       ...breaches.map(b => ({ value: String(b.check_id), label: formatDateSec(b.checked_at) })),
                     ]}
-                    searchThreshold={8} />
+                    searchThreshold={8} ariaLabel={t('pspd.snapshotLabel')} />
                   <span className="field-hint pspd-snapshot-count">
                     {t('pspd.breachCount', breaches.length)}</span>
                 </>)}
-                <button type="button" className="btn btn-sm btn-secondary pspd-snapshot-csv"
-                  disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</button>
+                <Button type="button" variant="secondary" size="sm" className="pspd-snapshot-csv"
+                  disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</Button>
               </div>
               {/* Sunucu en agir N kaynagi dondurur. Kirpildiysa bunu SOYLEMEK zorunlu: yoksa
                   kullanici 50 satiri sayfanin tamami sanip agirligin nereden geldigini yanlis okur. */}
@@ -1204,9 +1205,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       <em>{t('pspd.suggestWhyRequests')}</em></li>
                   </ul>
                   {partial && <div className="field-hint field-hint--warn">{t('pspd.suggestPartial')}</div>}
-                  <button type="button" className="btn btn-sm btn-primary" onClick={apply}>
+                  <Button type="button" size="sm" onClick={apply}>
                     <Wand2 size={14} />{t('pspd.suggestApply')}
-                  </button>
+                  </Button>
                   <div className="field-hint">{t('pspd.suggestNote')}</div>
                 </div>
               )
@@ -1219,14 +1220,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
             <div className="modal-actions">
               {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
                   (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim()}
                 title={!form.url.trim() ? t('pspd.testNeedsUrl') : undefined}>
                 <FlaskConical size={14} />{t('pspd.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('pspd.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('pspd.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</Button>
             </div>
           </div>
         </div>,

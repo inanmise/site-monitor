@@ -51,6 +51,7 @@ import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -544,18 +545,18 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           <span className="upt-last-check">
             {t('keyword.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
           </span>
-          <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} />{t('keyword.refresh')}
-          </button>
+          </Button>
           <CheckAllButton count={checkable.length} running={checkRun.running}
             done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
             onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+          <CopyLinkButton iconOnly variant="outline" />
           <MonitorGuideButton type="keyword" />
           {canWrite && (
-            <button className="btn btn-sm btn-primary" onClick={openNew}>
+            <Button size="sm" onClick={openNew}>
               <Plus size={14} />{t('keyword.addMonitor')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -571,10 +572,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -582,7 +583,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -617,7 +618,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                   <span className="upt-port-tag">
                     {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} {t('keyword.times')}
                   </span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} className="btn btn-sm upt-card-copy" />
+                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.url}>{m.url}</div>
@@ -648,7 +649,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.url}
                     running={isRunning(m.id)}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('keyword.check')} editTitle={t('keyword.edit')}
@@ -686,7 +687,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                 deleting={deleting === selected.id}
                 deleteTitle={t('keyword.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -823,7 +824,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                     { value: 'LT', label: t('keyword.opLt') }]} /></label>
               <label><span>{t('keyword.matchCount')}</span>
                 <input type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} /></label>
-              <div className="full-width" style={{ background: '#f1f5f9', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#334155' }}>
+              <div className="full-width" style={{ background: '#f4f4f5', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#3f3f46' }}>
                 <div><Check size={12} style={{ verticalAlign: '-2px', color: '#15803d' }} /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
                 <div style={{ marginTop: 4 }}><AlertTriangle size={12} style={{ verticalAlign: '-2px', color: '#dc2626' }} /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
               </div>
@@ -956,13 +957,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             </div>
             <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
             <div className="modal-actions">
-              <button className="btn btn-secondary" style={{ marginRight: 'auto' }} onClick={runTest}
+              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
                 aria-busy={testing || undefined} disabled={testing || !form.url.trim() || !form.keyword.trim()}>
                 <FlaskConical size={14} />{t('keyword.test')}
-              </button>
-              {modal !== 'new' && canDeleteRow(modal) && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</button>}
-              <button className="btn btn-secondary" onClick={closeEdit}>{t('keyword.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</button>
+              </Button>
+              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</Button>}
+              <Button variant="secondary" onClick={closeEdit}>{t('keyword.cancel')}</Button>
+              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</Button>
             </div>
           </div>
         </div>,
@@ -980,12 +981,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               <div className="modal-icon-hdr-badge"><Target size={20} /></div>
               <h3>{t('keyword.cacheBustTitle')}</h3>
             </div>
-            <div style={{ fontSize: '.9em', color: 'var(--text, #1e293b)', lineHeight: 1.6, padding: '4px 2px' }}>
+            <div style={{ fontSize: '.9em', color: 'var(--text, #18181b)', lineHeight: 1.6, padding: '4px 2px' }}>
               <p style={{ marginTop: 0 }}>{t('keyword.cacheBustHint')}</p>
               <div style={{ whiteSpace: 'pre-line' }}>{t('keyword.cacheBustExamples')}</div>
             </div>
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</button>
+              <Button variant="secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</Button>
             </div>
           </div>
         </div>,

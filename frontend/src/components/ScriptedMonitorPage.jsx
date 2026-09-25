@@ -58,6 +58,7 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { Button } from '@/components/shadcn/button'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
@@ -94,7 +95,7 @@ const emptyForm = {
 const DRAFT_DEBOUNCE_MS = 1500
 const DRAFT_INTERVAL_MS = 30000
 
-const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#9ca3af' }
+const STATUS_COLOR = { PASS: '#16a34a', FAIL: '#d97706', ERROR: '#dc2626', TIMEOUT: '#b45309', NO_CHECKS: '#d97706', unknown: '#a1a1aa' }
 function statusLabel(t, s) { return t(`scripted.status_${s || 'unknown'}`) }
 /** PASS/FAIL/ERROR/TIMEOUT/NO_CHECKS alfabesi → kanonik up/down eşlemesi (upt-card/upt-badge aileleri). */
 function isPass(s) { return s === 'PASS' }
@@ -1032,20 +1033,20 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             <span className="upt-last-check">
               {t('scripted.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
             </span>
-            <button className="btn btn-sm upt-refresh-btn" onClick={load}>
+            <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw size={14} />{t('scripted.refresh')}
-            </button>
+            </Button>
             {/* iconOnly (10 izleme sayfasında da aynı): "Bağlantıyı kopyala" tam metniyle başlık
                 satırının en geniş öğesiydi. Anlam kaybı yok — metin title/aria-label'da duruyor. */}
             <CheckAllButton count={checkable.length} running={checkRun.running}
               done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
               onClick={checkRun.openPicker} />
-            <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+            <CopyLinkButton iconOnly variant="outline" />
             {/* k6 sürümü buradan BAŞLIĞA taşındı (yukarıdaki nota bakın). K6VersionBadge yaşamaya
                 devam ediyor: düzenleme formunda sözdizimi notuyla birlikte kullanılıyor. */}
             <MonitorGuideButton type="scripted" />
             {k6.canManage && k6.available &&
-              <button className="btn btn-sm btn-primary" onClick={openNew}><Plus size={14} />{t('scripted.addMonitor')}</button>}
+              <Button size="sm" onClick={openNew}><Plus size={14} />{t('scripted.addMonitor')}</Button>}
           </div>
         )}
       </div>
@@ -1067,12 +1068,12 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
           tone="info"
           title={t('scripted.draftBannerTitle')}
           actions={<>
-            <button className="btn btn-sm btn-primary" onClick={() => continueDraft(newDraft)}>
+            <Button size="sm" onClick={() => continueDraft(newDraft)}>
               {t('scripted.draftContinue')}
-            </button>
-            <button className="btn btn-sm btn-secondary" onClick={() => discardDraft('new')}>
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => discardDraft('new')}>
               {t('scripted.draftDiscard')}
-            </button>
+            </Button>
           </>}
         >
           {t('scripted.draftBannerText', formatDateSec(newDraft.updated_at))}
@@ -1089,9 +1090,9 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
-          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} />}
-          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} />}
-          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} />}
+          {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
+          {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
+          {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <input className="upt-search" type="text" placeholder={t('scripted.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
@@ -1100,7 +1101,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       {loading ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : loadError && monitors.length === 0 ? (
         /* Hata bandi bos durumun ONUNDE: aksi halde yukleme hatasi "hic izleme yok" gibi gorunur. */
         <AlertBanner tone="danger" title={t('mon.loadError')} role="alert"
-          actions={<button className="btn btn-sm btn-secondary" onClick={load}>{t('hist.retry')}</button>}>
+          actions={<Button variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
@@ -1152,7 +1153,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                 <span className="upt-card-top-right">
                   <span className="upt-port-tag">k6</span>
                   <CopyLinkButton iconOnly url={monitorDeepLink('scripted', m.id)}
-                    className="btn btn-sm upt-card-copy" />
+                    variant="ghost" size="icon-xs" className="upt-card-copy" />
                 </span>
               </div>
               <div className="upt-card-domain" title={m.name}>{m.name}</div>
@@ -1174,7 +1175,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               <div className="upt-card-foot">
                 <span>{m.checked_at ? formatDateSec(m.checked_at) : t('scripted.neverRun')}</span>
                 {canManageRow(m) && (
-                  <MonitorCardActions
+                  <MonitorCardActions rowLabel={m.name}
                     running={isRunning(m.id)} checkDisabled={!k6.available}
                     onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                     checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
@@ -1217,7 +1218,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                 deleting={deleting === selected.id}
                 deleteTitle={t('scripted.delete')}
                 onClose={closeDetail}>
-                <CopyLinkButton iconOnly className="btn btn-sm upt-refresh-btn" />
+                <CopyLinkButton iconOnly variant="outline" />
               </MonitorModalActions>
             </div>
             <div className="upt-modal-divider" />
@@ -1478,9 +1479,9 @@ function DiagTab({ t, monitor, canRun }) {
       <div className="sc-diag-run">
         <input className="input" value={url} onChange={e => setUrl(e.target.value)}
           placeholder={t('scripted.diagUrlPlaceholder')} aria-label={t('scripted.diagUrl')} />
-        <button type="button" className="btn btn-primary" onClick={run} disabled={state.loading || !canRun}>
+        <Button type="button" onClick={run} disabled={state.loading || !canRun}>
           {state.loading ? <Spinner size={14} /> : <Play size={14} />} {t('scripted.diagRun')}
-        </button>
+        </Button>
       </div>
       {!canRun && <div className="field-hint">{t('scripted.diagNoPermission')}</div>}
 
@@ -1590,9 +1591,9 @@ function CheckDetail({ t, check, k6Version }) {
                 {/* Tam metin her zaman kopyalanabilir — kırpılmış hâli değil. */}
                 <CopyButton value={outputTail} label={t('scripted.errCopy')} copiedLabel={t('scripted.errCopied')} />
                 {lines.length > CLAMP && (
-                  <button type="button" className="btn btn-sm" onClick={() => setShowAll(v => !v)}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowAll(v => !v)}>
                     {showAll ? t('scripted.outShowLess') : t('scripted.outShowAll', lines.length)}
-                  </button>
+                  </Button>
                 )}
               </div>
               <pre className="show-pre sc-output">{shown}{clamped ? '\n…' : ''}</pre>
@@ -1658,8 +1659,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           <div className="full-width" style={{ padding: '0 4px 8px' }}>
             <AlertBanner tone="info" title={t('scripted.draftRestoreTitle')}
               actions={<>
-                <button className="btn btn-sm btn-primary" onClick={() => applyDraft(pendingDraft)}>{t('scripted.draftRestore')}</button>
-                <button className="btn btn-sm btn-secondary" onClick={() => discardDraft(pendingDraft.monitor_key)}>{t('scripted.draftDiscard')}</button>
+                <Button size="sm" onClick={() => applyDraft(pendingDraft)}>{t('scripted.draftRestore')}</Button>
+                <Button variant="secondary" size="sm" onClick={() => discardDraft(pendingDraft.monitor_key)}>{t('scripted.draftDiscard')}</Button>
               </>}>
               {t('scripted.draftRestoreText', formatDateSec(pendingDraft.updated_at))}
             </AlertBanner>
@@ -1791,7 +1792,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                     (kaydırma + seçimi kaçırma). Boşken düğme HİÇ çizilmez: copyText('') zaten
                     false döner ve onay ikonu hiç gelmez — ölü bir düğme bırakmayalım. */}
                 {(form.script || '').trim() &&
-                  <CopyButton value={form.script} className="btn btn-sm btn-secondary"
+                  <CopyButton value={form.script} variant="secondary"
                     label={t('scripted.scriptCopy')} copiedLabel={t('scripted.scriptCopied')} />}
               </span>
             </div>
@@ -1862,7 +1863,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                   </div>
                 ))}
               </div>}
-            <button type="button" className="btn btn-secondary btn-sm env-add" onClick={addEnvRow}><Plus size={13} /> {t('scripted.envAdd')}</button>
+            <Button type="button" variant="secondary" size="sm" className="env-add" onClick={addEnvRow}><Plus size={13} /> {t('scripted.envAdd')}</Button>
             <span className="field-hint">{t('scripted.envHint')}</span>
           </div>
 
@@ -1902,8 +1903,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           {/* Kaydetme sonrası doğrulama koşumu. Sürüm ZATEN kaydedildi — metin bunu söylüyor
               ve "Kapat" her an açık: koşum sunucuda sürer, sonucu Kontrol Geçmişi'ne düşer. */}
           {smoke && (
-            <div className="full-width sc-smoke">
-              <AlertBanner tone={smoke.state === 'skipped' ? 'warning' : 'info'}>
+            <div className="full-width">
+              <AlertBanner tone={smoke.state === 'skipped' ? 'warning' : 'info'}
+                actions={
+                  <Button type="button" variant="secondary" size="sm" onClick={dismissSmoke}>
+                    {t('scripted.smokeClose')}
+                  </Button>
+                }>
                 <span className="sc-smoke-msg">
                   {smoke.state === 'running' && <Spinner size={14} inline decorative />}
                   {smoke.state === 'running'  && t('scripted.smokeRunning')}
@@ -1911,9 +1917,6 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
                   {smoke.state === 'cooldown' && t('scripted.smokeCooldown')}
                   {smoke.state === 'skipped'  && t('scripted.smokeSkipped', smoke.reason || '')}
                 </span>
-                <button type="button" className="btn btn-sm btn-secondary" onClick={dismissSmoke}>
-                  {t('scripted.smokeClose')}
-                </button>
               </AlertBanner>
             </div>
           )}
@@ -1923,13 +1926,13 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
         <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
         <div className="modal-actions">
           <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-            <button className="btn btn-secondary" onClick={runTest} disabled={testing} aria-busy={testing}>
+            <Button variant="secondary" onClick={runTest} disabled={testing} aria-busy={testing}>
               {testing ? <Spinner size={14} inline decorative /> : <FlaskConical size={14} />}
-              {t('scripted.testRun')}</button>
-            {modal.id && canDelete && <button className="btn btn-danger" onClick={del}><Trash2 size={14} />{t('scripted.delete')}</button>}
+              {t('scripted.testRun')}</Button>
+            {modal.id && canDelete && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('scripted.delete')}</Button>}
           </div>
-          <button className="btn btn-secondary" onClick={closeEdit}>{t('scripted.cancel')}</button>
-          <button className="btn btn-primary" onClick={save} aria-busy={saving || undefined} disabled={saving || !form.name.trim() || !form.teamId || !form.groupName.trim()}>{t('scripted.save')}</button>
+          <Button variant="secondary" onClick={closeEdit}>{t('scripted.cancel')}</Button>
+          <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.name.trim() || !form.teamId || !form.groupName.trim()}>{t('scripted.save')}</Button>
         </div>
       </div>
     </div>

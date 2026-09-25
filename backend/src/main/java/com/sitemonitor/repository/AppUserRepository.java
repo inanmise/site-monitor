@@ -47,6 +47,22 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("SELECT DISTINCT u FROM AppUser u JOIN u.teamIds tid WHERE tid IN :teamIds ORDER BY u.username ASC")
     List<AppUser> findByAnyTeamId(@Param("teamIds") Collection<Long> teamIds);
 
+    /**
+     * Takım kümesinin ÜYELERİ — birincil takım ({@code teamId}) VEYA çoklu üyelik ({@code app_user_teams}).
+     * {@link #findByAnyTeamId} yalnız üyelik tablosuna bakar; birincil takımı üyelik satırı olmayan kullanıcı
+     * orada görünmez. "Ekip üyelerinin yaptıkları" kapsamı (Monitor Changes / Audit Log, 2026-09-25) ikisini birden ister.
+     */
+    @Query("SELECT DISTINCT u FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
+    List<AppUser> findMembersOfTeams(@Param("teamIds") Collection<Long> teamIds);
+
+    /**
+     * Ekip kapsamı için üyelerin YALNIZ kimliği + küçük harf kullanıcı adı (regresyon R9): tam {@code AppUser}
+     * fotoğraf kolonunu ve EAGER takım koleksiyonunu da çekiyordu — Denetim Logu herkese açıldığı için istek başı
+     * maliyet önemli. Satır: {@code [Long id, String lowerUsername]}.
+     */
+    @Query("SELECT DISTINCT u.id, LOWER(u.username) FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
+    List<Object[]> findMemberIdentities(@Param("teamIds") Collection<Long> teamIds);
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);

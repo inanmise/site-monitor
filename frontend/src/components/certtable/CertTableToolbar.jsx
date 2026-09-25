@@ -6,6 +6,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, WINDOW_OPTIONS, TIER_OPTIONS, EMPTY_FILTERS,
   activeFilterChips, defaultCols, moveCol } from './certTableModel.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Süzgeç çubuğu + aktif süzgeç çipleri + ön ayarlar + sütun seçici (sürükle-bırak sıralı) + yoğunluk + CSV.
@@ -89,20 +90,20 @@ export default function CertTableToolbar({
             onChange={(e) => set('issuer', e.target.value)} />
         </div>
         <div className="filter-group">
-          <label>{t('app.teamLabel')}</label>
-          <SearchableSelect value={filters.team} onChange={(v) => set('team', v)} options={teamOpts} />
+          <label htmlFor="ct-f-team">{t('app.teamLabel')}</label>
+          <SearchableSelect id="ct-f-team" value={filters.team} onChange={(v) => set('team', v)} options={teamOpts} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.windowLabel')}</label>
-          <SearchableSelect value={filters.window} onChange={(v) => set('window', v)}
+          <label htmlFor="ct-f-window">{t('tbl.windowLabel')}</label>
+          <SearchableSelect id="ct-f-window" value={filters.window} onChange={(v) => set('window', v)}
             options={WINDOW_OPTIONS.map((w) => ({
               value: w,
               label: w === '' ? t('tbl.filterAll') : `${w === 'expired' ? t('tbl.winExpired') : t('tbl.winDays', w)}${win[w] != null ? ` (${win[w]})` : ''}`,
             }))} />
         </div>
         <div className="filter-group">
-          <label>{t('tbl.sort')}</label>
-          <SearchableSelect value={sortBy} onChange={onSort} options={sortOptions} />
+          <label htmlFor="ct-f-sort">{t('tbl.sort')}</label>
+          <SearchableSelect id="ct-f-sort" value={sortBy} onChange={onSort} options={sortOptions} />
         </div>
         <div className="filter-group ct-filters-more">
           <label>{t('tbl.moreFilters')}</label>
@@ -134,17 +135,17 @@ export default function CertTableToolbar({
         </div>
         <div className="ct-tools">
           {onColFilters && (
-            <button type="button" className={`btn btn-sm ${colFilters ? 'btn-primary' : 'btn-secondary'}`} onClick={() => onColFilters(!colFilters)}
+            <Button type="button" variant={colFilters ? 'default' : 'secondary'} size="sm" onClick={() => onColFilters(!colFilters)}
               title={t('inv.colFiltersHint')} aria-pressed={colFilters}>
               <ListFilter size={14} /> {t('inv.colFilters')}
-            </button>
+            </Button>
           )}
           <SegmentedControl value={density} onChange={onDensity} ariaLabel={t('tbl.density')}
             options={[{ value: 'comfortable', label: t('tbl.densityComfortable') }, { value: 'compact', label: t('tbl.densityCompact') }]} />
           <div className="colpick" ref={presetRef} data-tour="ct-presets">
-            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setPresetOpen((o) => !o); setColsOpen(false) }} aria-expanded={presetOpen} aria-haspopup="true">
+            <Button type="button" variant="secondary" size="sm" onClick={() => { setPresetOpen((o) => !o); setColsOpen(false) }} aria-expanded={presetOpen} aria-haspopup="true">
               <Bookmark size={14} /> {t('tbl.presets')}{presets.length ? ` (${presets.length})` : ''}
-            </button>
+            </Button>
             {presetOpen && (
               <div className="colpick-menu ct-preset-menu" role="group" aria-label={t('tbl.presets')}>
                 {presets.length === 0 && <span className="colpick-note">{t('tbl.presetsEmpty')}</span>}
@@ -158,17 +159,17 @@ export default function CertTableToolbar({
                   <input className="filter-input" placeholder={t('tbl.presetNamePh')} value={presetName} maxLength={40}
                     onChange={(e) => setPresetName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && presetName.trim()) { onSavePreset(presetName.trim()); setPresetName('') } }} />
-                  <button type="button" className="btn btn-sm btn-primary" disabled={!presetName.trim()}
-                    onClick={() => { onSavePreset(presetName.trim()); setPresetName('') }}>{t('tbl.presetSave')}</button>
+                  <Button type="button" size="sm" disabled={!presetName.trim()}
+                    onClick={() => { onSavePreset(presetName.trim()); setPresetName('') }}>{t('tbl.presetSave')}</Button>
                 </div>
                 <span className="colpick-note">{t('tbl.presetNote')}</span>
               </div>
             )}
           </div>
           <div className="colpick" ref={colsRef} data-tour="ct-columns">
-            <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setColsOpen((o) => !o); setPresetOpen(false) }} aria-expanded={colsOpen} aria-haspopup="true">
+            <Button type="button" variant="secondary" size="sm" onClick={() => { setColsOpen((o) => !o); setPresetOpen(false) }} aria-expanded={colsOpen} aria-haspopup="true">
               <Columns3 size={14} /> {t('tbl.columns')} ({cols.length}/{TABLE_COLUMNS.length})
-            </button>
+            </Button>
             {colsOpen && (
               <div className="colpick-menu" role="group" aria-label={t('tbl.columns')}>
                 <span className="colpick-note">{t('tbl.columnsDragHint')}</span>
@@ -190,12 +191,12 @@ export default function CertTableToolbar({
                     <input type="checkbox" checked={false} onChange={() => onCols([...cols, c.key])} /> {t(c.labelKey)}
                   </label>
                 ))}
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => onCols(defaultCols())}>{t('tbl.columnsReset')}</button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => onCols(defaultCols())}>{t('tbl.columnsReset')}</Button>
                 <span className="colpick-note">{t('tbl.viewSaved')}</span>
               </div>
             )}
           </div>
-          <a className="btn btn-sm btn-secondary" href={exportUrl} download title={t('tbl.csvTitle')} data-tour="ct-csv"><Download size={14} /> CSV</a>
+          <Button asChild variant="secondary" size="sm"><a href={exportUrl} download title={t('tbl.csvTitle')} data-tour="ct-csv"><Download size={14} /> CSV</a></Button>
           <CopyLinkButton iconOnly />
         </div>
       </div>

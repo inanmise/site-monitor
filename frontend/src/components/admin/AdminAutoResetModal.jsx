@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { KeyRound } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Admin auto-reset modal. The admin re-proves their own password; the
@@ -63,10 +64,10 @@ export default function AdminAutoResetModal({ targetUser, onClose, onSuccess }) 
         </div>
         {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
         <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={onClose}>{t('usr.cancel')}</button>
-          <button className="btn btn-primary" onClick={submit} disabled={saving || !adminPwd}>
+          <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
+          <Button onClick={submit} disabled={saving || !adminPwd}>
             {saving ? t('usr.saving') : t('usr.autoResetSend')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

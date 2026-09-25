@@ -15,6 +15,7 @@ import { buildIcs, downloadIcs } from '../utils/ics.js'
 import { csvRows } from '../utils/csv.js'
 import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { CalendarDays, List, Download, ShieldCheck, Table2, Search, FolderOpen, Copy, FileDown, Stethoscope } from 'lucide-react'
+import { Button } from '@/components/shadcn/button'
 
 const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
 const PRIORITY_ORDER = { critical: 0, warning: 1, info: 2 }
@@ -231,15 +232,15 @@ export default function RenewalAdvice({ onSelectDomain }) {
         {groupOptions.length > 1 && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} ariaLabel={t('app.groupLabel')} />}
         {tagOptions.length > 1 && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} ariaLabel={t('app.tagLabel')} />}
         <SearchableSelect value={sortKey} onChange={setSortKey} options={sortOptions} ariaLabel={t('renewal.sort')} />
-        {filtersActive && <button type="button" className="btn btn-secondary btn-sm-p" onClick={clearFilters}>{t('app.clearFilters')}</button>}
+        {filtersActive && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('app.clearFilters')}</Button>}
         <span className="rn-count">{t('renewal.shown', filtered.length, advice.length)}</span>
         <div className="seg rn-views" role="group" aria-label={t('renewal.viewLabel')}>
-          <button type="button" className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => switchView('list')} aria-pressed={view === 'list'}><List size={13} /> {t('renewal.viewList')}</button>
-          <button type="button" className={`btn btn-sm ${view === 'table' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => switchView('table')} aria-pressed={view === 'table'}><Table2 size={13} /> {t('renewal.viewTable')}</button>
-          <button type="button" className={`btn btn-sm ${view === 'calendar' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => switchView('calendar')} aria-pressed={view === 'calendar'}><CalendarDays size={13} /> {t('renewal.viewCalendar')}</button>
+          <Button type="button" variant={view === 'list' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('list')} aria-pressed={view === 'list'}><List size={13} /> {t('renewal.viewList')}</Button>
+          <Button type="button" variant={view === 'table' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('table')} aria-pressed={view === 'table'}><Table2 size={13} /> {t('renewal.viewTable')}</Button>
+          <Button type="button" variant={view === 'calendar' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('calendar')} aria-pressed={view === 'calendar'}><CalendarDays size={13} /> {t('renewal.viewCalendar')}</Button>
         </div>
-        <button type="button" className="btn btn-sm btn-secondary" onClick={exportCsv} disabled={!filtered.length} title={t('renewal.csvTip')}><FileDown size={13} /> CSV</button>
-        <button type="button" className="btn btn-sm btn-secondary" onClick={exportIcs} disabled={!calEvents.length} title={t('renewal.icsTip')}><Download size={13} /> {t('renewal.ics')}</button>
+        <Button type="button" variant="secondary" size="sm" onClick={exportCsv} disabled={!filtered.length} title={t('renewal.csvTip')}><FileDown size={13} /> CSV</Button>
+        <Button type="button" variant="secondary" size="sm" onClick={exportIcs} disabled={!calEvents.length} title={t('renewal.icsTip')}><Download size={13} /> {t('renewal.ics')}</Button>
       </div>
 
       {filtered.length === 0 && <StatusBlock tone="neutral" title={t('renewal.noneFiltered')} description={t('empty.hintFilter')} />}
@@ -255,7 +256,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
             </tr></thead>
             <tbody>{pager.pageItems.map((a) => (
               <tr key={a.domain + a.code} className="rn-row">
-                <td><span className="renewal-badge" style={{ background: PRIORITY_COLOR[a.priority] || '#6c757d' }}>{PRIORITY_LABEL[a.priority] || a.priority}</span></td>
+                <td><span className="renewal-badge" style={{ background: PRIORITY_COLOR[a.priority] || '#71717a' }}>{PRIORITY_LABEL[a.priority] || a.priority}</span></td>
                 <td>
                   <button type="button" className="inv-domain" onClick={() => onSelectDomain?.(a.domain)}>{a.domain}</button>
                   {a.port && a.port !== 443 ? <span className="inv-dim">:{a.port}</span> : null}
@@ -268,8 +269,8 @@ export default function RenewalAdvice({ onSelectDomain }) {
                 <td>{a.team_name ? <TeamBadge teamId={a.team_id} teamName={a.team_name} /> : <span className="inv-dim">—</span>}</td>
                 <td className="inv-dim rn-issuer" title={a.issuer_cn || ''}>{a.issuer_cn || '—'}</td>
                 <td className="rn-actions">
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => onSelectDomain?.(a.domain)}>{t('renewal.detail')}</button>
-                  {a.code === 'UNREACHABLE' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => setDiag({ domain: a.domain, port: a.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnoseShort')}</button>}
+                  <Button type="button" variant="secondary" size="sm" onClick={() => onSelectDomain?.(a.domain)}>{t('renewal.detail')}</Button>
+                  {a.code === 'UNREACHABLE' && <Button type="button" variant="secondary" size="sm" onClick={() => setDiag({ domain: a.domain, port: a.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnoseShort')}</Button>}
                 </td>
               </tr>
             ))}</tbody>
@@ -278,7 +279,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
       )}
 
       {view === 'list' && pager.pageItems.map((item) => {
-        const color = PRIORITY_COLOR[item.priority] || '#6c757d'
+        const color = PRIORITY_COLOR[item.priority] || '#71717a'
         const label = PRIORITY_LABEL[item.priority] || item.priority
         const days = item.days_remaining
         const daysAbs = days !== null && days !== undefined ? Math.abs(days) : null
@@ -305,11 +306,11 @@ export default function RenewalAdvice({ onSelectDomain }) {
                 {tagsOf(item).map((tag) => <button key={tag} type="button" className="inv-tag" title={t('card.tag')} onClick={() => setTagFilter(tag)}>{tag}</button>)}
               </div>
               <div className="rn-card-actions">
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => onSelectDomain?.(item.domain)}>{t('renewal.detail')}</button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => onSelectDomain?.(item.domain)}>{t('renewal.detail')}</Button>
                 {item.code === 'UNREACHABLE' && (
-                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => setDiag({ domain: item.domain, port: item.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnose')}</button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setDiag({ domain: item.domain, port: item.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnose')}</Button>
                 )}
-                <button type="button" className="btn btn-sm btn-secondary" onClick={() => copyDomain(item.domain)}><Copy size={12} /> {copied === item.domain ? t('renewal.copied') : t('renewal.copy')}</button>
+                <Button type="button" variant="secondary" size="sm" onClick={() => copyDomain(item.domain)}><Copy size={12} /> {copied === item.domain ? t('renewal.copied') : t('renewal.copy')}</Button>
               </div>
             </div>
             <div className="renewal-expiry-stamp" style={{ background: `linear-gradient(150deg, ${color}18 0%, ${color}38 100%)`, borderLeftColor: `${color}50` }}>

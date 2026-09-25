@@ -75,7 +75,7 @@ describe('TeamManager — business-card members', () => {
 
   /** Takım adı rozeti (üye modalını açan düğme) — satırdaki kebab menüsü de aynı adı taşır. */
   const teamBadge = (name) => screen.getAllByRole('button', { name: new RegExp(name) })
-    .find(b => b.classList.contains('team-badge'))
+    .find(b => b.getAttribute('data-slot') === 'team-badge')
 
   it('takım adına tıklayınca üye kartları MODALDA açılır (etiket-değer çiftleri)', async () => {
     render(<TeamManager onTeamsChange={() => {}} />)

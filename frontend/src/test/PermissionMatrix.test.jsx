@@ -54,13 +54,13 @@ const GRANTS = [
 const renderMatrix = () => render(<LangProvider><PermissionMatrix /></LangProvider>)
 
 /** Satırdaki tıklanabilir hücreler: ADMIN kilitli olduğu için sıra TEAM_ADMIN, USER, AUDIT × view/edit/execute. */
-const pills = () => [...document.querySelectorAll('.perm-toggle-cell button.perm-pill')]
+const pills = () => [...document.querySelectorAll('.perm-toggle-cell [data-slot="switch"]')]
 
 describe('PermissionMatrix', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     confirmMock.mockResolvedValue(true)
-    api.admin.getPermissionMatrix.mockResolvedValue({ success: true, catalog: CATALOG, grants: GRANTS })
+    api.admin.getPermissionMatrix.mockResolvedValue({ success: true, catalog: CATALOG, grants: GRANTS, can_edit: true })
     api.admin.updatePermissionGrant.mockImplementation((body) =>
       Promise.resolve({ success: true, data: { ...body } }))
     api.admin.resetPermissionsToDefaults.mockResolvedValue({ success: true })
@@ -101,12 +101,12 @@ describe('PermissionMatrix', () => {
     expect(api.admin.updatePermissionGrant.mock.calls[2][0].action).toBe('view')
   })
 
-  it('mevcut yetki durumu aria-pressed ile doğru yansır', async () => {
+  it('mevcut yetki durumu shadcn Switch aria-checked ile doğru yansır', async () => {
     renderMatrix()
     await waitFor(() => expect(api.admin.getPermissionMatrix).toHaveBeenCalled())
 
-    expect(pills()[0].getAttribute('aria-pressed')).toBe('true')    // TEAM_ADMIN/view verili
-    expect(pills()[1].getAttribute('aria-pressed')).toBe('false')   // TEAM_ADMIN/edit yok
+    expect(pills()[0].getAttribute('aria-checked')).toBe('true')    // TEAM_ADMIN/view verili
+    expect(pills()[1].getAttribute('aria-checked')).toBe('false')   // TEAM_ADMIN/edit yok
   })
 
   it('HASSAS yetki VERİLİRKEN onay ister; iptal edilirse istek GİTMEZ', async () => {
@@ -123,7 +123,7 @@ describe('PermissionMatrix', () => {
   it('hassas yetki GERİ ALINIRKEN onay istenmez (kısıtlama yönü serbest)', async () => {
     api.admin.getPermissionMatrix.mockResolvedValue({ success: true, catalog: CATALOG, grants: [
       ...GRANTS, { role: 'TEAM_ADMIN', resource_key: 'inventory.crud', action: 'execute', allowed: true },
-    ] })
+    ], can_edit: true })
     renderMatrix()
     await waitFor(() => expect(api.admin.getPermissionMatrix).toHaveBeenCalled())
 
@@ -139,11 +139,11 @@ describe('PermissionMatrix', () => {
     renderMatrix()
     await waitFor(() => expect(api.admin.getPermissionMatrix).toHaveBeenCalled())
 
-    const before = pills()[1].getAttribute('aria-pressed')
+    const before = pills()[1].getAttribute('aria-checked')
     fireEvent.click(pills()[1])
 
     await waitFor(() => expect(toastMock.error).toHaveBeenCalled())
-    expect(pills()[1].getAttribute('aria-pressed')).toBe(before)
+    expect(pills()[1].getAttribute('aria-checked')).toBe(before)
   })
 
   it('varsayılanlara sıfırlama ONAY ister; iptalde istek gitmez', async () => {
@@ -166,5 +166,55 @@ describe('PermissionMatrix', () => {
 
     await waitFor(() => expect(api.admin.resetPermissionsToDefaults).toHaveBeenCalled())
     await waitFor(() => expect(api.admin.getPermissionMatrix).toHaveBeenCalledTimes(2))
+  })
+
+  // 2026-09-25 kullanıcı kararı: admin dışındakiler matrisi OKUR ama değiştiremez (sunucu can_edit=false).
+  it('SALT OKUNUR (can_edit=false): bilgi şeridi var, anahtarlar KAPALI ama durumu gösterir, sıfırla YOK, tıklama istek atmaz', async () => {
+    api.admin.getPermissionMatrix.mockResolvedValue({ success: true, catalog: CATALOG, grants: GRANTS, can_edit: false })
+    renderMatrix()
+    expect(await screen.findByText(/Salt okunur görünüm|Read-only view/)).toBeInTheDocument()
+    expect(pills().length).toBeGreaterThan(0)
+    expect(pills().every(p => p.disabled)).toBe(true)
+    expect(pills()[0].getAttribute('aria-checked')).toBe('true')      // TEAM_ADMIN/view verili — okunabilir
+    expect(screen.queryByRole('button', { name: /reset|varsayılan/i })).toBeNull()
+    fireEvent.click(pills()[1])
+    expect(api.admin.updatePermissionGrant).not.toHaveBeenCalled()
+  })
+
+  it('düzenlenebilir kipte salt-okunur şeridi YOK; can_edit alanı hiç gelmezse güvenli taraf: salt okunur', async () => {
+    renderMatrix()
+    await waitFor(() => expect(pills().length).toBeGreaterThan(0))
+    expect(screen.queryByText(/Salt okunur görünüm|Read-only view/)).toBeNull()
+    expect(pills().some(p => p.disabled)).toBe(false)
+
+    api.admin.getPermissionMatrix.mockResolvedValue({ success: true, catalog: CATALOG, grants: GRANTS })
+    renderMatrix()
+    expect(await screen.findByText(/Salt okunur görünüm|Read-only view/)).toBeInTheDocument()
+  })
+
+  // R10 (2026-09-25): "bilinmiyor" ile "yetkin yok" aynı ekrana düşmemeli.
+  const errorBanner = () => document.querySelector('[data-slot="alert"][data-tone="danger"]')
+
+  it('R10: yükleme success:false → HATA bandı + yeniden dene; salt-okunur bandı ve anahtarlar YOK; yeniden deneyince matris gelir', async () => {
+    api.admin.getPermissionMatrix.mockResolvedValueOnce({ success: false, error: '500' })
+    renderMatrix()
+    await waitFor(() => expect(errorBanner()).not.toBeNull())
+    expect(errorBanner()).toHaveTextContent(/Yetki matrisi yüklenemedi|Could not load the permission matrix/)
+    expect(screen.queryByText(/Salt okunur görünüm|Read-only view/)).toBeNull()
+    expect(pills()).toHaveLength(0)
+    expect(screen.queryByRole('button', { name: /reset|varsayılan/i })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Yeniden dene$|^Try again$/ }))
+    await waitFor(() => expect(pills()).toHaveLength(9))
+    expect(api.admin.getPermissionMatrix).toHaveBeenCalledTimes(2)
+    expect(errorBanner()).toBeNull()
+  })
+
+  it('R10: istek FIRLATIRSA ret yakalanır ve hata bandı çıkar (işlenmeyen ret yok)', async () => {
+    api.admin.getPermissionMatrix.mockRejectedValueOnce(new Error('ağ yok'))
+    renderMatrix()
+    await waitFor(() => expect(errorBanner()).not.toBeNull())
+    expect(screen.queryByText(/Salt okunur görünüm|Read-only view/)).toBeNull()
+    expect(screen.queryByText(/Yetkiler yükleniyor|Loading permissions/)).toBeNull()
   })
 })

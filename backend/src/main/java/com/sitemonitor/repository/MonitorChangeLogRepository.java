@@ -36,7 +36,13 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
      * çalışma kaydı — konsolda "kim neyi değiştirdi" listesinde yeri yok.
      *
      * <p>{@code teamScopeAll} true ise takım kısıtı UYGULANMAZ (global admin/AUDIT); false ise
-     * yalnız {@code teamIds} kesişimi döner. İki ayrı sorgu yazmak yerine tek yerde tutuluyor ki
+     * satır İKİ yoldan görünür (2026-09-25): izlemenin takımı {@code teamIds} içinde VEYA değişikliği
+     * yapan aktör o takımların üyesi ({@code actorIds} / küçük harf {@code actorNames}) — YALNIZ takımı boş
+     * satırlarda (envanter türevi, sentetik): ekip arkadaşının oralarda yaptığı değişiklik de görünsün.
+     * Takımı DOLU satırda aktör yolu YOK (kullanıcı kararı 2026-09-25, regresyon R1): ekip arkadaşının başka
+     * takımın izlemesinde yaptığı değişiklik yalnız o takıma görünür — kaynak bazlı geçmiş uçları da aynı
+     * satırı zaten 404'lüyor, iki uç çelişmesin.
+     * Takım süzgeci ({@code teamId}) aynı kuralla: o takımın izlemesi VEYA (takımsız) o takım üyesinin değişikliği. İki ayrı sorgu yazmak yerine tek yerde tutuluyor ki
      * kapsam mantığı ikiye ayrılıp ayrışmasın.
      *
      * <p><b>{@code CAST(:x AS string)} ZORUNLU</b> — süslemedir sanılmasın: PostgreSQL'de null
@@ -53,22 +59,28 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
              AND (:kind IS NULL OR c.resourceKind = :kind)
              AND (:eventType IS NULL OR c.eventType = :eventType)
              AND (:actor IS NULL OR LOWER(c.actor) = LOWER(CAST(:actor AS string)))
-             AND (:teamId IS NULL OR c.teamId = :teamId)
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
              AND (:q IS NULL OR LOWER(c.resourceName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
            ORDER BY c.createdAt DESC, c.id DESC
            """)
     Page<MonitorChangeLog> search(@Param("kind") String kind,
                                   @Param("eventType") String eventType,
                                   @Param("actor") String actor,
                                   @Param("teamId") Long teamId,
+                                  @Param("filterActorIds") Collection<Long> filterActorIds,
+                                  @Param("filterActorNames") Collection<String> filterActorNames,
                                   @Param("from") String from,
                                   @Param("to") String to,
                                   @Param("q") String q,
                                   @Param("teamScopeAll") boolean teamScopeAll,
                                   @Param("teamIds") Collection<Long> teamIds,
+                                  @Param("actorIds") Collection<Long> actorIds,
+                                  @Param("actorNames") Collection<String> actorNames,
                                   Pageable pageable);
 
     /**
@@ -81,17 +93,23 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
     @Query("""
            SELECT c.eventType, COUNT(c) FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
-             AND (:teamId IS NULL OR c.teamId = :teamId)
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
-             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
            GROUP BY c.eventType
            """)
     List<Object[]> countByEventType(@Param("from") String from,
                                     @Param("to") String to,
                                     @Param("teamId") Long teamId,
+                                    @Param("filterActorIds") Collection<Long> filterActorIds,
+                                    @Param("filterActorNames") Collection<String> filterActorNames,
                                     @Param("teamScopeAll") boolean teamScopeAll,
-                                    @Param("teamIds") Collection<Long> teamIds);
+                                    @Param("teamIds") Collection<Long> teamIds,
+                                    @Param("actorIds") Collection<Long> actorIds,
+                                    @Param("actorNames") Collection<String> actorNames);
 
     /**
      * Konsolun tür kartları: (izleme türü × olay türü) dağılımı.
@@ -114,17 +132,23 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
     @Query("""
            SELECT c.resourceKind, c.eventType, COUNT(c) FROM MonitorChangeLog c
            WHERE c.resourceKind <> 'SYSTEM'
-             AND (:teamId IS NULL OR c.teamId = :teamId)
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
-             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
            GROUP BY c.resourceKind, c.eventType
            """)
     List<Object[]> countByKindAndEventType(@Param("from") String from,
                                            @Param("to") String to,
                                            @Param("teamId") Long teamId,
+                                           @Param("filterActorIds") Collection<Long> filterActorIds,
+                                           @Param("filterActorNames") Collection<String> filterActorNames,
                                            @Param("teamScopeAll") boolean teamScopeAll,
-                                           @Param("teamIds") Collection<Long> teamIds);
+                                           @Param("teamIds") Collection<Long> teamIds,
+                                           @Param("actorIds") Collection<Long> actorIds,
+                                           @Param("actorNames") Collection<String> actorNames);
 
     /**
      * "Ne zamandır duraklatılmış" (2026-09-23, bugün paneli): verilen kaynakların {@code active} alanının

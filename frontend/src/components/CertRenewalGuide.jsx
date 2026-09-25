@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import './CertRenewalGuide.css'
+import { Button } from '@/components/shadcn/button'
 
 const emptyForm = { category: '', title: '', url: '', description: '', sortOrder: 0 }
 
@@ -119,10 +120,10 @@ export default function CertRenewalGuide({ isAdmin }) {
           <p className="guide-intro">{t('guide.intro')}</p>
         </div>
         {isAdmin && (
-          <button className="btn btn-primary" onClick={openAdd}>
+          <Button onClick={openAdd}>
             <Plus size={16} />
             {t('guide.addLink')}
-          </button>
+          </Button>
         )}
       </header>
 
@@ -164,20 +165,20 @@ export default function CertRenewalGuide({ isAdmin }) {
                   </div>
                   {isAdmin && (
                     <div className="guide-actions">
-                      <button
-                        className="btn btn-sm btn-secondary"
+                      <Button
+                        variant="secondary" size="sm"
                         onClick={() => openEdit(link)}
                         title={t('guide.edit')}
                       >
                         <Pencil size={13} />
-                      </button>
-                      <button
-                        className="btn btn-sm btn-danger"
+                      </Button>
+                      <Button
+                        variant="destructive" size="sm"
                         onClick={() => del(link)}
                         title={t('guide.delete')}
                       >
                         <Trash2 size={13} />
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </li>
@@ -237,10 +238,10 @@ export default function CertRenewalGuide({ isAdmin }) {
             </div>
             {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
             <div className="modal-actions">
-              <button className="btn btn-secondary" onClick={() => setModal(null)}>{t('guide.cancel')}</button>
-              <button className="btn btn-primary" onClick={save} disabled={saving}>
+              <Button variant="secondary" onClick={() => setModal(null)}>{t('guide.cancel')}</Button>
+              <Button onClick={save} disabled={saving}>
                 {saving ? t('guide.saving') : t('guide.save')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

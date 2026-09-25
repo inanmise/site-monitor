@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { Clock, ChevronDown } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /** Hızlı aralıklar — dk cinsinden (Grafana benzeri). */
 export const QUICK_RANGES = [
@@ -88,9 +89,9 @@ export default function TimeRangePicker({ value, onChange }) {
               <input type="datetime-local" value={from} onChange={e => setFrom(e.target.value)} /></label>
             <label className="trp-field"><span>{t('range.to')}</span>
               <input type="datetime-local" value={to} onChange={e => setTo(e.target.value)} /></label>
-            <button type="button" className="btn btn-sm btn-primary trp-apply" onClick={applyAbs}>
+            <Button type="button" size="sm" className="trp-apply" onClick={applyAbs}>
               {t('range.apply')}
-            </button>
+            </Button>
           </div>
           <div className="trp-col trp-col-quick">
             <input className="trp-search" placeholder={t('range.search')} value={search}

@@ -1,5 +1,6 @@
-import { useState } from 'react'
 import { useUserDirectory } from './UserDirectory.jsx'
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/shadcn/avatar'
+import { cn } from '@/lib/utils'
 
 // Deterministik avatar tonu + baş harfler (resim yoksa fallback). Diğer bileşenler de kullanabilir.
 export function avatarBg(s) {
@@ -18,6 +19,9 @@ export function initialsOf(name, username) {
  * `username` ve/veya `email` verilir; `userId`/`displayName` verilmezse UserDirectory'den (username→
  * sonra email) çözülür. Böylece username YA DA e-posta görünen her yer ad-soyad+resme dönüşür.
  *
+ * Avatar shadcn Avatar (Radix): foto yüklenene kadar ve yüklenemezse (404/403) baş-harf yedeği
+ * görünür — eskiden bunu elle tutulan bir onError durumu yapıyordu.
+ *
  * props:
  *  - username | email (en az biri) — dizinden çözüm anahtarı + fallback metin
  *  - userId, displayName (opsiyonel) — verilirse dizine bakılmaz
@@ -29,11 +33,10 @@ export default function UserBadge({
   size = 'md', showUsername = true, inline = false, systemLabel, nameOnly = false,
 }) {
   const dir = useUserDirectory()
-  const [imgErr, setImgErr] = useState(false)
 
   // Sistem/boş actor → düz metin (avatar yok).
-  if (username === 'system') return <span style={{ color: 'var(--text-muted)' }}>{systemLabel || 'Sistem'}</span>
-  if (!username && !email && !displayName) return <span style={{ color: 'var(--text-muted)' }}>{systemLabel || '—'}</span>
+  if (username === 'system') return <span className="text-muted-foreground">{systemLabel || 'Sistem'}</span>
+  if (!username && !email && !displayName) return <span className="text-muted-foreground">{systemLabel || '—'}</span>
 
   const needLookup = (userId == null || displayName == null)
   const resolved = needLookup ? (dir.lookup(username) || dir.lookupByEmail(email)) : null
@@ -42,30 +45,28 @@ export default function UserBadge({
   const rawName = displayName || resolved?.display_name || ident
   // nameOnly: sondaki parantezli eki ("(… Bölümü)" gibi departman/başlık) çıkar → yalnız ad-soyad.
   const name = nameOnly && typeof rawName === 'string' ? rawName.replace(/\s*\([^)]*\)\s*$/, '') : rawName
-  const px = size === 'sm' ? 20 : 26
-  const fs = size === 'sm' ? 9 : 11
+  const sm = size === 'sm'
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 0, maxWidth: '100%' }}>
-      {id != null && !imgErr ? (
-        <img src={`/api/users/${id}/photo`} alt="" onError={() => setImgErr(true)}
-          style={{ width: px, height: px, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-      ) : (
-        <span style={{ width: px, height: px, borderRadius: '50%', flexShrink: 0, color: '#fff',
-          fontSize: fs, fontWeight: 700, display: 'inline-flex', alignItems: 'center',
-          justifyContent: 'center', background: avatarBg(ident || name) }}>{initialsOf(name, ident)}</span>
-      )}
+    <span data-slot="user-badge" className="inline-flex min-w-0 max-w-full items-center gap-[7px]">
+      <Avatar className={sm ? 'size-5' : 'size-[26px]'}>
+        {id != null && <AvatarImage src={`/api/users/${id}/photo`} alt="" className="object-cover" />}
+        <AvatarFallback className={cn('font-bold text-white', sm ? 'text-[9px]' : 'text-[11px]')}
+          style={{ background: avatarBg(ident || name) }}>
+          {initialsOf(name, ident)}
+        </AvatarFallback>
+      </Avatar>
       {inline ? (
-        <span style={{ minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+        <span className="min-w-0 overflow-hidden text-ellipsis font-semibold">{name}</span>
       ) : (
-        <span style={{ minWidth: 0, lineHeight: 1.2 }}>
-          <span style={{ fontWeight: 600 }}>{name}</span>
+        <span className="min-w-0 leading-[1.2]">
+          <span className="font-semibold">{name}</span>
           {showUsername && ident && name !== ident && (
-            <span className="sys-mono sys-small" style={{ display: 'block', opacity: 0.6, fontSize: '.78em' }}>{ident}</span>
+            <span className="block font-mono text-[.78em] opacity-60">{ident}</span>
           )}
         </span>
       )}
-      {count != null && <span style={{ marginLeft: 'auto', fontWeight: 700, flexShrink: 0 }}>{count}</span>}
+      {count != null && <span className="ml-auto shrink-0 font-bold">{count}</span>}
     </span>
   )
 }

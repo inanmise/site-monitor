@@ -7,6 +7,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import VersionTimeline from './VersionTimeline.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { lineDiff, collapseContext, envNameDiff } from '../../utils/lineDiff.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Şablon sürüm geçmişi — "kim, ne zaman, ne yaptı" TEK zaman çizelgesinde.
@@ -111,9 +112,9 @@ export default function ScriptedTemplateVersions({ t, template, canEdit, onClose
                     </span>
                     {/* Geri yükleme geçmişi EZMEZ: yeni bir RESTORE sürümü olarak eklenir. */}
                     {canEdit && detail && !sel.current &&
-                      <button className="btn btn-sm btn-primary" onClick={restore} disabled={busy}>
+                      <Button size="sm" onClick={restore} disabled={busy}>
                         {t('tpl.versionRestore')}
-                      </button>}
+                      </Button>}
                   </span>
                 </div>
 

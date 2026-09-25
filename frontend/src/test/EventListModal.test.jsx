@@ -56,6 +56,6 @@ describe('EventListModal', () => {
     expect(within(dlg).queryByLabelText(/^Sonuç$|^Outcome$/)).toBeNull()
     expect(within(dlg).getByTestId('evl-stats').textContent).not.toMatch(/Başarısız|Failed/)
     expect(within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)).toHaveLength(25)
-    expect(dlg.querySelector('.pgn-bar')).toBeTruthy()
+    expect(within(dlg).getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
   })
 })

@@ -11,6 +11,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import ChangeDiffChips from './ChangeDiffChips.jsx'
 import { fieldLabel, formatValue, parseSnapshot, shortUserAgent } from './changeFields.js'
 import { copyText } from '../../utils/copyText.js'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * Bir izlemenin YAPILANDIRMA geçmişi — "kim, ne zaman, hangi IP'den, neyi değiştirdi".
@@ -155,10 +156,10 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
               {/* Geri döndürme yalnız YÖNETEBİLENE ve durum kaydı olan olaylarda çıkar —
                   düğmenin görünüp 403 vermesi kullanıcıyı boşuna umutlandırırdı. */}
               {canManage && detail?.snapshot && (
-                <button type="button" className="btn btn-secondary btn-sm chg-restore-btn"
+                <Button type="button" variant="secondary" size="sm" className="chg-restore-btn"
                   disabled={restoring} onClick={restore}>
                   <RotateCcw size={13} /> {restoring ? t('chg.restoring') : t('chg.restoreAction')}
-                </button>
+                </Button>
               )}
             </div>
             <div className="sc-ver-preview-body">

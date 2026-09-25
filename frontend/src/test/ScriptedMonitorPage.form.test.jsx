@@ -111,16 +111,23 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     const inModal = (sel) => document.querySelector(`.modal-box ${sel}`)
     /** Script kaynağı artık aranabilir seçici (SearchableSelect): tetikleyiciye tıkla, seçeneği tıkla. */
     // Tetikleyici TOGGLE: açıkken yeniden tıklamak kapatır → yalnız kapalıysa aç (idempotent).
-    const isSourceOpen = () => !!document.querySelector('.sc-source-select .ss-dropdown')
-    const openSource = () => { if (!isSourceOpen()) fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger')) }
-    const sourceOptions = () => [...document.querySelectorAll('.sc-source-select .ss-option')]
+    // Tetik role="combobox" (shadcn Combobox deseni); liste body'ye PORTAL'lanır → seçenekler ve dal
+    // başlıkları `.sc-source-select` altında DEĞİL, açık tek listbox'ta aranır.
+    const sourceTrigger = () => document.querySelector('.sc-source-select button[role="combobox"]')
+    const isSourceOpen = () => sourceTrigger()?.getAttribute('aria-expanded') === 'true'
+    const openSource = () => { if (!isSourceOpen()) fireEvent.mouseDown(sourceTrigger()) }
+    const sourceOptions = () => [...document.querySelectorAll('[role="listbox"] [role="option"]')]
+    /** Katlanabilir dal başlıkları: listbox içindeki aria-expanded taşıyan düğmeler. */
+    const sourceGroupHeads = () => [...document.querySelectorAll('[role="listbox"] button[aria-expanded]')]
+    /** Boş değerli ("şablon seçin") satır: yer tutucuyla aynı metni taşıyan seçenek. */
+    const placeholderOption = () => sourceOptions().find(o => /pick a template|şablon seçin/i.test(o.textContent))
     /**
      * Gruplar artik KATLANABILIR (`collapsibleGroups`): yerlesik katalog 100 sablon oldugu icin
      * dallar kapali geliyor ve kapali dalin secenekleri hic CIZILMIYOR. Kullanici da once dali
      * acmak zorunda; test de ayni yolu izler.
      */
     const expandSourceGroups = () => {
-      for (const b of document.querySelectorAll('.sc-source-select .ss-group-btn')) {
+      for (const b of sourceGroupHeads()) {
         if (b.getAttribute('aria-expanded') !== 'true') fireEvent.mouseDown(b)
       }
     }
@@ -153,7 +160,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // yapilan is, ona fazladan tik eklenmemeli (`groupOpen`).
       await openEditFor(FAILING)
       openSource()
-      const groups = [...document.querySelectorAll('.sc-source-select .ss-group')].map(g => g.textContent)
+      const groups = sourceGroupHeads().map(g => g.textContent)
       expect(groups[0]).toMatch(/saved scripts|kayıtlı/i)
       expect(groups.length).toBeGreaterThan(1)                      // ardindan sablon dallari
       expect(groups.slice(1).every(g => !/saved scripts|kayıtlı/i.test(g))).toBe(true)
@@ -169,12 +176,12 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       await openEditFor(FAILING)
       openSource()
       // "llm" YALNIZ kayıtlı script'in adında geçer → şablon grubu tamamen boşalmalı
-      fireEvent.change(document.querySelector('.sc-source-select .ss-search-input'), { target: { value: 'llm' } })
+      fireEvent.change(document.querySelector('[cmdk-input]'), { target: { value: 'llm' } })
 
       const labels = sourceOptions().map(o => o.textContent)
       expect(labels.some(l => l.includes('llm-test'))).toBe(true)
       expect(labels.some(l => /smoke/i.test(l))).toBe(false)
-      const groups = [...document.querySelectorAll('.sc-source-select .ss-group')].map(g => g.textContent)
+      const groups = sourceGroupHeads().map(g => g.textContent)
       expect(groups).toHaveLength(1)                       // yalnız "Kayıtlı script'ler" kaldı
       expect(groups[0]).toMatch(/saved scripts|kayıtlı/i)
     })
@@ -217,8 +224,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       openSource()
 
       // Dal basliklari VAR ve kategoriye gore ayrilmis...
-      const heads = [...document.querySelectorAll('.sc-source-select .ss-group-btn')]
-        .map(b => b.textContent)
+      const heads = sourceGroupHeads().map(b => b.textContent)
       // Etiketler i18n'den gelir (tpl.cat.*) — TR "Erişilebilirlik & Uptime" / "Kimlik & Oturum",
       // EN "Availability & uptime" / "Sign-in & sessions".
       expect(heads.some(h => /erişilebilirlik|availability/i.test(h))).toBe(true)
@@ -230,8 +236,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(sourceOptions().some(o => /smoke/i.test(o.textContent))).toBe(false)
 
       // Dali ac → altindaki script secilebilir olur.
-      const branch = [...document.querySelectorAll('.sc-source-select .ss-group-btn')]
-        .find(b => /erişilebilirlik|availability/i.test(b.textContent))
+      const branch = sourceGroupHeads().find(b => /erişilebilirlik|availability/i.test(b.textContent))
       fireEvent.mouseDown(branch)
       const opt = sourceOptions().find(o => /smoke/i.test(o.textContent))
       expect(opt).toBeTruthy()
@@ -276,7 +281,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       const { unmount } = await openEditFor(FAILING)
       openSource()
       // Düzenlemede placeholder yok: monitörün kendi girdisi listede, "boşalt" yolu veri kaybettiriyordu
-      expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).toBeNull()
+      expect(placeholderOption()).toBeUndefined()
       unmount()
 
       api.monitoring.getScriptedMonitors.mockResolvedValue({
@@ -286,12 +291,12 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
       fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
       openSource()
-      expect(document.querySelector('.sc-source-select .ss-opt-placeholder')).not.toBeNull()
+      expect(placeholderOption()).toBeDefined()
 
       pickSource(/smoke/i)
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
       openSource()
-      fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-opt-placeholder'))
+      fireEvent.mouseDown(placeholderOption())
       expect(screen.getByTestId('code-editor').value).toBe('')
     })
   })
@@ -360,11 +365,11 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
-      // Hedef DÜZENLEME MODALININ silme düğmesi (`.btn-danger`). Kartta da artık bir silme
+      // Hedef DÜZENLEME MODALININ silme düğmesi (`[data-slot="button"][data-variant="destructive"]`). Kartta da artık bir silme
       // düğmesi var (`.mon-act--danger`, dokuz türün tamamına eklendi), bu yüzden yalnız
       // erişilebilir adla sorgulamak iki eşleşme döndürüyor. Satır 360'taki `.mon-act--edit`
       // ile aynı ayrıştırma.
-      fireEvent.click(document.querySelector('.modal-box .btn-danger, .btn-danger'))
+      fireEvent.click(document.querySelector('.modal-box [data-slot="button"][data-variant="destructive"], [data-slot="button"][data-variant="destructive"]'))
       // Onay artık PROJENİN diyaloğu (window.confirm değil): tarayıcı-varsayılanı kutu tasarım
       // sisteminin dışındaydı ve jsdom'da hiç çalışmadığı için bu yol yalnız spy ile test
       // edilebiliyordu — yani gerçek onay akışı test EDİLMİYORDU.
@@ -389,7 +394,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'yeni bir sey' } })
 
         // Teklif gorunuyor: kullanici karar verene kadar yazim DURUR
-        expect(document.querySelector('.modal-box .alert-banner')).not.toBeNull()
+        expect(document.querySelector('.modal-box [data-slot="alert"]')).not.toBeNull()
         await vi.advanceTimersByTimeAsync(2000)
         expect(api.monitoring.saveScriptedDraft,
           'karar verilmeden taslak uzerine yazildi').not.toHaveBeenCalled()
@@ -413,12 +418,12 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
         fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'x' } })
         // Şablon seç → env satırları gelsin, birine gizli değer yazalım
-        fireEvent.mouseDown(document.querySelector('.sc-source-select .ss-trigger'))
-        // Dallar kapali gelir (collapsibleGroups) → once ac, sonra sec.
-        for (const b of document.querySelectorAll('.sc-source-select .ss-group-btn')) {
+        fireEvent.mouseDown(document.querySelector('.sc-source-select button[role="combobox"]'))
+        // Dallar kapali gelir (collapsibleGroups) → once ac, sonra sec. Liste portal'da (listbox).
+        for (const b of document.querySelectorAll('[role="listbox"] button[aria-expanded]')) {
           if (b.getAttribute('aria-expanded') !== 'true') fireEvent.mouseDown(b)
         }
-        fireEvent.mouseDown([...document.querySelectorAll('.sc-source-select .ss-option')]
+        fireEvent.mouseDown([...document.querySelectorAll('[role="listbox"] [role="option"]')]
           .find(o => /OAuth2/i.test(o.textContent)))
         const secretInput = document.querySelector('.modal-box .env-row input.env-val[type="password"]')
         if (secretInput) fireEvent.change(secretInput, { target: { value: 'COK-GIZLI' } })
@@ -543,7 +548,9 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
       await waitFor(() => expect(api.monitoring.triggerScriptedCheck).toHaveBeenCalledWith(MON.id))
       // Modal KAPANMAZ: sonuç formda gösterilecek.
-      expect(container.ownerDocument.querySelector('.sc-smoke')).not.toBeNull()
+      // Doğrulama şeridi (AlertBanner) ve "Kapat" eylemi görünür.
+      expect(await screen.findByText(/Doğrulama koşumu|Verification run|Koşum sürüyor|The run is still going/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Kapat$|^Close$/ })).toBeInTheDocument()
     })
 
     it('YALNIZ AYAR kaydında (sürüm değişmedi) doğrulama koşumu tetiklenMEZ', async () => {

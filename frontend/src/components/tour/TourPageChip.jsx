@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Compass, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useTour } from './TourProvider.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * "Bu sayfayı tanımak ister misin?" çipi — sayfa turu olan bir sekmeye İLK gelişte, sağ altta küçük.
@@ -17,7 +18,7 @@ export default function TourPageChip({ tab }) {
     <div className="tour-chip" role="status">
       <Compass size={14} />
       <span>{t('tour.pageOffer')}</span>
-      <button type="button" className="btn btn-sm btn-primary" onClick={() => start('page', { pageId: tab })}>{t('tour.pageStart')}</button>
+      <Button type="button" size="sm" onClick={() => start('page', { pageId: tab })}>{t('tour.pageStart')}</Button>
       <button type="button" className="tour-x" aria-label={t('tour.close')} onClick={() => { setHidden(true); persist({ seen_page: tab }) }}><X size={14} /></button>
     </div>
   )

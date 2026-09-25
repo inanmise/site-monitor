@@ -200,7 +200,7 @@ describe('ChangeHistoryTab', () => {
     await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledWith('port', 4, { page: 0, size: 25 }))
 
     const one = await screen.findByRole('button', { name: 'Page 1' })
-    expect(one.className).toContain('pg-btn--active')
+    expect(one).toHaveAttribute('data-variant', 'outline')   // etkin sayfa: shadcn Pagination'ın isActive görünümü
     expect(one).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
   })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 
 /**
  * Alarm Geçmişi zenginleştirmesi (2026-09-16, kullanıcı isteği):
@@ -113,7 +113,7 @@ describe('AlertTeamStatsPanel — takım kırılımı', () => {
     const modal = await screen.findByRole('dialog')
     expect(modal.textContent).toMatch(/Takım A/)
     await waitFor(() => expect(modal.querySelectorAll('.alh-cell-row')).toHaveLength(25))
-    expect(modal.querySelector('.pg-nav')).not.toBeNull()
+    expect(within(modal).getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
     fireEvent.click([...modal.querySelectorAll('button')].find((b) => /Sonraki|Next/i.test(b.getAttribute('aria-label') || '')))
     await waitFor(() => expect(api.admin.getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1 })))
     await waitFor(() => expect(modal.querySelectorAll('.alh-cell-row')).toHaveLength(14))   // 39 - 25

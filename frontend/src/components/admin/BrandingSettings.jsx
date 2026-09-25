@@ -9,6 +9,7 @@ import { downscaleImage } from '../../utils/imageDownscale.js'
 import { Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import { Button } from '@/components/shadcn/button'
 
 const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
@@ -174,7 +175,7 @@ export default function BrandingSettings() {
               <input type="text" value={primary} placeholder={t('branding.primaryPlaceholder')}
                 onChange={(ev) => set(K('primary-color'), ev.target.value)} style={{ flex: 1 }} />
               <span aria-hidden="true" style={{
-                width: 28, height: 28, borderRadius: 6, border: '1px solid #d1d5db',
+                width: 28, height: 28, borderRadius: 6, border: '1px solid #d4d4d8',
                 background: primary || 'var(--primary)', flexShrink: 0 }} />
             </div>
           </div>
@@ -184,17 +185,17 @@ export default function BrandingSettings() {
           <div className="threshold-field">
             <label><span className="help-label-row">{t('branding.logo')}<HelpTip helpKey={'help.set.' + K('logo-data')} label={t('branding.logo')} /></span></label>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button type="button" className="btn btn-secondary" onClick={() => fileRef.current?.click()}>
+              <Button type="button" variant="secondary" onClick={() => fileRef.current?.click()}>
                 <Upload size={14} /> {t('branding.logoUpload')}
-              </button>
+              </Button>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/svg+xml"
                 style={{ display: 'none' }} onChange={onLogoChosen} />
               {logo && (
                 <>
                   <img src={logo} alt="logo" style={{ maxHeight: 40, maxWidth: 200 }} />
-                  <button type="button" className="btn btn-danger" onClick={() => set(K('logo-data'), '')}>
+                  <Button type="button" variant="destructive" onClick={() => set(K('logo-data'), '')}>
                     <Trash2 size={14} /> {t('branding.logoRemove')}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -218,8 +219,8 @@ export default function BrandingSettings() {
                 onClick={() => set(K('banner-enabled'), bannerOn ? 'false' : 'true')}
                 style={{
                   width: 46, height: 24, borderRadius: 999, padding: 0, cursor: 'pointer',
-                  border: '1px solid ' + (bannerOn ? 'transparent' : '#d1d5db'),
-                  background: bannerOn ? 'var(--primary)' : '#e5e7eb',
+                  border: '1px solid ' + (bannerOn ? 'transparent' : '#d4d4d8'),
+                  background: bannerOn ? 'var(--primary)' : '#e4e4e7',
                   position: 'relative', flexShrink: 0, transition: 'background .15s',
                 }}>
                 <span style={{
@@ -254,7 +255,7 @@ export default function BrandingSettings() {
       <div className="admin-section">
         <h4 className="ldap-subhdr">{t('branding.preview')}</h4>
         <div style={{
-          maxWidth: 360, border: '1px solid #e5e7eb', borderRadius: 10, padding: '22px 24px',
+          maxWidth: 360, border: '1px solid #e4e4e7', borderRadius: 10, padding: '22px 24px',
           background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {logo
             ? <img src={logo} alt="logo" style={{ maxHeight: 36, maxWidth: 180, alignSelf: 'flex-start' }} />
@@ -263,28 +264,28 @@ export default function BrandingSettings() {
             {valueOf(K('login-title')) || t('login.heading')}
           </div>
           {(valueOf(K('login-subtitle'))) &&
-            <div style={{ fontSize: 13, color: '#6b7280' }}>{valueOf(K('login-subtitle'))}</div>}
-          <div style={{ fontSize: 12, color: '#6b7280' }}>
+            <div style={{ fontSize: 13, color: '#71717a' }}>{valueOf(K('login-subtitle'))}</div>}
+          <div style={{ fontSize: 12, color: '#71717a' }}>
             {valueOf(K('username-label')) || t('login.username')}
           </div>
-          <div style={{ height: 30, border: '1px solid #d1d5db', borderRadius: 6 }} />
-          <button type="button" className="btn" style={{
+          <div style={{ height: 30, border: '1px solid #d4d4d8', borderRadius: 6 }} />
+          <Button type="button" variant="outline" style={{
             background: primary || 'var(--primary)', color: '#fff', border: 'none',
             borderRadius: 6, padding: '8px 0', fontWeight: 600, cursor: 'default' }}>
             {valueOf(K('signin-label')) || t('login.submit')}
-          </button>
+          </Button>
           {(valueOf(K('footer-text'))) &&
-            <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center' }}>{valueOf(K('footer-text'))}</div>}
+            <div style={{ fontSize: 11, color: '#a1a1aa', textAlign: 'center' }}>{valueOf(K('footer-text'))}</div>}
         </div>
       </div>
 
       <div className="ldap-actions">
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+        <Button onClick={save} disabled={saving}>
           {saving ? t('settings.saving') : t('settings.save')}
-        </button>
-        <button className="btn btn-danger" onClick={resetToDefaults} disabled={saving}>
+        </Button>
+        <Button variant="destructive" onClick={resetToDefaults} disabled={saving}>
           {t('branding.reset')}
-        </button>
+        </Button>
       </div>
     </div>
   )

@@ -244,7 +244,7 @@ describe('UserPushSettings', () => {
     fireEvent.click(within(teamChips).getByRole('button', { name: /Takım A/ }))
     await waitFor(() => expect(api.admin.userPush.getDeliveries).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: 5 })))
 
-    fireEvent.click(within(dlg.querySelector('.modal-shell-footer')).getByRole('button', { name: /^(Kapat|Close)$/ }))
+    fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /^(Kapat|Close)$/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     fireEvent.click(cards[0].querySelector('.up-kpi-fail'))    // Son 24 saat → FAILED ile açılır
@@ -275,8 +275,8 @@ describe('UserPushSettings', () => {
     // Takım seçimi: SearchableSelect gizli native select ya da tetikleyici — değeri doğrudan state'e taşımak için
     // bileşenin combobox'ını aç ve seçeneği tıkla.
     const section = document.querySelector('.up-explain')
-    fireEvent.mouseDown(section.querySelector('.ss-trigger'))   // açılış onMouseDown ile
-    const opt = [...section.querySelectorAll('.ss-option')].find(o => o.textContent.trim() === 'Takım A')
+    fireEvent.mouseDown(section.querySelector('button[role="combobox"]'))   // açılış onMouseDown ile
+    const opt = [...document.querySelectorAll('[role="option"]')].find(o => o.textContent.trim() === 'Takım A')
     fireEvent.mouseDown(opt)
     await waitFor(() => expect(api.admin.userPush.explain).toHaveBeenCalledWith('5', 'HIGH'))
     await screen.findByText('Geliştirici İki')

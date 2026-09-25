@@ -120,6 +120,21 @@ describe('CertificateCard — aksiyon butonları', () => {
     expect(onClick).not.toHaveBeenCalled()
   })
 
+  /**
+   * 2026-09-25 (R15): dört eylemin ADI kartı ayırır (alan adı + eylem) — 50 kartlık panoda 50 özdeş
+   * "Sil" duyuluyordu. İpucu (title) kısa kalır.
+   */
+  it('dört eylemin erişilebilir adı alan adını taşır; ipucu kısa kalır', () => {
+    render(<CertificateCard cert={makeCert()} onClick={() => {}}
+      onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} onDelete={() => {}} />)
+    const btns = actionBtns()
+    expect(btns).toHaveLength(4)
+    for (const b of btns) {
+      expect(b.getAttribute('aria-label')).toMatch(/^test\.example\.com — \S/)
+      expect(b.getAttribute('title')).not.toMatch(/test\.example\.com/)
+    }
+  })
+
   it('yetkisi olmayanda (onDelete yok) Sil butonu HİÇ çizilmez', () => {
     render(<CertificateCard cert={makeCert()} onClick={() => {}}
       onCheckNow={() => {}} onEdit={() => {}} onDuplicate={() => {}} />)
