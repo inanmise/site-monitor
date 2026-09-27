@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.87.0] — 2026-09-27
+
 ### Added
 - **shadcn/ui geçişi tamamlandı:** arayüzdeki HER ekran ve öğe shadcn/ui bileşenleriyle çizilir (kalan 1.199 ham
   öğe sıfırlandı). Kalıcı kapılar: `shadcnOnly` (ham kontrol / elle bileşen / `role="button"` ile elle düğme yasak,
@@ -1140,7 +1142,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.86.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.87.0...HEAD
+[20.87.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.87.0
 [20.86.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.86.0
 [20.85.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.85.0
 [20.84.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.84.2
