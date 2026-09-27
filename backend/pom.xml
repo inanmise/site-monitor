@@ -211,7 +211,9 @@
                          gorunsun. Servisler zaten acik ZoneId.of("Europe/Istanbul") kullaniyor,
                          yani uygulama davranisi bu bayraktan ETKILENMEZ; etkilenen tek sey
                          testlerin ciplak now() cagrilaridir. -->
-                    <argLine>@{argLine} -Xmx1g -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
+                    <!-- -Xmx1536m (2026-09-27): 73 @WebMvcTest bağlamı + yeni denetleyici testleri CI'da 1g ile "Java heap
+                         space" verdi; bağlam önbelleği ayrıca src/test/resources/spring.properties ile 12'ye sınırlı. -->
+                    <argLine>@{argLine} -Xmx1536m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                 </configuration>
             </plugin>
             <!-- Code coverage report. Run via `mvn test`; output in target/site/jacoco/index.html -->
