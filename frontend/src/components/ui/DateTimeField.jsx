@@ -1,52 +1,9 @@
-import { forwardRef, useRef } from 'react'
-import { createPortal } from 'react-dom'
-import DatePicker, { registerLocale } from 'react-datepicker'
-import 'react-datepicker/dist/react-datepicker.css'
-import { tr, enUS } from 'date-fns/locale'
-import { Calendar, ChevronDown, X } from 'lucide-react'
-import { useLanguage, useT } from '../../i18n/index.jsx'
+import { X } from 'lucide-react'
+import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
-
-registerLocale('tr', tr)
-registerLocale('en', enUS)
-
-// Takvimi document.body'ye portalla — modal overflow + z-index katmanından kaçar
-// (.react-datepicker-popper z-index:9100 modal overlay 2000'in üstünde).
-const BodyPortal = ({ children }) => createPortal(children, document.body)
-
-// Modül seviyesi — render'lar arası yeniden yaratılmaz, react-datepicker stabil kalır.
-//
-// Temizleme GERÇEK bir düğme ve tetiğin DIŞINDA (kardeşi): eskiden tetik <button>'ın İÇİNDE
-// role="button" taşıyan bir SVG'ydi — odaklanamıyordu (Tab ona hiç uğramaz), düğme içinde düğme
-// de geçersiz yapı; klavye kullanıcısı isteğe bağlı bir tarihi temizleyemiyordu (2026-09-25, R14).
-// Kardeş, react-datepicker'ın `__input-container`'ında durur (position: relative, tetiği sarar) →
-// hem tam genişlik hem inline varyantta tetiğin sağ köşesine oturur. Tetik o köşede ok yerine
-// aynı genişlikte boş yer bırakır ki değer metni düğmenin altına kaymasın. `ref` tetikte kalır.
-const TriggerInput = forwardRef(function TriggerInput(
-  { value, onClick, disabled, placeholder, onClear, clearLabel }, ref) {
-  const clearShown = !!(value && onClear && !disabled)
-  return (
-    <>
-      <button className="dp-trigger" onClick={onClick} ref={ref} type="button" disabled={disabled}>
-        <Calendar size={13} className="dp-trigger-icon" />
-        <span className="dp-trigger-value" style={value ? undefined : { color: 'var(--text-muted)', fontWeight: 500 }}>
-          {value || placeholder || '—'}
-        </span>
-        {clearShown
-          ? <span aria-hidden="true" className="size-5 shrink-0" />
-          : <ChevronDown size={12} className="dp-trigger-chevron" aria-hidden="true" />}
-      </button>
-      {clearShown && (
-        <Button type="button" variant="ghost" size="icon-xs"
-          className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-destructive"
-          aria-label={clearLabel} title={clearLabel}
-          onClick={onClear}>
-          <X aria-hidden="true" />
-        </Button>
-      )}
-    </>
-  )
-})
+import { cn } from '@/lib/utils'
+import { DateTimePopover } from './DatePickerParts.jsx'
+import SimpleTooltip from './SimpleTooltip.jsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 
@@ -82,58 +39,53 @@ function toDateOnly(d) {
 }
 
 /**
- * Proje geneli react-datepicker deseniyle (DateTimeRangePicker ile aynı görünüm) tek
- * tarih+saat seçici. Native `datetime-local` yerine kullanılır; .dp-trigger ile stillenir,
- * takvim body'ye portallanır, TR/EN locale + dd.MM.yyyy HH:mm formatı.
+ * Proje geneli tek tarih(+saat) seçici — shadcn Date Picker deseni (Popover + Calendar + saat için
+ * `Input type="time"`, ortak parçalar `DatePickerParts.jsx`). Native `datetime-local` ve react-datepicker
+ * yerine kullanılır; takvim body'ye portal'lanır (modal içinde de üstte), TR/EN yerel, Pazartesi başlangıç,
+ * gösterim dd.MM.yyyy HH:mm.
  *
- * value/onChange proje ISO string'i (yyyy-MM-dd'T'HH:mm:ss) ile çalışır. `clearable`
- * (zorunlu olmayan alanlar) verilirse tetikleyicide × ile temizlenebilir. `dateOnly`
- * verilirse saat seçimi olmadan sadece gün döner (filtre From/To). `className` ile
- * sarmalayıcıya ek sınıf (örn. inline filtre için 'dtf-inline') eklenir.
+ * value/onChange proje ISO string'i (yyyy-MM-dd'T'HH:mm:ss, UTC) ile çalışır. `clearable` (zorunlu olmayan
+ * alanlar) verilirse tetiğin YANINDA × ile temizlenebilir. `dateOnly` verilirse saat seçimi olmadan yalnız
+ * gün döner (yyyy-MM-dd, yerel takvim günü — filtre From/To). `min` aynı biçimde alt sınır (öncesi seçilemez).
+ * `className` sarmalayıcıya eklenir; `dtf-inline` (filtre satırı) içerik genişliğinde çizer (eski sözleşme).
+ *
+ * Temizleme GERÇEK bir düğme ve tetiğin DIŞINDA (kardeşi): eskiden tetik <button>'ın İÇİNDE role="button"
+ * taşıyan bir SVG'ydi — odaklanamıyordu, düğme içinde düğme de geçersiz yapı (2026-09-25, R14). Tetik o
+ * köşede ok yerine aynı genişlikte boş yer bırakır ki değer metni düğmenin altına kaymasın.
  */
-export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min }) {
-  const { lang } = useLanguage()
+export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min, max }) {
   const t = useT()
-  const dpRef = useRef(null)
   const parse = dateOnly ? parseDateOnly : parseIso
   const selected = parse(value)
   const minDate = min ? parse(min) : null
+  const maxDate = max ? parse(max) : null   // `max`: üst sınır (sonrası seçilemez) — 2026-09-27, gelecek olamayan anlar
+  const inline = /(^|\s)dtf-inline(\s|$)/.test(className || '')
+  const extra = (className || '').replace(/(^|\s)dtf-inline(?=\s|$)/g, ' ').trim()
+  const clearShown = !!(value && clearable && !disabled)
+  const clearLabel = t('app.clear')
+
   return (
-    <div className={'dtf' + (className ? ' ' + className : '')}>
-      <DatePicker
-        ref={dpRef}
-        selected={selected}
-        onChange={(d) => onChange(dateOnly ? toDateOnly(d) : toIso(d))}
-        disabled={disabled}
-        minDate={minDate || undefined}
-        showTimeSelect={!dateOnly}
-        showTimeInput={!dateOnly}
-        timeFormat="HH:mm"
-        timeIntervals={5}
-        dateFormat={dateOnly ? 'dd.MM.yyyy' : 'dd.MM.yyyy HH:mm'}
-        locale={lang === 'tr' ? 'tr' : 'en'}
-        popperContainer={BodyPortal}
-        customInput={<TriggerInput disabled={disabled} placeholder={placeholder}
-          onClear={clearable ? () => onChange('') : undefined} clearLabel={t('app.clear')} />}
-        showPopperArrow={false}
-        popperPlacement="bottom-start"
-        calendarClassName="dp-calendar"
-        shouldCloseOnSelect={!!dateOnly}
-      >
-        {/* Saatli seçimde otomatik kapanma yok (kullanıcı gün+saati ayarlar) → seçimin bittiğini
-            belirten ve takvimi kapatan açık bir "Tamam" butonu. dateOnly modunda gerek yok (gün
-            tıklanınca zaten kapanır). */}
-        {!dateOnly && (
-          <div style={{ padding: '6px 8px', borderTop: '1px solid var(--border, #e4e4e7)',
-                        display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={() => dpRef.current?.setOpen(false)}
-              style={{ padding: '5px 16px', fontWeight: 600, fontSize: '.85rem', cursor: 'pointer',
-                       background: 'var(--primary, #2563eb)', color: '#fff', border: 'none', borderRadius: 6 }}>
-              {lang === 'tr' ? 'Tamam' : 'Done'}
-            </button>
-          </div>
-        )}
-      </DatePicker>
-    </div>
+    <DateTimePopover
+      value={selected}
+      onChange={(d) => onChange(dateOnly ? toDateOnly(d) : toIso(d))}
+      withTime={!dateOnly}
+      minDate={minDate || undefined}
+      maxDate={maxDate || undefined}
+      placeholder={placeholder}
+      disabled={disabled}
+      reserveEnd={clearShown}
+      className={cn(inline ? 'w-auto' : 'w-full', extra)}
+      triggerClassName={inline ? 'w-auto max-w-full' : undefined}
+      endSlot={clearShown && (
+        <SimpleTooltip content={clearLabel}>
+          <Button type="button" variant="ghost" size="icon-xs"
+            className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-destructive"
+            aria-label={clearLabel}
+            onClick={() => onChange('')}>
+            <X aria-hidden="true" />
+          </Button>
+        </SimpleTooltip>
+      )}
+    />
   )
 }

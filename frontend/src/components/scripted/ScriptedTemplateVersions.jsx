@@ -7,6 +7,8 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import VersionTimeline from './VersionTimeline.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { lineDiff, collapseContext, envNameDiff } from '../../utils/lineDiff.js'
+import SegmentedControl from '../ui/SegmentedControl.jsx'
+import { VersionChip } from './VersionTimeline.jsx'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -97,19 +99,18 @@ export default function ScriptedTemplateVersions({ t, template, canEdit, onClose
               <div className="sc-ver-preview">
                 <div className="sc-ver-preview-head">
                   <span className="sc-ver-preview-id">
-                    <span className="sc-ver-chip sc-ver-chip--cell">v{sel.version}</span>
+                    <VersionChip>v{sel.version}</VersionChip>
                     {prev && <span className="sc-ver-vs">v{prev.version} → v{sel.version}</span>}
                   </span>
                   <span className="sc-ver-preview-tools">
-                    {/* Uygulamanın standart segment denetimi (.seg-ctl) — eskiden iki ayrı
+                    {/* Uygulamanın standart segment denetimi (ui/SegmentedControl) — eskiden iki ayrı
                         btn/btn-primary yan yanaydı ve "seçili" hâli bir eylem düğmesinden
                         ayırt edilemiyordu. */}
-                    <span className="seg-ctl">
-                      <button type="button" className={`seg-ctl-btn${view === 'diff' ? ' active' : ''}`}
-                        onClick={() => setView('diff')} disabled={!prev}>{t('scripted.verTabDiff')}</button>
-                      <button type="button" className={`seg-ctl-btn${view === 'script' ? ' active' : ''}`}
-                        onClick={() => setView('script')}>{t('scripted.verTabScript')}</button>
-                    </span>
+                    <SegmentedControl ariaLabel={t('scripted.verViewLabel')} value={view} onChange={setView}
+                      options={[
+                        { value: 'diff', label: t('scripted.verTabDiff'), disabled: !prev },
+                        { value: 'script', label: t('scripted.verTabScript') },
+                      ]} />
                     {/* Geri yükleme geçmişi EZMEZ: yeni bir RESTORE sürümü olarak eklenir. */}
                     {canEdit && detail && !sel.current &&
                       <Button size="sm" onClick={restore} disabled={busy}>

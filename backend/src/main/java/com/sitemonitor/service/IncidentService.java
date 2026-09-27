@@ -175,7 +175,7 @@ public class IncidentService {
         e.setUpdatedAt(now());
         e.setUpdatedBy(actorName);
         IncidentRecord saved = repo.save(e);
-        linkImages(saved);
+        linkImages(saved, actorName);
         return saved;
     }
 
@@ -186,7 +186,7 @@ public class IncidentService {
         e.setUpdatedAt(now());
         e.setUpdatedBy(actorName);
         IncidentRecord saved = repo.save(e);
-        linkImages(saved);
+        linkImages(saved, actorName);
         return saved;
     }
 
@@ -325,8 +325,13 @@ public class IncidentService {
     }
 
     /** Markdown alanlarındaki /api/incidents/images/{id} referanslarını olaya bağlar —
-     *  create modunda (id'siz) yüklenen taslak görseller kaydedince olaya iliştirilir. */
-    private void linkImages(IncidentRecord e) {
+     *  create modunda (id'siz) yüklenen taslak görseller kaydedince olaya iliştirilir.
+     *
+     *  <p><b>Yalnız KENDİ taslağını sahiplenir</b> (prod kapısı 2026-09-25, Y-1): eskiden referans verilen HER
+     *  görsel bu olaya taşınıyordu — kullanıcı açıklamasına başka takımın olayındaki görselin id'sini yazarak
+     *  görseli kendi olayına çekebiliyor, sahibi takım da 403 alıyordu. Artık yalnız henüz olaya bağlanmamış
+     *  (taslak) ve AYNI kullanıcının yüklediği görseller bağlanır; başka olayın görseline dokunulmaz. */
+    private void linkImages(IncidentRecord e, String actorName) {
         Set<Long> ids = new HashSet<>();
         for (String body : List.of(
                 Optional.ofNullable(e.getRcaSummary()).orElse(""),
@@ -338,7 +343,9 @@ public class IncidentService {
         }
         if (ids.isEmpty()) return;
         for (IncidentImage img : imageRepo.findAllById(ids)) {
-            if (!Objects.equals(img.getIncidentId(), e.getId())) {
+            boolean ownDraft = img.getIncidentId() == null && actorName != null
+                    && actorName.equalsIgnoreCase(img.getCreatedBy());
+            if (ownDraft) {
                 img.setIncidentId(e.getId());
                 imageRepo.save(img);
             }

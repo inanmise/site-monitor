@@ -1,3 +1,5 @@
+# LEGACY / UNMAINTAINED - the production source of truth is helm/site-monitor. Do not kubectl apply
+# this file as-is: see k8s/README.md for the known incompatibilities.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

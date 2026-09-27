@@ -1,6 +1,9 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.SmtpSettings;
+import com.sitemonitor.service.mail.MailDoc;
+import com.sitemonitor.service.mail.MailKit;
+import com.sitemonitor.service.mail.MailTokens;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -99,9 +102,9 @@ public class SmtpMailService {
                 helper.setFrom(from);
             }
             helper.setSubject("[Site Monitor] SMTP test e-postası");
-            String html = buildTestHtml(s);   // logo şablonun başlık çubuğundan (lockup) gelir
-            helper.setText(html, true);
-            BrandMailAssets.addInline(helper, html, "ok");   // test maili nötr "ok"
+            MailDoc.Mail mail = buildTestMail(s);   // logo şablonun başlık çubuğundan (lockup) gelir
+            helper.setText(mail.text(), mail.html());   // multipart/alternative (düz metin + HTML)
+            BrandMailAssets.addInline(helper, mail.html(), "ok");   // test maili nötr "ok"
             sender.send(msg);
             out.put("success", true);
             out.put("message", "Test e-postası gönderildi: " + to.trim());
@@ -111,7 +114,7 @@ public class SmtpMailService {
             out.put("success", false);
             out.put("error", rootMessage(e));
             // Son arg `e` (Throwable) → tam stack. Admin-tetikli tanılama olduğundan WARN.
-            log.warn("✗ SMTP test e-postası başarısız: TO={} | {} | {}", to.trim(), rootMessage(e), smtpContextOf(s), e);
+            log.warn("✗ SMTP test e-postası başarısız: TO={} | {} | {}", SecretMask.maskEmails(to), rootMessage(e), smtpContextOf(s), e);
         }
         return out;
     }
@@ -154,44 +157,35 @@ public class SmtpMailService {
         return sender;
     }
 
-    private String buildTestHtml(SmtpSettings s) {
+    /** Test e-postası gövdesi (HTML) — önizleme galerisi ve testler için gönderimden ayrı. */
+    String buildTestHtml(SmtpSettings s) {
+        return buildTestMail(s).html();
+    }
+
+    /** SMTP test e-postası (HTML + düz metin) — e-posta yeniden tasarımı 2026-09-26 (MailDoc). */
+    MailDoc.Mail buildTestMail(SmtpSettings s) {
         // Explicit İstanbul: konteynerde JVM saat dilimi GMT olduğu için zone'suz now() test e-postasında
         // saati 3 saat geri gösteriyordu (diğer tüm e-postalar EmailNotificationService gibi IST kullanır).
         String now = LocalDateTime.now(java.time.ZoneId.of("Europe/Istanbul"))
                 .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        // Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış 520px beyaz kart → padding td'de; Apple dark-mode kapalı.
-        return "<!DOCTYPE html><html lang='tr'><head><meta charset='UTF-8'>"
-                + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                + "<meta name='color-scheme' content='light only'><meta name='supported-color-schemes' content='light'>"
-                + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
-                + "</head><body style=\"margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;color:#1e293b\">"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-                + "<tr><td align='center' style='padding:24px 10px'>"
-                + "<table role='presentation' width='520' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='width:520px;max-width:520px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden'>"
-                // Marka barı (BRAND.md §5.1 lockup)
-                + "<tr><td bgcolor='#0F1B2D' style='background-color:#0F1B2D;padding:12px 20px'>" + BrandMailAssets.headerLockup() + "</td></tr>"
-                + "<tr><td bgcolor='#ffffff' style='padding:22px'>"
-                + "<h2 style='color:#2563eb;margin:0 0 10px;font-size:20px'>SMTP test</h2>"
-                + "<p style='margin:0 0 10px'>Bu, Site Monitor Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.</p>"
-                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px;margin:10px 0'>"
-                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>Sunucu:</td>"
-                + "<td style='padding:3px 0;font-weight:600'>" + esc(s.getHost()) + ":" + s.getPort() + "</td></tr>"
-                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>STARTTLS:</td>"
-                + "<td style='padding:3px 0'>" + Boolean.TRUE.equals(s.getStartTlsEnable()) + "</td></tr>"
-                + "<tr><td style='padding:3px 12px 3px 0;color:#64748b'>Zaman:</td>"
-                + "<td style='padding:3px 0'>" + now + "</td></tr>"
-                + "</table>"
-                + "<p style='font-size:12px;color:#94a3b8;margin:0'>Bu e-postayı aldıysanız SMTP ayarlarınız çalışıyor demektir.</p>"
-                + "</td></tr></table></td></tr></table></body></html>";
+        String server = (s.getHost() == null ? "" : s.getHost()) + ":" + s.getPort();
+        // Sunucu adı kullanıcı girdisidir → MailKit.esc (beş karakter; eski yerel esc tırnakları kaçırmıyordu).
+        return MailDoc.create("[Site Monitor] SMTP test e-postası")
+                .preheader("Site Monitor Ayarlar ekranından gönderilen SMTP test e-postası.")
+                .kicker("Ayarlar")
+                .badges(MailKit.Badge.tint("TEST", MailTokens.Tone.INFO))
+                .title("SMTP test e-postası", "Bu, Site Monitor Ayarlar ekranından gönderilen bir SMTP test e-postasıdır.")
+                .keyValue(MailDoc.rows(
+                        new MailKit.Row("Sunucu", MailKit.mono(server), server),
+                        MailKit.Row.of("STARTTLS", Boolean.TRUE.equals(s.getStartTlsEnable()) ? "Açık" : "Kapalı"),
+                        MailKit.Row.of("Zaman", now)))
+                .alert(MailTokens.Tone.SUCCESS, "SMTP ayarlarınız çalışıyor", "Bu e-postayı aldıysanız SMTP ayarlarınız çalışıyor demektir.")
+                .footerMeta("Site Monitor — Ayarlar", "Bu e-posta otomatik gönderilmiştir.")
+                .build();
     }
 
     private static int orDefault(Integer v, int def) {
         return v != null ? v : def;
-    }
-
-    private static String esc(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     /** Tek satır SMTP bağlamı (host/port/auth/TLS/timeout) — PAROLA ASLA dahil edilmez. */

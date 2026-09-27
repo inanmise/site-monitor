@@ -77,7 +77,7 @@ public class NotificationGroupController {
     }
 
     private static String actorName(HttpSession session) {
-        Object n = session != null ? session.getAttribute("fullName") : null;
+        Object n = session != null ? session.getAttribute("displayName") : null;
         return n != null && !n.toString().isBlank() ? n.toString() : actor(session);
     }
 

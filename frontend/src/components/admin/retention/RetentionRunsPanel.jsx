@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Download, RotateCcw } from 'lucide-react'
 import { api, formatDateSec } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
@@ -8,10 +8,18 @@ import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import DateTimeRangePicker from '../../ui/DateTimeRangePicker.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
-import { readPageSize, writePageSize } from '../../../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../../hooks/useUrlQuerySync.js'
+import { useServerPagination } from '../../../hooks/useServerPagination.js'
+import { useUrlQuerySync, readUrlParam } from '../../../hooks/useUrlQuerySync.js'
 import { fmtNum } from './PolicyRow.jsx'
+import { DataTable, SortTh, TH, TD, TD_NUM } from '../HealthUi.jsx'
+import ToneBadge from '../ToneBadge.jsx'
+import HintPopover from '../../ui/HintPopover.jsx'
+import { ToolbarSearch } from '../ListToolbar.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Label } from '@/components/shadcn/label'
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * Veri Saklama → Son çalışmalar: sunucu-taraflı sayfalama, süzgeç (tür / yalnız hatalı / politika /
@@ -44,15 +52,20 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
   const [until, setUntil]   = useState(() => readUrlParam('r_until', ''))
   const [sort, setSort]     = useState(() => SORTS.includes(readUrlParam('r_sort', 'started_at')) ? readUrlParam('r_sort', 'started_at') : 'started_at')
   const [dir, setDir]       = useState(() => readUrlParam('r_dir', 'desc') === 'asc' ? 'asc' : 'desc')
-  const [page, setPage]     = useState(() => Math.max(0, readUrlInt('r_page', 1) - 1))
-  const [size, setSize]     = useState(() => readPageSize('retention-runs', 20))
   const [rows, setRows]     = useState(null)
-  const [total, setTotal]   = useState(0)
   const [error, setError]   = useState(null)
   const loadSeq = useRef(0)
 
   // Arama 300 ms debounce — her tuşta sunucuya gitmesin.
   useEffect(() => { const id = setTimeout(() => setQTerm(q), 300); return () => clearTimeout(id) }, [q])
+
+  // Sayfalama standardı (2026-09-26). Eskiden `useEffect(() => setPage(0), [süzgeçler…, size])` MOUNT'ta da
+  // koşup `r_page` derin bağlantısını ilk render'da 1'e düşürüyordu; varsayılan 20 boyut listesinde yoktu.
+  // Kanca: panel ön ayarı (25), sıfırlama yalnız süzgeç/sıralama DEĞERİ değişince, URL r_page / r_ps.
+  const sp = useServerPagination({ listKey: 'retention-runs', preset: 'panel',
+    resetDeps: [kind, failedOnly, policyId, since, until, qTerm, sort, dir],
+    url: { pageKey: 'r_page', sizeKey: 'r_ps' }, apiBase: 0 })
+  const { apiPage: page, pageSize: size } = sp
 
   const params = useMemo(() => ({
     page, size, kind, failed: failedOnly, policyId: policyId || null,
@@ -64,7 +77,6 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
     r_policy: policyId || null, r_range: rangeKey !== 'all' ? rangeKey : null,
     r_since: rangeKey === 'custom' ? since || null : null, r_until: rangeKey === 'custom' ? until || null : null,
     r_sort: sort !== 'started_at' ? sort : null, r_dir: dir !== 'desc' ? dir : null,
-    r_page: page > 0 ? page + 1 : null,
   })
 
   const load = useCallback(async () => {
@@ -72,7 +84,7 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
     try {
       const res = await api.admin.getRetentionRuns(params)
       if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
-      if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? (res.data?.length ?? 0)); setError(null) }
+      if (res?.success) { setRows(res.data ?? []); sp.setTotal(res.total ?? (res.data?.length ?? 0)); setError(null) }
       else { setRows([]); setError(res?.error || t('settings.loadError')) }
     } catch (e) {
       if (seq !== loadSeq.current) return
@@ -81,8 +93,7 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, t, refreshKey])
   useEffect(() => { load() }, [load])
-  // Süzgeç/boyut değişince ilk sayfaya dön (sayfa 0 ise load dep'lerden fırlar; seq guard bayat yanıtı düşürür).
-  useEffect(() => { setPage(0) }, [kind, failedOnly, policyId, since, until, qTerm, size, sort, dir])
+  // Süzgeç/boyut değişince ilk sayfaya dönüşü useServerPagination yapar (değer karşılaştırmalı, mount'ta değil).
 
   function applyRange(k) {
     setRangeKey(k)
@@ -102,79 +113,88 @@ export default function RetentionRunsPanel({ policies = [], holdOn = false, refr
     else { setSort(key); setDir('desc') }
   }
   function backToLatest() {
-    setSort('started_at'); setDir('desc'); setPage(0)
+    setSort('started_at'); setDir('desc'); sp.reset()
   }
-  const isDefaultView = sort === 'started_at' && dir === 'desc' && page === 0
+  const isDefaultView = sort === 'started_at' && dir === 'desc' && sp.page === 1
+  // Özel aralık seçicisinin uçları KARARLI (2026-09-27 regresyon B1): tarih yokken her çizimde `new Date()`
+  // geçmek seçicinin taslağını panelin her yeniden çiziminde (yükleme, arama) sıfırlıyordu.
+  const customOpen = rangeKey === 'custom'
+  const pickerRange = useMemo(() => (customOpen ? {
+    from: since ? new Date(since) : new Date(Date.now() - 29 * 864e5),
+    to: until ? new Date(until) : new Date(),
+  } : null), [customOpen, since, until])
 
   const policyOptions = useMemo(() => [
     { value: '', label: t('ret.filterPolicyAll') },
     ...policies.map(p => ({ value: p.id, label: p.table || p.id })),
   ], [policies, t])
 
-  const totalPages = Math.max(1, Math.ceil(total / size))
-  const th = (key, label, cls = 'dbtcol-th') => (
-    <th className={`${cls} ret-th-sort`} aria-sort={sort === key ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
-      <button type="button" className="ret-th-btn" onClick={() => toggleSort(key)}>
-        {label}{sort === key ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
-      </button>
-    </th>
+  // Sıralanabilir başlık — ortak HealthUi SortTh (shadcn TableHead + ghost Button, aria-sort)
+  const th = (key, label, numeric = false) => (
+    <SortTh label={label} numeric={numeric} active={sort === key} dir={dir} onSort={() => toggleSort(key)} />
   )
 
   return (
-    <div className="ret-runs">
-      <div className="ret-runs-toolbar">
-        <SegmentedControl value={kind} onChange={setKind} ariaLabel={t('ret.filterKind')}
+    <div data-slot="ret-runs" className="flex min-w-0 flex-col gap-2.5">
+      {/* Araç çubuğu — mobil-önce: sarar; arama telefonda tam genişlik */}
+      <div className="flex flex-wrap items-center gap-2">
+        <SegmentedControl value={kind} onChange={setKind} ariaLabel={t('ret.filterKind')} className="max-w-full flex-wrap"
           options={KINDS.map(k => ({ value: k, label: k === 'all' ? t('ret.filterKindAll') : k === 'real' ? t('ret.kindReal') : k === 'dry' ? t('ret.kindDry') : t('ret.kindHold') }))} />
-        <label className="ret-runs-check">
-          <input type="checkbox" checked={failedOnly} onChange={e => setFailedOnly(e.target.checked)} /> {t('ret.filterFailed')}
-        </label>
-        <SearchableSelect value={policyId} onChange={v => setPolicyId(v || '')} options={policyOptions}
-          searchThreshold={4} ariaLabel={t('ret.filterPolicy')} />
-        <input className="filter-input" value={q} onChange={e => setQ(e.target.value)}
-          placeholder={t('ret.searchPlaceholder')} aria-label={t('ret.searchPlaceholder')} />
-        <SegmentedControl value={rangeKey} onChange={applyRange} ariaLabel={t('ret.filterRange')}
+        <FailedOnly checked={failedOnly} onChange={setFailedOnly} label={t('ret.filterFailed')} />
+        <div className="w-full min-w-0 sm:w-52">
+          <SearchableSelect value={policyId} onChange={v => setPolicyId(v || '')} options={policyOptions}
+            searchThreshold={4} ariaLabel={t('ret.filterPolicy')} />
+        </div>
+        <ToolbarSearch value={q} onChange={setQ} placeholder={t('ret.searchPlaceholder')} ariaLabel={t('ret.searchPlaceholder')}
+          clearLabel={t('app.clear')} className="w-full max-w-none sm:w-auto sm:max-w-xs" />
+        <SegmentedControl value={rangeKey} onChange={applyRange} ariaLabel={t('ret.filterRange')} className="max-w-full flex-wrap"
           options={RANGES.map(k => ({ value: k, label: k === 'all' ? t('ret.rangeAll') : k === 'custom' ? t('ret.rangeCustom') : t('ret.rangeDays', k) }))} />
-        {rangeKey === 'custom' && (
-          <DateTimeRangePicker from={since ? new Date(since) : new Date(Date.now() - 29 * 864e5)}
-            to={until ? new Date(until) : new Date()} onApply={applyCustom} />
+        {pickerRange && (
+          <DateTimeRangePicker from={pickerRange.from} to={pickerRange.to} onApply={applyCustom} />
         )}
-        <span className="ret-runs-spacer" />
+        <span className="hidden flex-1 sm:block" />
         {!isDefaultView && (
-          <Button type="button" variant="outline" size="sm" onClick={backToLatest}><RotateCcw size={13} /> {t('ret.backToLatest')}</Button>
+          <Button type="button" variant="outline" size="sm" onClick={backToLatest}><RotateCcw aria-hidden="true" /> {t('ret.backToLatest')}</Button>
         )}
         <Button asChild variant="outline" size="sm">
           <a href={api.admin.getRetentionRunsCsvUrl({ ...params, page: undefined, size: undefined })} download>
-            <Download size={13} /> {t('ret.exportCsv')}
+            <Download aria-hidden="true" /> {t('ret.exportCsv')}
           </a>
         </Button>
       </div>
 
       {error && <AlertBanner tone="danger">{error}</AlertBanner>}
-      {!rows ? <LoadingBlock label={t('settings.loading')} className="ret-loading" size={16} />
-        : rows.length === 0 ? <p className="field-hint">{t('ret.historyEmpty')}</p> : (
-          <div className="health-table-wrap">
-            <table className="health-dbtable">
-              <thead><tr>
+      {!rows ? <LoadingBlock label={t('settings.loading')} size={16} />
+        : rows.length === 0 ? <p className="text-xs text-muted-foreground">{t('ret.historyEmpty')}</p> : (
+          <DataTable>
+            <TableHeader className="bg-muted/50">
+              <TableRow className="hover:bg-transparent">
                 {th('started_at', t('ret.colWhen'))}
-                <th className="dbtcol-th">{t('ret.colKind')}</th>
-                {th('total_deleted', t('ret.colDeleted'), 'dbtcol-th-num')}
-                {th('failed_count', t('ret.colFailed'), 'dbtcol-th-num')}
-                {th('duration_ms', t('ret.colDuration'), 'dbtcol-th-num')}
-                <th className="dbtcol-th">{t('ret.colBy')}</th>
-                <th className="dbtcol-th">{t('ret.colTopTables')}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map(r => <RunRow key={r.id} r={r} holdOn={holdOn} t={t} />)}
-              </tbody>
-            </table>
-          </div>
+                <TableHead className={TH}>{t('ret.colKind')}</TableHead>
+                {th('total_deleted', t('ret.colDeleted'), true)}
+                {th('failed_count', t('ret.colFailed'), true)}
+                {th('duration_ms', t('ret.colDuration'), true)}
+                <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('ret.colBy')}</TableHead>
+                <TableHead className={TH}>{t('ret.colTopTables')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map(r => <RunRow key={r.id} r={r} holdOn={holdOn} t={t} />)}
+            </TableBody>
+          </DataTable>
         )}
-      {rows && total > 0 && (
-        <PaginationBar page={page + 1} totalPages={totalPages} totalItems={total}
-          rangeStart={total === 0 ? 0 : page * size + 1} rangeEnd={Math.min((page + 1) * size, total)}
-          pageSize={size} onPageChange={p => setPage(p - 1)}
-          onPageSizeChange={n => { setSize(n); writePageSize('retention-runs', n) }} />
-      )}
+      {rows && <PaginationBar {...sp.bar} />}
+    </div>
+  )
+}
+
+/** "Yalnız hatalı" süzgeci — shadcn Checkbox + bağlı etiket. */
+function FailedOnly({ checked, onChange, label }) {
+  const id = useId()
+  return (
+    <div className="flex min-h-8 items-center gap-2">
+      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer text-sm font-normal">{label}</Label>
     </div>
   )
 }
@@ -195,31 +215,38 @@ function RunRow({ r, t }) {
       why = t('ret.whyZeroNothing', cut ? formatDateSec(cut) : '—')
     }
   }
+  // Kalem rozetlerinin ayrıntısı (hata metni / atlanma sebebi) dokunmatikte de okunur: ui/HintPopover.
+  const errTitle = (i) => `${i.policy_id}: ${i.error}`
+  const skipTitle = skipped.map(i => `${i.policy_id}: ${i.skipped}`).join('\n')
   return (
     <>
-      <tr>
-        <td className="sys-mono sys-small">{formatDateSec(r.started_at)}</td>
-        <td>{r.hold_active ? t('ret.kindHold') : r.dry_run ? t('ret.kindDry') : t('ret.kindReal')}</td>
-        <td className="dbtcol-num-cell sys-mono">{fmtNum(r.total_deleted)}</td>
-        <td className={`dbtcol-num-cell sys-mono${r.failed_count > 0 ? ' sys-err-text' : ''}`}>{r.failed_count}</td>
-        <td className="dbtcol-num-cell sys-mono">{r.duration_ms} ms</td>
-        <td className="sys-small sys-muted">{r.triggered_by || t('ret.byScheduler')}</td>
-        <td className="sys-small sys-muted">
-          {top.map(i => `${i.table} ${fmtNum(i.rows)}`).join(' · ') || '—'}
-          {errs.map(i => (
-            <span key={'e' + i.policy_id} className="ret-item-badge ret-item-badge--err" title={`${i.policy_id}: ${i.error}`}>
-              {i.table} · {t('ret.errBadge')}
-            </span>
-          ))}
-          {skipped.length > 0 && (
-            <span className="ret-item-badge ret-item-badge--skip" title={skipped.map(i => `${i.policy_id}: ${i.skipped}`).join('\n')}>
-              {t('ret.skipBadge', skipped.length)}
-            </span>
-          )}
-        </td>
-      </tr>
+      <TableRow>
+        <TableCell className={cn(TD, 'font-mono text-xs whitespace-nowrap')}>{formatDateSec(r.started_at)}</TableCell>
+        <TableCell className={TD}>{r.hold_active ? t('ret.kindHold') : r.dry_run ? t('ret.kindDry') : t('ret.kindReal')}</TableCell>
+        <TableCell className={cn(TD_NUM, 'font-mono')}>{fmtNum(r.total_deleted)}</TableCell>
+        <TableCell className={cn(TD_NUM, 'font-mono', r.failed_count > 0 && 'font-semibold text-destructive')}>{r.failed_count}</TableCell>
+        <TableCell className={cn(TD_NUM, 'font-mono')}>{r.duration_ms} ms</TableCell>
+        <TableCell className={cn(TD, 'hidden text-xs text-muted-foreground md:table-cell')}>{r.triggered_by || t('ret.byScheduler')}</TableCell>
+        <TableCell className={cn(TD, 'text-xs text-muted-foreground')}>
+          <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="[overflow-wrap:anywhere]">{top.map(i => `${i.table} ${fmtNum(i.rows)}`).join(' · ') || '—'}</span>
+            {errs.map(i => (
+              <HintPopover key={'e' + i.policy_id} content={errTitle(i)}>
+                <ToneBadge tone="danger" data-item="error" title={errTitle(i)}>{i.table} · {t('ret.errBadge')}</ToneBadge>
+              </HintPopover>
+            ))}
+            {skipped.length > 0 && (
+              <HintPopover content={skipTitle}>
+                <ToneBadge tone="warning" data-item="skipped" title={skipTitle}>{t('ret.skipBadge', skipped.length)}</ToneBadge>
+              </HintPopover>
+            )}
+          </span>
+        </TableCell>
+      </TableRow>
       {why && (
-        <tr className="ret-why-zero-row"><td colSpan={7} className="ret-why-zero">{why}</td></tr>
+        <TableRow data-why-zero="" className="hover:bg-transparent">
+          <TableCell colSpan={7} className="bg-muted/40 px-3 py-1.5 text-xs whitespace-normal text-muted-foreground italic">{why}</TableCell>
+        </TableRow>
       )}
     </>
   )

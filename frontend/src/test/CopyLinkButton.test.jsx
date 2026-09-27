@@ -39,4 +39,15 @@ describe('CopyLinkButton', () => {
     const btn = screen.getByRole('button', { name: 'Copy link' })
     expect(btn).toHaveAttribute('title', 'Copy link')
   })
+
+  it('2026-09-27 a11y A1: targetName verilince erişilebilir ad HEDEFİ içerir (kart ızgarasında özdeş ad yok); title kısa kalır', () => {
+    render(<>
+      <CopyLinkButton iconOnly url="https://x.example.com/?tab=ping&monitor=1" targetName="db-1.example.com" />
+      <CopyLinkButton iconOnly url="https://x.example.com/?tab=ping&monitor=2" targetName="db-2.example.com" />
+    </>)
+    const a = screen.getByRole('button', { name: 'db-1.example.com — Copy link' })
+    expect(a).toHaveAttribute('title', 'Copy link')
+    expect(screen.getByRole('button', { name: 'db-2.example.com — Copy link' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull()
+  })
 })

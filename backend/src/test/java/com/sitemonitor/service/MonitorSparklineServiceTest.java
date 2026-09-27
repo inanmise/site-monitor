@@ -200,4 +200,36 @@ class MonitorSparklineServiceTest {
         assertThat(MonitorSparklineService.pct(7, 1)).isEqualTo(85.71);
         assertThat(MonitorSparklineService.pct(0, 0)).isNull();
     }
+
+    // ── Maliyet sınırı (prod kapısı 2026-09-25, O-7) ───────────────────────────────────────────
+
+    @Test
+    @DisplayName("O-7: kapsamlı çağıranın sorgusu GÖRÜNÜR kümeyle daraltılır (monitor_id IN) — türün tüm satırları taranmaz")
+    void scopedQueries_restrictToVisibleMonitors() {
+        check(1, 5, 200L, null);
+        check(2, 5, 200L, null);   // görünmeyen monitörün satırı
+        JdbcTemplate spy = org.mockito.Mockito.spy(jdbc);
+        MonitorSparklineService s = new MonitorSparklineService(spy);
+
+        assertThat(s.sparklines("http", 24, Set.of(1L))).containsOnlyKeys(1L);
+        assertThat(s.availability("http", 30, Set.of(1L))).containsOnlyKeys(1L);
+
+        org.mockito.ArgumentCaptor<String> sql = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(spy, org.mockito.Mockito.atLeast(4)).query(sql.capture(),
+                org.mockito.ArgumentMatchers.any(org.springframework.jdbc.core.RowCallbackHandler.class),
+                org.mockito.ArgumentMatchers.any(Object[].class));
+        assertThat(sql.getAllValues()).hasSizeGreaterThanOrEqualTo(4)
+                .allSatisfy(q -> assertThat(q).contains("monitor_id IN (?)"));
+    }
+
+    @Test
+    @DisplayName("O-7: tüm-filo (global) yolu daraltmasız tüm monitörleri döndürür — önbelleklenen sonuç")
+    void allFleetPath_returnsEveryMonitor() {
+        check(1, 5, 200L, null);
+        check(2, 5, 200L, "timeout");
+        Map<Long, Map<String, Object>> all = svc.sparklinesAll("http", 24);
+        assertThat(all).containsKeys(1L, 2L, 3L);
+        assertThat(all.get(2L)).containsEntry("fail", 1);
+        assertThat(svc.availabilityAll("http", 30)).containsKeys(1L, 2L, 3L);
+    }
 }

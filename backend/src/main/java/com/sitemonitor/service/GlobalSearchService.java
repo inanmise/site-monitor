@@ -32,14 +32,20 @@ public class GlobalSearchService {
         }
     }
 
-    /** İzleme türü → (tablo, hedef sütunu, nav sekmesi). */
-    record Kind(String table, String targetCol, String tab) {}
+    /**
+     * İzleme türü → (tablo, hedef sütunu, nav sekmesi, canlı-satır süzgeci). {@code liveFilter}: yumuşak silinen
+     * satırı dışarıda bırakan ek koşul — yalnız DNS/Port'ta {@code deleted_at} var (2026-09-27; diğer türler kalıcı
+     * silinir). Silinmiş izleme palet sonucunda görünmez; duraklatılmış görünür (diğer türlerle aynı).
+     */
+    record Kind(String table, String targetCol, String tab, String liveFilter) {
+        Kind(String table, String targetCol, String tab) { this(table, targetCol, tab, null); }
+    }
     static final Map<String, Kind> MONITOR_KINDS = new LinkedHashMap<>();
     static {
         MONITOR_KINDS.put("http",      new Kind("http_monitors",      "url",    "http"));
         MONITOR_KINDS.put("ping",      new Kind("ping_monitors",      "host",   "ping"));
-        MONITOR_KINDS.put("port",      new Kind("port_monitors",      "host",   "port"));
-        MONITOR_KINDS.put("dns",       new Kind("dns_monitors",       "domain", "dns"));
+        MONITOR_KINDS.put("port",      new Kind("port_monitors",      "host",   "port", "deleted_at IS NULL"));
+        MONITOR_KINDS.put("dns",       new Kind("dns_monitors",       "domain", "dns",  "deleted_at IS NULL"));
         MONITOR_KINDS.put("keyword",   new Kind("keyword_monitors",   "url",    "keyword"));
         MONITOR_KINDS.put("page",      new Kind("page_monitors",      "url",    "page"));
         MONITOR_KINDS.put("pagespeed", new Kind("pagespeed_monitors", "url",    "pagespeed"));
@@ -85,6 +91,9 @@ public class GlobalSearchService {
             // Etiket ve grup adı da aranır (2026-09-20).
             String where = (k.targetCol().equals("name") ? "LOWER(name) LIKE ?" : "LOWER(name) LIKE ? OR LOWER(COALESCE(" + k.targetCol() + ",'')) LIKE ?")
                     + " OR LOWER(COALESCE(group_name,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?";
+            // Ek koşul VEYA zincirinin TAMAMINI sarmalı — parantezsiz "… OR tags LIKE ? AND deleted_at IS NULL"
+            // yalnız son terimi süzerdi.
+            if (k.liveFilter() != null) where = "(" + where + ") AND " + k.liveFilter();
             try {
                 List<Object> args = k.targetCol().equals("name") ? List.of(like, like, like) : List.of(like, like, like, like);
                 jdbc.query("SELECT " + cols + " FROM " + k.table() + " WHERE " + where + " ORDER BY name LIMIT " + (MAX_PER_MONITOR * 3), rs -> {

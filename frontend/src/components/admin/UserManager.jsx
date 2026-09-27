@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -8,15 +8,38 @@ import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
-import { Download, Search, X, SlidersHorizontal } from 'lucide-react'
+import {
+  Download, SlidersHorizontal, Users, UserCheck, Shield, UserX, Moon, Lock, LockOpen, X, Pencil, History, KeyRound, Trash2,
+} from 'lucide-react'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { formatDateSec } from '../../api/client'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { useIsMobile } from '../../hooks/use-mobile.js'
+import { relTime } from './useractivity/uactModel.js'
+import TeamBadge from '../ui/TeamBadge.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { CARD_CHECK, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
 import { UserPlus, UserCog, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
 import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from './ToneBadge.jsx'
+import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
+import { CheckboxRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { Card } from '@/components/shadcn/card'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { cn } from '@/lib/utils'
 
 const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_ids: [], org_role: '', active: true,
   first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
@@ -40,16 +63,65 @@ function avatarBg(seed) {
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
   return AVATAR_PALETTE[Math.abs(h) % AVATAR_PALETTE.length]
 }
-/** AD photo with graceful fallback to a colored-initials badge. */
+/** AD fotoğrafı (shadcn Avatar); yüklenemezse renkli baş harf rozetine düşer. */
 function UserAvatar({ user }) {
-  const [err, setErr] = useState(false)
-  if (!err) {
-    // Kullanıcılar sekmesi USER rolüne de açık → admin'e özel foto ucu boş yere 403 üretirdi.
-    return <img className="usr-avatar" alt="" src={`/api/users/${user.id}/photo`} onError={() => setErr(true)} />
-  }
-  return <span className="usr-avatar usr-avatar-fallback" style={{ background: avatarBg(user.username) }}>
-    {initialsOf(user.display_name || user.username)}
-  </span>
+  // Kullanıcılar sekmesi USER rolüne de açık → admin'e özel foto ucu boş yere 403 üretirdi.
+  return (
+    <Avatar className="size-8">
+      <AvatarImage alt="" src={`/api/users/${user.id}/photo`} className="object-cover" />
+      <AvatarFallback className="text-[0.72em] font-bold tracking-wide text-white" style={{ background: avatarBg(user.username) }}>
+        {initialsOf(user.display_name || user.username)}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+/** Görünüm alanı 1024 px'ten dar mı (kart listesi eşiği). matchMedia yoksa (jsdom) masaüstü sayılır. */
+function useNarrowViewport(query = '(max-width: 1023px)') {
+  const read = () => { try { return !!window.matchMedia?.(query)?.matches } catch { return false } }
+  const [narrow, setNarrow] = useState(read)
+  useEffect(() => {
+    let mql
+    try { mql = window.matchMedia?.(query) } catch { mql = null }
+    if (!mql) return undefined
+    const on = () => setNarrow(!!mql.matches)
+    on()
+    mql.addEventListener?.('change', on)
+    return () => mql.removeEventListener?.('change', on)
+  }, [query])
+  return narrow
+}
+
+/** "Uzun süredir girmemiş" eşiği (gün) — AdminOverviewService.DORMANT_DAYS ile aynı. */
+const DORMANT_DAYS = 90
+
+const KPI_VALUE_TONE = { warning: 'text-amber-700 dark:text-amber-300', danger: 'text-destructive' }
+/**
+ * Özet kutucuğu — tıklanır olanı (var olan süzgeci uygular) shadcn Button + aria-pressed; süzgeci
+ * olmayan salt bilgi Card. Etkin süzgeç çerçevenin TAMAMIYLA vurgulanır (sol şerit YOK).
+ */
+function UserKpi({ kpiKey, icon: Icon, label, value, sub, tone, active = false, onClick, hint }) {
+  // Etiket değerin ALTINDA tam genişlikte: dar kutucukta (tablet, 3 sütun) büyük harfli uzun sözcük
+  // ikonun yanında kelime ortasından bölünüyordu (2026-09-26 ekran görüntüsü).
+  const body = (
+    <>
+      <span className="flex w-full items-center gap-2">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Icon size={15} aria-hidden="true" /></span>
+        <span className={cn('text-2xl leading-none font-extrabold tracking-tight tabular-nums', KPI_VALUE_TONE[tone])}>{value ?? '—'}</span>
+      </span>
+      <span className="w-full text-[11px] leading-tight font-bold tracking-wide text-muted-foreground uppercase">{label}</span>
+      {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+    </>
+  )
+  const box = 'flex min-w-0 flex-col items-start gap-2 rounded-xl border border-border bg-card px-3.5 py-3 text-left shadow-xs'
+  if (!onClick) return <Card data-kpi={kpiKey} className={box} title={hint}>{body}</Card>
+  return (
+    <Button type="button" variant="outline" data-kpi={kpiKey} aria-pressed={active} onClick={onClick} title={hint}
+      className={cn(box, 'h-auto justify-start font-normal whitespace-normal transition-[border-color,box-shadow] hover:border-primary/60 hover:bg-card hover:shadow-md motion-reduce:transition-none',
+        active && 'border-primary bg-primary/5 ring-2 ring-primary/20 hover:bg-primary/5')}>
+      {body}
+    </Button>
+  )
 }
 
 export default function UserManager({ systemRole, ownTeamId, currentUsername, teams }) {
@@ -87,12 +159,26 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const filterActive = !!(fRole || fOrgRole || fTeam || fDormant)
   const [filtersOpen, setFiltersOpen] = useState(() => !!(readUrlParam('g_role', '') || readUrlParam('g_org', '') || readUrlParam('g_team', '') || readUrlParam('g_dormant', '')))
   const clearFilters = () => { setQ(''); setFRole(''); setFOrgRole(''); setFTeam(''); setFDormant('') }
-  const [page, setPage] = useState(0)
-  const [size, setSize] = useState(25)   // PaginationBar seçenekleriyle (25/50/100/200) hizalı
-  const [total, setTotal] = useState(0)
+  // Sayfalama standardı (2026-09-26): süzgeçler 300 ms debounce ile "uygulanır"; uygulanan süzgeç değişince sayfa 1
+  // (değer karşılaştırmalı). Sayfa/boyut değişimi beklemeden yükler. Panel ön ayarı (25), API 0-tabanlı.
+  const filterKey = JSON.stringify([q.trim(), fRole, fOrgRole, fTeam, fDormant])
+  const [appliedKey, setAppliedKey] = useState(filterKey)
+  useEffect(() => { const tmr = setTimeout(() => setAppliedKey(filterKey), 300); return () => clearTimeout(tmr) }, [filterKey])
+  const sp = useServerPagination({ listKey: 'admin-users', preset: 'panel', resetDeps: [appliedKey], apiBase: 0 })
+  const total = sp.total ?? 0
   const [activeAdminCount, setActiveAdminCount] = useState(0)
   const [loading, setLoading] = useState(false)
-  const totalPages = Math.max(1, Math.ceil(total / size))
+  // Kart listesi: telefon (useIsMobile) YA DA < 1024 px — tablette kenar çubuğu içeriği ~410 px'e indiriyor, tablo
+  // orada yalnız kullanıcı sütununu gösterebiliyordu (2026-09-26 ölçümü). Tek varyant çizilir (jsdom medya sorgusu görmez).
+  const phone = useIsMobile()
+  const narrow = useNarrowViewport()
+  const isMobile = phone || narrow
+  const [overview, setOverview] = useState(null)   // /admin/overview sayaçları (yoksa kutucuklar gizli)
+  const loadOverview = useCallback(() => {
+    // Yalnız gerçek sayaç yükü kabul edilir (yetkisiz/boş yanıt → kutucuklar hiç çizilmez)
+    Promise.resolve(api.admin.overview?.()).then((r) => { if (r?.success && r.data?.counts) setOverview(r.data) }).catch(() => {})
+  }, [])
+  useEffect(() => { loadOverview() }, [loadOverview])
 
   // Son aktif admin sayısı sunucudan gelir → sayfalamadan bağımsız doğru
   const isLastActiveAdmin = (u) =>
@@ -100,7 +186,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   const teamMap = Object.fromEntries((teams || []).map(t => [t.id, t.name]))
 
-  async function load(p = page, s = size) {
+  // Fetch yarışı (BF1): 300 ms debounce'lu süzgeç, sayfa, boyut ve Yenile art arda istek çıkarır; geç dönen ESKİ
+  // (geniş) yanıt yeni süzgecin listesini/toplamını ezerse "sayfayı seç" + toplu işlem YANLIŞ kullanıcılara uygulanır.
+  // Yalnız EN SON isteğin yanıtı + bayrak temizliği uygulanır (kardeş: MonitorChangesConsole loadSeq).
+  const loadSeq = useRef(0)
+  async function load(p = sp.apiPage, s = sp.pageSize) {
+    const my = ++loadSeq.current
     setLoading(true)
     try {
       const res = await api.admin.searchUsers({
@@ -108,23 +199,25 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         dormantDays: fDormant && fDormant !== 'never' ? Number(fDormant) : '',
         neverLoggedIn: fDormant === 'never',
       })
+      if (my !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
-        setUsers(res.data); setTotal(res.total ?? 0); setPage(res.page ?? 0)
+        setUsers(res.data); sp.setTotal(res.total ?? 0)
         setActiveAdminCount(res.active_admin_count ?? 0)
         // Sayfa değişince görünmeyen seçim kalmasın (yanlışlıkla toplu işlem görünmeyene uygulanmasın).
         setSelected(prev => new Set([...prev].filter(id => (res.data || []).some(u => u.id === id))))
       }
     } finally {
-      setLoading(false)
+      if (my === loadSeq.current) setLoading(false)
     }
   }
 
-  // Filtre/sayfa-boyutu değişince 0. sayfaya dön (arama debounce'lu); ilk yükleme de buradan
+  // Uygulanan süzgeç / sayfa / boyut değişince yükle (ilk yükleme de buradan). Sayfa 1'e dönüşü kanca yapar.
   useEffect(() => {
-    const tmr = setTimeout(() => load(0, size), 300)
-    return () => clearTimeout(tmr)
+    load(sp.apiPage, sp.pageSize)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, fRole, fOrgRole, fTeam, fDormant, size])
+  }, [appliedKey, sp.apiPage, sp.pageSize])
+
+  const refresh = () => { load(); loadOverview() }
 
   // ── Toplu işlem (2026-09-20): sayfadaki seçim → tek istek; sunucu her kullanıcıyı kendi güvenlik zincirinden geçirir. ──
   const pageIds = users.map(u => u.id)
@@ -150,7 +243,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         const d = res.data || {}
         if ((d.failed ?? 0) > 0) toast.error(t('usr.bulkDone', d.ok ?? 0, d.failed ?? 0))
         else toast.success(t('usr.bulkDone', d.ok ?? 0, 0))
-        setSelected(new Set()); setBulk(null); load()
+        setSelected(new Set()); setBulk(null); refresh()
       } else toast.error(res?.error || 'Error')
     } finally { setBulkBusy(false) }
   }
@@ -238,7 +331,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       } else {
         res = await api.admin.updateUser(modal.id, payload)
       }
-      if (res?.success) { setModal(null); toast.success(t('usr.saved')); load() }
+      if (res?.success) { setModal(null); toast.success(t('usr.saved')); refresh() }
       else setMsg(res?.error || 'Error')
     } finally {
       setSaving(false)
@@ -247,26 +340,26 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   async function unlock(id) {
     const res = await api.admin.unlockUser(id)
-    if (res?.success) { toast.success(t('usr.unlocked')); load() }
+    if (res?.success) { toast.success(t('usr.unlocked')); refresh() }
     else toast.error(res?.error || 'Error')
   }
 
   async function roleUnlock(id) {
     const res = await api.admin.unlockUserRole(id)
-    if (res?.success) { toast.success(t('usr.roleUnlocked')); load() }
+    if (res?.success) { toast.success(t('usr.roleUnlocked')); refresh() }
     else toast.error(res?.error || 'Error')
   }
 
   async function orgRoleUnlock(id) {
     const res = await api.admin.unlockUserOrgRole(id)
-    if (res?.success) { toast.success(t('usr.orgRoleUnlocked')); load() }
+    if (res?.success) { toast.success(t('usr.orgRoleUnlocked')); refresh() }
     else toast.error(res?.error || 'Error')
   }
 
   // Takım kilidi (2026-09-18): admin üyeliği elle değiştirince LDAP girişi ezmez; kilit kalkınca AD yazar.
   async function teamUnlock(id) {
     const res = await api.admin.unlockUserTeams(id)
-    if (res?.success) { toast.success(t('usr.teamUnlocked')); load() }
+    if (res?.success) { toast.success(t('usr.teamUnlocked')); refresh() }
     else toast.error(res?.error || 'Error')
   }
 
@@ -281,332 +374,458 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     })
     if (!ok) return
     const res = await api.admin.deleteUser(id)
-    if (res?.success) { toast.success(t('usr.deleted')); load() }
+    if (res?.success) { toast.success(t('usr.deleted')); refresh() }
     else toast.error(res?.error || 'Error')
   }
 
+  const warn = (text) => <span className="text-xs text-warning">{text}</span>
+  const editingLocked = modal !== null && modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))
+  const profileField = (key, labelKey) => (
+    <Field label={t(labelKey)}>
+      {({ id }) => <Input id={id} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />}
+    </Field>
+  )
+
+  // ── Görünüm parçaları (2026-09-26 yeniden tasarım) ──
+  const now = Date.now()
+  const nameOf = (u) => u.display_name || u.username
+  const teamIdsOf = (u) => (u.team_ids ?? u.teamIds ?? (u.team_id != null ? [u.team_id] : [])).filter((id) => teamMap[id])
+  /** Kilit rozeti: lucide Lock + ipucu (eski 🔒 emojisi). Kalıcı kilit kırmızı, alan kilitleri amber. */
+  const lockBadge = (key, title, severe = false) => (
+    <SimpleTooltip key={key} content={title}>
+      <span role="img" aria-label={title} tabIndex={0} data-lock={key}
+        className={cn('relative z-10 inline-flex size-5 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+          severe ? 'bg-destructive/15 text-destructive' : 'bg-amber-500/15 text-amber-700 dark:text-amber-300')}>
+        <Lock size={12} aria-hidden="true" />
+      </span>
+    </SimpleTooltip>
+  )
+  const roleBadges = (u) => (
+    <span className="flex flex-wrap items-center gap-1">
+      <SystemRoleBadge role={u.system_role} />
+      {u.role_locked && lockBadge('role', t('usr.roleLockedTitle'))}
+      {u.org_role && <OrgRoleBadge role={u.org_role}>{t('usr.orgRoleVal.' + u.org_role)}</OrgRoleBadge>}
+      {u.org_role_locked && lockBadge('org', t('usr.orgRoleLockedTitle'))}
+      {isLastActiveAdmin(u) && (
+        <ToneBadge tone="danger" title={t('usr.lastAdminTitle')}>{t('usr.lastAdminBadge')}</ToneBadge>
+      )}
+    </span>
+  )
+  /** Takımlar: her ad ui/TeamBadge (üye listesini açar) — satır/kart tıklamasına sızmaz. */
+  const teamBadges = (u) => {
+    const ids = teamIdsOf(u)
+    if (ids.length === 0 && !u.team_locked) return <span className="text-muted-foreground">—</span>
+    return (
+      <span className={cn(CARD_LAYER, 'flex flex-wrap items-center gap-1')} onClick={(e) => e.stopPropagation()}>
+        {ids.map((id) => <TeamBadge key={id} teamId={id} teamName={teamMap[id]} size={11} />)}
+        {u.team_locked && lockBadge('team', t('usr.teamLockedTitle'))}
+      </span>
+    )
+  }
+  /** Son giriş: göreli süre (tam zaman ipucunda); hiç girmemiş → sessiz rozet; 90+ gün → uyarı rozeti. */
+  const lastLogin = (u) => {
+    if (!u.last_login_at) return <ToneBadge tone="muted" data-login="never">{t('usr.neverLoggedIn')}</ToneBadge>
+    const r = relTime(u.last_login_at, now)
+    const at = Date.parse(u.last_login_at.endsWith('Z') ? u.last_login_at : u.last_login_at + 'Z')
+    const dormant = Number.isFinite(at) && now - at >= DORMANT_DAYS * 86_400_000
+    const exact = `${formatDateSec(u.last_login_at)}${u.last_login_method ? ` · ${u.last_login_method}` : ''}`
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <SimpleTooltip content={exact}>
+          <span tabIndex={0} data-login-rel="" aria-label={t('usr.lastLoginAt', exact)}
+            className={cn(CARD_LAYER, 'cursor-default text-[0.86em] whitespace-nowrap underline decoration-muted-foreground/40 decoration-dotted underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring/50')}>
+            {r ? t(`uact.rel.${r.unit}`, r.n) : exact}
+          </span>
+        </SimpleTooltip>
+        {dormant && <ToneBadge tone="warning" data-login="dormant">{t('usr.dormantBadge', DORMANT_DAYS)}</ToneBadge>}
+      </span>
+    )
+  }
+  const statusBadge = (u) => (
+    <span className="flex flex-wrap items-center gap-1">
+      <Badge variant="outline" data-account={u.active ? 'active' : 'inactive'}
+        className={cn('gap-1.5 rounded-full font-medium', u.active ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground')}>
+        <span aria-hidden="true" className={cn('size-1.5 rounded-full', u.active ? 'bg-success' : 'bg-muted-foreground/60')} />
+        {u.active ? t('usr.active') : t('usr.inactive')}
+      </Badge>
+      {u.permanent_lock && lockBadge('perm', t('usr.permLocked'), true)}
+    </span>
+  )
+  const identity = (u, { titleButton = false } = {}) => (
+    <div className="flex min-w-0 items-center gap-2.5">
+      <UserAvatar user={u} />
+      <div className="flex min-w-0 flex-col leading-tight">
+        {titleButton ? (
+          // Kartın GERÇEK düğmesi: ::after tüm kartı örter (stretched button — MonitorCard deseni)
+          <Button type="button" variant="ghost" data-user-open={u.id} onClick={() => setViewUser(u)}
+            aria-label={t('a11y.openRow', nameOf(u))}
+            className="h-auto justify-start rounded-none p-0 text-left text-[0.97em] font-bold text-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-0 after:absolute after:inset-0 after:z-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50 dark:hover:bg-transparent">
+            <span className="min-w-0 truncate">{nameOf(u)}</span>
+          </Button>
+        ) : (
+          <strong className="max-w-[260px] truncate text-[0.95em]" title={nameOf(u)}>{nameOf(u)}</strong>
+        )}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 font-mono text-[0.78em] text-muted-foreground">
+          <span className="truncate">{u.username}{u.employee_id ? ` · ${u.employee_id}` : ''}</span>
+          {u.auth_source === 'LDAP' && (
+            <Badge variant="outline" className="px-1 py-0 text-[0.85em] font-normal text-muted-foreground" title={t('usr.authSourceTitle')}>{t('usr.ldapBadge')}</Badge>
+          )}
+          {u.push_opt_out && (
+            <span role="img" className="inline-flex items-center text-destructive" title={t('usr.pushOptOutTitle')} aria-label={t('usr.pushOptOutTitle')}>
+              <BellOff size={12} aria-hidden="true" />
+            </span>
+          )}
+        </span>
+        {u.title && <span className="max-w-[260px] truncate text-[0.76em] text-muted-foreground" title={u.title}>{u.title}</span>}
+      </div>
+    </div>
+  )
+  const menuItems = (u) => (canManage ? [
+    { label: t('usr.edit'), icon: <Pencil size={14} />, onClick: () => openEdit(u) },
+    { label: t('hist.title'), icon: <History size={14} />, onClick: () => setHistFilter({ id: u.id, name: nameOf(u) }), hidden: !isAdmin },
+    { label: t('usr.autoResetBtn'), icon: <KeyRound size={14} />, onClick: () => setAutoResetModal(u) },
+    { label: t('usr.unlock'), icon: <LockOpen size={14} />, onClick: () => unlock(u.id), hidden: !u.permanent_lock },
+    { label: t('usr.roleUnlock'), icon: <LockOpen size={14} />, onClick: () => roleUnlock(u.id), hidden: !u.role_locked },
+    { label: t('usr.orgRoleUnlock'), icon: <LockOpen size={14} />, onClick: () => orgRoleUnlock(u.id), hidden: !u.org_role_locked },
+    { label: t('usr.teamUnlock'), icon: <LockOpen size={14} />, onClick: () => teamUnlock(u.id), hidden: !u.team_locked },
+    { label: t('usr.delete'), icon: <Trash2 size={14} />, danger: true, onClick: () => del(u.id), hidden: isSelf(u) || isLastActiveAdmin(u) },
+  ] : [])
+
+  // ── Özet kutucukları: yalnız mevcut uç (/admin/overview); tıklama VAR OLAN süzgeci uygular ──
+  const oc = overview?.counts || {}
+  const warnCount = (code) => (overview?.warnings || []).find((w) => w.code === code)?.count ?? 0
+  const dormantKey = String(overview?.dormant_days || DORMANT_DAYS)
+  const dormantFilterable = ['30', '90', '180'].includes(dormantKey)
+  const share = (n) => (oc.users > 0 ? Math.round((n * 100) / oc.users) : 0)
+  const kpis = overview ? [
+    { key: 'total', icon: Users, label: t('usr.kpiTotal'), value: oc.users, active: !filterActive && !q.trim(), onClick: clearFilters },
+    { key: 'active', icon: UserCheck, label: t('usr.kpiActive'), value: oc.users_active, sub: t('usr.kpiShare', share(oc.users_active ?? 0)) },
+    { key: 'admins', icon: Shield, label: t('usr.kpiAdmins'), value: oc.admins, active: fRole === 'ADMIN', onClick: () => setFRole(fRole === 'ADMIN' ? '' : 'ADMIN'),
+      tone: oc.admins === 1 ? 'warning' : oc.admins === 0 ? 'danger' : undefined },
+    { key: 'never', icon: UserX, label: t('usr.kpiNever'), value: warnCount('USER_NEVER_LOGGED_IN'), active: fDormant === 'never',
+      onClick: () => setFDormant(fDormant === 'never' ? '' : 'never'), tone: warnCount('USER_NEVER_LOGGED_IN') > 0 ? 'warning' : undefined },
+    { key: 'dormant', icon: Moon, label: t('usr.kpiDormant', dormantKey), value: warnCount('USER_DORMANT'), active: fDormant === dormantKey,
+      onClick: dormantFilterable ? () => setFDormant(fDormant === dormantKey ? '' : dormantKey) : undefined, tone: warnCount('USER_DORMANT') > 0 ? 'warning' : undefined },
+    { key: 'locked', icon: Lock, label: t('usr.kpiLocked'), value: warnCount('USER_LOCKED'), tone: warnCount('USER_LOCKED') > 0 ? 'danger' : undefined },
+  ] : []
+
+  // ── Etkin süzgeç çipleri ──
+  const dormantLabel = { 30: t('usr.dormant30'), 90: t('usr.dormant90'), 180: t('usr.dormant180'), never: t('usr.dormantNever') }
+  const chips = [
+    q.trim() && { key: 'q', label: t('usr.chipSearch', q.trim()), clear: () => setQ('') },
+    fRole && { key: 'role', label: `${t('usr.colRole')}: ${fRole}`, clear: () => setFRole('') },
+    fOrgRole && { key: 'org', label: `${t('usr.colOrgRole')}: ${t('usr.orgRoleVal.' + fOrgRole)}`, clear: () => setFOrgRole('') },
+    fTeam && { key: 'team', label: `${t('usr.colTeam')}: ${teamMap[fTeam] || teamMap[Number(fTeam)] || fTeam}`, clear: () => setFTeam('') },
+    fDormant && { key: 'dormant', label: dormantLabel[fDormant] || fDormant, clear: () => setFDormant('') },
+  ].filter(Boolean)
+
+  const firstLoad = loading && users.length === 0
+  const empty = !loading && users.length === 0
+  const TH_CLS = 'h-10 px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase'
+  const STICKY = 'sticky right-0 z-[1] bg-card shadow-[-10px_0_12px_-12px_rgba(0,0,0,.35)] group-hover:bg-muted group-data-[state=selected]:bg-muted'
+
   return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <h3>{t('usr.title')}</h3>
-        <div className="hdr-actions">
-          <Button variant="secondary" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} /> {t('usr.exportCsv')}</Button>
-          {canManage && <Button variant="success" onClick={openAdd}>{t('usr.addBtn')}</Button>}
+    <section data-testid="users-tab" className="flex min-w-0 flex-col gap-4">
+      {/* Başlık + eylemler — telefonda alt alta */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-lg leading-tight font-semibold">{t('usr.title')}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('usr.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} aria-hidden="true" /> {t('usr.exportCsv')}</Button>
+          {canManage && <Button variant="success" onClick={openAdd}><UserPlus size={14} aria-hidden="true" /> {t('usr.addBtn')}</Button>}
         </div>
       </div>
-      {msg && !modal && !autoResetModal && <div className="alert-msg">{msg}</div>}
+      {msg && !modal && !autoResetModal && <AlertBanner tone={msg === t('usr.autoResetFailed') ? 'danger' : 'success'} className="mb-0">{msg}</AlertBanner>}
 
-      {/* Araç çubuğu — proje standardı (.invtb): arama kutusu + Süzgeçler paneli + kayıt sayacı (2026-09-20) */}
-      <div className="invtb um-toolbar" data-testid="um-toolbar">
-        <div className="invtb-row">
-          <label className="invtb-search">
-            <Search size={14} aria-hidden="true" />
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('usr.searchPlaceholder')} aria-label={t('usr.searchLabel')} />
-            {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
-          </label>
-          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'secondary'} size="sm" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
-            <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
-          </Button>
-          <span className="invtb-count">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
-          <div className="invtb-spacer" />
-          {(filterActive || q) && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
+      {/* Özet kutucukları — tıklanınca listedeki süzgeç uygulanır (etkin olan vurgulu) */}
+      {kpis.length > 0 && (
+        <div data-testid="um-kpis" className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 xl:grid-cols-6">
+          {kpis.map(({ key, ...k }) => <UserKpi key={key} kpiKey={key} {...k} hint={k.onClick ? t('usr.kpiFilterHint') : t('usr.kpiInfoHint')} />)}
         </div>
+      )}
+
+      {/* Araç çubuğu: arama + Süzgeçler paneli + etkin süzgeç çipleri + sayaç */}
+      <div className="flex flex-col gap-2" data-testid="um-toolbar">
+        <div className="flex flex-wrap items-center gap-2">
+          <ToolbarSearch value={q} onChange={setQ} placeholder={t('usr.searchPlaceholder')}
+            ariaLabel={t('usr.searchLabel')} clearLabel={t('inv.filterClear')} className="w-full max-w-none sm:w-auto sm:max-w-[420px]" />
+          <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'outline'} size="sm" className="h-8" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
+            <SlidersHorizontal size={13} aria-hidden="true" /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
+          </Button>
+          <span className="text-[0.84em] whitespace-nowrap text-muted-foreground" aria-live="polite">{loading ? '…' : t('inv.shownOf', users.length, total)}</span>
+        </div>
+        {chips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5" data-testid="um-chips">
+            {chips.map((c) => (
+              <Button key={c.key} type="button" variant="outline" size="xs" data-chip={c.key} onClick={c.clear}
+                aria-label={t('usr.chipRemove', c.label)} className="h-7 gap-1 rounded-full border-primary/40 bg-primary/5 pr-1.5 pl-2.5 font-normal">
+                {c.label}<X aria-hidden="true" className="size-3.5 opacity-70" />
+              </Button>
+            ))}
+            <Button type="button" variant="ghost" size="xs" className="h-7" onClick={clearFilters}>{t('inv.filterClear')}</Button>
+          </div>
+        )}
         {filtersOpen && (
-          <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
-            <label className="invtb-f"><span>{t('usr.colRole')}</span>
+          <FilterPanel label={t('inv.filters')} className="mt-0 grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
+            <FilterField label={t('usr.colRole')}>
               <SearchableSelect value={fRole} onChange={setFRole} ariaLabel={t('usr.colRole')}
-                options={[{ value: '', label: t('usr.allRoles') }, ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} /></label>
-            <label className="invtb-f"><span>{t('usr.colOrgRole')}</span>
+                options={[{ value: '', label: t('usr.allRoles') }, ...['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT'].map(r => ({ value: r, label: r }))]} />
+            </FilterField>
+            <FilterField label={t('usr.colOrgRole')}>
               <SearchableSelect value={fOrgRole} onChange={setFOrgRole} ariaLabel={t('usr.colOrgRole')}
-                options={[{ value: '', label: t('usr.allOrgRoles') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} /></label>
+                options={[{ value: '', label: t('usr.allOrgRoles') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
+            </FilterField>
             {canSeeAllTeams && (
-              <label className="invtb-f"><span>{t('usr.colTeam')}</span>
+              <FilterField label={t('usr.colTeam')}>
                 <SearchableSelect value={fTeam} onChange={setFTeam} ariaLabel={t('usr.colTeam')} searchThreshold={2}
-                  options={[{ value: '', label: t('usr.allTeams') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} /></label>
+                  options={[{ value: '', label: t('usr.allTeams') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+              </FilterField>
             )}
-            <label className="invtb-f"><span>{t('usr.colLastLogin')}</span>
+            <FilterField label={t('usr.colLastLogin')}>
               <SearchableSelect value={fDormant} onChange={setFDormant} ariaLabel={t('usr.colLastLogin')}
                 options={[{ value: '', label: t('usr.dormantAll') }, { value: '30', label: t('usr.dormant30') }, { value: '90', label: t('usr.dormant90') },
-                  { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} /></label>
-          </div>
+                  { value: '180', label: t('usr.dormant180') }, { value: 'never', label: t('usr.dormantNever') }]} />
+            </FilterField>
+          </FilterPanel>
         )}
       </div>
 
-      {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
+      {/* Toplu işlem çubuğu — seçim varken; telefonda ekranın altına yapışık */}
       {canManage && selected.size > 0 && (
-        <div className="um-bulk" data-testid="bulk-bar" aria-busy={bulkBusy || undefined}>
-          <span className="um-bulk-count">{t('usr.selected', selected.size)}</span>
+        <div data-testid="bulk-bar" role="region" aria-label={t('bulk.aria')} aria-busy={bulkBusy || undefined}
+          className="sticky bottom-3 z-20 flex flex-wrap items-center gap-2 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg md:static md:bottom-auto md:shadow-none">
+          <span className="mr-1 font-bold">{t('usr.selected', selected.size)}</span>
           <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</Button>
           <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('usr.bulkDeactivate')}</Button>
           {canSeeAllTeams && (
-            <SearchableSelect value={bulk?.team_id || ''} onChange={(v) => v && runBulk('assign_team', { team_id: Number(v) })} placeholder={t('usr.bulkAssignTeam')} ariaLabel={t('usr.bulkAssignTeam')}
-              searchThreshold={2} options={[{ value: '', label: t('usr.bulkPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+            <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
+              <SearchableSelect value={bulk?.team_id || ''} onChange={(v) => v && runBulk('assign_team', { team_id: Number(v) })} placeholder={t('usr.bulkAssignTeam')} ariaLabel={t('usr.bulkAssignTeam')}
+                searchThreshold={2} options={[{ value: '', label: t('usr.bulkPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+            </span>
           )}
-          <SearchableSelect value={bulk?.org_role || ''} onChange={(v) => v && runBulk('set_org_role', { org_role: v })} placeholder={t('usr.bulkOrgRole')} ariaLabel={t('usr.bulkOrgRole')}
-            options={[{ value: '', label: t('usr.bulkPickOrgRole') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
-          <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
+          <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
+            <SearchableSelect value={bulk?.org_role || ''} onChange={(v) => v && runBulk('set_org_role', { org_role: v })} placeholder={t('usr.bulkOrgRole')} ariaLabel={t('usr.bulkOrgRole')}
+              options={[{ value: '', label: t('usr.bulkPickOrgRole') }, ...['PO', 'TECH', 'MANAGER', 'BOLUM_BASKANI', 'CLEVEL'].map(r => ({ value: r, label: t('usr.orgRoleVal.' + r) }))]} />
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
-      <div className="admin-table-wrap">
-        {/* 2026-09-11: 11 sütun (avatar + kullanıcı adı + sicil + ad + ünvan + …) 1366px'te sığmıyor,
-            Eylemler sütunu yatay kaydırmanın ardında kayboluyordu. Kimlik alanları TEK hücrede
-            (avatar · ad soyad / kullanıcı adı · sicil / ünvan), Eylemler daralmaz (um-col-actions). */}
-        <table className="admin-table um-table">
-          <thead>
-            <tr>
-              {canManage && <th className="um-col-check"><input type="checkbox" checked={allPageSelected} onChange={toggleAllPage} aria-label={t('usr.selectAll')} /></th>}
-              <th>{t('usr.colUser')}</th>
-              <th>{t('usr.colEmail')}</th>
-              <th>{t('usr.colRole')}</th>
-              <th>{t('usr.colOrgRole')}</th>
-              <th>{t('usr.colTeam')}</th>
-              <th>{t('usr.colLastLogin')}</th>
-              <th>{t('usr.colActive')}</th>
-              <th className="um-col-actions">{t('usr.colActions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
-                {loading ? '…' : t('usr.noResults')}
-              </td></tr>
-            )}
-            {users.map((user) => (
-              <tr key={user.id} style={{ cursor: 'pointer' }} title={t('usr.viewTitle')} tabIndex={0}
-                aria-label={t('a11y.openRow', user.display_name || user.username)}
-                onClick={() => setViewUser(user)}
-                onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setViewUser(user) } }}>
-                {canManage && (
-                  <td className="um-col-check" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggleOne(user.id)} aria-label={t('bulk.selectOneFor', user.username)} />
-                  </td>
-                )}
-                <td className="um-col-user">
-                  <div className="um-identity">
-                    <UserAvatar user={user} />
-                    <div className="um-identity-text">
-                      <strong className="um-identity-name">
-                        {user.display_name || user.username}
-                        {user.push_opt_out && (
-                          <span className="um-optout-badge" title={t('usr.pushOptOutTitle')} aria-label={t('usr.pushOptOutTitle')}>
-                            <BellOff size={12} />
-                          </span>
-                        )}
-                      </strong>
-                      <span className="um-identity-sub sys-mono">
-                        {user.username}{user.employee_id ? ` · ${user.employee_id}` : ''}
-                        {user.auth_source === 'LDAP' && <span className="um-ldap" title={t('usr.authSourceTitle')}>{t('usr.ldapBadge')}</span>}
-                      </span>
-                      {user.title && <span className="um-identity-title" title={user.title}>{user.title}</span>}
-                    </div>
-                  </div>
-                </td>
-                <td className="um-col-email"><span className="um-email" title={user.email || ''}>{user.email || '—'}</span></td>
-                <td>
-                  <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : user.system_role === 'AUDIT' ? ' role-audit' : ''}`}>{user.system_role}</span>
-                  {user.role_locked && (
-                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.roleLockedTitle')}>🔒</span>
+      {empty ? (
+        (filterActive || q.trim())
+          ? <StatusBlock tone="neutral" icon={Users} title={t('usr.noResults')} description={t('usr.noResultsHint')}
+              actions={<Button type="button" variant="outline" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>} />
+          : <StatusBlock tone="neutral" icon={Users} title={t('usr.noUsers')} description={canManage ? t('usr.noUsersHint') : undefined} />
+      ) : isMobile ? (
+        /* Telefon: kart listesi — kart başlığı gerçek düğme (stretched), içteki kontroller örtünün üstünde */
+        <div data-testid="um-cards" className="flex flex-col gap-2.5">
+          {canManage && users.length > 0 && (
+            <label className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
+              <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('usr.selectAll')} />{t('usr.selectAll')}
+            </label>
+          )}
+          {firstLoad
+            ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-[132px] rounded-xl motion-reduce:animate-none" />)
+            : users.map((u) => (
+              <Card key={u.id} data-user-card={u.id} data-state={selected.has(u.id) ? 'selected' : undefined}
+                className="relative gap-2.5 px-4 py-3.5 shadow-xs data-[state=selected]:border-primary data-[state=selected]:bg-primary/5">
+                <div className="flex items-start gap-2">
+                  {canManage && (
+                    <Checkbox className={cn(CARD_CHECK, 'mt-2')} checked={selected.has(u.id)} onCheckedChange={() => toggleOne(u.id)}
+                      aria-label={t('bulk.selectOneFor', u.username)} />
                   )}
-                  {isLastActiveAdmin(user) && (
-                    <span className="badge badge-err" style={{ marginLeft: 6 }} title={t('usr.lastAdminTitle')}>
-                      {t('usr.lastAdminBadge')}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {user.org_role ? <span className={`badge-role badge-role-${user.org_role}`}>{t('usr.orgRoleVal.' + user.org_role)}</span> : '—'}
-                  {user.org_role_locked && (
-                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.orgRoleLockedTitle')}>🔒</span>
-                  )}
-                </td>
-                <td className="um-col-team">{((user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []))
-                  .map(id => teamMap[id]).filter(Boolean).join(', ')) || '—'}
-                  {user.team_locked && (
-                    <span style={{ marginLeft: 6, cursor: 'help' }} title={t('usr.teamLockedTitle')}>🔒</span>
-                  )}</td>
-                <td>
-                  {user.last_login_at
-                    ? <span className="um-lastlogin" title={user.last_login_method || ''}>{formatDateSec(user.last_login_at)}</span>
-                    : <span className="um-lastlogin um-lastlogin--never">{t('usr.neverLoggedIn')}</span>}
-                </td>
-                <td>
-                  <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
-                  {user.permanent_lock && <span className="badge badge-err" style={{ marginLeft: 4 }} title={t('usr.permLocked')}>🔒</span>}
-                </td>
-                <td className="um-col-actions" onClick={(e) => e.stopPropagation()}>
-                  <KebabMenu label={t('usr.colActions')} rowLabel={user.display_name || user.username} items={canManage ? [
-                    { label: t('usr.edit'), onClick: () => openEdit(user) },
-                    { label: t('hist.title'), onClick: () => setHistFilter({ id: user.id, name: user.display_name || user.username }), hidden: !isAdmin },
-                    { label: t('usr.autoResetBtn'), onClick: () => setAutoResetModal(user) },
-                    { label: t('usr.unlock'), onClick: () => unlock(user.id), hidden: !user.permanent_lock },
-                    { label: t('usr.roleUnlock'), onClick: () => roleUnlock(user.id), hidden: !user.role_locked },
-                    { label: t('usr.orgRoleUnlock'), onClick: () => orgRoleUnlock(user.id), hidden: !user.org_role_locked },
-                    { label: t('usr.teamUnlock'), onClick: () => teamUnlock(user.id), hidden: !user.team_locked },
-                    { label: t('usr.delete'), danger: true, onClick: () => del(user.id),
-                      hidden: isSelf(user) || isLastActiveAdmin(user) },
-                  ] : []} />
-                </td>
-              </tr>
+                  <div className="min-w-0 flex-1">{identity(u, { titleButton: true })}</div>
+                  <span className={CARD_LAYER}>
+                    <KebabMenu label={t('usr.colActions')} rowLabel={nameOf(u)} items={menuItems(u)} />
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">{roleBadges(u)}{statusBadge(u)}</div>
+                {teamBadges(u)}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{t('usr.colLastLogin')}:</span>{lastLogin(u)}
+                </div>
+              </Card>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Sayfalama — proje standardı PaginationBar (1 tabanlı; sunucu 0 tabanlı) (2026-09-20) */}
-      {total > 0 && (
-        <PaginationBar page={page + 1} totalPages={totalPages} totalItems={total}
-          rangeStart={page * size + 1} rangeEnd={Math.min((page + 1) * size, total)}
-          pageSize={size} onPageChange={(p) => load(p - 1, size)} onPageSizeChange={(s) => setSize(s)} />
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          {/* Masaüstü/tablet: tablo — Eylemler sütunu sağa yapışık (yatay kaydırmada kaybolmaz). */}
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow className="hover:bg-transparent">
+                {canManage && (
+                  <TableHead className="w-9 px-3">
+                    <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('usr.selectAll')} />
+                  </TableHead>
+                )}
+                <TableHead className={TH_CLS}>{t('usr.colUser')}</TableHead>
+                <TableHead className={cn(TH_CLS, 'hidden 2xl:table-cell')}>{t('usr.colEmail')}</TableHead>
+                <TableHead className={TH_CLS}>{t('usr.colRole')}</TableHead>
+                <TableHead className={cn(TH_CLS, 'hidden xl:table-cell')}>{t('usr.colTeam')}</TableHead>
+                <TableHead className={cn(TH_CLS, 'hidden xl:table-cell')}>{t('usr.colLastLogin')}</TableHead>
+                <TableHead className={TH_CLS}>{t('usr.colActive')}</TableHead>
+                <TableHead className={cn(TH_CLS, STICKY, 'w-px bg-muted text-right')}><span className="sr-only">{t('usr.colActions')}</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {firstLoad && Array.from({ length: 5 }, (_, i) => (
+                <TableRow key={`sk${i}`} data-skeleton="">
+                  <TableCell colSpan={canManage ? 8 : 7} className="px-3 py-2.5"><Skeleton className="h-9 w-full motion-reduce:animate-none" /></TableCell>
+                </TableRow>
+              ))}
+              {!firstLoad && users.map((user) => (
+                <TableRow key={user.id} className="group cursor-pointer" title={t('usr.viewTitle')} tabIndex={0}
+                  data-state={selected.has(user.id) ? 'selected' : undefined}
+                  aria-label={t('a11y.openRow', nameOf(user))}
+                  onClick={() => setViewUser(user)}
+                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setViewUser(user) } }}>
+                  {canManage && (
+                    <TableCell className="w-9 px-3" onClick={(e) => e.stopPropagation()}>
+                      <Checkbox checked={selected.has(user.id)} onCheckedChange={() => toggleOne(user.id)} aria-label={t('bulk.selectOneFor', user.username)} />
+                    </TableCell>
+                  )}
+                  <TableCell className="min-w-[200px] px-3 py-2.5">{identity(user)}</TableCell>
+                  <TableCell className="hidden max-w-[240px] px-3 2xl:table-cell">
+                    <span className="inline-block max-w-[240px] truncate align-bottom text-[0.9em]" title={user.email || ''}>{user.email || '—'}</span>
+                  </TableCell>
+                  <TableCell className="px-3 whitespace-normal">{roleBadges(user)}</TableCell>
+                  <TableCell className="hidden max-w-[240px] px-3 whitespace-normal xl:table-cell">{teamBadges(user)}</TableCell>
+                  <TableCell className="hidden px-3 whitespace-normal xl:table-cell">{lastLogin(user)}</TableCell>
+                  <TableCell className="px-3">{statusBadge(user)}</TableCell>
+                  <TableCell className={cn('w-px px-2 text-right', STICKY)} onClick={(e) => e.stopPropagation()}>
+                    <KebabMenu label={t('usr.colActions')} rowLabel={nameOf(user)} items={menuItems(user)} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
+
+      {/* Sayfalama — proje standardı (useServerPagination: taban dönüşümü ve sıfırlama kancada) */}
+      <PaginationBar {...sp.bar} />
 
       {/* Kullanıcı geçmişi yalnız global ADMIN (rol/takım/parola sıfırlama kayıtları kişisel veri taşır). */}
       <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={isAdmin} />
 
-      {modal !== null && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-icon-hdr modal-icon-hdr--user">
-              <div className="modal-icon-hdr-badge">
-                {modal === 'add'
-                  ? <UserPlus size={20} />
-                  : <ModalHeaderAvatar userId={modal?.id}><UserCog size={20} /></ModalHeaderAvatar>}
-              </div>
-              <h3>{modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}</h3>
-            </div>
-            {/* form-grid--top: alanlar üstten hizalansın — "Takım"daki uyarı ipucu (teamRequired)
-                altta dururken Organizasyonel Rol ile Takım select'leri karşılıklı kalsın (align-items:end kayması) */}
-            <div className="form-grid form-grid--top">
-              <label>
-                <span>{t('usr.formUsername')} <span className="req-star">*</span></span>
-                <input value={form.username} disabled={modal !== 'add'}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })} />
-              </label>
-              {modal === 'add' && (
-                <label>
-                  <span>{t('usr.formPassword')} <span className="req-star">*</span></span>
-                  <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
-                </label>
+      <ModalShell open={modal !== null} onClose={() => setModal(null)} size="md"
+        title={(
+          <span className="flex items-center gap-2.5">
+            {modal === 'add'
+              ? <UserPlus size={20} aria-hidden="true" />
+              : <ModalHeaderAvatar userId={modal?.id}><UserCog size={20} aria-hidden="true" /></ModalHeaderAvatar>}
+            {modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}
+          </span>
+        )}
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</Button>
+            <Button onClick={save} aria-busy={saving || undefined}
+              disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && (isTeamAdmin ? !ownTeamId : form.team_ids.length === 0)) || (modal === 'add' && form.password.length < 4)}>
+              {saving ? t('usr.saving') : t('usr.save')}
+            </Button>
+          </>
+        )}>
+        {/* items-start: alanlar üstten hizalansın — "Takım"daki uyarı ipucu (teamRequired)
+            altta dururken Organizasyonel Rol ile Takım seçicileri karşılıklı kalsın */}
+        <div className="grid grid-cols-1 items-start gap-x-3 sm:grid-cols-2">
+          <Field label={t('usr.formUsername')} required>
+            {({ id }) => (
+              <Input id={id} value={form.username} disabled={modal !== 'add'}
+                onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            )}
+          </Field>
+          {modal === 'add' && (
+            <Field label={t('usr.formPassword')} required>
+              {({ id }) => (
+                <Input id={id} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
               )}
-              <label>{t('usr.formDisplay')}
-                <input value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
-              </label>
-              <label>
-                <span>{t('usr.formEmail')} <span className="req-star">*</span></span>
-                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              </label>
-              <label>{t('usr.formEmployeeId')}
-                <input value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
-              </label>
-              <label>{t('usr.formRole')}
-                <SearchableSelect
-                  value={form.system_role}
-                  onChange={v => setForm({ ...form, system_role: v })}
-                  disabled={modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))}
-                  options={isAdmin ? [
-                    { value: 'USER',       label: 'USER' },
-                    { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
-                    { value: 'AUDIT',      label: 'AUDIT' },
-                    { value: 'ADMIN',      label: 'ADMIN' },
-                  ] : [
-                    { value: 'USER',       label: 'USER' },
-                    { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
-                  ]}
-                />
-                {modal !== 'add' && isSelf(modal) && (
-                  <span className="field-hint field-hint--warn">{t('usr.selfRoleLocked')}</span>
-                )}
-                {modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && (
-                  <span className="field-hint field-hint--warn">{t('usr.lastAdminRoleLocked')}</span>
-                )}
-              </label>
-              <label>{t('usr.orgRole')}
-                <SearchableSelect
-                  value={form.org_role}
-                  onChange={v => setForm({ ...form, org_role: v })}
-                  options={[
-                    { value: '',              label: t('usr.orgRoleNone') },
-                    { value: 'TECH',          label: t('usr.orgRoleVal.TECH') },
-                    { value: 'PO',            label: t('usr.orgRoleVal.PO') },
-                    { value: 'MANAGER',       label: t('usr.orgRoleVal.MANAGER') },
-                    { value: 'BOLUM_BASKANI', label: t('usr.orgRoleVal.BOLUM_BASKANI') },
-                    { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
-                  ]}
-                />
-              </label>
-              <label>
-                <span>{t('usr.teamsLabel')} {form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
-                {isTeamAdmin ? (
-                  <SearchableSelect
-                    value={ownTeamId ?? ''}
-                    onChange={() => {}}
-                    disabled
-                    options={[
-                      { value: ownTeamId ?? '', label: (teams || []).find(team => team.id === ownTeamId)?.name ?? t('usr.noTeam') },
-                    ]}
-                  />
-                ) : (
-                  <MultiTeamSelect
-                    value={form.team_ids}
-                    onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
-                    placeholder={t('usr.teamsPlaceholder')}
-                    searchThreshold={2}
-                    options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
-                  />
-                )}
-                {!isTeamAdmin && form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
-                  <span className="field-hint field-hint--warn">{t('usr.teamsRequired')}</span>
-                )}
-              </label>
-              {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
-              <label>{t('usr.formFirstName')}
-                <input value={form.first_name} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
-              </label>
-              <label>{t('usr.formLastName')}
-                <input value={form.last_name} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
-              </label>
-              <label>{t('usr.colTitle')}
-                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-              </label>
-              <label>{t('usr.colPhone')}
-                <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-              </label>
-              <label>{t('usr.colDept')}
-                <input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
-              </label>
-              <label>{t('usr.formCompanyLevel')}
-                <input value={form.company_level} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
-              </label>
-              <label>{t('usr.colMudurluk')}
-                <input value={form.mudurluk_name} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
-              </label>
-              <label>{t('usr.colManager')}
-                <input value={form.manager_sicil} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active}
-                  disabled={modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))}
-                  onChange={(e) => setForm({ ...form, active: e.target.checked })} />
-                {t('usr.formActive')}
-                {modal !== 'add' && isSelf(modal) && (
-                  <span className="field-hint field-hint--warn" style={{ marginLeft: 8 }}>{t('usr.selfActiveLocked')}</span>
-                )}
-                {modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && (
-                  <span className="field-hint field-hint--warn" style={{ marginLeft: 8 }}>{t('usr.lastAdminActiveLocked')}</span>
-                )}
-              </label>
-            </div>
-            {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</Button>
-              <Button onClick={save}
-                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && (isTeamAdmin ? !ownTeamId : form.team_ids.length === 0)) || (modal === 'add' && form.password.length < 4)}>
-                {saving ? t('usr.saving') : t('usr.save')}
-              </Button>
-            </div>
+            </Field>
+          )}
+          {profileField('display_name', 'usr.formDisplay')}
+          <Field label={t('usr.formEmail')} required>
+            {({ id }) => (
+              <Input id={id} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            )}
+          </Field>
+          {profileField('employee_id', 'usr.formEmployeeId')}
+          <Field label={t('usr.formRole')} hintTone="warn"
+            hint={modal !== null && modal !== 'add' && isSelf(modal) ? t('usr.selfRoleLocked')
+              : modal !== null && modal !== 'add' && isLastActiveAdmin(modal) ? t('usr.lastAdminRoleLocked') : undefined}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.system_role}
+                onChange={v => setForm({ ...form, system_role: v })}
+                disabled={editingLocked}
+                options={isAdmin ? [
+                  { value: 'USER',       label: 'USER' },
+                  { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
+                  { value: 'AUDIT',      label: 'AUDIT' },
+                  { value: 'ADMIN',      label: 'ADMIN' },
+                ] : [
+                  { value: 'USER',       label: 'USER' },
+                  { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
+                ]}
+              />
+            )}
+          </Field>
+          <Field label={t('usr.orgRole')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.org_role}
+                onChange={v => setForm({ ...form, org_role: v })}
+                options={[
+                  { value: '',              label: t('usr.orgRoleNone') },
+                  { value: 'TECH',          label: t('usr.orgRoleVal.TECH') },
+                  { value: 'PO',            label: t('usr.orgRoleVal.PO') },
+                  { value: 'MANAGER',       label: t('usr.orgRoleVal.MANAGER') },
+                  { value: 'BOLUM_BASKANI', label: t('usr.orgRoleVal.BOLUM_BASKANI') },
+                  { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
+                ]}
+              />
+            )}
+          </Field>
+          <Field label={t('usr.teamsLabel')} required={form.system_role !== 'ADMIN'} hintTone="warn"
+            hint={!isTeamAdmin && form.system_role !== 'ADMIN' && form.team_ids.length === 0 ? t('usr.teamsRequired') : undefined}>
+            {({ id }) => (isTeamAdmin ? (
+              <SearchableSelect id={id}
+                value={ownTeamId ?? ''}
+                onChange={() => {}}
+                disabled
+                options={[
+                  { value: ownTeamId ?? '', label: (teams || []).find(team => team.id === ownTeamId)?.name ?? t('usr.noTeam') },
+                ]}
+              />
+            ) : (
+              <MultiTeamSelect id={id}
+                value={form.team_ids}
+                onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
+                placeholder={t('usr.teamsPlaceholder')}
+                searchThreshold={2}
+                options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
+              />
+            ))}
+          </Field>
+          {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
+          {profileField('first_name', 'usr.formFirstName')}
+          {profileField('last_name', 'usr.formLastName')}
+          {profileField('title', 'usr.colTitle')}
+          {profileField('phone', 'usr.colPhone')}
+          {profileField('department', 'usr.colDept')}
+          {profileField('company_level', 'usr.formCompanyLevel')}
+          {profileField('mudurluk_name', 'usr.colMudurluk')}
+          {profileField('manager_sicil', 'usr.colManager')}
+          <div className="col-span-full mb-3.5 flex flex-wrap items-center gap-2">
+            <CheckboxRow checked={!!form.active} disabled={editingLocked} label={t('usr.formActive')}
+              onChange={(v) => setForm({ ...form, active: v })} />
+            {modal !== null && modal !== 'add' && isSelf(modal) && warn(t('usr.selfActiveLocked'))}
+            {modal !== null && modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && warn(t('usr.lastAdminActiveLocked'))}
           </div>
         </div>
-      )}
+        {msg && <AlertBanner tone="danger" className="mt-2">{msg}</AlertBanner>}
+      </ModalShell>
 
       {autoResetModal && (
         <AdminAutoResetModal
@@ -618,12 +837,14 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         />
       )}
 
-      {/* Satıra tıklayınca: kullanıcı düzenle ekranının salt-okunur (gösterim) hali */}
+      {/* Satıra tıklayınca: kullanıcı ayrıntısı (salt-okunur). Liste tazelenince (kilit açma, AD eşitleme) güncel satır
+          verilir; kilit açma MEVCUT işleyicilerle (menüdekiyle aynı yetki kapısı: canManage). */}
       {viewUser && (
-        <UserDetailPanel user={viewUser} teams={teams} isAdmin={isAdmin}
-          onClose={() => setViewUser(null)}
+        <UserDetailPanel user={users.find((u) => u.id === viewUser.id) || viewUser} teams={teams} isAdmin={isAdmin}
+          onClose={() => setViewUser(null)} onChanged={refresh}
+          onUnlock={canManage ? { perm: unlock, role: roleUnlock, org: orgRoleUnlock, team: teamUnlock } : undefined}
           onEdit={canManage ? () => { const u = viewUser; setViewUser(null); openEdit(u) } : undefined} />
       )}
-    </div>
+    </section>
   )
 }

@@ -1,38 +1,34 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { formatPercent } from '../i18n/dateLocale.js'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Globe, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
+import { useCardDensity } from '../hooks/useCardDensity.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -46,14 +42,24 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import HttpMonitorCard from './http/HttpMonitorCard.jsx'
+import { metaRow as httpMetaRow } from './http/httpCardModel.js'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, InlineField, LabelSlot,
+} from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -85,19 +91,19 @@ const emptyForm = {
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   intervalSeconds: 300, timeoutMs: 10000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true,
+  nocNotify: false, nocGroupIds: [],   // 7/24 izleme ekibi (2026-09-27): varsayılan KAPALI; [] = varsayılan gruplar
 }
 
-export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -109,15 +115,15 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   const sparks = useSparklines('http')   // kart mini trendi (2026-09-12)
   const sla = useSla('http')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — her açılış Zengin başlar; Kompakt seçimi yalnız sayfada kalındıkça
+  // geçerli, KALICI DEĞİL (kullanıcı kararı: sayfa değişip dönünce ya da yenileyince yeniden Zengin)
+  const [density, setDensity] = useCardDensity('http')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -134,6 +140,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
@@ -168,6 +175,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updateHttpMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -207,12 +219,12 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
   useMonitorDeepLink(monitors, openDetail)
 
-  function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null); setSelCheck(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
     setModal('new')
@@ -228,7 +240,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 10000,
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
-      active: m.active !== false }
+      active: m.active !== false,
+      nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids) }
   }
   function openEdit(m) {
     setTestResult(null); setDupSource(null)
@@ -280,6 +293,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         active: form.active,
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),
       }
       // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -378,7 +392,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
+        // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
+        // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -456,7 +472,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'http-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
+    listKey: 'http-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -481,57 +497,179 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  function cardClass(m) {
-    if (m.status === 'up') return 'upt-card--up'
-    if (m.status === 'unknown') return 'upt-card--unknown'
-    return 'upt-card--down'
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı): up | down | unknown.
+  const statusKey = (m) => (m?.status === 'up' ? 'up' : m?.status === 'unknown' ? 'unknown' : 'down')
   function statusBadge(m) {
     const s = m?.status
-    const cls = s === 'up' ? 'upt-badge--up' : s === 'unknown' ? 'upt-badge--unknown' : 'upt-badge--down'
     const label = s === 'up' ? t('http.statusOk')
       : s === 'unknown' ? t('http.statusUnknown')
       : s === 'error' ? t('http.statusError') : t('http.statusDown')
-    return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
-  }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('http.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
+    return <MonitorStatusBadge status={statusKey(m)}>{label}</MonitorStatusBadge>
   }
 
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('http.noTeam'))
-    : (teamName || t('http.noTeam'))
+    : (defaultTeamName || t('http.noTeam'))
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır — eskiden aynı katmandaki iki
+  // elle kurulu örtü DOM sırasıyla üst üste biniyordu.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={Globe}
+      title={modal === 'new' ? t('http.modalNew') : t('http.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('http.testing') : null}
+      footer={<>
+        <Button variant="secondary" className="mr-auto" onClick={runTest}
+          aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
+          <FlaskConical size={14} />{t('http.test')}
+        </Button>
+        {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('http.delete')}</Button>}
+        <Button variant="secondary" onClick={closeEdit}>{t('http.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('http.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={Globe}>{t('http.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('http.url')} required hint={t('http.urlHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
+          )}
+        </FormField>
+
+        <FormField label={t('http.method')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.method} onChange={v => setForm(f => ({ ...f, method: v }))}
+              options={METHODS.map(x => ({ value: x, label: x }))} />
+          )}
+        </FormField>
+        <FormField label={t('http.expectedStatus')}>
+          {({ id }) => (
+            <Input id={id} value={form.expectedStatus} placeholder="200, 2xx, 200-399" onChange={e => setForm(f => ({ ...f, expectedStatus: e.target.value }))} />
+          )}
+        </FormField>
+        <CheckField checked={form.followRedirects} onCheckedChange={v => setForm(f => ({ ...f, followRedirects: v }))} label={t('http.followRedirects')} />
+        <CheckField checked={form.verifySsl} onCheckedChange={v => setForm(f => ({ ...f, verifySsl: v }))} label={t('http.verifySsl')} />
+        {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar; düzenlemede etkin sonuç ipucu */}
+        <LabelSlot full>
+          <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+            effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+        </LabelSlot>
+
+        <FormField label={t('http.name')}>
+          {({ id }) => (
+            <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('http.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('http.noTeam')} disabled />}
+        </FormField>
+
+        <FormField full label={t('http.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('http.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('http.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="HTTP" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        <FormHint>{t('http.groupInfo')}</FormHint>
+
+        {/* Etiketler */}
+        <FormSection title={t('http.tagsTitle')} required hint={t('http.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        {/* SSL + Domain kontrolleri */}
+        <FormSection title={t('http.sslSectionTitle')} icon={ShieldCheck}>
+          <CheckField checked={form.checkSslErrors} onCheckedChange={v => setForm(f => ({ ...f, checkSslErrors: v }))} label={t('http.checkSslErrors')} />
+          <CheckField checked={form.sslExpiryReminders} onCheckedChange={v => setForm(f => ({ ...f, sslExpiryReminders: v }))} label={t('http.sslExpiryReminders')} />
+          {form.sslExpiryReminders && (
+            <InlineField label={t('http.reminderDays')}>
+              {({ id }) => <Input id={id} className="h-8 w-36" value={form.sslReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, sslReminderDays: e.target.value }))} />}
+            </InlineField>
+          )}
+          <CheckField checked={form.domainExpiryReminders} onCheckedChange={v => setForm(f => ({ ...f, domainExpiryReminders: v }))} label={t('http.domainExpiryReminders')} />
+          {form.domainExpiryReminders && (
+            <InlineField label={t('http.reminderDays')}>
+              {({ id }) => <Input id={id} className="h-8 w-36" value={form.domainReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, domainReminderDays: e.target.value }))} />}
+            </InlineField>
+          )}
+          <FormHint full={false}>{t('http.whoisHint')}</FormHint>
+        </FormSection>
+
+        {/* Alarm hassasiyeti */}
+        <FormField label={t('http.confirmAttempts')}>
+          {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('http.confirmInterval')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('http.recoveryChecks')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('http.recoveryInterval')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('http.timeout')}>
+          {({ id }) => <Input id={id} type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />}
+        </FormField>
+        <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('http.active')} className="self-center" />
+        <FormHint>ⓘ {t('http.confirmHint')}</FormHint>
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.error ? 'danger' : testResult.condition_met ? 'success' : 'warning'}
+          icon={testResult.error || !testResult.condition_met ? AlertTriangle : undefined}
+          title={testResult.error ? t('http.testError') : testResult.condition_met ? t('http.testMet') : t('http.testNotMet')}>
+          {testResult.error
+            ? testResult.error
+            : <>
+                {testResult.http_status != null && <>HTTP {testResult.http_status}</>}
+                {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
+                {testResult.expected_status && <> · {t('http.expectedStatus')}: {testResult.expected_status}</>}
+                {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
+              </>}
+        </AlertBanner>
+      )}
+      {/* Form testi düştüyse aynı tanı paneli (kaydetmeden önce "neden" görülsün) — 2026-09-22 */}
+      {testResult && !testResult.condition_met && (testResult.error || testResult.http_status != null) && (
+        <HttpErrorDetail t={t} check={{ id: 'test', ok: false, error: testResult.error, http_status: testResult.http_status, checked_at: new Date().toISOString(), error_detail: testResult.error_detail }} />
+      )}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="http-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
 
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('http.pageTitle')}</h2>
-          <p className="upt-subtitle">{t('http.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('http.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('http.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="http" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew} data-tour="mon-new">
-              <Plus size={14} />{t('http.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="http" title={t('http.pageTitle')} subtitle={t('http.subtitle')}
+        count={loading ? null : monitors.length} down={counts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('http.addMonitor')} />
 
       <MonitorHowBox bullets={[t('http.how1'), t('http.how2'), t('http.how3'), t('http.how4')]} />
 
@@ -544,11 +682,13 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {/* Kart görünümü (Kompakt / Zengin) araç çubuğunun İLK öğesi: mr-auto süzgeçleri sağda tutar; telefonda satır sarar */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('http.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('http.searchPlaceholder')} aria-label={t('http.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -562,137 +702,91 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('http.noMonitorsAdmin') : t('http.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="HTTP"
           api={{ update: api.monitoring.updateHttpMonitor, remove: api.monitoring.deleteHttpMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid" data-tour="mon-cards">
+        <div className="upt-grid" data-tour="mon-cards" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-card-top-right">
-                  <span className="upt-port-tag">{m.method || 'GET'}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('http', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.url}>{m.url}</div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.http_status ?? '—'}</span>
-                  <span className="upt-metric-lbl">HTTP</span>
-                </div>
-                {m.response_ms != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.response_ms}ms</span>
-                    <span className="upt-metric-lbl">{t('http.responseMs')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.url}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('http.check')} editTitle={t('http.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('http.delete')} />
-                )}
-              </div>
-            </div>
+            /* Kart sunumu http/HttpMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
+               yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada), meta (zorlanmış vekil kipinde yol rozeti kip
+               çipine bırakılır — metaRow) ve eylemler (yetki + işleyiciler burada). */
+            <HttpMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
+              )}
+              meta={<MonitorCardMeta monitor={httpMetaRow(m)} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('http.check')} editTitle={t('http.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('http.delete')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${selected.status === 'up' ? 'up' : selected.status === 'unknown' ? 'unknown' : 'down'}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.url}</span>
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('http.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('http.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('http.delete')}
-                onClose={closeDetail}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric" title={t('http.sumOkHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('http.sumOk')}</span>
-              </div>
-              <div className="upt-modal-metric" title={t('http.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('http.sumTotal')}</span></div>
-              <div className="upt-modal-metric" title={t('http.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('http.sumIncidents')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.method || 'GET'}</span><span className="upt-modal-metric-lbl">{t('http.method')}</span></div>
-              {selected.http_status != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.http_status}</span><span className="upt-modal-metric-lbl">HTTP</span></div>}
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('http.lastCheck')}</span></div>}
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="kw-reqinfo">
-              <div className="kw-reqinfo-title">{t('http.reqSettings')}</div>
-              <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.expectedStatus')}</span><span>{selected.expected_status || '200-399'}</span></div>
-              <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.followRedirects')}</span>
-                <span className={selected.follow_redirects !== false ? 'kw-on' : 'kw-off'}>{selected.follow_redirects !== false ? t('http.on') : t('http.off')}</span></div>
-              <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.verifySsl')}</span>
-                <span className={selected.verify_ssl ? 'kw-on' : 'kw-off'}>{selected.verify_ssl ? t('http.on') : t('http.off')}</span></div>
-              {selected.proxy_effective && <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('mon.proxy.label')}</span>
-                <span><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /> <span className="sys-muted">· {t(`mon.proxy.${selected.use_proxy || 'AUTO'}`)}</span></span></div>}
-              <div className="kw-reqinfo-row"><span className="kw-reqinfo-k">{t('http.sslSectionTitle')}</span>
-                <span>{[selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')}</span></div>
-            </div>
-            {/* Sekme değişince seçili kontrol DÜŞER. Tanı penceresi `detailTab === 'control'`
-                koşuluyla gizleniyordu ama `selCheck` ayakta kalıyordu: kullanıcı pencere açıkken
-                başka sekmeye geçip geri döndüğünde pencere kendiliğinden yeniden açılıyordu —
-                üstelik 30 sn'lik canlı yenileme listeyi tazelediyse artık listede olmayan bir
-                satırın tanısıyla. */}
-            <div className="modal-tabs">
-              {[['control', t('hist.tab')], ['alerts', t('http.tabAlerts')], ['chart', t('http.tabChart')],
-                ['notes', t('http.tabGuide')],
-                // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
-                ['changes', t('chg.tab')]].map(([key, label]) => (
-                <button key={key} className={`modal-tab${detailTab === key ? ' active' : ''}`}
-                  onClick={() => { setDetailTab(key); setSelCheck(null) }}>{label}</button>
-              ))}
-            </div>
-
-            {detailTab === 'control' && (
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('http.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('http.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('http.delete')}
+              onClose={closeDetail}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-0" />
+          <DetailSummary items={[
+            { key: 'ok', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—', label: t('http.sumOk'), hint: t('http.sumOkHint') },
+            { key: 'total', value: summary.total, label: t('http.sumTotal'), hint: t('http.sumTotalHint') },
+            { key: 'inc', value: summary.down, label: t('http.sumIncidents'), hint: t('http.sumIncidentsHint') },
+            { key: 'method', value: selected.method || 'GET', label: t('http.method') },
+            selected.http_status != null && { key: 'http', value: selected.http_status, label: 'HTTP' },
+            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('http.lastCheck'), time: true },
+          ]} />
+          <DetailDivider />
+          <DetailInfoCard title={t('http.reqSettings')} rows={[
+            [t('http.expectedStatus'), selected.expected_status || '200-399'],
+            [t('http.followRedirects'), <OnOff key="fr" on={selected.follow_redirects !== false} onText={t('http.on')} offText={t('http.off')} />],
+            [t('http.verifySsl'), <OnOff key="vs" on={!!selected.verify_ssl} onText={t('http.on')} offText={t('http.off')} />],
+            selected.proxy_effective && [t('mon.proxy.label'),
+              <span key="px"><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /> <span className="text-muted-foreground">· {t(`mon.proxy.${selected.use_proxy || 'AUTO'}`)}</span></span>],
+            [t('http.sslSectionTitle'), [selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')],
+          ]} />
+          {/* Sekme değişince seçili kontrol DÜŞER. Tanı penceresi `detailTab === 'control'`
+              koşuluyla gizleniyordu ama `selCheck` ayakta kalıyordu: kullanıcı pencere açıkken
+              başka sekmeye geçip geri döndüğünde pencere kendiliğinden yeniden açılıyordu —
+              üstelik 30 sn'lik canlı yenileme listeyi tazelediyse artık listede olmayan bir
+              satırın tanısıyla. */}
+          <DetailTabs value={detailTab} onValueChange={(v) => { setDetailTab(v); setSelCheck(null) }}
+            countsFor={{ kind: 'http', monitorId: selected.id, notesType: 'HTTP', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['control', t('hist.tab')], ['alerts', t('http.tabAlerts')], ['chart', t('http.tabChart')],
+              ['notes', t('http.tabGuide')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="control">
               <CheckHistoryTab kind="http" monitorId={selected.id} listKey="http-history" reloadSignal={histReload}
                 columns={[t('http.colTime'), t('http.colStatus'), 'HTTP', t('http.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
@@ -709,208 +803,54 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                     <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
                     {bad
-                      ? <button type="button" className="hdiag-open" onClick={open} title={c.error || undefined}
+                      ? <Button type="button" variant="ghost" size="xs" onClick={open} title={c.error || undefined}
+                          className="h-auto min-w-0 justify-between gap-2 px-1.5 py-0.5 text-left font-normal text-destructive hover:bg-destructive/10 hover:text-destructive"
                           /* Erişilebilir ad ZAMANI da taşır: aynı hata art arda tekrarladığında
                              (tipik durum — 32 satırın hepsi "HTTP connect timed out") yalnız hata
                              metniyle satırlar ekran okuyucuda birbirinin aynı okunuyor ve klavye
                              kullanıcısı hangi kontrolde olduğunu ayırt edemiyordu. */
                           aria-label={`${formatDateSec(c.checked_at)} · ${detailText} — ${t('httpdiag.rowOpenAria')}`}>
-                          <span className="hdiag-open-text">{detailText}</span>
-                          <span className="hdiag-open-cta">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
-                        </button>
+                          <span className="min-w-0 truncate">{detailText}</span>
+                          <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-semibold text-primary">{t('httpdiag.rowShow')}<ChevronRight size={12} aria-hidden="true" /></span>
+                        </Button>
                       : <span className="upt-rt-ms">{detailText}</span>}
                   </>)
                 }} />
-            )}
-            {/* Tanı KENDİ penceresinde (2026-09-23): iç içe modal — ModalShell derinliğe göre katmanlıyor,
-                Escape yalnız en derindekini kapatıyor, odak geri Detay düğmesine dönüyor. */}
-            <ModalShell open={detailTab === 'control' && !!selCheck} onClose={() => setSelCheck(null)}
-              title={t('httpdiag.title')} icon={AlertTriangle} size="lg" closeLabel={t('httpdiag.close')}>
-              <HttpErrorDetail check={selCheck} t={t} className="hdiag--modal" />
-            </ModalShell>
+            </TabsContent>
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('http')} />}
+            <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('http')} /></TabsContent>
 
-            {detailTab === 'chart' && (
+            <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="http" />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'notes' && (
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="HTTP" target={selected.url} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="http" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {/* Tanı KENDİ penceresinde (2026-09-23): iç içe modal — ModalShell derinliğe göre katmanlıyor,
+              Escape yalnız en derindekini kapatıyor, odak geri Detay düğmesine dönüyor. */}
+          <ModalShell open={detailTab === 'control' && !!selCheck} onClose={() => setSelCheck(null)}
+            title={t('httpdiag.title')} icon={AlertTriangle} size="lg" closeLabel={t('httpdiag.close')}>
+            <HttpErrorDetail check={selCheck} t={t} className="hdiag--modal" />
+          </ModalShell>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir) */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--http">
-              <div className="modal-icon-hdr-badge"><Globe size={20} /></div>
-              <h3>{modal === 'new' ? t('http.modalNew') : t('http.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('http.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="http-type-banner"><Globe size={16} /><span>{t('http.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('http.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('http.urlHint')}</div>
-
-              <label><span>{t('http.method')}</span>
-                <SearchableSelect value={form.method} onChange={v => setForm(f => ({ ...f, method: v }))}
-                  options={METHODS.map(x => ({ value: x, label: x }))} /></label>
-              <label><span>{t('http.expectedStatus')}</span>
-                <input value={form.expectedStatus} placeholder="200, 2xx, 200-399" onChange={e => setForm(f => ({ ...f, expectedStatus: e.target.value }))} /></label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.followRedirects} onChange={e => setForm(f => ({ ...f, followRedirects: e.target.checked }))} />{t('http.followRedirects')}</label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.verifySsl} onChange={e => setForm(f => ({ ...f, verifySsl: e.target.checked }))} />{t('http.verifySsl')}</label>
-              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar; düzenlemede etkin sonuç ipucu */}
-              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
-
-              <label><span>{t('http.name')}</span>
-                <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('http.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('http.noTeam')} disabled />}</label>
-
-              <label className="full-width"><span>{t('http.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('http.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('http.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('http.groupInfo')}</div>
-
-              {/* Etiketler */}
-              <div className="full-width http-tags-block">
-                <div className="http-block-title">{t('http.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('http.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-
-
-              {/* SSL + Domain kontrolleri */}
-              <div className="full-width http-ssl-section">
-                <div className="http-block-title"><ShieldCheck size={15} style={{ verticalAlign: '-2px', marginRight: 5 }} />{t('http.sslSectionTitle')}</div>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.checkSslErrors} onChange={e => setForm(f => ({ ...f, checkSslErrors: e.target.checked }))} />{t('http.checkSslErrors')}</label>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.sslExpiryReminders} onChange={e => setForm(f => ({ ...f, sslExpiryReminders: e.target.checked }))} />{t('http.sslExpiryReminders')}</label>
-                {form.sslExpiryReminders && (
-                  <div className="http-days-row">
-                    <span>{t('http.reminderDays')}</span>
-                    <input value={form.sslReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, sslReminderDays: e.target.value }))} />
-                  </div>
-                )}
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.domainExpiryReminders} onChange={e => setForm(f => ({ ...f, domainExpiryReminders: e.target.checked }))} />{t('http.domainExpiryReminders')}</label>
-                {form.domainExpiryReminders && (
-                  <div className="http-days-row">
-                    <span>{t('http.reminderDays')}</span>
-                    <input value={form.domainReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, domainReminderDays: e.target.value }))} />
-                  </div>
-                )}
-                <div className="field-hint">{t('http.whoisHint')}</div>
-              </div>
-
-              {/* Alarm hassasiyeti */}
-              <label><span>{t('http.confirmAttempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('http.confirmInterval')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('http.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('http.recoveryInterval')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('http.timeout')}</span>
-                <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('http.active')}</label>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                ⓘ {t('http.confirmHint')}
-              </div>
-            </div>
-
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error
-                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
-                  : testResult.condition_met
-                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
-                {testResult.error || !testResult.condition_met
-                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.error
-                    ? <><strong>{t('http.testError')}:</strong> {testResult.error}</>
-                    : <>
-                        <strong>{testResult.condition_met ? t('http.testMet') : t('http.testNotMet')}</strong>
-                        {testResult.http_status != null && <> — HTTP {testResult.http_status}</>}
-                        {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
-                        {testResult.expected_status && <> · {t('http.expectedStatus')}: {testResult.expected_status}</>}
-                        {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
-                      </>}
-                </span>
-              </div>
-            )}
-            {/* Form testi düştüyse aynı tanı paneli (kaydetmeden önce "neden" görülsün) — 2026-09-22 */}
-            {testResult && !testResult.condition_met && (testResult.error || testResult.http_status != null) && (
-              <HttpErrorDetail t={t} check={{ id: 'test', ok: false, error: testResult.error, http_status: testResult.http_status, checked_at: new Date().toISOString(), error_detail: testResult.error_detail }} />
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="http-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
-                <FlaskConical size={14} />{t('http.test')}
-              </Button>
-              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('http.delete')}</Button>}
-              <Button variant="secondary" onClick={closeEdit}>{t('http.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('http.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

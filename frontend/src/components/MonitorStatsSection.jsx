@@ -1,9 +1,13 @@
-import { BarChart3, ChevronDown } from 'lucide-react'
+import { BarChart3 } from 'lucide-react'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import CollapsibleSection from './ui/CollapsibleSection.jsx'
 import { useT } from '../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
 
 /**
  * İzleme sayfalarının istatistik şeridi: katlanabilir başlık + sayım kartları + aktif filtre çubuğu.
+ * Çizim shadcn: Collapsible (tetik Button, aria-expanded Radix'ten), filtre çubuğu ui/AlertBanner.
  *
  * <p>Bu 18 satırlık JSX sekiz izleme sayfasında (domain/http/keyword/page/ping/port/scripted/dns)
  * <b>birebir aynı</b> kopyalanmıştı — projedeki en büyük tekrar eden blok. Tek fark DNS
@@ -35,29 +39,21 @@ export default function MonitorStatsSection({
 }) {
   const t = useT()
   const hasMonitors = !loading && total > 0
+  const toggleLabel = statsVisible ? t('app.collapseStats') : t('app.expandStats')
+  // Başlık = projenin tek katlanır şeridi (ui/CollapsibleSection; Pano/İstatistikler/Sistem Sağlığı ile aynı)
   return (
-    <>
+    <CollapsibleSection open={statsVisible} onOpenChange={() => onToggle()} showTrigger={hasMonitors}
+      icon={BarChart3} label={t('app.statistics')} hint={t('app.expandStats')} toggleLabel={toggleLabel}
+      triggerClassName="mb-2">
       {hasMonitors && (
-        <div className="stats-collapse-bar" onClick={onToggle}
-          role="button" tabIndex={0} aria-expanded={statsVisible}
-          aria-label={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
-          title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}>
-          <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-          <span className="stats-collapse-label">{t('app.statistics')}</span>
-          {!statsVisible && <span className="stats-collapse-hint">{t('app.expandStats')}</span>}
-          <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}><ChevronDown size={18} /></span>
-        </div>
-      )}
-      {statsVisible && hasMonitors && (
         <MonitorStatsBar items={items} activeFilter={activeFilter} onStatClick={onStatClick} />
       )}
-      {statsVisible && activeFilter && activeFilter !== 'total' && (
-        <div className="stats-filter-bar" style={{ marginBottom: 16 }}>
-          <span>{items.find(s => s.key === activeFilter)?.label} — {t('mondash.showing', shownCount)}</span>
-          <button className="stats-filter-clear" onClick={onClearFilter}>{t('app.clearFilter')}</button>
-        </div>
+      {activeFilter && activeFilter !== 'total' && (
+        <AlertBanner tone="info" className="mb-4"
+          actions={<Button type="button" variant="outline" size="sm" onClick={onClearFilter}>{t('app.clearFilter')}</Button>}>
+          {items.find(s => s.key === activeFilter)?.label} — {t('mondash.showing', shownCount)}
+        </AlertBanner>
       )}
-    </>
+    </CollapsibleSection>
   )
 }

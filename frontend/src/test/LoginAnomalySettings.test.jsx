@@ -38,7 +38,7 @@ describe('LoginAnomalySettings', () => {
     render(<LoginAnomalySettings />)
     await waitFor(() => expect(api.admin.getLoginAnomalySettings).toHaveBeenCalled())
     expect(await screen.findByDisplayValue('20')).toBeInTheDocument()   // threshold_total
-    const toggles = screen.getAllByRole('checkbox')
+    const toggles = screen.getAllByRole('switch')   // shadcn Switch (ToggleRow)
     expect(toggles[0]).toBeChecked()                                    // enabled
   })
 
@@ -68,5 +68,8 @@ describe('LoginAnomalySettings', () => {
     render(<LoginAnomalySettings />)
     await waitFor(() => expect(api.admin.getLoginAnomalyIncidents).toHaveBeenCalled())
     expect(await screen.findByText('GLOBAL_VOLUME,IP_BRUTE_FORCE')).toBeInTheDocument()
+    // shadcn Table + durum Badge (açık olay = danger tonu)
+    expect(screen.getByTestId('la-incidents')).toHaveAttribute('data-slot', 'table')
+    expect(screen.getByText(/^(Aktif|Active)$/).closest('[data-slot="badge"]')).toHaveAttribute('data-tone', 'danger')
   })
 })

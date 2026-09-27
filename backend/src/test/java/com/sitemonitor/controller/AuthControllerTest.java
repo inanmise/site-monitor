@@ -15,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -192,6 +193,58 @@ class AuthControllerTest {
         org.mockito.Mockito.verify(userService, org.mockito.Mockito.never())
                 .recordFailedLogin(org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    // ── Kilit sayacı KANONİK adla (prod kapısı 2026-09-25, O-1) ──────────────────────────────
+    // Kimlik doğrulama harf duyarsız ama deneme sayacı (a.actor = :actor) duyarlıydı: "admin"/"ADMIN"/
+    // "Admin" ayrı sayılıyor, her varyant kendi 4 deneme hakkını alıyor, kilit hiç devreye girmiyordu.
+
+    @Test
+    @DisplayName("O-1: mevcut kullanıcı farklı harfle denenirse başarısız giriş KAYITLI adla yazılır")
+    void failedLogin_existingUser_recordedUnderCanonicalName() throws Exception {
+        when(userService.findByUsername("TESTUSER")).thenReturn(Optional.of(testUser));   // kayıtlı ad "testuser"
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"TESTUSER\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(auditService).recordLogin(eq("testuser"), any(), any(), any(), any(), any(), any(),
+                eq(false), eq("BAD_PASSWORD"), any(), anyInt());
+        verify(auditService, never()).recordLogin(eq("TESTUSER"), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("O-1: bilinmeyen kullanıcı adı BÜYÜK harfe kanonikleştirilir (varyantlar tek sayaçta birikir)")
+    void failedLogin_unknownUser_recordedUpperCase() throws Exception {
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"nobody\",\"password\":\"testpass\"}"))
+                .andExpect(status().isUnauthorized());
+
+        verify(auditService).recordLogin(eq("NOBODY"), any(), any(), any(), any(), any(), any(),
+                eq(false), eq("UNKNOWN_USER"), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("O-1: BRUTE_FORCE eşiğinde kilit ve ACCOUNT_LOCKED olayı KANONİK ada uygulanır")
+    void bruteForce_lockAppliedToCanonicalName() throws Exception {
+        when(userService.findByUsername("TestUser")).thenReturn(Optional.of(testUser));
+        AuditLog brute = new AuditLog();
+        brute.setAnomalyFlags("BRUTE_FORCE");
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt())).thenReturn(brute);
+        when(userService.applyProgressiveLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 30));
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"TestUser\",\"password\":\"wrongpass\"}"))
+                .andExpect(status().isLocked());
+
+        verify(userService).applyProgressiveLockout("testuser");
+        verify(auditService).recordAction(eq("ACCOUNT_LOCKED"), eq("testuser"), any(), any(), any(), eq("USER"),
+                eq("testuser"), any(), any(), any(), any());
     }
 
     // ── Tek aktif oturum onayı ────────────────────────────────────────────────
@@ -474,6 +527,64 @@ class AuthControllerTest {
 
         mvc.perform(get("/api/me").session(session))
                 .andExpect(jsonPath("$.inactivity_warn_seconds").value(2 * 60 - 1));
+    }
+
+    // ── Bayat oturum takım kapsamı (2026-09-25, kullanıcı isteği: USER izleme/alan adı ekleyebilmeli) ──
+    // Takım öznitelikleri yalnız girişte yazılıyordu: sonradan takıma eklenen kullanıcı requireInventoryWriter /
+    // canOperateTeam'de 403 alıyor, /me taze team_ids yanında bayat team_id veriyordu.
+
+    private MockHttpSession staleUserSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "testuser");
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("teamId", null);
+        s.setAttribute("memberTeamIds", new java.util.ArrayList<Long>());
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<Long>());
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
+        return s;
+    }
+
+    private void userNowInTeam5() {
+        testUser.setTeamId(5L);
+        testUser.getTeamIds().add(5L);
+        when(userService.computeMemberTeamIds(testUser)).thenReturn(List.of(5L));
+        when(userService.computeViewTeamIds(testUser)).thenReturn(List.of(5L));
+        when(userService.computeManageTeamIds(testUser)).thenReturn(List.of());
+        com.sitemonitor.model.Team t = new com.sitemonitor.model.Team();
+        t.setId(5L); t.setName("Takım A");
+        when(userService.findTeamById(5L)).thenReturn(Optional.of(t));
+    }
+
+    @Test
+    @DisplayName("/me: girişten SONRA takıma eklenen kullanıcının oturumu DB'den tazelenir — team_id 5, üyelik [5]")
+    void me_refreshesStaleTeamScope() throws Exception {
+        userNowInTeam5();
+        MockHttpSession session = staleUserSession();
+
+        mvc.perform(get("/api/me").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.team_id").value(5))
+                .andExpect(jsonPath("$.team_name").value("Takım A"));
+
+        assertThat(session.getAttribute("teamId")).isEqualTo(5L);
+        assertThat(session.getAttribute("memberTeamIds")).isEqualTo(List.of(5L));
+        assertThat(session.getAttribute("viewTeamIds")).isEqualTo(List.of(5L));
+        assertThat(session.getAttribute("teamName")).isEqualTo("Takım A");
+    }
+
+    @Test
+    @DisplayName("/me: oturum rolü DB rolünden FARKLIYSA takım kapsamına dokunulmaz (rol semantiği değişmez)")
+    void me_roleChanged_doesNotRefreshScope() throws Exception {
+        userNowInTeam5();
+        testUser.setSystemRole("ADMIN");   // DB'de rol yükseltilmiş; oturum hâlâ USER
+        MockHttpSession session = staleUserSession();
+
+        mvc.perform(get("/api/me").session(session)).andExpect(status().isOk());
+
+        assertThat(session.getAttribute("teamId")).isNull();
+        assertThat(session.getAttribute("memberTeamIds")).isEqualTo(List.of());
+        assertThat(session.getAttribute("viewTeamIds")).isEqualTo(List.of());
     }
 
     @Test

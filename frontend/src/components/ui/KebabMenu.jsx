@@ -54,8 +54,9 @@ export default function KebabMenu({ items = [], label = 'İşlemler', rowLabel =
         {/* aria-label SATIRI ayırt eder, title kısa kalır: 200 satırlık bir tabloda ekran
             okuyucu 200 kez "İşlemler, menü" okuyordu — hangi kaydın silme menüsünde olunduğu
             duyulmuyordu. rowLabel verilmezse davranış eskisiyle birebir aynı. */}
-        {/* print:hidden — eski sarmalayıcı (.wr-menu-wrap) yazdırmada gizleniyordu; aynı davranış. */}
-        <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground print:hidden"
+        {/* print:hidden — eski sarmalayıcı (.wr-menu-wrap) yazdırmada gizleniyordu; aynı davranış.
+            pointer-coarse:size-10 — dokunmatikte 40 px dokunma hedefi (RESPONSIVE.md); masaüstü 28 px kalır. */}
+        <Button variant="ghost" size="icon-sm" className="size-7 text-muted-foreground pointer-coarse:size-10 print:hidden"
           title={label} aria-label={rowLabel ? `${rowLabel} — ${label}` : label}>
           <Menu aria-hidden="true" />
         </Button>

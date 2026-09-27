@@ -1,6 +1,6 @@
 import { Component, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
-import { AlertOctagon, Bug } from 'lucide-react'
+import { AlertOctagon, Bug, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
@@ -8,6 +8,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 
 /**
  * Çökme ekranı. İki kural bu yüzeyi diğerlerinden ayırır:
@@ -24,6 +25,7 @@ import { Button } from '@/components/shadcn/button'
 function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
   const t = useT()
   const [reportOpen, setReportOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const reportFailed = reportState === 'failed'
 
   return (
@@ -56,7 +58,7 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
       {reportState === 'sent' && (
         // Bildirim başarılı — kullanıcı "yöneticiye ilettim mi?" diye uğraşmasın.
         // Referans kopyalanabilir: çökmüş bir ekrandan not almanın tek pratik yolu.
-        <div className="eb-reported">
+        <div className="mt-3.5 text-[13px] text-muted-foreground">
           {t('err.reported')}
           {reportRef && (
             <> · <CopyableRef value={reportRef} copyLabel={t('err.copyRef')} copiedLabel={t('err.copied')} /></>
@@ -65,7 +67,7 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
       )}
 
       {reportFailed && (
-        <div className="eb-report-failed">
+        <div className="mx-auto mt-3.5 w-full max-w-[560px] text-left">
           <AlertBanner tone="warning" role="status">{t('err.reportFailed')}</AlertBanner>
         </div>
       )}
@@ -78,17 +80,26 @@ function ErrorFallback({ onReload, errorText, reportRef, reportState }) {
         // seçmek pratikte işlemiyor. CopyButton bilinçli: CopyableRef değeri ekranda TEKRAR yazar
         // (kısa referans kodları için), burada metin zaten <pre> içinde. İkisi de toast KULLANMAZ —
         // bu yüzey provider'sız da çalışmak zorunda (dosya başındaki 1. kural).
-        <details className="eb-details">
-          <summary className="eb-details-summary">
-            <span>{t('err.details')}</span>
-            {/* Butona tıklamak <details>'i açıp kapatmasın diye olay burada durdurulur. */}
-            <span className="eb-details-copy"
-                  onClick={e => { e.preventDefault(); e.stopPropagation() }}>
+        //
+        // shadcn Collapsible (eski <details>): kopyalama düğmesi başlık düğmesinin KARDEŞİ — içinde değil —
+        // bu yüzden kopyalamak paneli açıp kapatmaz (eskiden <summary> içinde durduğu için olay durduruluyordu).
+        <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen} data-slot="error-details"
+          className="mx-auto mt-[18px] w-full max-w-[720px] text-left">
+          <div className="flex items-center gap-2">
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="group/eb px-2 font-semibold text-muted-foreground">
+                <ChevronDown aria-hidden="true" className="transition-transform duration-200 group-data-[state=open]/eb:rotate-180 motion-reduce:transition-none" />
+                {t('err.details')}
+              </Button>
+            </CollapsibleTrigger>
+            <span className="ml-auto inline-flex">
               <CopyButton value={errorText} label={t('err.copyError')} copiedLabel={t('err.copied')} />
             </span>
-          </summary>
-          <pre className="eb-pre">{errorText}</pre>
-        </details>
+          </div>
+          <CollapsibleContent>
+            <pre className="mt-2 max-h-80 overflow-auto rounded-lg border bg-muted p-3 text-xs break-words whitespace-pre-wrap text-foreground">{errorText}</pre>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </StatusBlock>
   )

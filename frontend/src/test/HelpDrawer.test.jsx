@@ -27,7 +27,9 @@ describe('HelpDrawer', () => {
     render(<HelpDrawer tab="nonexistent" />)
     fireEvent.click(screen.getByRole('button', { name: /Bu sayfa için yardım|Help for this page/ }))
     expect(screen.getByText(/ayrı bir kılavuz bölümü yok|no dedicated guide section/)).toBeInTheDocument()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    // Panel shadcn Sheet: Escape Radix'in katman yığınından (odaktaki öğeden belgeye kabarır).
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-slot', 'sheet-content')
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

@@ -102,6 +102,19 @@ public class UserService {
     @Value("${site.monitor.login.stamp-dedupe-seconds:30}")
     private long stampDedupeSeconds;
 
+    /**
+     * Üyelik kaynak izi (2026-09-26) — elle değişen üyelik {@code MANUAL} olarak işaretlenir ki LDAP
+     * budaması ona dokunmasın ve yönetici "bu kişi bu takıma neden üye?" sorusunu ekrandan cevaplayabilsin.
+     * Alan enjeksiyonu + null-güvenli: yapıcıyla kurulan birim testleri (iz tutmadan) aynen çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TeamMembershipSourceService teamSources;
+
+    /** Test kancası (yapıcıyla kurulan servislerde iz yazarını bağlamak için). */
+    void setTeamSources(TeamMembershipSourceService teamSources) {
+        this.teamSources = teamSources;
+    }
+
     private record ActiveSidEntry(String sid, long atMs) {}
     private static final int SESSION_MAP_MAX = 10_000;   // sert üst sınır (CaAutoPinService cap deseni)
     private final java.util.concurrent.ConcurrentHashMap<String, ActiveSidEntry> activeSessionCache =
@@ -689,6 +702,10 @@ public class UserService {
         user.setCreatedAt(now);
         user.setUpdatedAt(now);
         AppUser saved = userRepo.save(user);
+        if (teamSources != null) {
+            teamSources.recordAll(saved.getId(), teams, com.sitemonitor.model.UserTeamSource.MANUAL,
+                    "create", TeamMembershipSourceService.currentActor());
+        }
         syncPoLeadership(saved);
         return saved;
     }
@@ -743,8 +760,18 @@ public class UserService {
             // Üyelik GERÇEKTEN değiştiyse kilitle (role/orgRole ile aynı sözleşme): düzenleme formu her
             // kayıtta team_ids gönderir; aynı kümeyi yeniden yazmak manuel atama sayılmaz (2026-09-18).
             boolean changed = !next.equals(new LinkedHashSet<>(user.getTeamIds() == null ? java.util.Set.of() : user.getTeamIds()));
+            LinkedHashSet<Long> before = new LinkedHashSet<>(user.getTeamIds() == null ? java.util.Set.of() : user.getTeamIds());
+            if (user.getTeamId() != null) before.add(user.getTeamId());
             applyTeams(user, next);
             if (changed) user.setTeamLocked(true);   // admin manuel değiştirdi → LDAP takımları ezmesin
+            if (changed && teamSources != null) {
+                // Yeni eklenen üyelik MANUAL; çıkarılanın izi silinir. Değişmeyenlerin (ör. AD grubu) izi korunur.
+                List<Long> added = next.stream().filter(t -> !before.contains(t)).toList();
+                List<Long> removed = before.stream().filter(t -> !next.contains(t)).toList();
+                teamSources.recordAll(id, added, com.sitemonitor.model.UserTeamSource.MANUAL,
+                        "admin", TeamMembershipSourceService.currentActor());
+                teamSources.forget(id, removed);
+            }
         }
         if (active != null) user.setActive(active);
         String newOrg = (orgRole != null && !orgRole.isBlank()) ? orgRole : null;
@@ -828,8 +855,9 @@ public class UserService {
             u.setManagerSicil(sicil);
             // Elle girilen sicil DB'de bir kullanıcıya denk geliyorsa bağı da kur (Takım Müdürü sütunu ve
             // müdür-zinciri managerId'den yürür; eskiden yalnız metin yazılıyor, bağ LDAP girişine kalıyordu).
+            // ManagerLookup: aynı sicilli iki kullanıcıda istisna (500) yerine BAĞLAMAZ; boşluk/harf duyarsız.
             u.setManagerId(sicil == null ? null
-                    : userRepo.findByEmployeeId(sicil).map(AppUser::getId).filter(id -> !id.equals(u.getId())).orElse(null));
+                    : ManagerLookup.resolve(userRepo, sicil, u.getId()).map(AppUser::getId).orElse(null));
         }
     }
 
@@ -973,6 +1001,7 @@ public class UserService {
             teamRepo.save(t);
         }
         userRepo.deleteById(id);
+        if (teamSources != null) teamSources.forgetUser(id);   // üyelik kaynak izleri öksüz kalmasın
     }
 
     // ── Progressive lockout ───────────────────────────────────────────────────
@@ -999,7 +1028,13 @@ public class UserService {
     /**
      * Called when BRUTE_FORCE is detected for this username.
      * Escalates the lockout level and persists it.
-     * Level 1→30s, 2→2min, 3→10min, 4→30min, 5+→permanent.
+     * Level 1→30s, 2→2min, 3→10min, 4→30min, 5+→30min again (last level REPEATS).
+     *
+     * <p><b>Kalıcı kilit YOK</b> (kullanıcı kararı 2026-09-26, prod kapısı O-2): eskiden 5. ihlal hesabı kalıcı
+     * kilitliyordu ve yalnız yönetici açabiliyordu. Parola gerektirmediği için kimliksiz bir saldırgan tahmin
+     * edilebilir kullanıcı adlarını (açılış yöneticisi dâhil) ~12 istekle kalıcı kilitleyip hizmet dışı
+     * bırakabiliyordu. Artık son kademenin süresi her yeni ihlalde yinelenir: kaba kuvvet yine 30 dakikada
+     * bir denemeye iner, hesap kendiliğinden açılır. Yöneticinin elle kilidi ({@code permanentLock}) aynen kalır.
      */
     @Transactional
     public LockoutStatus applyProgressiveLockout(String username) {
@@ -1007,15 +1042,8 @@ public class UserService {
             int offense = (u.getFailedBlockCount() == null ? 0 : u.getFailedBlockCount()) + 1;
             u.setFailedBlockCount(offense);
             u.setUpdatedAt(now());
-            if (offense > lockoutDurationsSecs.size()) {
-                u.setPermanentLock(true);
-                u.setLockoutUntil(null);
-                u.setLastLockoutAt(now());
-                userRepo.save(u);
-                log.warn("Account PERMANENTLY locked: user='{}'", username);
-                return new LockoutStatus(true, 0);
-            }
-            long secs = lockoutDurationsSecs.get(offense - 1);
+            // Son kademeden sonra son süre yinelenir (kalıcı kilide yükseltme yok).
+            long secs = lockoutDurationsSecs.get(Math.min(offense, lockoutDurationsSecs.size()) - 1);
             String lockedAt = ISO.format(Instant.now());
             u.setLastLockoutAt(lockedAt);
             u.setLockoutUntil(ISO.format(Instant.now().plusSeconds(secs)));

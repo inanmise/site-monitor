@@ -15,7 +15,14 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import ScriptedTemplateEditor from './ScriptedTemplateEditor.jsx'
 import ScriptedTemplateVersions from './ScriptedTemplateVersions.jsx'
+import Field from '../ui/Field.jsx'
+import { VersionChip } from './VersionTimeline.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Input } from '@/components/shadcn/input'
+import { cn } from '@/lib/utils'
 
 /**
  * Şablon kütüphanesi yönetim yüzeyi — Sentetik İzleme sayfasının "Şablonlar" görünümü.
@@ -144,10 +151,17 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
    * geri alma işlemi çoğu zaman şablonun geldiği yere döndürmektir.
    */
   async function demote(row, targetTeamId) {
-    const res = await api.monitoring.demoteScriptedTemplate(row.id, Number(targetTeamId))
-    setDemoting(null)
-    if (res?.success) { toast.success(t('tpl.demoted')); reload() }
-    else toast.error(res?.error || t('tpl.demoteError'))
+    // try/finally ŞART: request() ağ hatasında THROW eder; yakalanmazsa setDemoting(null) hiç koşmuyor ve
+    // pencere "meşgul" (düğmeler kilitli) kalıyordu — kapatmanın tek yolu sayfayı yenilemekti.
+    try {
+      const res = await api.monitoring.demoteScriptedTemplate(row.id, Number(targetTeamId))
+      if (res?.success) { toast.success(t('tpl.demoted')); reload() }
+      else toast.error(res?.error || t('tpl.demoteError'))
+    } catch (e) {
+      toast.error(e?.message || t('tpl.demoteError'))
+    } finally {
+      setDemoting(null)
+    }
   }
 
   /** Kopyala: gövdeyi tekil uçtan çeker ve YENİ şablon taslağı olarak editöre koyar. */
@@ -172,7 +186,7 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
         <SegmentedControl value={scope} onChange={setScope} options={scopeOptions} ariaLabel={t('tpl.scope')} />
         {tagOptions.length > 1 &&
           <SearchableSelect value={tag} onChange={setTag} options={tagOptions} searchThreshold={6} ariaLabel={t('flt.tag')} />}
-        <input className="upt-search" type="text" placeholder={t('tpl.searchPlaceholder')}
+        <Input type="text" className="w-auto min-w-[200px]" placeholder={t('tpl.searchPlaceholder')}
           value={search} onChange={e => setSearch(e.target.value)} aria-label={t('tpl.searchPlaceholder')} />
         {canCreate &&
           <Button size="sm" onClick={() => setEditing({})}>
@@ -195,22 +209,27 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
                     <Plus size={14} />{t('tpl.emptyCta')}
                   </Button>
                 : null} />
-          : (<div className="sc-tpl-tree">
+          : (<div className="flex flex-col gap-2">
             {grouped.map(group => {
               const open = openCats.has(group.key)
               return (
-                <section key={group.key} className={`sc-tpl-branch${open ? ' is-open' : ''}`}>
-                  <button type="button" className="sc-tpl-branch-head"
-                    aria-expanded={open} onClick={() => toggleCat(group.key)}>
-                    <ChevronRight size={15} className="sc-tpl-branch-caret" aria-hidden="true" />
-                    <span className="sc-tpl-branch-name">{t('tpl.cat.' + group.key)}</span>
-                    <span className="sc-tpl-branch-count">{group.items.length}</span>
-                  </button>
-
-                  {/* Kapalı dal İÇERİĞİ HİÇ ÇİZİLMEZ (CSS ile gizlenmez): 100 şablonun tamamını
-                      DOM'a koyup saklamak, ağacın çözdüğü sorunu geri getirirdi. */}
-                  {open && (
-                    <div className="cards-container sc-tpl-cards">
+                // Dal: shadcn Collapsible. Kapalı dal İÇERİĞİ HİÇ ÇİZİLMEZ (Radix kapalı içeriği boş
+                // bırakır; CSS ile gizlenmez): 100 şablonun tamamını DOM'a koyup saklamak, ağacın
+                // çözdüğü sorunu geri getirirdi.
+                <Collapsible key={group.key} open={open} onOpenChange={() => toggleCat(group.key)}
+                  data-branch={group.key} className="overflow-hidden rounded-[10px] border bg-card">
+                  <CollapsibleTrigger asChild>
+                    <Button type="button" variant="ghost"
+                      className={cn('h-auto w-full justify-start gap-2.5 rounded-none bg-muted/40 px-3.5 py-2.5 text-left text-[13.5px] font-bold hover:bg-muted',
+                        open && 'border-b')}>
+                      <ChevronRight size={15} aria-hidden="true"
+                        className={cn('shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-90 text-primary')} />
+                      <span className="min-w-0 flex-1 truncate">{t('tpl.cat.' + group.key)}</span>
+                      <Badge variant="outline" data-slot="branch-count" className="bg-muted/60 font-bold tabular-nums text-muted-foreground">{group.items.length}</Badge>
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="cards-container p-3.5">
                       {group.items.map(row => (
                         <TemplateCard key={row.id} t={t} lang={lang} row={row}
                           onView={() => setViewing(row)}
@@ -225,8 +244,8 @@ export default function ScriptedTemplatesTab({ t, lang, teams = [], teamName, on
                           onUse={onUseTemplate ? () => onUseTemplate(row) : null} />
                       ))}
                     </div>
-                  )}
-                </section>
+                  </CollapsibleContent>
+                </Collapsible>
               )
             })}
           </div>)}
@@ -300,36 +319,43 @@ function TemplateCard({ t, lang, row, onView, onEdit, onVersions, onDuplicate, o
   ]
 
   return (
-    <div className={`sc-tpl-card${deleted ? ' is-deleted' : ''}`}>
-      <div className="card-header">
-        <div className="sc-tpl-card-title">
-          <span className="card-title">{name}</span>
+    <Card data-template-card="true" data-deleted={deleted ? 'true' : undefined}
+      className={cn('gap-2 rounded-[10px] px-4 py-3.5 shadow-none transition-[box-shadow,translate] duration-150 hover:-translate-y-px hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0',
+        deleted && 'border-dashed opacity-70')}>
+      <CardHeader className="px-0">
+        <CardTitle className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm">
+          <span className="[overflow-wrap:anywhere]">{name}</span>
           <ScopeBadge t={t} row={row} />
-          {row.current_version && <span className="sc-ver-chip">v{row.current_version}</span>}
-          {deleted && <span className="card-badge sc-tpl-badge--deleted">{t('tpl.badgeDeleted')}</span>}
-        </div>
+          {row.current_version && <VersionChip>v{row.current_version}</VersionChip>}
+          {deleted && <Badge variant="secondary" className={SCOPE_TONE.deleted}>{t('tpl.badgeDeleted')}</Badge>}
+        </CardTitle>
         {/* placement="right": aşağı açılan menü kartın kendi içeriğini örtüyordu ve kullanıcı
             hangi şablonun menüsünü açtığını göremiyordu. */}
-        <KebabMenu items={items} label={t('tpl.actions')} rowLabel={name} placement="right" />
-      </div>
+        <CardAction>
+          <KebabMenu items={items} label={t('tpl.actions')} rowLabel={name} placement="right" />
+        </CardAction>
+      </CardHeader>
 
-      {desc && <p className="sc-tpl-card-desc">{desc}</p>}
-      {when && <p className="sc-tpl-card-when"><b>{t('scripted.templateWhen')}</b> {when}</p>}
+      <CardContent className="flex flex-col gap-1.5 px-0 text-[13px] leading-relaxed text-muted-foreground">
+        {/* İki satır kırpma: kartlar aynı yükseklikte kalsın, uzun açıklama ızgarayı bozmasın. */}
+        {desc && <p className="line-clamp-2">{desc}</p>}
+        {when && <p className="line-clamp-2"><b className="text-foreground">{t('scripted.templateWhen')}</b> {when}</p>}
 
-      {(row.tags || []).length > 0 &&
-        <div className="tag-chips sc-tpl-card-tags">
-          {row.tags.map(g => <span key={g} className="tag-chip">{g}</span>)}
-        </div>}
+        {(row.tags || []).length > 0 &&
+          <div className="my-1 flex flex-wrap gap-1.5">
+            {row.tags.map(g => <Badge key={g} variant="outline" className="font-semibold">{g}</Badge>)}
+          </div>}
 
-      {(row.env || []).length > 0 &&
-        <p className="card-info"><span className="card-info-label">{t('scripted.templateEnvNeeded')}</span>{' '}
-          {row.env.map(e => e.name).join(', ')}</p>}
+        {(row.env || []).length > 0 &&
+          <p><span className="font-semibold text-foreground">{t('scripted.templateEnvNeeded')}</span>{' '}
+            {row.env.map(e => e.name).join(', ')}</p>}
+      </CardContent>
 
-      <div className="card-footer sc-tpl-card-foot">
+      <CardFooter className="mt-auto justify-between gap-2 px-0 text-xs text-muted-foreground">
         <span>{t('tpl.updatedBy', row.updated_by_name || row.updated_by || '—')}</span>
         <span>{formatDateSec(row.updated_at)}</span>
-      </div>
-    </div>
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -344,29 +370,46 @@ function DemoteModal({ t, row, teams, onClose, onConfirm }) {
   const [teamId, setTeamId] = useState(origin ? String(origin.id) : '')
   const [busy, setBusy] = useState(false)
   return (
-    <ModalShell open onClose={onClose} title={t('tpl.demoteTitle')} icon={Users} size="sm" busy={busy}>
-      <p>{t('tpl.demoteText', row.name)}</p>
-      <label className="full-width"><span>{t('tpl.demoteTarget')} <span className="req-star">*</span></span>
-        <SearchableSelect value={teamId} onChange={setTeamId} searchThreshold={4}
-          options={[{ value: '', label: t('tpl.scopePick') },
-                    ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} /></label>
-      <div className="modal-actions">
+    <ModalShell open onClose={onClose} title={t('tpl.demoteTitle')} icon={Users} size="sm" busy={busy}
+      footer={<>
         <Button variant="secondary" onClick={onClose}>{t('tpl.cancel')}</Button>
         <Button disabled={!teamId || busy}
-          onClick={() => { setBusy(true); onConfirm(teamId) }}>{t('tpl.demote')}</Button>
-      </div>
+          onClick={async () => {
+            // Bayrak try/finally ile söner: onConfirm reddederse (ağ hatası) pencere kalıcı "meşgul" kalmasın.
+            setBusy(true)
+            try { await onConfirm(teamId) } finally { setBusy(false) }
+          }}>{t('tpl.demote')}</Button>
+      </>}>
+      <p className="mb-3 text-sm">{t('tpl.demoteText', row.name)}</p>
+      <Field label={t('tpl.demoteTarget')} required className="mb-0">
+        {({ id }) => (
+          <SearchableSelect id={id} value={teamId} onChange={setTeamId} searchThreshold={4}
+            options={[{ value: '', label: t('tpl.scopePick') },
+                      ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+        )}
+      </Field>
     </ModalShell>
   )
 }
 
+// Kapsam rozeti tonları (eski .sc-tpl-badge--*): yerleşik nötr, genel marka, takım yeşil, silinmiş kırmızı.
+const SCOPE_TONE = {
+  builtin: 'bg-muted text-muted-foreground',
+  general: 'bg-primary/15 text-primary',
+  team: 'bg-success/15 text-success',
+  deleted: 'bg-destructive/15 text-destructive',
+}
+
 function ScopeBadge({ t, row }) {
-  if (row.builtin) return <span className="card-badge sc-tpl-badge--builtin">{t('tpl.badgeBuiltin')}</span>
+  if (row.builtin) return <Badge variant="secondary" data-scope="builtin" className={SCOPE_TONE.builtin}>{t('tpl.badgeBuiltin')}</Badge>
   if (row.scope === 'general') {
     return (<>
-      <span className="card-badge sc-tpl-badge--general">{t('tpl.badgeGeneral')}</span>
+      <Badge variant="secondary" data-scope="general" className={SCOPE_TONE.general}>{t('tpl.badgeGeneral')}</Badge>
       {/* Köken rozeti: genele açılmış şablonun nereden geldiği (K5) — güven sinyali. */}
-      {row.source_team_name && <span className="sc-tpl-origin">{t('scripted.tplFromTeam', row.source_team_name)}</span>}
+      {row.source_team_name && (
+        <Badge variant="ghost" className="px-0 text-[11px] font-semibold text-muted-foreground">{t('scripted.tplFromTeam', row.source_team_name)}</Badge>
+      )}
     </>)
   }
-  return <span className="card-badge sc-tpl-badge--team">{row.team_name || t('tpl.badgeTeam')}</span>
+  return <Badge variant="secondary" data-scope="team" className={SCOPE_TONE.team}>{row.team_name || t('tpl.badgeTeam')}</Badge>
 }

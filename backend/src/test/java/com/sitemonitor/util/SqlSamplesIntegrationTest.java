@@ -7,6 +7,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
@@ -27,8 +28,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * tolerate "function not found" errors for those rows.
  */
 @DataJpaTest
+// Kendi izole H2 örneği + NON_KEYWORDS=VALUE (HistoryQueryGrammarTest deseni). Paylaşılan gömülü H2'de
+// dns_records DDL'i hiç kurulamıyor ("value" H2'de anahtar kelime); DNS örnek sorgusu bu yüzden eskiden
+// "bad SQL grammar" diye TOLERE ediliyordu. SqlPlaygroundService artık en özgül nedeni ("Table ... not found")
+// döndürdüğü için gerçek şema hatası sayıldı (2026-09-27) — örnek artık GERÇEKTEN koşuyor.
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {
-    "spring.jpa.hibernate.ddl-auto=create-drop"
+    "spring.jpa.hibernate.ddl-auto=create-drop",
+    "spring.datasource.url=jdbc:h2:mem:sqlsamples;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=VALUE",
+    "spring.datasource.driver-class-name=org.h2.Driver"
 })
 class SqlSamplesIntegrationTest {
 

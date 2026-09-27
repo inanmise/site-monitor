@@ -4,8 +4,11 @@ Site Monitor {{ .Chart.AppVersion }} has been deployed!
   Release   : {{ .Release.Name }}
   Namespace : {{ .Release.Namespace }}
   Version   : {{ .Chart.AppVersion }}
+  Image     : {{ include "site-monitor.image" . }}
   Revision  : {{ .Release.Revision }}  (Sistem Sağlığı → Sürüm & Dağıtım'da bu revizyon görünür)
   Env label : {{ .Values.config.environmentName | default "(unset — environments/*.yaml doldurur)" }}
+  Log level : {{ .Values.config.logLevel | default "INFO" }}
+  Secret    : {{ include "site-monitor.secretName" . }}{{ if .Values.secret.existingSecret }} (existingSecret - not managed by this chart){{ else }} (rendered by this chart from secret.* values){{ end }}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 {{- if .Values.ingress.enabled }}
@@ -20,6 +23,18 @@ Port-forward to access locally:
 Health check:
   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "site-monitor.name" . }}
 
-⚠  IMPORTANT: Change the default admin password immediately!
-   kubectl patch secret {{ include "site-monitor.secretName" . }} -n {{ .Release.Namespace }} \
-     --type='json' -p='[{"op":"replace","path":"/data/ADMIN_PASSWORD","value":"'$(echo -n 'NEW_PASSWORD' | base64)'"}]'
+!!! SITE_MONITOR_SECRET_KEY must be the SAME value as before this upgrade.
+    A changed key does not stop the app: every stored secret (LDAP bind, SMTP password,
+    header / push secrets, PageSpeed key, scripted env secrets) silently decrypts to null.
+    Secrets are decrypted on use, so first trigger them (LDAP login or test-bind, SMTP test
+    mail, one header-secret monitor "check now"), then - the count MUST be 0:
+      kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "site-monitor.fullname" . }} | grep -c "decrypt failed"
+    If it is not 0: put the previous key back into the Secret and restart the pod (or
+    helm rollback when this chart renders the Secret). Do not re-enter the secrets unless
+    the old key is really lost - see docs/RUNBOOK.md, "Secret key".
+
+Post-deploy checklist (smoke steps, 24h watch, rollback): docs/PROD_DEPLOY_CHECKLIST.md
+
+Admin password: ADMIN_USERNAME / ADMIN_PASSWORD are used ONLY on the very first start
+(empty database) to create the bootstrap admin. Patching the Secret afterwards changes
+nothing - change the password in the UI (user menu) after the first login.

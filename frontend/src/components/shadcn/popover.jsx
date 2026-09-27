@@ -1,4 +1,4 @@
-
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Popover as PopoverPrimitive } from "radix-ui"
 
@@ -8,11 +8,12 @@ function Popover({
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
 
-function PopoverTrigger({
-  ...props
-}) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
-}
+// forwardRef (React 18): tetik başka bir tetiğin asChild çocuğu olunca (ör. <TooltipTrigger asChild><PopoverTrigger>)
+// Radix Slot ref'i buraya verir; düz işlev ref'i düşürür → ipucu çapasız kalır, konsolda "cannot be given refs"
+// (2026-09-27, Tüm Sertifikalar araç çubuğu). SHADCN.md §3.1.
+const PopoverTrigger = React.forwardRef(function PopoverTrigger(props, ref) {
+  return <PopoverPrimitive.Trigger ref={ref} data-slot="popover-trigger" {...props} />
+})
 
 function PopoverContent({
   className,

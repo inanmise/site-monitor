@@ -20,6 +20,17 @@ export const DEPLOY_KIND_STYLE = {
   RELEASE:    { icon: Tag,       tone: 'new' },
 }
 
+/**
+ * Dağıtım türü → rozet/nokta tonu (ToneBadge anahtarları: success/danger/warning/info/muted). Sürüm & Dağıtım
+ * yeniden tasarımı (2026-09-27): yükseltme yeşil, geri alma kırmızı, belirsiz değişim amber, yeniden başlatma mavi,
+ * sürümü bilinmeyen gri. Bilinmeyen tür → muted (sessiz boşluk olmaz).
+ */
+export const DEPLOY_KIND_TONE = {
+  FIRST_SEEN: 'success', UPGRADE: 'success', ROLLBACK: 'danger', CHANGED: 'warning',
+  RESTART: 'info', UNKNOWN: 'muted', MANUAL: 'info', BACKFILL: 'muted',
+}
+export function deployKindTone(kind) { return DEPLOY_KIND_TONE[kind] ?? 'muted' }
+
 /** Yayın bump türü → ikon. */
 export const BUMP_ICON = { major: Zap, minor: Sparkles, patch: Wrench, initial: Tag }
 export function bumpIcon(bump) { return BUMP_ICON[bump] ?? HelpCircle }

@@ -98,6 +98,13 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private UserPushService userPushService;
 
+    /**
+     * 7/24 İzleme Ekibi (NOC, 2026-09-27) — fırtınada NOC da TOPLU tek e-posta alır (sözleşme §4). Karar ve teslim
+     * {@code NocNotificationService}'te (bireysel hunideki ile AYNI kurallar); alan enjeksiyonu, null-güvenli.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocNotificationService nocNotifications;
+
     /** Olay ctx'indeki kanal bastırma damgasını okumak için — alan enjeksiyonu, null-güvenli. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -271,6 +278,16 @@ public class StormService {
             log.info("🌩 Storm #{} günlük toplu re-alert gönderildi — {} monitör hâlâ down", storm.getId(), stillDown.size());
         } else {
             stormRepo.save(storm);   // memberCount tazelemesini kalıcılaştır
+        }
+        // 7/24: fırtına SÜRERKEN katılan kapsanan izlemeler bireysel alarm üretmez (evaluate bastırır) — NOC'a toplu
+        // güncelleme bu tik'ten gider (fırtına başına en çok ~5 dk'da bir; tekilleştirme ve aralık serviste).
+        if (nocNotifications != null) {
+            try {
+                nocNotifications.onStormTick(storm, members.stream().filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList(),
+                        scopeLabel(storm), rootCauseLabel(storm.getRootCause()));
+            } catch (Exception ex) {
+                log.warn("Storm #{} 7/24 güncellemesi atlandı: {}", storm.getId(), ex.toString());
+            }
         }
     }
 
@@ -508,6 +525,12 @@ public class StormService {
             }
             if (!anyEmail) log.warn("Storm #{} toplu alarm — alıcı yok, e-posta atlandı", storm.getId());
 
+            // 7/24: takım e-postalarından BAĞIMSIZ; fırtına başına tek NOC e-postası (tekilleştirme serviste).
+            if (nocNotifications != null) {
+                try { nocNotifications.onStormDispatched(storm, downMembers, scopeLabel, rootCauseLabel); }
+                catch (Exception ex) { log.warn("Storm #{} 7/24 bildirimi atlandı: {}", storm.getId(), ex.toString()); }
+            }
+
             storm.setNotifiedTeams(String.join(", ", teamNames));
             storm.setMemberCount(downMembers.size());
             storm.setLastReAlertAt(now());
@@ -592,6 +615,11 @@ public class StormService {
         } catch (Exception e) {
             log.warn("Storm #{} toplu recovery gönderilemedi: {}", storm.getId(), e.getMessage());
         }
+        // 7/24: takım yolundaki bir hatadan BAĞIMSIZ — açılışı NOC'a gitmiş kurtulanlar için tek "ÇÖZÜLDÜ".
+        if (nocNotifications != null) {
+            try { nocNotifications.onStormRecovered(storm, recovered, stillDown); }
+            catch (Exception ex) { log.warn("Storm #{} 7/24 çözüm bildirimi atlandı: {}", storm.getId(), ex.toString()); }
+        }
     }
 
     private List<TeamDispatch> resolveDispatches(List<AlertEvent> members) {
@@ -606,7 +634,10 @@ public class StormService {
         Map<String, List<EscalationContact>> contactCache = new HashMap<>();
 
         for (AlertEvent m : members) {
-            boolean teamOnly = EscalationService.teamOnlyRecipients(m.getAlertType(), m.getAlertLevel());
+            // Bireysel yolla AYNI karar (prod kapısı 2026-09-25, O-1): bağlamdaki team_id damgası da bağımsız
+            // izleme sayılır (PORT/DNS); damgalı alarm envanterin UG takımını almaz (açılış yolu ugTeamId=null).
+            boolean stamped = EscalationService.hasTeamStamp(m);
+            boolean teamOnly = EscalationService.teamOnlyRecipients(m);
             Long teamId = m.getTeamId();
             Long ugTeamId = null;
             List<EscalationContact> contacts = List.of();
@@ -615,7 +646,7 @@ public class StormService {
                         k -> inventoryRepo.findByDomain(m.getDomain()));
                 if (inv.isPresent()) {
                     if (teamId == null) teamId = inv.get().getTeamId();
-                    ugTeamId = inv.get().getUgTeamId();
+                    if (!stamped) ugTeamId = inv.get().getUgTeamId();
                 }
                 // Önbellek anahtarı ÇÖZÜLMÜŞ takımı taşır (envanterden doldurulmuş olabilir);
                 // lambda da aynı değeri kullanmalı — final kopya şart.

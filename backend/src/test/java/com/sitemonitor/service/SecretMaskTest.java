@@ -125,4 +125,31 @@ class SecretMaskTest {
         assertThat(SecretMask.maskValues(null, java.util.List.of("abcd"))).isNull();
         assertThat(SecretMask.maskValues("x", null)).isEqualTo("x");
     }
+
+    // ── E-posta maskeleme (prod kapısı 2026-09-25, P4-1) ──────────────────────────────────────
+
+    @Test
+    @DisplayName("maskEmail: yerel kısım ilk harf + ***, alan adı görünür; adres olmayan değer de maskelenir")
+    void maskEmail_keepsDomainHidesLocalPart() {
+        assertThat(SecretMask.maskEmail("kisi.adi@example.com")).isEqualTo("k***@example.com");
+        assertThat(SecretMask.maskEmail("  takim-a@example.com ")).isEqualTo("t***@example.com");
+        assertThat(SecretMask.maskEmail("N12345")).isEqualTo("N***");
+        assertThat(SecretMask.maskEmail(null)).isEqualTo("-");
+        assertThat(SecretMask.maskEmail(" ")).isEqualTo("-");
+        assertThat(SecretMask.maskEmail("@example.com")).doesNotContain("kisi");
+    }
+
+    @Test
+    @DisplayName("maskEmails: dizi / liste / virgül ayraçlı dize — hiçbir yerel kısım günlüğe sızmaz")
+    void maskEmails_allShapes() {
+        String[] arr = {"birinci@example.com", "ikinci@example.org"};
+        assertThat(SecretMask.maskEmails(arr)).isEqualTo("[b***@example.com, i***@example.org]");
+        assertThat(SecretMask.maskEmails(java.util.List.of("ucuncu@example.com")))
+                .isEqualTo("[u***@example.com]");
+        String joined = SecretMask.maskEmails("dorduncu@example.com, besinci@example.com;altinci@example.com");
+        assertThat(joined).isEqualTo("[d***@example.com, b***@example.com, a***@example.com]")
+                .doesNotContain("dorduncu").doesNotContain("besinci").doesNotContain("altinci");
+        assertThat(SecretMask.maskEmails(null)).isEqualTo("[]");
+        assertThat(SecretMask.maskEmails(new String[0])).isEqualTo("[]");
+    }
 }

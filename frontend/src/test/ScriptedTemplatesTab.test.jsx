@@ -77,9 +77,9 @@ const TEAMS = [{ id: 5, name: 'Kanal' }, { id: 6, name: 'Çekirdek' }]
 async function expandAll() {
   // Liste ASENKRON yükleniyor: dal başlıkları daha çizilmemişken tıklamak sessizce hiçbir şey
   // yapmaz ve test "kart yok" diye düşer. Önce dalın gelmesini bekle.
-  await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
-  document.querySelectorAll('.sc-tpl-branch-head').forEach(h => fireEvent.click(h))
-  await waitFor(() => expect(document.querySelector('.sc-tpl-card')).not.toBeNull())
+  await waitFor(() => expect(document.querySelector('[data-branch] button[aria-expanded]')).not.toBeNull())
+  document.querySelectorAll('[data-branch] button[aria-expanded]').forEach(h => fireEvent.click(h))
+  await waitFor(() => expect(document.querySelector('[data-template-card]')).not.toBeNull())
 }
 
 function draw(props = {}) {
@@ -88,9 +88,9 @@ function draw(props = {}) {
 
 /** Kartın kebab menüsünü açar ve menü öğelerinin (role=menuitem) metnini döndürür. Dalı kendisi açar. */
 async function openMenu(cardName) {
-  await waitFor(() => expect(document.querySelector('.sc-tpl-branch-head')).not.toBeNull())
+  await waitFor(() => expect(document.querySelector('[data-branch] button[aria-expanded]')).not.toBeNull())
   await expandAll()
-  const card = (await screen.findByText(cardName)).closest('.sc-tpl-card')
+  const card = (await screen.findByText(cardName)).closest('[data-template-card]')
   // Kebab'ın adı artık şablon adını da taşıyor ("<ad> — tpl.actions").
   pressMenuTrigger(within(card).getByLabelText(/tpl[.]actions$/))
   return () => screen.queryAllByRole('menuitem').map(b => b.textContent)
@@ -183,11 +183,11 @@ describe('ScriptedTemplatesTab — süzgeçler ve boş durum', () => {
     list([{ ...BUILTIN, category: 'availability' }, { ...TEAM_TPL, category: 'checkout' }])
     draw()
 
-    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(2))
-    expect(document.querySelector('.sc-tpl-card')).toBeNull()
+    await waitFor(() => expect(document.querySelectorAll('[data-branch]').length).toBe(2))
+    expect(document.querySelector('[data-template-card]')).toBeNull()
     expect(screen.queryByText('Sistem sağlık kontrolü')).not.toBeInTheDocument()
     // Dal başlığı sayıyı gösterir: açmadan kaç şablon olduğu görünsün.
-    expect(document.querySelectorAll('.sc-tpl-branch-count')[0].textContent).toBe('1')
+    expect(document.querySelectorAll('[data-slot="branch-count"]')[0].textContent).toBe('1')
   })
 
   it('dal başlığına tıklayınca AÇILIR, tekrar tıklayınca kapanır', async () => {
@@ -195,7 +195,7 @@ describe('ScriptedTemplatesTab — süzgeçler ve boş durum', () => {
     draw()
 
     const head = await waitFor(() => {
-      const h = document.querySelector('.sc-tpl-branch-head')
+      const h = document.querySelector('[data-branch] button[aria-expanded]')
       expect(h).not.toBeNull()
       return h
     })
@@ -214,8 +214,8 @@ describe('ScriptedTemplatesTab — süzgeçler ve boş durum', () => {
     // içinde kalır ve arama çalışmıyor sanılır.
     list([{ ...BUILTIN, category: 'availability' }, { ...TEAM_TPL, category: 'checkout' }])
     draw()
-    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(2))
-    expect(document.querySelector('.sc-tpl-card')).toBeNull()
+    await waitFor(() => expect(document.querySelectorAll('[data-branch]').length).toBe(2))
+    expect(document.querySelector('[data-template-card]')).toBeNull()
 
     fireEvent.change(screen.getByLabelText('tpl.searchPlaceholder'), { target: { value: 'odeme' } })
 
@@ -225,7 +225,7 @@ describe('ScriptedTemplatesTab — süzgeçler ve boş durum', () => {
   it('kategorisiz şablon "Diğer" dalında toplanır — hiçbir kayıt ağacın dışında kalmaz', async () => {
     list([{ ...TEAM_TPL, category: null }])
     draw()
-    await waitFor(() => expect(document.querySelectorAll('.sc-tpl-branch').length).toBe(1))
+    await waitFor(() => expect(document.querySelectorAll('[data-branch]').length).toBe(1))
     expect(screen.getByText('tpl.cat.other')).toBeInTheDocument()
   })
 

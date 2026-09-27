@@ -5,7 +5,8 @@ import { api } from '../../api/client'
 // Bir kez çekilir (login sonrası), her UserBadge buradan ad-soyad + avatar çözer. Böylece
 // düzinelerce backend DTO'suna user_id eklemeden, sadece username (veya e-posta) olan her yerde
 // ad-soyad+resim gösterebiliriz.
-const UserDirectoryCtx = createContext({ lookup: () => null, lookupByEmail: () => null, ready: false })
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const UserDirectoryCtx = (globalThis.__smUserDirectoryCtx ??= createContext({ lookup: () => null, lookupByEmail: () => null, ready: false }))
 
 export function UserDirectoryProvider({ children }) {
   const [maps, setMaps] = useState(null) // { byName, byEmail } | null

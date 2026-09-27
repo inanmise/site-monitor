@@ -20,9 +20,27 @@ describe('VersionTimeline — mevcut sözleşme değişmedi', () => {
     expect(screen.getByText('ilk')).toBeInTheDocument()
     expect(screen.getByText('ŞU AN')).toBeInTheDocument()
     expect(document.querySelector('.sc-vt-item.is-sel')).not.toBeNull()
-    fireEvent.click(screen.getByText('v1.0.0').closest('[role="button"]'))
+    // Seçici GERÇEK düğme (role="button" div değil); seçili satırınki basılı
+    expect(screen.getByRole('button', { name: /v1\.1\.0/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /v1\.0\.0/ })).toHaveAttribute('aria-pressed', 'false')
+    expect(document.querySelector('[role="button"]')).toBeNull()
+    fireEvent.click(screen.getByText('v1.0.0').closest('button'))
     expect(onPick).toHaveBeenCalledWith(ROWS[0])
     expect(document.querySelectorAll('.sc-vt-caret').length).toBe(2)
+  })
+
+  it('stretched button: renderExtra içindeki gerçek düğme satır seçicisinin İÇİNDE değil ve seçimi tetiklemez', () => {
+    const onPick = vi.fn()
+    const onCopy = vi.fn()
+    render(<VersionTimeline rows={ROWS.slice(0, 1)} selId={null} onPick={onPick} eventLabel={(e) => e} currentLabel=""
+      renderExtra={() => <button type="button" onClick={onCopy}>kopyala</button>} />)
+    const pick = document.querySelector('[data-slot="version-pick"]')
+    const extra = screen.getByRole('button', { name: 'kopyala' })
+    expect(pick.contains(extra)).toBe(false)               // düğme içinde düğme yok
+    expect(extra.closest('[data-slot="version-extra"]')).not.toBeNull()   // örtünün üstündeki katman
+    fireEvent.click(extra)
+    expect(onCopy).toHaveBeenCalledTimes(1)
+    expect(onPick).not.toHaveBeenCalled()
   })
 })
 

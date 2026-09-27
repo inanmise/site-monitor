@@ -1,164 +1,190 @@
-import { useState, useEffect, useMemo } from 'react'
-import { UserCog, Shield, BellRing, Users, History, Mail, KeyRound } from 'lucide-react'
-import { api, formatDateSec } from '../../api/client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { BellRing, History, LayoutGrid, SearchCheck, ShieldCheck, UserCog, Users, X } from 'lucide-react'
+import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import ModalShell from '../ui/ModalShell.jsx'
-import TeamBadge from '../ui/TeamBadge.jsx'
-import UserBadge from '../ui/UserBadge.jsx'
-import NotificationGroupHistory from './NotificationGroupHistory.jsx'
-import { LoadingBlock } from '../ui/Progress.jsx'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
+import UserLdapCompare from './UserLdapCompare.jsx'
+import UserDetailHeader from './userdetail/UserDetailHeader.jsx'
+import OverviewTab from './userdetail/OverviewTab.jsx'
+import TeamsTab from './userdetail/TeamsTab.jsx'
+import NotificationsTab from './userdetail/NotificationsTab.jsx'
+import PermissionsTab from './userdetail/PermissionsTab.jsx'
+import ChangesTab from './userdetail/ChangesTab.jsx'
+import { SectionCard } from './userdetail/parts.jsx'
+import { useSection, unwrap } from './userdetail/useSection.js'
+import { effectivePermissions, fullNameOf, teamIdsOf } from './userdetail/userDetailModel.js'
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader } from '@/components/shadcn/sheet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 
+// Kaydırma kilidi sayaçlı (ModalShell / IssueDetailSheet ile aynı sözleşme): iç içe pencerede erken açılmaz.
+let scrollLocks = 0
+let savedOverflow = ''
+
 /**
- * Kullanıcı detay kartı (2026-09-20): "bu kişi ne görür, ne alır, son ne yaptı" tek ekranda.
- * Profil + takım üyelikleri + son giriş/kaynak/kilitler + eskalasyon kayıtları + etkin yetkiler
- * (PermissionMatrix'ten role göre çözümlenmiş) + push kararı (birincil takım, YÜKSEK) + son 10 denetim olayı.
- * Yetki/push/denetim ayakları yalnız global ADMIN'e yüklenir (kişisel veri ve global ayar).
+ * Kullanıcı Detayı (2026-09-27 yeniden tasarım — kullanıcı isteği: "shadcn ile zengin, profesyonel, mobil duyarlı").
+ *
+ * <p><b>Neden sağdan Sheet (ModalShell değil).</b> Bu pencere bir liste satırının İNCELEYİCİSİ: kullanıcı listeyi
+ * bağlamında tutar, tam yükseklik sekmeli içeriğe yer açar ve telefonda doğal olarak TAM EKRAN olur. Kardeş ayrıntı
+ * pencereleri (Sorun Bildirimi, Olay) aynı deseni kullanır → uygulamada tek "ayrıntı" dili. `modal={false}` + kendi
+ * scrim'i + sayaçlı kaydırma kilidi: içinden açılan takım üyeleri penceresi (TeamBadge → ModalShell), onay diyaloğu
+ * (AD'den yeniden eşitle) ve ipucu/menü portal'ları tıklanabilir kalır. Kapatma yolları: scrim, X, Escape.
+ *
+ * <p>Yerleşim: profil başlığı (avatar · ad · kullanıcı adı/e-posta kopyala · rol/durum/kilit rozetleri · son giriş ·
+ * Düzenle / AD denetimi) → yapışkan sekmeler (sayılı): Genel Bakış · Takımlar · Bildirimler · Yetkiler · Değişiklikler ·
+ * Dizin (AD). Her bölüm kendi iskeleti ve hata + yeniden dene yüzeyiyle yüklenir (eski panel hataları yutuyordu).
+ *
+ * <p>Props sözleşmesi korunur: `{ user, teams, isAdmin, onClose, onEdit, onChanged }`; ek (isteğe bağlı) `onUnlock` =
+ * UserManager'ın MEVCUT kilit açma işleyicileri `{ perm, role, org, team }` (yeni uç yok). Kapılar eskisiyle aynı:
+ * yetki / push / geçmiş / AD ayakları yalnız `isAdmin`'e yüklenir; AD karşılaştırması yalnız LDAP hesapta (sunucu
+ * ayrıca global yönetici ister).
  */
-export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, onEdit }) {
+export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, onEdit, onChanged, onUnlock }) {
   const t = useT()
-  const [contacts, setContacts] = useState(null)
-  const [matrix, setMatrix] = useState(null)
-  const [push, setPush] = useState(null)
-  const [hist, setHist] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('overview')
+  const bodyRef = useRef(null)
+  const name = fullNameOf(user)
+  const teamIds = useMemo(() => teamIdsOf(user), [user])
+  const teamMap = useMemo(() => Object.fromEntries((teams || []).map((x) => [Number(x.id), x.name])), [teams])
+  const showDirectory = !!isAdmin && user.auth_source === 'LDAP'
 
-  const teamIds = useMemo(() => {
-    const ids = user.team_ids ?? user.teamIds ?? []
-    const set = new Set(ids.map(Number))
-    if (user.team_id != null) set.add(Number(user.team_id))
-    return Array.from(set)
-  }, [user])
-  const teamMap = useMemo(() => Object.fromEntries((teams || []).map(x => [Number(x.id), x.name])), [teams])
+  // ── Bölümler: her biri kendi durumunu taşır (yükleniyor / hata + yeniden dene / veri) ──
+  // Üyelik + KAYNAK izi sunucudan TAZE okunur (yeniden eşitlemeden sonra `user` prop'u bayat kalır).
+  const membership = useSection(`m:${user.id}`, async () => {
+    const r = unwrap(await api.admin.userTeamMembership(user.id), t('ud.errTeams'))
+    if (!Array.isArray(r.data?.memberships)) throw new Error(t('ud.errTeams'))
+    return r.data
+  })
+  const contacts = useSection(`c:${user.id}`, async () => {
+    const r = unwrap(await api.admin.getContacts(), t('ud.errContacts'))
+    return (r.data || []).filter((c) => Number(c.user_id) === Number(user.id))
+  })
+  const matrix = useSection(`p:${user.id}`, async () => {
+    const r = unwrap(await api.admin.getPermissionMatrix(), t('ud.errPerms'))
+    return { catalog: r.catalog || [], grants: r.grants || [] }
+  }, !!isAdmin)
+  const push = useSection(`u:${user.id}:${user.team_id}`, async () => {
+    const r = unwrap(await api.admin.userPush.explain(user.team_id, 'HIGH'), t('ud.errPush'))
+    return (r.members || r.data?.members || []).find((x) => x.username === user.username) || null
+  }, !!isAdmin && user.team_id != null && !!api.admin.userPush?.explain)
+  // Değişiklik geçmişi: standart sunucu sayfalaması (pencere ön ayarı: 10 / [10, 25, 50], sıkı çubuk).
+  const sp = useServerPagination({ listKey: 'user-detail-history', preset: 'modal', resetDeps: [user.id], apiBase: 0 })
+  const history = useSection(`h:${user.id}:${sp.apiPage}:${sp.pageSize}`, async () => (
+    sp.bind(unwrap(await api.admin.history('USER', user.id, { page: sp.apiPage, size: sp.pageSize }), t('ud.errChanges')))
+  ), !!isAdmin)
 
+  const perms = useMemo(() => effectivePermissions(matrix.data, user.system_role), [matrix.data, user.system_role])
+
+  // Odak iadesi: kapanışta tetikleyiciye (satır / kart).
   useEffect(() => {
-    let alive = true
-    setLoading(true)
-    const jobs = [
-      api.admin.getContacts().then(r => { if (alive && r?.success) setContacts((r.data || []).filter(c => Number(c.user_id) === Number(user.id))) }).catch(() => {}),
-    ]
-    if (isAdmin) {
-      jobs.push(api.admin.getPermissionMatrix().then(r => { if (alive && r?.success) setMatrix({ catalog: r.catalog || [], grants: r.grants || [] }) }).catch(() => {}))
-      jobs.push(api.admin.history('USER', user.id, { page: 0, size: 10 }).then(r => { if (alive && r?.success) setHist(r) }).catch(() => {}))
-      if (user.team_id != null && api.admin.userPush?.explain) {
-        jobs.push(Promise.resolve(api.admin.userPush.explain(user.team_id, 'HIGH'))
-          .then(r => { if (!alive || !r?.success) return; const m = (r.members || r.data?.members || []).find(x => x.username === user.username); setPush(m || null) })
-          .catch(() => {}))
-      }
-    }
-    Promise.all(jobs).finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [user.id, isAdmin])   // eslint-disable-line react-hooks/exhaustive-deps
+    const previous = document.activeElement
+    return () => { if (previous && typeof previous.focus === 'function' && document.contains(previous)) previous.focus() }
+  }, [])
+  // Arka plan kaydırma kilidi (sayaçlı).
+  useEffect(() => {
+    if (scrollLocks === 0) { savedOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden' }
+    scrollLocks += 1
+    return () => { scrollLocks -= 1; if (scrollLocks === 0) document.body.style.overflow = savedOverflow }
+  }, [])
 
-  // Etkin yetkiler: rolün izinli (resource, action) çiftleri — matris tanımı üzerinden.
-  const perms = useMemo(() => {
-    if (!matrix) return null
-    const role = user.system_role
-    const out = []
-    for (const r of matrix.catalog) {
-      const acts = (r.actions || []).filter(a => matrix.grants.some(g => g.role === role && g.resource_key === r.resource_key && g.action === a && g.allowed))
-      if (acts.length) out.push({ key: r.resource_key, group: r.group, actions: acts })
-    }
-    return out
-  }, [matrix, user.system_role])
+  const openTab = (next) => {
+    setTab(next)
+    if (bodyRef.current) bodyRef.current.scrollTop = 0
+  }
+  const afterMutation = () => { history.reload(); onChanged?.() }
 
-  const footer = (
-    <>
-      <Button variant="secondary" onClick={onClose}>{t('team.close')}</Button>
-      {onEdit && <Button onClick={onEdit}>{t('usr.edit')}</Button>}
-    </>
-  )
-  const label = (k) => { const s = t(`perm.res.${k}`); return s === `perm.res.${k}` ? k : s }
+  const tabs = [
+    { key: 'overview', label: t('ud.tabOverview'), icon: LayoutGrid },
+    { key: 'teams', label: t('ud.tabTeams'), icon: Users,
+      count: membership.data ? membership.data.memberships.length : (membership.loading ? null : teamIds.length) },
+    { key: 'notifications', label: t('ud.tabNotifications'), icon: BellRing, count: contacts.data ? contacts.data.length : null },
+    isAdmin && { key: 'permissions', label: t('ud.tabPermissions'), icon: ShieldCheck, count: perms ? perms.granted : null },
+    isAdmin && { key: 'changes', label: t('ud.tabChanges'), icon: History, count: history.data ? Number(history.data.total ?? 0) : null },
+    showDirectory && { key: 'directory', label: t('ud.tabDirectory'), icon: SearchCheck },
+  ].filter(Boolean)
+
+  const primaryName = user.team_id != null
+    ? (membership.data?.memberships?.find((m) => Number(m.team_id) === Number(user.team_id))?.team_name || teamMap[Number(user.team_id)])
+    : null
 
   return (
-    <ModalShell open onClose={onClose} title={t('usr.viewTitle')} icon={UserCog} size="lg" footer={footer} scrollBody>
-      <div className="udp" data-testid="user-detail">
-        <div className="udp-head">
-          <UserBadge displayName={user.display_name} username={user.username} email={user.email} userId={user.id} size="md" />
-          <div className="udp-badges">
-            <span className={`role-badge${user.system_role === 'ADMIN' ? ' role-admin' : ''}`}>{user.system_role}</span>
-            {user.org_role && <span className={`badge-role badge-role-${user.org_role}`}>{t('usr.orgRoleVal.' + user.org_role)}</span>}
-            <span className={user.active ? 'badge badge-ok' : 'badge badge-err'}>{user.active ? t('usr.active') : t('usr.inactive')}</span>
-            <span className="badge" title={t('usr.authSourceTitle')}>{user.auth_source === 'LDAP' ? 'LDAP' : t('usr.authLocal')}</span>
+    <Sheet open modal={false} onOpenChange={(next) => { if (!next) onClose?.() }}>
+      {/* Katman: shadcn Sheet'in z-50'si yüzen yardım düğmesinin (900) altında kalır; ModalShell (2000) ve onay diyalogları
+          (--z-dialog) yine üstte açılsın diye 1000/1001 (Olay / Sorun ayrıntısıyla aynı). data-slot="dialog-overlay":
+          rowAccessibleNames kapısı bu örtüyü pasif tıklama sayar — kapatma ayrıca X ve Escape ile. */}
+      {createPortal(
+        <div data-slot="dialog-overlay" aria-hidden="true"
+          className="fixed inset-0 z-[1000] bg-black/50 animate-in fade-in-0 motion-reduce:animate-none"
+          onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }} />,
+        document.body,
+      )}
+      <SheetContent side="right" showCloseButton={false} data-testid="user-detail" data-slot="user-detail" data-user-id={user.id}
+        aria-modal="true" onInteractOutside={(e) => e.preventDefault()} onCloseAutoFocus={(e) => e.preventDefault()}
+        className="z-[1001] flex h-[100dvh] w-full flex-col gap-0 p-0 sm:w-[min(56rem,calc(100vw-2rem))] sm:max-w-none">
+        <SheetHeader className="shrink-0 gap-3 px-4 pt-3 pb-4 text-left sm:px-6">
+          <div className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+              <UserCog aria-hidden="true" className="size-3.5" />{t('usr.viewTitle')}
+            </span>
+            <SheetClose asChild>
+              <Button type="button" variant="ghost" size="icon" className="-mr-2 size-10 shrink-0 text-muted-foreground sm:size-9" aria-label={t('app.close')}>
+                <X aria-hidden="true" />
+              </Button>
+            </SheetClose>
           </div>
-        </div>
+          <SheetDescription className="sr-only">{t('ud.description', name)}</SheetDescription>
+          <UserDetailHeader user={user} name={name} onEdit={onEdit}
+            onOpenDirectory={showDirectory ? () => openTab('directory') : undefined} />
+        </SheetHeader>
 
-        <div className="udp-grid">
-          <section className="udp-block">
-            <h4><KeyRound size={14} /> {t('usr.detailAccess')}</h4>
-            <dl className="udp-dl">
-              <dt>{t('usr.colLastLogin')}</dt><dd>{user.last_login_at ? `${formatDateSec(user.last_login_at)}${user.last_login_method ? ` · ${user.last_login_method}` : ''}` : t('usr.neverLoggedIn')}</dd>
-              <dt>{t('usr.formEmployeeId')}</dt><dd>{user.employee_id || '—'}</dd>
-              <dt>{t('usr.colEmail')}</dt><dd>{user.email || '—'}</dd>
-              <dt>{t('usr.detailLocks')}</dt>
-              <dd>{[user.role_locked && t('usr.lockRole'), user.team_locked && t('usr.lockTeam'), user.org_role_locked && t('usr.lockOrg'), user.permanent_lock && t('usr.permLocked')].filter(Boolean).join(' · ') || '—'}</dd>
-            </dl>
-          </section>
+        <Tabs value={tab} onValueChange={openTab} className="flex min-h-0 flex-1 flex-col gap-0">
+          <div className="shrink-0 border-y bg-background">
+            {/* Telefonda sekmeler yatay kayar; kenarlar yumuşak solar (kaydırılabilir olduğu görünsün), hedefler 44 px */}
+            <TabsList variant="line" aria-label={t('ud.tabsLabel')}
+              className="w-full justify-start gap-1 overflow-x-auto rounded-none px-3 py-0 group-data-[orientation=horizontal]/tabs:h-auto [scrollbar-width:none] sm:px-5 max-sm:[mask-image:linear-gradient(90deg,transparent,#000_14px,#000_calc(100%-14px),transparent)]">
+              {tabs.map(({ key, label, icon: Icon, count }) => (
+                <TabsTrigger key={key} value={key} data-tab-key={key} className="h-11 flex-none gap-1.5 px-2.5 sm:h-10">
+                  <Icon aria-hidden="true" />{label}
+                  {count != null && (
+                    <Badge variant="secondary" data-slot="ud-tab-count" className="h-5 min-w-5 rounded-full px-1.5 text-[11px] tabular-nums">{count}</Badge>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
-          <section className="udp-block">
-            <h4><Users size={14} /> {t('usr.detailTeams')}</h4>
-            {teamIds.length === 0 ? <p className="field-hint">{t('usr.detailNoTeam')}</p> : (
-              <div className="udp-teams">
-                {teamIds.map(id => (
-                  <span key={id} className="udp-team">
-                    <TeamBadge teamId={id} teamName={teamMap[id] || `#${id}`} size={12} />
-                    {Number(user.team_id) === id && <span className="field-hint">{t('team.memberPrimary')}</span>}
-                  </span>
-                ))}
-              </div>
+          <div ref={bodyRef} data-slot="ud-body" className="min-h-0 flex-1 overflow-y-auto bg-muted/30 px-4 py-4 pb-[max(env(safe-area-inset-bottom),1rem)] sm:px-6">
+            <TabsContent value="overview" className="mt-0">
+              <OverviewTab user={user} teamName={primaryName} onUnlock={onUnlock} onUnlocked={afterMutation} />
+            </TabsContent>
+            <TabsContent value="teams" className="mt-0">
+              <TeamsTab user={user} section={membership} teamIds={teamIds} teamMap={teamMap} />
+            </TabsContent>
+            <TabsContent value="notifications" className="mt-0">
+              <NotificationsTab user={user} isAdmin={!!isAdmin} push={push} contacts={contacts} teamMap={teamMap} />
+            </TabsContent>
+            {isAdmin && (
+              <TabsContent value="permissions" className="mt-0">
+                <PermissionsTab role={user.system_role} section={matrix} perms={perms} />
+              </TabsContent>
             )}
-          </section>
-
-          <section className="udp-block">
-            <h4><Mail size={14} /> {t('usr.detailContacts')}</h4>
-            {contacts == null ? <span className="field-hint">…</span> : contacts.length === 0 ? <p className="field-hint">{t('usr.detailNoContacts')}</p> : (
-              <ul className="udp-list">
-                {contacts.map(c => (
-                  <li key={c.id}>
-                    <span className="role-badge">{c.role}</span> ≥ {c.min_alert_level}
-                    {c.team_id && <> · <TeamBadge teamId={c.team_id} teamName={teamMap[Number(c.team_id)] || `#${c.team_id}`} size={11} /></>}
-                    {c.webhook_url && <span className="badge badge-ok">{c.webhook_type}</span>}
-                    {!c.active && <span className="badge badge-err">{t('ec.inactive')}</span>}
-                  </li>
-                ))}
-              </ul>
+            {isAdmin && (
+              <TabsContent value="changes" className="mt-0">
+                <ChangesTab section={history} pagination={sp.bar} />
+              </TabsContent>
             )}
-          </section>
-
-          {isAdmin && (
-            <section className="udp-block">
-              <h4><BellRing size={14} /> {t('usr.detailPush')}</h4>
-              {user.team_id == null ? <p className="field-hint">{t('usr.detailNoTeam')}</p>
-                : push == null ? <p className="field-hint">{loading ? '…' : t('usr.detailPushUnknown')}</p>
-                : <p><span className={`up-decision up-decision--${push.decision}`}>{t('userpush.decision.' + push.decision)}</span>
-                    {push.group && <span className="field-hint"> · {push.group}{push.min_level ? ` · ≥ ${push.min_level}` : ''}</span>}</p>}
-            </section>
-          )}
-
-          {isAdmin && (
-            <section className="udp-block udp-block--wide">
-              <h4><Shield size={14} /> {t('usr.detailPerms', user.system_role)}</h4>
-              {perms == null ? (loading ? <LoadingBlock label="…" size={14} /> : <p className="field-hint">—</p>) : perms.length === 0 ? <p className="field-hint">{t('usr.detailNoPerms')}</p> : (
-                <ul className="udp-perms">
-                  {perms.map(p => (
-                    <li key={p.key} title={label(p.key) !== p.key ? label(p.key) : ''}><span className="udp-perm-key audit-mono">{p.key}</span> <span className="field-hint">{p.actions.join(' · ')}</span></li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-
-          {isAdmin && (
-            <section className="udp-block udp-block--wide">
-              <h4><History size={14} /> {t('usr.detailHistory')}</h4>
-              {hist == null ? (loading ? <LoadingBlock label="…" size={14} /> : <p className="field-hint">—</p>) : (
-                <NotificationGroupHistory rows={hist.items || []} truncated={false} hidden={0} loading={false} error={null}
-                  fieldPrefix="hist.f" actPrefix="hist.act" nameOf={(r) => r.name || `#${r.resource_id}`} />
-              )}
-            </section>
-          )}
-        </div>
-      </div>
-    </ModalShell>
+            {showDirectory && (
+              <TabsContent value="directory" className="mt-0">
+                <SectionCard icon={SearchCheck} title={t('mship.checkTitle')} description={t('ud.dirIntro')}>
+                  <UserLdapCompare user={user} onResynced={() => { membership.reload(); afterMutation() }} />
+                </SectionCard>
+              </TabsContent>
+            )}
+          </div>
+        </Tabs>
+      </SheetContent>
+    </Sheet>
   )
 }

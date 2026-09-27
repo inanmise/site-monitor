@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import UserManager from '../components/admin/UserManager.jsx'
 import UserDetailPanel from '../components/admin/UserDetailPanel.jsx'
 import { toCsv } from '../utils/csvExport.js'
@@ -38,9 +38,9 @@ describe('UserManager — zenginleştirme', () => {
     api.admin.bulkUsers.mockResolvedValue({ success: true, data: { ok: 2, failed: 0, results: [] } })
   })
 
-  it('son giriş sütunu: tarih ya da "hiç girmedi"; LDAP rozeti yalnız LDAP hesapta', async () => {
+  it('son giriş sütunu: göreli süre (tam zaman ipucunda/adında) ya da "hiç girmedi"; LDAP rozeti yalnız LDAP hesapta', async () => {
     render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
-    expect(await screen.findByText('2026-09-19T10:00:00')).toBeInTheDocument()
+    expect(await screen.findByLabelText(/2026-09-19T10:00:00/)).toHaveAttribute('data-login-rel')
     expect(screen.getByText(/hiç girmedi|^never$/)).toBeInTheDocument()
     expect(screen.getAllByText('LDAP').length).toBe(1)
   })
@@ -104,25 +104,65 @@ describe('UserDetailPanel', () => {
     api.admin.userPush.explain.mockResolvedValue({ success: true, members: [{ username: 'ali', decision: 'RECIPIENT', group: 'PO' }] })
   })
 
+  afterEach(async () => { await act(() => new Promise((r) => setTimeout(r, 0))) })   // bekleyen bölüm yanıtları
+  // Sekmeli ayrıntı (2026-09-27): Radix Tabs tetiği jsdom'da mousedown ile etkinleşir (SHADCN.md §8.3).
+  const openTab = (re) => fireEvent.mouseDown(screen.getByRole('tab', { name: re }), { button: 0 })
+  /** Çizer ve ilk bölüm yüklemelerini act içinde boşaltır. */
+  const renderAct = async (ui) => { let out; await act(async () => { out = render(ui) }); return out }
+
   it('admin: erişim, takımlar, eskalasyon kaydı, push kararı, ROLE göre etkin yetkiler ve son değişiklikler', async () => {
-    render(<UserDetailPanel user={USERS[0]} teams={TEAMS} isAdmin onClose={() => {}} />)
-    expect(await screen.findByText('2026-09-19T10:00:00')).toBeInTheDocument()
+    await renderAct(<UserDetailPanel user={USERS[0]} teams={TEAMS} isAdmin onClose={() => {}} />)
+    expect(await screen.findByText('2026-09-19T10:00:00')).toBeInTheDocument()   // Genel Bakış: son giriş (tam zaman)
     expect(screen.getAllByText('Takım A').length).toBeGreaterThanOrEqual(1)
-    expect(await screen.findByText(/≥ HIGH/)).toBeInTheDocument()          // eskalasyon kaydı
+    openTab(/^(Bildirimler|Notifications)/)
+    expect(await screen.findByText(/HIGH and above|YÜKSEK ve üzeri/)).toBeInTheDocument()   // eskalasyon kaydı
     expect(await screen.findByText(/^Alır$|^Receives$/)).toBeInTheDocument()   // push kararı
     // USER rolünün yetkisi: inventory.crud view VAR, users.crud edit (ADMIN) YOK
-    expect(await screen.findByText(/inventory\.crud|Envanter/)).toBeInTheDocument()
+    openTab(/^(Yetkiler|Permissions)/)
+    expect((await screen.findAllByText(/inventory\.crud|Envanter/)).length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText(/users\.crud/)).toBeNull()
+    openTab(/^(Değişiklikler|Changes)/)
     expect(await screen.findByText(/düzenledi|edited/)).toBeInTheDocument()   // son değişiklik
     expect(api.admin.history).toHaveBeenCalledWith('USER', 1, { page: 0, size: 10 })
   })
 
   it('admin değil: yetki / push / geçmiş ayakları hiç istenmez', async () => {
-    render(<UserDetailPanel user={USERS[1]} teams={TEAMS} isAdmin={false} onClose={() => {}} />)
-    expect(await screen.findByText(/hiç girmedi|^never$/)).toBeInTheDocument()
+    await renderAct(<UserDetailPanel user={USERS[1]} teams={TEAMS} isAdmin={false} onClose={() => {}} />)
+    expect((await screen.findAllByText(/Hiç giriş yapmadı|Never signed in/)).length).toBeGreaterThanOrEqual(1)
     expect(api.admin.getPermissionMatrix).not.toHaveBeenCalled()
     expect(api.admin.history).not.toHaveBeenCalled()
     expect(api.admin.userPush.explain).not.toHaveBeenCalled()
+  })
+})
+
+describe('UserManager → UserDetailPanel bağlantısı', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
+    api.admin.searchUsers.mockResolvedValue({ success: true, data: USERS, total: 2, page: 0, total_pages: 1, active_admin_count: 1 })
+  })
+  afterEach(async () => { await act(() => new Promise((r) => setTimeout(r, 0))) })   // bekleyen bölüm yanıtları
+
+  it('satırdan açılan ayrıntıda kilit açma MEVCUT işleyiciyle çalışır; liste tazelenince pencere güncel satırı gösterir', async () => {
+    // İlk yüklemede takımları kilitli; kilit açılınca liste tazelenir ve sunucu kilitsiz satır döner.
+    api.admin.searchUsers.mockResolvedValueOnce({ success: true, data: [{ ...USERS[0], team_locked: true }, USERS[1]], total: 2, page: 0, total_pages: 1, active_admin_count: 1 })
+    render(<UserManager systemRole="ADMIN" teams={TEAMS} currentUsername="admin" />)
+    fireEvent.click(await screen.findByRole('row', { name: /^(Ali — open row details|Ali — satır ayrıntısını aç)$/ }))
+    const dlg = await screen.findByTestId('user-detail')
+    const locks = dlg.querySelector('[data-slot="ud-locks"]')
+    fireEvent.click(within(locks).getByRole('button', { name: /Takımları AD'ye geri ver|Return teams to AD/ }))
+    await waitFor(() => expect(api.admin.unlockUserTeams).toHaveBeenCalledWith(1))
+    await waitFor(() => expect(dlg.querySelector('[data-slot="ud-no-locks"]')).not.toBeNull())
+    expect(api.admin.searchUsers.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('kilit açma yetkisi olmayan (canManage değil) kullanıcıda ayrıntıda kilit açma ve Düzenle yok', async () => {
+    api.admin.searchUsers.mockResolvedValue({ success: true, data: [{ ...USERS[0], team_locked: true }], total: 1, page: 0, total_pages: 1, active_admin_count: 1 })
+    render(<UserManager systemRole="USER" teams={TEAMS} currentUsername="veli" />)
+    fireEvent.click(await screen.findByRole('row', { name: /^(Ali — open row details|Ali — satır ayrıntısını aç)$/ }))
+    const dlg = await screen.findByTestId('user-detail')
+    expect(dlg.querySelector('[data-slot="ud-locks"] button')).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /^(Düzenle|Edit)$/ })).toBeNull()
   })
 })
 

@@ -129,6 +129,15 @@ public class WeeklyReportService {
     private static final int MAX_CONTENT_BYTES = 200 * 1024;
     private static final int MAX_CHANNELS = 20;
 
+    /**
+     * Madde 1 kayıtlarının DURUM DAĞILIMI (2026-09-27, kullanıcı isteği: tek "Durum" seçimi hep "Çalışılıyor" kalıyordu,
+     * anlamsızdı — her durumda kaç kayıt olduğu girilir). İçerik JSON'unda {@code item1.status_counts} = bu dört anahtar;
+     * negatif olmayan tamsayı, {@link #STATUS_COUNT_MAX} ile sınırlı. Eski {@code item1.status_text} okunur (geriye
+     * uyum: dağılım boşsa okuma görünümleri onu gösterir) ama yeni şablonlara taşınmaz.
+     */
+    public static final List<String> STATUS_COUNT_KEYS = List.of("working", "planned", "on_hold", "done");
+    static final int STATUS_COUNT_MAX = 100_000;
+
     /** Yumuşak kilit bayatlama eşiği — heartbeat 45 sn'de bir tazelenir,
      *  4 kaçırılmış vuruş sonrası kilit serbest sayılır. */
     private static final long LOCK_STALE_SECONDS = 180;
@@ -138,7 +147,7 @@ public class WeeklyReportService {
 
     static final String DEFAULT_TEMPLATE_JSON = """
             {"version":1,
-             "item1":{"total":0,"urgent":0,"high":0,"medium":0,"low":0,"status_text":"Çalışılıyor","tracking_url":"","notes_md":""},
+             "item1":{"total":0,"urgent":0,"high":0,"medium":0,"low":0,"status_counts":{"working":0,"planned":0,"on_hold":0,"done":0},"tracking_url":"","notes_md":""},
              "item2":{"open_incidents":0,"problem_records":0,"postmortems":0,"incidents_url":"","problems_url":"","postmortems_url":"","notes_md":""},
              "item3":{"notes_md":""},
              "item4":{"channels":[
@@ -300,6 +309,12 @@ public class WeeklyReportService {
             Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("team_id", t.getId()); m.put("team_name", t.getName()); m.put("reminder", Boolean.TRUE.equals(t.getWeeklyReminderEnabled()));
             m.put("approved", approved); m.put("missing", missing); m.put("cells", cells);
+            // Yıl özeti (2026-09-27): takımın o yıldaki EN SON raporunun Madde 1 durum dağılımı (anlık görüntü) —
+            // yalnız en son rapor ayrıştırılır (tek pod; hücre başına içerik okunmaz).
+            rows.keySet().stream().max(Integer::compare).ifPresent(w -> {
+                m.put("latest_week", w);
+                m.put("status_counts", statusCountsOf(rows.get(w).getContentJson()));
+            });
             teams.add(m);
         }
         teams.sort((a, b) -> Integer.compare((int) b.get("missing"), (int) a.get("missing")));   // en eksik üstte
@@ -922,14 +937,16 @@ public class WeeklyReportService {
                 teamName, r.getWeekLabel(), managerName, r.getContentJson(), true,
                 imageDisplayWidths(inline), approver, approvedAt, now(), null, emailKpiSummary(r));
 
-        String subject = "[" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
+        // "[Site Monitor]" öneki tüm konularda ortak (gelen kutusu kuralları buna bakar); takım köşeli
+        // ayracı KORUNUR — müdürlerin "[Takım] Haftalık Rapor" filtreleri kırılmasın (2026-09-26).
+        String subject = "[Site Monitor] [" + teamName + "] Haftalık Rapor — " + r.getWeekLabel();
         String mailStatus = emailService.sendHtml(to, cc, subject, html, inline);
         recordMail(r, "APPROVE_MANAGER", List.of(to),
                 cc != null ? List.of(cc) : null, subject, html, mailStatus, actor);
 
         log.info("Haftalık rapor müdüre gönderildi: team={} week={} TO=[{}] CC=[{}] status={}",
-                teamName, r.getWeekLabel(), String.join(", ", to),
-                teamEmail != null ? teamEmail : "-", mailStatus);
+                teamName, r.getWeekLabel(), SecretMask.maskEmails(to),
+                SecretMask.maskEmails(teamEmail), mailStatus);
         return mailStatus;
     }
 
@@ -1364,6 +1381,8 @@ public class WeeklyReportService {
                     total += i1.path(k).asInt(0);
                 }
                 i1.put("total", total);
+                // Durum dağılımı (2026-09-27): varsa dört anahtara indirgenir, negatif/bozuk → 0, tavan STATUS_COUNT_MAX
+                if (i1.has("status_counts")) putStatusCounts(i1, statusCounts(i1));
             }
             JsonNode channels = root.path("item4").path("channels");
             if (channels.isArray()) {
@@ -1435,6 +1454,7 @@ public class WeeklyReportService {
             String head = "**Geçen haftadan devam (" + (prevLabel == null ? "" : prevLabel) + ")**\n\n";
             ObjectNode i1 = root.withObject("item1");
             for (String k : List.of("total", "urgent", "high", "medium", "low")) i1.put(k, 0);
+            resetStatusCounts(i1);   // önem sayılarıyla AYNI kural: yeni haftada sıfırdan (anlık görüntü)
             i1.put("notes_md", carry(i1.path("notes_md").asText(""), head));
             ObjectNode i2 = root.withObject("item2");
             for (String k : List.of("open_incidents", "problem_records", "postmortems")) i2.put(k, 0);
@@ -1641,13 +1661,54 @@ public class WeeklyReportService {
         return out;
     }
 
+    /**
+     * Madde 1 durum dağılımını okur: eksik / nesne olmayan / bozuk değer → 0; sayısal metin kabul; negatif → 0;
+     * {@link #STATUS_COUNT_MAX} üstü kırpılır. Sıra {@link #STATUS_COUNT_KEYS} (her zaman dört anahtar).
+     */
+    public static Map<String, Integer> statusCounts(JsonNode item1) {
+        Map<String, Integer> out = new java.util.LinkedHashMap<>();
+        JsonNode sc = item1 == null ? null : item1.path("status_counts");
+        for (String k : STATUS_COUNT_KEYS) {
+            int v = 0;
+            JsonNode n = sc != null && sc.isObject() ? sc.path(k) : null;
+            if (n != null && n.isNumber()) {
+                v = n.canConvertToLong() ? (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, n.asLong())) : 0;
+            } else if (n != null && n.isTextual()) {
+                try { v = Integer.parseInt(n.asText().trim()); } catch (NumberFormatException e) { v = 0; }
+            }
+            out.put(k, Math.max(0, Math.min(STATUS_COUNT_MAX, v)));
+        }
+        return out;
+    }
+
+    /** Rapor içeriğinden (JSON metni) durum dağılımı — liste/pano özetleri için; bozuk içerik → hepsi 0. */
+    public Map<String, Integer> statusCountsOf(String contentJson) {
+        if (contentJson == null || contentJson.isBlank()) return statusCounts(null);
+        try {
+            return statusCounts(objectMapper.readTree(contentJson).path("item1"));
+        } catch (Exception e) {
+            return statusCounts(null);
+        }
+    }
+
+    private static void putStatusCounts(ObjectNode i1, Map<String, Integer> counts) {
+        ObjectNode sc = i1.putObject("status_counts");
+        for (String k : STATUS_COUNT_KEYS) sc.put(k, counts.getOrDefault(k, 0));
+    }
+
+    /** Yeni hafta şablonu: dağılım sıfırlanır (önem sayılarıyla aynı kural), eski tekil "Durum" taşınmaz. */
+    private static void resetStatusCounts(ObjectNode i1) {
+        putStatusCounts(i1, Map.of());
+        i1.remove("status_text");
+    }
+
     static String resetTemplate(String prevContentJson) {
         ObjectMapper om = TEMPLATE_MAPPER;
         try {
             ObjectNode root = (ObjectNode) om.readTree(prevContentJson);
             ObjectNode i1 = root.withObject("item1");
             for (String k : List.of("total", "urgent", "high", "medium", "low")) i1.put(k, 0);
-            i1.put("status_text", "Çalışılıyor"); // combobox varsayılanı
+            resetStatusCounts(i1);   // eski tekil "Durum" (varsayılan "Çalışılıyor") yerine sıfır dağılım (2026-09-27)
             i1.put("notes_md", "");
             ObjectNode i2 = root.withObject("item2");
             for (String k : List.of("open_incidents", "problem_records", "postmortems")) i2.put(k, 0);

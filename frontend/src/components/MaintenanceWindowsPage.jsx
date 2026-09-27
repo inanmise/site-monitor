@@ -1,27 +1,33 @@
-import { LoadingBlock } from './ui/Progress.jsx'
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { usePagination } from '../hooks/usePagination.js'
+import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
+import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
+import { useIsMobile } from '../hooks/use-mobile.js'
 import PaginationBar from './ui/PaginationBar.jsx'
-import MaintenanceTargetPicker from './monitoring/MaintenanceTargetPicker.jsx'
-import SearchableSelect from './ui/SearchableSelect.jsx'
-import DateTimeField from './ui/DateTimeField.jsx'
 import MonthCalendar from './ui/MonthCalendar.jsx'
 import ModalShell from './ui/ModalShell.jsx'
-import { Wrench, Plus, Play, Pencil, Trash2, Pause, RefreshCw, History, CalendarDays } from 'lucide-react'
+import StatusBlock from './ui/StatusBlock.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import { LoadingBlock } from './ui/Progress.jsx'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
+import MaintenanceActiveStrip from './maintenance/MaintenanceActiveStrip.jsx'
+import MaintenanceAgenda from './maintenance/MaintenanceAgenda.jsx'
+import MaintenanceList from './maintenance/MaintenanceList.jsx'
+import MaintenanceEditor, { EMPTY_FORM, formFromWindow } from './maintenance/MaintenanceEditor.jsx'
+import MaintenanceQuickModal from './maintenance/MaintenanceQuickModal.jsx'
+import { DAY_MS, TILE_PRED, nextOccurrence, occurrences, parseIso, sortWindows, toIso } from './maintenance/maintenanceSchedule.js'
+import { countText, useScheduleText } from './maintenance/maintenanceUi.jsx'
+import { Wrench, Plus, Play, RefreshCw, History, CalendarDays, List as ListIcon, BellOff, Clock, CalendarRange, Repeat, Pause, Archive } from 'lucide-react'
 import { Button } from '@/components/shadcn/button'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
-const RECURRENCES = ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY']
-const DOW = [1, 2, 3, 4, 5, 6, 7]   // Pzt..Paz (ISO)
-const TZ_LIST = (() => {
-  try { return Intl.supportedValuesOf('timeZone') } catch { return ['Europe/Istanbul', 'UTC', 'Europe/London', 'America/New_York'] }
-})()
 const MON_TYPES = [
   ['http', 'getHttpMonitors', m => m.url],
   ['port', 'getPortMonitors', m => m.host],
@@ -39,53 +45,60 @@ const MON_TYPES = [
   // tek çare "tüm monitörler" bayrağıyla her şeyi birden susturmaktı.
   ['scripted', 'getScriptedMonitors', m => m.name, d => d?.monitors || []],
 ]
-const emptyForm = {
-  name: '', description: '', allMonitors: false, targets: [], timezone: 'Europe/Istanbul',
-  startAt: '', durationMinutes: 60, recurrence: 'NONE', daysOfWeek: [], dayOfMonth: 1,
-}
 
-function dayInTz(utcIso, tz) {
-  if (!utcIso) return ''
-  try {
-    return new Date(utcIso.endsWith('Z') ? utcIso : utcIso + 'Z').toLocaleDateString('sv-SE', { timeZone: tz })   // YYYY-MM-DD, pencerenin diliminde (saatle aynı gün)
-  } catch { return utcIso.slice(0, 10) }
-}
-function todInTz(utcIso, tz) {
-  if (!utcIso) return ''
-  try {
-    return new Date(utcIso.endsWith('Z') ? utcIso : utcIso + 'Z')
-      .toLocaleTimeString([], { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false })
-  } catch { return '' }
-}
+const VIEWS = ['list', 'agenda', 'calendar']
+/** Özet kartları — süzgeç mantığı `maintenanceSchedule.TILE_PRED` (saf); burada yalnız ikon + ton. */
+const TILES = [
+  { key: 'active', Icon: BellOff, cls: 'valid' },
+  { key: 'next24h', Icon: Clock, cls: 'warning' },
+  { key: 'next7d', Icon: CalendarRange, cls: 'total' },
+  { key: 'recurring', Icon: Repeat, cls: 'weak' },
+  { key: 'paused', Icon: Pause, cls: 'paused' },
+  { key: 'past', Icon: Archive, cls: 'paused' },
+]
 
-export default function MaintenanceWindowsPage({ systemRole }) {
+/**
+ * Bakım Pencereleri (2026-09-26 yeniden tasarım, shadcn + mweb): başlık + amaç, "Şu an susturulanlar" şeridi
+ * (kalan süre + Şimdi bitir), süzen özet kartları, üç görünüm (Liste / Ajanda 7 gün / Takvim), düzenleyici ve hızlı
+ * pencere modalları, satır başına değişiklik geçmişi. Veri tek uçtan (`maintenance.list`); durum/oluşum açılımı
+ * istemcide (`maintenance/maintenanceSchedule.js`), 30 sn'de bir kalan süre tazelenir (sekme görünürken).
+ * URL: `view` (list dışı görünüm). Test kancası: kök `data-slot="maintenance-page"`.
+ */
+export default function MaintenanceWindowsPage({ systemRole, teamId, teamName }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const toast = useToast()
+  const { range } = useScheduleText()
   const canManage = systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'
+  // Telefonda tablo yerine kart listesi + eylem menüsü (yapı farkı → useIsMobile; jsdom tek varyant çizer)
+  const phone = useIsMobile()
 
   const [rows, setRows] = useState([])
-  const [calOpen, setCalOpen] = useState(() => { try { return localStorage.getItem('mw-cal-open') === 'true' } catch { return false } })
-  // Takvim olayları (2026-09-12, #19): sıradaki oluşum (next_occurrence) ya da tek seferlik başlangıç; aynı güne 2+ pencere = çakışma adayı
-  const mwCalEvents = rows.filter(w => w.next_occurrence || w.start_at).map(w => ({
-    date: w.next_occurrence || w.start_at, label: w.name, title: `${w.name} · ${w.duration_minutes ?? 60} ${t('chg.unitMin')}`,
-    tone: w.status === 'ACTIVE' ? 'warn' : 'info', onClick: () => openEdit(w),
-  }))
-  const pager = usePagination(rows, { listKey: 'maintenance-windows' })
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState(null)          // 'new' | window | 'quick'
+  const [error, setError] = useState(null)          // string (sunucu metni) | true (genel)
+  const [now, setNow] = useState(() => Date.now())
+  const [view, setView] = useState(() => { const v = readUrlParam('view'); return VIEWS.includes(v) ? v : 'list' })
+  const [filter, setFilter] = useState(null)
+  const [modal, setModal] = useState(null)          // { kind: 'new' } | { kind: 'edit', w } | { kind: 'quick' }
+  const [editorInitial, setEditorInitial] = useState(EMPTY_FORM)
   const [historyItem, setHistoryItem] = useState(null)   // değişiklik geçmişi penceresi
-  const [form, setForm] = useState(emptyForm)
-  const [quickForm, setQuickForm] = useState({ allMonitors: false, targets: [], minutes: 30, name: '' })
   const [saving, setSaving] = useState(false)
   const [monitorOptions, setMonitorOptions] = useState([])
-  const [optsLoaded, setOptsLoaded] = useState(false)
+  const optsLoaded = useRef(false)
+
+  useUrlQuerySync({ view: view === 'list' ? null : view })
+  // Kalan süre / "sıradaki" metinleri sekme görünürken 30 sn'de bir tazelenir (yeni istek yok).
+  useVisibleInterval(() => setNow(Date.now()), 30_000, false)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const res = await api.monitoring.maintenance.list()
-      if (res?.success) setRows(res.data ?? [])
+      if (res?.success) { setRows(res.data ?? []); setNow(Date.now()) }
+      else setError(res?.error || true)
+    } catch (e) {
+      setError(e?.message || true)
     } finally {
       setLoading(false)
     }
@@ -93,7 +106,8 @@ export default function MaintenanceWindowsPage({ systemRole }) {
   useEffect(() => { load() }, [load])
 
   async function loadMonitorOptions() {
-    if (optsLoaded) return
+    if (optsLoaded.current) return
+    optsLoaded.current = true
     const out = []
     await Promise.all(MON_TYPES.map(async ([type, fn, key, pick]) => {
       try {
@@ -105,88 +119,77 @@ export default function MaintenanceWindowsPage({ systemRole }) {
           if (!target) continue
           // Kimlik TUR + hedef: ayni URL hem Sayfa Butunlugu hem Sayfa Hizi monitoru olabilir; kimlik
           // yalniz hedef olunca ikincisi dedup'ta ELENIYOR ve o tur bakim penceresinde hic secilemiyordu
-          // (2026-09-17 kullanici bildirimi: "page speed monitor adi hatali"). Tur adlari ':' icermez,
-          // bu yuzden ilk ':' guvenli ayiricidir (targetObjs geri ayirir).
+          // (2026-09-17). Tur adlari ':' icermez, bu yuzden ilk ':' guvenli ayiricidir (targetObjs geri ayirir).
           out.push({ value: `${type}:${target}`, target, type, name: m.name || target, label: `${m.name || target} · ${t('mw.type.' + type)}` })
         }
       } catch { /* atla */ }
     }))
-    const seen = new Set()   // artik tur+hedef bazli
+    const seen = new Set()
     setMonitorOptions(out.filter(o => seen.has(o.value) ? false : (seen.add(o.value), true)))
-    setOptsLoaded(true)
   }
 
-  function openNew() { setForm(emptyForm); loadMonitorOptions(); setModal('new') }
-  function openEdit(w) {
-    loadMonitorOptions()
-    setForm({
-      name: w.name || '', description: w.description || '', allMonitors: !!w.all_monitors,
-      targets: (w.targets || []).map(x => (x.type && x.type !== '?' ? `${x.type}:${x.target}` : x.target)).filter(Boolean),
-      timezone: w.timezone || 'Europe/Istanbul', startAt: w.start_at || '', durationMinutes: w.duration_minutes ?? 60,
-      recurrence: w.recurrence || 'NONE',
-      daysOfWeek: w.days_of_week ? w.days_of_week.split(',').map(Number) : [],
-      dayOfMonth: w.day_of_month ?? 1,
-    })
-    setModal(w)
-  }
-  function openQuick() { setQuickForm({ allMonitors: false, targets: [], minutes: 30, name: '' }); loadMonitorOptions(); setModal('quick') }
+  // ── Türetilmiş veri ─────────────────────────────────────────────────────────
+  const enriched = useMemo(() => rows.map((w) => ({ w, next: nextOccurrence(w, now) })), [rows, now])
+  const counts = useMemo(() => Object.fromEntries(Object.entries(TILE_PRED).map(([k, p]) => [k, enriched.filter((x) => p(x, now)).length])), [enriched, now])
+  const activeWindows = useMemo(() => enriched.filter(TILE_PRED.active).map((x) => x.w), [enriched])
+  const filtered = useMemo(() => sortWindows(filter ? enriched.filter((x) => TILE_PRED[filter](x, now)) : enriched).map((x) => x.w), [enriched, filter, now])
+  const pager = usePagination(filtered, { listKey: 'maintenance-windows', preset: 'page', resetDeps: [filter] })
+  // Takvim olayları: ±60 günlük oluşumlar (tekrarlayanlar açılır); süren oluşum amber, diğerleri mavi.
+  const calEvents = useMemo(() => (view !== 'calendar' ? [] : rows.flatMap((w) => occurrences(w, now - 30 * DAY_MS, now + 60 * DAY_MS, { limit: 40 }).map((o) => ({
+    date: toIso(o.start), label: w.name, title: `${w.name} · ${range(o.start, o.end, w.timezone)}`,
+    tone: o.start <= now && o.end > now ? 'warn' : 'info', onClick: canManage ? () => openEdit(w) : undefined,
+  })))), [view, rows, now, range, canManage])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Eylemler ────────────────────────────────────────────────────────────────
+  function openNew() { setEditorInitial(EMPTY_FORM); loadMonitorOptions(); setModal({ kind: 'new' }) }
+  function openEdit(w) { setEditorInitial(formFromWindow(w)); loadMonitorOptions(); setModal({ kind: 'edit', w }) }
+  function openQuick() { loadMonitorOptions(); setModal({ kind: 'quick' }) }
   function close() { setModal(null) }
 
-  /** Secici kimligi (`tur:hedef`) → sunucunun bekledigi {type, target, name}. Secenek listede yoksa
-   *  (monitor silinmis, eski kayit) kimlik yine de ayrilir; ':' yoksa tur bilinmiyor demektir. */
-  function targetObjs(vals) {
-    return vals.map(tg => {
-      const o = monitorOptions.find(x => x.value === tg)
-      if (o) return { type: o.type, target: o.target, name: o.name }
-      const i = String(tg).indexOf(':')
-      return i > 0 ? { type: tg.slice(0, i), target: tg.slice(i + 1), name: tg.slice(i + 1) } : { type: '?', target: tg, name: tg }
-    })
-  }
-
-  async function save() {
-    if (!form.name.trim()) { toast.error(t('mw.nameRequired')); return }
-    if (!form.startAt) { toast.error(t('mw.startRequired')); return }
-    if (!form.allMonitors && form.targets.length === 0) { toast.error(t('mw.targetsRequired')); return }
-    // Sessizce inert (hiç tetiklenmeyen) pencereyi önle (M9)
-    if (!(Number(form.durationMinutes) >= 1)) { toast.error(t('mw.durationRequired')); return }
-    if (form.recurrence === 'WEEKLY' && form.daysOfWeek.length === 0) { toast.error(t('mw.weekdayRequired')); return }
-    if (form.recurrence === 'MONTHLY' && !(Number(form.dayOfMonth) >= 1 && Number(form.dayOfMonth) <= 31)) { toast.error(t('mw.dayOfMonthRequired')); return }
+  async function saveWindow(payload) {
     setSaving(true)
     try {
-      const payload = {
-        name: form.name.trim(), description: form.description?.trim() || null, allMonitors: form.allMonitors,
-        targets: form.allMonitors ? [] : targetObjs(form.targets),
-        timezone: form.timezone, startAt: form.startAt, durationMinutes: Number(form.durationMinutes), recurrence: form.recurrence,
-        daysOfWeek: form.recurrence === 'WEEKLY' ? form.daysOfWeek.join(',') : null,
-        dayOfMonth: form.recurrence === 'MONTHLY' ? Number(form.dayOfMonth) : null,
-      }
-      const res = modal === 'new' ? await api.monitoring.maintenance.create(payload) : await api.monitoring.maintenance.update(modal.id, payload)
-      if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
-      toast.success(t('mw.saved')); close(); load()
+      const res = modal?.kind === 'edit' ? await api.monitoring.maintenance.update(modal.w.id, payload) : await api.monitoring.maintenance.create(payload)
+      if (res?.success) { toast.success(t('mw.saved')); close(); load() }
+      return res ?? { success: false }
     } finally {
       setSaving(false)
     }
   }
-
-  async function saveQuick() {
-    if (!quickForm.allMonitors && quickForm.targets.length === 0) { toast.error(t('mw.targetsRequired')); return }
+  async function startQuick(payload) {
     setSaving(true)
     try {
-      const res = await api.monitoring.maintenance.quick({
-        name: quickForm.name?.trim() || null, allMonitors: quickForm.allMonitors,
-        targets: quickForm.allMonitors ? [] : targetObjs(quickForm.targets), minutes: Number(quickForm.minutes),
-      })
-      if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
-      toast.success(t('mw.started')); close(); load()
+      const res = await api.monitoring.maintenance.quick(payload)
+      if (res?.success) { toast.success(t('mw.started')); close(); load() }
+      return res ?? { success: false }
     } finally {
       setSaving(false)
     }
   }
-
   async function togglePause(w) {
     const res = w.status === 'paused' ? await api.monitoring.maintenance.resume(w.id) : await api.monitoring.maintenance.pause(w.id)
-    if (!res?.success) { toast.error(res?.error || 'Error'); return }
+    if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
     load()
+  }
+  /**
+   * "Şimdi bitir": sunucuda ayrı uç yok. Tek seferlik pencerede süre = geçen dakika (pencere hemen "bitmiş" olur);
+   * tekrarlayan pencerede yalnız bu oluşum bitirilemez → seri DURAKLATILIR (onay metni bunu söyler, sonra sürdürülür).
+   */
+  async function endNow(w) {
+    const recurring = !!w.recurrence && w.recurrence !== 'NONE'
+    if (!await showConfirm({
+      title: t('mw.endNow'), message: recurring ? t('mw.endNowRecurringConfirm', w.name) : t('mw.endNowConfirm', w.name),
+      confirmText: t('mw.endNow'), variant: 'warning',
+    })) return
+    let res
+    if (recurring) res = await api.monitoring.maintenance.pause(w.id)
+    else {
+      const start = parseIso(w.start_at)
+      const elapsed = start == null ? 1 : Math.max(1, Math.floor((Date.now() - start) / 60_000))
+      res = await api.monitoring.maintenance.update(w.id, { durationMinutes: elapsed })
+    }
+    if (!res?.success) { toast.error(res?.error || t('mw.saveError')); return }
+    toast.success(t('mw.ended')); load()
   }
   async function del(w) {
     if (!await showConfirm({
@@ -197,185 +200,86 @@ export default function MaintenanceWindowsPage({ systemRole }) {
     if (!res?.success) { toast.error(res?.error || t('mw.deleteError')); return }
     toast.success(t('mw.deleted')); load()
   }
+  const rowActions = { onEdit: openEdit, onTogglePause: togglePause, onEndNow: endNow, onHistory: setHistoryItem, onDelete: del }
 
-  function scheduleSummary(w) {
-    const tod = todInTz(w.start_at, w.timezone)
-    const dur = w.duration_minutes
-    if (w.recurrence === 'DAILY')  return `${t('mw.daily')} · ${tod} · ${dur}${t('mw.minShort')}`
-    if (w.recurrence === 'WEEKLY') return `${t('mw.weekly')} · ${(w.days_of_week || '').split(',').filter(Boolean).map(d => t('mw.dow.' + d)).join(', ')} · ${tod}`
-    if (w.recurrence === 'MONTHLY') return `${t('mw.monthly')} · ${t('mw.dayOfMonthShort')} ${w.day_of_month} · ${tod}`
-    return `${t('mw.once')} · ${tod}`
+  function onTile(key) {
+    setFilter((f) => (f === key ? null : key))
+    if (view !== 'list') setView('list')
   }
-  function statusBadge(s) {
-    return <span className={`mw-status mw-status--${s}`}>{t('mw.st.' + s)}</span>
-  }
+
+  const tiles = TILES.map((x) => ({ ...x, label: t('mw.tile.' + x.key), hint: t('mw.tile.' + x.key + 'Hint'), value: counts[x.key] ?? 0 }))
 
   return (
-    <div className="mw-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title"><Wrench size={20} style={{ verticalAlign: '-4px', marginRight: 6 }} />{t('mw.title')}</h2>
-          <p className="upt-subtitle">{t('mw.subtitle')}</p>
+    <div data-slot="maintenance-page" className="flex min-w-0 flex-col gap-4">
+      {/* Başlık + amaç + eylemler — telefonda alt alta, eylemler sarar */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-1.5 text-lg font-bold"><Wrench aria-hidden="true" className="size-5 shrink-0" />{t('mw.title')}</h2>
+          <p className="mt-1 max-w-[78ch] text-xs text-muted-foreground">{t('mw.purpose')}</p>
         </div>
-        <div className="upt-header-right">
-          <Button variant="outline" size="sm" onClick={() => setCalOpen(v => { try { localStorage.setItem('mw-cal-open', String(!v)) } catch { /* yoksay */ } return !v })} aria-pressed={calOpen}><CalendarDays size={14} />{t('mw.calendar')}</Button>
-          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('mw.refresh')}</Button>
-          {canManage && <Button variant="secondary" size="sm" onClick={openQuick}><Play size={14} />{t('mw.startNow')}</Button>}
-          {canManage && <Button size="sm" onClick={openNew}><Plus size={14} />{t('mw.create')}</Button>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={load} disabled={loading}><RefreshCw aria-hidden="true" />{t('mw.refresh')}</Button>
+          {canManage && <Button variant="secondary" size="sm" onClick={openQuick}><Play aria-hidden="true" />{t('mw.quickWindow')}</Button>}
+          {canManage && <Button size="sm" onClick={openNew}><Plus aria-hidden="true" />{t('mw.newWindow')}</Button>}
         </div>
       </div>
 
-      {loading ? (
-        <LoadingBlock label={t('tbl.loading')} fullWidth />
+      {loading && rows.length === 0 ? (
+        <div data-slot="mw-skeleton" role="status" aria-busy="true" aria-label={t('tbl.loading')} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-2 rounded-[10px] border bg-card p-2 sm:grid-cols-3 sm:gap-3 sm:p-3 lg:grid-cols-6">
+            {TILES.map((x) => <Skeleton key={x.key} className="h-24 rounded-lg" />)}
+          </div>
+          <Skeleton className="h-9 w-64 max-w-full" />
+          <div className="flex flex-col gap-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+        </div>
+      ) : error ? (
+        <AlertBanner tone="danger" role="alert" title={t('mw.loadError')}
+          actions={<Button type="button" size="sm" variant="outline" onClick={load}><RefreshCw aria-hidden="true" />{t('mw.retry')}</Button>}>
+          {typeof error === 'string' ? error : null}
+        </AlertBanner>
       ) : rows.length === 0 ? (
-        <div className="mw-empty">
-          <div className="mw-empty-art"><Wrench size={54} /></div>
-          <h3 className="mw-empty-title">{t('mw.emptyTitle')}</h3>
-          <p className="mw-empty-text">{t('mw.emptyText')}</p>
-          {canManage && <Button onClick={openNew}><Plus size={15} />{t('mw.create')}</Button>}
-        </div>
+        <StatusBlock tone="neutral" icon={Wrench} title={t('mw.emptyTitle')} description={t('mw.emptyText')} className="py-14"
+          actions={canManage && <Button onClick={openNew}><Plus aria-hidden="true" />{t('mw.newWindow')}</Button>} />
       ) : (<>
-        {/* Takvim görünümü (2026-09-12, #19): sıradaki oluşumlar ay ızgarasında; aynı güne çakışan pencereler yığılır */}
-        {calOpen && <MonthCalendar events={mwCalEvents} ariaLabel={t('mw.calendar')} />}
-        <div className="admin-table-wrap">
-          <table className="admin-table mw-table">
-            <thead>
-              <tr>
-                <th>{t('mw.colName')}</th><th>{t('mw.colMonitors')}</th><th>{t('mw.colSchedule')}</th>
-                <th>{t('mw.colNext')}</th><th>{t('mw.colStatus')}</th><th className="mw-th-actions">{t('mw.colActions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pager.pageItems.map(w => (
-                <tr key={w.id} className={w.status === 'active' ? 'mw-row-active' : ''}>
-                  <td><div className="mw-name">{w.name}</div>{w.description && <div className="mw-desc">{w.description}</div>}</td>
-                  <td>{w.all_monitors ? <span className="mw-all">{t('mw.allMonitors')}</span> : (w.target_count + ' ' + t('mw.monitors'))}</td>
-                  <td className="mw-sched">{scheduleSummary(w)}</td>
-                  <td className="mw-next">{w.next_occurrence ? todInTz(w.next_occurrence, w.timezone) + ' · ' + dayInTz(w.next_occurrence, w.timezone) : '—'}</td>
-                  <td>{statusBadge(w.status)}</td>
-                  <td className="mw-th-actions">
-                    {canManage && <>
-                      {/* Adlar satırı ayırır (pencere adı + eylem); ipucu kısa kalır (2026-09-25, R15). */}
-                      <button className="mw-act" title={w.status === 'paused' ? t('mw.resume') : t('mw.pause')}
-                        aria-label={t('a11y.rowAction', w.name, w.status === 'paused' ? t('mw.resume') : t('mw.pause'))} onClick={() => togglePause(w)}>
-                        {w.status === 'paused' ? <Play size={13} /> : <Pause size={13} />}
-                      </button>
-                      <button className="mw-act" title={t('mw.edit')} aria-label={t('a11y.rowAction', w.name, t('mw.edit'))} onClick={() => openEdit(w)}><Pencil size={13} /></button>
-                      {/* Pencerenin GEÇMİŞİ: planlı kesinti alarmları susturur, dolayısıyla
-                          "bu pencereyi kim genişletti" sorusunun izlenebilir olması gerekir. */}
-                      <button className="mw-act" title={t('chg.tab')} aria-label={t('a11y.rowAction', w.name, t('chg.tab'))} onClick={() => setHistoryItem(w)}><History size={13} /></button>
-                      <button className="mw-act mw-act-danger" title={t('mw.delete')} aria-label={t('a11y.rowAction', w.name, t('mw.delete'))} onClick={() => del(w)}><Trash2 size={13} /></button>
-                    </>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <PaginationBar {...pager} />
-        </div>
+        <MaintenanceActiveStrip windows={activeWindows} now={now} canManage={canManage} onEndNow={endNow} onEdit={openEdit} teamId={teamId} teamName={teamName} />
+        <MonitorStatsBar items={tiles} activeFilter={filter} onStatClick={onTile} />
+
+        <Tabs value={view} onValueChange={setView} className="min-w-0 gap-3">
+          <TabsList aria-label={t('mw.viewsAria')} className="w-full justify-start overflow-x-auto sm:w-fit">
+            <TabsTrigger value="list" className="flex-none px-3"><ListIcon aria-hidden="true" />{t('mw.view.list')}</TabsTrigger>
+            <TabsTrigger value="agenda" className="flex-none px-3"><CalendarDays aria-hidden="true" />{t('mw.view.agenda')}</TabsTrigger>
+            <TabsTrigger value="calendar" className="flex-none px-3"><CalendarRange aria-hidden="true" />{t('mw.calendar')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="list" className="flex min-w-0 flex-col gap-3">
+            {filter && (
+              <div className="flex flex-wrap items-center gap-2 text-[0.86em] text-muted-foreground">
+                <span>{t('mondash.filterTip', t('mw.tile.' + filter))} · {countText(t, filtered.length, 'mw.matchOne', 'mw.matchCount')}</span>
+                <Button type="button" variant="link" size="xs" className="h-auto px-1" onClick={() => setFilter(null)}>{t('app.clearFilter')}</Button>
+              </div>
+            )}
+            {filtered.length === 0 ? (
+              <StatusBlock tone="neutral" icon={Wrench} description={t('mw.noMatch')} className="py-8"
+                actions={<Button type="button" variant="outline" size="sm" onClick={() => setFilter(null)}>{t('app.clearFilter')}</Button>} />
+            ) : (<>
+              <MaintenanceList items={pager.pageItems} phone={phone} canManage={canManage} now={now} actions={rowActions} teamId={teamId} teamName={teamName} />
+              {/* Çubuk tablo kabının DIŞINDA (telefonda tabloyla birlikte kayıp gitmesin) */}
+              <PaginationBar {...pager} />
+            </>)}
+          </TabsContent>
+          <TabsContent value="agenda" className="min-w-0">
+            <MaintenanceAgenda windows={rows} now={now} canManage={canManage} onOpen={openEdit} teamId={teamId} teamName={teamName} />
+          </TabsContent>
+          <TabsContent value="calendar" className="min-w-0">
+            <MonthCalendar events={calEvents} ariaLabel={t('mw.calendar')} />
+          </TabsContent>
+        </Tabs>
       </>)}
 
-      {/* Create / Edit modal */}
-      {modal && modal !== 'quick' && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
-              <div className="modal-icon-hdr-badge"><Wrench size={20} /></div>
-              <h3>{modal === 'new' ? t('mw.modalNew') : t('mw.modalEdit')}</h3>
-            </div>
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('mw.name')} <span className="req-star">*</span></span>
-                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label className="full-width"><span>{t('mw.description')}</span>
-                <textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></label>
+      <MaintenanceEditor open={!!modal && modal.kind !== 'quick'} mode={modal?.kind === 'edit' ? 'edit' : 'new'} initial={editorInitial}
+        monitorOptions={monitorOptions} saving={saving} onSave={saveWindow} onClose={close} />
+      <MaintenanceQuickModal open={modal?.kind === 'quick'} monitorOptions={monitorOptions} saving={saving} onStart={startQuick} onClose={close} />
 
-              {/* Monitör seçimi */}
-              <div className="full-width mw-block">
-                <div className="mw-block-title">{t('mw.monitorsTitle')}</div>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.allMonitors} onChange={e => setForm(f => ({ ...f, allMonitors: e.target.checked }))} />{t('mw.allMonitorsOpt')}</label>
-                {!form.allMonitors && (
-                  <div style={{ marginTop: 6 }}>
-                    {/* Önce tür, sonra o türün monitörleri (2026-09-17): düz liste hangi türü
-                        durdurduğunu göstermiyordu, bir türü tümden susturmak tek tek seçim istiyordu. */}
-                    <MaintenanceTargetPicker options={monitorOptions} value={form.targets}
-                      onChange={v => setForm(f => ({ ...f, targets: v }))} typeLabel={ty => t('mw.type.' + ty)} />
-                  </div>
-                )}
-              </div>
-
-              {/* Zamanlama */}
-              <label><span>{t('mw.start')} <span className="req-star">*</span></span>
-                <DateTimeField value={form.startAt} onChange={v => setForm(f => ({ ...f, startAt: v }))} placeholder={t('mw.start')} /></label>
-              <label><span>{t('mw.timezone')}</span>
-                <SearchableSelect value={form.timezone} onChange={v => setForm(f => ({ ...f, timezone: v }))}
-                  options={TZ_LIST.map(z => ({ value: z, label: z }))} searchThreshold={2} /></label>
-              <label><span>{t('mw.duration')}</span>
-                <input type="number" min="1" value={form.durationMinutes} onChange={e => setForm(f => ({ ...f, durationMinutes: Number(e.target.value) }))} /></label>
-              <label><span>{t('mw.recurrence')}</span>
-                <SearchableSelect value={form.recurrence} onChange={v => setForm(f => ({ ...f, recurrence: v }))}
-                  options={RECURRENCES.map(r => ({ value: r, label: t('mw.rec.' + r) }))} /></label>
-
-              {form.recurrence === 'WEEKLY' && (
-                <div className="full-width mw-dow">
-                  {DOW.map(d => (
-                    <button type="button" key={d} className={`mw-dow-btn${form.daysOfWeek.includes(d) ? ' active' : ''}`}
-                      onClick={() => setForm(f => ({ ...f, daysOfWeek: f.daysOfWeek.includes(d) ? f.daysOfWeek.filter(x => x !== d) : [...f.daysOfWeek, d] }))}>
-                      {t('mw.dow.' + d)}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {form.recurrence === 'MONTHLY' && (
-                <label><span>{t('mw.dayOfMonth')}</span>
-                  <input type="number" min="1" max="31" value={form.dayOfMonth} onChange={e => setForm(f => ({ ...f, dayOfMonth: Number(e.target.value) }))} /></label>
-              )}
-
-              <div className="full-width mw-summary">
-                <span>{t('mw.summaryLabel')}:</span> {scheduleSummary({ recurrence: form.recurrence, start_at: form.startAt, timezone: form.timezone, duration_minutes: form.durationMinutes, days_of_week: form.daysOfWeek.join(','), day_of_month: form.dayOfMonth })} · {form.timezone}
-              </div>
-            </div>
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={close}>{t('mw.cancel')}</Button>
-              <Button onClick={save} disabled={saving}>{saving ? '…' : t('mw.save')}</Button>
-            </div>
-          </div>
-        </div>, document.body)}
-
-      {/* Quick (ad-hoc) modal */}
-      {modal === 'quick' && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 520, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
-              <div className="modal-icon-hdr-badge"><Play size={20} /></div>
-              <h3>{t('mw.quickTitle')}</h3>
-            </div>
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('mw.name')}</span>
-                <input value={quickForm.name} placeholder={t('mw.quickNamePh')} onChange={e => setQuickForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <div className="full-width mw-block">
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={quickForm.allMonitors} onChange={e => setQuickForm(f => ({ ...f, allMonitors: e.target.checked }))} />{t('mw.allMonitorsOpt')}</label>
-                {!quickForm.allMonitors && (
-                  <div style={{ marginTop: 6 }}>
-                    <MaintenanceTargetPicker options={monitorOptions} value={quickForm.targets}
-                      onChange={v => setQuickForm(f => ({ ...f, targets: v }))} typeLabel={ty => t('mw.type.' + ty)} />
-                  </div>
-                )}
-              </div>
-              <label><span>{t('mw.durationMin')}</span>
-                <input type="number" min="1" value={quickForm.minutes} onChange={e => setQuickForm(f => ({ ...f, minutes: Number(e.target.value) }))} /></label>
-            </div>
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={close}>{t('mw.cancel')}</Button>
-              <Button onClick={saveQuick} disabled={saving}><Play size={14} />{saving ? '…' : t('mw.startNow')}</Button>
-            </div>
-          </div>
-        </div>, document.body)}
-
-      {/* Değişiklik geçmişi — ayrı ve SALT-OKUNUR bir kabuk. Düzenleme formunun içine sekme
-          olarak konsaydı geçmişi okumak için formu açmak gerekirdi ve yanlışlıkla kayıt
-          riski doğardı. */}
+      {/* Değişiklik geçmişi — ayrı ve SALT-OKUNUR bir kabuk (formun içine sekme olarak konsaydı yanlışlıkla kayıt riski doğardı). */}
       <ModalShell open={!!historyItem} onClose={() => setHistoryItem(null)}
         title={historyItem ? historyItem.name : ''} icon={History} size="lg" scrollBody>
         {historyItem && (

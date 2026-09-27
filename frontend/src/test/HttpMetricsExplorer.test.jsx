@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import HttpMetricsExplorer from '../components/admin/HttpMetricsExplorer.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -64,7 +64,7 @@ describe('HttpMetricsExplorer', () => {
 
   it('özet rozetleri sunucudan gelen değerleri basar', async () => {
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-pills')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-pills"]')).not.toBeNull())
     expect(container.textContent).toContain('120')
     expect(container.textContent).toContain('3')
   })
@@ -72,7 +72,7 @@ describe('HttpMetricsExplorer', () => {
   it('SAKLAMA ANAHTARI: kutu, Genel Ayarlar satırını ADIYLA bulur', async () => {
     const { container } = render(<HttpMetricsExplorer />)
     await waitFor(() => expect(api.admin.getGeneralSettings).toHaveBeenCalled())
-    await waitFor(() => expect(container.querySelector('.hme-retention')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-retention"]')).not.toBeNull())
   })
 
   it('anahtar BULUNAMAZSA kutu gizlenir (yanlış değerle çizilmez)', async () => {
@@ -82,34 +82,34 @@ describe('HttpMetricsExplorer', () => {
 
     const { container } = render(<HttpMetricsExplorer />)
     await waitFor(() => expect(api.admin.getGeneralSettings).toHaveBeenCalled())
-    await waitFor(() => expect(container.querySelector('.hme-pills')).not.toBeNull())
-    expect(container.querySelector('.hme-retention')).toBeNull()
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-pills"]')).not.toBeNull())
+    expect(container.querySelector('[data-testid="hme-retention"]')).toBeNull()
   })
 
   it('yetki yoksa (success:false) kutu gizlenir ve ekran ÇÖKMEZ', async () => {
     api.admin.getGeneralSettings.mockResolvedValue({ success: false, error: '403' })
 
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-pills')).not.toBeNull())
-    expect(container.querySelector('.hme-retention')).toBeNull()
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-pills"]')).not.toBeNull())
+    expect(container.querySelector('[data-testid="hme-retention"]')).toBeNull()
   })
 
   it('getGeneralSettings REJECT ederse de ekran ayakta kalır', async () => {
     api.admin.getGeneralSettings.mockRejectedValue(new Error('network'))
 
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-pills')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-pills"]')).not.toBeNull())
   })
 
   it('GEÇERSİZ saklama günü kaydedilmez (backend çöp değer almaz)', async () => {
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-retention')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-retention"]')).not.toBeNull())
 
-    const input = container.querySelector('.hme-retention input')
+    const input = within(container.querySelector('[data-testid="hme-retention"]')).getByRole('spinbutton', { name: /Saklama|Retention|Tut/i })
     expect(input, 'saklama girdisi bulunamadı').not.toBeNull()
     fireEvent.change(input, { target: { value: '0' } })
 
-    const saveBtn = container.querySelector('.hme-retention button')
+    const saveBtn = within(container.querySelector('[data-testid="hme-retention"]')).getByRole('button')
     fireEvent.click(saveBtn)
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).not.toHaveBeenCalled())
@@ -117,10 +117,10 @@ describe('HttpMetricsExplorer', () => {
 
   it('geçerli gün sayısı DOĞRU anahtarla kaydedilir', async () => {
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-retention')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-retention"]')).not.toBeNull())
 
-    fireEvent.change(container.querySelector('.hme-retention input'), { target: { value: '30' } })
-    fireEvent.click(container.querySelector('.hme-retention button'))
+    fireEvent.change(within(container.querySelector('[data-testid="hme-retention"]')).getByRole('spinbutton', { name: /Saklama|Retention|Tut/i }), { target: { value: '30' } })
+    fireEvent.click(within(container.querySelector('[data-testid="hme-retention"]')).getByRole('button'))
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     const payload = api.admin.saveGeneralSettings.mock.calls.at(-1)[0]
@@ -130,6 +130,6 @@ describe('HttpMetricsExplorer', () => {
   it('seri boş dönerse çökmez', async () => {
     api.admin.getHttpMetricsSeries.mockResolvedValue({ success: true, data: null })
     const { container } = render(<HttpMetricsExplorer />)
-    await waitFor(() => expect(container.querySelector('.hme-panel')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-panel"]')).not.toBeNull())
   })
 })

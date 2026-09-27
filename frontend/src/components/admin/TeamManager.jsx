@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -13,15 +13,28 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import TeamMembersManager from './TeamMembersManager.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
+import TeamLdapAuditModal from './TeamLdapAuditModal.jsx'
 import { navigateTo } from '../../utils/navigate.js'
-import { Download, Search, X, SlidersHorizontal } from 'lucide-react'
+import { Download, SlidersHorizontal } from 'lucide-react'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
-import { resolveTeamManager } from '../../utils/teamManager.js'
+import { resolveTeamManagerEntry, isTeamMember } from '../../utils/teamManager.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
+import { CheckboxRow as FormCheckbox, ToggleRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Switch } from '@/components/shadcn/switch'
+import { FieldSet, FieldLegend } from '@/components/shadcn/field'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
@@ -47,15 +60,13 @@ function weeklyFlag(team, which) {
     : !!(team?.weekly_availability_enabled ?? team?.weeklyAvailabilityEnabled)
 }
 
-/** Takım satırındaki/formundaki haftalık e-posta anahtarı — PermissionMatrix'teki pill switch'in aynısı. */
-function WeeklyPill({ on, disabled, onToggle, label }) {
+/** Takım satırındaki haftalık e-posta anahtarı — shadcn Switch + kısa etiket (tam ad aria-label/title). */
+function WeeklySwitch({ on, disabled, onToggle, label, short }) {
   return (
-    <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={label}
-      disabled={disabled}
-      className={`perm-pill ${on ? 'perm-pill-on' : 'perm-pill-off'}`}
-      onClick={onToggle}>
-      <span className="perm-pill-knob" />
-    </button>
+    <span className="flex items-center gap-2">
+      <Switch checked={!!on} disabled={disabled} aria-label={label} title={label} onCheckedChange={onToggle} />
+      <span className="text-xs whitespace-nowrap text-muted-foreground">{short}</span>
+    </span>
   )
 }
 
@@ -94,6 +105,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [stats, setStats] = useState({})                // takım id → sayaçlar (2026-09-20)
   const [manageTeam, setManageTeam] = useState(null)    // üye yönetimi modalı
   const [impactTeam, setImpactTeam] = useState(null)    // silme etki modalı
+  const [ldapAuditTeam, setLdapAuditTeam] = useState(null)   // AD ile üyelik denetimi (2026-09-26)
   const [q, setQ]       = useState(() => readUrlParam('g_q', ''))   // URL'de (g_q)
   // Zengin süzgeçler (2026-09-20, kullanıcı bildirimi): durum, müdür, açık alarm, lider, haftalık — URL'de g_*
   const [fActive, setFActive]   = useState(() => readUrlParam('g_active', ''))     // '' | 'active' | 'inactive'
@@ -139,8 +151,11 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
   }
 
-  /** Yönetim ekranı yükleyicisi: kapsamlı tam üye listesi + kurum-geneli eskalasyon kişileri. */
-  const loadTeamMembers = async (teamId) => {
+  /** Yönetim ekranı yükleyicisi: kapsamlı tam üye listesi + kurum-geneli eskalasyon kişileri.
+   *  useCallback (bağımlılığı yok — yalnız modül düzeyi `api`): TeamMembersModal `loadMembers` kimliği
+   *  değişince listeyi YENİDEN çeker; düz fonksiyon her üst render'da yeni kimlik alıp modalı gereksiz
+   *  yeniden yüklüyordu. */
+  const loadTeamMembers = useCallback(async (teamId) => {
     const [adm, dir] = await Promise.all([
       api.admin.getTeamUsers(teamId),
       Promise.resolve(api.teams?.members ? api.teams.members(teamId) : null).catch(() => null),
@@ -149,7 +164,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     return { success: true, data: {
       team: dir?.data?.team ?? null, members: adm.data ?? [], escalation_contacts: dir?.data?.escalation_contacts ?? [],
     } }
-  }
+  }, [])
 
   const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
   const usersById = Object.fromEntries(users.map(u => [u.id, u]))
@@ -159,13 +174,26 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
   /** Takımın müdürü — TEK kişi. Elle atanmışsa (team.manager_id) o; yoksa takımın bağlı olduğu ilk
    *  yönetici (lider/PO ve üst kademeler elenir; kural utils/teamManager.js). Eskiden üyelerin
-   *  müdürlerinin birleşimiydi → iki ad çıkıyordu. */
+   *  müdürlerinin birleşimiydi → iki ad çıkıyordu. Türetilen müdür takımın ÜYESİ DEĞİLDİR — yalnız
+   *  bu sütunda durur, üye modalına/sayısına girmez (prod hatası 2026-09-26).
+   *  Üyelik = birincil takım VEYA ek üyelik (eskiden yalnız team_id sayılıyordu). Dönen kayıt
+   *  kullanıcı KİMLİĞİNİ taşır; süzgeç ada göre değil kimliğe göre eşler (aynı adlı iki müdür). */
   const manualManagerId = (team) => team.manager_id ?? team.managerId ?? null
-  const teamManagerLabel = (team) => {
+  const teamManagerEntry = (team) => {
     const manual = manualManagerId(team)
-    if (manual != null && userMap[manual]) return userMap[manual]
-    return resolveTeamManager(users.filter(u => u.team_id === team.id), usersById, managerLabelFor,
+    if (manual != null && userMap[manual]) return { label: userMap[manual], userId: manual, manual: true }
+    return resolveTeamManagerEntry(users.filter(u => isTeamMember(u, team.id)), usersById, managerLabelFor,
       team.leader_id ?? team.leaderId ?? null)
+  }
+  const teamManagerLabel = (team) => teamManagerEntry(team)?.label ?? null
+  /** "AD ile üyelik denetimi" modalı için: müdür + ona DOĞRUDAN bağlı üyeler (müdürün kendisi üye sayılmaz). */
+  const managerInfoFor = (team) => {
+    const e = teamManagerEntry(team)
+    if (!e) return null
+    const reports = e.userId == null ? [] : users
+      .filter(u => isTeamMember(u, team.id) && String(u.manager_id ?? '') === String(e.userId))
+      .map(u => u.display_name || u.username)
+    return { label: e.label, manual: !!e.manual, reports }
   }
 
   /** Süzgeç + arama (ad / e-posta / lider adı / müdür adı / açıklama) — istemci tarafı; liste zaten tümü. */
@@ -173,13 +201,15 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     const needle = q.trim().toLowerCase()
     return teams.filter(tm => {
       const s = stats[String(tm.id)] || {}
-      const mgrLabel = teamManagerLabel(tm) || ''
+      const mgr = teamManagerEntry(tm)
+      const mgrLabel = mgr?.label || ''
       const manualMgr = manualManagerId(tm)
       if (needle && ![tm.name, tm.email, tm.description, userMap[tm.leader_id], mgrLabel].some((v) => v && String(v).toLowerCase().includes(needle))) return false
       if (fActive === 'active' && !tm.active) return false
       if (fActive === 'inactive' && tm.active) return false
       if (fManager === 'none' && (manualMgr != null || mgrLabel)) return false
-      if (fManager && fManager !== 'none' && String(manualMgr ?? '') !== String(fManager) && !(userMap[fManager] && mgrLabel === userMap[fManager])) return false
+      // Kimlikle eşleş: eskiden görünen ad karşılaştırılıyordu → aynı adlı iki müdürün takımları karışıyordu.
+      if (fManager && fManager !== 'none' && String(manualMgr ?? '') !== String(fManager) && String(mgr?.userId ?? '') !== String(fManager)) return false
       if (fAlerts === 'open' && !(Number(s.open_alerts) > 0)) return false
       if (fAlerts === 'none' && Number(s.open_alerts) > 0) return false
       if (fLeader === 'none' && tm.leader_id != null && userMap[tm.leader_id]) return false
@@ -190,12 +220,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       return true
     })
   }, [teams, stats, users, q, fActive, fManager, fAlerts, fLeader, fWeekly]) // eslint-disable-line react-hooks/exhaustive-deps
-  const pager = usePagination(filteredTeams, { listKey: 'admin-teams', defaultSize: 25, resetDeps: [q, fActive, fManager, fAlerts, fLeader, fWeekly] })
+  const pager = usePagination(filteredTeams, { listKey: 'admin-teams', preset: 'panel', resetDeps: [q, fActive, fManager, fAlerts, fLeader, fWeekly] })
   const pagedTeams = pager.pageItems
   const managerOptions = useMemo(() => {
     const ids = new Set()
     for (const tm of teams) { const m = manualManagerId(tm); if (m != null && userMap[m]) ids.add(String(m)) }
-    for (const tm of teams) { const lbl = teamManagerLabel(tm); const u = users.find((x) => (x.display_name || x.username) === lbl); if (u) ids.add(String(u.id)) }
+    for (const tm of teams) { const e = teamManagerEntry(tm); if (e?.userId != null && userMap[e.userId]) ids.add(String(e.userId)) }
     return [{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.filterNoManager') }, ...[...ids].map((id) => ({ value: id, label: userMap[id] })).sort((a, b) => a.label.localeCompare(b.label))]
   }, [teams, users]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -300,12 +330,17 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   }
 
   const canSave = form.name.trim() && form.email.trim()
+  const userOptions = (placeholder) => [
+    { value: '', label: placeholder },
+    ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
+  ]
+  const formMsgTone = msg && msg.startsWith('✓') ? 'success' : 'danger'
 
   return (
     <div className="admin-section">
       <div className="admin-section-header">
         <h3>{t('team.title')}</h3>
-        <div className="hdr-actions">
+        <div className="flex items-center gap-2">
           <Button variant="secondary" title={t('team.exportCsv')} onClick={() => {
             const rows = filteredTeams.map(tm => { const s = stats[String(tm.id)] || {}; return [tm.name, tm.email, userMap[tm.leader_id] || '', teamManagerLabel(tm) || '',
               tm.active ? t('team.active') : t('team.inactive'), s.members ?? '', s.domains ?? '', s.monitors ?? '', s.open_alerts ?? '', s.contacts ?? '', s.groups ?? ''] })
@@ -315,139 +350,149 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           {isAdmin && <Button variant="success" onClick={openAdd}>{t('team.addBtn')}</Button>}
         </div>
       </div>
-      {msg && !modal && <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`}>{msg}</div>}
+      {msg && !modal && <AlertBanner tone={formMsgTone}>{msg}</AlertBanner>}
       {loadError && teams.length === 0 && (
         <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
       )}
 
-      {/* Araç çubuğu — proje standardı (.invtb): arama + Süzgeçler paneli + sayaç (2026-09-20) */}
-      <div className="invtb um-toolbar" data-testid="tm-toolbar">
-        <div className="invtb-row">
-          <label className="invtb-search">
-            <Search size={14} aria-hidden="true" />
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('team.searchPlaceholder')} aria-label={t('team.searchLabel')} />
-            {q && <button type="button" className="invtb-clear" onClick={() => setQ('')} aria-label={t('inv.filterClear')}><X size={12} /></button>}
-          </label>
+      {/* Araç çubuğu — arama + Süzgeçler paneli + sayaç (2026-09-20); shadcn InputGroup + Label */}
+      <div className="mb-3" data-testid="tm-toolbar">
+        <div className="flex flex-wrap items-center gap-2">
+          <ToolbarSearch value={q} onChange={setQ} placeholder={t('team.searchPlaceholder')}
+            ariaLabel={t('team.searchLabel')} clearLabel={t('inv.filterClear')} />
           <Button type="button" variant={filtersOpen || filterActive ? 'default' : 'secondary'} size="sm" onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen}>
             <SlidersHorizontal size={13} /> {t('inv.filters')}{filterActive ? ` · ${t('inv.filterActive')}` : ''}
           </Button>
-          <span className="invtb-count">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
-          <div className="invtb-spacer" />
+          <span className="text-[0.84em] whitespace-nowrap text-muted-foreground">{t('inv.shownOf', filteredTeams.length, teams.length)}</span>
+          <div className="flex-1" />
           {(filterActive || q) && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('inv.filterClear')}</Button>}
         </div>
         {filtersOpen && (
-          <div className="invtb-filters" role="group" aria-label={t('inv.filters')}>
-            <label className="invtb-f"><span>{t('team.colActive')}</span>
+          <FilterPanel label={t('inv.filters')} className="grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
+            <FilterField label={t('team.colActive')}>
               <SearchableSelect value={fActive} onChange={setFActive} ariaLabel={t('team.colActive')} searchThreshold={99}
-                options={[{ value: '', label: t('team.filterAny') }, { value: 'active', label: t('team.active') }, { value: 'inactive', label: t('team.inactive') }]} /></label>
-            <label className="invtb-f"><span>{t('team.colManager')}</span>
-              <SearchableSelect value={fManager} onChange={setFManager} ariaLabel={t('team.colManager')} searchThreshold={4} options={managerOptions} /></label>
-            <label className="invtb-f"><span>{t('team.filterAlerts')}</span>
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'active', label: t('team.active') }, { value: 'inactive', label: t('team.inactive') }]} />
+            </FilterField>
+            <FilterField label={t('team.colManager')}>
+              <SearchableSelect value={fManager} onChange={setFManager} ariaLabel={t('team.colManager')} searchThreshold={4} options={managerOptions} />
+            </FilterField>
+            <FilterField label={t('team.filterAlerts')}>
               <SearchableSelect value={fAlerts} onChange={setFAlerts} ariaLabel={t('team.filterAlerts')} searchThreshold={99}
-                options={[{ value: '', label: t('team.filterAny') }, { value: 'open', label: t('team.filterAlertsOpen') }, { value: 'none', label: t('team.filterAlertsNone') }]} /></label>
-            <label className="invtb-f"><span>{t('team.colLeader')}</span>
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'open', label: t('team.filterAlertsOpen') }, { value: 'none', label: t('team.filterAlertsNone') }]} />
+            </FilterField>
+            <FilterField label={t('team.colLeader')}>
               <SearchableSelect value={fLeader} onChange={setFLeader} ariaLabel={t('team.colLeader')} searchThreshold={99}
-                options={[{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.noLeader') }]} /></label>
-            <label className="invtb-f"><span>{t('team.colWeeklyEmails')}</span>
+                options={[{ value: '', label: t('team.filterAny') }, { value: 'none', label: t('team.noLeader') }]} />
+            </FilterField>
+            <FilterField label={t('team.colWeeklyEmails')}>
               <SearchableSelect value={fWeekly} onChange={setFWeekly} ariaLabel={t('team.colWeeklyEmails')} searchThreshold={99}
                 options={[{ value: '', label: t('team.filterAny') }, { value: 'reminder_on', label: `${t('team.weeklyReminderShort')}: ${t('team.on')}` }, { value: 'reminder_off', label: `${t('team.weeklyReminderShort')}: ${t('team.off')}` },
-                  { value: 'availability_on', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.on')}` }, { value: 'availability_off', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.off')}` }]} /></label>
-          </div>
+                  { value: 'availability_on', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.on')}` }, { value: 'availability_off', label: `${t('team.weeklyAvailabilityShort')}: ${t('team.off')}` }]} />
+            </FilterField>
+          </FilterPanel>
         )}
       </div>
 
       {/* Toplu işlem çubuğu — seçim varken (2026-09-20) */}
       {canManage && selected.size > 0 && (
-        <div className="um-bulk" data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}>
-          <span className="um-bulk-count">{t('team.selected', selected.size)}</span>
+        <div data-testid="tm-bulk-bar" aria-busy={bulkBusy || undefined}
+          className="mb-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2">
+          <span className="mr-1 font-bold">{t('team.selected', selected.size)}</span>
           <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('team.bulkActivate')}</Button>
           <Button variant="destructive" size="sm" onClick={() => runBulk('deactivate')} disabled={bulkBusy}>{t('team.bulkDeactivate')}</Button>
-          <SearchableSelect value="" onChange={(v) => v && runBulk(v)} placeholder={t('team.bulkWeekly')} ariaLabel={t('team.bulkWeekly')} searchThreshold={99}
-            options={[{ value: '', label: t('team.bulkWeekly') }, { value: 'weekly_reminder_on', label: t('team.bulkReminderOn') }, { value: 'weekly_reminder_off', label: t('team.bulkReminderOff') },
-              { value: 'weekly_availability_on', label: t('team.bulkAvailOn') }, { value: 'weekly_availability_off', label: t('team.bulkAvailOff') }]} />
-          {isAdmin && <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : Number(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
-            options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />}
+          <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
+            <SearchableSelect value="" onChange={(v) => v && runBulk(v)} placeholder={t('team.bulkWeekly')} ariaLabel={t('team.bulkWeekly')} searchThreshold={99}
+              options={[{ value: '', label: t('team.bulkWeekly') }, { value: 'weekly_reminder_on', label: t('team.bulkReminderOn') }, { value: 'weekly_reminder_off', label: t('team.bulkReminderOff') },
+                { value: 'weekly_availability_on', label: t('team.bulkAvailOn') }, { value: 'weekly_availability_off', label: t('team.bulkAvailOff') }]} />
+          </span>
+          {isAdmin && (
+            <span className="w-full sm:w-auto sm:min-w-[180px] sm:flex-[0_1_220px]">
+              <SearchableSelect value="" onChange={(v) => v && runBulk('set_manager', { manager_id: v === 'none' ? null : Number(v) })} placeholder={t('team.bulkSetManager')} ariaLabel={t('team.bulkSetManager')} searchThreshold={4}
+                options={[{ value: '', label: t('team.bulkSetManager') }, { value: 'none', label: t('team.bulkClearManager') }, ...users.map((u) => ({ value: String(u.id), label: u.display_name || u.username }))]} />
+            </span>
+          )}
           <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())} disabled={bulkBusy}>{t('usr.bulkClear')}</Button>
         </div>
       )}
 
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              {canManage && <th className="um-col-check"><input type="checkbox" checked={allPageSelected} onChange={toggleAllPage} aria-label={t('team.selectAll')} disabled={selectableIds.length === 0} /></th>}
-              <th>{t('team.colName')}</th>
-              <th>{t('team.colEmail')}</th>
-              <th>{t('team.colLeader')}</th>
-              <th>{t('team.colManager')}</th>
-              <th>{t('team.colActive')}</th>
-              <th>{t('team.colWeeklyEmails')}</th>
-              <th>{t('team.colAssets')}</th>
-              <th>{t('team.colActions')}</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="overflow-hidden rounded-lg border bg-card border-border">
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow>
+              {canManage && (
+                <TableHead className="w-7">
+                  <Checkbox checked={allPageSelected} onCheckedChange={toggleAllPage} aria-label={t('team.selectAll')} disabled={selectableIds.length === 0} />
+                </TableHead>
+              )}
+              <TableHead>{t('team.colName')}</TableHead>
+              <TableHead className="hidden md:table-cell">{t('team.colEmail')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('team.colLeader')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('team.colManager')}</TableHead>
+              <TableHead>{t('team.colActive')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('team.colWeeklyEmails')}</TableHead>
+              <TableHead>{t('team.colAssets')}</TableHead>
+              <TableHead>{t('team.colActions')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {filteredTeams.length === 0 && (
-              <tr><td colSpan={canManage ? 9 : 8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
-                {t('team.noResults')}
-              </td></tr>
+              <TableRow>
+                <TableCell colSpan={canManage ? 9 : 8} className="p-[18px] text-center text-muted-foreground">
+                  {t('team.noResults')}
+                </TableCell>
+              </TableRow>
             )}
             {pagedTeams.map((team) => (
-              <Fragment key={team.id}>
-                <tr className={selected.has(team.id) ? 'is-selected' : ''}>
-                  {canManage && (
-                    <td className="um-col-check">
-                      {canEditRow(team.id) ? <input type="checkbox" checked={selected.has(team.id)} onChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} /> : null}
-                    </td>
+              <TableRow key={team.id} data-state={selected.has(team.id) ? 'selected' : undefined}>
+                {canManage && (
+                  <TableCell className="w-7">
+                    {canEditRow(team.id) ? <Checkbox checked={selected.has(team.id)} onCheckedChange={() => toggleOne(team.id)} aria-label={t('team.selectOne', team.name)} /> : null}
+                  </TableCell>
+                )}
+                <TableCell>
+                  <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
+                    onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
+                </TableCell>
+                <TableCell className="hidden md:table-cell">{team.email || '—'}</TableCell>
+                <TableCell className="hidden lg:table-cell">{userMap[team.leader_id] ?? <span className="text-destructive">{t('team.noLeader')}</span>}</TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  {teamManagerLabel(team) || '—'}
+                  {manualManagerId(team) != null && userMap[manualManagerId(team)] && (
+                    <span className="ml-1.5 text-xs text-muted-foreground" title={t('team.managerManualTitle')}>
+                      {t('team.managerManual')}
+                    </span>
                   )}
-                  <td>
-                    <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
-                      onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
-                  </td>
-                  <td>{team.email || '—'}</td>
-                  <td>{userMap[team.leader_id] ?? <span style={{ color: 'var(--danger)' }}>{t('team.noLeader')}</span>}</td>
-                  <td>
-                    {teamManagerLabel(team) || '—'}
-                    {manualManagerId(team) != null && userMap[manualManagerId(team)] && (
-                      <span className="field-hint" style={{ marginLeft: 6 }} title={t('team.managerManualTitle')}>
-                        {t('team.managerManual')}
-                      </span>
-                    )}
-                  </td>
-                  <td><span className={team.active ? 'badge badge-ok' : 'badge badge-err'}>{team.active ? t('team.active') : t('team.inactive')}</span></td>
-                  <td>
-                    <div className="tm-weekly-cell">
-                      <span className="tm-weekly-item">
-                        <WeeklyPill on={weeklyFlag(team, 'reminder')} disabled={!canToggleWeekly(team.id)}
-                          label={t('team.weeklyReminder')} onToggle={() => toggleWeekly(team, 'reminder')} />
-                        <span className="tm-weekly-label">{t('team.weeklyReminderShort')}</span>
-                      </span>
-                      <span className="tm-weekly-item">
-                        <WeeklyPill on={weeklyFlag(team, 'availability')} disabled={!canToggleWeekly(team.id)}
-                          label={t('team.weeklyAvailability')} onToggle={() => toggleWeekly(team, 'availability')} />
-                        <span className="tm-weekly-label">{t('team.weeklyAvailabilityShort')}</span>
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <TeamStats s={stats[String(team.id)]} t={t}
-                      onMembers={() => (canEditRow(team.id) ? setManageTeam(team) : setMembersTeam(team))}
-                      onDomains={() => navigateTo('domains', { i_team: String(team.id) })}
-                      onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
-                  </td>
-                  <td>
-                    <KebabMenu label={t('team.colActions')} rowLabel={team.name} items={[
-                      { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
-                      { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
-                      { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
-                      { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
-                    ]} />
-                  </td>
-                </tr>
-              </Fragment>
+                </TableCell>
+                <TableCell>
+                  <ToneBadge tone={team.active ? 'success' : 'danger'}>{team.active ? t('team.active') : t('team.inactive')}</ToneBadge>
+                </TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  <div className="flex flex-col gap-1.5">
+                    <WeeklySwitch on={weeklyFlag(team, 'reminder')} disabled={!canToggleWeekly(team.id)}
+                      label={t('team.weeklyReminder')} short={t('team.weeklyReminderShort')} onToggle={() => toggleWeekly(team, 'reminder')} />
+                    <WeeklySwitch on={weeklyFlag(team, 'availability')} disabled={!canToggleWeekly(team.id)}
+                      label={t('team.weeklyAvailability')} short={t('team.weeklyAvailabilityShort')} onToggle={() => toggleWeekly(team, 'availability')} />
+                  </div>
+                </TableCell>
+                <TableCell className="whitespace-normal">
+                  <TeamStats s={stats[String(team.id)]} t={t}
+                    onMembers={() => (canEditRow(team.id) ? setManageTeam(team) : setMembersTeam(team))}
+                    onDomains={() => navigateTo('domains', { i_team: String(team.id) })}
+                    onAlerts={() => navigateTo('alerthistory', { team: String(team.id) })} />
+                </TableCell>
+                <TableCell>
+                  <KebabMenu label={t('team.colActions')} rowLabel={team.name} items={[
+                    { label: t('team.edit'), onClick: () => openEdit(team), hidden: !canEditRow(team.id) },
+                    { label: t('team.manageMembers'), onClick: () => setManageTeam(team), hidden: !canEditRow(team.id) },
+                    { label: t('hist.title'), onClick: () => setHistFilter({ id: team.id, name: team.name }) },
+                    { label: t('tla.menu'), onClick: () => setLdapAuditTeam(team), hidden: !isAdmin },
+                    { label: t('team.delete'), danger: true, onClick: () => del(team.id), hidden: !isAdmin },
+                  ]} />
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Sayfalama — proje standardı PaginationBar (istemci-taraflı, 2026-09-20) */}
@@ -455,107 +500,96 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
 
       <AdminChangeHistory resource="TEAM" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
-      {modal !== null && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-icon-hdr modal-icon-hdr--team">
-              <div className="modal-icon-hdr-badge">
-                {modal === 'add' ? <UsersRound size={20} /> : <PenLine size={20} />}
-              </div>
-              <h3>{modal === 'add' ? t('team.addTitle') : t('team.editTitle')}</h3>
-            </div>
-            <div className="form-grid">
-              <label>
-                <span>{t('team.formName')} <span className="req-star">*</span></span>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('team.formNamePh')} />
-              </label>
-              <label>
-                <span>{t('team.formEmail')} <span className="req-star">*</span></span>
-                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="team@example.com" />
-              </label>
-              <label>
-                <span>{t('team.formLeader')}</span>
-                <SearchableSelect
-                  value={form.leader_id}
-                  onChange={v => setForm({ ...form, leader_id: v })}
-                  placeholder={t('team.selectLeader')}
-                  searchThreshold={2}
-                  options={[
-                    { value: '', label: t('team.selectLeader') },
-                    ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
-                  ]}
-                />
-                <span className="field-hint">{t('team.leaderOptionalHint')}</span>
-              </label>
-              <label>
-                <span>{t('team.formManager')}</span>
-                <SearchableSelect
-                  value={form.manager_id}
-                  onChange={v => setForm({ ...form, manager_id: v })}
-                  placeholder={t('team.selectManager')}
-                  searchThreshold={2}
-                  options={[
-                    { value: '', label: t('team.selectManager') },
-                    ...users.map(u => ({ value: u.id, label: `${u.display_name || u.username} (${u.username})` })),
-                  ]}
-                />
-                <span className="field-hint">{t('team.managerHint')}</span>
-              </label>
-              <label className="full-width">{t('team.formDesc')}
-                <input value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
-                {t('team.formActive')}
-              </label>
-              {/* Haftalık e-postalar — yeni takımda İKİSİ DE KAPALI açılır; takım sonradan kendi üyeleri
-                  üzerinden açar. E-posta ancak takım AKTİF ve ilgili anahtar açıkken gider. */}
-              <div className="full-width tm-weekly-form">
-                <span className="tm-weekly-form-title">{t('team.colWeeklyEmails')}</span>
-                <div className="tm-weekly-form-row">
-                  <WeeklyPill on={!!form.weekly_reminder_enabled} label={t('team.weeklyReminder')}
-                    onToggle={() => setForm({ ...form, weekly_reminder_enabled: !form.weekly_reminder_enabled })} />
-                  <span>{t('team.weeklyReminder')}</span>
-                </div>
-                <div className="tm-weekly-form-row">
-                  <WeeklyPill on={!!form.weekly_availability_enabled} label={t('team.weeklyAvailability')}
-                    onToggle={() => setForm({ ...form, weekly_availability_enabled: !form.weekly_availability_enabled })} />
-                  <span>{t('team.weeklyAvailability')}</span>
-                </div>
-                <span className="field-hint">{t('team.weeklyHint')}</span>
-                <div className="tm-weekly-channels">
-                  <TagInput label={t('team.weeklyChannels')} value={form.weekly_channels || ''}
-                    onChange={(v) => setForm({ ...form, weekly_channels: v })} placeholder={t('team.weeklyChannelsPh')} />
-                  <span className="field-hint">{t('team.weeklyChannelsHint')}</span>
-                </div>
-              </div>
-            </div>
-            {msg && (
-              <div className={`alert-msg${msg.startsWith('✓') ? '' : ' alert-msg--err'}`} style={{ marginTop: 8 }}>
-                {msg}
-              </div>
+      <ModalShell open={modal !== null} onClose={closeModal} size="md"
+        icon={modal === 'add' ? UsersRound : PenLine}
+        title={modal === 'add' ? t('team.addTitle') : t('team.editTitle')}
+        footer={(
+          <>
+            <Button variant="secondary" onClick={closeModal}>{t('team.cancel')}</Button>
+            <Button onClick={save} disabled={saving || !canSave} aria-busy={saving || undefined}>
+              {saving ? t('team.saving') : t('team.save')}
+            </Button>
+          </>
+        )}>
+        <div className="grid grid-cols-1 items-end gap-x-3 sm:grid-cols-2">
+          <Field label={t('team.formName')} required>
+            {({ id }) => (
+              <Input id={id} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('team.formNamePh')} />
             )}
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={closeModal}>{t('team.cancel')}</Button>
-              <Button onClick={save} disabled={saving || !canSave}>
-                {saving ? t('team.saving') : t('team.save')}
-              </Button>
+          </Field>
+          <Field label={t('team.formEmail')} required>
+            {({ id }) => (
+              <Input id={id} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="team@example.com" />
+            )}
+          </Field>
+          <Field label={t('team.formLeader')} hint={t('team.leaderOptionalHint')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.leader_id}
+                onChange={v => setForm({ ...form, leader_id: v })}
+                placeholder={t('team.selectLeader')}
+                searchThreshold={2}
+                options={userOptions(t('team.selectLeader'))}
+              />
+            )}
+          </Field>
+          <Field label={t('team.formManager')} hint={t('team.managerHint')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.manager_id}
+                onChange={v => setForm({ ...form, manager_id: v })}
+                placeholder={t('team.selectManager')}
+                searchThreshold={2}
+                options={userOptions(t('team.selectManager'))}
+              />
+            )}
+          </Field>
+          <Field label={t('team.formDesc')} className="col-span-full">
+            {({ id }) => (
+              <Input id={id} value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            )}
+          </Field>
+          <FormCheckbox className="col-span-full mb-3.5" checked={!!form.active} label={t('team.formActive')}
+            onChange={(v) => setForm({ ...form, active: v })} />
+          {/* Haftalık e-postalar — yeni takımda İKİSİ DE KAPALI açılır; takım sonradan kendi üyeleri
+              üzerinden açar. E-posta ancak takım AKTİF ve ilgili anahtar açıkken gider. */}
+          <FieldSet className="col-span-full gap-2" data-testid="tm-weekly-form">
+            <FieldLegend variant="label" className="mb-1 text-[13px] font-semibold">{t('team.colWeeklyEmails')}</FieldLegend>
+            <ToggleRow checked={!!form.weekly_reminder_enabled} label={t('team.weeklyReminder')}
+              onChange={(v) => setForm({ ...form, weekly_reminder_enabled: v })} />
+            <ToggleRow checked={!!form.weekly_availability_enabled} label={t('team.weeklyAvailability')}
+              onChange={(v) => setForm({ ...form, weekly_availability_enabled: v })} />
+            <span className="text-xs text-muted-foreground">{t('team.weeklyHint')}</span>
+            <div className="mt-1 flex flex-col gap-1">
+              <TagInput label={t('team.weeklyChannels')} value={form.weekly_channels || ''}
+                onChange={(v) => setForm({ ...form, weekly_channels: v })} placeholder={t('team.weeklyChannelsPh')} />
+              <span className="text-xs text-muted-foreground">{t('team.weeklyChannelsHint')}</span>
             </div>
-          </div>
+          </FieldSet>
         </div>
-      )}
+        {msg && <AlertBanner tone={formMsgTone} className="mt-2">{msg}</AlertBanner>}
+      </ModalShell>
 
       {manageTeam && (
         <TeamMembersManager team={manageTeam} users={users} canManage={canEditRow(manageTeam.id)}
           onClose={() => setManageTeam(null)} onChanged={() => { loadStats(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
       )}
+      {ldapAuditTeam && (
+        <TeamLdapAuditModal team={ldapAuditTeam} managerInfo={managerInfoFor(ldapAuditTeam)}
+          onClose={() => setLdapAuditTeam(null)}
+          onChanged={() => { load(); loadUsers(); setMembersNonce(n => n + 1); onTeamsChange?.() }} />
+      )}
       {impactTeam && (
         <TeamDeleteImpactModal team={impactTeam} teams={teams} onClose={() => setImpactTeam(null)}
           onDeleted={(deleted) => { setImpactTeam(null); if (membersTeam?.id === impactTeam.id) setMembersTeam(null); load(); if (deleted) onTeamsChange?.() }} />
       )}
+      {/* usersById BİLEREK verilmez: verilince üye kartları üyelerden yukarı 2 kademe yönetim zinciri
+          yürüyüp müdürü ve onun müdürünü ÜYE ızgarasına ekliyordu — takımda olmayan Kullanıcı X "takımın
+          içinde" görünüyordu (prod hatası 2026-09-26). Müdür, üye kartında ALAN olarak (managerLabelFor)
+          ve satırdaki "Takım Müdürü" sütununda ayrı durur. */}
       <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
         canManage={canManage} onEditUser={setEditingUser} loadMembers={loadTeamMembers}
-        usersById={usersById} managerLabelFor={managerLabelFor} refreshKey={membersNonce} />
+        managerLabelFor={managerLabelFor} refreshKey={membersNonce} />
       <UserEditModal
         user={editingUser}
         teams={teams}
@@ -569,23 +603,25 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   )
 }
 
-/** Satır varlık sayaçları (2026-09-20): üye/domain/alarm tıklanır, diğerleri bilgi. Sayaç yoksa (henüz yüklenmedi) boş. */
+/** Satır varlık sayaçları (2026-09-20): üye/domain/alarm tıklanır, diğerleri bilgi. Sayaç yoksa (henüz yüklenmedi) boş.
+ *  Tıklanabilen sayaç shadcn Button (outline, hap biçimi), bilgi sayacı shadcn Badge. */
 function TeamStats({ s, t, onMembers, onDomains, onAlerts }) {
   if (!s) return null
-  const chip = (key, val, onClick, tip, extraCls = '') => {
+  const chip = (key, val, onClick, tip, alert = false) => {
     const n = Number(val ?? 0)
-    const cls = `tm-stat${n === 0 ? ' tm-stat--zero' : ''}${extraCls}`
+    const cls = cn('h-auto rounded-full px-2 py-px text-[0.76em] font-semibold', n === 0 && 'opacity-55',
+      alert && 'border-destructive/40 text-destructive')
     const label = t(`team.stat.${key}`, n)
     return onClick
-      ? <button type="button" key={key} className={cls} onClick={onClick} title={tip}>{label}</button>
-      : <span key={key} className={cls} title={tip}>{label}</span>
+      ? <Button type="button" key={key} variant="outline" size="xs" className={cn(cls, 'hover:border-primary hover:text-primary')} onClick={onClick} title={tip}>{label}</Button>
+      : <Badge key={key} variant="outline" className={cls} title={tip}>{label}</Badge>
   }
   return (
-    <div className="tm-stats" data-testid="team-stats">
+    <div className="flex max-w-[260px] flex-wrap gap-1" data-testid="team-stats">
       {chip('members', s.members, onMembers, t('team.statMembersTip'))}
       {chip('domains', s.domains, onDomains, t('team.statDomainsTip'))}
       {chip('monitors', s.monitors)}
-      {chip('open_alerts', s.open_alerts, onAlerts, t('team.statAlertsTip'), Number(s.open_alerts) > 0 ? ' tm-stat--alert' : '')}
+      {chip('open_alerts', s.open_alerts, onAlerts, t('team.statAlertsTip'), Number(s.open_alerts) > 0)}
       {chip('contacts', s.contacts)}
       {chip('groups', s.groups)}
     </div>

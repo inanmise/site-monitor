@@ -7,7 +7,13 @@ import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import Field from '../ui/Field.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import { SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 /**
  * Ayarlar → Platformlar (2026-09-22, kullanıcı isteği): sitenin koştuğu ortam kataloğu (IIS, OpenShift, Kubernetes, Linux…).
@@ -70,59 +76,83 @@ export default function PlatformSettings() {
     else toast.error(r?.error || t('plat.saveError'))
   }
 
-  return (
-    <div className="admin-section plat-settings">
-      <h3><Layers size={16} /> {t('plat.title')}</h3>
-      <p className="section-desc">{t('plat.desc')}</p>
+  const actionLabel = (label, p) => t('a11y.rowAction', label, p.name)
 
+  return (
+    <div className={SETTINGS_STACK} data-testid="platform-settings">
+    <SettingsHeader icon={Layers} title={t('plat.title')} description={t('plat.desc')} />
+    <SettingsSection contentClassName="flex flex-col gap-4">
       {/* Ekle / düzenle formu */}
-      <div className="plat-form">
-        <div className="plat-form-grid">
+      <div className="rounded-lg border bg-muted/40 p-3 sm:p-4">
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
           <Field label={t('plat.code')} required={editing == null} hint={editing == null ? t('plat.codeHint') : t('plat.codeLocked')}>
-            {({ id }) => <input id={id} className="input" value={form.code} disabled={editing != null} maxLength={20}
-              onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="OPENSHIFT_PROD" />}
+            {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={form.code} disabled={editing != null} maxLength={20}
+              className="font-mono" onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))} placeholder="OPENSHIFT_PROD" />}
           </Field>
           <Field label={t('plat.name')} required>
-            {({ id }) => <input id={id} className="input" value={form.name} maxLength={80} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={t('plat.namePh')} />}
+            {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={form.name} maxLength={80} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={t('plat.namePh')} />}
           </Field>
-          <Field label={t('plat.description')} className="full-width">
-            {({ id }) => <input id={id} className="input" value={form.description} maxLength={300} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder={t('plat.descriptionPh')} />}
+          <Field label={t('plat.description')} className="sm:col-span-2">
+            {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={form.description} maxLength={300} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder={t('plat.descriptionPh')} />}
           </Field>
         </div>
-        <div className="plat-form-actions">
+        <div className="flex flex-wrap justify-end gap-2">
           {editing != null && <Button type="button" variant="secondary" onClick={startNew}>{t('plat.cancelEdit')}</Button>}
-          <Button type="button" disabled={saving} onClick={save}>
+          <Button type="button" disabled={saving} aria-busy={saving || undefined} onClick={save}>
             {editing == null ? <><Plus size={14} /> {t('plat.add')}</> : <><Pencil size={14} /> {t('plat.save')}</>}
           </Button>
         </div>
       </div>
 
       {error && <AlertBanner tone="danger" role="alert" actions={<Button type="button" variant="secondary" size="sm" onClick={load}>{t('hist.retry')}</Button>}>{error}</AlertBanner>}
-      {loading ? <p className="section-desc">{t('settings.loading')}</p> : rows.length === 0 ? (
+      {loading ? <LoadingBlock label={t('settings.loading')} /> : rows.length === 0 ? (
         <StatusBlock tone="neutral" icon={Layers} title={t('plat.empty')} />
       ) : (
-        <table className="admin-table plat-table" data-testid="plat-table">
-          <thead>
-            <tr><th>{t('plat.code')}</th><th>{t('plat.name')}</th><th>{t('plat.description')}</th><th>{t('plat.usage')}</th><th>{t('plat.status')}</th><th className="grp-actions">{t('inv.colActions')}</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((p) => (
-              <tr key={p.id} className={p.active ? '' : 'mon-row-inactive'}>
-                <td><code className="plat-code">{p.code}</code></td>
-                <td className="plat-name">{p.name}</td>
-                <td className="plat-desc">{p.description || '—'}</td>
-                <td>{p.usage > 0 ? <span className="ccx-chip ccx-chip--info">{t('plat.usageN', p.usage)}</span> : <span className="inv-dim">—</span>}</td>
-                <td>{p.active ? <span className="badge badge-ok">{t('plat.active')}</span> : <span className="badge badge-err">{t('plat.inactive')}</span>}</td>
-                <td className="grp-actions">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => startEdit(p)} title={t('plat.edit')}><Pencil size={12} /></Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => toggleActive(p)} title={p.active ? t('plat.deactivate') : t('plat.activate')} aria-pressed={!p.active}><Power size={12} /></Button>
-                  <Button type="button" variant="destructive" size="sm" onClick={() => remove(p)} disabled={p.usage > 0} title={p.usage > 0 ? t('plat.inUse', p.usage) : t('plat.delete')}><Trash2 size={12} /></Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="overflow-hidden rounded-lg border">
+          <Table data-testid="plat-table">
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead>{t('plat.code')}</TableHead>
+                <TableHead>{t('plat.name')}</TableHead>
+                <TableHead className="hidden md:table-cell">{t('plat.description')}</TableHead>
+                <TableHead>{t('plat.usage')}</TableHead>
+                <TableHead>{t('plat.status')}</TableHead>
+                <TableHead className="text-right">{t('inv.colActions')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((p) => (
+                <TableRow key={p.id} data-inactive={p.active ? undefined : 'true'} className="data-[inactive]:opacity-60">
+                  <TableCell><code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{p.code}</code></TableCell>
+                  <TableCell className="font-medium whitespace-normal">{p.name}</TableCell>
+                  <TableCell className="hidden max-w-[320px] whitespace-normal text-muted-foreground md:table-cell">{p.description || '—'}</TableCell>
+                  <TableCell>{p.usage > 0 ? <ToneBadge tone="info">{t('plat.usageN', p.usage)}</ToneBadge> : <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell>{p.active ? <ToneBadge tone="success">{t('plat.active')}</ToneBadge> : <ToneBadge tone="danger">{t('plat.inactive')}</ToneBadge>}</TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1.5">
+                      <SimpleTooltip content={t('plat.edit')}>
+                        <Button type="button" variant="outline" size="icon-sm" onClick={() => startEdit(p)} aria-label={actionLabel(t('plat.edit'), p)}><Pencil /></Button>
+                      </SimpleTooltip>
+                      <SimpleTooltip content={p.active ? t('plat.deactivate') : t('plat.activate')}>
+                        <Button type="button" variant="outline" size="icon-sm" onClick={() => toggleActive(p)} aria-pressed={!p.active}
+                          aria-label={actionLabel(p.active ? t('plat.deactivate') : t('plat.activate'), p)}><Power /></Button>
+                      </SimpleTooltip>
+                      {/* Devre dışı düğme ipucu almaz (olay üretmez) → span tetik; neden de adında */}
+                      <SimpleTooltip content={p.usage > 0 ? t('plat.inUse', p.usage) : t('plat.delete')}>
+                        <span className="inline-flex">
+                          <Button type="button" variant="destructive" size="icon-sm" onClick={() => remove(p)} disabled={p.usage > 0}
+                            aria-label={actionLabel(p.usage > 0 ? t('plat.inUse', p.usage) : t('plat.delete'), p)}><Trash2 /></Button>
+                        </span>
+                      </SimpleTooltip>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
+    </SettingsSection>
     </div>
   )
 }

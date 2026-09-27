@@ -373,6 +373,23 @@ class TodayMonitorInsightsServiceTest {
         assertThat(p.get(0).get("paused_since")).isEqualTo(at(10 * 1440));
     }
 
+    @Test
+    @DisplayName("2026-09-27: SİLİNMİŞ standalone Port/DNS 'Duraklatılmış' kartında YOK; duraklatılmış (silinmemiş) standalone VAR")
+    void paused_excludesDeletedStandalonePortDns() {
+        PortMonitor pausedPort = new PortMonitor(); pausedPort.setId(21L); pausedPort.setName("durdu"); pausedPort.setHost("durdu.example.com");
+        pausedPort.setPort(22); pausedPort.setActive(false); pausedPort.setStandalone(true);
+        PortMonitor deletedPort = new PortMonitor(); deletedPort.setId(22L); deletedPort.setName("silindi"); deletedPort.setHost("silindi.example.com");
+        deletedPort.setPort(22); deletedPort.setActive(false); deletedPort.setStandalone(true); deletedPort.setDeletedAt(at(5 * 1440));
+        when(portRepo.findAll()).thenReturn(List.of(pausedPort, deletedPort));
+        DnsMonitor deletedDns = new DnsMonitor(); deletedDns.setId(23L); deletedDns.setName("silindi-dns"); deletedDns.setDomain("silindi.example.com");
+        deletedDns.setActive(false); deletedDns.setStandalone(true); deletedDns.setDeletedAt(at(5 * 1440));
+        when(dnsRepo.findAll()).thenReturn(List.of(deletedDns));
+
+        List<Map<String, Object>> p = svc.snapshot(NOW).paused();
+
+        assertThat(p).extracting(m -> m.get("type") + ":" + m.get("monitor_id")).containsExactly("PORT:21");
+    }
+
     private static MaintenanceWindow mw(long id, String name, String startAt, int durMin, Long team, boolean all) {
         MaintenanceWindow w = new MaintenanceWindow(); w.setId(id); w.setName(name); w.setStartAt(startAt); w.setDurationMinutes(durMin);
         w.setRecurrence("NONE"); w.setTimezone("Europe/Istanbul"); w.setActive(true); w.setTeamId(team); w.setAllMonitors(all);

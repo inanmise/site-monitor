@@ -12,6 +12,9 @@ import { test, expect } from '@playwright/test'
  * <p>Boşluk daha önce fark edilmiş ama ekran ekran yamanmıştı; o kapsayıcıların dışındaki her
  * ekran açıkta kalmıştı. Bu kapı, yamanın PAYLAŞILAN sınıfta durduğunu pinler.
  *
+ * <p>2026-09-27: `.threshold-field` alan kuralları shadcn geçişiyle silindi; harness artık shadcn Input /
+ * NativeSelect / Textarea çizer (uygulamanın tek alan ailesi) — kural aynı: tarayıcı varsayılanı YOK.
+ *
  * <p>Ölçüm görünüş karşılaştırması değil: aynı sayfadaki SINIFSIZ bir alanla kıyaslanır.
  * Yazı tipi/tema değişse de doğru kalır, ekran görüntüsü testleri gibi kırılgan değildir.
  */
@@ -27,7 +30,7 @@ async function style(page, testId, props) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/e2e/harness/field-style.html');
-  await page.waitForSelector('.threshold-field');
+  await page.waitForSelector('[data-testid="tf"]');
 });
 
 for (const id of FIELDS) {
@@ -58,9 +61,13 @@ test('alanlar SINIFSIZ olanlardan gorunur sekilde farkli (kural gercekten uygulu
   expect(parseFloat(styledInput.borderRadius)).toBeGreaterThan(parseFloat(bareInput.borderRadius));
 });
 
-test('tema token\'lari uygulaniyor — alan seffaf/renksiz kalmaz', async ({ page }) => {
-  const s = await style(page, 'tf-textarea', ['backgroundColor', 'color']);
-  // rgba(0,0,0,0) = seffaf; token tanimsiz kalirsa boyle gorunur (hayalet token vakasi).
-  expect(s.backgroundColor, 'arka plan token\'i uygulanmamis').not.toBe('rgba(0, 0, 0, 0)');
+test('tema token\'lari uygulaniyor — alan renksiz kalmaz', async ({ page }) => {
+  // shadcn alanı açık temada BİLEREK saydam zeminlidir (üstünde durduğu yüzeyin rengini alır); "hayalet token"
+  // vakası (tanımsız var(--x) → özellik hesaplanırken geçersiz → `currentColor`a, yani YAZI rengine düşer) KENAR
+  // rengiyle ölçülür. Sınıfsız alanla kıyas işe yaramaz: globals.css tüm öğelere tema kenar rengini verir
+  // (2026-09-27, shadcn geçişi).
+  const s = await style(page, 'tf-textarea', ['borderTopColor', 'color']);
+  expect(s.borderTopColor, 'kenar rengi token\'i uygulanmamis (yazi rengine dustu)').not.toBe(s.color);
+  expect(s.borderTopColor).not.toBe('rgba(0, 0, 0, 0)');
   expect(s.color).not.toBe('');
 });

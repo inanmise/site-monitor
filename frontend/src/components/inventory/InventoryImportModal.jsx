@@ -7,6 +7,11 @@ import { api } from '../../api/client'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { parseCsv, mapCsv, importTemplateCsv, IMPORT_COLUMNS } from './inventoryModel.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { Textarea } from '@/components/shadcn/textarea'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * CSV içe aktarma (2026-09-12, #6): dosya ya da yapıştırılan metin → istemcide ayrıştır → sunucuda KURU
@@ -14,6 +19,13 @@ import { Button } from '@/components/shadcn/button'
  * içe aktar döngüsü). Sunucu satır başına kapsam uygular; sonuç satır satır listelenir.
  */
 const ACTION_LABEL = { create: 'inv.importCreate', update: 'inv.importUpdate', skip: 'inv.importSkip', error: 'inv.importErr' }
+/** Eylem rozeti tonu (eski .badge-ok/-warn/-err) — shadcn Badge. */
+const ACTION_TONE = {
+  create: 'bg-success/15 text-success dark:bg-success/20',
+  update: 'bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  error: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  skip: '',
+}
 
 export default function InventoryImportModal({ onClose, onDone }) {
   const t = useT()
@@ -30,6 +42,7 @@ export default function InventoryImportModal({ onClose, onDone }) {
     [t('inv.formIisAdmin')]: 'iis_admin_contact', [t('inv.formWafAdmin')]: 'waf_admin_contact', [t('inv.colActive')]: 'active',
     [t('inv.formChangeDesc')]: 'change_description', [t('inv.colUgTeam')]: 'ug_team', [t('inv.colGroup')]: 'group', [t('inv.colTags')]: 'tags',
     ...Object.fromEntries(INVENTORY_FLAGS.map(({ key, labelKey }) => [t(labelKey), key])),
+    [t('nocf.csvNotify')]: 'noc_notify', [t('nocf.csvGroups')]: 'noc_groups',   // 7/24 dışa aktarma başlıkları (2026-09-27)
   }), [t])
 
   const parsed = useMemo(() => { try { return mapCsv(parseCsv(text), labels) } catch { return { rows: [], unknown: [], columns: [] } } }, [text, labels])
@@ -71,44 +84,54 @@ export default function InventoryImportModal({ onClose, onDone }) {
           </Button>}
         </>
       }>
-      <p className="field-hint">{t('inv.importHint')}</p>
-      <div className="inv-import-src">
-        <Button asChild variant="secondary" size="sm">
-          <label>
-            <FileSpreadsheet size={13} /> {t('inv.importFile')}
-            <input type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{ display: 'none' }} />
-          </label>
-        </Button>
+      <p className="mb-3 text-[.85em] text-muted-foreground">{t('inv.importHint')}</p>
+      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+        {/* Dosya seçici: shadcn Input type="file" (etiketli); içerik metin kutusuna okunur */}
+        <label className="inline-flex max-w-full items-center gap-1.5 text-[.88em] font-semibold">
+          <FileSpreadsheet size={13} aria-hidden="true" />
+          <span className="sr-only sm:not-sr-only">{t('inv.importFile')}</span>
+          <Input type="file" accept=".csv,text/csv,text/plain" onChange={onFile} aria-label={t('inv.importFile')}
+            className="h-8 w-auto max-w-full cursor-pointer py-1 text-[.95em] font-normal" />
+        </label>
         <Button type="button" variant="secondary" size="sm" onClick={downloadTemplate}><Download size={13} /> {t('inv.importTemplate')}</Button>
-        <span className="inv-import-cols" title={IMPORT_COLUMNS.join(', ')}>{t('inv.importCols', IMPORT_COLUMNS.length)}</span>
+        <span className="text-[.82em] text-muted-foreground" title={IMPORT_COLUMNS.join(', ')}>{t('inv.importCols', IMPORT_COLUMNS.length)}</span>
       </div>
-      <textarea className="input inv-import-text" rows={6} value={text} placeholder={t('inv.importPaste')}
+      <Textarea rows={6} value={text} placeholder={t('inv.importPaste')} aria-label={t('inv.importPaste')}
+        className="mb-2.5 min-h-32 font-mono md:text-[.85em]"
         onChange={(e) => { setText(e.target.value); setPlan(null); setResult(null) }} spellCheck={false} />
       {parsed.unknown.length > 0 && <AlertBanner tone="warning">{t('inv.importUnknownCols', parsed.unknown.join(', '))}</AlertBanner>}
       {text && parsed.rows.length === 0 && <AlertBanner tone="warning">{t('inv.importNoRows')}</AlertBanner>}
       {error && <AlertBanner tone="danger">{error}</AlertBanner>}
       {summary && (
-        <div className="inv-import-result">
-          <div className="inv-import-sum">
-            <span className="badge badge-ok">{t('inv.importCreate')}: {summary.created}</span>
-            <span className="badge badge-warn">{t('inv.importUpdate')}: {summary.updated}</span>
-            <span className="badge">{t('inv.importSkip')}: {summary.skipped}</span>
-            <span className="badge badge-err">{t('inv.importErr')}: {summary.errors}</span>
-            <span className="inv-import-mode">{result ? t('inv.importDone') : t('inv.importDryRunDone')}</span>
+        <div data-slot="inv-import-result" className="mt-1">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <Badge variant="secondary" className={ACTION_TONE.create}>{t('inv.importCreate')}: {summary.created}</Badge>
+            <Badge variant="secondary" className={ACTION_TONE.update}>{t('inv.importUpdate')}: {summary.updated}</Badge>
+            <Badge variant="secondary">{t('inv.importSkip')}: {summary.skipped}</Badge>
+            <Badge variant="secondary" className={ACTION_TONE.error}>{t('inv.importErr')}: {summary.errors}</Badge>
+            <span className="text-[.85em] font-semibold text-muted-foreground">{result ? t('inv.importDone') : t('inv.importDryRunDone')}</span>
           </div>
-          <div className="admin-table-wrap inv-import-rows">
-            <table className="admin-table">
-              <thead><tr><th>#</th><th>{t('inv.colDomain')}</th><th>{t('inv.importAction')}</th><th>{t('inv.importDetail')}</th></tr></thead>
-              <tbody>
+          <div className="max-h-[40vh] overflow-y-auto rounded-[10px] border">
+            <Table className="text-[.9em]">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="bg-muted/60 text-muted-foreground">#</TableHead>
+                  <TableHead className="bg-muted/60 text-muted-foreground">{t('inv.colDomain')}</TableHead>
+                  <TableHead className="bg-muted/60 text-muted-foreground">{t('inv.importAction')}</TableHead>
+                  <TableHead className="bg-muted/60 text-muted-foreground">{t('inv.importDetail')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {rows.map((r) => (
-                  <tr key={r.line} className={`inv-import-row--${r.action}`}>
-                    <td>{r.line}</td><td>{r.domain}</td>
-                    <td><span className={`badge ${r.action === 'create' ? 'badge-ok' : r.action === 'update' ? 'badge-warn' : r.action === 'error' ? 'badge-err' : ''}`}>{t(ACTION_LABEL[r.action] || 'inv.importSkip')}</span></td>
-                    <td className="inv-dim">{reasonText(r)}</td>
-                  </tr>
+                  <TableRow key={r.line} data-action={r.action}>
+                    <TableCell className="tabular-nums">{r.line}</TableCell>
+                    <TableCell className="whitespace-normal break-all">{r.domain}</TableCell>
+                    <TableCell><Badge variant="secondary" className={cn(ACTION_TONE[r.action])}>{t(ACTION_LABEL[r.action] || 'inv.importSkip')}</Badge></TableCell>
+                    <TableCell className="text-[.88em] whitespace-normal text-muted-foreground">{reasonText(r)}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         </div>
       )}

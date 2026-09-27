@@ -5,6 +5,8 @@ import { useT } from '../i18n/index.jsx'
 import { RefreshCw, ShieldCheck, ShieldOff, ShieldAlert, ListX, History,
   Server, Globe, Building2, CalendarClock, BellRing } from 'lucide-react'
 import { Spinner, LoadingBlock } from './ui/Progress.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { usePagination } from '../hooks/usePagination.js'
 
 /** Bitiş tarihi — insan-okur ("6 Ağustos 2026 15:37"), tr-TR; date-only ("2029-10-26") ve datetime güvenli. */
 function fmtDateHuman(iso) {
@@ -22,6 +24,8 @@ function daysColor(d) {
 }
 import { eppKey, eppLabel } from '../utils/domainEpp.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Table, TableBody, TableCell, TableRow } from '@/components/shadcn/table'
 
 function csv(v) {
   if (Array.isArray(v)) return v
@@ -68,6 +72,9 @@ export default function DomainRegistrationTab({ monitor }) {
     api.monitoring.getDomainReminders?.(monitor.id)?.then(r => { if (alive && r?.success) setRem(r.data) }).catch(() => {})
     return () => { alive = false }
   }, [monitor.id])
+  // Hatırlatma geçmişi eskiden `slice(0, 10)` ile SESSİZCE kırpılıyordu (11. kayıt ve sonrası hiç görünmüyordu).
+  // Standart: pencere içi liste → modal ön ayarı + compact çubuk (hook erken dönüşlerin ÜSTÜNDE — hook sırası).
+  const remPager = usePagination(rem?.items || [], { listKey: 'dreg-reminders', preset: 'modal', resetDeps: [monitor.id] })
 
   if (loading && !reg) return <LoadingBlock label={t('dreg.loading')} className="upt-modal-loading" size={16} />
   if (err && !reg) return <div className="alert-msg alert-msg--err">{err}</div>
@@ -112,9 +119,15 @@ export default function DomainRegistrationTab({ monitor }) {
       {/* IP + Hostname */}
       <div className="dreg-section-hdr"><Globe size={15} /> {t('dreg.ips')}</div>
       {ips.length ? (
-        <table className="dreg-iptable"><tbody>
-          {ips.map((ip, i) => <tr key={ip}><td className="dreg-ip">{ip}</td><td className="dreg-host">{hosts[i] || <span className="dreg-why">{t('dreg.whyNoPtr')}</span>}</td></tr>)}
-        </tbody></table>
+        // IP ↔ ters kayıt (PTR) — shadcn Table (dar ekranda kendi kabında yatay kayar)
+        <Table data-slot="dreg-iptable" className="mb-1 w-auto text-[.9em]"><TableBody>
+          {ips.map((ip, i) => (
+            <TableRow key={ip} className="hover:bg-transparent">
+              <TableCell className="py-1 pr-4 pl-0 font-mono">{ip}</TableCell>
+              <TableCell className="py-1 whitespace-normal [overflow-wrap:anywhere]">{hosts[i] || <span className="dreg-why">{t('dreg.whyNoPtr')}</span>}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody></Table>
       ) : <div className="dreg-empty">— <span className="dreg-why">{t('dreg.whyNoIp', d.domain || '')}</span></div>}
 
       {/* Domain Status (EPP) */}
@@ -124,7 +137,7 @@ export default function DomainRegistrationTab({ monitor }) {
           {epp.map(c => {
             const k = 'epp.' + eppKey(c)
             const desc = t(k)
-            return <span key={c} className="dreg-epp-pill" title={desc !== k ? desc : c}>{eppLabel(c)}</span>
+            return <Badge key={c} variant="outline" data-slot="dreg-epp" className="font-mono font-normal" title={desc !== k ? desc : c}>{eppLabel(c)}</Badge>
           })}
         </div>
       ) : <div className="dreg-empty">— <span className="dreg-why">{d.source === 'WHOIS' ? t('dreg.whyNoEppWhois') : t('dreg.whyNoData')}</span></div>}
@@ -168,7 +181,7 @@ export default function DomainRegistrationTab({ monitor }) {
         <div className="dreg-rem-legend">{t('dreg.remLegend')}</div>
         {(rem.items || []).length > 0 ? (
           <ul className="dreg-list dreg-rem-list">
-            {rem.items.slice(0, 10).map(x => (
+            {remPager.pageItems.map(x => (
               <li key={x.id}><span className={`dreg-rem-dot dreg-rem-dot--${x.status === 'SENT' ? 'sent' : x.status === 'COVERED' ? 'covered' : 'skipped'}`} />
                 {formatDateSec(x.sent_at)} · {t('dreg.remRow', x.threshold_days, x.days_remaining ?? '—')} · {t('dreg.remStatus_' + x.status)}
                 {x.recipients ? <span className="dreg-why"> → {x.recipients}</span> : null}
@@ -176,6 +189,7 @@ export default function DomainRegistrationTab({ monitor }) {
             ))}
           </ul>
         ) : <div className="dreg-empty">{t('dreg.remNone')}</div>}
+        <PaginationBar {...remPager} />
       </>)}
 
       {/* Kontrol Geçmişi buradan kaldırıldı — "Kontrol" sekmesindeki geçmiş tablosuyla aynıydı (tekrar). */}

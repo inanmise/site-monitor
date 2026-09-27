@@ -1,19 +1,42 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Environment: PRODUCTION  (master branch)
-# Image tag  : {VERSION}   e.g. site-monitor:1.0.0
-# Deploy with:
-#   helm upgrade --install sitemonitor ./helm/site-monitor \
+# -----------------------------------------------------------------------------
+# Environment: PRODUCTION  (main branch, released tags only)
+# Image      : ghcr.io/<owner>/site-monitor:vX.Y.Z  <- WITH the "v": release.yml pushes only
+#              :vX.Y.Z and :latest. An empty image.tag renders v<Chart.AppVersion>.
+#
+# The ONE supported prod command, with its before/after checks and rollback, is in
+# docs/PROD_DEPLOY_CHECKLIST.md. Run it from a checkout of the release tag (git checkout vX.Y.Z):
+#
+#   helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
 #     -f helm/site-monitor/values.yaml \
 #     -f helm/site-monitor/environments/master.yaml \
-#     --set image.tag=1.0.0 \
-#     --set secret.adminPassword=$ADMIN_PASSWORD \
-#     --set secret.dbPassword=$DB_PASSWORD \
-#     -n sitemonitor-prod
-# ─────────────────────────────────────────────────────────────────────────────
+#     -f "$PRIVATE_VALUES" \
+#     --set image.repository="$IMAGE_REPO" \
+#     --set image.tag="v${VERSION}" \
+#     --set secret.existingSecret="$SECRET" \
+#     --set config.logLevel=DEBUG \
+#     --atomic --wait --timeout 10m
+#
+#   REL, NS        the REAL release name / namespace from `helm list -A`. A different name
+#                  silently installs a SECOND release (a second Ingress on the same host).
+#   PRIVATE_VALUES repo-external file: config.dbHost / dbName / dbUser (+ imagePullSecrets).
+#   SECRET         the Secret the running pod already uses - it holds the CURRENT values.
+#                  Without existingSecret every secret.* value must be passed with its
+#                  CURRENT value, or the values.yaml placeholders overwrite the live Secret.
+#   logLevel=DEBUG prod runs DEBUG ON PURPOSE (owner decision). Drop the flag and prod
+#                  silently returns to the INFO below.
+#   no --reuse-values: this file only reaches prod when it is passed explicitly. Reusing
+#                  old values is how dbPoolMax / NO_PROXY / CORS drifted away from it.
+#
+# !!! SITE_MONITOR_SECRET_KEY: carry the CURRENT value over UNCHANGED. A new key makes every
+# !!! stored secret undecryptable - LDAP bind, SMTP password, HTTP/Keyword header secrets,
+# !!! personal-push header secrets, PageSpeed key, scripted env secrets - with only a WARN.
+# !!! After every deploy: kubectl logs -n "$NS" deploy/<name> | grep -c "decrypt failed"  -> 0
+# -----------------------------------------------------------------------------
 
 image:
-  repository: site-monitor
-  tag: "1.0.0"      # overridden by CI with exact git tag
+  # repository: inherited from values.yaml (ghcr.io/<owner>/site-monitor); the deploy command
+  # passes it explicitly (internal mirror, if one is used). Never a registry-less name here.
+  tag: ""           # empty -> v<Chart.AppVersion>; the deploy command passes image.tag=vX.Y.Z
   pullPolicy: Always
 
 # Üretim TEK POD çalışır (2026-08-19 teyidi). Ölçekleme DİKEY yapılır: kapasite yetmezse
@@ -25,6 +48,8 @@ replicaCount: 1
 config:
   springProfile: prod
   environmentName: prod     # Sürüm & Dağıtım Geçmişi ortam etiketi
+  # Chart value INFO; PROD RUNS DEBUG ON PURPOSE (owner decision) via --set config.logLevel=DEBUG
+  # in the deploy command above. Runtime alternative: Settings -> Logging (DB override, no restart).
   logLevel: "INFO"          # prod: DEBUG pod başına on binlerce satır/gün üretir (console + dosya)
   corsAllowedOrigins: "https://sitemonitor.akbank.com"
   # ── Outbound proxy (kurumsal egress) ────────────────────────────────────────
@@ -60,17 +85,24 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-body-size: "1m"
 
-# BİLİNÇLİ AYRIŞMA: chart varsayılanı (values.yaml) tek pod için 1792Mi/1500m → 3584Mi/4000m
-# önerir; üretim şimdilik aşağıdaki daha dar limitlerle çalışıyor ve bu değerler KORUNUYOR.
-# Yükseltmeden önce namespace kotası ve node kapasitesi kontrol edilmeli — yetmezse pod
-# Pending'de kalır. Senaryo (k6) izlemesi yoğunlaşırsa ilk büyütülecek yer burasıdır,
-# çünkü k6 alt süreçleri JVM heap'inin ÜSTÜNE RSS bindirir.
+# Prod gate 2026-09-26 (owner decision): memory limit 1536Mi -> 3Gi, request 512Mi -> 1.5Gi.
+# Why: with -XX:MaxRAMPercentage=75 (values.yaml javaOpts) the heap ceiling was ~1152Mi of a
+# 1536Mi limit; metaspace + code cache + ~200 thread stacks (-Xss512k) + NIO buffers + up to two
+# concurrent k6 subprocesses (SCRIPTED_POOL_SIZE=2, soft cap GOMEMLIMIT=256MiB each) did not fit
+# in the remaining ~384Mi -> OOMKilled risk, and with a single pod OOMKilled = full outage.
+# At 3Gi: heap ceiling ~2304Mi, ~768Mi left for non-heap + k6. If working-set memory stays above
+# ~85% of the limit, lower MaxRAMPercentage to 70 (config.javaOpts) or the scripted pool size to 1
+# (Settings -> Scripted, site.monitor.scripted.pool-size) - see docs/RUNBOOK.md, "Memory".
+# CPU unchanged. BEFORE deploying: the namespace ResourceQuota/LimitRange must admit a 3Gi limit
+# and a 1.5Gi request - TWICE during the rollout window (maxSurge=1 -> old + new pod together) -
+# and a node needs 1.5Gi allocatable, otherwise the new pod stays Pending and --atomic rolls back.
+# The chart default (values.yaml, 1792Mi/3584Mi) remains the recommendation for heavy k6 use.
 resources:
   requests:
-    memory: "512Mi"
+    memory: "1536Mi"   # = 1.5Gi
     cpu: "500m"
   limits:
-    memory: "1536Mi"
+    memory: "3Gi"
     cpu: "2000m"
 
 # Tek pod profilinde üçü de KAPALI. Değerler, yatay ölçeklemeye geçildiğinde

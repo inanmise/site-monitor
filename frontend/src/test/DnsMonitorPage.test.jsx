@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import DnsMonitorPage from '../components/DnsMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -44,33 +44,43 @@ describe('DnsMonitorPage', () => {
    * kayıt-tipi + bağlantı kopyalama kartın SOLUNA düşüyordu. Sözcükler istatistik şeridiyle
    * AYNI sözlükten gelir ve koşullar filtre çipleriyle birebir eşleşir.
    */
+  // Duraklatılmış kart (2026-09-26): rozet SON BİLİNEN durumu gri çerçeveyle gösterir — "Duraklatıldı" yalnız
+  // alt çubuktaki MonitorPausedBadge'de, bir kez (eskiden rozet de "Duraklatıldı" yazıyordu → iki kez).
   it.each([
     [{ active: true },                        /sağlıklı|healthy/i],
     [{ active: true, active_alarm: true },    /alarmlı|alarming/i],
-    [{ active: false },                       /duraklatıldı|paused/i],
+    [{ active: false },                       /sağlıklı|healthy/i],
+    [{ active: false, active_alarm: true },   /alarmlı|alarming/i],
     [{ active: true, checked_at: null },      /kontrol edilmedi|not checked/i],
   ])('kart durum rozeti: %o → %s', async (patch, expected) => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{ ...monitor, ...patch }] })
     const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('www.example.com')
-    const badge = container.querySelector('.upt-card-top .upt-badge')
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    const badge = card.querySelector('[data-slot="badge"][data-status]')
     expect(badge).toBeTruthy()
     expect(badge.textContent).toMatch(expected)
+    const paused = patch.active === false
+    expect(badge.getAttribute('data-paused')).toBe(paused ? 'true' : null)
+    expect(badge.getAttribute('data-variant')).toBe(paused ? 'outline' : badge.getAttribute('data-variant'))
+    expect(card.querySelectorAll('[data-slot="monitor-paused"]')).toHaveLength(paused ? 1 : 0)
+    expect((card.textContent.match(/duraklatıldı|paused/gi) || []).length).toBe(paused ? 1 : 0)
     // Rozet üst satırın İLK çocuğu olmalı — sağ gruptaki kopyalama düğmesini sola itmesin.
     // Toplu seçim kutucuğu (2026-09-12, #13) rozetin SOLUNDA durabilir; rozet yine sağ gruptan önce gelmeli.
-    const top = container.querySelector('.upt-card-top')
-    const firstNonCheck = [...top.children].find((el) => !(el.tagName === 'INPUT' && el.type === 'checkbox'))
+    const top = badge.parentElement
+    expect(top.contains(card.querySelector('[data-slot="checkbox"]'))).toBe(true)   // aynı üst satır (vakum değil)
+    const firstNonCheck = [...top.children].find((el) => el.getAttribute('data-slot') !== 'checkbox')
     expect(firstNonCheck).toBe(badge)
   })
 
-  it('aktif alarmlı satırda alarm ikonu (.upt-alarm-ico) render olur', async () => {
+  it('aktif alarmlı satırda alarm ikonu (MonitorAlarmIcon) render olur', async () => {
     api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
       { ...monitor, active_alarm: true, alarm_level: 'CRITICAL', alarm_acknowledged: false },
     ] })
     const { container } = render(<DnsMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('www.example.com')
-    expect(container.querySelector('.upt-alarm-ico')).not.toBeNull()
+    expect(container.querySelector('[data-slot="monitor-alarm"]')).not.toBeNull()
   })
 
   it('group_name dolu satırda grup rozeti (metni) + toolbar grup filtresi render olur', async () => {
@@ -92,7 +102,7 @@ describe('DnsMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('www.example.com')
 
-    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
     // Domain artık düzenlenebilir → eski "değiştirilemez" ipucu YOK
     expect(screen.queryByText(/cannot be changed|değiştirilemez/i)).toBeNull()
     // Test butonu çözümleme çağırır
@@ -106,11 +116,11 @@ describe('DnsMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('www.example.com')
 
-    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
     const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
-    expect(checkbox.checked).toBe(true)   // dns_change_alert_enabled yok (null) → açık
+    expect(checkbox).toBeChecked()   // dns_change_alert_enabled yok (null) → açık
     fireEvent.click(checkbox)
-    expect(checkbox.checked).toBe(false)
+    expect(checkbox).not.toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
     await waitFor(() => expect(api.monitoring.updateDnsMonitor).toHaveBeenCalled())
     const payload = api.monitoring.updateDnsMonitor.mock.calls[0][1]
@@ -125,9 +135,9 @@ describe('DnsMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('www.example.com')
 
-    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
     const checkbox = screen.getByRole('checkbox', { name: /dns değişikliği alarmı|dns change alarm/i })
-    expect(checkbox.checked).toBe(false)
+    expect(checkbox).not.toBeChecked()
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
@@ -138,7 +148,7 @@ describe('DnsMonitorPage', () => {
       interval_seconds: 900, group_name: 'Kurumsal', tags: 'prod,kritik',
       expected_value: '1.2.3.4\n5.6.7.8', slow_threshold_ms: 2500,
       propagation_check: true, dns_change_alert_enabled: false, active: false,
-      notification_group_id: 7,
+      notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
     }] })
     api.monitoring.createDnsMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -149,8 +159,8 @@ describe('DnsMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
     // Ad "(Kopya)" sonekli — ad input'unun placeholder'ı form.domain'dir
     expect(screen.getByPlaceholderText('www.example.com').value).toMatch(/\(Kopya\)$/)
 
@@ -172,6 +182,8 @@ describe('DnsMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -190,7 +202,7 @@ describe('DnsMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.createDnsMonitor).toHaveBeenCalled())
     expect(await screen.findByText(/zaten bir izleme var/i)).toBeInTheDocument()
     // Modal açık kalır (veri kaybı yok) → Kopya rozeti hâlâ DOM'da
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
   })
 
   it('Düzenle: "listeye ekle" butonu mevcut değeri beklenen listeye EKLER (üzerine yazmaz, dedupe)', async () => {
@@ -201,7 +213,7 @@ describe('DnsMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('www.example.com')
 
-    fireEvent.click(screen.getByTitle(/edit|düzenle/i))
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
     const addBtn = screen.getByRole('button', { name: /^şu anki değeri listeye ekle$|^add current value to list$/i })
     fireEvent.click(addBtn)
     const textarea = screen.getByPlaceholderText(/beklenen değer|expected value/i)
@@ -211,6 +223,38 @@ describe('DnsMonitorPage', () => {
     expect(textarea.value).toBe('217.169.196.197\n192.168.1.10')
   })
 
+  // shadcn geçişi (2026-09-25): detay penceresi ortak kabukta (ModalShell); ondan açılan düzenleme formu
+  // detayın İÇİNDE çizilir → iç içe derinlik React ağacından okunur, form detayın ÜSTÜNDE katmanlanır.
+  it('detay penceresinden Düzenle: form ikinci dialog olarak detayın üstünde açılır', async () => {
+    api.monitoring.getDnsDetails.mockResolvedValue({ success: true, data: { records: {}, authoritative_servers: [] } })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('www.example.com')
+    fireEvent.click(screen.getByRole('button', { name: /www\.example\.com — (detayları aç|open details)/i }))
+    const detail = await screen.findByRole('dialog', { name: /www\.example\.com/ })
+    const editInDetail = [...detail.querySelectorAll('button')].find((b) => /^(düzenle|edit)$/i.test(b.getAttribute('aria-label') || ''))
+    fireEvent.click(editInDetail)
+    const dialogs = await screen.findAllByRole('dialog')
+    expect(dialogs).toHaveLength(2)
+    const form = dialogs.find((d) => d !== detail)
+    expect(form).toHaveAccessibleName(/dns monitörünü düzenle|edit dns monitor/i)
+    expect(Number(form.style.zIndex)).toBeGreaterThan(Number(detail.style.zIndex))
+  })
+
+  it('arama kutusu: doluyken "Temizle" düğmesi çıkar ve aramayı boşaltır', async () => {
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, domain: 'alfa.example.com' }, { ...monitor, id: 2, domain: 'beta.example.com' },
+    ] })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('beta.example.com')
+    const box = screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i })
+    expect(screen.queryByRole('button', { name: /^(temizle|clear)$/i })).toBeNull()
+    fireEvent.change(box, { target: { value: 'alfa' } })
+    await waitFor(() => expect(screen.queryByText('beta.example.com')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: /^(temizle|clear)$/i }))
+    expect(box.value).toBe('')
+    expect(await screen.findByText('beta.example.com')).toBeInTheDocument()
+  })
+
   it('sayfalama: 120 kayıt → 50 satır + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {
     localStorage.clear()
     const many = Array.from({ length: 120 }, (_, i) => ({ ...monitor, id: i + 1, domain: `d${i + 1}.example.com` }))
@@ -218,7 +262,7 @@ describe('DnsMonitorPage', () => {
     const { container, unmount } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('d1.example.com')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
@@ -253,8 +297,8 @@ describe('DnsMonitorPage', () => {
   async function openStats(container) {
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
     await screen.findByText('alfa.example.com')
-    fireEvent.click(container.querySelector('.stats-collapse-bar'))
-    return () => container.querySelector('.stat-value-total')?.textContent
+    fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
+    return () => container.querySelector('[data-tone="total"] [data-slot="stat-value"]')?.textContent
   }
 
   it('istatistik kartlari ARAMA ile daralir (kuresel sayida donup kalmaz)', async () => {
@@ -264,11 +308,11 @@ describe('DnsMonitorPage', () => {
 
     expect(totalText()).toBe('3')
 
-    fireEvent.change(container.querySelector('.dns-search-input'), { target: { value: 'alfa' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i }), { target: { value: 'alfa' } })
     await waitFor(() => expect(totalText()).toBe('1'))
 
     // Alarm sayaci da kapsamdan gelir: alarmli monitor arama disinda kaldi.
-    expect(container.querySelector('.stat-value-critical')?.textContent).toBe('0')
+    expect(container.querySelector('[data-tone="critical"] [data-slot="stat-value"]')?.textContent).toBe('0')
   })
 
   it('arama HICBIR seyi eslestirmese bile istatistik seridi CIZILMEYE devam eder', async () => {
@@ -279,11 +323,11 @@ describe('DnsMonitorPage', () => {
     const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     const totalText = await openStats(container)
 
-    fireEvent.change(container.querySelector('.dns-search-input'), { target: { value: 'hicbiryerde-yok' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^(domain veya kayıt tipi ara|search domain or record type)/i }), { target: { value: 'hicbiryerde-yok' } })
 
     await waitFor(() => expect(totalText()).toBe('0'))
-    expect(container.querySelector('.stats-collapse-bar')).not.toBeNull()
-    expect(container.querySelector('.stats-panel')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-toggle"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
   })
 
   /**
@@ -321,6 +365,38 @@ describe('DnsMonitorPage', () => {
     })
     const { container } = render(<DnsMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getDnsMonitors).toHaveBeenCalled())
-    await waitFor(() => expect(container.querySelector('.mon-actions')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-slot="monitor-card-actions"]')).not.toBeNull())
+  })
+
+  /**
+   * DNS KARTI (2026-09-27 yeniden tasarım, components/dns/DnsMonitorCard): sayfa satırı karta DOĞRU yuvalarla
+   * bağlar — kaynak rozeti iki kaynağı ayırır, türev satırın silmesi "izlemeyi durdur" adını taşır, toplu seçim ve
+   * eylem adları satırı ayırt eder, değer paneli çoklu değeri satır satır gösterir, başlık detayı açar.
+   */
+  it('kart: kaynak rozeti + türev silme adı + satır adlı seçim/eylemler + çoklu değer paneli + başlık detayı açar', async () => {
+    api.monitoring.getDnsDetails.mockResolvedValue({ success: true, data: { records: {}, authoritative_servers: [] } })
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, domain: 'www.example.com', standalone: true },
+      { ...monitor, id: 2, name: 'api.example.com', domain: 'api.example.com', standalone: false,
+        value: '203.0.113.10\n203.0.113.11\n203.0.113.12\n203.0.113.13', changed: true },
+    ] })
+    const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('api.example.com')
+    const [own, derived] = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+
+    expect(own.querySelector('[data-slot="dns-source"]')).toHaveAttribute('data-source', 'standalone')
+    expect(derived.querySelector('[data-slot="dns-source"]')).toHaveAttribute('data-source', 'inventory')
+    expect(within(own).getByRole('button', { name: 'www.example.com — Delete' })).toBeInTheDocument()
+    expect(within(derived).getByRole('button', { name: 'api.example.com — Stop monitoring (inventory-derived record is kept)' })).toBeInTheDocument()
+    expect(within(derived).getByRole('checkbox', { name: 'Select api.example.com for bulk action' })).toBeInTheDocument()
+
+    const panel = derived.querySelector('[data-slot="dns-values"]')
+    expect(panel).toHaveAttribute('data-count', '4')
+    expect(panel.querySelectorAll('[data-slot="dns-value"]')).toHaveLength(3)
+    expect(within(panel).getByRole('button', { name: 'api.example.com — +1 more' })).toBeInTheDocument()
+    expect(panel.querySelector('[data-slot="dns-changed"]')).not.toBeNull()
+
+    fireEvent.click(within(derived).getByRole('button', { name: 'api.example.com — open details' }))
+    expect(await screen.findByRole('dialog', { name: /api\.example\.com/ })).toBeInTheDocument()
   })
 })

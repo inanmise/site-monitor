@@ -7,10 +7,13 @@
  * (TR arayüzde de) okunuyor, üstelik kartın düğme adına ekleniyordu (2026-09-25, R16). Değer
  * zaten yanındaki metinde (yüzde) yazılı olduğunda adsız bırakmak doğrusu.
  */
-export default function Sparkline({ data = [], width = 100, height = 28, color = 'var(--sb-accent, #3b82f6)', label }) {
+export default function Sparkline({ data = [], width = 100, height = 28, color = 'var(--sb-accent, #3b82f6)', label, className }) {
+  // `className`: çağıran CSS ile ESNEK genişlik verebilir (ör. kart trendi dar telefonda daralır); viewBox
+  // ölçeklenir, çizgi kalınlığı `non-scaling-stroke` ile sabit kalır.
+  const cls = className ? `spark ${className}` : 'spark'
   const nums = (Array.isArray(data) ? data : []).map((v) => (typeof v === 'number' && isFinite(v) ? v : 0))
   if (nums.length < 2) {
-    return <svg width={width} height={height} className="spark" aria-hidden="true" />
+    return <svg width={width} height={height} className={cls} aria-hidden="true" />
   }
   const max = Math.max(...nums, 1)
   const min = Math.min(...nums, 0)
@@ -23,10 +26,10 @@ export default function Sparkline({ data = [], width = 100, height = 28, color =
   })
   const [lx, ly] = pts[pts.length - 1].split(',')
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="spark"
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className={cls}
       {...(label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' })} preserveAspectRatio="none">
       <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth="1.5"
-        strokeLinejoin="round" strokeLinecap="round" />
+        strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
       <circle cx={lx} cy={ly} r="2.2" fill={color} />
     </svg>
   )

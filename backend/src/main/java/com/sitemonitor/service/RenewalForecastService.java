@@ -161,10 +161,15 @@ public class RenewalForecastService {
 
     /**
      * Takvim günü dilimi: zaman damgaları UTC saklanır, istemci ise yerel günü gösterir (23:59:59Z biten
-     * sertifika ekranda ertesi gün). Çıplak 'YYYY-MM-DD' alanlar bu yüzden sunucu dilimine göre üretilir —
-     * servisler Europe/Istanbul'da koşar, kullanıcılar da oradadır (ISSUE-007, 2026-09-12).
+     * sertifika ekranda ertesi gün). Çıplak 'YYYY-MM-DD' alanlar bu yüzden KURUM dilimine göre üretilir —
+     * kullanıcılar Europe/Istanbul'dadır (ISSUE-007, 2026-09-12).
+     *
+     * <p>Sabit dilim, JVM varsayılanı DEĞİL (prod kapısı 2026-09-25, N4): konteyner JVM'i UTC koşuyor
+     * (Dockerfile/helm'de TZ ya da -Duser.timezone yok), {@code systemDefault()} prod'da UTC günü veriyor ve
+     * İstanbul'da her gece 00:00–03:00 arası renew_by / gecikme / ay kovası bir gün kayıyordu. Kardeş 15
+     * servisle aynı sabit; kapı: {@code OrgCalendarDayGateTest}.
      */
-    static final ZoneId ZONE = ZoneId.systemDefault();
+    static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
 
     /** Bitiş − lead gün ('YYYY-MM-DD', {@link #ZONE} günü). */
     static String renewBy(String notAfter, int leadDays) { return renewBy(notAfter, leadDays, ZONE); }

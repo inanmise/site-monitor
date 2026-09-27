@@ -26,7 +26,15 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
      *  join'ini tetiklemez. Eski findByUsername iki SELECT'e mal oluyordu; bu tek hafif indexli okuma. */
     @Query("SELECT u.activeSessionId FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
     Optional<String> findActiveSessionIdByUsername(@Param("username") String username);
-    Optional<AppUser> findByEmployeeId(String employeeId);     // sicil (AD cn)
+    /**
+     * Sicil (AD {@code cn}) → kullanıcı(lar). BİLEREK liste döner: eski {@code Optional findByEmployeeId}
+     * aynı sicili taşıyan iki satırda (ör. elle açılmış yerel hesap + LDAP hesabı) istisna fırlatıyordu —
+     * girişte bu istisna AuthController'da yutulup kullanıcıya "hatalı parola" gibi görünüyordu. Seçim
+     * kuralı {@code service.ManagerLookup}'ta. Karşılaştırma boşluk ve harf duyarsız (elle girilen
+     * sicilde baş/son boşluk bağlantıyı sessizce koparıyordu); BAŞTAKİ SIFIRLAR normalize EDİLMEZ.
+     */
+    @Query("SELECT u FROM AppUser u WHERE UPPER(TRIM(u.employeeId)) = UPPER(TRIM(:sicil)) ORDER BY u.id ASC")
+    List<AppUser> findAllByEmployeeIdNormalized(@Param("sicil") String sicil);
     List<AppUser> findByTeamIdOrderByUsernameAsc(Long teamId);
     List<AppUser> findAllByOrderByUsernameAsc();
     @Query("SELECT COUNT(u) > 0 FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
@@ -58,9 +66,9 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     /**
      * Ekip kapsamı için üyelerin YALNIZ kimliği + küçük harf kullanıcı adı (regresyon R9): tam {@code AppUser}
      * fotoğraf kolonunu ve EAGER takım koleksiyonunu da çekiyordu — Denetim Logu herkese açıldığı için istek başı
-     * maliyet önemli. Satır: {@code [Long id, String lowerUsername]}.
+     * maliyet önemli. Satır: {@code [Long id, String lowerUsername, String systemRole]}.
      */
-    @Query("SELECT DISTINCT u.id, LOWER(u.username) FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
+    @Query("SELECT DISTINCT u.id, LOWER(u.username), u.systemRole FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
     List<Object[]> findMemberIdentities(@Param("teamIds") Collection<Long> teamIds);
 
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */

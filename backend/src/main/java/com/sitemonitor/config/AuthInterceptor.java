@@ -66,8 +66,13 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
-        String path = req.getRequestURI();
-        if (!path.startsWith("/api/") || PUBLIC.contains(path)) return true;
+        // BK1 (2026-09-27): karar HAM getRequestURI() ile DEĞİL, yönlendiricinin gördüğü NORMALİZE yolla
+        // verilir. Ham yolda "/api;x/certificates" "/api/" ile başlamıyordu → kapı erken true dönüyordu,
+        // DispatcherServlet ise matris içeriğini kırpıp isteği korumalı uca yönlendiriyordu (oturumsuz 200).
+        // Yol çözülemezse (null) istek KORUMALI sayılır — PUBLIC'e ya da "API değil" dalına düşmez.
+        String path = RequestPathFirewallFilter.lookupPath(req);
+        if (path != null && (!path.startsWith("/api/") || PUBLIC.contains(path))) return true;
+        if (path == null) path = "";
 
         // 1. Valid session check
         HttpSession session = req.getSession(false);

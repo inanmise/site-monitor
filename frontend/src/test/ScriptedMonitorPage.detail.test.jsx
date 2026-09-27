@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ScriptedMonitorPage
   from '../components/ScriptedMonitorPage.jsx'
@@ -50,13 +50,14 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     expect(screen.getByText('k6 binary bulunamadı')).toBeInTheDocument()
 
     // 4 sekme (kanonik desen)
-    expect(screen.getByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /alert history|alarm geçmişi/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /duration chart|süre grafiği/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /guide|rehber/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /alert history|alarm geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /duration chart|süre grafiği/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /guide|rehber/i })).toBeInTheDocument()
 
-    // Özet şeridi: son koşum zamanı modalda DA görünür (kartta + modal özetinde ≥2 kez)
-    expect(screen.getAllByText('FMT:2026-07-31T10:00:00').length).toBeGreaterThanOrEqual(2)
+    // Özet şeridi: son koşum zamanı modalda DA görünür. (Kart 2026-09-27'den beri GÖRELİ zaman yazar — tam damga
+    // kartta ipucunda + ekran okuyucu metninde; bu yüzden tam damga pencerenin özetinde aranır.)
+    expect(within(screen.getByRole('dialog')).getAllByText('FMT:2026-07-31T10:00:00').length).toBeGreaterThanOrEqual(1)
   })
 
   it('detay sekmeleri: Alarm → AlertHistory(name), Rehber&Notlar → MonitorNotes(type=SCRIPTED, target=name)', async () => {
@@ -65,10 +66,10 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     fireEvent.click(screen.getByText('OIDC Login'))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
 
-    fireEvent.click(screen.getByRole('button', { name: /alert history|alarm geçmişi/i }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /alert history|alarm geçmişi/i }), { button: 0 })
     expect((await screen.findByTestId('alert-history')).dataset.domain).toBe('OIDC Login')
 
-    fireEvent.click(screen.getByRole('button', { name: /guide|rehber/i }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /guide|rehber/i }), { button: 0 })
     const notes = await screen.findByTestId('monitor-notes')
     expect(notes.dataset.type).toBe('SCRIPTED')
     expect(notes.dataset.target).toBe('OIDC Login')
@@ -111,9 +112,9 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     fireEvent.click(await screen.findByText('script çalışma-zamanı hatası (çıkış 107)'))
 
     // İnsan-okur çıkış kodu etiketi (kullanıcının DİLİNDE) ayrı bir satırda; backend mesajı Türkçe,
-    // bu satır arayüz diline çeviriyor. Sınıfla hedefleniyor — regex ikisini birden yakalardı.
+    // bu satır arayüz diline çeviriyor. Kancayla (data-slot) hedefleniyor — regex ikisini birden yakalardı.
     const exitLine = await waitFor(() => {
-      const el = document.querySelector('.sc-err-exit')
+      const el = document.querySelector('[data-slot="exit-label"]')
       if (!el) throw new Error('çıkış kodu satırı yok')
       return el
     })
@@ -146,14 +147,14 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     fireEvent.click(await screen.findByText('Request Failed — request timeout'))
 
     const panel = await waitFor(() => {
-      const el = document.querySelector('.sc-phases')
+      const el = document.querySelector('[data-request-phases]')
       if (!el) throw new Error('faz paneli yok')
       return el
     })
     // Ölçülen fazlar değerleriyle, ölçülmeyenler "—" ile
     expect(panel.textContent).toContain('4 ms')
     // Takılma noktası TLS: işaretli satır TAM olarak bir tane olmalı
-    const stuck = panel.querySelectorAll('.sc-phase--stuck')
+    const stuck = panel.querySelectorAll('[data-phase="stuck"]')
     expect(stuck).toHaveLength(1)
     expect(stuck[0].textContent).toMatch(/TLS/i)
     // Taşınan byte — "hiç yanıt yok" ile "kısa yanıt geldi" ayrımı
@@ -174,11 +175,11 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     fireEvent.click(await screen.findByText('OIDC Login'))
     fireEvent.click(await screen.findByText('k6 bulunamadı'))
 
-    // Detay paneli açıldı (hata metni hem satırda hem panelde geçtiği için sınıfla hedefleniyor)
+    // Detay paneli açıldı (hata metni hem satırda hem panelde geçtiği için kancayla hedefleniyor)
     await waitFor(() => {
-      if (!document.querySelector('.sc-detail')) throw new Error('detay paneli yok')
+      if (!document.querySelector('[data-slot="check-detail"]')) throw new Error('detay paneli yok')
     })
-    expect(document.querySelector('.sc-phases')).toBeNull()
+    expect(document.querySelector('[data-request-phases]')).toBeNull()
   })
 
   it('Bağlantı Teşhisi: bacakları faz kırılımıyla çizer, takılma noktasını işaretler', async () => {
@@ -200,22 +201,22 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
 
     render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     fireEvent.click(await screen.findByText('OIDC Login'))
-    fireEvent.click(await screen.findByRole('button', { name: /connection diagnostics|bağlantı teşhisi/i }))
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: /connection diagnostics|bağlantı teşhisi/i }), { button: 0 })
     fireEvent.click(await screen.findByRole('button', { name: /run diagnostics|teşhisi çalıştır/i }))
 
     await waitFor(() => expect(api.monitoring.diagnoseScripted).toHaveBeenCalledWith(1, undefined))
 
     const legs = await waitFor(() => {
-      const els = document.querySelectorAll('.sc-diag-leg')
+      const els = document.querySelectorAll('[data-diag-leg]')
       if (els.length !== 2) throw new Error('bacaklar cizilmedi')
       return els
     })
     // Başarısız bacak TLS'te takılmış olarak işaretli; BAŞARILI bacakta takılma işareti YOK
-    expect(legs[0].querySelectorAll('.sc-phase--stuck')).toHaveLength(1)
-    expect(legs[0].querySelector('.sc-phase--stuck').textContent).toMatch(/TLS/i)
-    expect(legs[1].querySelectorAll('.sc-phase--stuck')).toHaveLength(0)
+    expect(legs[0].querySelectorAll('[data-phase="stuck"]')).toHaveLength(1)
+    expect(legs[0].querySelector('[data-phase="stuck"]').textContent).toMatch(/TLS/i)
+    expect(legs[1].querySelectorAll('[data-phase="stuck"]')).toHaveLength(0)
     // Etkin vekil bağlamı görünür (NO_PROXY sonek eşleşmesi yanlış teşhisin kaynağıydı)
-    expect(document.querySelector('.sc-diag-meta').textContent).toContain('example.com')
+    expect(document.querySelector('[data-slot="diag-meta"]').textContent).toContain('example.com')
   })
 
   it('Detay hücresi: kriptik "2✓/0✗" YERİNE okunur ifade (kullanıcı bildirimi)', async () => {
@@ -231,11 +232,11 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
 
     // Kapsam GEÇMİŞ satırı: kart metriği de aynı bileşeni kullanıyor (bilinçli — tek ifade).
     const cell = await waitFor(() => {
-      const el = document.querySelector('.upt-rt-ms .sc-checks-sum')
+      const el = document.querySelector('.upt-rt-ms [data-slot="checks-summary"]')
       if (!el) throw new Error('doğrulama özeti yok')
       return el
     })
-    expect(cell.className).toContain('sc-checks-sum--ok')
+    expect(cell.dataset.tone).toBe('ok')
     expect(cell.textContent).toMatch(/2 doğrulama geçti|2 checks passed/i)
     // Eski kriptik notasyon HİÇBİR yerde kalmamalı
     expect(document.body.textContent).not.toContain('✓/')
@@ -271,8 +272,36 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     // Tıklama hedefi korunuyor: hücre hâlâ detay panelini açıyor
     fireEvent.click(cell)
     await waitFor(() => {
-      if (!document.querySelector('.sc-detail')) throw new Error('detay paneli açılmadı')
+      if (!document.querySelector('[data-slot="check-detail"]')) throw new Error('detay paneli açılmadı')
     })
+  })
+
+  it('satırı AÇAN zaman hücresi GERÇEK düğmedir (shadcn Button): adı zamanı taşır, koşum detayını açar/kapatır', async () => {
+    // Eskiden `role="button"` taşıyan bir span'di; artık gerçek <button> — Tab durağı ve Enter/Space
+    // tarayıcıdan gelir. Açık/kapalı durumu aria-expanded ile duyurulur.
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [{ id: 96, checked_at: '2026-08-14T09:00:00', status: 'ERROR', duration_ms: 512,
+                error: 'k6 bulunamadı', script_version: '1.0.3' }],
+      counts: { total: 1, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-08-14T00:00:00', to: '2026-08-15T00:00:00' }, total: 1, page: 0, size: 50 } })
+
+    render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('OIDC Login'))
+
+    const open = await screen.findByRole('button', {
+      name: /^FMT:2026-08-14T09:00:00 · .+ — (open the run details|koşum detayını aç)$/i })
+    expect(open.tagName).toBe('BUTTON')
+    expect(open).toHaveAttribute('aria-expanded', 'false')
+    expect(document.querySelector('[data-slot="check-detail"]')).toBeNull()
+
+    fireEvent.click(open)
+    await waitFor(() => expect(document.querySelector('[data-slot="check-detail"]')).not.toBeNull())
+    expect(open).toHaveAttribute('aria-expanded', 'true')
+    // Sürüm hücresi paylaşılan sürüm rozeti (VersionChip — shadcn Badge)
+    expect(document.querySelector('.upt-rt-ms [data-slot="version-chip"]').textContent).toBe('v1.0.3')
+
+    fireEvent.click(open)
+    await waitFor(() => expect(document.querySelector('[data-slot="check-detail"]')).toBeNull())
   })
 
   it('Detay hücresi: takılan faz rozeti hata metninin yanında görünür', async () => {
@@ -289,7 +318,7 @@ describe('ScriptedMonitorPage — detay, faz ve teşhis', () => {
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
 
     const chip = await waitFor(() => {
-      const el = document.querySelector('.sc-stuck-chip')
+      const el = document.querySelector('[data-slot="stuck-chip"]')
       if (!el) throw new Error('faz rozeti yok')
       return el
     })

@@ -37,13 +37,15 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     /**
      * Bulk count: returns [alertEventId, sentCount, failedCount] rows.
      * "SENT" is a single canonical string; "FAILED..." may carry a reason suffix.
+     * TAKIM bildirimleri sayılır: 7/24 (NOC) satırları ({@code recipientRole = 'NOC'}) alarm listesindeki
+     * {@code email_sent_count}'u ve haftalık raporun bildirim sayısını şişirmesin (2026-09-27).
      */
     @Query("""
        SELECT n.alertEventId,
               SUM(CASE WHEN n.emailStatus = 'SENT' THEN 1 ELSE 0 END),
               SUM(CASE WHEN n.emailStatus LIKE 'FAILED%' THEN 1 ELSE 0 END)
        FROM NotificationLog n
-       WHERE n.alertEventId IN :ids
+       WHERE n.alertEventId IN :ids AND (n.recipientRole IS NULL OR n.recipientRole <> 'NOC')
        GROUP BY n.alertEventId
     """)
     List<Object[]> countByAlertIds(@Param("ids") Collection<Long> ids);

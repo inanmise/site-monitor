@@ -1,4 +1,15 @@
 import { useT } from '../../i18n/index.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { Card } from '@/components/shadcn/card'
+import { cn } from '@/lib/utils'
+
+/** İhlal rozeti tonları (eski `.mini-chart-breach--*`). */
+const BREACH_TONE = {
+  ok: 'border-transparent bg-success/15 text-success',
+  warn: 'border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300',
+  crit: 'border-transparent bg-destructive/15 text-destructive',
+}
 
 // Pure-SVG sparkline chart — no external dependencies.
 // props: data [{ts, value}], color, label, unit, maxY, gran ('day'|'hour'|'minute'|undefined)
@@ -48,29 +59,26 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
   const breachTone = critCount > 0 ? 'crit' : warnCount > 0 ? 'warn' : (warn != null || crit != null) ? 'ok' : null
   const yTicks = [0, 0.25, 0.5, 0.75, 1]
 
-  return (
-    <div
-      className={`mini-chart${onClick ? ' mini-chart-clickable' : ''}`}
-      onClick={onClick}
-      role={onClick ? 'button' : undefined} tabIndex={onClick ? 0 : undefined}
-      aria-label={onClick ? `${label} — ${t('mini.expand')}` : undefined}
-      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } } : undefined}
-      title={onClick ? t('mini.expand') : undefined}
-    >
-      <div className="mini-chart-hdr">
-        <span className="mini-chart-lbl">{label}</span>
-        {breachTone && (
-          <span className={`mini-chart-breach mini-chart-breach--${breachTone}`}
-            title={`warn ≥ ${warn ?? '—'}${unit} · crit ≥ ${crit ?? '—'}${unit}`}>
-            {breachTone === 'ok' ? '✓' : `${critCount + warnCount}${breachLabel ? ' ' + breachLabel : ''}`}
-          </span>
-        )}
-        {current != null
-          ? <span className="mini-chart-cur" style={{ color }}>{current}{unit}</span>
-          : <span className="mini-chart-cur mini-chart-na">—</span>
-        }
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="mini-chart-svg" aria-hidden="true">
+  const header = (
+    <div className="mb-1 flex w-full items-baseline justify-between gap-2">
+      <span className="text-[.78em] font-medium text-muted-foreground">{label}</span>
+      {breachTone && (
+        <Badge variant="outline" data-breach={breachTone}
+          className={cn('mr-2 ml-auto rounded-full px-1.5 py-0 text-[.7em] leading-4 font-bold', BREACH_TONE[breachTone])}
+          title={`warn ≥ ${warn ?? '—'}${unit} · crit ≥ ${crit ?? '—'}${unit}`}>
+          {breachTone === 'ok' ? '✓' : `${critCount + warnCount}${breachLabel ? ' ' + breachLabel : ''}`}
+        </Badge>
+      )}
+      {current != null
+        // renk CSS özel değişkeniyle (--mc): seri rengi tek kaynaktan (color prop'u)
+        ? <span data-slot="mini-chart-current" className="text-[.9em] font-bold text-(--mc) tabular-nums" style={{ '--mc': color }}>{current}{unit}</span>
+        : <span data-slot="mini-chart-current" className="text-[.9em] font-bold text-muted-foreground">—</span>
+      }
+    </div>
+  )
+  const svg = (
+      // `size-full h-auto`: sınıfta "size-" geçmesi ŞART — shadcn Button iç SVG'leri aksi halde 16 px'e (size-4) zorlar.
+      <svg viewBox={`0 0 ${W} ${H}`} className="block size-full h-auto overflow-visible" aria-hidden="true">
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%"   stopColor={color} stopOpacity="0.25" />
@@ -95,8 +103,8 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
         })}
 
         {/* Eşik bantları (2026-09-12, #23) — yMax içinde kalanlar çizilir */}
-        {warn != null && warn <= yMax && <line x1={PAD.left} y1={toY(warn)} x2={W - PAD.right} y2={toY(warn)} stroke="#d97706" strokeWidth="0.8" strokeDasharray="4,3" className="mini-chart-thr" />}
-        {crit != null && crit <= yMax && <line x1={PAD.left} y1={toY(crit)} x2={W - PAD.right} y2={toY(crit)} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="4,3" className="mini-chart-thr" />}
+        {warn != null && warn <= yMax && <line x1={PAD.left} y1={toY(warn)} x2={W - PAD.right} y2={toY(warn)} stroke="#d97706" strokeWidth="0.8" strokeDasharray="4,3" pointerEvents="none" data-threshold="warn" />}
+        {crit != null && crit <= yMax && <line x1={PAD.left} y1={toY(crit)} x2={W - PAD.right} y2={toY(crit)} stroke="#dc2626" strokeWidth="0.8" strokeDasharray="4,3" pointerEvents="none" data-threshold="crit" />}
         {/* Area fill */}
         {area && <path d={area} fill={`url(#${gradId})`} />}
 
@@ -136,6 +144,15 @@ export default function MiniChart({ data = [], color = '#4f9cf9', label, unit = 
             fontSize="9" fill="var(--chart-label)">collecting…</text>
         )}
       </svg>
-    </div>
+  )
+  const box = 'flex flex-col items-stretch gap-0 rounded-lg border bg-card px-3 pt-2.5 pb-2 text-left shadow-none border-border'
+  // Tıklanır grafik = shadcn Button (outline); değilse Card. Legacy `.mini-chart*` sınıfı taşımaz.
+  if (!onClick) return <Card data-slot="mini-chart" className={box}>{header}{svg}</Card>
+  return (
+    <Button type="button" variant="outline" data-slot="mini-chart" onClick={onClick}
+      aria-label={`${label} — ${t('mini.expand')}`} title={t('mini.expand')}
+      className={cn(box, 'h-auto w-full font-normal whitespace-normal hover:border-primary hover:bg-card hover:shadow-[0_0_0_2px_color-mix(in_srgb,var(--primary)_25%,transparent)]')}>
+      {header}{svg}
+    </Button>
   )
 }

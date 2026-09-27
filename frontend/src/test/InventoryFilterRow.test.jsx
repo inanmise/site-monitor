@@ -11,7 +11,7 @@ describe('InventoryFilterRow', () => {
   ]
   const renderRow = (props = {}) => {
     const onFilters = vi.fn()
-    const cols = defaultCols()
+    const cols = [...defaultCols(), 'port']   // port 2026-09-27'den beri varsayılan kapalı (alan adı hücresinde rozet); burada açık
     render(<table><thead><InventoryFilterRow filters={EMPTY_FILTERS} onFilters={onFilters} allRows={rows} cols={cols} canManage statusFilter="default" {...props} /></thead></table>)
     return { onFilters, cols }
   }

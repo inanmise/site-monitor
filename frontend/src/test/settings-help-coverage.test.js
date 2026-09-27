@@ -41,14 +41,26 @@ function walk(dir, out = []) {
 
 /** helpKey="x" ve helpKey={'x'} / helpKey={`x`} — yalnız TAM literaller (birleştirme değil). */
 const LITERAL_HELP_KEY = /helpKey=(?:"([^"{}$`]+)"|\{\s*'([^'{}$`+]+)'\s*\}|\{\s*`([^`{}$]+)`\s*\})/g
+/**
+ * shadcn dalgası (2026-09-26) metin/sayı alanlarının yardımını yardımcı çağrılara taşıdı:
+ * `helpLabel(t('smtp.password'), 'help.smtp.password')`, `textField('host', 'ldap.host', 'help.ldap.host', …)`,
+ * `numField(…, 'help.smtp.port')`. Yardım ekranda duruyordu ama bu kapı yalnız `helpKey=` biçimini tanıdığı için
+ * 79 anahtardan 30'unu görüyordu. Çağrının argümanlarındaki literal `'help.…'` da sayılır (bir iç parantez düzeyi).
+ */
+// Birleştirme öneki ('help.set.' + key) anahtar DEĞİL: noktayla biten ya da ardından `+` gelen literal sayılmaz.
+const HELPER_HELP_KEY = /\b(?:helpLabel|textField|numField)\((?:[^()]|\([^()]*\))*?'(help\.[\w.-]*[\w-])'(?!\s*\+)/g
 
 function literalHelpKeys() {
   const found = new Map()
   for (const f of walk(path.join(FRONT, 'components', 'admin'))) {
     const src = read(f)
+    const rel = path.relative(FRONT, f).replace(/\\/g, '/')
     for (const m of src.matchAll(LITERAL_HELP_KEY)) {
       const key = m[1] || m[2] || m[3]
-      if (!found.has(key)) found.set(key, path.relative(FRONT, f).replace(/\\/g, '/'))
+      if (!found.has(key)) found.set(key, rel)
+    }
+    for (const m of src.matchAll(HELPER_HELP_KEY)) {
+      if (!found.has(m[1])) found.set(m[1], rel)
     }
   }
   return found

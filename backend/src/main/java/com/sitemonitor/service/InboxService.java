@@ -54,8 +54,18 @@ public class InboxService {
     private TeamRepository teamRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private MonitorRefResolver monitorRefResolver;
+    // Sorun bildirimi konuşma dizisi (2026-09-26): yönetici yanıtı / durum geçişi → bildirene; yeniden açma → global
+    // yöneticiye. Aynı alan-enjeksiyonu deseni (7-arg yapıcı testte olduğu gibi kalır).
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.IssueReportCommentRepository issueCommentRepo;
     static final int HISTORY_DAYS = 30;
     static final int HISTORY_SIZE_MAX = 100;
+    /** Sorun bildirimi haberleri: son {@value} gün, en çok {@link #ISSUE_ITEMS_MAX} satır. */
+    static final int ISSUE_DAYS = 30;
+    static final int ISSUE_ITEMS_MAX = 20;
+    /** Sorun bildirimi sayfası sekmesi + derin bağlantı anahtarı (useUrlQuerySync PAGE_STATE_PREFIXES 'ir_'). */
+    static final String ISSUE_TAB = "login-issues";
+    static final String ISSUE_PARAM = "ir_id";
 
     /**
      * Bildirim satırı. {@code startedAt}/{@code endedAt}: alarmın açıldığı / çözüldüğü an (UTC ISO) — süre arayüzde
@@ -129,6 +139,78 @@ public class InboxService {
         List<Item> items = new ArrayList<>();
         for (AlertEvent e : slice) items.add(alertItem(e, true, teamNames, refs));
         return new HistoryPage(items, resolvedAll.size(), p, s);
+    }
+
+    /**
+     * Bildirim kutusu + sorun bildirimi haberleri (2026-09-26). {@code username}: bildirenin kendi raporlarına gelen
+     * yönetici yanıtı / durum geçişi; {@code globalAdmin}: bildirenin yorumuyla yeniden açılan raporlar (yalnız global
+     * yönetici — kapsamlı müdür değil). İki-arg {@link #build(Predicate, List)} eski davranışıyla kalır (testler).
+     */
+    public List<Item> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds, String username, boolean globalAdmin) {
+        List<Item> out = new ArrayList<>(build(canViewTeam, ownTeamIds));
+        List<Item> issues = issueItems(username, globalAdmin);
+        if (issues.isEmpty()) return out;
+        out.addAll(issues);
+        sortItems(out);
+        return out.size() > MAX_ITEMS ? out.subList(0, MAX_ITEMS) : out;
+    }
+
+    /**
+     * Sorun bildirimi satırları — kalıcı bildirim tablosu YOK: her satır konuşma dizisindeki bir yönetici hareketinden
+     * (herkese açık yanıt ya da durum geçişi) türer; anahtar satır kimliğidir ({@code issue:<commentId>}) → her yönetici
+     * eylemi tam BİR kez haber olur, bildirenin kendi yorumu ve iç notlar hiç olmaz. Derin bağlantı: raporu doğrudan açar.
+     */
+    List<Item> issueItems(String username, boolean globalAdmin) {
+        List<Item> out = new ArrayList<>();
+        if (issueCommentRepo == null) return out;
+        String since = ISO.format(Instant.now().minus(ISSUE_DAYS, ChronoUnit.DAYS));
+        if (username != null && !username.isBlank()) {
+            try {
+                int n = 0;
+                for (Object[] row : issueCommentRepo.findAdminActivityForReporter(username.strip().toLowerCase(Locale.ROOT), since)) {
+                    if (n++ >= ISSUE_ITEMS_MAX) break;
+                    com.sitemonitor.model.IssueReportComment c = (com.sitemonitor.model.IssueReportComment) row[0];
+                    com.sitemonitor.model.LoginIssueReport r = (com.sitemonitor.model.LoginIssueReport) row[1];
+                    boolean status = com.sitemonitor.model.IssueReportComment.KIND_STATUS.equals(c.getKind());
+                    String kind = status ? "issue_status_" + String.valueOf(c.getBody()).toLowerCase(Locale.ROOT) : "issue_reply";
+                    String level = status && LoginIssueService.RESOLVED.equals(c.getBody()) ? "OK" : "INFO";
+                    String sub = status ? (LoginIssueService.RESOLVED.equals(c.getBody()) ? excerpt(r.getResolutionNote()) : null)
+                                        : excerpt(c.getBody());
+                    out.add(new Item("issue:" + c.getId(), kind, level, LoginIssueService.refCode(r), sub, c.getCreatedAt(),
+                            ISSUE_TAB, Map.of(ISSUE_PARAM, r.getId())));
+                }
+            } catch (Exception ex) { log.debug("inbox: sorun bildirimi yanıtları düştü: {}", ex.toString()); }
+        }
+        if (globalAdmin) {
+            try {
+                int n = 0;
+                for (Object[] row : issueCommentRepo.findReopensSince(since)) {
+                    if (n++ >= ISSUE_ITEMS_MAX) break;
+                    com.sitemonitor.model.IssueReportComment c = (com.sitemonitor.model.IssueReportComment) row[0];
+                    com.sitemonitor.model.LoginIssueReport r = (com.sitemonitor.model.LoginIssueReport) row[1];
+                    Map<String, Object> params = new LinkedHashMap<>();
+                    params.put(ISSUE_PARAM, r.getId());
+                    params.put("ir_view", "all");   // yönetici ekranı: "Tüm bildirimler" sekmesi
+                    out.add(new Item("issue:" + c.getId(), "issue_reopened", "WARNING", LoginIssueService.refCode(r),
+                            r.getUsername(), c.getCreatedAt(), ISSUE_TAB, params));
+                }
+            } catch (Exception ex) { log.debug("inbox: yeniden açılan bildirimler düştü: {}", ex.toString()); }
+        }
+        return out;
+    }
+
+    private static String excerpt(String s) {
+        if (s == null || s.isBlank()) return null;
+        String one = s.strip().replaceAll("\\s+", " ");
+        return one.length() > 90 ? one.substring(0, 90) + "…" : one;
+    }
+
+    private static void sortItems(List<Item> out) {
+        out.sort((a, b) -> {
+            int c = Integer.compare(rank(b), rank(a));
+            if (c != 0) return c;
+            return String.valueOf(b.at()).compareTo(String.valueOf(a.at()));
+        });
     }
 
     public List<Item> build(Predicate<Long> canViewTeam, List<Long> ownTeamIds) {
@@ -235,7 +317,9 @@ public class InboxService {
     }
 
     private static int rank(Item i) {
-        return switch (i.kind()) { case "alert_open" -> "CRITICAL".equalsIgnoreCase(i.level()) ? 5 : 4; case "weekly_due" -> 3; case "maintenance_active" -> 2; case "exception_expired" -> 2; case "maintenance_soon" -> 1; default -> 0; };
+        return switch (i.kind()) { case "alert_open" -> "CRITICAL".equalsIgnoreCase(i.level()) ? 5 : 4; case "weekly_due" -> 3; case "maintenance_active" -> 2; case "exception_expired" -> 2; case "maintenance_soon" -> 1;
+            // sorun bildirimi haberleri (yanıt / durum / yeniden açma): haftalık rapor seviyesi — kişiye yönelik, bekleyen iş
+            default -> i.kind().startsWith("issue_") ? 3 : 0; };
     }
 
     private static boolean visible(AlertEvent e, Predicate<Long> canViewTeam, Set<String> domains) {

@@ -56,7 +56,7 @@ describe('DeviceHistoryPanel', () => {
 
     // Ayni ozet hem "bu cihaz" kartinda hem gecmis satirinda gorunur → sorgu KARTA daraltilir.
     await screen.findByText(/CURRENT SESSION|MEVCUT OTURUM/i)
-    const card = document.querySelector('.dev-card')
+    const card = document.querySelector('[data-slot="dev-card"]')
     expect(within(card).getByText('Windows · Chrome')).toBeInTheDocument()
     expect(within(card).getByText(/Istanbul, TR/)).toBeInTheDocument()
   })

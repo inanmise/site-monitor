@@ -31,10 +31,10 @@ describe('SharedCertificateModal', () => {
     expect(screen.getByText('DigiCert')).toBeInTheDocument()
     const rows = screen.getByTestId('shc-table').querySelectorAll('tbody tr')
     expect(rows).toHaveLength(2)
-    expect(rows[0].classList.contains('shc-self')).toBe(true)
+    expect(rows[0]).toHaveAttribute('data-self', 'true')
     expect(rows[0].textContent).toMatch(/bu kart|this card/)
     expect(rows[1].textContent).toMatch(/envanterde değil|not in inventory/)
-    expect(rows[1].querySelector('.shc-crit')).not.toBeNull()   // 5 gün
+    expect(rows[1].querySelector('[data-tone="crit"]')).not.toBeNull()   // 5 gün
     expect(screen.getByText(/2 alan görüş kapsamınız dışında|2 domains are outside/)).toBeInTheDocument()
     expect(screen.getByText(':8443', { exact: false })).toBeInTheDocument()
   })
@@ -43,7 +43,7 @@ describe('SharedCertificateModal', () => {
     const onClose = vi.fn(); const onSelectDomain = vi.fn()
     const { unmount } = render(<SharedCertificateModal domain="a.example.com" onClose={onClose} onSelectDomain={onSelectDomain} />)
     await waitFor(() => expect(screen.getByTestId('shc-table')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('shc-table').querySelectorAll('tbody tr')[1].querySelector('.inv-domain'))
+    fireEvent.click(screen.getByTestId('shc-table').querySelectorAll('tbody tr')[1].querySelector('[data-shc-domain]'))
     expect(onSelectDomain).toHaveBeenCalledWith('b.example.com')
     expect(onClose).toHaveBeenCalled()
     unmount()

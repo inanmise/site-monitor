@@ -59,11 +59,12 @@ describe('SecretTools', () => {
   })
 
   it('BOŞ anahtarla çözümleme isteği ATILMAZ', async () => {
-    const { container } = render(<SecretTools />)
+    render(<SecretTools />)
     await waitFor(() => expect(api.admin.secretToolsInfo).toHaveBeenCalled())
 
-    const btn = container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')
-    if (btn) fireEvent.click(btn)
+    const btn = screen.getByRole('button', { name: /^(decrypt|çözümle)$/i })
+    expect(btn).toBeDisabled()   // boş anahtarla düğme kilitli
+    fireEvent.click(btn)
 
     await waitFor(() => expect(api.admin.decryptSecrets).not.toHaveBeenCalled())
   })
@@ -74,7 +75,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
+    fireEvent.click(screen.queryByRole('button', { name: /^(decrypt|çözümle)$/i }))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalledWith('ANAHTAR'))
     expect(await screen.findByText(/smtp_password/)).toBeInTheDocument()
@@ -86,7 +87,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
+    fireEvent.click(screen.queryByRole('button', { name: /^(decrypt|çözümle)$/i }))
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
 
     // Değer alanları password tipinde olmalı; düz metin olan HİÇBİR alan sırrı taşımamalı.
@@ -104,16 +105,18 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
+    fireEvent.click(screen.queryByRole('button', { name: /^(decrypt|çözümle)$/i }))
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
 
     const before = container.querySelector('input[readonly][type="password"]')
     expect(before).not.toBeNull()
 
-    // Satırdaki göz düğmesi
-    const eye = before.parentElement?.querySelector('button')
-    expect(eye, 'göster/gizle düğmesi bulunamadı').not.toBeNull()
+    // Satırdaki göz düğmesi — shadcn InputGroupButton; adı SATIRI içerir (a11y.rowAction)
+    const eye = screen.getByRole('button', { name: /(Show value|Değeri göster) — SMTP parolasi/ })
+    expect(eye).toHaveAttribute('aria-pressed', 'false')
+    expect(before.closest('[data-slot="input-group"]')).toContainElement(eye)
     fireEvent.click(eye)
+    expect(eye).toHaveAttribute('aria-pressed', 'true')
 
     await waitFor(() => {
       const revealed = [...container.querySelectorAll('input[readonly]')]
@@ -130,7 +133,7 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'YANLIS' } })
-    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
+    fireEvent.click(screen.queryByRole('button', { name: /^(decrypt|çözümle)$/i }))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
     expect(screen.queryByText(/smtp_password/)).toBeNull()
@@ -144,9 +147,9 @@ describe('SecretTools', () => {
 
     fireEvent.change(container.querySelector('input[placeholder="SITE_MONITOR_SECRET_KEY"]'),
       { target: { value: 'ANAHTAR' } })
-    fireEvent.click(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]'))
+    fireEvent.click(screen.queryByRole('button', { name: /^(decrypt|çözümle)$/i }))
 
     await waitFor(() => expect(api.admin.decryptSecrets).toHaveBeenCalled())
-    expect(container.querySelector('.ldap-settings')).not.toBeNull()
+    expect(screen.getByTestId('secret-tools')).toBeInTheDocument()
   })
 })

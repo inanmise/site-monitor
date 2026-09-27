@@ -1,17 +1,28 @@
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { Fragment, useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
+import { useServerPagination } from '../hooks/useServerPagination.js'
 import {
   Shield, Activity, Globe, Server, Radio, Share2, Search, CalendarClock, ScanSearch, FlaskConical, Gauge,
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
   Download, X, RefreshCw, Clock, User, Inbox, ExternalLink } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
 import TeamBadge from './ui/TeamBadge.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { useIsMobile } from '../hooks/use-mobile.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * Aktivite satırı → ilgili izleme sekmesi (2026-09-20, kullanıcı bildirimi: "ping logunu görünce o ping izlemesine
@@ -49,16 +60,39 @@ const TYPES = [
 ]
 const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
 
+// Sonuç durumu → ikon + mürekkep (jeton sınıfı; koyu temada karşılıklı).
 const STATUS_META = {
-  SUCCESS: { Icon: CheckCircle,   color: '#059669' },
-  WARNING: { Icon: AlertTriangle, color: '#d97706' },
-  ERROR:   { Icon: XCircle,       color: '#dc2626' },
-  TIMEOUT: { Icon: XCircle,       color: '#dc2626' },
-  UNKNOWN: { Icon: HelpCircle,    color: '#71717a' },
+  SUCCESS: { Icon: CheckCircle,   ink: 'text-success' },
+  WARNING: { Icon: AlertTriangle, ink: 'text-amber-600 dark:text-amber-400' },
+  ERROR:   { Icon: XCircle,       ink: 'text-destructive' },
+  TIMEOUT: { Icon: XCircle,       ink: 'text-destructive' },
+  UNKNOWN: { Icon: HelpCircle,    ink: 'text-muted-foreground' },
+}
+const UNKNOWN_TYPE = { Icon: HelpCircle, color: '#71717a' }
+
+/** İzleme türü rozeti — türün kalıcı renk kimliği (ikon + ad); zemin rengin %10'u. */
+function TypeBadge({ type }) {
+  const tm = TYPE_MAP[type] || UNKNOWN_TYPE
+  return (
+    <Badge variant="outline" data-type={type} className="shrink-0 gap-1 rounded-full border-transparent px-2 text-[0.72em] font-bold tracking-wide"
+      style={{ color: tm.color, background: tm.color + '18' }}>
+      <tm.Icon aria-hidden="true" /> {type}
+    </Badge>
+  )
+}
+
+/** Sonuç özeti (ikon + yerelleştirilmiş özet). */
+function ResultSummary({ row, t, className }) {
+  const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
+  return (
+    <span data-slot="act-result" className={cn('inline-flex min-w-0 items-center gap-1 font-semibold tabular-nums', sm.ink, className)}>
+      <sm.Icon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">{localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}</span>
+    </span>
+  )
 }
 const STATUSES = ['SUCCESS', 'WARNING', 'ERROR', 'UNKNOWN']
 const RANGES = ['today', '24h', '7d', 'all']
-const PAGE_SIZE = 50
 
 /** range → {from,to} ISO (UTC, yyyy-MM-ddTHH:mm:ss) — backend string karşılaştırmasıyla uyumlu. */
 function rangeToFromTo(range) {
@@ -121,6 +155,8 @@ export function localizeSummary(summary, t) {
 
 export default function ActivityLog({ refreshTrigger }) {
   const t = useT()
+  // Telefonda satırlar kart listesi (yapı farkı → useIsMobile; jsdom medya sorgusu uygulamaz, TEK varyant çizilir)
+  const phone = useIsMobile()
   const [filters, setFilters] = useState(readParams)
   const [qInput, setQInput]   = useState(filters.q)
   const [data, setData]       = useState([])
@@ -150,8 +186,9 @@ export default function ActivityLog({ refreshTrigger }) {
     return out
   }, [data, unfolded])
 
-  const [total, setTotal]     = useState(0)
-  const [page, setPage]       = useState(0)
+  // Sayfalama standardı (2026-09-26): el yapımı "Önceki/Sonraki" yerine useServerPagination + PaginationBar.
+  // Süzgeç değişince sayfa 1 (değer karşılaştırmalı, mount'ta değil); API 0-tabanlı.
+  const sp = useServerPagination({ listKey: 'activity-log', preset: 'page', resetDeps: [filters], apiBase: 0 })
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(false)
@@ -175,25 +212,31 @@ export default function ActivityLog({ refreshTrigger }) {
     return { type: filters.types.join(','), status: filters.status, from, to, q: filters.q }
   }, [filters])
 
-  const load = useCallback((p, silent) => {
+  // Yarış koruması: sayfa/süzgeç hızlı değişirse yalnız SON isteğin yanıtı uygulanır.
+  const loadSeq = useRef(0)
+  const { apiPage, pageSize } = sp
+  const load = useCallback((silent) => {
+    const seq = ++loadSeq.current
     if (!silent) setLoading(true)
     setError(false)
-    api.getActivity({ ...params, page: p, size: PAGE_SIZE })
+    api.getActivity({ ...params, page: apiPage, size: pageSize })
       .then((res) => {
-        if (res?.success) { setData(res.data); setTotal(res.total); setPage(res.page ?? p) }
+        if (seq !== loadSeq.current) return
+        if (res?.success) { setData(res.data); sp.bind(res) }
         else setError(true)
       })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false))
+      .catch(() => { if (seq === loadSeq.current) setError(true) })
+      .finally(() => { if (seq === loadSeq.current) setLoading(false) })
     api.getActivitySummary(params).then((res) => { if (res?.success) setSummary(res) }).catch(() => {})
-  }, [params])
+  }, [params, apiPage, pageSize]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Filtre değişince 1. sayfaya dön + URL'yi güncelle.
-  useEffect(() => { writeParams(filters); setOpenId(null); load(0, false) }, [filters, load])
-  useEffect(() => { if (refreshTrigger) load(page, true) }, [refreshTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Süzgeç değişince URL'yi güncelle + açık detayı kapat; sayfa sıfırlamasını useServerPagination yapar.
+  useEffect(() => { writeParams(filters); setOpenId(null) }, [filters])
+  useEffect(() => { load(false) }, [load])
+  useEffect(() => { if (refreshTrigger) load(true) }, [refreshTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Görünür sekmede, 1. sayfadayken sessiz otomatik tazeleme (gizli sekmede durur).
-  useVisibleInterval(() => { if (page === 0) load(0, true) }, 30000, false)
+  useVisibleInterval(() => { if (sp.page === 1) load(true) }, 30000, false)
 
   const toggleType = (key) =>
     setFilters((f) => ({ ...f, types: f.types.includes(key) ? f.types.filter((x) => x !== key) : [...f.types, key] }))
@@ -210,177 +253,337 @@ export default function ActivityLog({ refreshTrigger }) {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const anyFilter = filters.types.length > 0 || filters.status || filters.q || filters.range !== '24h'
 
+  // Özet kalemleri = durum süzgeci (MonitorStatsBar). Etkin kart tekrar tıklanınca süzgeç kalkar; "Toplam" temizler.
+  // Ad her zaman etiketi taşır ("Hata — Filtreyi kaldır"): etkin kartın adı yalnız "Filtreyi kaldır" olsaydı hangi
+  // kartın etkin olduğu duyulmazdı.
+  const statItems = [
+    ['ALL', summary?.total ?? '—', t('act.sum.total'), Activity, 'total'],
+    ['SUCCESS', summary?.success_count ?? 0, t('act.st.SUCCESS'), CheckCircle, 'valid'],
+    ['WARNING', summary?.warning ?? 0, t('act.st.WARNING'), AlertTriangle, 'warning'],
+    ['ERROR', summary?.error ?? 0, t('act.st.ERROR'), XCircle, 'critical'],
+  ].map(([key, value, label, Icon, cls]) => {
+    const on = (filters.status || 'ALL') === key
+    return { key, value, label, Icon, cls, hint: t('act.sumFilterHint'),
+      tip: on && key !== 'ALL' ? t('a11y.rowAction', label, t('mondash.clearTip')) : t('mondash.filterTip', label) }
+  })
+  const onStat = (key) => setFilters((f) => ({ ...f, status: key === 'ALL' || f.status === key ? '' : key }))
+
+  const toggleFold = (key) => setUnfolded((u) => { const n = new Set(u); n.add(key); return n })
+  const rowKey = (e, fn) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fn() } }
+  const ROW_CLICK = 'cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
+  const TH = 'h-9 px-2.5 text-[0.76em] font-semibold tracking-wide text-muted-foreground uppercase'
+  const teamOf = (r, isStatic = true) => (r.team_id != null
+    ? <TeamBadge teamId={r.team_id} teamName={r.team_name} static={isStatic} />
+    : <span className="text-muted-foreground">—</span>)
+  const time = (iso, label) => <time dateTime={iso} title={formatDateSec(iso)} className="whitespace-nowrap tabular-nums">{label ?? rel(iso)}</time>
+
+  /** Açılan satırın ayrıntısı — masaüstü tablo ve telefon kartı AYNI gövdeyi kullanır. */
+  const detail = (row) => {
+    const d = details[row.id]
+    const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
+    const fact = (label, value) => (
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <dt className="text-[0.8em] tracking-wide text-muted-foreground uppercase">{label}</dt>
+        <dd className="min-w-0 [overflow-wrap:anywhere]">{value}</dd>
+      </div>
+    )
+    return (
+      <div data-slot="act-detail" className="flex min-w-0 flex-col gap-2.5 text-[0.86em]">
+        <dl className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]">
+          {fact(t('act.d.target'), <span className="font-mono text-xs break-all">{row.target || '—'}</span>)}
+          {fact(t('act.d.status'), <span className={cn('font-semibold', sm.ink)}>{t('act.st.' + row.result_status)}</span>)}
+          {fact(t('act.d.time'), formatDateSec(row.activity_time))}
+          {fact(t('act.d.actor'), <span className="inline-flex items-center gap-1"><User aria-hidden="true" className="size-3" /> {row.actor || 'scheduler'}</span>)}
+          {fact(t('act.d.team'), teamOf(row, false))}
+          {row.response_ms != null && fact(t('act.d.response'), `${row.response_ms} ms`)}
+          {row.days_remaining != null && fact(t('act.d.days'), row.days_remaining)}
+        </dl>
+        {row.error_message && (
+          <AlertBanner tone="danger" icon={XCircle} className="mb-0">
+            {row.error_message}{row.error_class ? ` (${row.error_class})` : ''}
+          </AlertBanner>
+        )}
+        {row.result_detail && (
+          <pre className="m-0 max-h-[200px] overflow-auto rounded-md border bg-background px-2.5 py-2 font-mono text-[0.85em] break-all whitespace-pre-wrap">{row.result_detail}</pre>
+        )}
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex items-center gap-1.5 text-[0.8em] tracking-wide text-muted-foreground uppercase"><Clock aria-hidden="true" className="size-3" /> {t('act.miniHistory')}</div>
+          {d ? (d.recent.length ? (
+            <ul className="flex list-none flex-col gap-1 p-0">
+              {d.recent.map((h) => {
+                const hs = STATUS_META[h.result_status] || STATUS_META.UNKNOWN
+                return (
+                  <li key={h.id} className="flex min-w-0 items-center gap-2.5">
+                    <hs.Icon aria-hidden="true" className={cn('size-3 shrink-0', hs.ink)} />
+                    <span className="min-w-0 flex-1 tabular-nums [overflow-wrap:anywhere]">{localizeSummary(h.result_summary, t) || h.result_status}</span>
+                    <span className="shrink-0 text-[0.85em] text-muted-foreground">{time(h.activity_time)}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : <p className="text-[0.85em] text-muted-foreground italic">{t('act.noHistory')}</p>)
+            : <p className="text-[0.85em] text-muted-foreground italic">{t('act.loading')}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  /** "İzlemeye git" — satırın adı + eylem (satırlar ayırt edilir); telefonda metinli, ≥ 40 px. */
+  const goButton = (row, dest, withText = false) => (
+    <Button type="button" variant={withText ? 'outline' : 'ghost'} size={withText ? 'sm' : 'icon-sm'}
+      className={cn(withText ? 'h-10 shrink-0' : 'text-muted-foreground hover:text-primary')}
+      title={t('act.goMonitor')} aria-label={t('act.goMonitorFor', row.monitor_name || row.target || '')}
+      onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
+      <ExternalLink aria-hidden="true" />{withText && <span>{t('act.goMonitor')}</span>}
+    </Button>
+  )
+
+  // ── Masaüstü / tablet: hizalı sütunlar (shadcn Table). Düşük öncelikli sütunlar dar ekranda gizli. ──
+  const desktopFeed = (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className="text-[0.88em]">
+        <TableHeader className="bg-muted/50">
+          <TableRow className="hover:bg-transparent">
+            <TableHead className={cn(TH, 'w-8')}><span className="sr-only">{t('act.d.status')}</span></TableHead>
+            <TableHead className={TH}>{t('act.d.type')}</TableHead>
+            <TableHead className={TH}>{t('act.d.monitor')}</TableHead>
+            <TableHead className={cn(TH, 'hidden xl:table-cell')}>{t('act.d.team')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('act.d.action')}</TableHead>
+            <TableHead className={TH}>{t('act.d.result')}</TableHead>
+            <TableHead className={cn(TH, 'text-right')}>{t('act.d.time')}</TableHead>
+            <TableHead className={cn(TH, 'w-10')}><span className="sr-only">{t('act.goMonitor')}</span></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {groupedFeed.map((entry) => {
+            // Zaman grubu başlığı (2026-09-12, #22): bugün / dün / bu hafta / daha eski
+            if (entry.kind === 'head') {
+              return (
+                <TableRow key={entry.key} data-slot="act-group-head" className="bg-muted/40 hover:bg-muted/40">
+                  <TableCell colSpan={8} className="py-1.5 text-[0.76em] font-bold tracking-wider text-muted-foreground uppercase">
+                    {t('act.group.' + entry.group)} <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px] tabular-nums">{entry.count}</Badge>
+                  </TableCell>
+                </TableRow>
+              )
+            }
+            // Katlanmış ardışık koşu: aynı hedefin peş peşe N kontrolü tek satırda; tıklayınca açılır
+            if (entry.kind === 'fold') {
+              const r0 = entry.rows[0]
+              const errs = entry.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
+              const unfold = () => toggleFold(entry.key)
+              return (
+                <TableRow key={entry.key} data-slot="act-fold" tabIndex={0} className={cn(ROW_CLICK, 'bg-primary/5 hover:bg-primary/10')}
+                  aria-label={t('a11y.toggleRow', `${r0.monitor_name} · ${t('act.folded', entry.rows.length)}`)}
+                  onClick={unfold} onKeyDown={(e) => rowKey(e, unfold)}>
+                  <TableCell className="text-muted-foreground"><ChevronRight aria-hidden="true" className="size-3.5" /></TableCell>
+                  <TableCell><TypeBadge type={r0.monitor_type} /></TableCell>
+                  <TableCell>
+                    <span className="block max-w-[16rem] truncate font-semibold" title={r0.monitor_name}>{r0.monitor_name}</span>
+                    <span className="block max-w-[16rem] truncate font-mono text-xs text-muted-foreground" title={r0.target}>{r0.target}</span>
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(r0)}</TableCell>
+                  <TableCell className="hidden lg:table-cell" />
+                  <TableCell className="min-w-[9rem] text-[0.9em] whitespace-normal text-primary">
+                    {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
+                  </TableCell>
+                  <TableCell className="text-right text-[0.9em] text-muted-foreground">{time(r0.activity_time, `${rel(entry.rows[entry.rows.length - 1].activity_time)} → ${rel(r0.activity_time)}`)}</TableCell>
+                  <TableCell />
+                </TableRow>
+              )
+            }
+            const row = entry.row
+            const isOpen = openId === row.id
+            const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
+            const dest = activityTarget(row)
+            const toggle = () => openDetail(row)
+            return (
+              <Fragment key={entry.key}>
+                <TableRow data-slot="act-item" data-status={row.result_status} data-state={isOpen ? 'open' : 'closed'}
+                  tabIndex={0} aria-expanded={isOpen}
+                  aria-label={t('a11y.toggleRow', row.monitor_name || row.target || String(row.id))}
+                  className={cn(ROW_CLICK, isError && 'bg-destructive/[0.04]', 'data-[state=open]:bg-primary/5')}
+                  onClick={toggle} onKeyDown={(e) => rowKey(e, toggle)}>
+                  <TableCell className="text-muted-foreground">{isOpen ? <ChevronDown aria-hidden="true" className="size-3.5" /> : <ChevronRight aria-hidden="true" className="size-3.5" />}</TableCell>
+                  <TableCell><TypeBadge type={row.monitor_type} /></TableCell>
+                  <TableCell>
+                    {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar */}
+                    {dest ? (
+                      <Button type="button" variant="link" size="xs" title={t('act.goMonitor')}
+                        className="h-auto max-w-[16rem] justify-start truncate p-0 text-[1em] font-semibold text-foreground decoration-dotted underline-offset-[3px] hover:text-primary"
+                        onClick={(e) => { e.stopPropagation(); navigateTo(dest.tab, dest.params) }}>
+                        <span className="truncate">{row.monitor_name}</span>
+                      </Button>
+                    ) : <span className="block max-w-[16rem] truncate font-semibold" title={row.monitor_name}>{row.monitor_name}</span>}
+                    {/* Hedef adın altında (ayrı sütun olsaydı zaman sütunu 1440 px'te ekran dışına itiliyordu) */}
+                    {row.target && <span className="block max-w-[16rem] truncate font-mono text-xs text-muted-foreground" title={row.target}>{row.target}</span>}
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell" data-col="team">{teamOf(row)}</TableCell>
+                  <TableCell className="hidden text-[0.9em] whitespace-nowrap text-muted-foreground lg:table-cell">{t('act.ac.' + row.action)}</TableCell>
+                  <TableCell className="min-w-[9rem] whitespace-normal"><ResultSummary row={row} t={t} className="text-[0.95em]" /></TableCell>
+                  <TableCell className="text-right text-[0.9em] text-muted-foreground">{time(row.activity_time)}</TableCell>
+                  <TableCell className="px-1">{dest && goButton(row, dest)}</TableCell>
+                </TableRow>
+                {isOpen && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={8} className="bg-muted/30 px-4 py-3 whitespace-normal sm:pl-10">{detail(row)}</TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  )
+
+  // ── Telefon: kart listesi — üstte tür + ad + göreli zaman, altında hedef, sonuç + eylem; alt şeritte takım +
+  // "İzlemeye git". Metinler üst üste binmez (min-w-0 + truncate/sarma); sol renk şeridi YOK, hata kartı TÜM
+  // çerçeveyle belirtilir. ──
+  const mobileFeed = (
+    <ul className="flex list-none flex-col gap-2 p-0">
+      {groupedFeed.map((entry) => {
+        if (entry.kind === 'head') {
+          return (
+            <li key={entry.key} data-slot="act-group-head" className="mt-1 flex items-center gap-1.5 px-1 text-[0.76em] font-bold tracking-wider text-muted-foreground uppercase first:mt-0">
+              {t('act.group.' + entry.group)} <Badge variant="secondary" className="h-4 px-1.5 text-[10px] tabular-nums">{entry.count}</Badge>
+            </li>
+          )
+        }
+        if (entry.kind === 'fold') {
+          const r0 = entry.rows[0]
+          const errs = entry.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
+          return (
+            <li key={entry.key} data-slot="act-fold" className="min-w-0 overflow-hidden rounded-lg border border-dashed border-primary/40 bg-primary/5">
+              <Button type="button" variant="ghost" onClick={() => toggleFold(entry.key)}
+                className="h-auto min-h-11 w-full flex-col items-stretch gap-1 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal">
+                <span className="flex min-w-0 items-center gap-2">
+                  <TypeBadge type={r0.monitor_type} />
+                  <span className="min-w-0 flex-1 truncate font-semibold">{r0.monitor_name}</span>
+                  <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                </span>
+                <span className="text-[0.84em] text-primary">
+                  {t('act.folded', entry.rows.length)}{errs ? <span className="font-semibold text-destructive"> · {t('act.foldedErrors', errs)}</span> : ''}
+                </span>
+                <span className="text-[0.78em] text-muted-foreground">{rel(entry.rows[entry.rows.length - 1].activity_time)} → {rel(r0.activity_time)}</span>
+              </Button>
+            </li>
+          )
+        }
+        const row = entry.row
+        const isOpen = openId === row.id
+        const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
+        const dest = activityTarget(row)
+        return (
+          <li key={entry.key} data-slot="act-item" data-status={row.result_status} data-state={isOpen ? 'open' : 'closed'}
+            className={cn('min-w-0 overflow-hidden rounded-lg border bg-card', isError && 'border-destructive/50', isOpen && 'border-primary/60')}>
+            <Button type="button" variant="ghost" aria-expanded={isOpen}
+              className="h-auto w-full flex-col items-stretch gap-1.5 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal"
+              onClick={() => openDetail(row)}>
+              <span className="flex min-w-0 items-center gap-2">
+                <TypeBadge type={row.monitor_type} />
+                <span className="min-w-0 flex-1 truncate font-semibold">{row.monitor_name}</span>
+                <span className="shrink-0 text-[0.78em] text-muted-foreground">{time(row.activity_time)}</span>
+                {isOpen ? <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+              </span>
+              {row.target && <span className="block min-w-0 truncate font-mono text-[0.78em] text-muted-foreground">{row.target}</span>}
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.84em]">
+                <ResultSummary row={row} t={t} />
+                <span className="text-muted-foreground">· {t('act.ac.' + row.action)}</span>
+              </span>
+            </Button>
+            <div className="flex min-w-0 items-center justify-between gap-2 border-t px-3 py-1.5">
+              <span className="min-w-0 truncate" data-col="team">{teamOf(row)}</span>
+              {dest && goButton(row, dest, true)}
+            </div>
+            {isOpen && <div className="border-t bg-muted/30 px-3 py-3">{detail(row)}</div>}
+          </li>
+        )
+      })}
+    </ul>
+  )
+
   return (
-    <div className="activity-log">
-      {/* Özet şerit */}
-      {/* Özet kalemleri tıklanır (2026-09-20): duruma süzer, tekrar tıklayınca süzgeç kalkar */}
-      <div className="act-summary-bar">
-        {[['', summary?.total ?? '—', t('act.sum.total'), null, ''], ['SUCCESS', summary?.success_count ?? 0, t('act.st.SUCCESS'), CheckCircle, 'act-ok'],
-          ['WARNING', summary?.warning ?? 0, t('act.st.WARNING'), AlertTriangle, 'act-warn'], ['ERROR', summary?.error ?? 0, t('act.st.ERROR'), XCircle, 'act-err']].map(([st, val, label, Icon, cls]) => (
-          <button key={st || 'all'} type="button" className={`act-sum-item act-sum-btn${cls ? ' ' + cls : ''}${filters.status === st ? ' is-on' : ''}`}
-            aria-pressed={filters.status === st} title={t('act.sumFilterHint')}
-            onClick={() => setFilters((f) => ({ ...f, status: f.status === st ? '' : st }))}>
-            {Icon && <Icon size={13} />}<strong>{val}</strong><span>{label}</span>
-          </button>
-        ))}
-        <div className="act-sum-spacer" />
+    <div data-slot="activity-log" className="flex min-w-0 flex-col gap-3">
+      {/* Özet — tıklanabilir sayım kartları (durum süzgeci); son aktivite zamanı altta */}
+      <div className="flex min-w-0 flex-col gap-1">
+        <MonitorStatsBar items={statItems} activeFilter={filters.status || 'ALL'} onStatClick={onStat} />
         {summary?.last_activity && (
-          <div className="act-sum-last"><Clock size={12} /> {t('act.lastActivity')}: {formatDateSec(summary.last_activity)}</div>
+          <p className="-mt-2 flex items-center gap-1.5 text-[0.82em] text-muted-foreground">
+            <Clock aria-hidden="true" className="size-3" /> {t('act.lastActivity')}: {formatDateSec(summary.last_activity)}
+          </p>
         )}
       </div>
 
-      {/* Filtre çubuğu */}
-      <div className="act-filters">
-        <div className="act-type-chips">
+      {/* Süzgeç çubuğu — mobil-önce: tür çipleri sarar; aralık/durum/arama telefonda alt alta, geniş ekranda tek satır */}
+      <div className="flex min-w-0 flex-col gap-2.5">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('act.typeFilter')}>
           {TYPES.map(({ key, Icon, color }) => {
             const on = filters.types.includes(key)
             return (
-              <button key={key} type="button" onClick={() => toggleType(key)}
-                className={`act-type-chip${on ? ' on' : ''}`}
-                style={on ? { borderColor: color, color, background: color + '18' } : undefined}
-                title={key}>
-                <Icon size={13} /> {key}
-              </button>
+              <Button key={key} type="button" variant="outline" size="sm" aria-pressed={on} onClick={() => toggleType(key)}
+                className="h-8 rounded-full px-2.5 text-[0.8em] font-medium text-muted-foreground pointer-coarse:h-10"
+                style={on ? { borderColor: color, color, background: color + '18' } : undefined}>
+                <Icon aria-hidden="true" className="size-3.5" /> {key}
+              </Button>
             )
           })}
         </div>
-        <div className="act-filter-row">
-          <div className="act-range-group">
-            {RANGES.map((rg) => (
-              <button key={rg} type="button" className={`act-filter-btn${filters.range === rg ? ' active' : ''}`}
-                onClick={() => setFilters((f) => ({ ...f, range: rg }))}>{t('act.range.' + rg)}</button>
-            ))}
+        <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center">
+          <SegmentedControl value={filters.range} onChange={(rg) => setFilters((f) => ({ ...f, range: rg }))}
+            ariaLabel={t('act.rangeFilter')} className="max-w-full flex-wrap"
+            options={RANGES.map((rg) => ({ value: rg, label: t('act.range.' + rg) }))} />
+          {/* NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için dış kapta *:w-full */}
+          <div className="w-full *:w-full md:w-44">
+            <NativeSelect value={filters.status} aria-label={t('act.d.status')}
+              onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
+              <NativeSelectOption value="">{t('act.allStatuses')}</NativeSelectOption>
+              {STATUSES.map((s) => <NativeSelectOption key={s} value={s}>{t('act.st.' + s)}</NativeSelectOption>)}
+            </NativeSelect>
           </div>
-          <select className="filter-input act-status-select" value={filters.status}
-            onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-            <option value="">{t('act.allStatuses')}</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{t('act.st.' + s)}</option>)}
-          </select>
-          <div className="act-search">
-            <input className="filter-input" placeholder={t('act.searchPh')} value={qInput}
+          <InputGroup className="w-full md:max-w-sm md:flex-1">
+            <InputGroupInput type="search" placeholder={t('act.searchPh')} value={qInput} aria-label={t('act.searchPh')}
               onChange={(e) => setQInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') applySearch() }} />
-            <Button variant="secondary" onClick={applySearch}
-              title={t('act.search')} aria-label={t('act.search')}><Search size={14} /></Button>
-          </div>
-          <div className="act-filter-actions">
-            {anyFilter && <button className="act-stat-clear" onClick={clearAll}><X size={12} /> {t('act.clearFilter')}</button>}
-            <Button variant="secondary" onClick={() => load(page, false)} title={t('act.refresh')}><RefreshCw size={14} /></Button>
-            <Button variant="secondary" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}>
-              <Download size={14} /> CSV
+            <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="sm" variant="secondary" onClick={applySearch}>{t('act.search')}</InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+          <div className="flex flex-wrap items-center gap-2 md:ml-auto">
+            {anyFilter && (
+              <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={clearAll}>
+                <X aria-hidden="true" /> {t('act.clearFilter')}
+              </Button>
+            )}
+            <Button type="button" variant="secondary" size="icon" onClick={() => load(false)} title={t('act.refresh')} aria-label={t('act.refresh')}>
+              <RefreshCw aria-hidden="true" />
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => exportCsv(data)} disabled={!data.length} title={t('act.exportCsv')}>
+              <Download aria-hidden="true" /> CSV
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Ana liste */}
-      {loading ? (
+      {/* Ana liste — yükleme göstergesi yalnız elde veri yokken; sayfa değişiminde liste + çubuk yerinde kalır
+          (akış sıfırlanıp çubuk kaybolursa sayfa zıplıyordu) */}
+      {loading && data.length === 0 ? (
         <LoadingBlock label={t('act.loading')} fullWidth />
       ) : error ? (
-        <div className="loading act-error-state">{t('act.error')}</div>
+        <StatusBlock tone="danger" icon={XCircle} title={t('act.error')} role="alert"
+          actions={<Button type="button" variant="outline" onClick={() => load(false)}><RefreshCw aria-hidden="true" /> {t('act.refresh')}</Button>} />
       ) : data.length === 0 ? (
         <StatusBlock tone="neutral" icon={Inbox} title={anyFilter ? t('act.noMatch') : t('act.empty')} description={anyFilter ? t('empty.hintFilter') : t('empty.hintActivity')} />
       ) : (
         <>
-          <div className="act-feed">
-            {groupedFeed.map((entry) => {
-              // Zaman grubu başlığı (2026-09-12, #22): bugün / dün / bu hafta / daha eski
-              if (entry.kind === 'head') return <div key={entry.key} className="act-group-head">{t('act.group.' + entry.group)} <small>{entry.count}</small></div>
-              // Katlanmış ardışık koşu: aynı hedefin peş peşe N kontrolü tek satırda; tıklayınca açılır
-              if (entry.kind === 'fold') {
-                const f = entry
-                const tm0 = TYPE_MAP[f.rows[0].monitor_type] || { Icon: HelpCircle, color: '#71717a' }
-                const errs = f.rows.filter((r) => r.result_status === 'ERROR' || r.result_status === 'TIMEOUT').length
-                return (
-                  <div key={f.key} className={`act-item act-fold${errs ? ' act-item-error' : ''}`}>
-                    <button className="act-item-row" onClick={() => setUnfolded((u) => { const n = new Set(u); n.add(f.key); return n })}>
-                      <span className="act-item-caret"><ChevronRight size={14} /></span>
-                      <span className="act-item-badge" style={{ color: tm0.color, background: tm0.color + '18' }}><tm0.Icon size={13} /> {f.rows[0].monitor_type}</span>
-                      <span className="act-item-name" title={f.rows[0].monitor_name}>{f.rows[0].monitor_name}</span>
-                      <span className="act-item-target" title={f.rows[0].target}>{f.rows[0].target}</span>
-                      <span className="act-item-team">{f.rows[0].team_id != null ? <TeamBadge teamId={f.rows[0].team_id} teamName={f.rows[0].team_name} static /> : <span className="sys-muted">—</span>}</span>
-                      <span className="act-item-action act-fold-count">{t('act.folded', f.rows.length)}{errs ? ` · ${t('act.foldedErrors', errs)}` : ''}</span>
-                      <span className="act-item-time" title={formatDateSec(f.rows[0].activity_time)}>{rel(f.rows[f.rows.length - 1].activity_time)} → {rel(f.rows[0].activity_time)}</span>
-                    </button>
-                  </div>
-                )
-              }
-              const row = entry.row
-              const tm = TYPE_MAP[row.monitor_type] || { Icon: HelpCircle, color: '#71717a' }
-              const sm = STATUS_META[row.result_status] || STATUS_META.UNKNOWN
-              const isOpen = openId === row.id
-              const d = details[row.id]
-              const isError = row.result_status === 'ERROR' || row.result_status === 'TIMEOUT'
-              const dest = activityTarget(row)
-              const go = (e) => { e.stopPropagation(); if (dest) navigateTo(dest.tab, dest.params) }
-              return (
-                <div key={entry.key} className={`act-item${isOpen ? ' open' : ''}${isError ? ' act-item-error' : ''}`}>
-                  <div className="act-item-head">
-                    <button className="act-item-row" onClick={() => openDetail(row)}>
-                      <span className="act-item-caret">{isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-                      <span className="act-item-badge" style={{ color: tm.color, background: tm.color + '18' }}>
-                        <tm.Icon size={13} /> {row.monitor_type}
-                      </span>
-                      {/* Ad tıklanınca izlemeye gider (2026-09-20); satırın kalanı detayı açar */}
-                      <span className={`act-item-name${dest ? ' act-item-name--link' : ''}`}
-                        title={dest ? t('act.goMonitor') : row.monitor_name}
-                        role={dest ? 'button' : undefined} tabIndex={dest ? 0 : undefined}
-                        onKeyDown={dest ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(e) } } : undefined}
-                        onClick={dest ? go : undefined}>{row.monitor_name}</span>
-                      <span className="act-item-target" title={row.target}>{row.target}</span>
-                      <span className="act-item-team">{row.team_id != null ? <TeamBadge teamId={row.team_id} teamName={row.team_name} static /> : <span className="sys-muted">—</span>}</span>
-                      <span className="act-item-action">{t('act.ac.' + row.action)}</span>
-                      <span className="act-item-summary" style={{ color: sm.color }}>
-                        <sm.Icon size={13} /> {localizeSummary(row.result_summary, t) || t('act.st.' + row.result_status)}
-                      </span>
-                      <span className="act-item-time" title={formatDateSec(row.activity_time)}>{rel(row.activity_time)}</span>
-                    </button>
-                    {dest && <button type="button" className="act-item-go" onClick={go} title={t('act.goMonitor')} aria-label={t('act.goMonitorFor', row.monitor_name || row.target || '')}><ExternalLink size={14} /></button>}
-                  </div>
-                  {isOpen && (
-                    <div className="act-item-detail">
-                      <div className="act-detail-grid">
-                        <div><label>{t('act.d.target')}</label><span>{row.target || '—'}</span></div>
-                        <div><label>{t('act.d.status')}</label><span style={{ color: sm.color }}>{t('act.st.' + row.result_status)}</span></div>
-                        <div><label>{t('act.d.time')}</label><span>{formatDateSec(row.activity_time)}</span></div>
-                        <div><label>{t('act.d.actor')}</label><span><User size={11} /> {row.actor || 'scheduler'}</span></div>
-                        <div><label>{t('act.d.team')}</label><span>{row.team_id != null ? <TeamBadge teamId={row.team_id} teamName={row.team_name} /> : '—'}</span></div>
-                        {row.response_ms != null && <div><label>{t('act.d.response')}</label><span>{row.response_ms} ms</span></div>}
-                        {row.days_remaining != null && <div><label>{t('act.d.days')}</label><span>{row.days_remaining}</span></div>}
-                      </div>
-                      {row.error_message && <div className="act-detail-error"><XCircle size={13} /> {row.error_message}{row.error_class ? ` (${row.error_class})` : ''}</div>}
-                      {row.result_detail && <pre className="act-detail-raw">{row.result_detail}</pre>}
-                      <div className="act-mini-history">
-                        <div className="act-mini-title"><Clock size={12} /> {t('act.miniHistory')}</div>
-                        {d ? (d.recent.length ? d.recent.map((h) => {
-                          const hs = STATUS_META[h.result_status] || STATUS_META.UNKNOWN
-                          return (
-                            <div key={h.id} className="act-mini-row">
-                              <span style={{ color: hs.color }}><hs.Icon size={11} /></span>
-                              <span className="act-mini-sum">{localizeSummary(h.result_summary, t) || h.result_status}</span>
-                              <span className="act-mini-time" title={formatDateSec(h.activity_time)}>{rel(h.activity_time)}</span>
-                            </div>
-                          )
-                        }) : <div className="act-mini-empty">{t('act.noHistory')}</div>) : <div className="act-mini-empty">{t('act.loading')}</div>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+          <div data-slot="act-feed" aria-busy={loading || undefined} className={cn(loading && 'opacity-70')}>
+            {phone ? mobileFeed : desktopFeed}
           </div>
 
-          {/* Sayfalama */}
-          <div className="act-pagination">
-            <span className="act-page-info">{t('act.pageInfo', page + 1, totalPages, total)}</span>
-            <div className="act-page-btns">
-              <Button variant="secondary" disabled={page <= 0} onClick={() => load(page - 1, false)}>{t('act.prev')}</Button>
-              <Button variant="secondary" disabled={page + 1 >= totalPages} onClick={() => load(page + 1, false)}>{t('act.next')}</Button>
-            </div>
-          </div>
+          {/* Sayfalama — proje standardı (shadcn Data Table deseni) */}
+          <PaginationBar {...sp.bar} />
         </>
       )}
     </div>

@@ -60,6 +60,28 @@ ServiceAccount name
 {{- end }}
 
 {{/*
+Image tag. release.yml pushes ONLY ghcr.io/<owner>/site-monitor:vX.Y.Z and :latest, while
+Chart.AppVersion is the bare "X.Y.Z" -> the default MUST add the "v" prefix, otherwise a plain
+install asks the registry for a tag that does not exist (ImagePullBackOff, prod gate P3-1).
+An explicit image.tag (develop-<sha>, X.Y.Z-rc, a pinned vX.Y.Z) is used exactly as given.
+*/}}
+{{- define "site-monitor.imageTag" -}}
+{{- .Values.image.tag | default (printf "v%s" (trimPrefix "v" .Chart.AppVersion)) -}}
+{{- end }}
+
+{{/*
+Full image reference: repository:tag, plus "@sha256:..." when image.digest is set. With a digest
+the node pulls exactly that content even if the tag was re-pushed (rollback to a known image).
+*/}}
+{{- define "site-monitor.image" -}}
+{{- $ref := printf "%s:%s" .Values.image.repository (include "site-monitor.imageTag" .) -}}
+{{- if .Values.image.digest -}}
+{{- $ref = printf "%s@%s" $ref .Values.image.digest -}}
+{{- end -}}
+{{- $ref -}}
+{{- end }}
+
+{{/*
 Secret name — either existing or managed by this chart
 */}}
 {{- define "site-monitor.secretName" -}}

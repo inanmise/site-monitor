@@ -596,7 +596,7 @@ class WeeklyReportServiceTest {
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         ArgumentCaptor<String[]> cc = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendHtml(to.capture(), cc.capture(),
-                eq("[TakimA] Haftalık Rapor — 2026-W24 (8–12 Haziran 2026)"),
+                eq("[Site Monitor] [TakimA] Haftalık Rapor — 2026-W24 (8–12 Haziran 2026)"),
                 anyString(), any());
         assertThat(to.getValue()).containsExactly("mudur@test.com");
         assertThat(cc.getValue()).containsExactly("takim@test.com");
@@ -767,6 +767,47 @@ class WeeklyReportServiceTest {
         String normalized = service.validateAndNormalizeContent(
                 "{\"item1\":{\"total\":99,\"urgent\":2,\"high\":3,\"medium\":4,\"low\":3}}");
         assertThat(normalized).contains("\"total\":12");
+    }
+
+    @Test
+    @DisplayName("Madde 1 durum dağılımı: şablon sıfırlarla başlar (tekil status_text yok); normalleştirici kırpar, bozuk → 0, fazla anahtar düşer")
+    void item1StatusCounts_templateAndNormaliser() throws Exception {
+        var tpl = new ObjectMapper().readTree(WeeklyReportService.DEFAULT_TEMPLATE_JSON).path("item1");
+        assertThat(tpl.has("status_text")).isFalse();
+        for (String k : WeeklyReportService.STATUS_COUNT_KEYS) assertThat(tpl.path("status_counts").path(k).isInt()).isTrue();
+        assertThat(WeeklyReportService.statusCounts(tpl)).containsExactly(
+                Map.entry("working", 0), Map.entry("planned", 0), Map.entry("on_hold", 0), Map.entry("done", 0));
+
+        String out = service.validateAndNormalizeContent("{\"item1\":{\"urgent\":1,\"status_counts\":"
+                + "{\"working\":-3,\"planned\":\"7\",\"on_hold\":\"x\",\"done\":999999,\"extra\":5}}}");
+        var sc = new ObjectMapper().readTree(out).path("item1").path("status_counts");
+        assertThat(sc.path("working").asInt()).isZero();
+        assertThat(sc.path("planned").asInt()).isEqualTo(7);
+        assertThat(sc.path("on_hold").asInt()).isZero();
+        assertThat(sc.path("done").asInt()).isEqualTo(100_000);
+        assertThat(sc.has("extra")).isFalse();
+        // Nesne değilse sıfır dağılım; alan hiç yoksa eklenmez (eski rapor aynen kalır)
+        assertThat(new ObjectMapper().readTree(service.validateAndNormalizeContent("{\"item1\":{\"status_counts\":\"çok\"}}"))
+                .path("item1").path("status_counts").path("working").asInt()).isZero();
+        assertThat(service.validateAndNormalizeContent("{\"item1\":{\"status_text\":\"Planlandı\"}}"))
+                .doesNotContain("status_counts").contains("Planlandı");
+        // Liste özeti yardımcısı: bozuk içerik çökertmez
+        assertThat(service.statusCountsOf("{bozuk")).containsEntry("working", 0).hasSize(4);
+        assertThat(service.statusCountsOf("{\"item1\":{\"status_counts\":{\"done\":4}}}")).containsEntry("done", 4);
+    }
+
+    @Test
+    @DisplayName("Yeni hafta: durum dağılımı önem sayılarıyla AYNI kuralla sıfırlanır (boş şablon da devam da); eski status_text taşınmaz")
+    void item1StatusCounts_resetOnNewWeek() throws Exception {
+        String prev = "{\"version\":1,\"item1\":{\"total\":5,\"urgent\":5,\"status_text\":\"Beklemede\","
+                + "\"status_counts\":{\"working\":3,\"planned\":1,\"on_hold\":0,\"done\":1},\"notes_md\":\"not\"},"
+                + "\"item2\":{},\"item3\":{\"notes_md\":\"\"},\"item4\":{\"channels\":[]}}";
+        for (String out : List.of(WeeklyReportService.resetTemplate(prev), WeeklyReportService.carryTemplate(prev, "2026-W38"))) {
+            var i1 = new ObjectMapper().readTree(out).path("item1");
+            assertThat(i1.path("urgent").asInt()).isZero();
+            assertThat(WeeklyReportService.statusCounts(i1).values()).containsOnly(0);
+            assertThat(i1.has("status_text")).isFalse();
+        }
     }
 
     @Test

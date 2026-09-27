@@ -38,15 +38,25 @@ public class MonitorSparklineController {
         if (!MonitorSparklineService.supports(type)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Bilinmeyen izleme türü: " + type));
         }
-        Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                .filter(e -> SessionScope.canView(session, e.getValue()))
-                .map(Map.Entry::getKey).collect(Collectors.toSet());
+        // Maliyet sınırı (prod kapısı 2026-09-25, O-7): global görücü tüm filoyu ortak önbellekten alır; kapsamlı
+        // kullanıcı yalnız GÖRÜNÜR monitörleri sorgular ve penceresi arayüzün kullandığı 24 saatle sınırlıdır.
+        boolean global = SessionScope.isGlobalViewer(session);
+        int h = Math.max(1, Math.min(global ? MonitorSparklineService.MAX_HOURS : MonitorSparklineService.SCOPED_MAX_HOURS, hours));
+        Map<Long, Map<String, Object>> result;
+        if (global) {
+            result = sparklineService.sparklinesAll(type, h);
+        } else {
+            Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
+                    .filter(e -> SessionScope.canView(session, e.getValue()))
+                    .map(Map.Entry::getKey).collect(Collectors.toSet());
+            result = sparklineService.sparklines(type, h, visible);
+        }
         Map<String, Object> data = new LinkedHashMap<>();
-        sparklineService.sparklines(type, hours, visible).forEach((id, v) -> data.put(String.valueOf(id), v));
+        result.forEach((id, v) -> data.put(String.valueOf(id), v));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("type", type);
-        body.put("hours", Math.max(1, Math.min(MonitorSparklineService.MAX_HOURS, hours)));
+        body.put("hours", h);
         body.put("data", data);
         return ResponseEntity.ok(body);
     }
@@ -61,15 +71,24 @@ public class MonitorSparklineController {
         if (!MonitorSparklineService.supports(type)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Bilinmeyen izleme türü: " + type));
         }
-        Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                .filter(e -> SessionScope.canView(session, e.getValue()))
-                .map(Map.Entry::getKey).collect(Collectors.toSet());
+        // O-7: global görücü ortak önbellekten; kapsamlı kullanıcı yalnız görünür monitörler, en çok 30 gün.
+        boolean global = SessionScope.isGlobalViewer(session);
+        int d = Math.max(1, Math.min(global ? MonitorSparklineService.MAX_DAYS : MonitorSparklineService.SCOPED_MAX_DAYS, days));
+        Map<Long, Map<String, Object>> result;
+        if (global) {
+            result = sparklineService.availabilityAll(type, d);
+        } else {
+            Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
+                    .filter(e -> SessionScope.canView(session, e.getValue()))
+                    .map(Map.Entry::getKey).collect(Collectors.toSet());
+            result = sparklineService.availability(type, d, visible);
+        }
         Map<String, Object> data = new LinkedHashMap<>();
-        sparklineService.availability(type, days, visible).forEach((id, v) -> data.put(String.valueOf(id), v));
+        result.forEach((id, v) -> data.put(String.valueOf(id), v));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("type", type);
-        body.put("days", Math.max(1, Math.min(MonitorSparklineService.MAX_DAYS, days)));
+        body.put("days", d);
         body.put("target_pct", appSettings.getDouble(SLA_TARGET_KEY, 99.9));
         body.put("data", data);
         return ResponseEntity.ok(body);

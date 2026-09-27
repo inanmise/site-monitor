@@ -29,7 +29,7 @@ describe('TodayPanel', () => {
     render(<TodayPanel onOpenDomain={onOpen} />)
     await screen.findByText(/4 konu ilgi bekliyor|4 items need attention/)
     // Varsayılan KAPALI: özet satırı görünür, kartlar açılınca gelir
-    expect(document.querySelector('.today-grid')).toBeNull()
+    expect(document.querySelector('[data-slot="today-grid"]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Sizin için|For you/ }))
     expect(screen.getByText(/1 tanesi DOLMUŞ|1 already EXPIRED/)).toBeInTheDocument()
     expect(screen.getByText(/1 tanesi KRİTİK|1 CRITICAL/)).toBeInTheDocument()
@@ -65,7 +65,7 @@ describe('TodayPanel', () => {
     render(<TodayPanel onOpenDomain={onOpen} />)
     await screen.findByText(/23 konu ilgi bekliyor|23 items need attention/)
     fireEvent.click(screen.getByRole('button', { name: /Sizin için|For you/ }))
-    expect(document.querySelectorAll('.today-card .today-list li')).toHaveLength(5)   // kartta yalnız 5
+    expect(document.querySelectorAll('[data-slot="today-card"] .today-list li')).toHaveLength(5)   // kartta yalnız 5
     fireEvent.click(screen.getByRole('button', { name: /Tümünü gör|See all/ }))
     const modal = await screen.findByRole('dialog')
     await waitFor(() => expect(modal.querySelectorAll('.today-modal-row')).toHaveLength(10))
@@ -84,13 +84,13 @@ describe('TodayPanel', () => {
     } })
     render(<TodayPanel />)
     await screen.findByText(/Bugün ilgilenilecek bir şey yok|Nothing needs attention today/)
-    expect(document.querySelector('.today-grid')).toBeNull()
+    expect(document.querySelector('[data-slot="today-grid"]')).toBeNull()
     const head = screen.getByRole('button', { name: /Sizin için|For you/ })
     expect(head).toHaveAttribute('aria-expanded', 'false')   // varsayılan kapalı
     fireEvent.click(head)
     expect(head).toHaveAttribute('aria-expanded', 'true')
     expect(localStorage.getItem('today-panel-open')).toBe('true')
-    expect(document.querySelector('.today-ok')).toBeNull()   // hepsi temizken "Sorun yok" şeridi tekrar olurdu
+    expect(document.querySelector('[data-slot="today-ok"]')).toBeNull()   // hepsi temizken "Sorun yok" şeridi tekrar olurdu
   })
 
   it('2026-09-19 izleme kartları: kararsız/yavaşlayan/sessiz/alan adı satırları; satır tıklaması izlemenin sekmesine ?monitor=; pop-up aynı satırı çizer; "Sayfaya git" bölüm sekmesine', async () => {
@@ -154,9 +154,9 @@ describe('TodayPanel', () => {
     expect(screen.getByText('550 mailbox unavailable')).toBeInTheDocument()
     expect(screen.getByText(/1 tanesi KRİTİK \(güven|1 CRITICAL \(trust/)).toBeInTheDocument()
     const chain = screen.getByText(/^Zincir kırık$|^Broken chain$/)
-    expect(chain.className).toContain('is-bad')                                   // kritik anahtar kırmızı
+    expect(chain).toHaveAttribute('data-bad', 'true')                            // kritik anahtar kırmızı (shadcn Badge)
     expect(chain).toHaveAttribute('title', expect.stringMatching(/Kırık|Broken/))   // hlth.val.broken
-    expect(screen.getByText(/^Eski TLS$|^Outdated TLS$/).className).not.toContain('is-bad')
+    expect(screen.getByText(/^Eski TLS$|^Outdated TLS$/)).not.toHaveAttribute('data-bad')
     expect(screen.getByText(/^Eski TLS$|^Outdated TLS$/)).toHaveAttribute('title', expect.stringMatching(/TLSv1/))
     expect(screen.getByText(/^istisnalı$|^exception$/)).toBeInTheDocument()
     // bildirim satırı → Alarm Geçmişi + incident; olaysız push → yalnız sekme
@@ -191,8 +191,8 @@ describe('TodayPanel', () => {
     try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
     render(<TodayPanel />)
     await screen.findByText(/4 konu ilgi bekliyor|4 items need attention/)
-    const card = screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('.today-card')
-    expect(card.className).toContain('today-card--warn')   // 7+ gündür duraklatılmış + dolacak istisna
+    const card = screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('[data-slot="today-card"]')
+    expect(card).toHaveAttribute('data-tone', 'warn')   // 7+ gündür duraklatılmış + dolacak istisna
     expect(within(card).getByText(/1 bakım sürüyor · 2 izleme duraklatılmış \(1 tanesi 7\+ gündür\) · 1 istisnanın süresi doluyor|Maintenance in progress: 1 · Paused monitors: 2 \(1 for over a week\) · Exceptions expiring: 1/)).toBeInTheDocument()
     expect(within(card).getByText(/^BAKIMDA$|^MAINTENANCE$/)).toBeInTheDocument()
     expect(within(card).getByText(/tüm izlemeler|all monitors/)).toBeInTheDocument()
@@ -209,7 +209,7 @@ describe('TodayPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'weak.example.com' }))
     expect(nav.mock.calls.at(-1)[0].detail.tab).toBe('weakalgo')
     // pop-up: dört satır aynı bileşenle (anahtarlar çakışmaz), "Sayfaya git" → bakım sayfası (bakım varken)
-    fireEvent.click(within(screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('.today-card'))
+    fireEvent.click(within(screen.getByText(/^Susturulmuş ve bakımda$|^Muted and under maintenance$/).closest('[data-slot="today-card"]'))
       .getByRole('button', { name: /Tümünü gör|See all/ }))
     const modal = await screen.findByRole('dialog')
     await waitFor(() => expect(modal.querySelectorAll('.today-modal-row')).toHaveLength(4))
@@ -253,7 +253,7 @@ describe('TodayPanel', () => {
     try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
     render(<TodayPanel />)
     await screen.findByText(/Bugün ilgilenilecek bir şey yok|Nothing needs attention today/)
-    expect(document.querySelector('.today-grid')).toBeNull()
+    expect(document.querySelector('[data-slot="today-grid"]')).toBeNull()
     const strip = document.querySelector('.today-recent')
     expect(strip.textContent).toMatch(/2 sertifika yenilendi|2 certificates renewed/)
     expect(strip.textContent).not.toMatch(/dün bu saate göre|compared with this time yesterday/)
@@ -270,8 +270,8 @@ describe('TodayPanel', () => {
     try { localStorage.setItem('today-panel-open', 'true') } catch { /* yok */ }
     render(<TodayPanel />)
     await screen.findByText(/2 konu ilgi bekliyor|2 items need attention/)
-    expect(document.querySelectorAll('.today-card')).toHaveLength(1)   // yalnız 30 gün altı sertifika
-    const ok = document.querySelector('.today-ok')
+    expect(document.querySelectorAll('[data-slot="today-card"]')).toHaveLength(1)   // yalnız 30 gün altı sertifika
+    const ok = document.querySelector('[data-slot="today-ok"]')
     expect(ok.textContent).toMatch(/^Sorun yok:|^All clear:/)
     expect([...ok.querySelectorAll('li')].map((li) => li.firstChild.textContent)).toEqual([
       expect.stringMatching(/Açık alarm|Open alert/), expect.stringMatching(/Kararsız|Flapping/), expect.stringMatching(/Yavaşlayan|Slow/),

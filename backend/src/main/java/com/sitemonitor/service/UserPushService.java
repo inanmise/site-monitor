@@ -291,13 +291,17 @@ public class UserPushService {
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
 
+        // RESOLVE saat tavanından MUAF (prod kapısı 2026-09-25, O-3): 2026-09-10 kararı "çözüm push'u açılışta SENT
+        // olanlara gider" — sessiz saatten muaf olmasının nedeni aynı ("telefondaki alarm kapanmalı"). Tavana
+        // takılan "DÜZELDİ" push'u ayakta olan izlemeyi telefonda "düştü" gösteriyordu. Alıcılar zaten açılışta
+        // SENT olanlarla sınırlı (resolvePrior), yani çözüm push'u açılış sayısını aşamaz.
+        boolean capExempt = "RESOLVE".equals(trigger);
         int queued = 0;
         for (var r : recipients) {
             String status;
             if (r.skipReason() != null) status = r.skipReason();
-            else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
-            else if (circuitOpen()) status = "CIRCUIT_OPEN";
-            else status = "PENDING";
+            else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
 
             if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username()))
                 continue;   // faz zaten kayıtlı — sessiz erken çıkış (satır orada duruyor)
@@ -391,8 +395,7 @@ public class UserPushService {
             String status;
             if (r.skipReason() != null) status = r.skipReason();
             else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
-            else if (circuitOpen()) status = "CIRCUIT_OPEN";
-            else status = "PENDING";
+            else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             rows.add(new PushPreviewRow(r.username(), r.displayName(), status));
         }
         if (rows.isEmpty()) return new PushPreview(true, "SKIPPED_NO_RECIPIENTS", List.of());
@@ -431,7 +434,7 @@ public class UserPushService {
             d.setDisplayName(u.trim());
             d.setTitle(titleSetting());
             d.setMessage(message);
-            d.setStatus(circuitOpen() ? "CIRCUIT_OPEN" : "PENDING");
+            d.setStatus("PENDING");   // devre kesici açıksa drainOutbox bekletir (N2)
             d.setCreatedAt(now);
             d.setBatchId(batchId);
             d.setMonitorName(note);
@@ -489,8 +492,7 @@ public class UserPushService {
             String status;
             if (r.skipReason() != null) status = r.skipReason();
             else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
-            else if (circuitOpen()) status = "CIRCUIT_OPEN";
-            else status = "PENDING";
+            else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, r.username())) { skipped++; continue; }
             UserPushDelivery d = new UserPushDelivery();
             d.setTrigger(trigger);
@@ -543,8 +545,7 @@ public class UserPushService {
             String status;
             if (r.optOut()) status = "SKIPPED_USER_OPT_OUT";
             else if (deliveryRepo.countRecentForUser(u, since) >= hourlyCap()) status = "RATE_LIMITED";
-            else if (circuitOpen()) status = "CIRCUIT_OPEN";
-            else status = "PENDING";
+            else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, u)) { skipped++; continue; }
             UserPushDelivery d = new UserPushDelivery();
             d.setTrigger(trigger);
@@ -681,10 +682,11 @@ public class UserPushService {
             // ayrıştırılamazsa notificationId null kalır — gönderim YİNE başarılıdır.
             HttpResponse<java.io.InputStream> resp =
                     client().send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
-            String bodyText;
-            try (java.io.InputStream is = resp.body()) {
-                bodyText = new String(is.readNBytes(MAX_RESPONSE_BYTES), java.nio.charset.StandardCharsets.UTF_8);
-            }
+            // Gövde SÜRE sınırıyla (prod kapısı 2026-09-25, N1): tek iş parçacıklı push worker'ı, başlığı gönderip
+            // gövdeyi bitirmeyen bir API yanıtında SÜRESİZ bekliyor ve tüm push kanalı duruyordu. Süre dolarsa
+            // okunan kısım kullanılır — başarı durum koduyla belli; gövde yalnız notificationId + günlük içindir.
+            String bodyText = new String(com.sitemonitor.util.HttpBodies.readPreview(resp.body(), MAX_RESPONSE_BYTES,
+                    totalTimeout() * 1000L, "Push"), java.nio.charset.StandardCharsets.UTF_8);
             String raw = bodyText.length() > MAX_RAW_RESPONSE ? bodyText.substring(0, MAX_RAW_RESPONSE) : bodyText;
 
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
@@ -855,6 +857,14 @@ public class UserPushService {
         }
     }
 
+    /**
+     * Devre kesici açık mı. Kuyruğa YAZMA kararını ETKİLEMEZ (prod kapısı 2026-09-25, N2): kesici açıkken
+     * doğan satırlar eskiden {@code CIRCUIT_OPEN} yazılıyordu ve drain yalnız PENDING okuduğu için kalıcı
+     * düşüyordu — bildirim API'si bir dakika düşünce o 5 dakikada açılan HER alarmın push'u (çoğu zaman
+     * kesintinin kendisininki de) API ayağa kalksa bile gitmiyordu. Artık satır PENDING yazılır ve
+     * {@link #drainOutbox} cooldown bitene dek bekletir (açılmadan önce kuyruğa girenlerle aynı yol);
+     * hata olursa {@code fail()}'in tavanlı retry + backoff'u devralır.
+     */
     private boolean circuitOpen() { return System.currentTimeMillis() < circuitOpenUntil; }
 
     /** E4 sağlık kartı için anlık durum. */

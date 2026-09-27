@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { LogIn, XCircle, ShieldAlert, Search, Download, Users, Globe, Clock, MapPin } from 'lucide-react'
+import { LogIn, XCircle, ShieldAlert, Download, Users, Globe, Clock, MapPin } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { formatDateSec } from '../../../api/client'
 import ModalShell from '../../ui/ModalShell.jsx'
@@ -11,7 +11,12 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
 import { toCsv, downloadCsv, stampedName } from '../../../utils/csvExport.js'
 import { splitFlags, FLAG_KEYS } from './uactModel.js'
+import { ToolbarSearch, FilterField } from '../ListToolbar.jsx'
+import { TH, TD, MUTED_SM, DataTable, LinkButton, StatChip, AuthSourceBadge, FlagBadge } from '../HealthUi.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Card } from '@/components/shadcn/card'
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * Giriş / başarısız giriş / anomali KPI kartlarının drill-down'ı (2026-09-20, kullanıcı bildirimi: "login kartına
@@ -19,6 +24,7 @@ import { Button } from '@/components/shadcn/button'
  * süzgeçler (metin: kullanıcı / IP / kuruluş; takım; sonuç; bayrak), sayfalı tablo (zaman, kullanıcı + rol, takım,
  * kaynak, IP + konum + kuruluş, tarayıcı, sonuç + sebep, bayraklar), CSV. Satırdaki kullanıcı → oturum detayı (onUser).
  * Veri: details.<kind> (backend eventRows — aktör adı/rol/takım/kaynak, olay türü, kuruluş, tarayıcı ile zenginleştirilmiş).
+ * Çizim shadcn: Card süzgeç çubuğu, Table, Badge / Button çipleri (ortak parçalar ../HealthUi.jsx).
  */
 export function shortUa(ua) {
   if (!ua) return '—'
@@ -66,7 +72,8 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
   // eski (dar) satırlar için login_status'tan ad/rol/takım tamamlanır
   const all = useMemo(() => (rowsIn || []).map((r) => { const u = byName.get(String(r.actor || '').toLowerCase()) || {}; return { ...u, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null)) } }), [rowsIn, byName])
   const rows = useMemo(() => all.filter((r) => eventMatches(r, f)), [all, f])
-  const pager = usePagination(rows, { listKey: `uact-events-${kind}`, defaultSize: 25, resetDeps: [f] })
+  // Pencere içi liste → modal ön ayarı (10 / [10,25,50]; compact çubuk ön ayardan gelir)
+  const pager = usePagination(rows, { listKey: `uact-events-${kind}`, preset: 'modal', resetDeps: [f] })
   const stats = useMemo(() => ({
     total: all.length,
     users: new Set(all.map((r) => String(r.actor || '').toLowerCase()).filter(Boolean)).size,
@@ -81,9 +88,7 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
   const flagOptions = opt(FLAG_KEYS.map((k) => ({ value: k, label: t(`uact.anom_${k}`) })))
   const outcomeOptions = opt([{ value: 'SUCCESS', label: t('uact.success') }, { value: 'FAILURE', label: t('uact.failed') }])
   const Icon = isAnom ? ShieldAlert : isFailed ? XCircle : LogIn
-  const chip = (key, val, label, on, onClick, tone) => (
-    <button key={key} type="button" className={`udir-chip${on ? ' is-on' : ''}${tone ? ' udir-chip--' + tone : ''}`} onClick={onClick} disabled={!onClick}><b>{val}</b> {label}</button>
-  )
+  const chip = (key, val, label, on, onClick, tone) => <StatChip key={key} val={val} label={label} on={on} onClick={onClick || undefined} tone={tone} />
 
   return (
     <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Icon} size="xl" scrollBody
@@ -91,8 +96,8 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
         <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t))}><Download size={14} /> {t('uact.exportEvents')}</Button>
         <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
       </>}>
-      <p className="field-hint">{winLabel}{all.length >= 500 ? ` · ${t('uact.eventsCapped', 500)}` : ''}</p>
-      <div className="udir-stats" data-testid="evl-stats">
+      <p className={cn(MUTED_SM, 'mb-2')}>{winLabel}{all.length >= 500 ? ` · ${t('uact.eventsCapped', 500)}` : ''}</p>
+      <div className="mb-2.5 flex flex-wrap gap-1.5" data-testid="evl-stats">
         {chip('all', stats.total, t('uact.dirAll'), !f.outcome && !f.flag, () => patch({ outcome: '', flag: '' }))}
         {chip('users', stats.users, t('uact.uniqueUsers'), false, null)}
         {chip('ips', stats.ips, t('uact.uniqueIps'), false, null)}
@@ -101,45 +106,48 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
         {!isAnom && chip('failed', stats.failed, t('uact.failed'), f.outcome === 'FAILURE', () => patch({ outcome: f.outcome === 'FAILURE' ? '' : 'FAILURE' }), stats.failed > 0 ? 'danger' : undefined)}
         {chip('off', stats.offHours, t('uact.anom_OFF_HOURS'), f.flag === 'OFF_HOURS', () => patch({ flag: f.flag === 'OFF_HOURS' ? '' : 'OFF_HOURS' }), stats.offHours > 0 ? 'warn' : undefined)}
       </div>
-      <div className="uact-filters udir-filters">
-        <label className="invtb-f udir-q"><span>{t('uact.dirSearch')}</span><span className="udir-q-wrap"><Search size={13} aria-hidden="true" /><input className="input" value={f.q} onChange={(e) => patch({ q: e.target.value })} placeholder={t('uact.eventsSearchPh')} aria-label={t('uact.dirSearch')} /></span></label>
-        <label className="invtb-f"><span>{t('uact.colTeam')}</span><SearchableSelect ariaLabel={t('uact.colTeam')} value={f.team} onChange={(v) => patch({ team: v })} options={teamOptions} searchThreshold={6} /></label>
-        {!isAnom && <label className="invtb-f"><span>{t('uact.colOutcome')}</span><SearchableSelect ariaLabel={t('uact.colOutcome')} value={f.outcome} onChange={(v) => patch({ outcome: v })} options={outcomeOptions} searchThreshold={99} /></label>}
-        <label className="invtb-f"><span>{t('uact.colFlags')}</span><SearchableSelect ariaLabel={t('uact.colFlags')} value={f.flag} onChange={(v) => patch({ flag: v })} options={flagOptions} searchThreshold={99} /></label>
+      <Card data-testid="evl-filters" className="mb-2.5 flex-row flex-wrap items-end gap-2.5 px-3 py-2.5 shadow-none">
+        <FilterField label={t('uact.dirSearch')} className="flex-[1_1_200px]">
+          <ToolbarSearch value={f.q} onChange={(v) => patch({ q: v })} placeholder={t('uact.eventsSearchPh')} ariaLabel={t('uact.dirSearch')} clearLabel={t('app.clear')} className="max-w-none flex-auto" />
+        </FilterField>
+        <FilterField label={t('uact.colTeam')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colTeam')} value={f.team} onChange={(v) => patch({ team: v })} options={teamOptions} searchThreshold={6} /></FilterField>
+        {!isAnom && <FilterField label={t('uact.colOutcome')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colOutcome')} value={f.outcome} onChange={(v) => patch({ outcome: v })} options={outcomeOptions} searchThreshold={99} /></FilterField>}
+        <FilterField label={t('uact.colFlags')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colFlags')} value={f.flag} onChange={(v) => patch({ flag: v })} options={flagOptions} searchThreshold={99} /></FilterField>
         {(f.q || f.team || f.outcome || f.flag) && <Button type="button" variant="secondary" size="sm" onClick={() => setF({ q: '', team: '', outcome: '', flag: '' })}>{t('uact.filterClear')}</Button>}
-      </div>
+      </Card>
       {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noLogins')} /> : (
-        <div className="health-table-wrap uact-table-wrap">
-          <table className="health-dbtable uact-table evl-table" data-testid="evl-table">
-            <thead><tr>
-              <th className="dbtcol-th">{t('uact.colTime')}</th>
-              <th className="dbtcol-th">{t('uact.colUser')}</th>
-              <th className="dbtcol-th">{t('uact.colTeam')}</th>
-              <th className="dbtcol-th">{t('uact.colAuthSource')}</th>
-              <th className="dbtcol-th">{t('uact.colIp')}</th>
-              <th className="dbtcol-th">{t('uact.colBrowser')}</th>
-              <th className="dbtcol-th">{t('uact.colOutcome')}</th>
-              <th className="dbtcol-th">{t('uact.colFlags')}</th>
-            </tr></thead>
-            <tbody>{pager.pageItems.map((r, i) => {
-              const ok = r.outcome === 'SUCCESS'
-              return (
-                <tr key={r.id ?? `${r.time}-${i}`} className={`uact-row${!ok && r.outcome ? ' evl-row--bad' : ''}`}>
-                  <td data-label={t('uact.colTime')} className="sys-mono sys-small"><Clock size={11} aria-hidden="true" /> {r.time ? formatDateSec(r.time) : '—'}</td>
-                  <td data-label={t('uact.colUser')}>{r.actor ? <button type="button" className="uact-link udir-name" onClick={() => onUser?.({ username: r.actor, ...r })}><UserBadge username={r.actor} userId={r.user_id} displayName={r.display_name} inline nameOnly size="sm" /></button> : '—'}{/* yalnız ad soyad (2026-09-21 kullanıcı bildirimi) — rol/olay türü hücreyi kalabalıklaştırıyordu */}</td>
-                  <td data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="sys-muted">—</span>}</td>
-                  <td data-label={t('uact.colAuthSource')}>{r.auth_source ? <span className={`udir-src${r.auth_source === 'LDAP' ? ' udir-src--ldap' : ''}`}>{r.auth_source === 'LDAP' ? 'LDAP' : t('usr.authLocal')}</span> : '—'}</td>
-                  <td data-label={t('uact.colIp')} className="sys-small"><span className="sys-mono">{r.ip || '—'}</span>{(loc(r) || r.org) && <span className="udir-sub"><MapPin size={10} aria-hidden="true" /> {[loc(r), r.org].filter(Boolean).join(' · ')}</span>}</td>
-                  <td data-label={t('uact.colBrowser')} className="sys-small" title={r.user_agent || ''}>{r.user_agent ? <><Globe size={11} aria-hidden="true" /> {shortUa(r.user_agent)}{osOf(r.user_agent) ? <span className="sys-muted"> · {osOf(r.user_agent)}</span> : null}</> : '—'}</td>
-                  <td data-label={t('uact.colOutcome')} className="sys-small">{r.outcome ? <span className={ok ? 'sys-ok-text' : 'sys-err-text'}>{ok ? t('uact.success') : r.outcome}</span> : '—'}{r.reason ? <span className="udir-sub">{r.reason}</span> : null}</td>
-                  <td data-label={t('uact.colFlags')}>{splitFlags(r.flags).length ? splitFlags(r.flags).map((k) => <span key={k} className="uact-flag" title={t(`uact.flagHelp.${k}`)}>{t(`uact.anom_${k}`)}</span>) : <span className="sys-muted">—</span>}</td>
-                </tr>
-              )
-            })}</tbody>
-          </table>
-        </div>
+        <DataTable testId="evl-table">
+          <TableHeader><TableRow>
+            <TableHead className={TH}>{t('uact.colTime')}</TableHead>
+            <TableHead className={TH}>{t('uact.colUser')}</TableHead>
+            <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('uact.colTeam')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('uact.colAuthSource')}</TableHead>
+            <TableHead className={TH}>{t('uact.colIp')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('uact.colBrowser')}</TableHead>
+            <TableHead className={TH}>{t('uact.colOutcome')}</TableHead>
+            <TableHead className={TH}>{t('uact.colFlags')}</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>{pager.pageItems.map((r, i) => {
+            const ok = r.outcome === 'SUCCESS'
+            const bad = !ok && !!r.outcome
+            const cell = cn(TD, 'align-top')
+            const sub = 'mt-0.5 block text-[11px] text-muted-foreground'
+            return (
+              <TableRow key={r.id ?? `${r.time}-${i}`} data-outcome={bad ? 'bad' : undefined} className={cn(bad && 'bg-destructive/5')}>
+                <TableCell data-label={t('uact.colTime')} className={cn(cell, 'font-mono text-xs')}><Clock size={11} aria-hidden="true" className="inline" /> {r.time ? formatDateSec(r.time) : '—'}</TableCell>
+                <TableCell data-label={t('uact.colUser')} className={cell}>{r.actor ? <LinkButton className="ml-0 no-underline" onClick={() => onUser?.({ username: r.actor, ...r })}><UserBadge username={r.actor} userId={r.user_id} displayName={r.display_name} inline nameOnly size="sm" /></LinkButton> : '—'}{/* yalnız ad soyad (2026-09-21 kullanıcı bildirimi) — rol/olay türü hücreyi kalabalıklaştırıyordu */}</TableCell>
+                <TableCell data-label={t('uact.colTeam')} className={cn(cell, 'hidden md:table-cell')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="text-muted-foreground">—</span>}</TableCell>
+                <TableCell data-label={t('uact.colAuthSource')} className={cn(cell, 'hidden lg:table-cell')}>{r.auth_source ? <AuthSourceBadge source={r.auth_source} localLabel={t('usr.authLocal')} /> : '—'}</TableCell>
+                <TableCell data-label={t('uact.colIp')} className={cn(cell, 'text-xs')}><span className="font-mono">{r.ip || '—'}</span>{(loc(r) || r.org) && <span className={sub}><MapPin size={10} aria-hidden="true" className="inline" /> {[loc(r), r.org].filter(Boolean).join(' · ')}</span>}</TableCell>
+                <TableCell data-label={t('uact.colBrowser')} className={cn(cell, 'hidden text-xs lg:table-cell')} title={r.user_agent || ''}>{r.user_agent ? <><Globe size={11} aria-hidden="true" className="inline" /> {shortUa(r.user_agent)}{osOf(r.user_agent) ? <span className="text-muted-foreground"> · {osOf(r.user_agent)}</span> : null}</> : '—'}</TableCell>
+                <TableCell data-label={t('uact.colOutcome')} className={cn(cell, 'text-xs')}>{r.outcome ? <span className={ok ? 'text-success' : 'text-destructive'}>{ok ? t('uact.success') : r.outcome}</span> : '—'}{r.reason ? <span className={sub}>{r.reason}</span> : null}</TableCell>
+                <TableCell data-label={t('uact.colFlags')} className={cell}>{splitFlags(r.flags).length ? splitFlags(r.flags).map((k) => <FlagBadge key={k} flag={k} title={t(`uact.flagHelp.${k}`)}>{t(`uact.anom_${k}`)}</FlagBadge>) : <span className="text-muted-foreground">—</span>}</TableCell>
+              </TableRow>
+            )
+          })}</TableBody>
+        </DataTable>
       )}
-      {rows.length > 0 && <PaginationBar {...pager} compact />}
+      <PaginationBar {...pager} />
     </ModalShell>
   )
 }

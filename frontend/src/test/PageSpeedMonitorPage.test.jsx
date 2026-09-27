@@ -46,6 +46,15 @@ const monitor = {
 /** Ölçüm dışı bırakılan alanları kolayca değiştirmek için. */
 const withMonitor = (over = {}) => ({ ...monitor, ...over })
 
+/** Kaynak sekmesindeki ölçüm (anlık görüntü) seçicisi — tetik role="combobox", adı "Ölçüm". */
+const snapshotPicker = () => screen.getByRole('combobox', { name: /^measurement$|^ölçüm$/i })
+
+/** Kartın başlık düğmesi (stretched button) — adı satırı taşır; URL görsel olarak host/yol parçalarına bölünür. */
+const cardTitle = () => screen.findByRole('button', { name: /^https:\/\/x\.com\/odeme — (open details|detayları aç)$/ })
+/** Kartın bütçe ölçeri ve görünen değeri ("900 ms", "2.0 MB", "42 req"). */
+const meter = (key) => document.querySelector(`[data-slot="budget-meter"][data-metric="${key}"]`)
+const meterText = (key) => meter(key).querySelector('[data-slot="meter-value"]').textContent.replace(/\s+/g, ' ').trim()
+
 describe('PageSpeedMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -54,15 +63,15 @@ describe('PageSpeedMonitorPage', () => {
     api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
   })
 
-  it('izlemeyi dört metriğiyle listeler', async () => {
+  it('izlemeyi dört bütçe ölçeriyle listeler (okunur değer + birim)', async () => {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
 
-    expect(await screen.findByText('https://x.com/odeme')).toBeInTheDocument()
-    expect(screen.getByText('900 ms')).toBeInTheDocument()     // yükleme
-    expect(screen.getByText('120 ms')).toBeInTheDocument()     // TTFB
-    expect(screen.getByText('2.0 MB')).toBeInTheDocument()     // boyut
-    expect(screen.getByText('42')).toBeInTheDocument()         // istek
+    expect(await cardTitle()).toBeInTheDocument()
+    expect(meterText('load')).toBe('900 ms')                    // yükleme
+    expect(meterText('ttfb')).toBe('120 ms')                    // TTFB
+    expect(meterText('size')).toBe('2.0 MB')                    // boyut
+    expect(meterText('requests')).toMatch(/^42 (req|istek)$/)   // istek
   })
 
   it('API düşerse "izleme yok" DEMEZ — hata bandı gösterir (silindi sanılmasın)', async () => {
@@ -72,13 +81,17 @@ describe('PageSpeedMonitorPage', () => {
     expect(await screen.findByText(/boom/)).toBeInTheDocument()
   })
 
-  it('eşik aşımı kartta rozet olarak görünür', async () => {
+  it('eşik aşımı kartta ÖLÇERİN KENDİSİNDE vurgulanır (sunucu kararı; ton + ekran okuyucu metni)', async () => {
+    // LOAD: 900 ms / 3000 ms bütçe = %30 — yine de sunucu son ölçümde ihlal saydı → kırmızı (durum rozetiyle tutarlı).
     api.monitoring.getPageSpeedMonitors.mockResolvedValue({
       success: true, data: [withMonitor({ status: 'SLOW', breached_metrics: ['LOAD', 'SIZE'] })] })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle()
 
-    expect(await screen.findByText(/Load time over threshold|Yükleme eşiği aşıldı/)).toBeInTheDocument()
-    expect(screen.getByText(/Size over threshold|Boyut eşiği aşıldı/)).toBeInTheDocument()
+    expect(meter('load')).toHaveAttribute('data-over', 'true')
+    expect(meter('size')).toHaveAttribute('data-over', 'true')
+    expect(meter('ttfb')).not.toHaveAttribute('data-over')
+    expect(within(meter('load')).getByText(/^(Over budget|Eşik aşıldı)$/)).toHaveClass('sr-only')
   })
 
   it('form açılır ve dört eşik alanı BOŞ bırakılabilir', async () => {
@@ -122,7 +135,7 @@ describe('PageSpeedMonitorPage', () => {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
 
-    fireEvent.click(await screen.findByTitle(/edit|düzenle/i))
+    fireEvent.click(await screen.findByRole('button', { name: /edit|düzenle/i }))
     await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
@@ -143,7 +156,7 @@ describe('PageSpeedMonitorPage', () => {
     render(<PageSpeedMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
 
-    fireEvent.click(await screen.findByTitle(/edit|düzenle/i))
+    fireEvent.click(await screen.findByRole('button', { name: /edit|düzenle/i }))
     fireEvent.click(screen.getByRole('button', { name: /advanced|gelişmiş/i }))
 
     expect(screen.queryByText(/custom request headers|özel istek başlıkları/i)).toBeNull()
@@ -152,7 +165,7 @@ describe('PageSpeedMonitorPage', () => {
   it('özel başlık alanı ADMIN için çizilir', async () => {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageSpeedMonitors).toHaveBeenCalled())
-    fireEvent.click(await screen.findByTitle(/edit|düzenle/i))
+    fireEvent.click(await screen.findByRole('button', { name: /edit|düzenle/i }))
     fireEvent.click(screen.getByRole('button', { name: /advanced|gelişmiş/i }))
 
     expect(screen.getByText(/custom request headers|özel istek başlıkları/i)).toBeInTheDocument()
@@ -167,24 +180,28 @@ describe('PageSpeedMonitorPage', () => {
       breaches: [{ check_id: 77, checked_at: '2026-08-20T09:00:00' }],
     } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: undefined }))
     expect(await screen.findByText('https://x.com/app.js')).toBeInTheDocument()
     expect(screen.getByText('500 KB')).toBeInTheDocument()
     expect(screen.getByText(/third party|3\. taraf/i)).toBeInTheDocument()
+    // Kırılım shadcn Table: başlık + iki kaynak satırı (telefonda düşük öncelikli sütunlar CSS ile gizlenir).
+    const table = within(screen.getByRole('dialog')).getByRole('table')
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+    expect(within(table).getByRole('columnheader', { name: /resource|kaynak/i })).toBeInTheDocument()
   })
 
   it('ihlal anına tıklanınca O ölçümün kırılımı çekilir (delil görünümü)', async () => {
     api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: {
       resources: [], breaches: [{ check_id: 77, checked_at: '2026-08-20T09:00:00' }] } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     // Ihlal anlari artik tek tek dugme DEGIL, tek bir secici: birikince (20'ye kadar) tablonun
     // ustunu iki-uc sira dolduruyorlardi. SearchableSelect mouseDown dinler (click DEGIL).
     await screen.findByText(/threshold breaches on record|eşik ihlali kayıtlı/i)
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
+    fireEvent.mouseDown(snapshotPicker())
     fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
     await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: 77 }))
   })
@@ -192,7 +209,7 @@ describe('PageSpeedMonitorPage', () => {
   it('kısmi ölçüm (capped) modalde açıkça uyarılır', async () => {
     api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true, data: [withMonitor({ capped: true })] })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     expect(await screen.findByText(/resource cap reached|kaynak tavanına ulaşıldı/i)).toBeInTheDocument()
   })
@@ -209,7 +226,7 @@ describe('PageSpeedMonitorPage', () => {
       breaches: [],
     } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     expect(await screen.findByText(/183/)).toBeInTheDocument()
   })
@@ -221,7 +238,7 @@ describe('PageSpeedMonitorPage', () => {
       breaches: [],
     } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     await screen.findByText('https://x.com/app.js')
     expect(screen.queryByText(/heaviest of|en ağır/i)).not.toBeInTheDocument()
@@ -246,14 +263,14 @@ describe('PageSpeedMonitorPage', () => {
     })
 
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
     await screen.findByText('https://x.com/ILK.js')
 
     // Ihlal anlik goruntusune gec (2. istek HAVADA kalir)...
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
+    fireEvent.mouseDown(snapshotPicker())
     fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
     // ...ve daha o donmeden son olcume geri don (3. istek HEMEN doner).
-    fireEvent.mouseDown(document.querySelector('.pspd-snapshot-row button[role="combobox"]'))
+    fireEvent.mouseDown(snapshotPicker())
     fireEvent.mouseDown(await screen.findByText(/^Son ölçüm$|^Latest measurement$/))
     expect(await screen.findByText('https://x.com/YENI.js')).toBeInTheDocument()
 
@@ -268,7 +285,7 @@ describe('PageSpeedMonitorPage', () => {
       resources: [{ url: 'https://x.com/bozuk', type: null, bytes: null, duration_ms: null, http_status: null }],
       breaches: [] } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     expect(await screen.findByText('https://x.com/bozuk')).toBeInTheDocument()
   })
@@ -287,9 +304,9 @@ describe('PageSpeedMonitorPage', () => {
       range: { from: '2026-08-16T00:00:00', to: '2026-08-23T23:59:59' },
       total: 1, page: 0, size: 50 } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
-    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
 
     expect(await screen.findByText('2026-08-22T09:15:00')).toBeInTheDocument()
     expect(screen.getByText('1234 ms')).toBeInTheDocument()
@@ -307,8 +324,8 @@ describe('PageSpeedMonitorPage', () => {
       range: { from: '2026-08-16T00:00:00', to: '2026-08-23T23:59:59' },
       total: 1, page: 0, size: 50 } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
-    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+    fireEvent.click(await cardTitle())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
 
     // Satir artik ihlal eden metrikleri de yaziyor; "esik asildi" birden fazla dugumde geciyor.
     // Onemli olan DOWN degil SLOW etiketlenmesi.
@@ -330,12 +347,12 @@ describe('PageSpeedMonitorPage', () => {
       range: { from: '2026-08-16T00:00:00', to: '2026-08-26T23:59:59' },
       total: 1, page: 0, size: 50 } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
-    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+    fireEvent.click(await cardTitle())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
 
     expect(await screen.findByText(/TTFB over threshold|TTFB eşiği aşıldı/i)).toBeInTheDocument()
     // Esik ve olculen tek bir kutuda: "1000 → 2955"
-    const nums = document.querySelector('.pspd-breach-nums')
+    const nums = document.querySelector('[data-slot="breach-nums"]')
     expect(nums).not.toBeNull()
     expect(nums.textContent.replace(/\s+/g, ' ')).toContain('1000')
     expect(nums.textContent).toContain('2955')
@@ -350,8 +367,8 @@ describe('PageSpeedMonitorPage', () => {
       range: { from: '2026-08-16T00:00:00', to: '2026-08-26T23:59:59' },
       total: 1, page: 0, size: 50 } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
-    fireEvent.click(screen.getByRole('button', { name: /check history|kontrol geçmişi/i }))
+    fireEvent.click(await cardTitle())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
 
     expect(await screen.findByText(/Load time over threshold|Yükleme eşiği aşıldı/i)).toBeInTheDocument()
   })
@@ -375,7 +392,7 @@ describe('PageSpeedMonitorPage', () => {
     api.admin.getAlerts.mockResolvedValue({ success: true, data: [], total: 0 })
 
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     // Sekme -> o sekme MONTE OLDUYSA cagrilacak API. Tek basina "modal ayakta" demek yetmiyor:
     // lazy sekmeler (Notlar, Degisiklikler) Suspense arkasinda oldugu icin, cagriyi beklemeden
@@ -396,7 +413,8 @@ describe('PageSpeedMonitorPage', () => {
     // artti; testler hizli oldugunda bu deger hicbir sey maliyet etmez, yavas bir runner'da
     // ise sahte kirmizi uretmez.
     for (const [name, apiFn] of tabs) {
-      fireEvent.click(screen.getByRole('button', { name }))
+      // Sekmeler shadcn Tabs (Radix): tetik `mousedown` ile değişir, `click` değil (SHADCN.md §8.3).
+      fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 })
       await waitFor(() => expect(apiFn()).toHaveBeenCalled(), { timeout: 15000 })
       expect(screen.getAllByText('https://x.com/odeme').length).toBeGreaterThan(0)
     }
@@ -411,8 +429,8 @@ describe('PageSpeedMonitorPage', () => {
 
   async function openChart() {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
-    fireEvent.click(screen.getByRole('button', { name: /^chart$|^grafik$/i }))
+    fireEvent.click(await cardTitle())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /^chart$|^grafik$/i }), { button: 0 })
   }
 
   it('metrik secimi ETIKETLI ve zaman araligindan ayri bir gruptur', async () => {
@@ -468,10 +486,14 @@ describe('PageSpeedMonitorPage', () => {
     api.monitoring.getPageSpeedMonitors.mockResolvedValue({
       success: true, data: [withMonitor({ bytes_truncated: true })] })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle()
 
-    expect(await screen.findByText('≥ 2.0 MB')).toBeInTheDocument()
+    expect(meterText('size')).toBe('≥ 2.0 MB')
+    // "≥" NEDEN — açıklama dokunmatikte de açılır (HintPopover; eskiden yalnız fareyle açılan ipucuydu)
+    fireEvent.click(within(meter('size')).getByRole('button', { name: /real figure may be higher|gerçek değer daha yüksek/ }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/size cap|boyut tavanında/)
 
-    fireEvent.click(screen.getByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
     expect(await screen.findByText(/lower bound|alt sınır/i)).toBeInTheDocument()
   })
 
@@ -483,7 +505,7 @@ describe('PageSpeedMonitorPage', () => {
       ],
       breaches: [] } })
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://x.com/odeme'))
+    fireEvent.click(await cardTitle())
 
     expect(await screen.findByText('≥ 10.0 MB')).toBeInTheDocument()
     expect(screen.getByText('500 KB')).toBeInTheDocument()      // kırpılmayan satırda "≥" YOK
@@ -595,12 +617,17 @@ describe('formatBytes', () => {
 })
 
 describe('PageSpeedMonitorPage — eşik üstü haftalık karşılaştırma (2026-09-12, #15)', () => {
-  it('7 gün / 14 gün SLA verisinden "bu hafta 3 · geçen hafta 5 ↓" satırı kartta', async () => {
+  it('7 gün / 14 gün SLA verisinden kart çipi "bu hafta 3 · ▼2"; ham sayılar dokun-gör açıklamada', async () => {
     api.monitoring.getSla = vi.fn((type, days) => Promise.resolve({ success: true, target_pct: 99.9, days,
       data: { 1: { n: 100, fail: days === 7 ? 3 : days === 14 ? 8 : 10, up_pct: 97, bad_hours: 2 } } }))
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://x.com/odeme')
-    const line = await screen.findByText(/Eşik üstü: bu hafta 3 · geçen hafta 5|Over budget: this week 3 · last week 5/)
-    expect(line.closest('.pspd-breach-week').classList.contains('is-better')).toBe(true)
+    await cardTitle()
+    // Geçen hafta = 14 gün (8) − 7 gün (3) = 5 → bu hafta 2 eksik → "better"
+    const trigger = await screen.findByRole('button', { name: /^(Over budget this week: 3, 2 fewer than last week|Bu hafta eşik aşımı: 3, geçen haftadan 2 az)$/ })
+    const chip = trigger.querySelector('[data-slot="breach-week"]')
+    expect(chip).toHaveAttribute('data-trend', 'better')
+    expect(chip.textContent).toMatch(/Over budget this week: 3·▼2 on last week|Bu hafta eşik aşımı: 3·geçen haftaya göre ▼2/)
+    fireEvent.click(trigger)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/Eşik üstü: bu hafta 3 · geçen hafta 5|Over budget: this week 3 · last week 5/)
   })
 })

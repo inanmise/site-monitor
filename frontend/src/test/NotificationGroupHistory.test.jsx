@@ -33,7 +33,7 @@ describe('NotificationGroupHistory', () => {
     // Boolean ham "false" olarak değil, insan okunur biçimde.
     expect(screen.getByText('No')).toBeTruthy()
     // Anlık görüntüde "neyden" sütunu OLMAMALI: oluşturmanın öncesi yoktur.
-    expect(document.querySelector('.audit-diff-from')).toBeNull()
+    expect(document.querySelector('[data-diff="from"]')).toBeNull()
   })
 
   it('DÜZENLEME kaydı neyden→neye tablosu çizer', () => {
@@ -42,7 +42,7 @@ describe('NotificationGroupHistory', () => {
       changes: '{"name":{"from":"Eski","to":"Yeni"},"emails":{"from":"a@example.com","to":"b@example.com"}}',
     })])
 
-    expect(document.querySelectorAll('.audit-diff-from')).toHaveLength(2)
+    expect(document.querySelectorAll('[data-diff="from"]')).toHaveLength(2)
     expect(screen.getByText('Eski')).toBeTruthy()
     expect(screen.getByText('Yeni')).toBeTruthy()
   })
@@ -76,7 +76,7 @@ describe('NotificationGroupHistory', () => {
 
     expect(screen.getByText('ayse')).toBeTruthy()
     expect(screen.getByText('deleted')).toBeTruthy()
-    expect(document.querySelector('.audit-diff-table')).toBeNull()
+    expect(document.querySelector('[data-diff]')).toBeNull()
   })
 
   it('Kesilme ve gizlenen sayısı AÇIKÇA bildirilir', () => {
@@ -105,11 +105,11 @@ describe('NotificationGroupHistory', () => {
 
   it('Yükleniyor ve hata durumları listeyi çizmez', () => {
     const { unmount } = renderList([row({ action: 'UPDATE', changes: null })], { loading: true })
-    expect(document.querySelector('.ng-hist-list')).toBeNull()
+    expect(document.querySelector('[data-slot="ng-hist-list"]')).toBeNull()
     unmount()
 
     renderList([row({ action: 'UPDATE', changes: null })], { error: 'boom' })
     expect(screen.getByText('boom')).toBeTruthy()
-    expect(document.querySelector('.ng-hist-list')).toBeNull()
+    expect(document.querySelector('[data-slot="ng-hist-list"]')).toBeNull()
   })
 })

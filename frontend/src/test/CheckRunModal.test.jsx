@@ -41,8 +41,8 @@ describe('CheckRunModal', () => {
 
   it('durum kendi kolonunda ve hata satırı mesajı gösterir', () => {
     render(<CheckRunModal run={run} certIndex={certIndex} onClose={() => {}} onCancel={() => {}} />)
-    expect(document.querySelectorAll('.chk-td-status').length).toBe(2)
-    expect(document.querySelector('.chk-tick-err')).not.toBeNull()
+    expect(document.querySelectorAll('[data-col="status"]').length).toBe(2)
+    expect(document.querySelector('[data-ok="false"]')).not.toBeNull()
     expect(screen.getByText('connect timed out')).toBeInTheDocument()
   })
 
@@ -70,8 +70,8 @@ describe('CheckRunModal', () => {
   })
 
   it('run yoksa hiçbir şey render etmez', () => {
-    const { container } = render(<CheckRunModal run={null} certIndex={{}} onClose={() => {}} onCancel={() => {}} />)
-    expect(container.querySelector('.chk-modal')).toBeNull()
+    render(<CheckRunModal run={null} certIndex={{}} onClose={() => {}} onCancel={() => {}} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
@@ -142,5 +142,40 @@ describe('CheckTeamPicker — izleme varyantı', () => {
     render(<CheckTeamPicker buckets={monitorTeamBuckets(monitors)} storageKey="sm.checkRun.teams.http"
       totalText={(n) => `${n} izleme`} onStart={() => {}} onClose={() => {}} />)
     expect(screen.getByText('4 izleme')).toBeInTheDocument()
+  })
+})
+
+/**
+ * 2026-09-27 regresyon taraması, FRONTEND B/5 — seçici, liste henüz yüklenirken (kova yok) açılınca varsayılan "tüm
+ * takımlar" BOŞ kalıyordu (ilk değer yalnız mount'ta alınıyordu): kovalar gelince hiçbiri seçili değil, Başlat pasif.
+ */
+describe('CheckTeamPicker — kovalar açılıştan SONRA gelince', () => {
+  const two = [{ id: 1, team_name: 'SY-Takım A' }, { id: 2, team_name: 'SY-Takım B' }]
+  const three = [...two, { id: 3, team_name: 'SY-Takım C' }]
+  const picker = (monitors, onStart) => (
+    <CheckTeamPicker buckets={monitorTeamBuckets(monitors)} storageKey="sm.checkRun.teams.http"
+      onStart={onStart} onClose={() => {}} />
+  )
+  const startBtn = () => screen.getByRole('button', { name: /kontrolü başlat|start check/i })
+
+  it('dokunulmamışsa kovalar gelince HEPSİ seçilir, Başlat etkinleşir', () => {
+    localStorage.clear()
+    const onStart = vi.fn()
+    const { rerender } = render(picker([], onStart))
+    expect(startBtn()).toBeDisabled()
+    rerender(picker(two, onStart))
+    expect(startBtn()).toBeEnabled()
+    fireEvent.click(startBtn())
+    expect(onStart.mock.calls[0][0]).toEqual(['SY-Takım A', 'SY-Takım B'])
+  })
+
+  it('kullanıcı seçime dokunduysa sonradan gelen kovalar seçimini EZMEZ', () => {
+    localStorage.clear()
+    const onStart = vi.fn()
+    const { rerender } = render(picker(two, onStart))
+    fireEvent.click(screen.getByText('SY-Takım B'))       // B'yi çıkar
+    rerender(picker(three, onStart))                        // yenileme yeni bir takım getirdi
+    fireEvent.click(startBtn())
+    expect(onStart.mock.calls[0][0]).toEqual(['SY-Takım A'])
   })
 })

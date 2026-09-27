@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within } from './test-utils.jsx'
 import TableDetailsModal from '../components/admin/TableDetailsModal.jsx'
+import { tableQuery } from '../components/admin/sql/sqlUtils.js'
 
 vi.mock('../api/client', () => ({ formatDateSec: (s) => (s ? `F(${s})` : '') }))
 
@@ -58,30 +59,31 @@ describe('TableDetailsModal — Zaman & Aktivite (2026-09-11)', () => {
       stats: { seq_scan: 1, idx_scan: 3, dead_rows: 4 },
     }} />)
     const root = screen.getByTestId('table-details')
-    expect(root.querySelectorAll('.sqltd-kpi')).toHaveLength(7)
+    expect(root.querySelectorAll('[data-kpi]')).toHaveLength(7)
     // genel bakış: birincil anahtar, FK hedefi bağlantı
     expect(within(root).getByText('Alarm kayıtları')).toBeInTheDocument()
     expect(within(root).getByText(/indeksli %75|75% via index/)).toBeInTheDocument()
     fireEvent.click(within(root).getAllByRole('button', { name: /teams/ })[0])
     expect(onOpenTable).toHaveBeenCalledWith('teams')
     // kolonlar
-    fireEvent.click(screen.getByRole('button', { name: /Kolonlar \(3\)|Columns \(3\)/ }))
-    const rows = root.querySelectorAll('.sqltd-cols tbody tr')
+    // shadcn Tabs (2026-09-27): sekme tetiği Radix — jsdom'da mousedown ile değişir
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Kolonlar \(3\)|Columns \(3\)/ }))
+    const rows = root.querySelectorAll('[data-testid="sqltd-columns"] tbody tr')
     expect(rows[0].textContent).toContain('PK'); expect(rows[1].textContent).toContain('FK'); expect(rows[2].textContent).toContain('IDX')
     expect(rows[1].textContent).toMatch(/NULL 25%/); expect(rows[1].textContent).toContain('Takım')
     expect(rows[0].textContent).toMatch(/ayrık 100%|distinct 100%/)   // n_distinct = -1 → satır oranı
     // bütünlük: FK hedefi + kullanılmayan indeks rozeti
-    fireEvent.click(screen.getByRole('button', { name: /Bütünlük|Integrity/ }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Bütünlük|Integrity/ }))
     expect(within(root).getByText(/ON DELETE CASCADE/)).toBeInTheDocument()
     expect(within(root).getByText(/kullanılmıyor|unused/)).toBeInTheDocument()
     // ilişkiler: giden, gelen, çıkarım
-    fireEvent.click(screen.getByRole('button', { name: /İlişkiler \(3\)|Relationships \(3\)/ }))
-    expect(root.querySelectorAll('.sqltd-rel-list li')).toHaveLength(3)
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /İlişkiler \(3\)|Relationships \(3\)/ }))
+    expect(root.querySelectorAll('[data-slot="rel-list"] li')).toHaveLength(3)
     fireEvent.click(within(root).getByRole('button', { name: /alert_notes/ }))
     expect(onOpenTable).toHaveBeenLastCalledWith('alert_notes')
     // sorguya koy
-    fireEvent.click(screen.getByRole('button', { name: /Sorguya koy|Put in the query/ }))
-    expect(onUseQuery).toHaveBeenCalledWith('SELECT * FROM alerts LIMIT 100')
+    fireEvent.click(screen.getByRole('button', { name: /Bu tabloyu sorgula|Query this table/ }))
+    expect(onUseQuery).toHaveBeenCalledWith(tableQuery('alerts'))
     expect(onClose).toHaveBeenCalled()
   })
 

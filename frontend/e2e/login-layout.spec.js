@@ -80,8 +80,12 @@ test.describe('giriş sayfası yerleşimi', () => {
     expect(d.y).toBeGreaterThanOrEqual(0)
     expect(d.y + d.height, 'pencere ekranın altından taşıyor').toBeLessThanOrEqual(640)
 
-    // Uzun form kısa ekrana sığmaz: kutu kendi içinde kayar, gönder düğmesine ulaşılır.
-    const scrollable = await dialog.evaluate((el) => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === 'auto')
+    // Uzun form kısa ekrana sığmaz: pencere ya da (2026-09-27 yeniden tasarım: ModalShell) GÖVDESİ kendi içinde kayar,
+    // alt çubuktaki gönder düğmesine ulaşılır. Kaydırılan öğe pencerenin kendisi ya da bir alt öğesi olabilir.
+    const scrollable = await dialog.evaluate((root) => [root, ...root.querySelectorAll('*')].some((el) => {
+      const oy = getComputedStyle(el).overflowY
+      return (oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1
+    }))
     expect(scrollable, 'pencere içi kaydırma yok — alt kısım erişilemez').toBe(true)
     const send = dialog.getByRole('button', { name: /send report|gönder/i })
     await send.scrollIntoViewIfNeeded()

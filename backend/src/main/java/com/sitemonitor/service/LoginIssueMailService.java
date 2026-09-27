@@ -42,6 +42,10 @@ public class LoginIssueMailService {
     public static final String USER_REPORT_ADMIN = "USER_REPORT_ADMIN";
     /** Günlük özet — admin'e (daily-digest açıkken). */
     public static final String DIGEST = "DIGEST";
+    /** Yöneticinin herkese açık yanıtı — bildirene (2026-09-26 konuşma dizisi). İç not mail üretmez. */
+    public static final String ADMIN_REPLY = "ADMIN_REPLY";
+    /** Durum geçişi (OPEN ↔ IN_PROGRESS) — bildirene; RESOLVED ayrı zengin {@link #RESOLVED} mailiyle gider. */
+    public static final String STATUS_CHANGE = "STATUS_CHANGE";
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -126,8 +130,30 @@ public class LoginIssueMailService {
         boolean hasAdmin = adminEmail != null && !adminEmail.isBlank();
         String to = hasReporter ? reporterEmail : (hasAdmin ? adminEmail : null);
         String cc = (hasReporter && hasAdmin) ? adminEmail : null;
-        log.info("Login issue {} çözüldü maili → to={} cc={} ({})", refCode, to, cc, res.status());
+        log.info("Login issue {} çözüldü maili → to={} cc={} ({})", refCode, SecretMask.maskEmails(to), SecretMask.maskEmails(cc), res.status());
         saveLog(reportId, refCode, RESOLVED, to, cc, res, force);
+    }
+
+    /** Yöneticinin HERKESE AÇIK yanıtı → bildirene kısa mail (iç not için ÇAĞRILMAZ; çağıran karar verir). */
+    @Async("loginIssueMailExecutor")
+    public void dispatchAdminReply(Long reportId, String refCode, String reporterEmail, String username, String status,
+                                   String replyBody, String repliedAt, String messageSummary) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendIssueReply(
+                reporterEmail, reportId, refCode, username, status, replyBody, repliedAt, messageSummary, force));
+        log.info("Sorun bildirimi {} yanıt maili → {} ({})", refCode, SecretMask.maskEmails(reporterEmail), res.status());
+        saveLog(reportId, refCode, ADMIN_REPLY, reporterEmail, null, res, force);
+    }
+
+    /** Durum geçişi (OPEN ↔ IN_PROGRESS) → bildirene kısa mail. RESOLVED için {@link #dispatchResolved} kullanılır. */
+    @Async("loginIssueMailExecutor")
+    public void dispatchStatusChange(Long reportId, String refCode, String reporterEmail, String username, String newStatus,
+                                     String note, String changedAt, String messageSummary) {
+        boolean force = forceEmail();
+        LoginIssueMailResult res = send(() -> emailService.sendIssueStatusChange(
+                reporterEmail, reportId, refCode, username, newStatus, note, changedAt, messageSummary, force));
+        log.info("Sorun bildirimi {} durum maili ({}) → {} ({})", refCode, newStatus, SecretMask.maskEmails(reporterEmail), res.status());
+        saveLog(reportId, refCode, STATUS_CHANGE, reporterEmail, null, res, force);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

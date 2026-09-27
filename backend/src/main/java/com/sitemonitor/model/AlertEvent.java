@@ -136,6 +136,14 @@ public class AlertEvent {
     @Transient private String  currentNotAfter;
 
     /**
+     * 7/24 arama kaydı özeti (2026-09-27) — uyarı listesi ve tekil uyarı ucunda TEK toplu sorguyla doldurulur
+     * ({@code NocCallLogService.decorate}; kart başına sorgu N+1 olurdu), kalıcı DEĞİL. JSON: {@code noc_call_count},
+     * {@code noc_last_call} = {@code {contacted_name, outcome, contacted_at}} (anahtarlar zaten snake_case).
+     */
+    @Transient private Long    nocCallCount;
+    @Transient private java.util.Map<String, Object> nocLastCall;
+
+    /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
      *
      * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse

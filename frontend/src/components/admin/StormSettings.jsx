@@ -1,16 +1,24 @@
 import { useState, useEffect } from 'react'
-import { Save } from 'lucide-react'
+import { CloudLightning } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
-import { Spinner } from '../ui/Progress.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
-import { Button } from '@/components/shadcn/button'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import { SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow } from './SettingsControls.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Slider } from '@/components/shadcn/slider'
+import { Card, CardContent } from '@/components/shadcn/card'
+import { cn } from '@/lib/utils'
 
 /**
  * "Alert Settings" — Alarm fırtınası (alert storm) yapılandırması. Master toggle + eşik (sayı + birim)
  * + zaman penceresi (1–15 dk slider) + grup-bazlı toggle + Kaydet. Kalıcılık site.monitor.storm.* key'lerine
  * (StormSettingsController → AppSettingsService) gider; değişiklik CANLI yansır. Default AÇIK.
+ * Çizim shadcn: SettingsHeader/MasterToggleCard/SettingsSection, Switch (ToggleRow), Input + NativeSelect, Slider.
  */
 export default function StormSettings() {
   const t = useT()
@@ -78,97 +86,73 @@ export default function StormSettings() {
   }
 
   if (loading) {
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
   // Yüzde önizlemesi: ceil(value/100 × total), taban 2 (sunucu ile aynı round kuralı).
   const pctPreview = Math.max(2, Math.ceil((Number(value) || 0) / 100 * total))
+  const unitLabel = t('storm.unitCount') + ' / ' + t('storm.unitPercent')
 
   return (
-    <div className="ldap-settings">
-      <div className="admin-section">
-        <h3>{t('storm.title')} <span className="storm-beta">BETA</span></h3>
-        <p className="section-desc">{t('storm.desc')}</p>
-      </div>
+    <div className={SETTINGS_STACK} data-testid="storm-settings">
+      <SettingsHeader icon={CloudLightning} description={t('storm.desc')}
+        title={<>{t('storm.title')} <Badge variant="warning" className="font-bold tracking-wider">BETA</Badge></>} />
 
       {/* Master toggle */}
-      <div className="admin-section">
-        <label className="ldap-toggle ldap-toggle-major">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          <span>{t('storm.enabled')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.storm.enabled" label={t('storm.enabled')} />
-        <p className="hint">{t('storm.enabledHint')}</p>
-        {!enabled && (
-          <div className="alert-msg ldap-lookup-error" style={{ marginTop: 10 }}>
-            {t('storm.disabledWarn')}
+      <MasterToggleCard checked={enabled} onChange={setEnabled} label={t('storm.enabled')}
+        helpKey="help.set.site.monitor.storm.enabled" hint={t('storm.enabledHint')}>
+        {!enabled && <AlertBanner tone="warning" className="mt-1 mb-0">{t('storm.disabledWarn')}</AlertBanner>}
+      </MasterToggleCard>
+
+      {/* Eşik + pencere geniş ekranda yan yana */}
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        {/* Threshold: number + unit */}
+        <SettingsSection title={helpLabel(t('storm.thresholdTitle'), 'help.set.site.monitor.storm.threshold-value')}
+          description={t('storm.thresholdDesc')} contentClassName="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input type="number" className="w-28" aria-label={t('storm.thresholdTitle')}
+              min={unit === 'PERCENT' ? 1 : 2} max={unit === 'PERCENT' ? 100 : 100000} value={value}
+              onChange={(e) => setValue(e.target.value === '' ? '' : Number(e.target.value))} />
+            <NativeSelect value={unit} aria-label={unitLabel} onChange={(e) => setUnit(e.target.value)}>
+              <NativeSelectOption value="COUNT">{t('storm.unitCount')}</NativeSelectOption>
+              <NativeSelectOption value="PERCENT">{t('storm.unitPercent')}</NativeSelectOption>
+            </NativeSelect>
+            <HelpTip helpKey="help.set.site.monitor.storm.threshold-unit" label={unitLabel} />
           </div>
-        )}
-      </div>
+          <p className="text-xs text-muted-foreground">
+            {unit === 'PERCENT' ? t('storm.pctPreview', value || 0, total, pctPreview) : t('storm.countHint')}
+          </p>
+        </SettingsSection>
 
-      {/* Threshold: number + unit */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('storm.thresholdTitle')}<HelpTip helpKey="help.set.site.monitor.storm.threshold-value" label={t('storm.thresholdTitle')} /></h4>
-        <p className="section-desc">{t('storm.thresholdDesc')}</p>
-        <div className="storm-threshold-row">
-          <input
-            type="number"
-            className="storm-num"
-            min={unit === 'PERCENT' ? 1 : 2}
-            max={unit === 'PERCENT' ? 100 : 100000}
-            value={value}
-            onChange={(e) => setValue(e.target.value === '' ? '' : Number(e.target.value))}
-          />
-          <select className="storm-unit" value={unit} onChange={(e) => setUnit(e.target.value)}>
-            <option value="COUNT">{t('storm.unitCount')}</option>
-            <option value="PERCENT">{t('storm.unitPercent')}</option>
-          </select>
-          <HelpTip helpKey="help.set.site.monitor.storm.threshold-unit" label={t('storm.unitCount') + ' / ' + t('storm.unitPercent')} />
-        </div>
-        <p className="hint">
-          {unit === 'PERCENT'
-            ? t('storm.pctPreview', value || 0, total, pctPreview)
-            : t('storm.countHint')}
-        </p>
-      </div>
-
-      {/* Time window slider (1–15 min) */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('storm.windowTitle')}<HelpTip helpKey="help.set.site.monitor.storm.window-minutes" label={t('storm.windowTitle')} /></h4>
-        <p className="section-desc">{t('storm.windowDesc')}</p>
-        <div className="storm-slider-wrap">
-          <input
-            type="range"
-            className="http-interval-slider"
-            min={1}
-            max={15}
-            step={1}
-            value={windowMin}
-            onChange={(e) => setWindowMin(Number(e.target.value))}
-          />
-          <div className="storm-slider-value">{t('storm.windowValue', windowMin)}</div>
-        </div>
-        <div className="http-interval-ticks">
-          {[1, 5, 10, 15].map((n) => (
-            <span key={n} className={`http-interval-tick${n === windowMin ? ' active' : ''}`}>{n}</span>
-          ))}
-        </div>
+        {/* Time window slider (1–15 min) — shadcn Slider (Radix); başparmak adı + okunur değer */}
+        <SettingsSection title={helpLabel(t('storm.windowTitle'), 'help.set.site.monitor.storm.window-minutes')}
+          description={t('storm.windowDesc')} contentClassName="flex flex-col gap-2">
+          <div className="flex max-w-[560px] items-center gap-4">
+            <Slider min={1} max={15} step={1} value={[windowMin]} className="py-1.5"
+              onValueChange={([v]) => setWindowMin(v)}
+              thumbProps={{ 'aria-label': t('storm.windowTitle'), 'aria-valuetext': t('storm.windowValue', windowMin) }} />
+            <span className="min-w-16 shrink-0 text-sm font-semibold tabular-nums">{t('storm.windowValue', windowMin)}</span>
+          </div>
+          <div className="flex max-w-[480px] justify-between text-[11px] text-muted-foreground" aria-hidden="true">
+            {[1, 5, 10, 15].map((n) => (
+              <span key={n} data-active={n === windowMin ? 'true' : undefined}
+                className={cn('tabular-nums', n === windowMin && 'font-semibold text-foreground')}>{n}</span>
+            ))}
+          </div>
+        </SettingsSection>
       </div>
 
       {/* Per-group toggle */}
-      <div className="admin-section">
-        <label className="ldap-toggle">
-          <input type="checkbox" checked={perGroup} onChange={(e) => setPerGroup(e.target.checked)} />
-          <span>{t('storm.perGroup')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.storm.per-group" label={t('storm.perGroup')} />
-        <p className="hint">{t('storm.perGroupHint')}</p>
-      </div>
+      <Card className="gap-2 py-4">
+        <CardContent className="flex flex-col gap-2 px-4 sm:px-6">
+          <ToggleRow checked={perGroup} onChange={setPerGroup} label={t('storm.perGroup')}
+            helpKey="help.set.site.monitor.storm.per-group" />
+          <p className="text-xs text-muted-foreground">{t('storm.perGroupHint')}</p>
+        </CardContent>
+      </Card>
 
       {/* Save */}
-      <div className="admin-section">
-        <Button onClick={save} disabled={saving}>
-          {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />} {t('storm.save')}
-        </Button>
-      </div>
+      <SettingsSaveBar saving={saving} onSave={save} saveLabel={t('storm.save')} />
     </div>
   )
 }

@@ -47,7 +47,8 @@ const TRIGGER_CLASS = cn(
  * etiketin id'si (`ariaLabelledBy`) ya da `id` + `<label htmlFor>` / Field render-prop'u.
  * Tetiği bir `<label>` sarıyorsa ad oradan gelir. Kapı: rowAccessibleNames.test.js.
  */
-export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeholderShown, ariaLabel, ariaLabelledBy, id, children }) {
+export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeholderShown, ariaLabel, ariaLabelledBy, id, children,
+  ariaDescribedBy, ariaInvalid }) {   // isteğe bağlı: ui/Field render-prop bağları (ipucu/hata) — 2026-09-27
   const toggle = () => {
     const next = !openRef.current
     if (next) onOpen?.()
@@ -82,6 +83,8 @@ export function PickerTrigger({ open, openRef, setOpen, onOpen, disabled, placeh
         aria-expanded={open}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid || undefined}
         disabled={disabled}
         data-placeholder={placeholderShown ? '' : undefined}
         className={TRIGGER_CLASS}

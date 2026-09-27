@@ -1,12 +1,33 @@
 import { useState, useMemo } from 'react'
-import { BarChart3, ChevronDown } from 'lucide-react'
+import { BarChart3, X } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
+import CollapsibleSection from './ui/CollapsibleSection.jsx'
 import { formatDate } from '../api/client'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import ExecutiveSummary from './ExecutiveSummary.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card } from '@/components/shadcn/card'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
+
+/** Takım × katman ızgarası durum tonu (eski .ts-hdr-* / .ts-cell-*) — başlık ve dolu hücre aynı renk. */
+const STATUS_INK = {
+  valid: 'text-green-500', warning: 'text-amber-500', high: 'text-orange-500',
+  critical: 'text-red-500', expired: 'text-zinc-400', error: 'text-red-500',
+}
+/** Etkin süzgeç çipi tonu (eski .sv-chip-*). */
+const CHIP_TONE = {
+  team: 'border-sky-600/25 bg-sky-600/10 text-sky-700 dark:text-sky-300',
+  tier: 'border-indigo-600/25 bg-indigo-600/10 text-indigo-700 dark:text-indigo-300',
+  status: 'border-orange-500/25 bg-orange-500/10 text-orange-700 dark:text-orange-300',
+}
+/** Satır/tablo durum noktası (eski .table-status.status-*). */
+const STATUS_DOT = { 'status-valid': 'bg-success', 'status-warning': 'bg-warning', 'status-critical': 'bg-destructive', 'status-error': 'bg-destructive' }
 
 // ── Tier meta ────────────────────────────────────────────────────────────────
 const TIER_META = {
@@ -16,6 +37,9 @@ const TIER_META = {
   4: { color: '#71717a', label: 'T4', descKey: 'tier.desc4' },
   0: { color: '#a1a1aa', label: '?',  descKey: 'tier.descNone' },
 }
+
+const TH = 'h-10 bg-muted/60 px-2.5 text-[.85em] font-medium text-muted-foreground'
+const TD = 'px-2.5 py-2.5 text-[.9em]'
 
 const CELL_STATUSES = [
   { key: 'valid',    labelKey: 'ts.valid'    },
@@ -113,7 +137,7 @@ function defaultPriority(c) {
 }
 
 // ── TeamTierSection ───────────────────────────────────────────────────────────
-function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilter, setTeamFilter, statusFilter, setStatusFilter, setPage }) {
+function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilter, setTeamFilter, statusFilter, setStatusFilter }) {
   const t     = useT()
   const teams = useMemo(() => buildTeams(teamStats), [teamStats])
 
@@ -145,7 +169,6 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
       setTierFilter(tierKey)
       setStatusFilter(statusKey)
     }
-    setPage(1)
   }
 
   function handleTeamHeaderClick(team) {
@@ -156,62 +179,66 @@ function TeamTierSection({ certs, teamStats, tierFilter, setTierFilter, teamFilt
       setTierFilter(null)
       setStatusFilter(null)
     }
-    setPage(1)
   }
 
   return (
-    <div className="ttg-root">
+    // Takım kartları — shadcn Card; başlık gerçek düğme (Button), ızgara shadcn Table. Telefonda tek sütun.
+    <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
       {teamData.map(team => {
         const cardActive = teamFilter?.label === team.name
         return (
-          <div key={team.id} className={`ttg-card${cardActive ? ' ttg-card-active' : ''}`}>
-            <div className="ttg-header" onClick={() => handleTeamHeaderClick(team)}
-              role="button" tabIndex={0} aria-label={team.name}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTeamHeaderClick(team) } }}>
-              <span className="ttg-team-name">{team.name}</span>
-              <span className="ttg-team-total">{team.total} {t('ts.total')}</span>
-            </div>
+          <Card key={team.id} data-slot="ttg-card" data-active={cardActive ? 'true' : undefined}
+            className={cn('min-w-0 gap-0 overflow-hidden rounded-[10px] py-0 shadow-none transition-colors motion-reduce:transition-none',
+              cardActive && 'border-primary ring-[3px] ring-primary/10')}>
+            <Button type="button" variant="ghost" aria-pressed={cardActive} onClick={() => handleTeamHeaderClick(team)}
+              className="h-auto w-full justify-between rounded-none border-b bg-muted px-4 py-3 text-left whitespace-normal hover:bg-muted hover:brightness-95 sm:px-[18px]">
+              <span className="min-w-0 text-[.95em] font-bold [overflow-wrap:anywhere]">{team.name}</span>
+              <span className="shrink-0 text-[.78em] font-semibold text-muted-foreground">{team.total} {t('ts.total')}</span>
+            </Button>
 
             {team.tierRows.length === 0 ? (
-              <div className="ttg-empty">{t('sv.noData')}</div>
+              <div className="px-3.5 py-3 text-center text-[.8em] text-muted-foreground">{t('sv.noData')}</div>
             ) : (
-              <table className="ts-grid-table">
-                <thead>
-                  <tr>
-                    <th className="ts-grid-tier-hdr"></th>
+              <Table className="text-[.92em]">
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-11" />
                     {CELL_STATUSES.map(({ key, labelKey }) => (
-                      <th key={key} className={`ts-grid-hdr ts-hdr-${key}`}>{t(labelKey)}</th>
+                      <TableHead key={key} className={cn('px-1.5 py-2.5 text-center text-[.76em] font-bold tracking-[.04em] uppercase', STATUS_INK[key])}>{t(labelKey)}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {team.tierRows.map(row => (
-                    <tr key={row.tier} className="ts-grid-row">
-                      <td className="ts-grid-tier-cell">
-                        <span className="ttg-badge" style={{ background: TIER_META[row.tier].color }}>
+                    <TableRow key={row.tier} className="hover:bg-transparent">
+                      <TableCell className="px-2.5 py-3">
+                        <Badge className="rounded px-1.5 font-extrabold text-white" style={{ background: TIER_META[row.tier].color }}>
                           {TIER_META[row.tier].label}
-                        </span>
-                      </td>
+                        </Badge>
+                      </TableCell>
                       {CELL_STATUSES.map(({ key }) => {
                         const count    = row[key] ?? 0
                         const selected = cardActive && tierFilter === row.tier && statusFilter === key
                         return (
-                          <td
+                          <TableCell
                             key={key}
-                            className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}${selected ? ' ts-cell-selected' : ''}`}
+                            data-status={key} data-selected={selected ? 'true' : undefined}
+                            className={cn('rounded px-1.5 py-3 text-center text-[1.05em]',
+                              count > 0 ? cn('cursor-pointer font-bold hover:opacity-70', STATUS_INK[key]) : 'font-normal text-muted-foreground opacity-45',
+                              selected && 'outline-2 -outline-offset-2 outline-current')}
                             tabIndex={count > 0 ? 0 : undefined}
                             aria-label={count > 0 ? `${team.name} — ${t(`ts.${key}`)}: ${count}` : undefined}
                             onClick={() => count > 0 && handleCellClick(team, row.tier, key)}
                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); count > 0 && handleCellClick(team, row.tier, key) } }}
-                          >{count}</td>
+                          >{count}</TableCell>
                         )
                       })}
-                    </tr>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
-          </div>
+          </Card>
         )
       })}
     </div>
@@ -275,17 +302,17 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
 
   // Sayfalama standardı: filtre/sıralama değişince hook kendisi 1. sayfaya döner.
   const pager = usePagination(filtered, {
-    listKey: 'stats-table',
+    listKey: 'stats-table', preset: 'page',
     resetDeps: [tierFilter, teamFilter, statusFilter, filterDomain, filterIssuer, filterStatus, sortBy],
   })
 
   function clearWidgetFilters() {
-    setTierFilter(null); setTeamFilter(null); setStatusFilter(null); pager.setPage(1)
+    setTierFilter(null); setTeamFilter(null); setStatusFilter(null)
   }
   function resetAll() {
     setTierFilter(null); setTeamFilter(null); setStatusFilter(null)
     setFilterDomain(''); setFilterIssuer(''); setFilterStatus('')
-    setSortBy('priority|asc'); pager.setPage(1)
+    setSortBy('priority|asc')
   }
 
   const hasTableFilter  = filterDomain || filterIssuer || filterStatus
@@ -301,25 +328,11 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
         setTeamFilter((cur) => (cur?.label === label ? null : { domains, label }))
       }} />
 
-      {/* ── Team × Tier cards (collapsible — matches Dashboard stats toggle) ── */}
-      <div
-        className="stats-collapse-bar"
-        role="button" tabIndex={0} aria-expanded={showTeamStats}
-        aria-label={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowTeamStats((v) => !v) } }}
-        onClick={() => setShowTeamStats((v) => !v)}
-        title={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
-      >
-        <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-        <span className="stats-collapse-label">{t('sv.teamStats')}</span>
-        {!showTeamStats && (
-          <span className="stats-collapse-hint">{t('sv.showTeamStats')}</span>
-        )}
-        <span className={`stats-collapse-chevron${showTeamStats ? ' open' : ''}`}>
-          <ChevronDown size={18} />
-        </span>
-      </div>
-      {showTeamStats && (
+      {/* ── Team × Tier cards — ui/CollapsibleSection (Pano istatistik şeridiyle aynı shadcn Collapsible) ── */}
+      <CollapsibleSection open={showTeamStats} onOpenChange={setShowTeamStats}
+        icon={BarChart3} label={t('sv.teamStats')} hint={t('sv.showTeamStats')}
+        toggleLabel={showTeamStats ? t('sv.hideTeamStats') : t('sv.showTeamStats')}
+        triggerClassName="my-3">
         <TeamTierSection
           certs={certs}
           teamStats={teamStats}
@@ -329,70 +342,75 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           setTeamFilter={setTeamFilter}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
-          setPage={pager.setPage}
         />
-      )}
+      </CollapsibleSection>
 
       {/* ── Active widget filter chips ── */}
       {hasWidgetFilter && (
-        <div className="sv-filter-bar">
-          <span className="sv-filter-label">{t('sv.activeFilter')}</span>
+        // Etkin süzgeç çipleri — shadcn Badge + kaldır düğmesi (Button, adı "Süzgeci kaldır: <çip>")
+        <div data-slot="sv-filter-bar" className="my-3 flex flex-wrap items-center gap-2">
+          <span className="text-[.82em] font-semibold text-muted-foreground">{t('sv.activeFilter')}</span>
           {teamFilter && (
-            <span className="sv-chip sv-chip-team">
+            <Badge variant="outline" data-slot="sv-chip" className={cn('gap-1 py-0.5 pr-0.5', CHIP_TONE.team)}>
               {teamFilter.label}
-              <button className="sv-chip-x" onClick={() => { setTeamFilter(null); pager.setPage(1) }}>✕</button>
-            </span>
+              <Button type="button" variant="ghost" size="icon-xs" className="size-5 text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
+                aria-label={t('a11y.rowAction', teamFilter.label, t('tbl.removeFilter'))} onClick={() => { setTeamFilter(null) }}><X aria-hidden="true" /></Button>
+            </Badge>
           )}
           {tierFilter !== null && (
-            <span className="sv-chip sv-chip-tier">
+            <Badge variant="outline" data-slot="sv-chip" className={cn('gap-1 py-0.5 pr-0.5', CHIP_TONE.tier)}>
               {tierFilter === 0
                 ? t('tier.descNone')
                 : `${TIER_META[tierFilter]?.label} — ${t(TIER_META[tierFilter]?.descKey)}`}
-              <button className="sv-chip-x" onClick={() => { setTierFilter(null); pager.setPage(1) }}>✕</button>
-            </span>
+              <Button type="button" variant="ghost" size="icon-xs" className="size-5 text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
+                aria-label={t('a11y.rowAction', tierFilter === 0 ? t('tier.descNone') : TIER_META[tierFilter]?.label, t('tbl.removeFilter'))}
+                onClick={() => { setTierFilter(null) }}><X aria-hidden="true" /></Button>
+            </Badge>
           )}
           {statusFilter && (
-            <span className="sv-chip sv-chip-status">
+            <Badge variant="outline" data-slot="sv-chip" className={cn('gap-1 py-0.5 pr-0.5', CHIP_TONE.status)}>
               {t(`ts.${statusFilter}`)}
-              <button className="sv-chip-x" onClick={() => { setStatusFilter(null); pager.setPage(1) }}>✕</button>
-            </span>
+              <Button type="button" variant="ghost" size="icon-xs" className="size-5 text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
+                aria-label={t('a11y.rowAction', t(`ts.${statusFilter}`), t('tbl.removeFilter'))} onClick={() => { setStatusFilter(null) }}><X aria-hidden="true" /></Button>
+            </Badge>
           )}
-          <button className="sv-clear-all" onClick={clearWidgetFilters}>{t('app.clearFilter')}</button>
+          <Button type="button" variant="outline" size="xs" className="text-muted-foreground hover:border-destructive hover:text-destructive" onClick={clearWidgetFilters}>{t('app.clearFilter')}</Button>
         </div>
       )}
 
       {/* ── Table filters ── */}
-      <div className="advanced-filters sv-table-filters">
-        <div className="filter-group">
-          <label>{t('tbl.domainSearch')}</label>
-          <div className="sv-domain-row">
-            <input className="filter-input" placeholder={t('tbl.domainPh')} value={filterDomain}
-              onChange={e => { setFilterDomain(e.target.value); pager.setPage(1) }} />
+      {/* Tablo süzgeçleri — shadcn Input + Label, ui/SearchableSelect; telefonda tek sütun */}
+      <div data-slot="sv-table-filters" className="mb-4 grid grid-cols-1 items-end gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="stats-f-domain" className="text-[.88em] font-semibold">{t('tbl.domainSearch')}</Label>
+          <div className="flex gap-2">
+            <Input id="stats-f-domain" className="min-w-0 flex-1" placeholder={t('tbl.domainPh')} value={filterDomain}
+              onChange={e => { setFilterDomain(e.target.value) }} />
             {canAddDomain && onAddDomain && (
-              <Button variant="success" className="sv-add-domain" onClick={onAddDomain}>{t('inv.addBtn')}</Button>
+              <Button variant="success" className="shrink-0" onClick={onAddDomain}>{t('inv.addBtn')}</Button>
             )}
           </div>
         </div>
-        <div className="filter-group">
-          <label>{t('tbl.issuerSearch')}</label>
-          <input className="filter-input" placeholder={t('tbl.issuerPh')} value={filterIssuer}
-            onChange={e => { setFilterIssuer(e.target.value); pager.setPage(1) }} />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="stats-f-issuer" className="text-[.88em] font-semibold">{t('tbl.issuerSearch')}</Label>
+          <Input id="stats-f-issuer" placeholder={t('tbl.issuerPh')} value={filterIssuer}
+            onChange={e => { setFilterIssuer(e.target.value) }} />
         </div>
-        <div className="filter-group">
-          <label htmlFor="stats-f-status">{t('tbl.colStatus')}</label>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="stats-f-status" className="text-[.88em] font-semibold">{t('tbl.colStatus')}</Label>
           <SearchableSelect
             id="stats-f-status"
             value={filterStatus}
-            onChange={v => { setFilterStatus(v); pager.setPage(1) }}
+            onChange={v => { setFilterStatus(v) }}
             options={STATUS_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) }))}
           />
         </div>
-        <div className="filter-group">
-          <label htmlFor="stats-f-sort">{t('tbl.sort')}</label>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="stats-f-sort" className="text-[.88em] font-semibold">{t('tbl.sort')}</Label>
           <SearchableSelect
             id="stats-f-sort"
             value={sortBy}
-            onChange={v => { setSortBy(v); pager.setPage(1) }}
+            onChange={v => { setSortBy(v) }}
             options={[
               { value: 'priority|asc',        label: t('tbl.sortPriority') },
               { value: 'domain|asc',          label: t('tbl.sortDomainAsc') },
@@ -406,31 +424,31 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
           />
         </div>
         {hasTableFilter && (
-          <Button variant="secondary" style={{ marginTop: 24 }} onClick={resetAll}>
+          <Button variant="secondary" className="self-end" onClick={resetAll}>
             {t('tbl.reset')}
           </Button>
         )}
       </div>
 
-      {/* ── Certificate table ── */}
-      <div className="table-scroll">
-      <table className="certificates-table">
-        <thead>
-          <tr>
-            <th>{t('tbl.colDomain')}</th>
-            <th>{t('sv.colSyTeam')}</th>
-            <th>{t('sv.colUgTeam')}</th>
-            <th>{t('sv.colTier')}</th>
-            <th>{t('tbl.colIssuer')}</th>
-            <th>{t('tbl.colExpiry')}</th>
-            <th>{t('tbl.colDays')}</th>
-            <th>{t('tbl.colStatus')}</th>
-            <th>{t('tbl.colChecked')}</th>
-          </tr>
-        </thead>
-        <tbody>
+      {/* ── Certificate table ── shadcn Table (yatay kayar; ekip/veren sütunları dar ekranda gizli) */}
+      <div className="rounded-lg border bg-card">
+      <Table data-slot="sv-table">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className={TH}>{t('tbl.colDomain')}</TableHead>
+            <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('sv.colSyTeam')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('sv.colUgTeam')}</TableHead>
+            <TableHead className={TH}>{t('sv.colTier')}</TableHead>
+            <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('tbl.colIssuer')}</TableHead>
+            <TableHead className={TH}>{t('tbl.colExpiry')}</TableHead>
+            <TableHead className={TH}>{t('tbl.colDays')}</TableHead>
+            <TableHead className={TH}>{t('tbl.colStatus')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('tbl.colChecked')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {pager.pageItems.length === 0 ? (
-            <tr><td colSpan={9} className="loading">{t('tbl.noCerts')}</td></tr>
+            <TableRow className="hover:bg-transparent"><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">{t('tbl.noCerts')}</TableCell></TableRow>
           ) : pager.pageItems.map(cert => {
             const days = cert.days_remaining
             const isCritical  = cert.status !== 'error' && days !== null && days >= 0 && days <= 30
@@ -442,38 +460,43 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
               : cert.warning  ? t('tbl.statusWarning') : t('tbl.statusValid')
             const teamInfo    = domainMap[cert.domain]
             return (
-              <tr key={cert.domain} style={{ cursor: 'pointer' }} tabIndex={0}
+              <TableRow key={cert.domain} tabIndex={0} data-domain={cert.domain}
+                className="cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
                 aria-label={t('a11y.openRow', cert.domain)}
                 onClick={() => onRowClick?.(cert.domain)}
                 onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick?.(cert.domain) } }}>
-                <td><strong>{cert.domain}</strong></td>
-                <td className="sv-team-cell">
+                <TableCell className={TD}><strong>{cert.domain}</strong></TableCell>
+                <TableCell className={cn(TD, 'hidden whitespace-normal md:table-cell')}>
                   {teamInfo?.syTeams?.length
                     ? teamInfo.syTeams.join(', ')
-                    : <span className="sv-cell-muted">—</span>}
-                </td>
-                <td className="sv-team-cell">
+                    : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className={cn(TD, 'hidden whitespace-normal lg:table-cell')}>
                   {teamInfo?.ugTeams?.length
                     ? teamInfo.ugTeams.join(', ')
-                    : <span className="sv-cell-muted">—</span>}
-                </td>
-                <td>
+                    : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className={TD}>
                   {cert.tier != null
-                    ? <span className="ttg-badge" style={{ background: (TIER_META[cert.tier] || TIER_META[0]).color, color: '#fff' }}>
+                    ? <Badge className="rounded px-1.5 font-extrabold text-white" style={{ background: (TIER_META[cert.tier] || TIER_META[0]).color }}>
                         {(TIER_META[cert.tier] || TIER_META[0]).label}
-                      </span>
-                    : <span className="sv-cell-muted">—</span>}
-                </td>
-                <td>{cert.issuer_cn || cert.issuer || 'N/A'}</td>
-                <td>{formatDate(cert.not_after)}</td>
-                <td><strong>{days ?? 'N/A'}</strong></td>
-                <td><span className={`table-status ${statusClass}`} />{statusText}</td>
-                <td>{formatDate(cert.checked_at)}</td>
-              </tr>
+                      </Badge>
+                    : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className={cn(TD, 'hidden md:table-cell')}>{cert.issuer_cn || cert.issuer || 'N/A'}</TableCell>
+                <TableCell className={TD}>{formatDate(cert.not_after)}</TableCell>
+                <TableCell className={TD}><strong>{days ?? 'N/A'}</strong></TableCell>
+                <TableCell className={TD}>
+                  <span className="inline-flex items-center gap-1.5" data-status={statusClass.replace('status-', '')}>
+                    <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[statusClass])} />{statusText}
+                  </span>
+                </TableCell>
+                <TableCell className={cn(TD, 'hidden lg:table-cell')}>{formatDate(cert.checked_at)}</TableCell>
+              </TableRow>
             )
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
       </div>
 
       {/* ── Pagination ── */}

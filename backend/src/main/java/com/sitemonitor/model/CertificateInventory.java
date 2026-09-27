@@ -13,7 +13,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "certificate_inventory")
 @Data
 @NoArgsConstructor
-public class CertificateInventory {
+public class CertificateInventory implements NocTarget {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -174,6 +174,13 @@ public class CertificateInventory {
     @Transient private String certIssuer;
     @Transient private String certError;
 
+    // ── Org geneli görünürlük (2026-09-26): çağıran bu kaydı DEĞİŞTİREBİLİR mi (SessionScope.canWriteInventory).
+    // Yalnız okuma uçları (listInventory / by-domain) doldurur; diğer yanıtlarda null → hiç yazılmaz. İstek
+    // gövdesinden gelen değer hiçbir yerde okunmaz (yazma kapıları her seferinde oturumdan yeniden hesaplar).
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean canManage;
+
     // ── Kimlik künyesi ────────────────────────────────────────────────────────────────────
     // "Bu izlemeyi kim kurdu?" sorusu geçmiş tablosuna gitmeden de cevaplanabilsin (kart künyesi
     // bunu okur). monitor_change_log'dan BAĞIMSIZ: biri retention ile temizlense de diğeri kalır.
@@ -200,6 +207,49 @@ public class CertificateInventory {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    // ── 7/24 İzleme Ekibi (NOC) bildirimi (2026-09-27) — bkz. NocTarget. Kolonlar NULLABLE (null = kapalı /
+    // varsayılan gruplar). İstek gövdesi bu varlığa DOĞRUDAN bağlanıyor (snake_case: noc_notify, noc_group_ids);
+    // gövdede alan YOKSA mevcut değer korunmalı — aksi hâlde alanı bilmeyen bir istemcinin (eski form, toplu yol)
+    // her düzenlemesi 7/24 bildirimini SESSİZCE kapatırdı. Bu yüzden JSON erişimi açık adlı yöntemlerden geçer ve
+    // "gövdede geldi mi" bilgisini taşır; updateInventory yalnız gelen alanı yazar.
+    @jakarta.persistence.Column(name = "noc_notify")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Boolean nocNotify;
+
+    /** Virgüllü NOC grup kimlikleri; null = varsayılan gruplar. JSON'da LİSTE ({@code noc_group_ids}). */
+    @jakarta.persistence.Column(name = "noc_group_ids", length = 500)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String nocGroupIds;
+
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean nocNotifySupplied;
+
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean nocGroupIdsSupplied;
+
+    /** Yanıt: null da {@code false} yazılır (sözleşme: null = kapalı). */
+    @com.fasterxml.jackson.annotation.JsonProperty("noc_notify")
+    public Boolean nocNotifyForJson() {
+        return Boolean.TRUE.equals(nocNotify);
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("noc_notify")
+    public void nocNotifyFromJson(Boolean v) {
+        this.nocNotify = v;
+        this.nocNotifySupplied = true;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("noc_group_ids")
+    public java.util.List<Long> nocGroupIdsForJson() {
+        return com.sitemonitor.service.noc.NocGroupIds.parse(nocGroupIds);
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("noc_group_ids")
+    public void nocGroupIdsFromJson(java.util.List<Long> ids) {
+        this.nocGroupIds = com.sitemonitor.service.noc.NocGroupIds.format(ids);
+        this.nocGroupIdsSupplied = true;
+    }
 
     // ── Planlanan yenileme (2026-09-12, vade takvimi #6): operatör "bu tarihte yenileyeceğiz" der; takvimde
     // taralı çizilir, gerçek yenileme (parmak izi değişimi) görülünce sunucu temizler. Hepsi nullable.

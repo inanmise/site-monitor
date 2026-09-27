@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const { apiMock } = vi.hoisted(() => {
@@ -34,7 +34,8 @@ const LABELS = {
   'chg.valueOff': 'Kapalı',
   'chg.unitSec': 'sn', 'chg.unitMin': 'dk', 'chg.unitHour': 'sa',
 }
-const t = (k, ...a) => LABELS[k] ?? (a.length ? `${k}:${a.join('|')}` : k)
+// a11y.rowAction gerçek biçimiyle ("{0} — {1}"): satır/kart düğmelerinin adı kayıt numarasını taşır.
+const t = (k, ...a) => LABELS[k] ?? (k === 'a11y.rowAction' ? `${a[0]} — ${a[1]}` : a.length ? `${k}:${a.join('|')}` : k)
 
 const CREATE_ROW = {
   seq: 0, kind: 'PORT', resource_id: 4, resource_name: 'Ödeme portu', event_type: 'CREATE',
@@ -78,11 +79,27 @@ describe('ChangeHistoryTab', () => {
     expect(screen.getAllByTitle(/Mozilla\/5\.0/)[0]).toBeInTheDocument()
   })
 
+  it('IP kopyala GERÇEK düğme (role="button" span değil), satır seçicisinin dışında; basmak satırı seçmez', async () => {
+    draw()
+    await screen.findByText('Güncellendi')
+    const ipButtons = screen.getAllByRole('button', { name: /^10\.20\.30\.40 — / })
+    expect(ipButtons[0].tagName).toBe('BUTTON')
+    expect(ipButtons[0].closest('[data-slot="version-pick"]')).toBeNull()
+    expect(document.querySelector('span[role="button"]')).toBeNull()
+    fireEvent.click(ipButtons[0])
+    // Detay isteği bir mikro-görevde atılır: bir tik bekle, sonra "satır açılmadı" + "istek yok" birlikte.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.querySelector('[data-slot="chg-panel"]')).toBeNull()
+    expect(api.monitoring.getChangeDetail).not.toHaveBeenCalled()
+  })
+
   it('değişen alanı "eski → yeni" olarak, ETİKETİYLE gösterir', async () => {
     draw()
     fireEvent.click(await screen.findByText('Güncellendi'))
 
-    const chip = await screen.findByTitle(/Kontrol sıklığı/)
+    // Çip shadcn Badge (history/ChangeChipList): alan kancası `data-chip`, etiket görünür metinde
+    const chip = await waitFor(() => { const c = document.querySelector('[data-chip="intervalSeconds"]'); expect(c).not.toBeNull(); return c })
+    expect(chip.textContent).toContain('Kontrol sıklığı')
     // Saniye insancıllaştırılır: 300 → "5 dk", 60 → "1 dk" (çıplak sayı okunmuyor).
     expect(chip.textContent).toContain('5 dk')
     expect(chip.textContent).toContain('1 dk')
@@ -92,10 +109,11 @@ describe('ChangeHistoryTab', () => {
     const { container } = draw()
     fireEvent.click(await screen.findByText('Güncellendi'))
 
-    await screen.findByTitle(/Kontrol sıklığı/)
-    const masked = screen.getByTitle(/Parola/)
+    await waitFor(() => expect(container.querySelector('[data-chip="intervalSeconds"]')).not.toBeNull())
+    const masked = container.querySelector('[data-chip="password"]')
+    expect(masked.textContent).toContain('Parola')
     expect(masked.textContent).toContain('***')
-    expect(container.querySelector('.chg-chip-lock')).not.toBeNull()
+    expect(masked.querySelector('[data-chip-lock]')).not.toBeNull()
   })
 
   it('İLK KAYIT seçilince snapshot "ilk değerler" olarak açılır', async () => {
@@ -127,7 +145,7 @@ describe('ChangeHistoryTab', () => {
 
     expect(await screen.findByText('Güncellendi')).toBeInTheDocument()
     fireEvent.click(screen.getByText('Güncellendi'))
-    expect(container.querySelector('.chg-chip')).toBeNull()
+    expect(container.querySelector('[data-chip]')).toBeNull()
   })
 
   it('kayıt yoksa boş durum gösterilir', async () => {
@@ -140,6 +158,49 @@ describe('ChangeHistoryTab', () => {
     api.monitoring.getChanges.mockResolvedValue({ success: false, error: 'yetki yok' })
     draw()
     expect(await screen.findByText('yetki yok')).toBeInTheDocument()
+  })
+
+  // ── Yeniden tasarım (2026-09-27): satır açılımı, DiffTable, kapsam hatası ────────────────
+
+  it('satır açılınca alan farkı Denetim Kaydı ile AYNI DiffTable (alan · eski → yeni); açma düğmesi aria-expanded', async () => {
+    draw()
+    const btn = await screen.findByRole('button', { name: /^#1 — / })
+    expect(btn).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(btn)
+    await waitFor(() => expect(api.monitoring.getChangeDetail).toHaveBeenCalledWith('port', 4, 1))
+    const panel = document.querySelector('[data-slot="chg-panel"]')
+    expect(panel).not.toBeNull()
+    expect([...panel.querySelectorAll('[data-diff="field"]')].map(c => c.textContent)).toContain('Kontrol sıklığı')
+    expect([...panel.querySelectorAll('[data-diff="from"]')].map(c => c.textContent)).toContain('5 dk')
+    expect([...panel.querySelectorAll('[data-diff="to"]')].map(c => c.textContent)).toContain('1 dk')
+    expect(screen.getByRole('button', { name: /^#1 — / })).toHaveAttribute('aria-expanded', 'true')
+    // Sol renk şeridi yok: not kutusu tam çerçeveli
+    const note = panel.querySelector('section')
+    expect(note.className).toMatch(/\bborder\b/)
+    expect(note.className).not.toMatch(/border-l-/)
+  })
+
+  it('takım kapsamı dışı / sunucu hatası → kırmızı tonlu durum bloğu + "yeniden dene" isteği tekrarlar', async () => {
+    api.monitoring.getChanges.mockResolvedValue({ success: false, error: 'Kayıt bulunamadı' })
+    draw()
+    const block = await waitFor(() => {
+      const b = document.querySelector('[data-slot="empty"][data-tone="danger"]')
+      expect(b).not.toBeNull()
+      return b
+    })
+    expect(block.textContent).toContain('Kayıt bulunamadı')
+    fireEvent.click(within(block).getByRole('button', { name: /chg.retry/ }))
+    await waitFor(() => expect(api.monitoring.getChanges).toHaveBeenCalledTimes(2))
+  })
+
+  it('satırda olay rozeti, göreli zaman, tam zaman ve alan çipleri; kayıt sayısı başlıkta', async () => {
+    draw()
+    await screen.findByText('Güncellendi')
+    const row = document.querySelector('[data-chg-row="1"]')
+    expect(row.querySelector('[data-slot="badge"][data-event="update"]')).not.toBeNull()
+    expect(row.querySelector('time[datetime="2026-08-22T10:00:00"]')).not.toBeNull()
+    expect(row.querySelector('[data-chip="intervalSeconds"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="chg-total"]').textContent).toContain('2')
   })
 
   // ── Geri döndürme (K6) ────────────────────────────────────────────────────

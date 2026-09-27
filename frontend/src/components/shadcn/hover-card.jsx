@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { HoverCard as HoverCardPrimitive } from "radix-ui"
 
@@ -7,13 +8,12 @@ function HoverCard({
   return <HoverCardPrimitive.Root data-slot="hover-card" {...props} />
 }
 
-function HoverCardTrigger({
-  ...props
-}) {
+// forwardRef (React 18): asChild iç içe tetiklerde ref zinciri kopmasın (SHADCN.md §3.1).
+const HoverCardTrigger = React.forwardRef(function HoverCardTrigger(props, ref) {
   return (
-    <HoverCardPrimitive.Trigger data-slot="hover-card-trigger" {...props} />
+    <HoverCardPrimitive.Trigger ref={ref} data-slot="hover-card-trigger" {...props} />
   )
-}
+})
 
 function HoverCardContent({
   className,

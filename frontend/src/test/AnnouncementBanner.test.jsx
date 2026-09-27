@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -52,5 +53,31 @@ describe('AnnouncementBanner', () => {
     wrap()
     expect(await screen.findByRole('status')).toBeInTheDocument()
     expect(screen.getByText('Yeni duyuru')).toBeInTheDocument()
+  })
+})
+
+describe('AnnouncementBanner — giriş "hero" kartı', () => {
+  beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); sessionStorage.clear() })
+  afterEach(() => { vi.useRealTimers() })
+
+  // 2026-09-26: zamanlayıcı gösterim kararıyla aynı efektteyken StrictMode'un çift çağrısı onu temizliyor, ikinci
+  // çalışma "zaten gösterildi" diye erken dönüyordu → hero kart ekranda asılı kalıyordu (geliştirme ortamı).
+  it('StrictMode altında da 1.5 sn sonra üst şeride toplanır; oturumda bir kez', async () => {
+    api.getBranding.mockResolvedValue({ success: true, data: {
+      banner_enabled: true, banner_text: 'Planlı bakım', banner_tone: 'WARNING', banner_version: 7 } })
+    // Uygulamadaki sıra: branding sağlayıcısı ÖNCE yüklenir, şerit girişten SONRA takılır (App.jsx) — StrictMode'un
+    // takılma anındaki çift efekt çağrısı tam bu durumda zamanlayıcıyı öldürüyordu.
+    const Gate = ({ show }) => (show ? <AnnouncementBanner heroOnMount /> : null)
+    const { rerender, unmount } = render(<StrictMode><BrandingProvider><Gate show={false} /></BrandingProvider></StrictMode>)
+    await waitFor(() => expect(api.getBranding).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 20))
+    rerender(<StrictMode><BrandingProvider><Gate show /></BrandingProvider></StrictMode>)
+    await waitFor(() => expect(document.querySelector('[data-slot="announcement-hero"]')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="announcement-hero"]')).toBeNull(), { timeout: 3000 })
+    expect(screen.getByRole('status')).toBeVisible()
+    unmount()
+    render(<BrandingProvider><AnnouncementBanner heroOnMount /></BrandingProvider>)
+    await screen.findByRole('status')
+    expect(document.querySelector('[data-slot="announcement-hero"]')).toBeNull()   // aynı oturumda yeniden çıkmaz
   })
 })

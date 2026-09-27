@@ -37,7 +37,7 @@ describe('EventListModal', () => {
     const rows = within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)
     expect(rows).toHaveLength(3)
     expect(rows[0].textContent).toContain('Takim A'); expect(rows[0].textContent).toContain('LDAP'); expect(rows[0].textContent).toContain('Istanbul, TR · Example ISP'); expect(rows[0].textContent).toContain('Chrome')
-    expect(rows[1].textContent).toContain('bad password'); expect(rows[1].textContent).toMatch(/Mesai Dışı|Off-hours|Off hours/i); expect(rows[1].className).toContain('evl-row--bad')
+    expect(rows[1].textContent).toContain('bad password'); expect(rows[1].textContent).toMatch(/Mesai Dışı|Off-hours|Off hours/i); expect(rows[1]).toHaveAttribute('data-outcome', 'bad'); expect(rows[0]).not.toHaveAttribute('data-outcome')
     expect(rows[2].textContent).toContain('Hayalet'); expect(rows[2].textContent).not.toContain('AUDIT'); expect(rows[2].textContent).toContain('Takim A')   // yalnız ad soyad (2026-09-21)
     fireEvent.click(within(stats).getByRole('button', { name: /1\s*(Başarısız|Failed)/ }))
     expect(within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)).toHaveLength(1)
@@ -55,7 +55,7 @@ describe('EventListModal', () => {
     const dlg = screen.getByRole('dialog')
     expect(within(dlg).queryByLabelText(/^Sonuç$|^Outcome$/)).toBeNull()
     expect(within(dlg).getByTestId('evl-stats').textContent).not.toMatch(/Başarısız|Failed/)
-    expect(within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)).toHaveLength(25)
+    expect(within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)).toHaveLength(10)   // modal ön ayarı
     expect(within(dlg).getByRole('navigation', { name: /Sayfalama|Pagination/ })).toBeInTheDocument()
   })
 })

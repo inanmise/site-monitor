@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * Haftalık Raporlar zenginleştirmesi (2026-09-13): bu-hafta şeridi, durum çipleri + onay kuyruğu, listeden
@@ -66,52 +67,57 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
   })
   afterEach(() => { window.history.replaceState({}, '', '/') })
 
-  it('"Bu hafta" şeridi: takım durumları, rapor yoksa Oluştur → modal o hafta ile; geri sayım metni', async () => {
+  it('"Bu hafta" bölümü: takım durumları, rapor yoksa Oluştur → "Yeni Hafta Raporu" ekranı o hafta + takım ile; geri sayım metni', async () => {
     renderPage()
-    const strip = await screen.findByLabelText(/Bu hafta|This week/)
+    const strip = await screen.findByRole('region', { name: /^(Bu hafta|This week)$/ })
     // Varsayılan KAPALI: başlıkta özet (1 takım eksik), açınca takım satırları
-    expect(strip.textContent).toMatch(/1 takımın raporu eksik|1 teams have no report/)
-    fireEvent.click(strip.querySelector('.wr-tw-head'))
+    expect(strip.textContent).toMatch(/1 takımın raporu eksik|Still to submit: 1/)
+    fireEvent.click(strip.querySelector('[data-slot="collapsible-trigger"]'))
     expect(strip.textContent).toMatch(/SY-A/); expect(strip.textContent).toMatch(/SY-B/)
     expect(strip.textContent).toMatch(/Son giriş|Deadline/)
     fireEvent.click(within(strip).getByText(/Oluştur|Create/))
-    const modal = document.querySelector('.modal-box')
-    expect(modal).not.toBeNull()
-    expect(modal.querySelector('input[type=number][min]').value).toBe('37')
+    // 2026-09-27: küçük pencere yerine yönlendirmeli ekran — seçili hafta özetinde ISO etiket + tarih aralığı
+    await screen.findByRole('heading', { name: /Yeni Hafta Raporu|New Weekly Report/ })
+    const week = document.querySelector('[data-slot="wr-new-week"]')
+    expect(within(week).getByText('2026-W37')).toBeInTheDocument()
+    await waitFor(() => expect(week.textContent).toMatch(/henüz rapor yok|No report for this week yet/))
     // Geçen haftadan devam → create carry_notes:true
-    fireEvent.click(within(modal).getByLabelText(/Geçen haftanın notlarıyla|last week's notes/))
-    fireEvent.click(within(modal).getByText(/^Oluştur$|^Create$/))
+    fireEvent.click(screen.getByLabelText(/Geçen haftanın notlarıyla|last week's notes/))
+    const cta = screen.getByRole('button', { name: /^(Raporu oluştur|Create report)$/ })
+    await waitFor(() => expect(cta).toBeEnabled())
+    fireEvent.click(cta)
     await waitFor(() => expect(api.weeklyReports.create).toHaveBeenCalledWith(expect.objectContaining({ team_id: 6, year: 2026, week_no: 37, carry_notes: true })))
   })
 
   it('durum çipleri facet sayaçlı; "Onayımı bekleyenler" yalnız PENDING satırı bırakır; URL w_st taşır', async () => {
     renderPage()
-    await screen.findByLabelText(/Bu hafta|This week/)
-    await waitFor(() => expect(document.querySelectorAll('.wr-table tbody tr')).toHaveLength(3))
-    const chips = document.querySelector('.wr-chips')
+    await screen.findByRole('region', { name: /^(Bu hafta|This week)$/ })
+    await waitFor(() => expect(document.querySelectorAll('[data-testid="wr-table"] tbody tr')).toHaveLength(3))
+    const chips = document.querySelector('[data-slot="wr-status-chips"]')
     expect(chips.textContent).toMatch(/\(3\)/)
     fireEvent.click(within(chips).getByText(/Onayımı bekleyenler|Awaiting my approval/))
-    await waitFor(() => expect(document.querySelectorAll('.wr-table tbody tr')).toHaveLength(1))
+    await waitFor(() => expect(document.querySelectorAll('[data-testid="wr-table"] tbody tr')).toHaveLength(1))
     await waitFor(() => expect(window.location.search).toContain('w_st=MINE'))
   })
 
   it('skor sütunu + başlıktan skor sıralaması; listeden Onayla onay diyaloğu ister ve approve(id) çağırır; İade Et modalı id ile', async () => {
     renderPage()
-    await waitFor(() => expect(document.querySelectorAll('.wr-table tbody tr')).toHaveLength(3))
-    expect([...document.querySelectorAll('.wr-score')].map((s) => s.textContent)).toEqual(['84', '—', '61'])
-    fireEvent.click(within(document.querySelector('.wr-table thead')).getByRole('button', { name: /Skor|Score/ }))
-    await waitFor(() => expect([...document.querySelectorAll('.wr-score')].map((s) => s.textContent)).toEqual(['84', '61', '—']))
+    await waitFor(() => expect(document.querySelectorAll('[data-testid="wr-table"] tbody tr')).toHaveLength(3))
+    expect([...document.querySelectorAll('[data-slot="wr-score"]')].map((s) => s.textContent)).toEqual(['84', '—', '61'])
+    fireEvent.click(within(document.querySelector('[data-testid="wr-table"] thead')).getByRole('button', { name: /Skor|Score/ }))
+    await waitFor(() => expect([...document.querySelectorAll('[data-slot="wr-score"]')].map((s) => s.textContent)).toEqual(['84', '61', '—']))
     // kebab → Onayla
-    const row = document.querySelector('.wr-table tbody tr')
-    fireEvent.click(within(row).getByLabelText(/İşlemler|Actions/))
+    const row = document.querySelector('[data-testid="wr-table"] tbody tr')
+    pressMenuTrigger(within(row).getByLabelText(/İşlemler|Actions/))   // D2: KebabMenu (Radix DropdownMenu)
     fireEvent.click(screen.getByText(/^Onayla$|^Approve$/))
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     await waitFor(() => expect(api.weeklyReports.approve).toHaveBeenCalledWith(10))
     // kebab → İade Et → not → gönder
-    fireEvent.click(within(document.querySelector('.wr-table tbody tr')).getByLabelText(/İşlemler|Actions/))
+    pressMenuTrigger(within(document.querySelector('[data-testid="wr-table"] tbody tr')).getByLabelText(/İşlemler|Actions/))
     fireEvent.click(screen.getByText(/^İade Et$|^Return$|^Reject$/))
-    fireEvent.change(document.querySelector('.modal-box textarea'), { target: { value: 'eksik' } })
-    fireEvent.click(within(document.querySelector('.modal-box')).getByText(/^İade Et$|^Return$|^Reject$/))
+    const dlg = await screen.findByRole('dialog')
+    fireEvent.change(within(dlg).getByRole('textbox'), { target: { value: 'eksik' } })
+    fireEvent.click(within(dlg).getByText(/^İade Et$|^Return$|^Reject$/))
     await waitFor(() => expect(api.weeklyReports.reject).toHaveBeenCalledWith(10, 'eksik'))
   })
 
@@ -122,13 +128,13 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
     await screen.findByText('2026-W36')
     await waitFor(() => expect(api.weeklyReports.previous).toHaveBeenCalledWith(11))
     // Δ: item1 total 3 vs 1 → ▲ 2 (kötü), item2 open 2 vs 5 → ▼ 3 (iyi)
-    await waitFor(() => expect(document.querySelectorAll('.wr-delta').length).toBeGreaterThan(0))
-    const deltas = [...document.querySelectorAll('.wr-delta')].map((d) => d.textContent.trim())
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="wr-delta"]').length).toBeGreaterThan(0))
+    const deltas = [...document.querySelectorAll('[data-slot="wr-delta"]')].map((d) => d.textContent.trim())
     expect(deltas).toEqual(expect.arrayContaining(['▲ 2', '▼ 3']))
     // öneri: sistemde 4 açık olay, elle 2 → Uygula
     const sug = await screen.findByText(/Uygula|Apply/)
     fireEvent.click(sug)
-    await waitFor(() => expect(document.querySelector('.wr-suggest.is-same')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="wr-suggest"][data-same]')).not.toBeNull())
     // geçen haftanın notu
     fireEvent.click(screen.getByText(/Geçen haftanın notunu göster|Show last week's note/))
     expect(screen.getByText('Geçen haftanın notu')).toBeInTheDocument()
@@ -139,11 +145,11 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
 
   it('AUDIT: şeritte Oluştur yok, çubukta onay kuyruğu çipi yok', async () => {
     renderPage('AUDIT')
-    const strip = await screen.findByLabelText(/Bu hafta|This week/)
-    fireEvent.click(strip.querySelector('.wr-tw-head'))
+    const strip = await screen.findByRole('region', { name: /^(Bu hafta|This week)$/ })
+    fireEvent.click(strip.querySelector('[data-slot="collapsible-trigger"]'))
     expect(within(strip).queryByText(/Oluştur|Create/)).toBeNull()
-    await waitFor(() => expect(document.querySelector('.wr-chips')).not.toBeNull())
-    expect(document.querySelector('.wr-chip-mine')).toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="wr-status-chips"]')).not.toBeNull())
+    expect(document.querySelector('[data-chip="MINE"]')).toBeNull()
   })
 
   it('ikinci tur: listede yorum rozeti; detayda yorum paneli + "Şablondan tamamla" takım şablonundaki eksik kanalları ekler; hatırlatma durumu satırı', async () => {
@@ -154,22 +160,76 @@ describe('WeeklyReportsPage — zenginleştirme (2026-09-13)', () => {
       ? { success: true, data: { report: DRAFT, images: [], team_channels: ['Web Kanalı', 'Mobil'] } }
       : { success: true, data: { report: PENDING, images: [] } })
     renderPage()
-    await waitFor(() => expect(document.querySelector('.wr-cm-badge')).not.toBeNull())
-    expect(document.querySelector('.wr-cm-badge').textContent).toBe('3')
+    await waitFor(() => expect(document.querySelector('[data-comments]')).not.toBeNull())
+    expect(document.querySelector('[data-comments]').textContent).toBe('3')
     const rem = await screen.findByRole('note')
     expect(rem.textContent).toMatch(/1 takıma gidecek|going to 1 teams/)
     // detay: DRAFT (11) düzenlenebilir → şablon düğmesi (2 eksik), tıklayınca 2 kanal sekmesi
-    const rows = document.querySelectorAll('.wr-table tbody tr')   // hafta desc: 37, 36, 35
+    const rows = document.querySelectorAll('[data-testid="wr-table"] tbody tr')   // hafta desc: 37, 36, 35
     fireEvent.click(rows[1])
     await waitFor(() => expect(api.weeklyReports.get).toHaveBeenCalledWith(11))
     await screen.findByText('2026-W36')
     const fill = await screen.findByText(/Şablondan tamamla \(2\)|Fill in from template \(2\)/)
     fireEvent.click(fill)
-    await waitFor(() => expect(screen.getByText('Mobil')).toBeInTheDocument())
+    // 2026-09-27: alanlar satır içi ad alanlarıyla (sekme değil) — değer olarak aranır
+    await waitFor(() => expect(screen.getByDisplayValue('Mobil')).toBeInTheDocument())
+    expect(screen.getByDisplayValue('Web Kanalı')).toBeInTheDocument()
     expect(screen.queryByText(/Şablondan tamamla|Fill in from template/)).toBeNull()
     // yorum paneli: sistem satırı listelenir, form var (ADMIN yazabilir)
     await waitFor(() => expect(api.weeklyReports.comments).toHaveBeenCalledWith(11))
     await screen.findByText(/Onaya gönderildi|Submitted for approval/)
-    expect(document.querySelector('.wr-cm-input')).not.toBeNull()
+    expect(document.querySelector('[data-slot="wr-comment-input"]')).not.toBeNull()
+  })
+
+  // ── D2 (2026-09-26): shadcn — özet katlanır bölümü, kanal sekmeleri (Tabs), telefon kart listesi ──
+  it('D2: "Haftalık Özet" katlanır — kapalıyken gövde DOM\'da gizli (yazdırmada açık: print:block), açınca izleme göstergeleri çekilir', async () => {
+    window.history.replaceState({}, '', '/?tab=weeklyreports&w_id=11')
+    renderPage()
+    await screen.findByText('2026-W36')
+    const trigger = screen.getByRole('button', { name: /Haftalık Özet|Weekly Summary/ })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    const body = document.getElementById(trigger.getAttribute('aria-controls'))
+    expect(body).not.toBeNull()
+    expect(body.className).toMatch(/(^|\s)hidden(\s|$)/)
+    expect(body.className).toMatch(/print:block/)
+    expect(api.weeklyReports.monitoringStats).not.toHaveBeenCalled()
+    fireEvent.click(trigger)
+    await waitFor(() => expect(api.weeklyReports.monitoringStats).toHaveBeenCalledWith(11))
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById(trigger.getAttribute('aria-controls')).className).not.toMatch(/(^|\s)hidden(\s|$)/)
+  })
+
+  // 2026-09-27: Madde 4 sekmeler yerine alan tablosu — ad satır içi düzenlenir, güncelleme satırın altında açılır
+  it('Madde 4: alanlar tabloda satır içi ad alanlarıyla; ilk satırın güncellemesi açık, başka satır açılınca o kanalın notu düzenlenir', async () => {
+    const withCh = { ...DRAFT, content_json: JSON.stringify({ ...JSON.parse(DRAFT.content_json), item4: { channels: [{ id: 'c1', name: 'Web', notes_md: 'web notu' }, { id: 'c2', name: 'Mobil', notes_md: 'mobil notu' }] } }) }
+    api.weeklyReports.get.mockResolvedValue({ success: true, data: { report: withCh, images: [] } })
+    window.history.replaceState({}, '', '/?tab=weeklyreports&w_id=11')
+    renderPage()
+    await screen.findByText('2026-W36')
+    const table = document.querySelector('[data-slot="wr-domain-table"]')
+    expect(within(table).getByRole('textbox', { name: /Domain adı — 1\. satır|Domain name — row 1/ })).toHaveValue('Web')
+    expect(within(table).getByRole('textbox', { name: /Domain adı — 2\. satır|Domain name — row 2/ })).toHaveValue('Mobil')
+    expect(screen.getByDisplayValue('web notu')).toBeInTheDocument()   // ilk satırın düzenleyicisi açık
+    expect(screen.queryByDisplayValue('mobil notu')).toBeNull()
+    fireEvent.click(within(table).getByRole('button', { name: /Güncellemeyi yaz — Mobil|Write the update — Mobil/ }))
+    await waitFor(() => expect(screen.getByDisplayValue('mobil notu')).toBeInTheDocument())
+    expect(screen.queryByDisplayValue('web notu')).toBeNull()
+  })
+
+  it('D2: telefonda (390 px) liste kart görünümünde — tablo yok, kart başlığı raporu açar, işlemler menüsü satırı adıyla ayırır', async () => {
+    const w = window.innerWidth
+    window.innerWidth = 390
+    try {
+      renderPage()
+      await screen.findByRole('region', { name: /^(Bu hafta|This week)$/ })
+      await waitFor(() => expect(document.querySelectorAll('[data-tour="wr-table"] li[data-status]').length).toBe(3))
+      expect(document.querySelector('[data-testid="wr-table"]')).toBeNull()
+      const card = document.querySelector('[data-tour="wr-table"] li[data-status="DRAFT"]')
+      expect(within(card).getByRole('button', { name: /— (İşlemler|Actions)$/ })).toBeInTheDocument()
+      fireEvent.click(card.querySelector('button'))
+      await waitFor(() => expect(api.weeklyReports.get).toHaveBeenCalledWith(11))
+    } finally {
+      window.innerWidth = w
+    }
   })
 })

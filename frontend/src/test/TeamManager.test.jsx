@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import TeamManager from '../components/admin/TeamManager.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -90,22 +90,36 @@ describe('TeamManager — business-card members', () => {
 
     await waitFor(() => expect(api.admin.getTeamUsers).toHaveBeenCalledWith(1))
     await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
-    await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull())
     // Label-value fields are rendered with i18n labels and raw values inside the card
-    const card = document.querySelector('.tm-member-card')
+    const card = document.querySelector('[data-slot="team-member-card"]')
     expect(card.textContent).toContain('Ali V')
     expect(card.textContent).toContain('ali')
     expect(card.textContent).toContain('12345')
     expect(card.textContent).toContain('ali@example.com')
   })
 
+  it('üst yeniden render üye modalını YENİDEN YÜKLEMEZ (loadMembers kimliği sabit — useCallback)', async () => {
+    const { rerender } = render(<TeamManager onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    fireEvent.click(teamBadge('Payments'))
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull())
+    expect(api.admin.getTeamUsers).toHaveBeenCalledTimes(1)
+
+    rerender(<TeamManager onTeamsChange={() => {}} />)   // yeni prop kimliği → TeamManager yeniden çizilir
+    rerender(<TeamManager onTeamsChange={() => {}} />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(api.admin.getTeamUsers).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull()
+  })
+
   it('opens the user edit modal when a member card is clicked (admin only)', async () => {
     render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
     fireEvent.click(teamBadge('Payments'))
-    await waitFor(() => expect(document.querySelector('.tm-member-card-clickable')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-open"]')).not.toBeNull())
 
-    const card = document.querySelector('.tm-member-card-clickable')
+    const card = document.querySelector('[data-slot="team-member-open"]')
     expect(card).not.toBeNull()
     fireEvent.click(card)
 
@@ -117,9 +131,9 @@ describe('TeamManager — business-card members', () => {
     render(<TeamManager onTeamsChange={() => {}} />)
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
     fireEvent.click(teamBadge('Payments'))
-    await waitFor(() => expect(document.querySelector('.tm-member-card')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull())
 
-    expect(document.querySelector('.tm-member-card-clickable')).toBeNull()
+    expect(document.querySelector('[data-slot="team-member-open"]')).toBeNull()
   })
 })
 
@@ -140,7 +154,7 @@ describe('TeamManager — haftalık e-posta anahtarları', () => {
   })
 
   /** Satır sırası tablodakiyle aynı: her takımda 2 anahtar (hatırlatma, erişilebilirlik). */
-  const pills = () => [...document.querySelectorAll('.tm-weekly-cell .perm-pill')]
+  const pills = () => within(screen.getByRole('table')).getAllByRole('switch')
 
   it('anahtarın durumu takım verisinden gelir', async () => {
     render(<TeamManager systemRole="USER" ownTeamId={1} myTeamIds={[1]} onTeamsChange={() => {}} />)
@@ -183,7 +197,7 @@ describe('TeamManager — haftalık e-posta anahtarları', () => {
     await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
 
     fireEvent.click(screen.getByRole('button', { name: /Takım Ekle|Add Team/i }))
-    const formPills = [...document.querySelectorAll('.tm-weekly-form .perm-pill')]
+    const formPills = within(screen.getByTestId('tm-weekly-form')).getAllByRole('switch')
     expect(formPills).toHaveLength(2)
     formPills.forEach(p => expect(p.getAttribute('aria-checked')).toBe('false'))
   })

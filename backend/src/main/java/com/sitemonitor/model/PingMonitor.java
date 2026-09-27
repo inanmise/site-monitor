@@ -13,7 +13,7 @@ import org.hibernate.annotations.ColumnDefault;
 @Table(name = "ping_monitors")
 @Data
 @NoArgsConstructor
-public class PingMonitor implements MonitorAlertPrefs, MonitorSchedule {
+public class PingMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -138,6 +138,16 @@ public class PingMonitor implements MonitorAlertPrefs, MonitorSchedule {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    /** 7/24 İzleme Ekibi (NOC) bildirimi (2026-09-27) — null = KAPALI (varsayılan). Bkz. {@link NocTarget}. */
+    @jakarta.persistence.Column(name = "noc_notify")
+    private Boolean nocNotify;
+
+    /** Hedef NOC grupları (virgüllü kimlik); null = varsayılan gruplar. API'ye LİSTE olarak yazılır
+     *  ({@code noc_group_ids}) — ham virgüllü değer JSON'a çıkmaz. */
+    @jakarta.persistence.Column(name = "noc_group_ids", length = 500)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String nocGroupIds;
 
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "PING"; }

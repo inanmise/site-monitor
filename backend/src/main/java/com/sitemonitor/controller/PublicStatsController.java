@@ -69,7 +69,7 @@ public class PublicStatsController {
                             + "FROM uptime_checks WHERE checked_at >= ? AND maintenance IS NOT TRUE", cutoff);
             long total = row.get("total") instanceof Number n ? n.longValue() : 0;
             long ups   = row.get("ups")   instanceof Number n ? n.longValue() : 0;
-            if (total > 0) pct = Math.round(ups * 1000.0 / total) / 10.0;   // 1 ondalık
+            pct = com.sitemonitor.util.AvailabilityMath.pct(total, ups, 1);   // 1 ondalık; olay varken %100,0 DEĞİL (O-5)
         } catch (Exception e) {
             log.debug("Public stats erişilebilirlik hesaplanamadı: {}", e.getMessage());
         }

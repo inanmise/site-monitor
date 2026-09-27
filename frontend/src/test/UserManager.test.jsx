@@ -208,9 +208,10 @@ describe('UserManager', () => {
     api.admin.unlockUserTeams.mockResolvedValue({ success: true })
     renderUm()
     const lockedRow = (await screen.findByText('cokTakim')).closest('tr')
-    expect(within(lockedRow).getByTitle(/Takımlar kilitli|Teams locked/i)).toBeInTheDocument()
+    // kilit artık emoji değil: lucide Lock rozeti (role=img, adı ipucu metni)
+    expect(within(lockedRow).getByRole('img', { name: /Takımlar kilitli|Teams locked/i })).toHaveAttribute('data-lock', 'team')
     const plainRow = screen.getByText('ali').closest('tr')
-    expect(within(plainRow).queryByTitle(/Takımlar kilitli|Teams locked/i)).toBeNull()
+    expect(within(plainRow).queryByRole('img', { name: /Takımlar kilitli|Teams locked/i })).toBeNull()
 
     await openRowMenu('ali')
     expect(screen.queryByText(/Takımları AD'ye geri ver|Return teams to AD/i)).toBeNull()

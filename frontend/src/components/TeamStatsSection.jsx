@@ -1,6 +1,11 @@
 import { Users } from 'lucide-react'
 import TeamBadge from './ui/TeamBadge.jsx'
 import { useT } from '../i18n/index.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { Card } from '@/components/shadcn/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 const STATUSES = [
   { key: 'valid',    countKey: 'valid_count',    domainsKey: 'valid_domains'    },
@@ -10,6 +15,19 @@ const STATUSES = [
   { key: 'expired',  countKey: 'expired',        domainsKey: 'expired_domains'  },
 ]
 
+/** Durum sütunu rengi (başlık + sıfır olmayan sayı) — eski .ts-hdr-* / .ts-cell-*.ts-cell-active. */
+const STATUS_INK = {
+  valid: 'text-green-500',
+  warning: 'text-amber-500',
+  high: 'text-orange-500',
+  critical: 'text-red-500',
+  expired: 'text-zinc-400',
+}
+
+/**
+ * Takım × kademe (T1/T2) sertifika durum ızgarası. Çizim shadcn Card + Table; sıfır olmayan sayı gerçek bir
+ * shadcn Button (klavyeyle odaklanır, adı takım + kademe + durum + sayı) → tıklanınca o alan adları süzülür.
+ */
 function TierRow({ label, stats, teamName, onStatClick, t }) {
   function click(domainsKey, statusLabel) {
     const domains = stats?.[domainsKey] ?? []
@@ -17,22 +35,27 @@ function TierRow({ label, stats, teamName, onStatClick, t }) {
     onStatClick(new Set(domains), `${teamName} — ${label} — ${statusLabel}`)
   }
   return (
-    <tr className="ts-grid-row">
-      <td className="ts-grid-tier-cell">{label}</td>
+    <TableRow className="border-0 hover:bg-transparent">
+      <TableCell className="px-2.5 py-2 text-[.82em] font-bold text-muted-foreground">{label}</TableCell>
       {STATUSES.map(({ key, countKey, domainsKey }) => {
         const count = stats?.[countKey] ?? 0
+        const statusLabel = t(`ts.${key}`)
         return (
-          <td
-            key={key}
-            className={`ts-grid-val-cell ts-cell-${key}${count > 0 ? ' ts-cell-active' : ' ts-cell-zero'}`}
-            tabIndex={count > 0 ? 0 : undefined}
-            aria-label={count > 0 ? `${t(`ts.${key}`)}: ${count}` : undefined}
-            onClick={() => count > 0 && click(domainsKey, t(`ts.${key}`))}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); count > 0 && click(domainsKey, t(`ts.${key}`)) } }}
-          >{count}</td>
+          <TableCell key={key} data-status={key} className="p-1 text-center">
+            {count > 0 ? (
+              <Button type="button" variant="ghost" size="sm" data-status={key}
+                aria-label={`${teamName} · ${label} · ${statusLabel}: ${count}`}
+                className={cn('h-10 w-full min-w-10 px-1 text-[1.05em] font-bold tabular-nums', STATUS_INK[key])}
+                onClick={() => click(domainsKey, statusLabel)}>
+                {count}
+              </Button>
+            ) : (
+              <span className="text-muted-foreground opacity-45">{count}</span>
+            )}
+          </TableCell>
         )
       })}
-    </tr>
+    </TableRow>
   )
 }
 
@@ -40,27 +63,31 @@ function TeamCard({ team, onStatClick }) {
   const t = useT()
   const total = (team.sy_t1_stats?.total_certificates ?? 0) + (team.sy_t2_stats?.total_certificates ?? 0)
   return (
-    <div className={`ts-team-card${total === 0 ? ' ts-zero' : ''}`}>
-      <div className="ts-team-card-header">
-        <Users size={13} className="ts-team-icon" />
-        <span className="ts-team-name"><TeamBadge teamId={team.team_id} teamName={team.team_name} size={0} /></span>
-        <span className="ts-team-grand-total">{total}</span>
+    <Card data-slot="team-stats-card" className={cn('gap-0 overflow-hidden py-0 shadow-none', total === 0 && 'opacity-40')}>
+      <div className="flex items-center gap-[7px] border-b bg-muted/50 px-3.5 py-2 text-[.875em] font-bold">
+        <Users size={13} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+        <span data-slot="team-stats-name" className="min-w-0 flex-1 truncate">
+          <TeamBadge teamId={team.team_id} teamName={team.team_name} size={0} />
+        </span>
+        <span className="ml-auto shrink-0 rounded-md bg-primary/10 px-2 text-[1.15em] leading-[1.7] font-extrabold text-primary">{total}</span>
       </div>
-      <table className="ts-grid-table">
-        <thead>
-          <tr>
-            <th className="ts-grid-tier-hdr"></th>
+      <Table className="text-[.92em]">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="w-11" />
             {STATUSES.map(({ key }) => (
-              <th key={key} className={`ts-grid-hdr ts-hdr-${key}`}>{t(`ts.${key}`)}</th>
+              <TableHead key={key} className={cn('px-1.5 text-center text-[.76em] font-bold tracking-[.04em] uppercase', STATUS_INK[key])}>
+                {t(`ts.${key}`)}
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           <TierRow label="T1" stats={team.sy_t1_stats} teamName={team.team_name} onStatClick={onStatClick} t={t} />
           <TierRow label="T2" stats={team.sy_t2_stats} teamName={team.team_name} onStatClick={onStatClick} t={t} />
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+      </Table>
+    </Card>
   )
 }
 
@@ -79,18 +106,18 @@ function AdminView({ teams, onStatClick }) {
 
   return (
     <div className="ts-root">
-      <div className="ts-section-frame">
-        <div className="ts-section-header">
-          <Users size={15} className="ts-section-icon" />
+      <Card className="gap-3 px-3.5 pt-3.5 pb-2.5 shadow-none">
+        <div className="flex items-center gap-[7px] text-[.78em] font-bold tracking-[.06em] text-muted-foreground uppercase">
+          <Users size={15} aria-hidden="true" className="shrink-0 opacity-65" />
           <span>{t('ts.teamSectionTitle')}</span>
-          <span className="ts-section-badge">{visibleTeams.length}</span>
+          <Badge data-slot="team-stats-count" className="ml-auto rounded-[10px] px-[7px] font-extrabold">{visibleTeams.length}</Badge>
         </div>
-        <div className="ts-admin-grid">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(440px,100%),1fr))] gap-3.5">
           {visibleTeams.map((team) => (
             <TeamCard key={team.team_id} team={team} onStatClick={onStatClick} />
           ))}
         </div>
-      </div>
+      </Card>
     </div>
   )
 }
@@ -105,7 +132,9 @@ function PersonalView({ data, onStatClick }) {
   }
   return (
     <div className="ts-root">
-      <div className="ts-title">{t('ts.title')}{data.team_name ? ` — ${data.team_name}` : ''}</div>
+      <div className="mb-2 text-[.78em] font-bold tracking-[.07em] text-muted-foreground uppercase">
+        {t('ts.title')}{data.team_name ? ` — ${data.team_name}` : ''}
+      </div>
       <TeamCard team={team} onStatClick={onStatClick} />
     </div>
   )

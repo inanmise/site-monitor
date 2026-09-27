@@ -74,6 +74,25 @@ public class AuditService {
     private String fallbackFile;
 
     /**
+     * Birincil fallback yazılamazsa kullanılan ikinci yer (prod kapısı 2026-09-25, P3-4): prod kök dosya
+     * sistemi salt-okunur (helm {@code readOnlyRootFilesystem: true}) ve eski göreli varsayılan
+     * {@code /app/logs}'a çözülüyordu — DB hatasında kayıt dosyaya da YAZILAMIYOR, dosya hiç oluşmadığı için
+     * "bekleyen 0" görünüyordu. Varsayılan artık log dizini (application.properties); o da yazılamazsa
+     * sistem geçici dizini ({@code /tmp} prod'da yazılabilir emptyDir). Testler kendi dizinini verir.
+     */
+    private String fallbackSecondaryDir = System.getProperty("java.io.tmpdir");
+
+    /** İki yere de yazılamayan (TAMAMEN kaybolan) kayıt sayısı — bekleyen sayısına eklenir: "temiz" yalanı olmasın. */
+    private final java.util.concurrent.atomic.AtomicLong droppedFallbackCount = new java.util.concurrent.atomic.AtomicLong();
+
+    private Path secondaryFallbackPath() {
+        String dir = fallbackSecondaryDir;
+        if (dir == null || dir.isBlank()) return null;
+        Path name = Path.of(fallbackFile).getFileName();
+        return Path.of(dir, "site-monitor", name == null ? "audit-fallback.jsonl" : name.toString());
+    }
+
+    /**
      * Fallback dosyasındaki (DB'ye yazılamamış) denetim kaydı sayısı — 0 ise sorun yok.
      *
      * <p>Neden gerekiyor: bu dosya denetim izinin son çaresi ama <b>geri okuyan hiçbir kod yoktu</b>.
@@ -85,14 +104,20 @@ public class AuditService {
      */
     public long pendingFallbackAuditCount() {
         try {
-            Path p = Path.of(fallbackFile);
-            if (!Files.exists(p)) return 0L;
-            try (var lines = Files.lines(p, StandardCharsets.UTF_8)) {
-                return lines.filter(l -> !l.isBlank()).count();
-            }
+            long n = countLines(Path.of(fallbackFile));
+            Path second = secondaryFallbackPath();
+            if (second != null && !second.equals(Path.of(fallbackFile))) n += countLines(second);
+            return n + droppedFallbackCount.get();   // hiçbir yere yazılamayanlar da "denetim izinde yok"
         } catch (Exception e) {
             log.debug("Denetim fallback dosyası okunamadı ({}): {}", fallbackFile, e.getMessage());
             return -1L;
+        }
+    }
+
+    private static long countLines(Path p) throws java.io.IOException {
+        if (!Files.exists(p)) return 0L;
+        try (var lines = Files.lines(p, StandardCharsets.UTF_8)) {
+            return lines.filter(l -> !l.isBlank()).count();
         }
     }
 
@@ -155,14 +180,27 @@ public class AuditService {
     private void writeFallback(AuditLog e, Exception cause) {
         log.error("AUDIT DB yazımı BAŞARISIZ (event={} actor={}) — fallback dosyaya yazılıyor: {}",
                 e.getEventType(), e.getActor(), cause.toString());
+        String line = fallbackJson(e) + System.lineSeparator();
         try {
-            Path p = Path.of(fallbackFile);
-            if (p.getParent() != null) Files.createDirectories(p.getParent());
-            Files.writeString(p, fallbackJson(e) + System.lineSeparator(), StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            appendLine(Path.of(fallbackFile), line);
+            return;
         } catch (Exception fe) {
-            log.error("AUDIT fallback dosya yazımı DA başarısız — kayıt kaybı: {}", fe.toString());
+            log.error("AUDIT fallback dosyası yazılamadı ({}): {} — geçici dizin deneniyor", fallbackFile, fe.toString());
         }
+        Path second = secondaryFallbackPath();
+        try {
+            if (second == null) throw new java.io.IOException("geçici dizin tanımsız");
+            appendLine(second, line);
+            log.error("AUDIT kaydı geçici fallback dosyasına yazıldı: {} (kalıcı DEĞİL — incelenmeli)", second);
+        } catch (Exception fe2) {
+            droppedFallbackCount.incrementAndGet();
+            log.error("AUDIT fallback dosya yazımı DA başarısız — kayıt kaybı: {}", fe2.toString());
+        }
+    }
+
+    private static void appendLine(Path p, String line) throws java.io.IOException {
+        if (p.getParent() != null) Files.createDirectories(p.getParent());
+        Files.writeString(p, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
     private static String fallbackJson(AuditLog e) {

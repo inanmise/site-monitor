@@ -63,7 +63,7 @@ data:
   DOMAIN_CRITICAL_CHECK_THRESHOLD_DAYS: {{ .Values.config.domainCriticalCheckThresholdDays | quote }}
   # Kurumsal SSL-araya-giren proxy'nin kök/ara CA paketi (PEM). TrustEvaluator bunu cacerts'e EK
   # trust anchor olarak kullanır → RDAP/outbound HTTPS PKIX ile doğrulanır (trust-all YOK). Boş =
-  # yalnız public CA'lar. CA rotasyonunda bu value'yu güncelle (bkz. domain-expiry runbook).
+  # yalniz public CA'lar. CA rotasyonunda bu value'yu guncelle (see docs/RUNBOOK.md, proxy CA rotation).
   {{- if .Values.config.caBundlePem }}
   TRUST_CA_BUNDLE_PEM: {{ .Values.config.caBundlePem | quote }}
   {{- end }}

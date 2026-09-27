@@ -1,5 +1,6 @@
 import { ListChecks } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -17,8 +18,10 @@ import { Button } from '@/components/shadcn/button'
  * ayrıca sayı, basmadan önce "kaç izlemeyi tetikleyeceğim" sorusunu cevaplıyor.
  *
  * @param {number} count  kaç izleme kontrol edilebilir — 0 ise düğme HİÇ çizilmez
+ * @param {string} [size]       shadcn Button boyu (varsayılan sm; sayfa başlığı — MonitorPageHeader — default verir)
+ * @param {string} [className]  ek sınıflar (telefonda satırı dolduran `flex-1` gibi)
  */
-export default function CheckAllButton({ count, running, done = 0, total = 0, onClick }) {
+export default function CheckAllButton({ count, running, done = 0, total = 0, onClick, size = 'sm', className }) {
   const t = useT()
   // Kalıcı gri bir düğme yerine YÜZEY YOK: yetkisi olmayan (ör. ADMIN olmayan DNS kullanıcısı)
   // ya da listesi boş olan kullanıcıya basılamayan bir düğme göstermek bilgi değil gürültüdür.
@@ -27,14 +30,15 @@ export default function CheckAllButton({ count, running, done = 0, total = 0, on
   return (
     <Button
       type="button"
-      variant="outline" size="sm"
+      variant="outline" size={size} className={className}
       onClick={onClick}
       disabled={running}
       aria-busy={running || undefined}
       title={t('mon.checkAllTitle', count)}
     >
-      <ListChecks size={14} />
-      {running ? t('app.checkedOf', done, total) : t('mon.checkAll', count)}
+      {/* Koşarken ikon yerine dönen gösterge + ilerleme ("12/40 …", tabular-nums: sayılar zıplamasın) */}
+      {running ? <Spinner size={14} decorative inline /> : <ListChecks size={14} aria-hidden="true" />}
+      <span className="tabular-nums">{running ? t('app.checkedOf', done, total) : t('mon.checkAll', count)}</span>
     </Button>
   )
 }

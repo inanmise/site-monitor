@@ -107,4 +107,27 @@ describe('DnsDetailModal', () => {
     // propagation kapalı → propagation satırı yok
     expect(screen.queryByText(/yayılım kontrolü çözümleyicileri|propagation check resolvers/i)).toBeNull()
   })
+
+  // shadcn geçişi (2026-09-25): elle kurulu .dns-modal-* penceresi → diğer sekiz türün detay kabuğu
+  // (MonitorDetailModal / ui/ModalShell). Kabuk sözleşmesi + kayıt türü alt sekmeleri + değişim rozetleri.
+  it('ortak detay kabuğu: dialog adı domain; kayıt türleri sekme (boş tür soluk, seçilince "kayıt yok"); rozetler Badge; Escape kapatır', async () => {
+    const onClose = vi.fn()
+    render(<DnsDetailModal monitor={monitor} onClose={onClose} status="up" />)
+    const dlg = await screen.findByRole('dialog', { name: /www\.iyigelecegeyatirim\.com/ })
+    // Kayıt türü alt sekmeleri: izlenen tür (A) seçili, değer sayısı rozeti adda; boş tür işaretli
+    const aTab = await screen.findByRole('tab', { name: /^A\s*1$/ })
+    expect(aTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /^AAAA$/ })).toHaveAttribute('data-empty', 'true')
+    expect(dlg.querySelector('code')?.textContent).toBe('192.168.1.10')
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /^MX$/ }), { button: 0 })
+    expect(await screen.findByText(/bu tip için kayıt bulunamadı|no records found for this type/i)).toBeInTheDocument()
+    // Geçmiş satırı rozetleri shadcn Badge (data-variant): "değişti" + "beklenen içinde" (1. satır), "değişiklik yok"
+    // (2. satır). İpuçlu rozetin data-slot'u Tooltip tetiğinindir (Slot birleştirmesi) → rozet data-variant'tan tanınır.
+    await waitFor(() => expect(dlg.querySelector('[data-variant][data-change="changed"]')).not.toBeNull())
+    expect(dlg.querySelector('[data-variant="outline"][data-change="expected"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-variant][data-change="none"]')).not.toBeNull()
+    // Escape → kabuk (Radix katman yığını) onClose'u çağırır; eski useEscapeKey artık yok
+    fireEvent.keyDown(document.activeElement || dlg, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
+  })
 })

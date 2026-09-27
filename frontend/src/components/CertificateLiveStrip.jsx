@@ -3,6 +3,8 @@ import { BellRing, BellOff } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import { formatDate } from '../api/client'
 import { navigateTo } from '../utils/navigate.js'
+import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * Genel Bakış kartı "şu an" şeridi (2026-09-19, kullanıcı seçimi) — footer'da eylem düğmelerinin karşısında:
@@ -41,23 +43,32 @@ function CertificateLiveStrip({ domain, uptime, alert }) {
     alert ? `${alert.type || ''} · ${alert.level || ''} · ${open ? t('live.alertOpen') : t('live.alertResolved', alert.resolved_at ? formatDate(alert.resolved_at) : '')}` : t('live.noAlert'),
   ].filter(Boolean).join('\n')
   return (
-    <button type="button" className={`cc-live cc-live--${tone}`} title={title}
-      onClick={(e) => { e.stopPropagation(); navigateTo('uptime', { q: domain }) }}>
+    // shadcn Button (hap biçimli, outline). Ton `data-tone` (ok|bad); sorun yoksa nötr — 100 kartta gürültü olmasın.
+    <Button type="button" variant="outline" size="xs" data-cert-live="true" data-tone={tone} title={title}
+      onClick={(e) => { e.stopPropagation(); navigateTo('uptime', { q: domain }) }}
+      className={cn(
+        'h-auto min-w-0 max-w-full shrink-0 gap-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] font-semibold whitespace-nowrap shadow-none has-[>svg]:px-1.5',
+        tone === 'bad'
+          ? 'border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive dark:border-destructive/50 dark:bg-destructive/20 dark:hover:bg-destructive/30'
+          : 'text-muted-foreground hover:border-primary hover:bg-background hover:text-primary dark:hover:bg-input/30',
+      )}>
       {uptime && (
-        <span className="cc-live-up">
-          <span className={`cc-live-dot${down ? ' is-down' : up ? ' is-up' : ''}`} aria-hidden="true" />
+        <span className="inline-flex items-center gap-1">
+          <span data-live-dot={down ? 'down' : up ? 'up' : 'unknown'} aria-hidden="true"
+            className={cn('size-[7px] shrink-0 rounded-full bg-muted-foreground/60',
+              up && 'bg-success', down && 'bg-destructive ring-[3px] ring-destructive/20')} />
           {down ? t('live.down') : up ? t('live.up') : t('live.unknown')}
-          {uptime.last_ms != null && up && <span className="cc-live-muted"> {uptime.last_ms}ms</span>}
+          {uptime.last_ms != null && up && <span className="font-medium opacity-85"> {uptime.last_ms}ms</span>}
         </span>
       )}
       {/* Açık alarm = zil ikonu + seviye (2026-09-20): "alarm AÇIK · CRITICAL" metni dar footer'da kesiliyordu (K harfi). */}
-      <span className={`cc-live-alert${open ? ' is-open' : ''}`}>
-        {uptime ? <span className="cc-live-sep" aria-hidden="true">·</span> : null}
+      <span className={cn('inline-flex items-center gap-0.5 whitespace-nowrap', open && 'font-bold')}>
+        {uptime ? <span className="mx-px opacity-60" aria-hidden="true">·</span> : null}
         {!alert ? t('live.noAlert')
-          : open ? <><BellRing size={11} className="cc-live-bell" aria-label={t('live.alertOpen')} /> {levelShort(alert.level, t)}</>
-          : <><BellOff size={11} className="cc-live-bell cc-live-bell--off" aria-hidden="true" /> {t('live.alertAgo', ago(alert.resolved_at || alert.at, t) || '—')}</>}
+          : open ? <><BellRing data-bell="open" className="size-[11px] shrink-0 text-destructive" aria-label={t('live.alertOpen')} /> {levelShort(alert.level, t)}</>
+          : <><BellOff data-bell="off" className="size-[11px] shrink-0 text-muted-foreground opacity-70" aria-hidden="true" /> {t('live.alertAgo', ago(alert.resolved_at || alert.at, t) || '—')}</>}
       </span>
-    </button>
+    </Button>
   )
 }
 

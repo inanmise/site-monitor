@@ -8,6 +8,10 @@
 > Değişmeyenler: **DB şeması ve DB kimliği** (`dbName/dbUser: certmonitor`), tüm
 > `/api/...` yolları, prod host (`certmonitor-prod.example.com` — DNS/URL kapsam dışı,
 > ayrıca ele alınacak), uygulama verisi.
+>
+> **Güncel prod dağıtım komutu bu dosyada DEĞİL:** tek geçerli komut, ön kontroller ve geri alma
+> [`PROD_DEPLOY_CHECKLIST.md`](PROD_DEPLOY_CHECKLIST.md)'dedir (imaj etiketi `v` önekli, `--reuse-values` yok,
+> `secret.existingSecret`, bilinçli `config.logLevel=DEBUG`). Bu plan yalnız rename geçişinin tarihçesidir.
 
 ## 0. Ön koşullar
 - Rename sürümü main'e girmiş ve release edilmiş olmalı (imaj: `ghcr.io/<owner>/site-monitor:v<X.Y.Z>`,
@@ -27,8 +31,13 @@ Mevcut namespace'te secret'ları **yeni env adlarıyla** (`SITE_MONITOR_USERNAME
 - Acele yok: properties'te `${SITE_MONITOR_X:${CERT_MONITOR_X:...}}` geriye-uyum zinciri
   var — eski `CERT_MONITOR_*` adları çalışmaya devam eder; uygulama açılışta eski adları
   görürse TEK bir WARN basar.
-- `SECRET_KEY` DEĞERİ AYNI KALMALI (yalnız anahtar ADI değişiyor) — değer değişirse
-  şifreli saklanan SMTP/LDAP/k6 secret'ları çözülemez.
+- ⚠ **`SECRET_KEY` DEĞERİ AYNI KALMALI** (yalnız anahtar ADI değişiyor). Değer değişirse uygulama
+  açılır ama şifreli saklanan her sır `null` çözülür: LDAP bind parolası, SMTP parolası, HTTP/Keyword
+  özel başlık sırları, kişi-push başlık sırları, PageSpeed API anahtarı, senaryo (k6) env sırları. Tek iz
+  `SecretCipher: decrypt failed` WARN'ıdır; rotasyon aracı yoktur. Yeni bir anahtar **üretmeyin** — eski
+  değeri yeni ada kopyalayın. Dağıtımdan (ve LDAP girişi / SMTP test maili gibi sırları kullanan bir duman
+  testinden) sonra: `kubectl logs -n <ns> deploy/<ad> | grep -c "decrypt failed"` → **0** olmalı.
+  Ayrıntı: [`RUNBOOK.md` → Secret key](RUNBOOK.md#secret-key).
 
 ### 2.1 ⚠ ESKİ RELEASE'İN --set / ELLE VERİLMİŞ DEĞERLERİ TAŞINMAZ — kontrol listesi
 > 2026-08 prod kesintisi bu adım eksik olduğu için yaşandı: proxy değerleri yalnız eski
@@ -46,14 +55,17 @@ Taze install ÖNCESİ eski release'ten dök ve karşılaştır:
 | WHOIS kararı | `config.whoisEnabled` | `DOMAIN_WHOIS_ENABLED` | port-43 proxy'den geçemez → prod'da `false` doğru; `.tr` verisi web-whois'ten gelir (`tr-web-whois-enabled` varsayılan açık) |
 | Kurumsal CA paketi | `config.caBundlePem` veya DB `site.monitor.trust.ca-bundle-pem` | `TRUST_CA_BUNDLE_PEM` | SSL-inspection proxy'de RDAP PKIX için |
 | Uygulama taban URL'i | (Genel Ayarlar `site.monitor.app.base-url` — DB) | `APP_BASE_URL` | e-posta linkleri; eski host kalmasın |
-| Log seviyesi | `config.logLevel` | `LOG_LEVEL` | prod'da INFO |
+| Log seviyesi | `config.logLevel` | `LOG_LEVEL` | prod **DEBUG** ile koşar — ürün sahibinin bilinçli kararı; `master.yaml` INFO der, dağıtım komutu `--set config.logLevel=DEBUG` taşır (düşerse prod INFO'ya döner) |
+| DB bağlantısı | `config.dbHost/dbName/dbUser` | `DB_HOST/DB_NAME/DB_USER` | hiçbir overlay'de yok → repo dışı özel values dosyası |
+| DB havuzu | `config.dbPoolMax` | `DB_POOL_MAX` | `master.yaml`'da 30; `--reuse-values` yüzünden çalışan pod'da 10 kalmıştı |
 
 Doğrulama: açılış "ETKİN KONFİGÜRASYON" dökümünde `site.monitor.proxy.host` dolu ve
 `RDAP istemcisi proxy üzerinden: <host>:<port>` satırı VAR (yoksa uygulama artık açık
 WARN basar: "RDAP istemcisi DOĞRUDAN çıkışta — proxy tanımsız").
 
 ## 3. Kurulum stratejisi (infra ile seçilecek)
-**(a) Yan yana (önerilen):** aynı namespace'e `helm install site-monitor ...` → doğrulama
+**(a) Yan yana (önerilen):** aynı namespace'e `helm install site-monitor ...` (komut ve bayraklar
+[`PROD_DEPLOY_CHECKLIST.md`](PROD_DEPLOY_CHECKLIST.md)'deki gibi; imaj etiketi `v` önekli) → doğrulama
 sonrası eski `cert-monitor` release'i uninstall.
 **(b) Bakım penceresi:** eski release uninstall → yeni install.
 
@@ -88,5 +100,7 @@ Kalıcı geri dönüş gerekirse anahtarları tersine güncelleyen tek SQL yeter
   Eski `CertMonitor-*` UA'sına tanımlı WAF/rate-limit istisnaları yeni desene güncellenmeli.
 - **Log toplayıcı:** filebeat/fluentd benzeri toplayıcılarda `cert-monitor*.log` dosya/dizin
   desenleri `site-monitor*.log` ve `/var/log/site-monitor` olarak güncellenmeli.
-- 2 sürüm sonra `CERT_MONITOR_*` env alias'ları ve eski remember-me cookie tanıma
-  (`cert-monitor-remember`) kaldırılacak — dağıtımlar o tarihe dek yeni adlara geçmiş olmalı.
+- `CERT_MONITOR_*` env alias'ları ve eski remember-me cookie tanıma (`cert-monitor-remember`) "2 sürüm
+  sonra" kaldırılacaktı; **2026-09-26 itibarıyla hâlâ duruyor** (`application.properties`, ör.
+  `CERT_MONITOR_SECRET_KEY`). Kaldırma tarihi ayrıca belirlenecek ve CHANGELOG'da **BREAKING** olarak
+  duyurulacak — dağıtımlar o tarihe dek yeni adlara geçmiş olmalı.

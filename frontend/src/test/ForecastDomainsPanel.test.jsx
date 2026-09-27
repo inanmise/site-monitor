@@ -27,15 +27,30 @@ describe('ForecastDomainsPanel', () => {
     expect(screen.getByText('forecast.domKpiUnknown(1)')).toBeInTheDocument()
     expect(screen.queryByText(/c\.example\.com/)).toBeNull()
     expect(screen.getByText(/d\.example\.com/)).toBeInTheDocument()
-    // Şerit: 90 çubuk, 5. gün ve 45. gün dolu
-    const bars = container.querySelectorAll('.fc-domains-bar')
+    // Şerit: 90 çubuk, 5. gün ve 45. gün dolu (shadcn/Tailwind: `data-slot` + `data-has` kancası, sınıf değil)
+    const bars = container.querySelectorAll('[data-slot="fc-domains-bar"]')
     expect(bars).toHaveLength(90)
-    expect(bars[5].classList.contains('has')).toBe(true)
-    expect(bars[45].classList.contains('has')).toBe(true)
-    expect(bars[6].classList.contains('has')).toBe(false)
-    // Sınıflar: 5 gün ≤ kritik 7 → critical; 45 gün → later (uyarı 30 varsayılanı üstü); dolmuş → overdue
-    expect(container.querySelector('.fc-exp-cls--critical')).not.toBeNull()
-    expect(screen.getByText(/dom\.expiredAgo 3/)).toBeInTheDocument()
+    expect(bars[5].getAttribute('data-has')).toBe('true')
+    expect(bars[45].getAttribute('data-has')).toBe('true')
+    expect(bars[6].hasAttribute('data-has')).toBe(false)
+    // Tablo satırı: kalan gün rozeti + alan adı düğmesi; takım/tescil firması telefon alt satırında da var
+    const row = container.querySelector('[data-slot="fc-domain-row"][data-cls="critical"]')
+    expect(row).not.toBeNull()
+    expect(row.textContent).toMatch(/a\.example\.com/)
+    expect(row.querySelector('[data-slot="fc-domain-team"]').textContent).toBe('Takım A')
+    expect(row.querySelector('[data-slot="fc-domain-registrar"]').textContent).toBe('R1')
+    // Sınıflar: 5 gün ≤ kritik 7 → critical; 45 gün → later (uyarı 30 varsayılanı üstü); dolmuş → "N gün önce doldu"
+    expect(container.querySelector('[data-cls="critical"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="fc-domain-row"][data-cls="overdue"]').textContent).toMatch(/inv\.expiredAgo\(3\)/)
+    // Varsayılan: kart başlığı var; sayfa içinde (katlanır bölüm başlığı zaten var) heading={false} başlığı çizmez
+    expect(container.querySelector('[data-slot="card-title"]').textContent).toMatch(/forecast\.domTitle/)
+  })
+
+  it('heading={false}: başlık yok, sayım rozeti ve aralık seçici kalır', () => {
+    const { container } = render(<ForecastDomainsPanel domains={domains} t={t} heading={false} />)
+    expect(container.querySelector('[data-slot="card-title"]')).toBeNull()
+    expect(screen.getByText('forecast.domCount(5)')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'forecast.rangeLabel' })).toBeInTheDocument()
   })
 
   it('180 gün seçilince uzun vadeli satır gelir; tıklama alan adı izlemesine derin bağlantı verir', () => {

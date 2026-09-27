@@ -296,6 +296,134 @@ class ChainValidationServiceTest {
     /** Uretim sabitiyle ayni tavan (ChainValidationService.MAX_CRL_BYTES). */
     private static final int MAX_CRL = 5 * 1024 * 1024;
 
+    // ── BO8 (bug regresyon 2026-09-27): TOPLAM sure siniri — yavas damlatan uc is parcacigini tutamaz ──
+    //
+    // Eski kod yalniz connect/read zaman asimi (okumalar ARASI sure) + bayt tavani tasiyordu: her okumada bir
+    // bayt damlatan uc hic zaman asimi tetiklemeden certCheckExecutor is parcacigini saatlerce tutabiliyordu.
+    // Govde asamasi SAHTE baglantiyla sinanir (deterministik): yerel Windows makinesinde loopback trafiginde
+    // basliktan sonraki kucuk parcalar istemciye ULASTIRILMIYOR (uc nokta guvenlik yazilimi), gercek soketli
+    // bir damla testi burada yanlis nedenle (okuma zaman asimi) gecerdi. Baslik asamasi hem sahte hem GERCEK
+    // soketle sinanir: gercek JDK'da disconnect() kilit almadan soketi kapatip bloklu baslik okumasini keser.
+
+    /**
+     * Sahte baglanti. {@code hangHeaders}: getInputStream disconnect() cagrilana dek BLOKLAR (baslik asamasi);
+     * aksi halde govde 50 ms'de bir bayt, SONSUZA dek akar (okuma zaman asimi hic tetiklenmez).
+     */
+    private static final class DripConnection extends java.net.HttpURLConnection {
+        final boolean hangHeaders;
+        final java.util.concurrent.CountDownLatch disconnected = new java.util.concurrent.CountDownLatch(1);
+
+        DripConnection(boolean hangHeaders) throws Exception {
+            super(java.net.URI.create("http://crl.example.com/drip.crl").toURL());
+            this.hangHeaders = hangHeaders;
+        }
+
+        @Override public void connect() { }
+        @Override public boolean usingProxy() { return false; }
+        @Override public void disconnect() { disconnected.countDown(); }
+
+        @Override
+        public java.io.InputStream getInputStream() throws java.io.IOException {
+            if (hangHeaders) {
+                try {
+                    disconnected.await();   // gercek JDK: disconnect() soketi kapatir, baslik okumasi duser
+                } catch (InterruptedException e) {
+                    throw new java.io.InterruptedIOException();
+                }
+                throw new java.net.SocketException("Socket closed");
+            }
+            return new java.io.InputStream() {
+                volatile boolean closed;
+                @Override public int read() throws java.io.IOException {
+                    if (closed || disconnected.getCount() == 0) throw new java.io.IOException("closed");
+                    try { Thread.sleep(50); } catch (InterruptedException e) { throw new java.io.InterruptedIOException(); }
+                    return 'x';
+                }
+                @Override public int read(byte[] b, int off, int len) throws java.io.IOException {
+                    if (len == 0) return 0;
+                    b[off] = (byte) read();
+                    return 1;
+                }
+                @Override public void close() { closed = true; }
+            };
+        }
+    }
+
+    /** openWithProxy'si sahte baglantiyi donen servis — SsrfGuard/vekil yolu bu testin konusu degil. */
+    private ChainValidationService serviceWith(java.net.HttpURLConnection conn, long totalMs) {
+        ChainValidationService s = new ChainValidationService() {
+            @Override java.net.HttpURLConnection openWithProxy(String url) { return conn; }
+        };
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlCacheMaxSize", 100);
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlCacheTtlHours", 1);
+        s.init();
+        org.springframework.test.util.ReflectionTestUtils.setField(s, "crlTotalMs", totalMs);
+        return s;
+    }
+
+    @Test
+    @DisplayName("KAPI (BO8): CRL GOVDESI bayt bayt sonsuza dek aksa da indirme toplam butcede kesilir (UNKNOWN)")
+    void downloadCrl_endlessDripBody_boundedByTotalDeadline() throws Exception {
+        ChainValidationService s = serviceWith(new DripConnection(false), 500L);
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com", "http://crl.example.com/drip.crl");
+        // Eski kod 5 MB tavana 50 ms/bayt ile ilerlerdi (~3 gun): preemptif sure asimi = KIRMIZI.
+        String status = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> s.checkCrl(cert));
+        assertThat(status).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("KAPI (BO8): yanit BASLIKLARI hic gelmese de bekci baglantiyi keser (UNKNOWN, butce icinde)")
+    void downloadCrl_hangingHeaders_abortedByWatchdog() throws Exception {
+        DripConnection conn = new DripConnection(true);
+        ChainValidationService s = serviceWith(conn, 500L);
+        X509Certificate cert = generateCertWithCrlDp("leaf.example.com", "http://crl.example.com/drip.crl");
+        String status = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(10), () -> s.checkCrl(cert));
+        assertThat(status).isEqualTo("UNKNOWN");
+        assertThat(conn.disconnected.getCount()).as("bekci disconnect() cagirmali").isZero();
+    }
+
+    /**
+     * GERCEK JDK kaniti: baslik satirlarini damlatan ham soketli sunucu. Okuma zaman asimi 5 sn, butce 1 sn —
+     * bekci baglantiyi ~1 sn'de keser. Bekci olmasa en erken okuma zaman asimi (5 sn; loopback'i kesmeyen bir
+     * ortamda damla bitene dek, ~30 sn) beklenirdi. Esik ikisinin arasinda.
+     */
+    @Test
+    @DisplayName("KAPI (BO8, gercek soket): baslik damlasini JDK disconnect() butce icinde keser")
+    void downloadCrl_realSocketHeaderDrip_abortedWithinBudget() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "crlTotalMs", 1_000L);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "crlReadTimeoutMs", 5_000);
+        String crlf = "" + (char) 13 + (char) 10;
+        try (java.net.ServerSocket ss = new java.net.ServerSocket(0, 5, java.net.InetAddress.getLoopbackAddress())) {
+            Thread t = new Thread(() -> {
+                try (java.net.Socket sock = ss.accept()) {
+                    java.io.InputStream in = sock.getInputStream();
+                    int state = 0;   // istek basliklarinin sonu (CRLF CRLF)
+                    while (state < 4) {
+                        int c = in.read();
+                        if (c < 0) return;
+                        state = (c == (state % 2 == 0 ? 13 : 10)) ? state + 1 : (c == 13 ? 1 : 0);
+                    }
+                    java.io.OutputStream out = sock.getOutputStream();
+                    out.write(("HTTP/1.1 200 OK" + crlf + "X-Pad: ").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                    out.flush();
+                    for (int i = 0; i < 300; i++) { out.write('a'); out.flush(); Thread.sleep(100); }
+                } catch (Exception ignored) {
+                    // istemci baglantiyi kesti — beklenen
+                }
+            }, "drip-server");
+            t.setDaemon(true);
+            t.start();
+            X509Certificate cert = generateCertWithCrlDp("leaf.example.com",
+                    "http://127.0.0.1:" + ss.getLocalPort() + "/drip.crl");
+            long t0 = System.nanoTime();
+            String status = service.checkCrl(cert);
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+            assertThat(status).isEqualTo("UNKNOWN");
+            assertThat(ms).as("butce 1 sn; bekcisiz en erken 5 sn (okuma zaman asimi)").isLessThan(3_500L);
+            t.interrupt();
+        }
+    }
+
     // ── Test Cert Utilities ───────────────────────────────────────────────────
 
     /** CRL onbellegine hazir bir liste koyar (indirme yolunu atlar). */

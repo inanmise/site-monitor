@@ -64,11 +64,13 @@ public class NotificationGroupUsageService {
     /** Tür anahtarı → o türün referanslarını okuyan sorgu. Sıra arayüzdeki gösterim sırasıdır. */
     private Map<String, Function<Long, List<Ref>>> sources() {
         Map<String, Function<Long, List<Ref>>> m = new LinkedHashMap<>();
+        // Port/DNS: SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) "kullanım" sayılmaz — görünmeyen bir izleme
+        // grubu silme kapısını kilitlememeli (kalıcı silinen kardeş türlerde bu satır zaten yok olurdu).
         m.put("http",      id -> refs("http",      httpRepo.findByNotificationGroupId(id),      x -> x.getId(), x -> x.getName()));
         m.put("keyword",   id -> refs("keyword",   keywordRepo.findByNotificationGroupId(id),   x -> x.getId(), x -> x.getName()));
         m.put("ping",      id -> refs("ping",      pingRepo.findByNotificationGroupId(id),      x -> x.getId(), x -> x.getName()));
-        m.put("port",      id -> refs("port",      portRepo.findByNotificationGroupId(id),      x -> x.getId(), x -> x.getName()));
-        m.put("dns",       id -> refs("dns",       dnsRepo.findByNotificationGroupId(id),       x -> x.getId(), x -> x.getName()));
+        m.put("port",      id -> refs("port",      portRepo.findByNotificationGroupId(id).stream().filter(x -> x.getDeletedAt() == null).toList(), x -> x.getId(), x -> x.getName()));
+        m.put("dns",       id -> refs("dns",       dnsRepo.findByNotificationGroupId(id).stream().filter(x -> x.getDeletedAt() == null).toList(),  x -> x.getId(), x -> x.getName()));
         m.put("domain",    id -> refs("domain",    domainRepo.findByNotificationGroupId(id),    x -> x.getId(), x -> x.getName()));
         m.put("page",      id -> refs("page",      pageRepo.findByNotificationGroupId(id),      x -> x.getId(), x -> x.getName()));
         m.put("pagespeed", id -> refs("pagespeed", pageSpeedRepo.findByNotificationGroupId(id), x -> x.getId(), x -> x.getName()));

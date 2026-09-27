@@ -2,6 +2,32 @@ import { navigateTo } from '../utils/navigate.js'
 import { toUtc } from '../utils/localDay.js'
 import { dateLocale } from '../i18n/dateLocale.js'
 import TeamBadge from './ui/TeamBadge.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
+
+/*
+ * Satır parçaları shadcn: ada götüren bağlantı Button (link varyantı), tür/kanal etiketi ve sağlık
+ * bulgusu Badge. `.today-days`/`.today-muted` düz metin görünümleri (kontrol değil) App.css'te kalır —
+ * todayPanelLayout.css.test.js o kuralları pinliyor.
+ */
+// Eski .today-link: satır içi, kırpılan, birincil renkli ad bağlantısı.
+const LINK = 'h-auto min-w-0 max-w-full justify-start truncate p-0 text-left font-semibold'
+// Eski .today-type(--kanal): küçük, kalın tür/kanal etiketi; kanal/bakım tonları koyu karşılıklarıyla.
+const TYPE = 'rounded-md px-1.5 py-px text-[.68em] font-bold tracking-[.02em]'
+const TYPE_TONE = {
+  email: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200',
+  webhook: 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200',
+  push: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
+  maint: 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200',
+  soon: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200',
+}
+function TypeBadge({ tone, children }) {
+  return <Badge variant="secondary" data-slot="today-type" data-tone={tone || undefined} className={cn(TYPE, TYPE_TONE[tone])}>{children}</Badge>
+}
+function RowLink({ title, onClick, children }) {
+  return <Button type="button" variant="link" data-slot="today-link" className={LINK} title={title} onClick={onClick}>{children}</Button>
+}
 
 /**
  * "Sizin için — bugün" İZLEME kartlarının (2026-09-19: kararsız · yavaşlayan · sessiz/bayat · alan adı kaydı)
@@ -38,11 +64,11 @@ function ageText(t, x) {
 /** @returns JSX satır içeriği (li sarmalayıcı çağıranda — kartta düz li, pop-up'ta .today-modal-row) */
 export function MonitorRowBody({ section, item: x, t, onOpen }) {
   const link = (
-    <button type="button" className="today-link" title={x.target || undefined} onClick={() => onOpen?.(x)}>
+    <RowLink title={x.target || undefined} onClick={() => onOpen?.(x)}>
       {section === 'domains' ? (x.domain || x.name) : x.name}
-    </button>
+    </RowLink>
   )
-  const type = <span className="today-type">{x.type}</span>
+  const type = <TypeBadge>{x.type}</TypeBadge>
   const team = x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : null
   if (section === 'flapping') return (<>
     {type}{link}
@@ -85,10 +111,10 @@ export function monitorRowKey(x) {
 export function NotificationRowBody({ item: x, t, onOpen }) {
   const time = x.at ? String(x.at).replace('T', ' ').slice(5, 16) : ''
   return (<>
-    <span className={`today-type today-type--${(x.channel || '').toLowerCase()}`}>{t(`today.ch.${x.channel}`)}</span>
-    <button type="button" className="today-link" title={x.subject || x.monitor_name || undefined} onClick={() => onOpen?.(x)}>
+    <TypeBadge tone={(x.channel || '').toLowerCase()}>{t(`today.ch.${x.channel}`)}</TypeBadge>
+    <RowLink title={x.subject || x.monitor_name || undefined} onClick={() => onOpen?.(x)}>
       {x.domain || x.monitor_name || x.target}
-    </button>
+    </RowLink>
     {(x.domain || x.monitor_name) && x.target && <span className="today-muted">{x.target}</span>}
     <span className="today-days is-bad" title={x.error}>{x.error}</span>
     {time && <span className="today-muted">{time}</span>}
@@ -99,13 +125,19 @@ export function NotificationRowBody({ item: x, t, onOpen }) {
 /** Sağlık bulgusu satırı: alan · bulgu rozetleri (hlth.val.* değer metniyle) · takım. */
 export function HealthRowBody({ item: x, t, onOpen }) {
   return (<>
-    <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain}</button>
-    {(x.findings || []).map((f) => (
-      <span key={f.key} className={`today-finding${x.critical && HEALTH_CRITICAL.has(f.key) ? ' is-bad' : ''}`}
-        title={t(`hlth.val.${f.value_key}`, ...(f.value_args || []))}>
-        {t(`today.hf.${f.key}`)}
-      </span>
-    ))}
+    <RowLink onClick={() => onOpen?.(x)}>{x.domain}</RowLink>
+    {(x.findings || []).map((f) => {
+      const bad = x.critical && HEALTH_CRITICAL.has(f.key)
+      // Bulgunun değer metni yerel `title` (etkileşimsiz rozet — odak almaz; Tooltip yalnız ikon düğmelerinde).
+      return (
+        <Badge key={f.key} variant={bad ? 'secondary' : 'warning'} data-slot="today-finding" data-bad={bad ? 'true' : undefined}
+          title={t(`hlth.val.${f.value_key}`, ...(f.value_args || []))}
+          className={cn('max-w-full truncate rounded-md px-[7px] py-px text-[.74em] font-semibold',
+            bad && 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300')}>
+          {t(`today.hf.${f.key}`)}
+        </Badge>
+      )
+    })}
     {x.silenced && <span className="today-muted" title={t('today.healthSilencedHint')}>{t('today.healthSilenced')}</span>}
     {x.team_name ? <TeamBadge teamId={x.team_id} teamName={x.team_name} /> : null}
   </>)
@@ -146,16 +178,16 @@ export function QuietRowBody({ item: x, t, onOpen }) {
   if (x.window_id != null) {
     const active = x.kind === 'MAINT_ACTIVE'
     return (<>
-      <span className={`today-type today-type--${active ? 'maint' : 'soon'}`}>{t(`today.qk.${x.kind}`)}</span>
-      <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.name}</button>
+      <TypeBadge tone={active ? 'maint' : 'soon'}>{t(`today.qk.${x.kind}`)}</TypeBadge>
+      <RowLink onClick={() => onOpen?.(x)}>{x.name}</RowLink>
       <span className="today-days">{active ? t('today.maintUntil', whenText(x.until)) : t('today.maintStarts', whenText(x.next_start))}</span>
       <span className="today-muted">{x.target_count < 0 ? t('today.maintAll') : t('today.maintTargets', x.target_count)}</span>
       {team}
     </>)
   }
   if (x.kind === 'EXCEPTION') return (<>
-    <span className="today-type">{t('today.qk.EXCEPTION')}</span>
-    <button type="button" className="today-link" title={x.reason || undefined} onClick={() => onOpen?.(x)}>{x.domain}</button>
+    <TypeBadge>{t('today.qk.EXCEPTION')}</TypeBadge>
+    <RowLink title={x.reason || undefined} onClick={() => onOpen?.(x)}>{x.domain}</RowLink>
     <span className={`today-days ${x.days_left <= 1 ? 'is-bad' : 'is-warn'}`}>
       {x.days_left === 0 ? t('today.exToday') : x.days_left === 1 ? t('today.exTomorrow') : t('today.exDays', x.days_left)}
     </span>
@@ -164,8 +196,8 @@ export function QuietRowBody({ item: x, t, onOpen }) {
   // PAUSED — 7+ gündür duraklatılmış satır "unutulmuş olabilir" (uyarı rengi); yaklaşık tarih ~ ile işaretli
   const long = x.paused_days != null && x.paused_days >= 7
   return (<>
-    <span className="today-type">{x.type}</span>
-    <button type="button" className="today-link" title={x.target || undefined} onClick={() => onOpen?.(x)}>{x.name}</button>
+    <TypeBadge>{x.type}</TypeBadge>
+    <RowLink title={x.target || undefined} onClick={() => onOpen?.(x)}>{x.name}</RowLink>
     <span className={`today-days${long ? ' is-warn' : ''}`} title={x.paused_since_exact === false && x.paused_days != null ? t('today.pausedApprox') : undefined}>
       {x.paused_since_exact === false && x.paused_days != null ? '~' : ''}{pausedText(t, x)}
     </span>

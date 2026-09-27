@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 
 /**
  * Envanter form modalı — InventoryManager'dan çıkarıldığı için bu dosya kesimin TEK güvenlik ağı.
@@ -71,7 +71,7 @@ describe('InventoryFormModal', () => {
   it('add: boş formda zorunlu alanlar dolunca create ucunu çağırır', async () => {
     render(<InventoryFormModal mode="add" teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
 
-    fireEvent.change(screen.getByPlaceholderText(/example\.com|domain/i), { target: { value: 'yeni.example.com' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^Domain/ }), { target: { value: 'yeni.example.com' } })
     // Takım SearchableSelect: gizli input yerine doğrudan seçenek tıklaması yerine formu
     // team_id ile açmak daha güvenilir — bu vaka create dallanmasını doğruluyor.
     expect(api.admin.addInventory).not.toHaveBeenCalled()
@@ -92,7 +92,9 @@ describe('InventoryFormModal', () => {
   it('edit: grup boşsa kaydetmez ve gruba dair hata gösterir; etiket boşsa etikete dair hata', async () => {
     render(<InventoryFormModal mode="edit" record={{ ...RECORD, group_name: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
     fireEvent.click(saveBtn())
-    expect(await screen.findByText(/grup seçimi zorunludur|a group is required/i)).toBeInTheDocument()
+    // Hata İKİ yerde (2026-09-27): alanın altında satır içi + alt çubuğun üstündeki özet bandı (role="alert")
+    expect(await screen.findAllByText(/grup seçimi zorunludur|a group is required/i)).toHaveLength(2)
+    expect(screen.getByRole('alert')).toHaveTextContent(/grup seçimi zorunludur|a group is required/i)
     expect(api.admin.updateInventory).not.toHaveBeenCalled()
   })
 
@@ -220,13 +222,14 @@ describe('InventoryFormModal', () => {
 
   it('duplicate: kopya rozeti ve ipucu görünür', () => {
     render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    // Pencere monitoring/MonitorForm'un MonitorFormModal'ı: rozet `data-slot="duplicate-badge"`, ipucu info AlertBanner
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(document.querySelector('[data-slot="alert"][data-tone="info"]')).not.toBeNull()
   })
 
   it('edit modunda kopya rozeti YOK', () => {
     render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    expect(document.querySelector('.mon-dup-badge')).toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).toBeNull()
   })
 
   it('sunucu hatası: onSaved çağrılmaz (modal açık kalır — 409 akışı)', async () => {
@@ -498,14 +501,15 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     api.admin.updateInventory = vi.fn(() => new Promise(r => { releaseSave = () => r({ success: true }) }))
     api.refreshCertificateHealth = vi.fn(() => new Promise(r => { releaseCheck = () => r({ success: true }) }))
     const onSaved = vi.fn()
-    const { container } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={onSaved} />)
-    const footer = container.querySelector('.modal-actions')
+    // Pencere (ModalShell → Dialog) body'ye portal'lanır: sorgular document üzerinden.
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={onSaved} />)
+    const footer = document.querySelector('[data-slot="inv-form-actions"]')
     const labelsBefore = Array.from(footer.querySelectorAll('button')).map(b => b.textContent.trim())
 
     fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     // Evre 1: şerit başlıkta, düğme metni değişmedi, şerit alt barda DEĞİL.
-    const title = container.querySelector('.modal-wide-title')
+    const title = document.querySelector('[data-slot="dialog-header"]')
     expect(title.querySelector('[data-slot="check-running"]')).toHaveTextContent(/Kaydediliyor|Saving/)
     expect(footer.querySelector('[data-slot="check-running"]')).toBeNull()
     expect(saveBtn()).toBeDisabled()
@@ -525,18 +529,18 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
   })
 
   it('doğrulama hatası alt barın üstünde YÜZER: gövde başa kaydırılmaz, × ile kapanır, alan değişince gider', async () => {
-    const { container } = render(<InventoryFormModal mode="edit" record={{ ...RECORD, group_name: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    const grid = container.querySelector('.form-grid')
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, group_name: '' }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    const grid = document.querySelector('[data-slot="form-grid"]')
     grid.scrollTo = vi.fn()
     fireEvent.click(saveBtn())
     const banner = await screen.findByRole('alert')
     expect(banner).toHaveTextContent(/grup seçimi zorunludur|a group is required/i)
-    expect(banner.closest('.modal-wide-float')).not.toBeNull()   // .form-grid'in kardeşi olarak yüzer, içinde değil
+    expect(banner.closest('[data-slot="inv-form-float"]')).not.toBeNull()   // alt çubukta yüzer, form ızgarasının içinde değil
     expect(grid.contains(banner)).toBe(false)
     expect(grid.scrollTo).not.toHaveBeenCalled()
 
-    // × kapatır
-    fireEvent.click(screen.getByRole('button', { name: /^Kapat$|^Close$/i }))
+    // × kapatır (bandın kendi düğmesi — pencerenin X'i de "Kapat" adını taşır)
+    fireEvent.click(within(banner).getByRole('button', { name: /^Kapat$|^Close$/i }))
     expect(screen.queryByRole('alert')).toBeNull()
 
     // Tekrar üret, bir alan değişince kendiliğinden gider.
@@ -549,15 +553,15 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
   it('Test et / Çalıştır koşarken de metinleri sabit kalır, evre başlıkta', async () => {
     let release
     api.testCertificate = vi.fn(() => new Promise(r => { release = () => r({ success: false, error: 'bağlantı reddedildi' }) }))   // hata dalı: tarih biçimleyici mock'ta yok
-    const { container } = render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
+    render(<InventoryFormModal mode="edit" record={RECORD} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
     const testBtn = screen.getByRole('button', { name: /^Test et$|^Test$/i })
     fireEvent.click(testBtn)
     await waitFor(() => expect(testBtn).toBeDisabled())
     expect(testBtn).toHaveTextContent(/^Test et$|^Test$/)
-    expect(container.querySelector('.modal-wide-title [data-slot="check-running"]')).toHaveTextContent(/Test ediliyor|Testing/)
+    expect(document.querySelector('[data-slot="dialog-header"] [data-slot="check-running"]')).toHaveTextContent(/Test ediliyor|Testing/)
     release()
     await waitFor(() => expect(testBtn).not.toBeDisabled())
-    expect(container.querySelector('.modal-wide-title [data-slot="check-running"]')).toBeNull()
+    expect(document.querySelector('[data-slot="dialog-header"] [data-slot="check-running"]')).toBeNull()
   })
 
   it('araç çubuğu "Açıklamayı panoya kopyala" (2026-09-22): editör metnini panoya verir; boşken uyarır, kopyalamaz', async () => {

@@ -88,6 +88,15 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("BO6: LDAP müdür/üyelik eşlemesi (yetkilendirme girdisi) GLOBAL_ONLY — takım kapsamlı müdür değiştiremez")
+    void ldapAuthorisationInputs_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.ldap.manager-attributes",
+                "site.monitor.ldap.prune-unsupported-teams",
+                "site.monitor.ldap.manager-refresh-hours");
+    }
+
+    @Test
     @DisplayName("isScopedAdmin / isScopedAdminInRequest: ADMIN + viewTeamIds dolu = müdür; global ADMIN ve USER değil; bağlam yoksa false")
     void scopedAdminDetection() {
         try {

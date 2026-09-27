@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
-import { readPageSize, writePageSize, DEFAULT_PAGE_SIZE } from '../../hooks/usePagination.js'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 
@@ -12,10 +12,12 @@ export const toUtcIso = (d) => new Date(d).toISOString().slice(0, 19)
  *
  * Kurallar:
  * - Aralık/filtre/boyut değişince sayfa HER ZAMAN 1'e döner (Page sayfasındaki "reset unutuldu"
- *   bug sınıfı burada kökten ölür).
+ *   bug sınıfı burada kökten ölür). Sayfalama 2026-09-26'dan beri standart `useServerPagination`
+ *   (modal ön ayarı: izleme detay penceresinde; değer karşılaştırmalı sıfırlama — eski `firstRun` ref'i
+ *   StrictMode çift-mount'ta sıfırlıyordu).
  * - Canlı yenileme (30 sn, useVisibleInterval) YALNIZ 1. sayfada ve aralık "şimdi"ye yaslıyken
  *   (preset modunda) çalışır — kullanıcının incelediği derin sayfa altından kaymaz.
- * - pageSize localStorage'a listKey ile yazılır (usePagination ile aynı kalıcılık).
+ * - pageSize localStorage'a listKey ile yazılır (standart kalıcılık, sm.pageSize.<listKey>).
  * - İlk preset URL'deki `range` paramından okunur (eski paylaşılan linkler çalışmaya devam eder).
  */
 export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], defaultPreset = 1,
@@ -39,9 +41,6 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     const v = readUrlParam('hst', null)
     return (v === 'fail' || v === 'changed') ? v : 'all'
   })
-  const [page, setPageRaw] = useState(1)                 // 1-tabanlı UI; API'ye page-1 gider
-  const [pageSize, setPageSizeRaw] = useState(() => readPageSize(listKey, DEFAULT_PAGE_SIZE))
-
   const [data, setData] = useState(null)                 // { items, counts, buckets, alerts, range, total }
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -50,6 +49,11 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
   const isCustom = preset === 'custom' && customFrom && customTo
   const fixedFrom = fixed?.from ? toUtcIso(fixed.from) : null
   const fixedTo = fixed?.to ? toUtcIso(fixed.to) : null
+  // Aralık/filtre değişiminde sayfa 1 — id değişimi de (başka monitör açıldı). Boyut değişimini kanca kendisi sıfırlar.
+  const sp = useServerPagination({ listKey, preset: 'modal', apiBase: 0,
+    resetDeps: [kind, id, preset, customFrom ? customFrom.getTime() : null, customTo ? customTo.getTime() : null, status, fixedFrom, fixedTo] })
+  const { apiPage, pageSize, setTotal } = sp
+  const page = sp.page
 
   const load = useCallback((silent = false) => {
     if (!id) return
@@ -60,7 +64,7 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     if (!silent) setLoading(true)
     const params = {
       status: status !== 'all' ? status : undefined,
-      page: page - 1,
+      page: apiPage,
       size: pageSize,
       ...(fixedFrom ? { from: fixedFrom, to: fixedTo }
         : isCustom ? { from: toUtcIso(customFrom), to: toUtcIso(customTo) }
@@ -70,13 +74,13 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     api.monitoring.getCheckHistory(kind, id, params)
       .then(r => {
         if (seq !== seqRef.current) return
-        if (r?.success) { setData(r.data); setError(null) }
+        if (r?.success) { setData(r.data); setTotal(r.data?.total ?? 0); setError(null) }
         else setError(r?.error || 'load failed')
       })
       .catch(e => { if (seq === seqRef.current) setError(String(e?.message || e)) })
       .finally(() => { if (seq === seqRef.current) setLoading(false) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, id, preset, customFrom, customTo, status, page, pageSize, fixedFrom, fixedTo, JSON.stringify(extraParams)])
+  }, [kind, id, preset, customFrom, customTo, status, apiPage, pageSize, fixedFrom, fixedTo, JSON.stringify(extraParams)])
 
   useEffect(() => { load() }, [load])
 
@@ -102,18 +106,10 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     loadRef.current(true)
   }, [reloadSignal])
 
-  // Aralık/filtre/boyut değişiminde sayfa 1'e döner — id değişimi de (başka monitör açıldı).
-  const firstRun = useRef(true)
-  useEffect(() => {
-    if (firstRun.current) { firstRun.current = false; return }
-    setPageRaw(1)
-  }, [kind, id, preset, customFrom, customTo, status, pageSize, fixedFrom, fixedTo])
-
   const setPreset = (p) => { setPresetRaw(p); if (p !== 'custom') { setCustomFrom(null); setCustomTo(null) } }
   const setCustomRange = (fromDate, toDate) => {
     setCustomFrom(fromDate); setCustomTo(toDate); setPresetRaw('custom')
   }
-  const setPageSize = (n) => { setPageSizeRaw(n); writePageSize(listKey, n) }
 
   return {
     // veri
@@ -131,7 +127,8 @@ export function useCheckHistory({ kind, id, listKey, presets = [1, 7, 15, 30], d
     // durum + eylemler
     preset, setPreset, customFrom, customTo, setCustomRange,
     status, setStatus, filterMode,
-    page, setPage: setPageRaw, pageSize, setPageSize,
+    page, setPage: sp.setPage, pageSize, setPageSize: sp.setPageSize,
+    bar: sp.bar,                     // <PaginationBar {...h.bar} /> — standart çubuk (modal ön ayarı, compact)
     liveActive, reload: load,
     fixedMode: !!fixedFrom,
     // CSV — `days` ifadesi load()'takiyle BİREBİR aynı olmalı: ikisi tek kuralın iki yüzü.

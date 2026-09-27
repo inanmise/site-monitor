@@ -82,6 +82,23 @@ describe('Login', () => {
     await waitFor(() => expect(onLogin).toHaveBeenCalled())
   })
 
+  // 2026-09-27 (S7): gizli pencere / site verisi engelli → localStorage erişimi ATAR. Giriş ekranı çökmemeli ve giriş
+  // yine tamamlanmalı ("Beni hatırla" yalnız bir kolaylık).
+  it('storage blocked: login screen still renders and a successful login still completes', async () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    const del = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+    try {
+      api.login.mockResolvedValueOnce({ success: true, username: 'admin' })
+      const onLogin = vi.fn()
+      render(<Login onLogin={onLogin} />)
+      fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'admin' } })
+      fireEvent.change(document.getElementById('lp-pass'), { target: { value: 'secret' } })
+      fireEvent.submit(document.querySelector('form'))
+      await waitFor(() => expect(onLogin).toHaveBeenCalled())
+    } finally { get.mockRestore(); set.mockRestore(); del.mockRestore() }
+  })
+
   it('remember-me persists the username on successful login', async () => {
     api.login.mockResolvedValueOnce({ success: true, username: 'remember-user' })
     const onLogin = vi.fn()
@@ -89,9 +106,8 @@ describe('Login', () => {
     render(<Login onLogin={onLogin} />)
     fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'remember-user' } })
     fireEvent.change(document.getElementById('lp-pass'), { target: { value: 'p' } })
-    // Toggle remember-me checkbox -- find by label OR fallback to first checkbox in the form.
-    const rememberCheckbox = document.querySelector('input[type="checkbox"]')
-    if (rememberCheckbox) fireEvent.click(rememberCheckbox)
+    // Remember-me: shadcn Checkbox (Radix, role="checkbox") — bound to its label via htmlFor.
+    fireEvent.click(screen.getByRole('checkbox', { name: /remember|hatırla/i }))
     fireEvent.submit(document.querySelector('form'))
 
     await waitFor(() => expect(onLogin).toHaveBeenCalled())
@@ -164,19 +180,22 @@ describe('Login', () => {
     fireEvent.click(screen.getByRole('button', { name: /report it to the system administrator/i }))
     const dialog = await screen.findByRole('dialog')
 
-    // Kullanıcı adı + email boş → gönder pasif + zorunluluk uyarıları
+    // Rehberli form (2026-09-27): doğrulama GÖNDERİMDE, satır içi — boş gönderim zorunluluk uyarılarını gösterir,
+    // alanları aria-invalid işaretler ve API ÇAĞRILMAZ (eskiden düğme pasifti; neyin eksik olduğu belirsizdi).
     const sendBtn = within(dialog).getByRole('button', { name: /^send report$/i })
-    expect(sendBtn.disabled).toBe(true)
-    expect(within(dialog).getByText(/username is required/i)).toBeDefined()
+    fireEvent.click(sendBtn)
+    expect(await within(dialog).findByText(/username is required/i)).toBeDefined()
     expect(within(dialog).getByText(/email is required/i)).toBeDefined()
+    expect(within(dialog).getByLabelText(/username/i).getAttribute('aria-invalid')).toBe('true')
+    expect(api.sendLoginHelp).not.toHaveBeenCalled()
 
     fireEvent.change(within(dialog).getByLabelText(/username/i), { target: { value: 'N12345' } })
     fireEvent.change(within(dialog).getByPlaceholderText(/paste the error message/i), { target: { value: 'HTTP 423 Locked' } })
     fireEvent.change(within(dialog).getByPlaceholderText(/describe the issue in detail/i), { target: { value: 'My account is locked' } })
-    // email zorunlu — hâlâ pasif
-    expect(sendBtn.disabled).toBe(true)
+    // e-posta hâlâ eksik → gönderim yine durur
+    fireEvent.click(sendBtn)
+    expect(api.sendLoginHelp).not.toHaveBeenCalled()
     fireEvent.change(within(dialog).getByLabelText(/your email/i), { target: { value: 'user@example.com' } })
-    expect(sendBtn.disabled).toBe(false)
 
     api.sendLoginHelp.mockResolvedValueOnce({ success: true, reference: 'LIR-2026-000042' })
     fireEvent.click(sendBtn)

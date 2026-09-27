@@ -124,6 +124,12 @@ function Calendar({
         ...classNames,
       }}
       components={{
+        // Proje eki (2026-09-26): ay gezinme düğmeleri DayPicker'ın çıplak <button>'ı — projede Tailwind preflight
+        // YOK, `data-slot` taşımayan düğme tarayıcı varsayılanıyla (gri zemin + kabarık kenar) çiziliyordu.
+        // `data-slot` globals.css'teki dar sıfırlamayı (kenar/zemin/yazı/imleç) devreye sokar; görünüm yine
+        // classNames.button_previous/next'teki buttonVariants'tan gelir.
+        PreviousMonthButton: (props) => <button data-slot="calendar-nav-button" {...props} />,
+        NextMonthButton: (props) => <button data-slot="calendar-nav-button" {...props} />,
         Root: ({ className, rootRef, ...props }) => {
           return (
             <div

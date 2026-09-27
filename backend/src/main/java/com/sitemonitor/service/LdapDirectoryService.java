@@ -220,6 +220,10 @@ public class LdapDirectoryService {
      * Service-account lookup of a single directory entry by an attribute
      * (e.g. {@code cn=<sicil>}). Returns the entry's attributes (with its DN under
      * key {@code "_dn"}), or empty if not found / on error.
+     *
+     * <p><b>TEK kayıt şartı (2026-09-26).</b> Eskiden ilk eşleşme dönüyordu: AD'de aynı {@code cn} farklı
+     * OU'larda iki kez bulunabilir (ör. eski/pasif hesap), ve müdür provizyonu sırası belirsiz ilk kaydı —
+     * belki eski hesabın gruplarıyla — uygulamaya yazıyordu. Birden çok eşleşmede boş döner ve uyarı loglanır.
      */
     public Optional<Map<String, Object>> findOne(String attr, String value) {
         if (value == null || value.isBlank()) return Optional.empty();
@@ -228,22 +232,57 @@ public class LdapDirectoryService {
                 || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
             return Optional.empty();
         }
-        String filter = buildUserFilter(s, value.trim(), attr);
+        return searchUnique(s, buildUserFilter(s, value.trim(), attr), attr + "=" + value);
+    }
+
+    /**
+     * Yapılandırılmış GİRİŞ filtresiyle (kullanıcı adı) tek kaydı bulur — parola doğrulamadan. Yönetici
+     * "AD ile karşılaştır / yeniden eşitle" eylemi bunu kullanır: kullanıcının giriş anında göreceği kaydın
+     * aynısı. Birden çok eşleşme ya da hata → boş.
+     */
+    public Optional<Map<String, Object>> findUser(String username) {
+        if (username == null || username.isBlank()) return Optional.empty();
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()
+                || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            return Optional.empty();
+        }
+        return searchUnique(s, buildUserFilter(s, username.trim(), null), "user=" + username);
+    }
+
+    private Optional<Map<String, Object>> searchUnique(LdapSettings s, String filter, String what) {
         try (LdapConn conn = open(s)) {
             SearchControls c = new SearchControls();
             c.setSearchScope(SearchControls.SUBTREE_SCOPE);
             c.setCountLimit(2);
             c.setTimeLimit(READ_TIMEOUT_MS);
             c.setReturningAttributes(null);
-            SearchResult first = firstResult(conn.ctx.search(s.getBaseDn(), filter, c));
-            if (first == null) return Optional.empty();
+            List<SearchResult> hits = new ArrayList<>();
+            NamingEnumeration<SearchResult> results = conn.ctx.search(s.getBaseDn(), filter, c);
+            try {
+                while (results.hasMore() && hits.size() < 2) hits.add(results.next());
+            } catch (javax.naming.SizeLimitExceededException tooMany) {
+                if (hits.size() < 2) hits.add(null);    // sınır aşıldı → en az iki kayıt var
+            } catch (PartialResultException ignored) {
+                // AD referral — toplananla yetin.
+            }
+            if (!uniqueHit(hits)) {
+                if (hits.size() > 1) log.warn("LDAP araması belirsiz ({}): birden çok kayıt eşleşti — hiçbiri kullanılmadı", what);
+                return Optional.empty();
+            }
+            SearchResult first = hits.get(0);
             Map<String, Object> a = readAttributes(first.getAttributes());
             a.put("_dn", first.getNameInNamespace());
             return Optional.of(a);
         } catch (Exception e) {
-            log.debug("findOne {}={} failed: {}", attr, value, rootMessage(e));
+            log.debug("LDAP lookup {} failed: {}", what, rootMessage(e));
             return Optional.empty();
         }
+    }
+
+    /** Tam olarak BİR eşleşme mi (0 → yok, 2+ → belirsiz). Birim testi için ayrı. */
+    static boolean uniqueHit(List<?> hits) {
+        return hits != null && hits.size() == 1 && hits.get(0) != null;
     }
 
     /** Reads the {@code mail} attribute of a group entry by its full DN (service account). */

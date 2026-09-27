@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('../components/ui/CodeEditor.jsx', () => ({
@@ -127,7 +128,7 @@ describe('ScriptedTemplateVersions', () => {
     await screen.findByText('Genele açıldı')
 
     expect(document.querySelector('table')).toBeNull()
-    expect(document.querySelectorAll('.sc-vt-row')).toHaveLength(VERSIONS.length)
+    expect(document.querySelectorAll('[data-slot="version-row"]')).toHaveLength(VERSIONS.length)
     // Not KENDI satirinda (tabloda 1/5 sutuna sikisiyordu).
     expect(document.querySelector('.sc-vt-note').textContent).toBe('Kanal takımından genele açıldı')
     // Notu olmayan surumde bos "—" hucresi degil, hic satir yok.
@@ -138,11 +139,15 @@ describe('ScriptedTemplateVersions', () => {
     draw()
     await screen.findByText('Düzenlendi')
 
-    const rows = document.querySelectorAll('.sc-vt-row')
-    expect(rows[0].getAttribute('tabindex')).toBe('0')   // ModalShell odak tuzağı da görsün
-    fireEvent.keyDown(rows[1], { key: 'Enter' })
+    // Satırın seçicisi GERÇEK bir düğme (stretched button): doğal Tab durağı + Enter/Space, aria-pressed.
+    const picks = document.querySelectorAll('[data-slot="version-pick"]')
+    expect(picks[0].tagName).toBe('BUTTON')
+    expect(picks[1]).toHaveAttribute('aria-pressed', 'false')
+    picks[1].focus()
+    await userEvent.setup().keyboard('{Enter}')
 
     await waitFor(() => expect(api.monitoring.getScriptedTemplateVersion).toHaveBeenCalledWith(7, 20))
+    expect(document.querySelectorAll('[data-slot="version-pick"]')[1]).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('hiç sürüm yoksa boş durum gösterilir', async () => {

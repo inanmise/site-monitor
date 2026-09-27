@@ -325,7 +325,7 @@ class MonitoringControllerTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.com")));
         when(dnsMonitorRepo.findAll()).thenReturn(List.of());
         when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
-        when(dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         com.sitemonitor.model.AlertEvent slow = openDnsEvent("a.com", com.sitemonitor.service.EscalationService.TYPE_DNS_SLOW, "HIGH");
         com.sitemonitor.model.AlertEvent fail = openDnsEvent("a.com", com.sitemonitor.service.EscalationService.TYPE_DNS_FAILURE, "CRITICAL");
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(slow, fail));
@@ -1666,7 +1666,7 @@ class MonitoringControllerTest {
     void createDns_duplicateDomainRecordType_returns400() throws Exception {
         com.sitemonitor.model.DnsMonitor existing = new com.sitemonitor.model.DnsMonitor();
         existing.setId(8L); existing.setDomain("www.example.com"); existing.setRecordType("A"); existing.setStandalone(true);
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("www.example.com", "A"))
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull("www.example.com", "A"))
                 .thenReturn(Optional.of(existing));
 
         mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
@@ -3071,7 +3071,7 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("B3: createDns dogrulama/kurtarma alanlarini VE kanal bayraklarini KAYDEDER")
     void createDns_persistsConfirmAndChannelFlags() throws Exception {
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(anyString(), anyString()))
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(anyString(), anyString()))
                 .thenReturn(Optional.empty());
         when(dnsMonitorRepo.save(any())).thenAnswer(inv -> {
             com.sitemonitor.model.DnsMonitor d = inv.getArgument(0);
@@ -3102,7 +3102,7 @@ class MonitoringControllerTest {
     @Test
     @DisplayName("B3: gonderilmeyen alanlar VARSAYILANDA kalir (3/30/3/30) - sessiz sifirlama yok")
     void createDns_absentFields_keepDefaults() throws Exception {
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(anyString(), anyString()))
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(anyString(), anyString()))
                 .thenReturn(Optional.empty());
         when(dnsMonitorRepo.save(any())).thenAnswer(inv -> {
             com.sitemonitor.model.DnsMonitor d = inv.getArgument(0);
@@ -3212,7 +3212,7 @@ class MonitoringControllerTest {
         edited.setStandalone(true);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("eski.example.com")));
         when(portMonitorRepo.findAll()).thenReturn(List.of(edited));
-        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of(edited));
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(edited));
         when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3230,7 +3230,7 @@ class MonitoringControllerTest {
         com.sitemonitor.model.PortMonitor orphan = inventoryPort(1L, "yeni.example.com", 3L);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("eski.example.com")));
         when(portMonitorRepo.findAll()).thenReturn(List.of(orphan));
-        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3299,7 +3299,7 @@ class MonitoringControllerTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
                 .thenReturn(List.of(invT("benim.example.com", 1L), invT("baskasi.example.com", 99L)));
         when(portMonitorRepo.findAll()).thenReturn(List.of());
-        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3315,7 +3315,7 @@ class MonitoringControllerTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
                 .thenReturn(List.of(invT("benim.example.com", 1L), invT("baskasi.example.com", 99L)));
         when(dnsMonitorRepo.findAll()).thenReturn(List.of());
-        when(dnsMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         when(dnsMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3332,7 +3332,7 @@ class MonitoringControllerTest {
         inv.setUgTeamId(1L);
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
         when(portMonitorRepo.findAll()).thenReturn(List.of());
-        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3347,7 +3347,7 @@ class MonitoringControllerTest {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc())
                 .thenReturn(List.of(invT("a.example.com", 1L), invT("b.example.com", 99L)));
         when(portMonitorRepo.findAll()).thenReturn(List.of());
-        when(portMonitorRepo.findByStandaloneTrueAndActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of());
         when(portMonitorRepo.saveAll(anyList())).thenAnswer(i -> i.getArgument(0));
         when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
 
@@ -3573,15 +3573,19 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("POST /dns: PASİFLEŞTİRİLMİŞ domain+tip yeniden eklenebilir (satır canlandırılır)")
-    void createDns_revivesDeactivatedRow() throws Exception {
-        // Silme artık pasifleştirme olduğu için satır tabloda kalıyor. Mükerrer guard "aktif mi"
-        // diye bakmasaydı kullanıcı sildiği domain'i bir daha ekleyemez ve sebebini anlamadığı bir
-        // "zaten var" hatası alırdı. Yeni satır DEĞİL canlandırma: standalone'da uq_dnsm_domain yok.
+    @DisplayName("POST /dns: SİLİNMİŞ domain+tip yeniden eklenebilir — satır canlanır, deleted_at temizlenir, eski ayarlar sızmaz")
+    void createDns_revivesDeletedRow() throws Exception {
+        // Yeni satır DEĞİL canlandırma: standalone'da uq_dnsm_domain yok; id + geçmiş korunur (2026-09-27: yalnız
+        // SİLİNMİŞ satır canlanır, duraklatılmış satır engeldir — bkz. createDns_pausedDuplicate_blocked).
         com.sitemonitor.model.DnsMonitor dead = standaloneDns(33L);
         dead.setActive(false);
+        dead.setDeletedAt("2026-09-01T00:00:00");
         dead.setCreatedAt("2026-01-01T00:00:00");
-        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue("own.example.com", "A"))
+        dead.setAlertLevel("CRITICAL");          // silinmiş izlemenin ayarları — yeni izlemeye SIZMAMALI
+        dead.setIntervalSeconds(3600);
+        dead.setConfirmAttempts(9);
+        dead.setExpectedValue("192.0.2.9");
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc("own.example.com", "A"))
                 .thenReturn(java.util.Optional.of(dead));
         when(dnsMonitorRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -3593,9 +3597,31 @@ class MonitoringControllerTest {
         org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
                 org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
         verify(dnsMonitorRepo).save(cap.capture());
-        assertThat(cap.getValue().getId()).isEqualTo(33L);              // AYNI satır
-        assertThat(cap.getValue().getActive()).isTrue();                 // canlandı
-        assertThat(cap.getValue().getCreatedAt()).isEqualTo("2026-01-01T00:00:00");  // özgün tarih korundu
+        com.sitemonitor.model.DnsMonitor saved = cap.getValue();
+        assertThat(saved.getId()).isEqualTo(33L);                                  // AYNI satır (geçmiş kesintisiz)
+        assertThat(saved.getActive()).isTrue();                                    // canlandı
+        assertThat(saved.getDeletedAt()).as("silinmiş işareti temizlenmeli").isNull();
+        assertThat(saved.getCreatedAt()).isEqualTo("2026-01-01T00:00:00");         // özgün tarih korundu
+        assertThat(saved.getAlertLevel()).isNull();
+        assertThat(saved.getIntervalSeconds()).isEqualTo(300);
+        assertThat(saved.getConfirmAttempts()).isEqualTo(3);
+        assertThat(saved.getExpectedValue()).isNull();
+    }
+
+    @Test
+    @DisplayName("POST /dns: DURAKLATILMIŞ (silinmemiş) aynı domain+tip → 400 'sürdürün'; görünür izleme ezilmez")
+    void createDns_pausedDuplicate_blocked() throws Exception {
+        com.sitemonitor.model.DnsMonitor paused = standaloneDns(34L);
+        paused.setActive(false);
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull("own.example.com", "A"))
+                .thenReturn(java.util.Optional.of(paused));
+
+        mvc.perform(post("/api/monitoring/dns").session(teamSession("TEAM_ADMIN", 5L, 5L))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"own.example.com\",\"recordType\":\"A\",\"teamId\":5}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("duraklatılmış")));
+        verify(dnsMonitorRepo, never()).save(any());
     }
 
     @Test
@@ -3988,5 +4014,301 @@ class MonitoringControllerTest {
         MockHttpSession v = sessionWithTeam("USER", 1L);
         v.setAttribute("viewTeamIds", java.util.List.of(1L, 2L));
         mvc.perform(delete("/api/monitoring/domain/9/renewal-plan").session(v)).andExpect(status().isForbidden());
+    }
+
+    // ═══════════ Zaman aşımı tavanı (prod kapısı 2026-09-25, Y-3 / N3) ═══════════
+    // timeoutMs yazma yollarında üst sınırsızdı: 2147483647 (~24 gün) + bağlantıyı kabul edip yanıt vermeyen
+    // hedef, sweep iş parçacığını takıp TÜM takımların alarm hattını durduruyordu. Tavan [1000, 120000].
+
+    private Integer savedKeywordTimeout(String method, String path, String body) throws Exception {
+        org.mockito.Mockito.clearInvocations(keywordMonitorRepo);
+        mvc.perform(("POST".equals(method) ? post(path) : put(path)).session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.KeywordMonitor.class);
+        verify(keywordMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        return cap.getValue().getTimeoutMs();
+    }
+
+    private Integer savedHttpTimeout(String method, String path, String body) throws Exception {
+        org.mockito.Mockito.clearInvocations(httpMonitorRepo);
+        mvc.perform(("POST".equals(method) ? post(path) : put(path)).session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(cap.capture());
+        return cap.getValue().getTimeoutMs();
+    }
+
+    @Test
+    @DisplayName("Y-3: POST/PUT /keyword timeoutMs tavanlanır — 2147483647 → 120000, 5 → 1000")
+    void keyword_timeoutClampedOnCreateAndUpdate() throws Exception {
+        when(keywordMonitorRepo.save(any(com.sitemonitor.model.KeywordMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.KeywordMonitor k = a.getArgument(0); if (k.getId() == null) k.setId(11L); return k; });
+        String base = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://x.example.com\",\"keyword\":\"foo\",\"teamId\":3,";
+        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":2147483647}")).isEqualTo(120_000);
+        assertThat(savedKeywordTimeout("POST", "/api/monitoring/keyword", base + "\"timeoutMs\":5}")).isEqualTo(1_000);
+
+        com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+        m.setId(7L); m.setUrl("https://x.example.com"); m.setKeyword("foo"); m.setActive(true);
+        when(keywordMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        when(keywordResultRepo.findTopByMonitorIdOrderByCheckedAtDesc(7L)).thenReturn(Optional.empty());
+        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":2147483647}")).isEqualTo(120_000);
+        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":5}")).isEqualTo(1_000);
+        // Aralık içi değer aynen korunur (tavan yalnız uçları keser).
+        assertThat(savedKeywordTimeout("PUT", "/api/monitoring/keyword/7", "{\"timeoutMs\":15000}")).isEqualTo(15_000);
+    }
+
+    @Test
+    @DisplayName("Y-3: POST/PUT /http timeoutMs tavanlanır — 2147483647 → 120000, 5 → 1000")
+    void http_timeoutClampedOnCreateAndUpdate() throws Exception {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); if (h.getId() == null) h.setId(31L); return h; });
+        String base = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://tavan.example.com\",\"teamId\":3,";
+        assertThat(savedHttpTimeout("POST", "/api/monitoring/http", base + "\"timeoutMs\":2147483647}")).isEqualTo(120_000);
+        assertThat(savedHttpTimeout("POST", "/api/monitoring/http", base + "\"timeoutMs\":5}")).isEqualTo(1_000);
+
+        var m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(1L); m.setUrl("https://tavan.example.com/"); m.setActive(true); m.setTeamId(3L);
+        when(httpMonitorRepo.findById(1L)).thenReturn(Optional.of(m));
+        assertThat(savedHttpTimeout("PUT", "/api/monitoring/http/1", "{\"timeoutMs\":2147483647}")).isEqualTo(120_000);
+        assertThat(savedHttpTimeout("PUT", "/api/monitoring/http/1", "{\"timeoutMs\":5}")).isEqualTo(1_000);
+    }
+
+    @Test
+    @DisplayName("N3: kaydetmeden test uçları (port/keyword/ping/http/page) da timeoutMs'i tavanlar")
+    void testEndpoints_clampTimeout() throws Exception {
+        String huge = "\"timeoutMs\":2147483647";
+        when(portChecker.check(anyString(), anyInt(), anyInt(), anyString(), any(), any(), anyString(), anyBoolean()))
+                .thenReturn(java.util.Map.of("open", true));
+        mvc.perform(post("/api/monitoring/port/test").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"host\":\"svc.example.com\",\"port\":443," + huge + "}"))
+                .andExpect(status().isOk());
+        verify(portChecker).check(anyString(), anyInt(), eq(120_000), anyString(), any(), any(), anyString(), anyBoolean());
+
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+                .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                        .contentType("application/json")
+                        .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\"," + huge + "}"))
+                .andExpect(status().isOk());
+        verify(keywordChecker).check(anyString(), anyString(), eq(120_000), any(), anyBoolean(), anyBoolean());
+
+        when(pingChecker.check(anyString(), anyString(), anyInt(), anyInt())).thenReturn(java.util.Map.of("up", true));
+        mvc.perform(post("/api/monitoring/ping/test").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"host\":\"svc.example.com\",\"timeoutMs\":5}"))
+                .andExpect(status().isOk());
+        verify(pingChecker).check(anyString(), anyString(), anyInt(), eq(1_000));
+
+        when(httpChecker.check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+                .thenReturn(java.util.Map.of("ok", true, "http_status", 200));
+        mvc.perform(post("/api/monitoring/http/test").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"url\":\"https://x.example.com\"," + huge + "}"))
+                .andExpect(status().isOk());
+        verify(httpChecker).check(anyString(), anyString(), anyString(), eq(120_000), anyBoolean(), anyBoolean(), anyBoolean());
+
+        when(pageChecker.test(anyString(), anyInt(), anyBoolean())).thenReturn(
+                new com.sitemonitor.service.PageCheckerService.PageCheckResult(
+                        "OK", true, 200, 12L, 3, 0, 0, 0, 1, null, null, null, List.of()));
+        mvc.perform(post("/api/monitoring/page/test").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"url\":\"https://x.example.com\"," + huge + "}"))
+                .andExpect(status().isOk());
+        verify(pageChecker).test(anyString(), eq(120_000), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("N1: aynı oturumda süren bir HTTP/Keyword testi varken ikinci istek 429 alır, denetleyici KOŞMAZ; yuva sonra boşalır")
+    void testEndpoints_oneInFlightPerSession() throws Exception {
+        MockHttpSession s = session("ADMIN");
+        when(httpChecker.check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+                .thenReturn(java.util.Map.of("ok", true, "http_status", 200));
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+                .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
+
+        MonitoringController.TEST_IN_FLIGHT.add(MonitoringController.testSlot(s, "http"));
+        MonitoringController.TEST_IN_FLIGHT.add(MonitoringController.testSlot(s, "keyword"));
+        try {
+            mvc.perform(post("/api/monitoring/http/test").session(s).contentType("application/json")
+                            .content("{\"url\":\"https://x.example.com\"}"))
+                    .andExpect(status().isTooManyRequests());
+            mvc.perform(post("/api/monitoring/keyword/test").session(s).contentType("application/json")
+                            .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\"}"))
+                    .andExpect(status().isTooManyRequests());
+            verify(httpChecker, never()).check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean());
+            verify(keywordChecker, never()).check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean());
+            // BAŞKA oturum etkilenmez.
+            mvc.perform(post("/api/monitoring/http/test").session(session("ADMIN")).contentType("application/json")
+                            .content("{\"url\":\"https://x.example.com\"}"))
+                    .andExpect(status().isOk());
+        } finally {
+            MonitoringController.TEST_IN_FLIGHT.remove(MonitoringController.testSlot(s, "http"));
+            MonitoringController.TEST_IN_FLIGHT.remove(MonitoringController.testSlot(s, "keyword"));
+        }
+        // Yuva boşaldıktan sonra aynı oturum yeniden test edebilir; tamamlanan istek yuvayı geri bırakır.
+        mvc.perform(post("/api/monitoring/http/test").session(s).contentType("application/json")
+                        .content("{\"url\":\"https://x.example.com\"}"))
+                .andExpect(status().isOk());
+        assertThat(MonitoringController.TEST_IN_FLIGHT).isEmpty();
+    }
+
+    // ── Standalone DNS/Port: SİLİNMİŞ ≠ DURAKLATILMIŞ (2026-09-27, kullanıcı kararı) ──────────────────────
+    // Eskiden silme ile duraklatma aynı durumu yazıyordu (active=false) ve liste standalone satırları active=true ile
+    // süzüyordu: duraklatılan standalone izleme listeden kayboluyor, kullanıcı onu göremiyor ve sürdüremiyordu.
+
+    private com.sitemonitor.model.PortMonitor standalonePort(long id, String host, boolean active, String deletedAt) {
+        com.sitemonitor.model.PortMonitor m = inventoryPort(id, host, 3L);
+        m.setStandalone(true); m.setActive(active); m.setDeletedAt(deletedAt);
+        return m;
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: GET /port — DURAKLATILMIŞ standalone izleme listede (active=false) görünür")
+    void listPort_pausedStandaloneIsListed() throws Exception {
+        com.sitemonitor.model.PortMonitor paused = standalonePort(41L, "durdu.example.com", false, null);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(portMonitorRepo.findAll()).thenReturn(List.of(paused));
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(paused));
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/port").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.host=='durdu.example.com')].active").value(org.hamcrest.Matchers.contains(false)));
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: GET /dns — DURAKLATILMIŞ standalone izleme listede (active=false) görünür")
+    void listDns_pausedStandaloneIsListed() throws Exception {
+        com.sitemonitor.model.DnsMonitor paused = standaloneDns(42L);
+        paused.setDomain("durdu.example.com");
+        paused.setActive(false);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of(paused));
+        when(dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(paused));
+
+        mvc.perform(get("/api/monitoring/dns").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[?(@.domain=='durdu.example.com')].active").value(org.hamcrest.Matchers.contains(false)));
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: DELETE /port — standalone satıra deleted_at yazılır; envanter-türevi yalnız duraklar")
+    void deletePort_standaloneMarkedDeleted_derivedOnlyPaused() throws Exception {
+        when(portMonitorRepo.findById(43L)).thenReturn(Optional.of(standalonePort(43L, "sil.example.com", true, null)));
+        when(portMonitorRepo.findById(44L)).thenReturn(Optional.of(inventoryPort(44L, "turev.example.com", 3L)));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/port/43").session(session("ADMIN"))).andExpect(status().isOk());
+        mvc.perform(delete("/api/monitoring/port/44").session(session("ADMIN"))).andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        verify(portMonitorRepo, org.mockito.Mockito.times(2)).save(cap.capture());
+        assertThat(cap.getAllValues().get(0).getActive()).isFalse();
+        assertThat(cap.getAllValues().get(0).getDeletedAt()).as("standalone silindi").isNotNull();
+        assertThat(cap.getAllValues().get(1).getActive()).isFalse();
+        assertThat(cap.getAllValues().get(1).getDeletedAt()).as("envanter-türevi yalnız duraklar").isNull();
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: DELETE /dns — standalone satıra deleted_at yazılır")
+    void deleteDns_standaloneMarkedDeleted() throws Exception {
+        when(dnsMonitorRepo.findById(45L)).thenReturn(Optional.of(standaloneDns(45L)));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(delete("/api/monitoring/dns/45").session(session("ADMIN"))).andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getActive()).isFalse();
+        assertThat(cap.getValue().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: duraklatılmış standalone SÜRDÜRÜLÜR (PUT active=true); SİLİNMİŞ satır 404 — sürdürülemez, çalıştırılamaz, silinemez")
+    void pausedResumes_deletedIsNotFoundEverywhere() throws Exception {
+        when(portMonitorRepo.findById(46L)).thenReturn(Optional.of(standalonePort(46L, "durdu.example.com", false, null)));
+        when(portMonitorRepo.findById(47L)).thenReturn(Optional.of(standalonePort(47L, "silindi.example.com", false, "2026-09-01T00:00:00")));
+        when(portMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        String resume = "{\"active\":true}";
+
+        mvc.perform(put("/api/monitoring/port/46").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(resume))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.active").value(true));
+
+        mvc.perform(put("/api/monitoring/port/47").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(resume))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/monitoring/port/47/check").session(session("ADMIN"))).andExpect(status().isNotFound());
+        mvc.perform(delete("/api/monitoring/port/47").session(session("ADMIN"))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/monitoring/port/47/history").session(session("ADMIN"))).andExpect(status().isNotFound());
+
+        com.sitemonitor.model.DnsMonitor deletedDns = standaloneDns(48L);
+        deletedDns.setActive(false);
+        deletedDns.setDeletedAt("2026-09-01T00:00:00");
+        when(dnsMonitorRepo.findById(48L)).thenReturn(Optional.of(deletedDns));
+        mvc.perform(put("/api/monitoring/dns/48").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(resume))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/monitoring/dns/48/check").session(session("ADMIN"))).andExpect(status().isNotFound());
+
+        // Yalnız duraklatılmış satır kaydedildi; silinmiş satıra hiçbir yazım yok.
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        verify(portMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getId()).isEqualTo(46L);
+        verify(dnsMonitorRepo, never()).save(any());
+        verify(portChecker, never()).check(any(com.sitemonitor.model.PortMonitor.class));
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: PUT /port — host:port'u DURAKLATILMIŞ bir standalone kopyayla aynı yapmak 400 (görünür mükerrer)")
+    void updatePort_toPausedDuplicate_blocked() throws Exception {
+        when(portMonitorRepo.findById(49L)).thenReturn(Optional.of(standalonePort(49L, "a.example.com", true, null)));
+        when(portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNullAndIdNot("durdu.example.com", 443, 49L))
+                .thenReturn(true);
+
+        mvc.perform(put("/api/monitoring/port/49").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"host\":\"durdu.example.com\",\"port\":443}"))
+                .andExpect(status().isBadRequest());
+        verify(portMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("SOFT-DELETE: POST /port — duraklatılmış kopya 400 'sürdürün'; silinmiş kopya engel değil → YENİ satır")
+    void createPort_pausedBlocks_deletedDoesNot() throws Exception {
+        String body = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"tekrar.example.com\",\"port\":8443,\"teamId\":3}";
+        when(portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull("tekrar.example.com", 8443))
+                .thenReturn(true);
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("duraklatılmış")));
+        verify(portMonitorRepo, never()).save(any());
+
+        // Silinmiş satır ne "aktif" ne "duraklatılmış" sorgusuna girer → ekleme serbest, yeni satır açılır.
+        when(portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull("tekrar.example.com", 8443))
+                .thenReturn(false);
+        java.util.concurrent.atomic.AtomicReference<Long> idAtSave = new java.util.concurrent.atomic.AtomicReference<>(-1L);
+        when(portMonitorRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PortMonitor p = i.getArgument(0); idAtSave.set(p.getId()); p.setId(900L); return p; });
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortMonitor.class);
+        verify(portMonitorRepo).save(cap.capture());
+        assertThat(idAtSave.get()).as("YENİ satır (silinmiş satır canlandırılmaz)").isNull();
+        assertThat(cap.getValue().getDeletedAt()).isNull();
+        assertThat(cap.getValue().getActive()).isTrue();
     }
 }

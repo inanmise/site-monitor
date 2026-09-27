@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useId } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -8,21 +8,35 @@ import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
-import RecipientSimulator from './RecipientSimulator.jsx'
 import { formatDateSec } from '../../api/client'
-import { Download } from 'lucide-react'
+import { ArrowRight, Download, UserPlus, Users } from 'lucide-react'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import ToneBadge, { OrgRoleBadge } from './ToneBadge.jsx'
+import { ToolbarSearch } from './ListToolbar.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Label } from '@/components/shadcn/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
-const levelColor = { WARNING: '#f0a500', HIGH: '#e07b00', CRITICAL: '#c0392b' }
+/** Alarm seviyesi rozeti — dolgulu ton (eski `.level-badge` renkleri: amber / turuncu / kırmızı). */
+const LEVEL_CLS = { WARNING: 'bg-amber-500 text-white', HIGH: 'bg-orange-600 text-white', CRITICAL: 'bg-red-700 text-white' }
 const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', webhook_url: '', webhook_type: 'TEAMS', active: true, team_id: '' }
 
-export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false }) {
+/**
+ * @param onOpenSimulator (g_* paramları) → "Kim bilgilendirilir?" sekmesine geçer (AdminPanel.jump). Simülatör
+ *        2026-09-27'de bu sayfadan ayrı sekmeye taşındı; burada yalnız oraya götüren bağlantı kalır.
+ */
+export default function EscalationContacts({ teams = [], systemRole, isAdmin: isAdminProp = false, onOpenSimulator }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole ? systemRole === 'ADMIN' : isAdminProp
@@ -68,7 +82,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   }, [contacts, q, fRole, fLevel, fTeam])
 
   // Proje standardı sayfalama (2026-09-21): usePagination + PaginationBar (istemci-taraflı)
-  const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', defaultSize: 25, resetDeps: [q, fRole, fLevel, fTeam] })
+  const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', preset: 'panel', resetDeps: [q, fRole, fLevel, fTeam] })
   const pagedContacts = pager.pageItems
 
   useEffect(() => { load(); loadUsers() }, [])
@@ -115,10 +129,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   }
 
   function openAdd() {
+    setMsg(null)
     setForm({ ...emptyContact, team_id: teams[0]?.id ?? '' })
     setModal('add')
   }
   function openEdit(c) {
+    setMsg(null)
     setForm({
       user_id: c.user_id ? String(c.user_id) : '',
       role: c.role || 'TECH',
@@ -171,192 +187,229 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const selectedUser = form.user_id ? userMap[form.user_id] : null
   const canSave = !!form.user_id
 
+  const TH = 'h-9 px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase'
+  const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
   return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <div>
-          <h3>{t('ec.title')}</h3>
-          <p className="section-desc">{t('ec.desc')}</p>
-          {loadError && contacts.length === 0 && (
-            <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-          )}
-          <div className="escalation-legend">
-            <span>{t('ec.legendWarn')}</span>
-            <span>{t('ec.legendHigh')}</span>
-            <span>{t('ec.legendCrit')}</span>
-          </div>
+    <section className="mb-8 flex min-w-0 flex-col gap-4">
+      {/* Başlık + eylemler — telefonda alt alta */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-lg leading-tight font-semibold">{t('ec.title')}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('ec.desc')}</p>
+          {/* Seviye → alıcı zinciri (eskiden tanımsız `.escalation-legend` sınıfıyla düz metin) */}
+          <ul data-slot="ec-legend" className="mt-2 flex list-none flex-wrap gap-1.5 p-0">
+            {[['WARNING', 'ec.legendWarn'], ['HIGH', 'ec.legendHigh'], ['CRITICAL', 'ec.legendCrit']].map(([lvl, key]) => (
+              <li key={lvl}>
+                <Badge variant="outline" className="gap-1.5 font-medium text-muted-foreground">
+                  <span aria-hidden="true" className={cn('size-2 rounded-full', LEVEL_CLS[lvl])} />{t(key)}
+                </Badge>
+              </li>
+            ))}
+          </ul>
         </div>
-        <div className="hdr-actions">
-          <Button variant="secondary" title={t('ec.exportCsv')} onClick={() => {
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenSimulator && (
+            // Takım süzgeci yalnız yöneticide görünür; seçiliyse simülasyon o takımla açılır.
+            <Button variant="link" className="h-10 px-1 md:h-9" onClick={() => onOpenSimulator(isAdmin && fTeam ? { g_team: fTeam } : undefined)}>
+              {t('wn.testLink')} <ArrowRight aria-hidden="true" />
+            </Button>
+          )}
+          <Button variant="outline" title={t('ec.exportCsv')} onClick={() => {
             const rows = filteredContacts.map(c => [c.name, c.email, teamMap[c.team_id] || '', roleLabelMap[c.role] || c.role, levelLabelMap[c.min_alert_level] || c.min_alert_level,
               c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive')])
             downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive')], rows))
-          }}><Download size={14} /> {t('ec.exportCsv')}</Button>
-          {canManage && <Button variant="success" onClick={openAdd}>{t('ec.addBtn')}</Button>}
+          }}><Download aria-hidden="true" /> {t('ec.exportCsv')}</Button>
+          {canManage && <Button variant="success" onClick={openAdd}><UserPlus aria-hidden="true" /> {t('ec.addBtn')}</Button>}
         </div>
       </div>
-      {msg && <div className="alert-msg">{msg}</div>}
+      {loadError && contacts.length === 0 && (
+        <AlertBanner tone="danger" title={t('settings.loadError')} role="alert" className="mb-0">{String(loadError)}</AlertBanner>
+      )}
 
-      <RecipientSimulator teams={teams} isAdmin={isAdmin} defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
-
-      {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım */}
-      <div className="audit-filters">
-        <input className="audit-filter-input" placeholder={t('ec.searchPlaceholder')}
-          value={q} onChange={(e) => setQ(e.target.value)} />
-        <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('ec.allRoles')} ariaLabel={t('flt.role')}
-          options={[{ value: '', label: t('ec.allRoles') },
-            ...ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))]} />
-        <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')} ariaLabel={t('flt.level')}
-          options={[{ value: '', label: t('ec.allLevels') },
-            ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
+      {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım (telefonda tam genişlik, alt alta) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ToolbarSearch value={q} onChange={setQ} placeholder={t('ec.searchPlaceholder')} ariaLabel={t('ec.searchPlaceholder')}
+          clearLabel={t('app.clear')} className="w-full max-w-none sm:w-auto sm:max-w-xs" />
+        <div className="w-full min-w-0 sm:w-44">
+          <SearchableSelect value={fRole} onChange={setFRole} placeholder={t('ec.allRoles')} ariaLabel={t('flt.role')}
+            options={[{ value: '', label: t('ec.allRoles') },
+              ...ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))]} />
+        </div>
+        <div className="w-full min-w-0 sm:w-44">
+          <SearchableSelect value={fLevel} onChange={setFLevel} placeholder={t('ec.allLevels')} ariaLabel={t('flt.level')}
+            options={[{ value: '', label: t('ec.allLevels') },
+              ...LEVELS.map(l => ({ value: l, label: levelLabelMap[l] }))]} />
+        </div>
         {isAdmin && teams.length > 0 && (
-          <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')} searchThreshold={2} ariaLabel={t('flt.team')}
-            options={[{ value: '', label: t('ec.allTeams') },
-              ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+          <div className="w-full min-w-0 sm:w-48">
+            <SearchableSelect value={fTeam} onChange={setFTeam} placeholder={t('ec.allTeams')} searchThreshold={2} ariaLabel={t('flt.team')}
+              options={[{ value: '', label: t('ec.allTeams') },
+                ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]} />
+          </div>
         )}
       </div>
 
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>{t('ec.colName')}</th>
-              <th>{t('ec.colEmail')}</th>
-              <th>{t('ec.colTeam')}</th>
-              <th>{t('ec.colRole')}</th>
-              <th>{t('ec.colLevel')}</th>
-              <th>{t('ec.colWebhook')}</th>
-              <th>{t('ec.colLastDelivery')}</th>
-              <th>{t('ec.colActive')}</th>
-              <th>{t('ec.colActions')}</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="overflow-hidden rounded-lg border bg-card">
+        <Table className="text-[0.86em]">
+          <TableHeader className="bg-muted/50">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className={TH}>{t('ec.colName')}</TableHead>
+              {/* Telefonda düşük öncelikli sütunlar gizli (ad + rol + seviye + durum + eylem kalır) */}
+              <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('ec.colEmail')}</TableHead>
+              <TableHead className={cn(TH, 'hidden sm:table-cell')}>{t('ec.colTeam')}</TableHead>
+              <TableHead className={TH}>{t('ec.colRole')}</TableHead>
+              <TableHead className={TH}>{t('ec.colLevel')}</TableHead>
+              <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('ec.colWebhook')}</TableHead>
+              <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('ec.colLastDelivery')}</TableHead>
+              <TableHead className={TH}>{t('ec.colActive')}</TableHead>
+              <TableHead className={cn(TH, 'w-12')}><span className="sr-only">{t('ec.colActions')}</span></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {filteredContacts.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 18 }}>
-                {t('ec.noResults')}
-              </td></tr>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={9} className="py-5 text-center text-muted-foreground">{t('ec.noResults')}</TableCell>
+              </TableRow>
             )}
             {pagedContacts.map((c) => (
-              <tr key={c.id}>
-                <td><UserBadge displayName={c.name} email={c.email} inline size="sm" /></td>
-                <td>{c.email}</td>
-                <td>{teamMap[c.team_id] || '—'}</td>
-                <td><span className="role-badge">{roleLabelMap[c.role] || c.role}</span></td>
-                <td><span className="level-badge" style={{ background: levelColor[c.min_alert_level] || '#a1a1aa' }}>{levelLabelMap[c.min_alert_level] || c.min_alert_level}</span></td>
-                <td>{c.webhook_url ? <span className="badge badge-ok">{c.webhook_type}</span> : '—'}</td>
-                <td>{(() => {
+              <TableRow key={c.id}>
+                <TableCell className="max-w-[16rem] whitespace-normal"><UserBadge displayName={c.name} email={c.email} inline size="sm" /></TableCell>
+                <TableCell className="hidden break-all whitespace-normal lg:table-cell">{c.email}</TableCell>
+                <TableCell className="hidden whitespace-normal sm:table-cell">{teamMap[c.team_id] || '—'}</TableCell>
+                <TableCell><OrgRoleBadge role={c.role}>{roleLabelMap[c.role] || c.role}</OrgRoleBadge></TableCell>
+                <TableCell>
+                  <Badge data-level={c.min_alert_level} className={cn('font-bold', LEVEL_CLS[c.min_alert_level] || 'bg-muted-foreground text-white')}>
+                    {levelLabelMap[c.min_alert_level] || c.min_alert_level}
+                  </Badge>
+                </TableCell>
+                <TableCell className="hidden md:table-cell">{c.webhook_url ? <ToneBadge tone="success">{c.webhook_type}</ToneBadge> : '—'}</TableCell>
+                <TableCell className="hidden md:table-cell">{(() => {
                   if (!c.webhook_url) return '—'
                   const d = deliveries[String(c.email || '').trim().toLowerCase()]
-                  if (!d) return <span className="field-hint">{t('ec.lastDeliveryNone')}</span>
+                  if (!d) return <span className={hint}>{t('ec.lastDeliveryNone')}</span>
                   return (
-                    <span className="ec-delivery" title={d.detail || ''}>
-                      <span className={d.status === 'SENT' ? 'badge badge-ok' : 'badge badge-err'}>{d.status}{d.trigger === 'WEBHOOK_TEST' ? ` · ${t('ec.lastDeliveryTest')}` : ''}</span>
-                      <span className="ec-delivery-at">{formatDateSec(d.at)}</span>
+                    <span data-slot="ec-delivery" className="inline-flex flex-col items-start gap-0.5" title={d.detail || ''}>
+                      <ToneBadge tone={d.status === 'SENT' ? 'success' : 'danger'}>{d.status}{d.trigger === 'WEBHOOK_TEST' ? ` · ${t('ec.lastDeliveryTest')}` : ''}</ToneBadge>
+                      <span className="font-mono text-[0.85em] text-muted-foreground">{formatDateSec(d.at)}</span>
                     </span>
                   )
-                })()}</td>
-                <td><span className={c.active ? 'badge badge-ok' : 'badge badge-err'}>{c.active ? t('ec.active') : t('ec.inactive')}</span></td>
-                <td>
+                })()}</TableCell>
+                <TableCell><ToneBadge tone={c.active ? 'success' : 'danger'}>{c.active ? t('ec.active') : t('ec.inactive')}</ToneBadge></TableCell>
+                <TableCell className="text-right">
                   <KebabMenu label={t('ec.colActions')} rowLabel={c.name || c.email} items={[
                     ...(canManage ? [{ label: t('ec.edit'), onClick: () => openEdit(c) }] : []),
                     { label: t('hist.title'), onClick: () => setHistFilter({ id: c.id, name: c.name || c.email }) },
                     ...(canManage && c.webhook_url ? [{ label: t('ec.testWebhook'), onClick: () => { if (testingId !== c.id) testWebhook(c) } }] : []),
                     ...(canManage ? [{ label: t('ec.delete'), danger: true, onClick: () => del(c.id) }] : []),
                   ]} />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
-      {filteredContacts.length > 0 && <PaginationBar {...pager} />}
+      <PaginationBar {...pager} />
 
       <AdminChangeHistory resource="ESCALATION_CONTACT" filter={histFilter} onClearFilter={() => setHistFilter(null)} />
 
-      {modal !== null && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{modal === 'add' ? t('ec.addTitle') : t('ec.editTitle')}</h3>
-            <div className="form-grid form-grid--top">
-              <label>
-                <span>{t('contact.user')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.user_id}
-                  onChange={v => setForm({ ...form, user_id: v })}
-                  placeholder={t('contact.selectUser')}
+      {/* Ekle / düzenle — ui/ModalShell (shadcn Dialog): odak tuzağı, Escape, telefonda sığan kutu + sabit altlık */}
+      <ModalShell open={modal !== null} onClose={() => setModal(null)} busy={saving}
+        title={modal === 'add' ? t('ec.addTitle') : t('ec.editTitle')} icon={Users} scrollBody
+        footer={<>
+          <Button variant="secondary" onClick={() => setModal(null)} disabled={saving}>{t('ec.cancel')}</Button>
+          <Button onClick={save} disabled={saving || !canSave}>
+            {saving ? t('ec.saving') : t('ec.save')}
+          </Button>
+        </>}>
+        {msg && <AlertBanner tone="danger" role="alert">{msg}</AlertBanner>}
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+          <Field label={t('contact.user')} required className="sm:col-span-2"
+            hint={selectedUser ? `${selectedUser.display_name || selectedUser.username} — ${selectedUser.email}` : (users.length === 0 ? t('team.noUsersHint') : undefined)}
+            hintTone={!selectedUser && users.length === 0 ? 'warn' : undefined}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.user_id}
+                onChange={v => setForm({ ...form, user_id: v })}
+                placeholder={t('contact.selectUser')}
+                searchThreshold={2}
+                options={[
+                  { value: '', label: t('contact.selectUser') },
+                  ...users.map(u => ({
+                    value: String(u.id),
+                    label: `${u.display_name || u.username} (${u.email || u.username})`,
+                  })),
+                ]}
+              />
+            )}
+          </Field>
+          {isAdmin && teams.length > 0 && (
+            <Field label={t('ec.formTeam')}>
+              {({ id }) => (
+                <SearchableSelect id={id}
+                  value={form.team_id}
+                  onChange={v => setForm({ ...form, team_id: v })}
                   searchThreshold={2}
-                  options={[
-                    { value: '', label: t('contact.selectUser') },
-                    ...users.map(u => ({
-                      value: String(u.id),
-                      label: `${u.display_name || u.username} (${u.email || u.username})`,
-                    })),
-                  ]}
+                  options={teams.map(team => ({ value: team.id, label: team.name }))}
                 />
-                {selectedUser && (
-                  <span className="field-hint">
-                    {selectedUser.display_name || selectedUser.username} — {selectedUser.email}
-                  </span>
-                )}
-                {users.length === 0 && (
-                  <span className="field-hint field-hint--warn">{t('team.noUsersHint')}</span>
-                )}
-              </label>
-              {isAdmin && teams.length > 0 && (
-                <label>{t('ec.formTeam')}
-                  <SearchableSelect
-                    value={form.team_id}
-                    onChange={v => setForm({ ...form, team_id: v })}
-                    searchThreshold={2}
-                    options={teams.map(team => ({ value: team.id, label: team.name }))}
-                  />
-                </label>
               )}
-              <label>{t('ec.formRole')}
-                <SearchableSelect
-                  value={form.role}
-                  onChange={v => setForm({ ...form, role: v })}
-                  options={ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))}
-                />
-              </label>
-              <label>{t('ec.formLevel')}
-                <SearchableSelect
-                  value={form.min_alert_level}
-                  onChange={v => setForm({ ...form, min_alert_level: v })}
-                  options={[
-                    { value: 'WARNING',  label: t('ec.levelWarn') },
-                    { value: 'HIGH',     label: t('ec.levelHigh') },
-                    { value: 'CRITICAL', label: t('ec.levelCrit') },
-                  ]}
-                />
-              </label>
-              <label>{t('ec.formWebhook')}<input value={form.webhook_url} onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} placeholder="https://..." /></label>
-              <label>{t('ec.formWebhookType')}
-                <SearchableSelect
-                  value={form.webhook_type}
-                  onChange={v => setForm({ ...form, webhook_type: v })}
-                  options={[
-                    { value: 'TEAMS', label: 'Microsoft Teams' },
-                    { value: 'SLACK', label: 'Slack' },
-                  ]}
-                />
-              </label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
-                {t('ec.formActive')}
-              </label>
-            </div>
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setModal(null)}>{t('ec.cancel')}</Button>
-              <Button onClick={save} disabled={saving || !canSave}>
-                {saving ? t('ec.saving') : t('ec.save')}
-              </Button>
-            </div>
-          </div>
+            </Field>
+          )}
+          <Field label={t('ec.formRole')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.role}
+                onChange={v => setForm({ ...form, role: v })}
+                options={ROLES.map(r => ({ value: r, label: roleLabelMap[r] }))}
+              />
+            )}
+          </Field>
+          <Field label={t('ec.formLevel')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.min_alert_level}
+                onChange={v => setForm({ ...form, min_alert_level: v })}
+                options={[
+                  { value: 'WARNING',  label: t('ec.levelWarn') },
+                  { value: 'HIGH',     label: t('ec.levelHigh') },
+                  { value: 'CRITICAL', label: t('ec.levelCrit') },
+                ]}
+              />
+            )}
+          </Field>
+          <Field label={t('ec.formWebhook')}>
+            {({ id }) => (
+              <Input id={id} type="url" value={form.webhook_url} placeholder="https://..."
+                onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} />
+            )}
+          </Field>
+          <Field label={t('ec.formWebhookType')}>
+            {({ id }) => (
+              <SearchableSelect id={id}
+                value={form.webhook_type}
+                onChange={v => setForm({ ...form, webhook_type: v })}
+                options={[
+                  { value: 'TEAMS', label: 'Microsoft Teams' },
+                  { value: 'SLACK', label: 'Slack' },
+                ]}
+              />
+            )}
+          </Field>
+          <ActiveCheckbox checked={form.active} label={t('ec.formActive')}
+            onChange={v => setForm({ ...form, active: v })} />
         </div>
-      )}
+      </ModalShell>
+    </section>
+  )
+}
+
+/** "Aktif" — shadcn Checkbox + bağlı etiket (form gönderimiyle gider). */
+function ActiveCheckbox({ checked, onChange, label }) {
+  const id = useId()
+  return (
+    <div className="flex min-h-9 items-center gap-2 sm:col-span-2">
+      <Checkbox id={id} checked={!!checked} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
     </div>
   )
 }

@@ -71,6 +71,17 @@ public class AuditLog {
     @Column(name = "user_agent", columnDefinition = "TEXT")
     private String userAgent;
 
+    /** User-Agent'ın tavanı (prod kapısı 2026-09-25, Y-2/O-3): istemci 8 KB'lık başlık gönderip her 403/başarısız
+     *  denemede şişkin satır yazdırabiliyor, dışa aktarma bunları belleğe topluyordu. Tanımlama için ilk 512
+     *  karakter fazlasıyla yeter. JPA ALAN erişimli (@Id alanda) → yükleme bu setter'dan geçmez, eski satırlar
+     *  ve hash zinciri etkilenmez; hash yazımda saklanan (kırpılmış) değer üzerinden hesaplanır. */
+    public static final int USER_AGENT_MAX = 512;
+
+    public void setUserAgent(String userAgent) {
+        this.userAgent = userAgent == null || userAgent.length() <= USER_AGENT_MAX
+                ? userAgent : userAgent.substring(0, USER_AGENT_MAX);
+    }
+
     /**
      * Oturum kimliği — YANITA ÇIKMAZ.
      *

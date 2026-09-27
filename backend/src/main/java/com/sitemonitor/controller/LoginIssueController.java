@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import com.sitemonitor.model.IssueReportComment;
 import com.sitemonitor.model.LoginIssueMailLog;
 import com.sitemonitor.model.LoginIssueReport;
 import com.sitemonitor.model.LoginIssueReportImage;
@@ -118,15 +119,18 @@ public class LoginIssueController {
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
         requireAccess(session, "edit");
-        if (loginIssueService.get(id).isEmpty()) return notFound();
+        var existing = loginIssueService.get(id);
+        if (existing.isEmpty()) return notFound();
+        String before = existing.get().getStatus();
         String newStatus = str(body.get("status"));
         String note = str(body.get("resolutionNote"));
         LoginIssueReport updated;
         try {
-            updated = loginIssueService.updateStatus(id, newStatus, note, actor(session));
+            updated = loginIssueService.updateStatus(id, newStatus, note, actor(session), role(session));
         } catch (IllegalArgumentException e) {
             return err(HttpStatus.BAD_REQUEST, e.getMessage());
         }
+        boolean changed = LoginIssueService.statusChanged(before, updated.getStatus());
         // Best-effort audit — durum değişikliği zaten commit'lendi; audit hatası 500'e yol açmasın.
         try {
             auditService.recordAction("LOGIN_ISSUE_STATUS_CHANGE", session, request,
@@ -154,8 +158,83 @@ public class LoginIssueController {
                     updated.getReporterEmail(), adminEmail, updated.getUsername(), updated.getErrorText(),
                     updated.getMessage(), updated.getReportedAt(), updated.getResolutionNote(),
                     updated.getResolvedAt(), images);
+        } else if (changed) {
+            // OPEN ↔ IN_PROGRESS gerçek geçişi: bildirene KISA durum maili (2026-09-26). Aynı durumu tekrar
+            // kaydetmek (yalnız not) mail üretmez. Uygulama-içi haber InboxService'te STATUS satırından türer.
+            loginIssueMailService.dispatchStatusChange(updated.getId(), LoginIssueService.refCode(updated),
+                    updated.getReporterEmail(), updated.getUsername(), updated.getStatus(),
+                    updated.getResolutionNote(), updated.getUpdatedAt(), summarize(updated.getMessage()));
         }
         return ok(Map.of("data", toDetail(updated), "message", "Durum güncellendi"));
+    }
+
+    // ── Konuşma dizisi (2026-09-26) ─────────────────────────────────────────────
+
+    /** Tüm satırlar — iç notlar DÂHİL (yönetici görünümü). */
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<Map<String, Object>> comments(@PathVariable Long id, HttpSession session) {
+        requireAccess(session, "view");
+        var existing = loginIssueService.get(id);
+        if (existing.isEmpty()) return notFound();
+        List<IssueReportComment> rows = loginIssueService.comments(id);
+        return ok(Map.of("data", commentsOf(rows), "timeline", IssueReportController.timeline(existing.get(), rows)));
+    }
+
+    /**
+     * Yönetici yorumu: {@code internal=true} → iç not (bildiren görmez, bildirim/mail YOK);
+     * {@code internal=false} → herkese açık yanıt → bildirene uygulama-içi haber (InboxService, satırdan türer)
+     * + kısa mail. Yönetici kendi raporuna yazıyorsa (bildiren = aktör) kendine mail gitmez.
+     */
+    @PostMapping("/{id}/comments")
+    public ResponseEntity<Map<String, Object>> addComment(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                          HttpSession session, HttpServletRequest request) {
+        requireAccess(session, "edit");
+        var existing = loginIssueService.get(id);
+        if (existing.isEmpty()) return notFound();
+        LoginIssueReport r = existing.get();
+        String text = str(body.get("body"));
+        boolean internal = Boolean.TRUE.equals(body.get("internal"));
+        if (text.isBlank()) return err(HttpStatus.BAD_REQUEST, "Yorum boş olamaz");
+        if (text.length() > IssueReportComment.MAX_BODY)
+            return err(HttpStatus.BAD_REQUEST, "Yorum en fazla " + IssueReportComment.MAX_BODY + " karakter olabilir");
+        LoginIssueService.CommentResult res;
+        try {
+            res = loginIssueService.addComment(id, actor(session), role(session), internal, false, text);
+        } catch (IllegalArgumentException e) {
+            return err(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        String refCode = LoginIssueService.refCode(r);
+        try {
+            auditService.recordAction("LOGIN_ISSUE_COMMENT", session, request, "LOGIN_ISSUE", String.valueOf(id),
+                    "{\"ref\":\"" + refCode + "\",\"comment\":" + res.comment().getId() + ",\"internal\":" + internal + "}");
+        } catch (Exception e) {
+            log.warn("Login issue {} yorum audit kaydı yazılamadı: {}", id, e.getMessage());
+        }
+        boolean selfReply = LoginIssueService.ownedBy(r, actor(session));
+        if (!internal && !selfReply) {
+            loginIssueMailService.dispatchAdminReply(r.getId(), refCode, r.getReporterEmail(), r.getUsername(),
+                    r.getStatus(), text, res.comment().getCreatedAt(), summarize(r.getMessage()));
+        }
+        return ok(Map.of("data", commentOf(res.comment()), "message", internal ? "İç not eklendi" : "Yanıt gönderildi"));
+    }
+
+    private static List<Map<String, Object>> commentsOf(List<IssueReportComment> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (IssueReportComment c : rows) if (IssueReportComment.KIND_COMMENT.equals(c.getKind())) out.add(commentOf(c));
+        return out;
+    }
+
+    /** Yönetici görünümü satırı — {@code internal} bayrağı burada VAR (bildiren ucunda alan bile dönmez). */
+    private static Map<String, Object> commentOf(IssueReportComment c) {
+        Map<String, Object> m = IssueReportController.commentItem(c);
+        m.put("internal", c.isInternal());
+        m.put("authorRole", c.getAuthorRole());
+        return m;
+    }
+
+    private String role(HttpSession session) {
+        Object r = session != null ? session.getAttribute("systemRole") : null;
+        return r != null ? r.toString() : "ADMIN";
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -191,6 +270,7 @@ public class LoginIssueController {
         m.put("source", r.getSource());
         m.put("category", r.getCategory());
         m.put("linkedReference", r.getLinkedReference());
+        m.put("lastActivityAt", r.getLastActivityAt() != null ? r.getLastActivityAt() : r.getReportedAt());
         // İmza: hata metninin normalize ilk satırı — frontend gruplama bunu anahtar alır.
         m.put("signature", signatureOf(r));
         return m;
@@ -254,6 +334,11 @@ public class LoginIssueController {
             mails.add(mm);
         }
         m.put("mailHistory", mails);
+        // Konuşma dizisi (2026-09-26): yönetici görünümünde iç notlar DÂHİL + zaman çizelgesi.
+        List<IssueReportComment> rows = loginIssueService.comments(r.getId());
+        m.put("comments", commentsOf(rows));
+        m.put("timeline", IssueReportController.timeline(r, rows));
+        m.put("lastActivityAt", r.getLastActivityAt() != null ? r.getLastActivityAt() : r.getReportedAt());
         return m;
     }
 

@@ -1,7 +1,9 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.model.IssueReportComment;
 import com.sitemonitor.model.LoginIssueReport;
 import com.sitemonitor.model.LoginIssueReportImage;
+import com.sitemonitor.repository.IssueReportCommentRepository;
 import com.sitemonitor.repository.LoginIssueMailLogRepository;
 import com.sitemonitor.repository.LoginIssueReportImageRepository;
 import com.sitemonitor.repository.LoginIssueReportRepository;
@@ -45,6 +47,11 @@ public class LoginIssueService {
     private final LoginIssueReportImageRepository imageRepo;
     /** Kalıcı silmede giden maillerin SAKLANAN kopyası da gider (konu + alıcı + tam HTML gövde). */
     private final LoginIssueMailLogRepository mailLogRepo;
+    /** Konuşma dizisi + durum geçişi satırları (2026-09-26) — rapor durum makinesiyle AYNI transaction'da yazılır. */
+    private final IssueReportCommentRepository commentRepo;
+
+    /** Yorum ekleme sonucu: yazılan satır + bildirenin yorumu ÇÖZÜLMÜŞ raporu yeniden açtı mı. */
+    public record CommentResult(IssueReportComment comment, boolean reopened) {}
 
     /** Ayrıştırılmış görsel — data-URL prefix'i çıkarılmış ham base64. */
     public record ParsedImage(String contentType, String base64) {}
@@ -115,8 +122,137 @@ public class LoginIssueService {
         if (r == null) return null;
         imageRepo.deleteByReportId(id);
         mailLogRepo.deleteByReportId(id);
+        commentRepo.deleteByReportId(id);
         reportRepo.delete(r);
         return r;
+    }
+
+    // ── "Bildirimlerim" — kullanıcının kendi kayıtları (2026-09-26) ─────────────────────────
+
+    /** Kullanıcı adı normalizasyonu: eşleşme büyük/küçük harf duyarsız (AD kullanıcı adı yazımı değişebilir). */
+    private static String norm(String username) {
+        return username == null ? "" : username.strip().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** Rapor bu kullanıcıya mı ait? (username eşleşmesi; boş kullanıcı adı hiçbir şeye sahip değildir) */
+    public static boolean ownedBy(LoginIssueReport r, String username) {
+        String u = norm(username);
+        return r != null && !u.isEmpty() && u.equals(norm(r.getUsername()));
+    }
+
+    /** Kullanıcının kendi raporları — tüm kaynaklar, en yeni önce; durum süzgeci opsiyonel. */
+    @Transactional(readOnly = true)
+    public Page<LoginIssueReport> listMine(String username, String status, int page, int size) {
+        String st = (status != null && STATUSES.contains(status)) ? status : null;
+        Pageable pageable = PageRequest.of(Math.max(0, page), clampSize(size));
+        return reportRepo.findMine(norm(username), st, pageable);
+    }
+
+    /** Kullanıcının kendi raporlarının durum sayaçları (eksik durumlar 0). */
+    @Transactional(readOnly = true)
+    public Map<String, Long> countsMine(String username) {
+        Map<String, Long> out = new LinkedHashMap<>();
+        out.put(OPEN, 0L); out.put(IN_PROGRESS, 0L); out.put(RESOLVED, 0L);
+        for (Object[] row : reportRepo.countMineByStatus(norm(username))) {
+            String st = (String) row[0];
+            if (st != null && out.containsKey(st)) out.put(st, ((Number) row[1]).longValue());
+        }
+        return out;
+    }
+
+    /**
+     * Kullanıcının KENDİ raporu — başkasınınki için boş döner (controller 404 verir: 403 varlığı sızdırır).
+     */
+    @Transactional(readOnly = true)
+    public Optional<LoginIssueReport> getMine(Long id, String username) {
+        return reportRepo.findById(id).filter(r -> ownedBy(r, username));
+    }
+
+    /** Bildiren raporu açtı — okunmamış-yanıt göstergesi sıfırlanır. */
+    @Transactional
+    public void markSeenByReporter(Long id) {
+        reportRepo.findById(id).ifPresent(r -> { r.setReporterSeenAt(nowIso()); reportRepo.save(r); });
+    }
+
+    // ── Konuşma dizisi ────────────────────────────────────────────────────────────────────────
+
+    /** Bir raporun TÜM satırları (yorum + durum geçişi; iç notlar DÂHİL) — yalnız yönetici ucu. */
+    @Transactional(readOnly = true)
+    public List<IssueReportComment> comments(Long reportId) {
+        return commentRepo.findByReportIdOrderByIdAsc(reportId);
+    }
+
+    /** Bildirenin görebileceği satırlar: iç notlar SÜZÜLÜR. Kullanıcı uçlarının tek kaynağı. */
+    @Transactional(readOnly = true)
+    public List<IssueReportComment> publicComments(Long reportId) {
+        return commentRepo.findByReportIdOrderByIdAsc(reportId).stream().filter(c -> !c.isInternal()).toList();
+    }
+
+    /** Liste rozeti: rapor → herkese açık yorum sayısı. */
+    @Transactional(readOnly = true)
+    public Map<Long, Long> publicCommentCounts(java.util.Collection<Long> ids) {
+        Map<Long, Long> out = new LinkedHashMap<>();
+        if (ids == null || ids.isEmpty()) return out;
+        for (Object[] row : commentRepo.countPublicByReportIds(ids)) {
+            out.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        }
+        return out;
+    }
+
+    /**
+     * Yorum ekle. Gövde 1–{@value IssueReportComment#MAX_BODY} karakter (aksi hâlde IllegalArgumentException →
+     * controller 400). {@code byReporter=true} ve rapor RESOLVED ise rapor OTOMATİK yeniden açılır
+     * (→ IN_PROGRESS; çözüm sahipliği temizlenir, çözüm notu geçmiş olarak KALIR) ve bir STATUS satırı düşer.
+     * İç not ({@code internal}) yalnız yönetici yazar ve bildirenin göstergesine dokunmaz.
+     */
+    @Transactional
+    public CommentResult addComment(Long reportId, String author, String authorRole, boolean internal,
+                                    boolean byReporter, String body) {
+        String text = body == null ? "" : body.strip();
+        if (text.isEmpty()) throw new IllegalArgumentException("Yorum boş olamaz");
+        if (text.length() > IssueReportComment.MAX_BODY)
+            throw new IllegalArgumentException("Yorum en fazla " + IssueReportComment.MAX_BODY + " karakter olabilir");
+        LoginIssueReport r = reportRepo.findById(reportId)
+                .orElseThrow(() -> new IllegalArgumentException("Kayıt bulunamadı: " + reportId));
+        String now = nowIso();
+        IssueReportComment c = new IssueReportComment();
+        c.setReportId(reportId);
+        c.setKind(IssueReportComment.KIND_COMMENT);
+        c.setAuthorUsername(trimTo(author, 100));
+        c.setAuthorRole(trimTo(authorRole, 20));
+        c.setInternal(!byReporter && internal);   // bildiren iç not yazamaz
+        c.setByReporter(byReporter);
+        c.setBody(text);
+        c.setCreatedAt(now);
+        IssueReportComment saved = commentRepo.save(c);
+
+        boolean reopened = false;
+        if (byReporter && RESOLVED.equals(r.getStatus())) {
+            // Çözülmüş rapora bildirenin yazması = "sorun bitmedi": IN_PROGRESS'e döner, çözüm notu geçmiş olarak kalır.
+            r.setStatus(IN_PROGRESS);
+            r.setResolvedBy(null);
+            r.setResolvedAt(null);
+            statusRow(reportId, IN_PROGRESS, author, authorRole, true, now);
+            reopened = true;
+        }
+        r.setLastActivityAt(now);
+        if (!byReporter && !saved.isInternal()) r.setLastAdminActivityAt(now);
+        r.setUpdatedAt(now);
+        reportRepo.save(r);
+        return new CommentResult(saved, reopened);
+    }
+
+    private void statusRow(Long reportId, String status, String author, String authorRole, boolean byReporter, String now) {
+        IssueReportComment s = new IssueReportComment();
+        s.setReportId(reportId);
+        s.setKind(IssueReportComment.KIND_STATUS);
+        s.setAuthorUsername(trimTo(author, 100));
+        s.setAuthorRole(trimTo(authorRole, 20));
+        s.setInternal(false);
+        s.setByReporter(byReporter);
+        s.setBody(status);
+        s.setCreatedAt(now);
+        commentRepo.save(s);
     }
 
     /** Geçerli kaynaklar — dışarıdan gelen filtre değeri bu kümede değilse yok sayılır. */
@@ -164,9 +300,20 @@ public class LoginIssueService {
      */
     @Transactional
     public LoginIssueReport updateStatus(Long id, String newStatus, String resolutionNote, String actor) {
-        if (!STATUSES.contains(newStatus)) throw new IllegalArgumentException("Geçersiz durum: " + newStatus);
+        return updateStatus(id, newStatus, resolutionNote, actor, "ADMIN");
+    }
+
+    /**
+     * Durum güncelle (2026-09-26 imzası: aktörün rolüyle). Durum GERÇEKTEN değiştiyse zaman çizelgesine bir
+     * STATUS satırı düşer ve bildirenin okunmamış göstergesi ({@code lastAdminActivityAt}) damgalanır —
+     * aynı durumu tekrar kaydetmek (yalnız not güncelleme) satır üretmez.
+     */
+    @Transactional
+    public LoginIssueReport updateStatus(Long id, String newStatus, String resolutionNote, String actor, String actorRole) {
+        if (newStatus == null || !STATUSES.contains(newStatus)) throw new IllegalArgumentException("Geçersiz durum: " + newStatus);
         LoginIssueReport r = reportRepo.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Kayıt bulunamadı: " + id));
+        boolean changed = !newStatus.equals(r.getStatus());
         if (RESOLVED.equals(newStatus)) {
             if (resolutionNote == null || resolutionNote.isBlank())
                 throw new IllegalArgumentException("Çözüm notu zorunludur");
@@ -183,9 +330,20 @@ public class LoginIssueService {
                 r.setResolutionNote(trimTo(resolutionNote, MAX_NOTE));
             }
         }
+        String now = nowIso();
         r.setStatus(newStatus);
-        r.setUpdatedAt(nowIso());
+        r.setUpdatedAt(now);
+        if (changed) {
+            statusRow(id, newStatus, actor, actorRole, false, now);
+            r.setLastActivityAt(now);
+            r.setLastAdminActivityAt(now);
+        }
         return reportRepo.save(r);
+    }
+
+    /** Durum geçişi gerçekten oldu mu? (controller bildirimleri yalnız gerçek geçişte gönderir) */
+    public static boolean statusChanged(String before, String after) {
+        return after != null && !after.equals(before);
     }
 
     /** Admin gösterim referans kodu: {@code LIR-<yıl>-<6 hane id>}. */

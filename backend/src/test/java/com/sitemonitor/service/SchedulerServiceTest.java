@@ -155,6 +155,9 @@ class SchedulerServiceTest {
         ReflectionTestUtils.setField(scheduler, "pageSpeedMonitorRepo", pageSpeedMonitorRepo);
         ReflectionTestUtils.setField(scheduler, "pageSpeedCheckRepo", pageSpeedCheckRepo);
         ReflectionTestUtils.setField(scheduler, "pageSpeedResourceRepo", pageSpeedResourceRepo);
+        // BO4: sil + yaz artık repository'nin @Transactional default metodunda (replaceLatest). Mock'ta gerçek
+        // gövdeyi koştur → kırılım testlerinin delete/saveAll doğrulamaları aynı sözleşmeyi sınamaya devam eder.
+        lenient().doCallRealMethod().when(pageSpeedResourceRepo).replaceLatest(anyLong(), anyList());
         ReflectionTestUtils.setField(scheduler, "scriptedCheckerService", scriptedCheckerService);
         ReflectionTestUtils.setField(scheduler, "scriptedMonitorRepo", scriptedMonitorRepo);
         ReflectionTestUtils.setField(scheduler, "scriptedCheckRepo", scriptedCheckRepo);
@@ -424,6 +427,25 @@ class SchedulerServiceTest {
         scheduler.runPortChecks();
 
         verify(escalationService, org.mockito.Mockito.times(1)).resolveOrphanedPortAlerts(any());
+    }
+
+    @Test
+    @DisplayName("2026-09-27: SİLİNMİŞ standalone Port satırının host'u 'hâlâ izleniyor' sayılmaz — açık alarmı öksüz kapanabilir")
+    @SuppressWarnings("unchecked")
+    void orphanCleanup_ignoresDeletedPortRows() {
+        com.sitemonitor.model.PortMonitor live = new com.sitemonitor.model.PortMonitor();
+        live.setId(1L); live.setHost("canli.example.com"); live.setPort(443); live.setStandalone(true); live.setActive(false);
+        com.sitemonitor.model.PortMonitor deleted = new com.sitemonitor.model.PortMonitor();
+        deleted.setId(2L); deleted.setHost("silindi.example.com"); deleted.setPort(443); deleted.setStandalone(true);
+        deleted.setActive(false); deleted.setDeletedAt("2026-09-01T00:00:00");
+        when(portMonitorRepo.findByActiveTrue()).thenReturn(List.of());
+        when(portMonitorRepo.findAll()).thenReturn(List.of(live, deleted));
+
+        scheduler.runPortChecks();
+
+        org.mockito.ArgumentCaptor<java.util.Set<String>> hosts = org.mockito.ArgumentCaptor.forClass(java.util.Set.class);
+        verify(escalationService).resolveOrphanedPortAlerts(hosts.capture());
+        assertThat(hosts.getValue()).containsExactly("canli.example.com");   // duraklatılmış İZLENİYOR sayılır, silinmiş sayılmaz
     }
 
     @Test
@@ -1471,6 +1493,21 @@ class SchedulerServiceTest {
         assertThat(saved.get(0).getKeepReason()).isEqualTo(com.sitemonitor.model.PageSpeedResource.KEEP_LATEST);
         assertThat(saved.get(0).getBytes()).isEqualTo(5000L);
         assertThat(saved.get(0).getCheckId()).isEqualTo(100L);
+    }
+
+    @Test
+    @DisplayName("BO4/O1: sil + yaz TEK transaction'lı repository metodundan (replaceLatest) geçer — servis içi self-invocation @Transactional'ı DEVRE DIŞI bırakıyordu")
+    void resourceBreakdown_goesThroughAtomicReplace() {
+        when(pageSpeedCheckerService.check(any())).thenReturn(psResult(java.util.List.of()));
+        when(pageSpeedCheckRepo.save(any())).thenAnswer(i -> {
+            com.sitemonitor.model.PageSpeedCheck c = i.getArgument(0); c.setId(100L); return c; });
+
+        scheduler.triggerPageSpeedCheck(psMonitor());
+
+        verify(pageSpeedResourceRepo).replaceLatest(eq(7L), anyList());
+        // Servis ham silme/yazmayı KENDİSİ çağırmamalı: sayılar yalnız replaceLatest'in gövdesinden gelmeli.
+        verify(pageSpeedResourceRepo, times(1)).deleteByMonitorIdAndKeepReason(anyLong(), anyString());
+        verify(pageSpeedResourceRepo, times(1)).saveAll(any());
     }
 
     @Test

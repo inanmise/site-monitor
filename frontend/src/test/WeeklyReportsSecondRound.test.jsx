@@ -17,7 +17,8 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import WeeklyComments from '../components/weekly/WeeklyComments.jsx'
 import WeeklyReminderStatus from '../components/weekly/WeeklyReminderStatus.jsx'
-import WeeklyCompletionBoard from '../components/WeeklyCompletionBoard.jsx'
+import WeeklyExportMenu from '../components/weekly/WeeklyExportMenu.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import { buildYearSummaryCsv, buildYearSummaryHtml } from '../components/weekly/weeklyModel.js'
 import { channelsCsv, channelsList } from '../components/admin/TeamManager.jsx'
 
@@ -38,7 +39,7 @@ describe('WeeklyComments — yorum dizisi', () => {
     api.weeklyReports.addComment.mockResolvedValue({ success: true, data: { id: 3, kind: 'COMMENT', author: 'Ekip Üyesi', created_at: '2026-09-10T12:00:00', text: 'düzelttim' } })
     wrap(<WeeklyComments reportId={5} canWrite />)
     await screen.findByText('eksik veri')
-    expect(document.querySelectorAll('.wr-cm-item--sys').length).toBe(2)
+    expect(document.querySelectorAll('[data-slot="wr-comment"][data-system]').length).toBe(2)
     expect(screen.getByText(/İade edildi|Returned/)).toBeDefined()
     const send = screen.getByRole('button', { name: /Gönder|Send/ })
     expect(send.disabled).toBe(true)
@@ -47,7 +48,7 @@ describe('WeeklyComments — yorum dizisi', () => {
     await waitFor(() => expect(api.weeklyReports.addComment).toHaveBeenCalledWith(5, 'düzelttim'))
     await screen.findByText('düzelttim')
     expect(screen.getByRole('textbox').value).toBe('')
-    expect(document.querySelectorAll('.wr-cm-item').length).toBe(3)
+    expect(document.querySelectorAll('[data-slot="wr-comment"]').length).toBe(3)
   })
 
   it('AUDIT (canWrite=false) formu görmez; boş dizi → boş durum metni; hata → uyarı', async () => {
@@ -87,11 +88,11 @@ describe('WeeklyReminderStatus — hatırlatma görünürlüğü', () => {
     api.weeklyReports.remindersStatus.mockResolvedValue({ success: true, data: { enabled: false } })
     wrap(<WeeklyReminderStatus />)
     const el = await screen.findByRole('note')
-    expect(el.className).toMatch(/is-off/)
+    expect(el).toHaveAttribute('data-state', 'off')
     api.weeklyReports.remindersStatus.mockResolvedValue({ success: false })
     const { container } = wrap(<WeeklyReminderStatus />)
     await new Promise((r) => setTimeout(r, 10))
-    expect(container.querySelector('.wr-rem-status')).toBeNull()
+    expect(container.querySelector('[data-slot="wr-reminder-status"]')).toBeNull()
   })
 })
 
@@ -101,8 +102,11 @@ describe('Yıl özeti — CSV + yazdırılabilir HTML + pano düğmeleri', () =>
   it('buildYearSummaryCsv: başlık W01..; hücre "durum (skor)"; onaylı/eksik sütunları; formül nötrleme', () => {
     const csv = buildYearSummaryCsv({ ...BOARD, teams: [{ ...BOARD.teams[0], team_name: '=Takım' }] }, t)
     const lines = csv.split('\r\n')
-    expect(lines[0]).toBe('wrc.team,W01,W02,W03,wrc.status.APPROVED,wrc.missingShort')
-    expect(lines[1]).toBe("'=Takım,wrc.status.APPROVED (88),wrc.status.MISSING,wrc.status.DRAFT,1,1")
+    // 2026-09-27: + takımın en son raporu ve Madde 1 durum dağılımı (veri yoksa boş hücreler)
+    expect(lines[0]).toBe('wrc.team,W01,W02,W03,wrc.status.APPROVED,wrc.missingShort,wr.ys.latest,wr.statusWorking,wr.statusPlanned,wr.statusOnHold,wr.statusDone')
+    expect(lines[1]).toBe("'=Takım,wrc.status.APPROVED (88),wrc.status.MISSING,wrc.status.DRAFT,1,1,,,,,")
+    const withCounts = buildYearSummaryCsv({ ...BOARD, teams: [{ ...BOARD.teams[0], latest_week: 3, status_counts: { working: 4, planned: 1, on_hold: 0, done: 2 } }] }, t)
+    expect(withCounts.split('\r\n')[1].endsWith(',W03,4,1,0,2')).toBe(true)
   })
 
   it('buildYearSummaryHtml: A4 yatay, takım satırı, skor hücrede, "·" skorsuz, HTML kaçışı, lejant', () => {
@@ -115,20 +119,37 @@ describe('Yıl özeti — CSV + yazdırılabilir HTML + pano düğmeleri', () =>
     expect(html).toContain('2026-09-13 10:00')
     expect((html.match(/class="lg"/g) || []).length).toBe(5)
     expect(html).toContain('<th class="w cur">3</th>')
+    // Durum dağılımı yoksa ikinci satır yok; varsa takım hücresinde son raporun anlık görüntüsü
+    expect(html).not.toContain('class="sc"')
+    const withCounts = buildYearSummaryHtml({ ...BOARD, teams: [{ ...BOARD.teams[0], latest_week: 3, status_counts: { working: 4, planned: 1, on_hold: 0, done: 2 } }] }, t)
+    expect(withCounts).toContain('<div class="sc">W03 · wr.statusWorking 4 · wr.statusPlanned 1 · wr.statusOnHold 0 · wr.statusDone 2</div>')
+    expect((withCounts.match(/<table/g) || []).length).toBe(1)   // yazdırma belgesi tek tablo (izin listesi sayısı değişmez)
   })
 
-  it('pano açılınca "Yıl özeti" araçları görünür; CSV düğmesi indirir, yazdır iframe açar', async () => {
-    api.weeklyReports.completion.mockResolvedValue({ success: true, data: BOARD })
+  // 2026-09-27: yıl özeti araçları panonun içinden başlığın "Dışa aktar" menüsüne taşındı (pano kapalıyken görünmüyordu)
+  it('"Dışa aktar" menüsü: liste CSV + yıl özeti CSV indirir, yazdır iframe açar; yıl verisi yoksa yıl özeti yok', async () => {
     const createURL = vi.fn(() => 'blob:x'); const revoke = vi.fn()
     globalThis.URL.createObjectURL = createURL; globalThis.URL.revokeObjectURL = revoke
-    wrap(<WeeklyCompletionBoard year={2026} />)
-    await screen.findByText(/1 eksik hafta|1 missing week/)
-    fireEvent.click(document.querySelector('.wrc-head'))
-    const csvBtn = screen.getByRole('button', { name: /CSV/ })
-    fireEvent.click(csvBtn)
+    const onListCsv = vi.fn()
+    const { rerender } = wrap(<WeeklyExportMenu onListCsv={onListCsv} listCount={4} yearData={BOARD} />)
+    // Seçim menüyü kapatır; yeniden açmadan önce kapanışın bitmesi beklenir (Radix Presence)
+    const open = async () => {
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+      pressMenuTrigger(screen.getByRole('button', { name: /Dışa aktar|Export/ }))
+    }
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV olarak indir \(4\)|Download as CSV \(4\)/ }))
+    expect(onListCsv).toHaveBeenCalled()
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Yıl özeti \(CSV\)|Year summary \(CSV\)/ }))
     expect(createURL).toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /Yazdır \/ PDF|Print \/ PDF/ }))
+    await open()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Yazdır \/ PDF|Print \/ PDF/ }))
     await waitFor(() => expect(document.querySelector('iframe.wrc-print-frame')).not.toBeNull())
+    rerender(<LangProvider><WeeklyExportMenu onListCsv={onListCsv} listCount={0} yearData={null} /></LangProvider>)
+    await open()
+    await screen.findByRole('menuitem', { name: /CSV olarak indir \(0\)|Download as CSV \(0\)/ })
+    expect(screen.queryByRole('menuitem', { name: /Yazdır \/ PDF|Print \/ PDF/ })).toBeNull()
   })
 })
 

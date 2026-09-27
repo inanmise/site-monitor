@@ -4,6 +4,8 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import DiffTable from './audit/DiffTable.jsx'
+import { EventBadge } from './ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -72,9 +74,9 @@ function Detail({ row, fieldPrefix }) {
   if (row.action === 'REASSIGN') {
     const to = parsed.to
     return (
-      <div className="ng-hist-detail">
-        <span className="audit-diff-to">{t('ng.histMoved').replace('{n}', parsed.moved ?? 0)}</span>
-        <span className="audit-sub">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[0.85em]">
+        <span className="font-semibold text-success">{t('ng.histMoved').replace('{n}', parsed.moved ?? 0)}</span>
+        <span className="text-muted-foreground">
           {to == null ? t('ng.histMovedDefault') : t('ng.histMovedTo').replace('{id}', to)}
         </span>
       </div>
@@ -82,38 +84,23 @@ function Detail({ row, fieldPrefix }) {
   }
 
   if (isDiffShape(parsed)) {
+    // Ortak fark tablosu (Denetim Kaydı / Değişiklik Geçmişi ile aynı): alan · eski (üstü çizili) → yeni.
     return (
-      <table className="audit-diff-table ng-hist-diff">
-        <thead>
-          <tr>
-            <th>{t('audit.diffField')}</th>
-            <th>{t('audit.diffFrom')}</th>
-            <th>{t('audit.diffTo')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(parsed).map(([field, c]) => (
-            <tr key={field}>
-              <td className="audit-diff-field">{fieldLabel(t, field, fieldPrefix)}</td>
-              <td className="audit-diff-from">{formatValue(t, c.from)}</td>
-              <td className="audit-diff-to">{formatValue(t, c.to)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <DiffTable fieldLabel={t('audit.diffField')} fromLabel={t('audit.diffFrom')} toLabel={t('audit.diffTo')}
+        rows={Object.entries(parsed).map(([field, c]) => [field, fieldLabel(t, field, fieldPrefix), formatValue(t, c.from), formatValue(t, c.to)])} />
     )
   }
 
   return (
-    <div className="ng-hist-detail">
-      <div className="audit-sub">
+    <div className="flex flex-col gap-1 text-[0.85em]">
+      <div className="text-muted-foreground">
         {row.action === 'DELETE' ? t('ng.histSnapshotOld') : t('ng.histSnapshotNew')}
       </div>
-      <ul className="ng-hist-fields">
+      <ul data-slot="ng-hist-fields" className="ml-1 flex list-none flex-col gap-0.5 p-0">
         {Object.entries(parsed).map(([field, v]) => (
-          <li key={field}>
-            <span className="audit-diff-field">{fieldLabel(t, field, fieldPrefix)}</span>
-            <span className="audit-mono">{formatValue(t, v)}</span>
+          <li key={field} className="flex min-w-0 flex-wrap gap-x-2">
+            <span className="font-semibold whitespace-nowrap">{fieldLabel(t, field, fieldPrefix)}</span>
+            <span className="min-w-0 font-mono break-all">{formatValue(t, v)}</span>
           </li>
         ))}
       </ul>
@@ -125,42 +112,45 @@ export default function NotificationGroupHistory({
   rows, truncated, hidden, loading, error, filterName, onClearFilter,
   // Yönetim Paneli sekmeleri aynı sunumu başka kaynaklar için kullanır (2026-09-20).
   fieldPrefix = 'ng.f', actPrefix = 'ng.act', nameOf = (r) => r.group_name || `#${r.group_id}`,
-  // Sayfalama (2026-09-20): sunucu 0 tabanlı; PaginationBar 1 tabanlı. Verilmezse (eski çağıran) çubuk çizilmez.
-  page = 0, size = 25, total = null, onPageChange, onPageSizeChange,
+  // Sayfalama (2026-09-26 standardı): çağıranın `useServerPagination(...).bar` nesnesi — taban dönüşümü kancada.
+  // Verilmezse (önizleme: UserDetailPanel son 10 kayıt) çubuk çizilmez.
+  pagination = null,
 }) {
   const t = useT()
 
   if (loading) return <LoadingBlock label={t('ng.histLoading')} size={16} />
   if (error) return <AlertBanner tone="danger" title={t('ng.histError')}>{error}</AlertBanner>
 
+  // shadcn (2026-09-26, D2): eski `.ng-hist-*` / `.audit-event-badge` / `.audit-diff-table` ailesi yerine
+  // EventBadge (Badge) + ortak DiffTable (Table); satırlar kenarlıklı liste (sol renk şeridi YOK), telefonda
+  // sarar. Test kancaları: `data-slot="ng-hist-list|ng-hist-row"`, fark hücrelerinde `data-diff`.
+  const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
   return (
-    <div className="ng-hist">
+    <div data-slot="ng-hist" className="flex min-w-0 flex-col gap-2.5">
       {filterName && (
-        <div className="ng-hist-filter">
-          <span className="field-hint">{t('ng.histFilterOn').replace('{name}', filterName)}</span>
-          <Button type="button" variant="secondary" onClick={onClearFilter}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={hint}>{t('ng.histFilterOn').replace('{name}', filterName)}</span>
+          <Button type="button" variant="secondary" size="sm" onClick={onClearFilter}>
             {t('ng.histFilterClear')}
           </Button>
         </div>
       )}
 
       {rows.length === 0 ? (
-        <p className="field-hint">{filterName ? t('ng.histEmptyGroup') : t('ng.histEmpty')}</p>
+        <p className={hint}>{filterName ? t('ng.histEmptyGroup') : t('ng.histEmpty')}</p>
       ) : (
-        <ul className="ng-hist-list">
+        <ul data-slot="ng-hist-list" className="flex list-none flex-col divide-y overflow-hidden rounded-lg border bg-card p-0">
           {rows.map(r => (
-            <li key={r.id} className="ng-hist-row">
-              <div className="ng-hist-main">
-                <span className="audit-cell-time audit-mono">{formatDateSec(r.at)}</span>
-                <span className={`audit-event-badge ${BADGE[r.action] || 'ev-other'}`}>
-                  {actionLabel(t, r.action, actPrefix)}
-                </span>
-                <span className="ng-hist-who">{r.actor || '—'}</span>
-                <span className="ng-hist-what">
+            <li key={r.id} data-slot="ng-hist-row" className="flex min-w-0 flex-col gap-2 px-3 py-2.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-sm">
+                <span className="font-mono text-xs whitespace-nowrap text-muted-foreground tabular-nums">{formatDateSec(r.at)}</span>
+                <EventBadge kind={BADGE[r.action] || 'ev-other'}>{actionLabel(t, r.action, actPrefix)}</EventBadge>
+                <span className="font-semibold break-all">{r.actor || '—'}</span>
+                <span className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 [overflow-wrap:anywhere]">
                   “{nameOf(r)}”
-                  {r.team_name && <span className="audit-sub"> · <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></span>}
+                  {r.team_name && <span className="inline-flex items-center gap-1 text-muted-foreground">· <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></span>}
                 </span>
-                {r.ip && <span className="ng-hist-ip audit-mono">{r.ip}</span>}
+                {r.ip && <span className="font-mono text-xs text-muted-foreground sm:ml-auto">{r.ip}</span>}
               </div>
               <Detail row={r} fieldPrefix={fieldPrefix} />
             </li>
@@ -168,16 +158,12 @@ export default function NotificationGroupHistory({
         </ul>
       )}
 
-      {total != null && total > 0 && onPageChange && (
-        <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / size))} totalItems={total}
-          rangeStart={page * size + 1} rangeEnd={Math.min((page + 1) * size, total)}
-          pageSize={size} onPageChange={(p) => onPageChange(p - 1)} onPageSizeChange={(s) => onPageSizeChange?.(s)} />
-      )}
+      {pagination && <PaginationBar {...pagination} />}
 
       {/* Sessiz kesme YOK: eksik bir geçmişi tam sanmak, geçmişin kendisinden daha kötüdür. */}
-      {truncated && <p className="field-hint">{t('ng.histTruncated').replace('{n}', total ?? rows.length)}</p>}
-      {hidden > 0 && <p className="field-hint">{t('ng.histHidden').replace('{n}', hidden)}</p>}
-      <p className="field-hint">{t('ng.histRetentionNote')}</p>
+      {truncated && <p className={hint}>{t('ng.histTruncated').replace('{n}', pagination?.totalItems || rows.length)}</p>}
+      {hidden > 0 && <p className={hint}>{t('ng.histHidden').replace('{n}', hidden)}</p>}
+      <p className={hint}>{t('ng.histRetentionNote')}</p>
     </div>
   )
 }

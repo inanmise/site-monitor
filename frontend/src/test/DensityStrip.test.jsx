@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent } from './test-utils.jsx'
+import { render, screen, fireEvent } from './test-utils.jsx'
 import DensityStrip, { bucketBounds } from '../components/history/DensityStrip.jsx'
 
 vi.mock('../api/client', () => ({ formatDateSec: (s) => s ?? '' }))
@@ -17,10 +17,13 @@ describe('DensityStrip', () => {
       { key: '2026-08-07T09', total: 60, fail: 0 },
       { key: '2026-08-07T10', total: 60, fail: 12 },
     ]} />)
-    const cells = container.querySelectorAll('.hist-strip-cell')
+    const cells = container.querySelectorAll('[data-cell]')
     expect(cells.length).toBe(2)
-    expect(cells[0].className).not.toContain('--fail')
-    expect(cells[1].className).toContain('--fail')
+    expect(cells[0].getAttribute('data-variant')).toBe('ghost')   // shadcn Button (data-slot'u Tooltip tetiği ezer)
+    expect(cells[0].hasAttribute('data-fail')).toBe(false)
+    expect(cells[1].getAttribute('data-fail')).toBe('true')
+    // adı kovayı ve hata sayısını taşır (hücreler birbirinden ayırt edilir)
+    expect(cells[1].getAttribute('aria-label')).toMatch(/2026-08-07T10:00:00 — 60 \/ 12/)
 
     fireEvent.click(cells[1])
     expect(onZoom).toHaveBeenCalledWith('2026-08-07T10:00:00', '2026-08-07T10:59:59')
@@ -28,9 +31,9 @@ describe('DensityStrip', () => {
 
   it('zoomed iken "aralığa dön" chip\'i görünür ve onReset çağrılır', () => {
     const onReset = vi.fn()
-    const { container } = render(<DensityStrip zoomed onReset={onReset}
+    render(<DensityStrip zoomed onReset={onReset}
       buckets={[{ key: '2026-08-07T10', total: 5, fail: 0 }]} />)
-    const reset = container.querySelector('.hist-strip-reset')
+    const reset = screen.getByRole('button', { name: /aralığa dön|back to range|reset/i })
     expect(reset).not.toBeNull()
     fireEvent.click(reset)
     expect(onReset).toHaveBeenCalled()

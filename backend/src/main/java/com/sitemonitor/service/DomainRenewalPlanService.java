@@ -43,7 +43,7 @@ public class DomainRenewalPlanService {
         m.setRenewalPlannedAt(date);
         m.setRenewalPlannedNote(n == null || n.isBlank() ? null : n);
         m.setRenewalPlannedBy(str(session, "username"));
-        String dn = str(session, "fullName");
+        String dn = str(session, "displayName");
         m.setRenewalPlannedByName(dn != null ? dn : str(session, "username"));
         m.setRenewalPlannedExpiry(currentExpiry);
         m.setUpdatedAt(ISO.format(Instant.now()));

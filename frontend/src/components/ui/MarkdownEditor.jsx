@@ -6,9 +6,13 @@ import { ImagePlus } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { useToast } from './Toast.jsx'
+import ModalShell from './ModalShell.jsx'
+import Field from './Field.jsx'
 import { clipboardToMarkdownTable } from '../../utils/pasteTable'
 import { downscaleImage } from '../../utils/imageDownscale'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Textarea } from '@/components/shadcn/textarea'
 
 const INDENT_ICON = (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -47,7 +51,7 @@ function transformSelectedLines(state, api, fn) {
  *
  * Görsel yükleme OPSİYONELDİR: `uploadImage(file, caption) => Promise<url|null>`
  * prop'u verilirse araç çubuğuna görsel butonu eklenir; seçilen görsel istemcide
- * küçültülür, açıklama modalı açılır ve imleç konumuna ![caption](url) eklenir.
+ * küçültülür, açıklama penceresi (ui/ModalShell) açılır ve imleç konumuna ![caption](url) eklenir.
  * editable=false iken render edilmiş markdown gösterir.
  */
 export default function MarkdownEditor({ value, onChange, editable = true, height = 200, uploadImage, makeUniqueCaption }) {
@@ -183,48 +187,51 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
           extraCommands={[mdCommands.codeEdit, mdCommands.codePreview, mdCommands.divider, mdCommands.fullscreen]}
         />
       </div>
-      <div className="wr-hint">{t('wr.pasteHint')}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{t('wr.pasteHint')}</div>
 
       {uploadImage && (
-        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
-               style={{ display: 'none' }} onChange={handleFileChosen} />
+        <Input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
+               hidden tabIndex={-1} onChange={handleFileChosen} />
       )}
 
+      {/* Görsel açıklama penceresi — ModalShell (shadcn Dialog): Escape / odak tuzağı / odak iadesi kabuktan;
+          yükleme sürerken kapatma yolları kapalı (busy). */}
       {pendingFile && (
-        <div className="modal-overlay" onClick={() => !uploading && setPendingFile(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-            <h3>{t('wr.uploadImage')}</h3>
-            <div style={{ fontSize: '.8em', color: 'var(--text-light)', marginBottom: 6 }}>{t('wr.imageFormats')}</div>
-            <p style={{ fontSize: '.85em', marginBottom: 10 }}>
-              <strong>{pendingFile.name}</strong>{' · '}
-              {pendingFile.processing ? (
-                <span style={{ color: 'var(--text-light)' }}>{t('wr.imageProcessing')}</span>
-              ) : (
-                <span>
-                  {t('wr.imageOriginal')}: {fmtFileSize(pendingFile.originalSize)}
-                  {pendingFile.processedSize < pendingFile.originalSize && (
-                    <> {' → '}<strong style={{ color: '#16a34a' }}>
-                      {t('wr.imageOptimizedLabel')}: {fmtFileSize(pendingFile.processedSize)}
-                    </strong></>
-                  )}
-                </span>
-              )}
-            </p>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '.9em' }}>
-              {t('wr.imageCaption')}
-              <textarea className="wr-caption" autoFocus rows={3}
-                value={caption} placeholder={t('wr.imageCaptionPlaceholder')}
-                onChange={(e) => setCaption(e.target.value)} />
-            </label>
-            <div className="modal-actions">
+        <ModalShell open onClose={() => setPendingFile(null)} busy={uploading} size="sm"
+          title={t('wr.uploadImage')} icon={ImagePlus} closeLabel={t('wr.cancel')}
+          footer={(
+            <>
               <Button variant="secondary" disabled={uploading}
                 onClick={() => setPendingFile(null)}>{t('wr.cancel')}</Button>
               <Button disabled={uploading || pendingFile.processing} onClick={doUpload}>
                 {uploading ? t('wr.uploading') : t('wr.insertImage')}
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          )}>
+          <p className="mb-1.5 text-[.8em] text-muted-foreground">{t('wr.imageFormats')}</p>
+          <p className="mb-2.5 text-[.85em] [overflow-wrap:anywhere]">
+            <strong>{pendingFile.name}</strong>{' · '}
+            {pendingFile.processing ? (
+              <span className="text-muted-foreground">{t('wr.imageProcessing')}</span>
+            ) : (
+              <span>
+                {t('wr.imageOriginal')}: {fmtFileSize(pendingFile.originalSize)}
+                {pendingFile.processedSize < pendingFile.originalSize && (
+                  <> {' → '}<strong className="text-success">
+                    {t('wr.imageOptimizedLabel')}: {fmtFileSize(pendingFile.processedSize)}
+                  </strong></>
+                )}
+              </span>
+            )}
+          </p>
+          <Field label={t('wr.imageCaption')} className="mb-0">
+            {({ id }) => (
+              <Textarea id={id} autoFocus rows={3}
+                value={caption} placeholder={t('wr.imageCaptionPlaceholder')}
+                onChange={(e) => setCaption(e.target.value)} />
+            )}
+          </Field>
+        </ModalShell>
       )}
     </div>
   )

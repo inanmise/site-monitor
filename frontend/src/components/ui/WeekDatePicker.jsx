@@ -1,159 +1,108 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
-import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
-import { useT, useLanguage, useDateLocale } from '../../i18n/index.jsx'
-import { MONTHS, monthGrid } from '../../utils/isoWeek'
+import { createContext, useContext, useEffect, useState } from 'react'
+import { format, getISOWeek, getISOWeekYear } from 'date-fns'
+import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Calendar } from '@/components/shadcn/calendar'
+import { Popover, PopoverTrigger } from '@/components/shadcn/popover'
+import { DatePopoverContent, DateTrigger, useCalendarProps } from './DatePickerParts.jsx'
 
-const DOW = {
-  tr: ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'],
-  en: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+/** 'yyyy-mm-dd' → öğlen yerel Date (gün sınırı kaymasın). */
+const atNoon = (v) => (v ? new Date(v + 'T12:00:00') : null)
+
+/** Hafta numarası hücresinin ihtiyaçları (seçici → hücre). Hücre bileşeni modül düzeyinde durur: render
+ *  içinde tanımlanan bir bileşen her çizimde YENİ tip olur ve DayPicker hücreleri söküp yeniden kurardı. */
+const WeekCtx = createContext(null)
+
+// Hafta numarası hücresi: gerçek düğme (klavyeyle erişilir) → haftanın Pazartesi'si. Rapor noktası süs değil
+// bilgi: düğmenin adına da eklenir.
+function WeekNumberCell({ week, children, ...props }) {
+  const ctx = useContext(WeekCtx)
+  const monday = week.days[0]?.date
+  if (!ctx || !monday) return <td {...props}>{children}</td>
+  const wy = getISOWeekYear(monday), wn = getISOWeek(monday)
+  const marked = !!ctx.isMarked?.(wy, wn)
+  const name = ctx.t('wdp.pickWeek', wn, wy) + (marked ? ` — ${ctx.t('wr.weekHasReport')}` : '')
+  return (
+    <td {...props} aria-label={undefined}>
+      <div className="flex size-(--cell-size) items-center justify-center">
+        <Button type="button" variant="ghost" data-marked={marked || undefined}
+          aria-label={name} onClick={() => ctx.pick(monday)}
+          className="relative size-full p-0 text-[0.75rem] font-semibold text-muted-foreground">
+          {children}
+          {marked && <span aria-hidden="true" className="absolute bottom-0.5 left-1/2 size-1.5 -translate-x-1/2 rounded-full bg-success" />}
+        </Button>
+      </div>
+    </td>
+  )
 }
+const CALENDAR_COMPONENTS = { WeekNumber: WeekNumberCell }
 
 /**
- * Hafta odaklı tarih seçici — native date input yerine (tarayıcı dilinde
- * render olduğu ve hafta kavramı olmadığı için). ISO hafta numarası sütunu,
- * satır (hafta) bazlı vurgu ve raporu olan haftalarda nokta işareti gösterir.
- * Görünüm SearchableSelect (ss-*) dilini paylaşır.
+ * Hafta odaklı tarih seçici — shadcn Date Picker deseni (Popover + Calendar), native date input yerine
+ * (tarayıcı dilinde çizilir ve hafta kavramı yoktur). ISO hafta numarası sütunu (Pazartesi başlangıç):
+ * hafta numarasına basmak o haftanın PAZARTESİ'sini, bir güne basmak o günü seçer. Raporu olan haftalarda
+ * numaranın altında yeşil nokta. İpucu (`hint`) açılır pencerenin üstünde GÖRÜNÜR metin (dokunmatikte de).
  *
- * Props: value 'yyyy-mm-dd' | '', onChange(dateStr), placeholder, hint,
- *        isMarked(year, week) → bool, onViewYearChange(year)
+ * Props (değişmedi): value 'yyyy-mm-dd' | '', onChange(dateStr), placeholder, hint,
+ *        isMarked(year, week) → bool, onViewYearChange(year) — görüntülenen ayın yılı (açıkken).
  */
 export default function WeekDatePicker({
   value, onChange, placeholder, hint, isMarked, onViewYearChange,
 }) {
   const t = useT()
-  const { lang } = useLanguage()
   const locale = useDateLocale()
+  const cal = useCalendarProps()
   const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-  const triggerRef = useRef(null)
+  const selected = atNoon(value)
+  const [month, setMonth] = useState(() => selected || new Date())
+  const viewYear = month.getFullYear()
 
-  const today = new Date()
-  const todayStr = new Date(today.getTime() - today.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 10)
-  const [view, setView] = useState(() => {
-    const base = value ? new Date(value + 'T12:00:00') : today
-    return { y: base.getFullYear(), m: base.getMonth() }
-  })
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  useEffect(() => {
-    if (open) onViewYearChange?.(view.y)
-  }, [open, view.y, onViewYearChange])
-
-  const rows = useMemo(() => monthGrid(view.y, view.m), [view])
-  const months = MONTHS[lang] ?? MONTHS.tr
-  const dow = DOW[lang] ?? DOW.tr
-
-  // Tetik `onClick` dinler: yalnız `onMouseDown` dinlerken Enter/Space seçiciyi AÇMIYORDU — klavye
-  // kullanıcısı haftaya atlayamıyor, önceki/sonraki hafta düğmeleriyle tek tek yürüyordu
-  // (2026-09-25, R14; F8'in kardeşi). Dış tık kapatıcısı `mousedown` dinler ve tetiği kapsar
-  // (ref sarmalayıcıda), yani fare basışı kapatıp tık yeniden açmaz.
-  function toggle(e) {
-    e.preventDefault()
-    setOpen((p) => {
-      if (!p) {
-        const base = value ? new Date(value + 'T12:00:00') : new Date()
-        setView({ y: base.getFullYear(), m: base.getMonth() })
-      }
-      return !p
-    })
+  // Açılışta görünüm seçili güne (yoksa bugüne) döner — eski davranış.
+  function onOpenChange(next) {
+    if (next) setMonth(atNoon(value) || new Date())
+    setOpen(next)
   }
 
-  function shiftMonth(delta) {
-    setView((v) => {
-      const d = new Date(v.y, v.m + delta, 1)
-      return { y: d.getFullYear(), m: d.getMonth() }
-    })
-  }
+  useEffect(() => {
+    if (open) onViewYearChange?.(viewYear)
+  }, [open, viewYear, onViewYearChange])
 
   function pick(day) {
-    onChange(day.toISOString().slice(0, 10))
+    onChange(format(day, 'yyyy-MM-dd'))
     setOpen(false)
   }
 
   return (
-    <div className="ss-wrap" ref={ref} title={hint}>
-      <button type="button" ref={triggerRef}
-        className={`ss-trigger${open ? ' ss-open' : ''}${value ? '' : ' ss-placeholder'}`}
-        aria-expanded={open}
-        onClick={toggle}
-        onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false) }}>
-        <span className="ss-label" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <Calendar size={14} />
-          {value ? new Date(value + 'T12:00:00').toLocaleDateString(locale) : placeholder}
-        </span>
-        <svg className="ss-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-
-      {open && (
-        // Escape açılır içinden de kapatır ve odağı tetiğe geri verir (odak içerideyken tetiğin
-        // kendi Escape dinleyicisi hiç tetiklenmiyordu).
-        <div className="ss-dropdown wdp-pop"
-          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); triggerRef.current?.focus() } }}>
-          <div className="wdp-head">
-            <button type="button" className="wdp-nav" onClick={() => shiftMonth(-1)}
-              aria-label={t('cal.prev')} title={t('cal.prev')}>
-              <ChevronLeft size={16} aria-hidden="true" />
-            </button>
-            <span className="wdp-title" aria-live="polite">{months[view.m]} {view.y}</span>
-            <button type="button" className="wdp-nav" onClick={() => shiftMonth(1)}
-              aria-label={t('cal.next')} title={t('cal.next')}>
-              <ChevronRight size={16} aria-hidden="true" />
-            </button>
-          </div>
-
-          <div className="wdp-row wdp-row-head">
-            <span className="wdp-wk">#</span>
-            {dow.map((d) => <span key={d} className="wdp-dow">{d}</span>)}
-          </div>
-
-          {rows.map(({ week, days }) => (
-            <div key={`${week.year}-${week.week}`}
-              className={`wdp-row${isMarked?.(week.year, week.week) ? ' wdp-has-report' : ''}`}
-              role="button" tabIndex={0} aria-label={`${week.year} — ${week.week}`}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(days[0]) } }}
-              onClick={() => pick(days[0])}>
-              <span className="wdp-wk">
-                {week.week}
-                {isMarked?.(week.year, week.week) && <span className="wdp-dot" />}
-              </span>
-              {days.map((d) => {
-                const ds = d.toISOString().slice(0, 10)
-                const out = d.getUTCMonth() !== view.m
-                return (
-                  <button key={ds} type="button"
-                    className={`wdp-day${out ? ' wdp-out' : ''}${ds === todayStr ? ' wdp-today' : ''}${ds === value ? ' wdp-sel' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); pick(d) }}>
-                    {d.getUTCDate()}
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-
-          <div className="wdp-foot">
-            <span className="wdp-legend"><span className="wdp-dot" /> {t('wr.weekHasReport')}</span>
-            <span style={{ flex: 1 }} />
-            {value && (
-              <Button type="button" variant="outline" size="sm" onClick={() => { onChange(''); setOpen(false) }}>
-                {t('wr.clear')}
-              </Button>
-            )}
-            <Button type="button" variant="secondary" size="sm" onClick={() => pick(new Date(Date.UTC(
-              today.getFullYear(), today.getMonth(), today.getDate(), 12)))}>
-              {t('wr.today')}
+    <WeekCtx.Provider value={{ isMarked, pick, t }}>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <DateTrigger text={selected ? selected.toLocaleDateString(locale) : ''} placeholder={placeholder}
+          className="w-full sm:w-[180px]" />
+      </PopoverTrigger>
+      <DatePopoverContent>
+        {hint && <p className="max-w-[18rem] px-3 pt-3 text-xs text-muted-foreground">{hint}</p>}
+        <Calendar mode="single" selected={selected || undefined}
+          onSelect={(d, triggerDate) => { const day = d || triggerDate; if (day) pick(day) }}
+          month={month} onMonthChange={setMonth}
+          showWeekNumber ISOWeek autoFocus
+          components={CALENDAR_COMPONENTS}
+          {...cal} />
+        <div className="flex flex-wrap items-center gap-1.5 border-t px-3 py-2">
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-success" /> {t('wr.weekHasReport')}
+          </span>
+          <span className="flex-1" />
+          {value && (
+            <Button type="button" variant="outline" size="sm" onClick={() => { onChange(''); setOpen(false) }}>
+              {t('wr.clear')}
             </Button>
-          </div>
+          )}
+          <Button type="button" variant="secondary" size="sm" onClick={() => pick(new Date())}>
+            {t('wr.today')}
+          </Button>
         </div>
-      )}
-    </div>
+      </DatePopoverContent>
+    </Popover>
+    </WeekCtx.Provider>
   )
 }

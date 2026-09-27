@@ -196,6 +196,24 @@ class AppSettingsServiceTest {
     }
 
     @Test
+    @DisplayName("BO6: müdür LDAP müdür-niteliği / budama / tazeleme ayarlarını KAYDEDEMEZ (403, satır yazılmaz); global admin kaydeder")
+    void scopedAdmin_cannotChangeLdapAuthorisationInputs() {
+        bindScopedAdminRequest();
+        for (String[] kv : new String[][]{
+                {"site.monitor.ldap.manager-attributes", "description,manager"},
+                {"site.monitor.ldap.prune-unsupported-teams", "false"},
+                {"site.monitor.ldap.manager-refresh-hours", "1"}}) {
+            assertThatThrownBy(() -> service.save(values(kv[0], kv[1]), "mudur"))
+                    .as(kv[0]).isInstanceOf(SecurityException.class);
+            assertThat(repo.findBySettingKey(kv[0])).as(kv[0]).isEmpty();
+        }
+
+        org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes(); // global (bağlam yok)
+        service.save(values("site.monitor.ldap.manager-refresh-hours", "12"), "admin");
+        assertThat(service.getInt("site.monitor.ldap.manager-refresh-hours", -1)).isEqualTo(12);
+    }
+
+    @Test
     @DisplayName("müdür: katalog GLOBAL_ONLY kalemlerini read_only=true, diğerlerini false işaretler; global admin için hepsi false")
     void catalog_readOnlyFlags_followScope() {
         bindScopedAdminRequest();

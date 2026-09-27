@@ -68,7 +68,7 @@ class ScriptedTemplateControllerTest {
         admin = new MockHttpSession();
         admin.setAttribute("authenticated", Boolean.TRUE);
         admin.setAttribute("username", "ahmet");
-        admin.setAttribute("fullName", "Ahmet Yılmaz");
+        admin.setAttribute("displayName", "Ahmet Yılmaz");
         admin.setAttribute("systemRole", "ADMIN");
     }
 

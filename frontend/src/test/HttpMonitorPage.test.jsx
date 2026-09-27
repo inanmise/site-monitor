@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import HttpMonitorPage from '../components/HttpMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -30,6 +31,26 @@ const monitor = {
   id: 1, name: 'Example', url: 'https://www.example.com/', method: 'GET', expected_status: '201-204',
   group_name: 'X Sistemleri', tags: 'prod', team_id: 5, team_name: 'SY-A', status: 'up', http_status: 200, response_ms: 12,
   interval_seconds: 600, timeout_ms: 7000, active: true, checked_at: '2026-06-24T00:00:00',
+}
+
+// Kart başlığı GERÇEK düğmedir (MonitorCardTitle), adı "<url> — open details". Kart URL'i kısaltılmış gösterir
+// (http/HttpMonitorCard 2026-09-27: https:// ve kök "/" gizli, host vurgulu) → kart ham URL METNİYLE değil başlığın
+// erişilebilir adıyla bulunur (metinle arayan "yok" iddiaları sessizce vakum kalırdı). Ad eşlemesi `[data-monitor-open]`
+// üzerinde: 50 kartlık ızgarada getByRole her sorguda yüzlerce düğmenin adını hesaplıyor (Anahtar Kelime testiyle aynı).
+const titleRe = (url) => new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} — (open details|detayları aç)$`)
+// Toplu seçim kutusunun satır adlı erişilebilir adı (EN / TR)
+const titleLikeBulk = (url) => {
+  const u = url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  return new RegExp(`^(Select ${u} for bulk action|${u} — toplu işlem için seç)$`)
+}
+const cardTitle = {
+  query: (url) => [...document.querySelectorAll('[data-monitor-open]')].find((b) => titleRe(url).test(b.getAttribute('aria-label') || '')) || null,
+  get: (url) => {
+    const el = cardTitle.query(url)
+    if (!el) throw new Error(`kart başlığı yok: ${url}`)
+    return el
+  },
+  find: (url) => waitFor(() => cardTitle.get(url)),
 }
 
 describe('HttpMonitorPage', () => {
@@ -77,7 +98,7 @@ describe('HttpMonitorPage', () => {
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [monitor] })
     fireEvent.click(screen.getByRole('button', { name: /yeniden dene|retry/i }))
 
-    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
+    expect(await cardTitle.find('https://www.example.com/')).toBeInTheDocument()
     expect(screen.queryByText(/izleme listesi yüklenemedi|could not load the monitor list/i))
       .not.toBeInTheDocument()
   })
@@ -85,7 +106,28 @@ describe('HttpMonitorPage', () => {
   it('izleme kartını (url) listeler', async () => {
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
+    expect(await cardTitle.find('https://www.example.com/')).toBeInTheDocument()
+  })
+
+  it('kart kablolaması (http/HttpMonitorCard 2026-09-27): kısaltılmış URL, istek satırı, HTTP kutusu, satır adlı seçim kutusu; zorlanmış vekilde yol rozeti tekrar çizilmez', async () => {
+    api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, url: 'https://a.example.com/', use_proxy: 'ON', proxy_effective: 'proxy', proxy_source: 'monitor' },
+      { ...monitor, id: 2, url: 'https://b.example.com/', use_proxy: 'AUTO', proxy_effective: 'proxy', proxy_source: 'inventory',
+        status: 'down', ok: false, http_status: 503 },
+    ] })
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    const cardOf = async (url) => (await cardTitle.find(url)).closest('[data-slot="card"]')
+    const a = await cardOf('https://a.example.com/')
+    expect(cardTitle.get('https://a.example.com/').textContent).toBe('a.example.com')
+    expect(a.querySelector('[data-slot="http-method"]').textContent).toBe('GET')
+    expect(a.querySelector('[data-slot="http-chip"][data-chip="expected"]').textContent).toBe('Expects 201-204')
+    expect(a.querySelector('[data-slot="meta-proxy"]')).toBeNull()   // kip çipi taşıyor (metaRow)
+    expect(within(a).getByRole('button', { name: 'https://a.example.com/ — Always via proxy' })).toBeInTheDocument()
+    expect(within(a).getByRole('checkbox', { name: /https:\/\/a\.example\.com\// })).toBeInTheDocument()
+    const b = await cardOf('https://b.example.com/')
+    expect(b.querySelector('[data-slot="meta-proxy"]')).not.toBeNull()   // AUTO: yol rozeti MonitorCardMeta'da
+    expect(b.querySelector('[data-slot="http-metric"][data-metric="status"]')).toHaveAttribute('data-tone', 'bad')
+    expect(b.querySelector('[data-slot="http-reason"]').textContent).toBe('Server error 503 — expected 201-204')
   })
 
   // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
@@ -114,7 +156,7 @@ describe('HttpMonitorPage', () => {
       { ...monitor, id: 3, url: 'https://c.example.com/', tags: '' },
     ] })
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://a.example.com/')
+    await cardTitle.find('https://a.example.com/')
     const toolbar = document.querySelector('.upt-toolbar')
     // Etiket kutusu: "Tüm etiketler" tetikleyicisi
     const tagTrigger = [...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm etiketler|all tags/i.test(b.textContent))
@@ -124,16 +166,16 @@ describe('HttpMonitorPage', () => {
     expect(labels).toEqual(expect.arrayContaining(['edge', 'kritik', 'prod']))
     expect(labels.some((l) => /etiketsiz|untagged/i.test(l))).toBe(true)   // id 3 etiketsiz → seçenek var
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'kritik'))
-    await waitFor(() => expect(screen.queryByText('https://b.example.com/')).toBeNull())
-    expect(screen.getByText('https://a.example.com/')).toBeInTheDocument()
-    expect(screen.queryByText('https://c.example.com/')).toBeNull()
+    await waitFor(() => expect(cardTitle.query('https://b.example.com/')).toBeNull())
+    expect(cardTitle.get('https://a.example.com/')).toBeInTheDocument()
+    expect(cardTitle.query('https://c.example.com/')).toBeNull()
 
     // Filtreyi sıfırla, serbest metinle grup adı ara
     fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /kritik/.test(b.textContent)))
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => /tüm etiketler|all tags/i.test(o.textContent)))
-    fireEvent.change(toolbar.querySelector('.upt-search'), { target: { value: 'ödeme' } })
-    await waitFor(() => expect(screen.getByText('https://b.example.com/')).toBeInTheDocument())
-    expect(screen.queryByText('https://a.example.com/')).toBeNull()
+    fireEvent.change(within(toolbar).getByRole('textbox'), { target: { value: 'ödeme' } })
+    await waitFor(() => expect(cardTitle.get('https://b.example.com/')).toBeInTheDocument())
+    expect(cardTitle.query('https://a.example.com/')).toBeNull()
   })
 
   it('USER rolünde de grup/etiket filtreleri GÖRÜNEN listenin tamamından türer (başka takımın grubu/etiketi seçilebilir)', async () => {
@@ -142,13 +184,13 @@ describe('HttpMonitorPage', () => {
       { ...monitor, id: 2, url: 'https://other.example.com/', team_id: 9, team_name: 'SY-B', group_name: 'Öteki Grup', tags: 'öteki' },
     ] })
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://own.example.com/')
+    await cardTitle.find('https://own.example.com/')
     const toolbar = document.querySelector('.upt-toolbar')
     fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm gruplar|all groups/i.test(b.textContent)))
     expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['Kendi Grubu', 'Öteki Grup']))
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'Öteki Grup'))
-    await waitFor(() => expect(screen.queryByText('https://own.example.com/')).toBeNull())
-    expect(screen.getByText('https://other.example.com/')).toBeInTheDocument()
+    await waitFor(() => expect(cardTitle.query('https://own.example.com/')).toBeNull())
+    expect(cardTitle.get('https://other.example.com/')).toBeInTheDocument()
     fireEvent.mouseDown([...toolbar.querySelectorAll('button[role="combobox"]')].find((b) => /tüm etiketler|all tags/i.test(b.textContent)))
     expect([...document.querySelectorAll('[role="option"]')].map((o) => o.textContent.trim())).toEqual(expect.arrayContaining(['kendi', 'öteki']))
   })
@@ -159,18 +201,18 @@ describe('HttpMonitorPage', () => {
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
-    const modal = document.querySelector('.modal-box')
-    expect(modal.querySelector('.notify-level-btn--warning').getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(modal.querySelector('.notify-level-btn--critical'))
+    const modal = screen.getByRole('dialog')
+    expect(modal.querySelector('[data-level="WARNING"]').getAttribute('aria-pressed')).toBe('true')
+    pressMenuTrigger(modal.querySelector('[data-level="CRITICAL"]'))
     fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://lvl.example.com' } })
     await fillGroupAndTags()
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
     expect(api.monitoring.createHttpMonitor.mock.calls[0][0].alertLevel).toBe('CRITICAL')
-    await waitFor(() => expect(document.querySelector('.modal-box')).toBeNull())   // başarılı kayıt modalı kapatır
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())   // başarılı kayıt modalı kapatır
     // Düzenle: kayıtlı HIGH forma gelir
     fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
-    await waitFor(() => expect(document.querySelector('.modal-box .notify-level-btn--high').getAttribute('aria-pressed')).toBe('true'))
+    await waitFor(() => expect(screen.getByRole('dialog').querySelector('[data-level="HIGH"]').getAttribute('aria-pressed')).toBe('true'))
   })
 
   // ── Grup + etiket zorunlu (2026-09-18): dokuz sayfa aynı kapıyı taşır; Http temsilci ──
@@ -188,8 +230,8 @@ describe('HttpMonitorPage', () => {
     expect(await screen.findByText(/en az bir etiket zorunludur|at least one tag is required/i)).toBeInTheDocument()
     expect(api.monitoring.createHttpMonitor).not.toHaveBeenCalled()
     // Zorunlu yıldızları: grup ve etiket başlığı
-    const modal = document.querySelector('.modal-box')
-    expect([...modal.querySelectorAll('.req-star')].length).toBeGreaterThanOrEqual(3)   // takım + grup + etiket
+    const modal = screen.getByRole('dialog')
+    expect([...modal.querySelectorAll('[data-slot="field-required"]')].length).toBeGreaterThanOrEqual(3)   // takım + grup + etiket
   })
 
   // ── Çok takımlı kullanıcı (2026-09-18): takım kutusu AÇIK, ikincil takım seçilip gönderilir ──
@@ -200,7 +242,7 @@ describe('HttpMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
 
     // Kutu açık (kilitli input değil) ve birincil takım seçili gelir
-    const modal = document.querySelector('.modal-box')
+    const modal = screen.getByRole('dialog')
     const trigger = [...modal.querySelectorAll('button[role="combobox"]')].find((b) => /SY-A/.test(b.textContent))
     expect(trigger).toBeTruthy()
     fireEvent.mouseDown(trigger)   // açılış onMouseDown ile
@@ -220,7 +262,7 @@ describe('HttpMonitorPage', () => {
     render(<HttpMonitorPage systemRole="USER" teamId={5} teamName="SY-A" myTeams={[{ id: 5, name: 'SY-A' }]} />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör|yeni izleme/i }))
-    const modal = document.querySelector('.modal-box')
+    const modal = screen.getByRole('dialog')
     const locked = [...modal.querySelectorAll('input[disabled]')].find((i) => i.value === 'SY-A')
     expect(locked).toBeTruthy()
     expect([...modal.querySelectorAll('button[role="combobox"]')].some((b) => /SY-A/.test(b.textContent))).toBe(false)
@@ -237,18 +279,18 @@ describe('HttpMonitorPage', () => {
       ssl_reminder_days: '45,20,5', domain_reminder_days: '60,30,10',
       interval_seconds: 600, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false, notification_group_id: 7,
+      active: false, notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
     }] })
 
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await cardTitle.find('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -266,6 +308,8 @@ describe('HttpMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -276,7 +320,7 @@ describe('HttpMonitorPage', () => {
     })
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await cardTitle.find('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -284,7 +328,7 @@ describe('HttpMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.createHttpMonitor).toHaveBeenCalled())
     expect(await screen.findByText(/zaten izleniyor/i)).toBeInTheDocument()
     // Modal açık kalır (veri kaybı yok) → Kopya rozeti hâlâ DOM'da
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
   })
 
   it('deep-link regresyonu: ?monitor= SON sayfadaki kayda işaret ederken modal yine açılır', async () => {
@@ -296,7 +340,7 @@ describe('HttpMonitorPage', () => {
       render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
       // Detay modalı listede görünürlüğe bağlı DEĞİL — ham monitors.find ile açılır.
-      expect(await screen.findByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
+      expect(await screen.findByRole('tab', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
       expect(screen.getAllByText('https://m120.example.com/').length).toBeGreaterThan(0)
     } finally {
       window.history.replaceState({}, '', '/')
@@ -309,30 +353,40 @@ describe('HttpMonitorPage', () => {
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: many })
     const { container, unmount } = render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getHttpMonitors).toHaveBeenCalled())
-    await screen.findByText('https://m1.example.com/')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    await cardTitle.find('https://m1.example.com/')
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    await screen.findByText('https://m51.example.com/')
-    expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+    await cardTitle.find('https://m51.example.com/')
+    expect(cardTitle.query('https://m1.example.com/')).toBeNull()
     expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
     unmount()
 
     // Tek sayfa (30 kayıt): gezinme yok ama kayıt bilgisi var
     api.monitoring.getHttpMonitors.mockResolvedValue({ success: true, data: many.slice(0, 30) })
     render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://m1.example.com/')
+    await cardTitle.find('https://m1.example.com/')
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+  })
+
+  it('derin bağlantı ?tab=http&monitor=1&mtab=changes → pencere DEĞİŞİKLİKLER sekmesinde açılır (İzleme Değişiklikleri konsolu böyle bağlar)', async () => {
+    window.history.replaceState({}, '', '/?tab=http&monitor=1&mtab=changes')
+    try {
+      render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      const tab = await screen.findByRole('tab', { name: /changes|değişiklikler/i })
+      await waitFor(() => expect(tab).toHaveAttribute('aria-selected', 'true'))
+      expect(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i })).toHaveAttribute('aria-selected', 'false')
+    } finally { window.history.replaceState({}, '', '/') }
   })
 
   it('eski e-posta formatı ?tab=http&monitor=1 modal açar; param artık URL DE KALIR (yeni davranış)', async () => {
     window.history.replaceState({}, '', '/?tab=http&monitor=1')
     try {
       render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-      expect(await screen.findByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()   // modal açık
+      expect(await screen.findByRole('tab', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()   // modal açık
       await waitFor(() => expect(window.location.search).toContain('monitor=1'), { timeout: 1500 })
     } finally { window.history.replaceState({}, '', '/') }
   })
@@ -395,8 +449,8 @@ describe('HttpMonitorPage', () => {
 
     await waitFor(() => expect(api.monitoring.triggerHttpCheck).toHaveBeenCalledTimes(1))
     expect(api.monitoring.triggerHttpCheck).toHaveBeenCalledWith(1)
-    await waitFor(() => expect(document.querySelector('.chk-modal')).not.toBeNull())
-    expect(document.querySelectorAll('.chk-td-status').length).toBe(1)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /kontrol ilerlemesi|check progress/i })).toBeInTheDocument())
+    expect(document.querySelectorAll('[data-col="status"]').length).toBe(1)
   })
 
   // Regression: ISSUE-002 — 32 satırın "ayrıntı" düğmesi ekran okuyucuda AYNI adı taşıyordu
@@ -455,9 +509,43 @@ describe('HttpMonitorPage', () => {
       fireEvent.click(open)
 
       const panel = await screen.findByTestId('http-error-detail')
-      // Sayfada başka role="dialog" yok (izleme detay modalı elle kurulmuş, rol taşımıyor):
-      // bu yüzden bu iddia "satır içi değil, ModalShell penceresinde" demenin kesin yolu.
-      expect(panel.closest('[role="dialog"]')).not.toBeNull()
+      // Detay penceresi de artık bir ModalShell (role="dialog"): panelin EN YAKIN penceresi tanı
+      // penceresinin kendisi olmalı — "satır içi değil, kendi ModalShell penceresinde".
+      expect(screen.getByRole('dialog', { name: /hata tanısı|failure diagnosis/i })).toContainElement(panel)
+      expect(panel.closest('[role="dialog"]')).toBe(screen.getByRole('dialog', { name: /hata tanısı|failure diagnosis/i }))
     } finally { window.history.replaceState({}, '', '/') }
+  })
+
+  it('kart yoğunluğu (2026-09-27): araç çubuğunun İLK öğesi Kompakt/Zengin seçici; her açılış Zengin, seçim ızgaraya + kartlara iner, toplu seçim ve detay çalışır; Kompakt KALICI DEĞİL', async () => {
+    const storedModes = () => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((k) => k && k.startsWith('sm.cardMode'))
+    const first = render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle.find('https://www.example.com/')
+    const grid = document.querySelector('.upt-grid')
+    const toolbar = document.querySelector('.upt-toolbar')
+    expect(toolbar.firstElementChild).toHaveAttribute('data-slot', 'card-density-toggle')
+    expect(toolbar.firstElementChild.className).toMatch(/(^|\s)mr-auto(\s|$)/)
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(grid).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('radio', { name: /^(Compact|Kompakt)$/ }))
+    expect(grid).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).toBeNull()
+    expect(storedModes()).toEqual([])   // seçim tarayıcıya yazılmaz
+    // Kompakt'ta da toplu seçim çalışır ve başlık (stretched button) detayı açar
+    fireEvent.click(screen.getByRole('checkbox', { name: titleLikeBulk('https://www.example.com/') }))
+    await waitFor(() => expect(document.querySelector('[data-slot="bulk-action-bar"]')).toHaveTextContent(/1 (selected|seçili)/))
+    fireEvent.click(grid.querySelector('[data-monitor-open]'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    first.unmount()
+
+    // sayfaya dönüş (yeni bağlama) yeniden Zengin açılır — Kompakt hatırlanmaz
+    render(<HttpMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle.find('https://www.example.com/')
+    expect(document.querySelector('.upt-grid')).toHaveAttribute('data-density', 'rich')
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(document.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
   })
 })

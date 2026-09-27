@@ -28,8 +28,16 @@ export const dateStamp = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/**
+ * 7/24 grupları hücresi (2026-09-27): açık seçim → grup ADLARI "; " ile (içe aktarma `noc_groups` sütunu adları `;`/`|`
+ * ile okur); boş = varsayılan gruplar (içe aktarmada "dokunma"). Adı bilinmeyen kimlik `#id`.
+ */
+const nocGroupsCell = (ids, names = {}) => (Array.isArray(ids) ? ids : [])
+  .map((id) => names[Number(id)] ?? `#${id}`).join('; ')
+
 /* ── CSV — columns matching show modal (single team) ──────── */
-export function exportInventoryCsv(items, teams, t) {
+/** @param nocNames 7/24 grup kimliği → ad (isteğe bağlı) */
+export function exportInventoryCsv(items, teams, t, nocNames = {}) {
   const yn = (b) => (b ? t('inv.yes') : t('inv.no'))
   const cols = [
     t('inv.formDomain'),
@@ -50,6 +58,9 @@ export function exportInventoryCsv(items, teams, t) {
     t('inv.formSubject'),
     t('inv.metaCreated'),
     t('inv.metaUpdated'),
+    // 7/24 izleme ekibi — içe aktarma bu iki başlığı `noc_notify` / `noc_groups`'a eşler (dışa aktar → düzelt → içe aktar)
+    t('nocf.csvNotify'),
+    t('nocf.csvGroups'),
   ]
   const rows = items.map((it) => [
     it.domain,
@@ -70,6 +81,8 @@ export function exportInventoryCsv(items, teams, t) {
     it.expected_subject ?? '',
     it.created_at ? formatDate(it.created_at) : '',
     it.updated_at ? formatDate(it.updated_at) : '',
+    yn(!!it.noc_notify),
+    nocGroupsCell(it.noc_group_ids, nocNames),
   ])
   const bom = '﻿' // UTF-8 BOM for Excel TR character support
   const csv = bom + [cols, ...rows]

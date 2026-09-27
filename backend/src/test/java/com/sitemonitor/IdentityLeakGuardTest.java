@@ -106,8 +106,8 @@ class IdentityLeakGuardTest {
                     "rapor altbilgisinde görünen kurum adı — marka metni, ayrı karar"),
             Map.entry("backend/src/test/java/com/sitemonitor/service/WeeklyReportServiceTest.java",
                     "yukarıdaki tohum verinin bekçisi — kaynakla AYNI değeri beklemek zorunda"),
-            Map.entry("backend/src/main/java/com/sitemonitor/service/EmailNotificationService.java",
-                    "kurumsal vurgu rengini adlandıran yorum"),
+            // EmailNotificationService muafiyeti DÜŞTÜ (2026-09-26): kurumsal vurgu rengini adlandıran yorum,
+            // e-posta yeniden tasarımında lacivert paletle birlikte kaldırıldı (renkler artık MailTokens'ta).
 
             // ── Somut olması değerli üretim açıklamaları ──
             Map.entry("backend/src/main/java/com/sitemonitor/service/ProxySettings.java",
@@ -171,17 +171,52 @@ class IdentityLeakGuardTest {
         }
     }
 
+    /**
+     * Terimler de KÜÇÜLTÜLÜR (BO7, bug regresyon 2026-09-27). Eskiden yalnız metin küçültülüyor, terim olduğu
+     * gibi aranıyordu: büyük harf içeren altı terim hiçbir zaman eşleşemiyordu (ÖLÜ kural) ve bir test
+     * dosyasındaki gerçek bir kimlik izi bu kör noktadan geçmişti. Kapı: {@link #everyForbiddenTermIsLive}.
+     */
+    private static final List<String> FORBIDDEN_LOWER =
+            FORBIDDEN.stream().map(t -> t.toLowerCase(Locale.ROOT)).toList();
+
+    static boolean containsForbidden(String text) {
+        String t = text.toLowerCase(Locale.ROOT);
+        for (String bad : FORBIDDEN_LOWER) {
+            if (t.contains(bad)) return true;
+        }
+        return false;
+    }
+
     private static boolean hasForbidden(Path p) {
         String text;
         try {
-            text = Files.readString(p, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            text = Files.readString(p, StandardCharsets.UTF_8);
         } catch (IOException e) {
             return false;                       // ikili/okunamayan dosya taramaya girmez
         }
-        for (String bad : FORBIDDEN) {
-            if (text.contains(bad)) return true;
+        return containsForbidden(text);
+    }
+
+    /** Yalnız ASCII harfleri büyütür — Türkçe ı/i dönüşümü testi yanlışlıkla kırmasın. */
+    private static String asciiUpper(String s) {
+        StringBuilder b = new StringBuilder(s.length());
+        for (char c : s.toCharArray()) b.append(c >= 'a' && c <= 'z' ? (char) (c - 32) : c);
+        return b.toString();
+    }
+
+    @Test
+    @DisplayName("BO7: her yasak terim GERÇEKTEN eşleşebilir — yazım biçiminden bağımsız (ölü kural yok)")
+    void everyForbiddenTermIsLive() {
+        List<Integer> dead = new ArrayList<>();
+        for (int i = 0; i < FORBIDDEN.size(); i++) {
+            String term = FORBIDDEN.get(i);
+            boolean asWritten = containsForbidden("önce " + term + " sonra");
+            boolean lower = containsForbidden("önce " + term.toLowerCase(Locale.ROOT) + " sonra");
+            boolean upper = containsForbidden("önce " + asciiUpper(term) + " sonra");
+            if (!asWritten || !lower || !upper) dead.add(i);
         }
-        return false;
+        // Yalnız İNDEKS raporlanır: terimlerin kendisi test çıktısına/günlüğe yazdırılmaz.
+        assertThat(dead).as("hiç eşleşemeyen FORBIDDEN terim indeksleri").isEmpty();
     }
 
     @Test

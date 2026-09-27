@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { api } from '../api/client'
 import { setRuntimeVersion, currentVersion } from '../utils/appVersion.js'
 
-const BrandingContext = createContext(null)
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const BrandingContext = (globalThis.__smBrandingCtx ??= createContext(null))
 
 /**
  * Branding (beyaz etiket): açılışta PUBLIC /api/branding'i çeker (auth GEREKMEZ — login sayfası da

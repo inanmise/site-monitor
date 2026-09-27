@@ -46,7 +46,11 @@ public class CacheConfig {
                     "failure-domains",
                     // monitoring-weekly-stats: istek başına ~15 gruplu/scan sorgu (domain_checks GROUP-BY
                     // dahil) → 300 sn TTL; geçmiş haftalar statik (bkz. MonitoringWeeklyStatsService, F6).
-                    "monitoring-weekly-stats");
+                    "monitoring-weekly-stats",
+                    // monitor-sla: global görücünün tüm-filo SLA taraması (30 gün ham kontrol satırı) — arayüz
+                    // 5 dk'da bir tazeliyor; 300 sn TTL ile tur başına 1 tarama (prod kapısı 2026-09-25, O-7).
+                    // Kardeşi "monitor-sparklines" varsayılan 60 sn'de (kart trendi dakikada bir tazelenir).
+                    "monitor-sla");
 
     private static final Duration LONG_TTL    = Duration.ofSeconds(300);
     private static final Duration DEFAULT_TTL = Duration.ofSeconds(60);

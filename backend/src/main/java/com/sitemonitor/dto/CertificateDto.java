@@ -139,6 +139,24 @@ public class CertificateDto {
     @JsonProperty("check_interval_hours")
     private Integer checkIntervalHours;
 
+    /**
+     * Org geneli görünürlük (2026-09-26): çağıran bu satırın kaydını DEĞİŞTİREBİLİR mi
+     * ({@code SessionScope.canWriteInventory}). Yalnız Tüm Sertifikalar listesi doldurur — ve yalnız
+     * {@link #withCanManage} KOPYASINA: {@code getAllLatest} sonucu önbellekte PAYLAŞILIYOR, aynı nesneye
+     * yazmak bir kullanıcının bayrağını ötekine sızdırırdı. Pano ({@code /certificates}) doldurmaz → null → yazılmaz.
+     */
+    @JsonProperty("can_manage")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean canManage;
+
+    /** Sığ kopya + {@code can_manage}; önbellekteki paylaşılan nesneye DOKUNMAZ. */
+    public CertificateDto withCanManage(boolean value) {
+        CertificateDto copy = new CertificateDto();
+        org.springframework.beans.BeanUtils.copyProperties(this, copy);
+        copy.canManage = value;
+        return copy;
+    }
+
     public static CertificateDto from(LatestCheck c, List<String> sanList,
                                       List<String> keyUsageList, List<String> extKeyUsageList) {
         CertificateDto dto = new CertificateDto();

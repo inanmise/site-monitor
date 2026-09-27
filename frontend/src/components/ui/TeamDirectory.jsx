@@ -8,7 +8,8 @@ import { api } from '../../api/client'
  * Sağlayıcı yoksa (testler) boş dizin döner; TeamBadge o zaman düz metin çizer.
  */
 const EMPTY = { byId: new Map(), byName: new Map(), ready: false }
-const TeamDirectoryCtx = createContext(EMPTY)
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const TeamDirectoryCtx = (globalThis.__smTeamDirectoryCtx ??= createContext(EMPTY))
 
 export function TeamDirectoryProvider({ children }) {
   const [maps, setMaps] = useState(null)

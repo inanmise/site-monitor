@@ -11,11 +11,10 @@ function Dialog({
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
-function DialogTrigger({
-  ...props
-}) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
-}
+// forwardRef (React 18): asChild iç içe tetiklerde ref zinciri kopmasın (SHADCN.md §3.1).
+const DialogTrigger = React.forwardRef(function DialogTrigger(props, ref) {
+  return <DialogPrimitive.Trigger ref={ref} data-slot="dialog-trigger" {...props} />
+})
 
 function DialogPortal({
   ...props

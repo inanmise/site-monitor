@@ -138,9 +138,10 @@ export function activeFilterChips(f) {
 export function countActiveFilters(f) { return activeFilterChips(f).length }
 
 /** Sunucu istek parametreleri (boşlar atılır → URL ve cache anahtarı kısa kalır). */
-export function toQuery(f, { page, perPage, sortBy }) {
+export function toQuery(f, { page, perPage, sortBy, scope }) {
   const [sb, sd] = String(sortBy || 'priority|asc').split('|')
   const q = { page, per_page: perPage, sort_by: sb, sort_dir: sd || 'asc' }
+  if (scope === 'all') q.scope = 'all'   // org geneli görünürlük (2026-09-26); 'mine' varsayılan → param yok
   if (f.domain) q.filter_domain = f.domain
   if (f.issuer) q.filter_issuer = f.issuer
   if (f.status) q.filter_status = f.status
@@ -153,17 +154,20 @@ export function toQuery(f, { page, perPage, sortBy }) {
   return q
 }
 
-/** URL eşlemesi (`c_` öneki — PAGE_STATE_PREFIXES'te; sekme değişince temizlenir). */
+/**
+ * URL eşlemesi (`c_` öneki — PAGE_STATE_PREFIXES'te; sekme değişince temizlenir). Sayfa/boyut (`c_page`/`c_ps`)
+ * 2026-09-26'dan beri standart `useServerPagination` tarafından okunur/yazılır (ps ön ayar listesine karşı doğrulanır,
+ * sayfa > 1 ise ps de yazılır); burada yalnız süzgeç + sıralama kalır — iki yazıcı aynı anahtarda yarışmasın.
+ */
 export const URL_KEYS = { domain: 'c_q', issuer: 'c_iss', status: 'c_st', team: 'c_team', window: 'c_win', insecure: 'c_sec', tier: 'c_tier', port: 'c_port', fp: 'c_fp' }
-export function toUrlMapping(f, { page, perPage, sortBy, defaultPerPage }) {
+export function toUrlMapping(f, { sortBy, scope }) {
   const m = {}
   for (const [k, p] of Object.entries(URL_KEYS)) {
     const v = f[k]
     m[p] = k === 'insecure' ? (v ? '1' : null) : (v || null)
   }
   m.c_sort = sortBy && sortBy !== 'priority|asc' ? sortBy : null
-  m.c_page = page > 1 ? page : null
-  m.c_ps = perPage !== defaultPerPage ? perPage : null
+  m.c_scope = scope === 'all' ? 'all' : null   // "Tüm takımlar" paylaşılan bağlantıda da taşınır
   return m
 }
 /** Mount'ta URL → süzgeçler (yalnız bilinen değerler; bozuk değer yok sayılır). */

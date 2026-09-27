@@ -1,7 +1,9 @@
 import { useT } from '../../i18n/index.jsx'
+import { Slider } from '@/components/shadcn/slider'
+import { cn } from '@/lib/utils'
 
 /**
- * "Kontrol Aralığı" kaydırma çubuğu — HER izleme türünde AYNI etkileşim.
+ * "Kontrol Aralığı" kaydırma çubuğu — HER izleme türünde AYNI etkileşim. Çizim shadcn Slider (Radix).
  *
  * <p><b>Neden ortak bileşen:</b> aynı ayar dokuz formda iki farklı biçimde soruluyordu —
  * HTTP/Keyword/Port/Page/PageSpeed bir kaydırma çubuğu, DNS/Ping/Domain ise açılır liste.
@@ -11,6 +13,10 @@ import { useT } from '../../i18n/index.jsx'
  * <p><b>Aralık listesi prop'tur, sabit DEĞİL:</b> türlerin tabanı bilinçli olarak farklı.
  * Sayfa Hızı'nın alt sınırı 5 dakikadır çünkü tek ölçüm onlarca istek demektir; DNS 30 saniyeye
  * inebilir. Ortak bir liste dayatmak bu kısıtları sessizce silerdi.
+ *
+ * <p>Çubuk SIRA NUMARASI üzerinde çalışır (0..n-1, eşit aralıklı duraklar); dışarıya her zaman
+ * SANİYE döner. Başparmak (role="slider") adını başlıktan, okunur değerini (aria-valuetext)
+ * seçili aralığın metninden alır — ekran okuyucu "3" değil "5 dk" okur.
  *
  * @param options {value, labelKey}[] — sıralı aralık seçenekleri
  * @param value   saniye cinsinden seçili aralık; listede yoksa EN YAKIN seçenek işaretlenir
@@ -34,23 +40,27 @@ export default function IntervalSlider({
     options.forEach((o, j) => { const d = Math.abs(o.value - (value ?? 0)); if (d < bd) { bd = d; best = j } })
     idx = best
   }
+  const current = t(options[idx].labelKey)
 
   return (
-    <div className="full-width http-interval-block">
-      <div className="http-block-title">{t(titleKey)}</div>
-      <div className="field-hint" style={{ marginBottom: 8 }}>
-        {t(everyKey).replace('{0}', t(options[idx].labelKey))}
-      </div>
-      <input type="range" className="http-interval-slider"
-        min={0} max={options.length - 1} step={1} value={idx}
-        aria-label={t(titleKey)}
-        onChange={e => onChange(options[Number(e.target.value)].value)} />
-      <div className="http-interval-ticks">
+    <div data-slot="interval-slider" className="col-span-full flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3.5 py-3">
+      <div className="text-sm font-semibold">{t(titleKey)}</div>
+      <p className="text-xs text-muted-foreground">{t(everyKey).replace('{0}', current)}</p>
+      <Slider
+        min={0} max={options.length - 1} step={1} value={[idx]}
+        onValueChange={([v]) => { if (options[v]) onChange(options[v].value) }}
+        thumbProps={{ 'aria-label': t(titleKey), 'aria-valuetext': current }}
+        className="py-1.5"
+      />
+      <div className="flex justify-between gap-1 text-[11px] text-muted-foreground" aria-hidden="true">
         {options.map((o, j) => (
-          <span key={o.value} className={`http-interval-tick${j === idx ? ' active' : ''}`}>{t(o.labelKey)}</span>
+          <span key={o.value} data-slot="interval-tick" data-active={j === idx ? 'true' : undefined}
+            className={cn('whitespace-nowrap', j === idx && 'font-semibold text-foreground')}>
+            {t(o.labelKey)}
+          </span>
         ))}
       </div>
-      {note && <div className="field-hint" style={{ marginTop: 6 }}>{note}</div>}
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   )
 }

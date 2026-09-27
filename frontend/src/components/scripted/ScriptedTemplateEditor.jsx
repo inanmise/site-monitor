@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Plus, Trash2, FileCode2 } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { Plus, Trash2, FileCode2, ChevronDown } from 'lucide-react'
 import { api } from '../../api/client'
 import ModalShell from '../ui/ModalShell.jsx'
 import CodeEditor from '../ui/CodeEditor.jsx'
@@ -10,7 +10,18 @@ import { categoryOptions } from '../../utils/templateCategories.js'
 import { pickLang } from '../../utils/scriptSourceOptions.js'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { FormGrid, FormField, FormSection } from '../monitoring/MonitorForm.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { FieldDescription } from '@/components/shadcn/field'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Textarea } from '@/components/shadcn/textarea'
+import { cn } from '@/lib/utils'
 
 /**
  * Şablon editörü — oluşturma, düzenleme ve salt-okunur görüntüleme TEK bileşende.
@@ -152,138 +163,179 @@ export default function ScriptedTemplateEditor({
           {error && <AlertBanner tone="danger" title={t('tpl.saveBlockedTitle')}>{error}</AlertBanner>}
           {warnings.length > 0 &&
             <AlertBanner tone="warning" title={t('tpl.saveWarnTitle')}>
-              <ul className="sc-warn-list">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              <ul className="m-0 list-disc pl-4">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </AlertBanner>}
 
-          <div className="form-grid form-grid--top">
-            <label className="full-width"><span>{t('tpl.name')} <span className="req-star">*</span></span>
-              <input value={show(form.name, form.nameEn)} disabled={readOnly} autoFocus={!readOnly}
-                onChange={e => set({ name: e.target.value })} />
-              {missingTranslation(form.name, form.nameEn) &&
-                <span className="field-hint">{t('tpl.noTranslation')}</span>}</label>
+          <FormGrid>
+            <FormField full label={t('tpl.name')} required
+              hint={missingTranslation(form.name, form.nameEn) ? t('tpl.noTranslation') : undefined}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} value={show(form.name, form.nameEn)}
+                  disabled={readOnly} autoFocus={!readOnly} onChange={e => set({ name: e.target.value })} />
+              )}
+            </FormField>
 
-            <label className="full-width"><span>{t('tpl.description')}</span>
-              <textarea rows={2} value={show(form.description, form.descriptionEn)} disabled={readOnly}
-                onChange={e => set({ description: e.target.value })} />
-              {missingTranslation(form.description, form.descriptionEn) &&
-                <span className="field-hint">{t('tpl.noTranslation')}</span>}</label>
+            <FormField full label={t('tpl.description')}
+              hint={missingTranslation(form.description, form.descriptionEn) ? t('tpl.noTranslation') : undefined}>
+              {({ id, describedBy }) => (
+                <Textarea id={id} aria-describedby={describedBy} rows={2} className="min-h-[62px]"
+                  value={show(form.description, form.descriptionEn)} disabled={readOnly}
+                  onChange={e => set({ description: e.target.value })} />
+              )}
+            </FormField>
 
-            <label className="full-width"><span>{t('tpl.whenToUse')}</span>
-              <textarea rows={2} value={show(form.whenToUse, form.whenToUseEn)} disabled={readOnly}
-                onChange={e => set({ whenToUse: e.target.value })} />
-              <span className="field-hint">
-                {missingTranslation(form.whenToUse, form.whenToUseEn)
-                  ? t('tpl.noTranslation') : t('tpl.whenToUseHint')}</span></label>
+            <FormField full label={t('tpl.whenToUse')}
+              hint={missingTranslation(form.whenToUse, form.whenToUseEn) ? t('tpl.noTranslation') : t('tpl.whenToUseHint')}>
+              {({ id, describedBy }) => (
+                <Textarea id={id} aria-describedby={describedBy} rows={2} className="min-h-[62px]"
+                  value={show(form.whenToUse, form.whenToUseEn)} disabled={readOnly}
+                  onChange={e => set({ whenToUse: e.target.value })} />
+              )}
+            </FormField>
 
             {/* Kapsam YALNIZ oluşturmada seçilir: sonrasında değişimi promote/demote yapar —
                 aksi hâlde bir USER kendi şablonunu Genel'e taşıyıp yetki yükseltebilirdi. */}
             {isNew
-              ? <label className="full-width"><span>{t('tpl.scope')} <span className="req-star">*</span></span>
-                  <SearchableSelect value={form.scope} onChange={v => set({ scope: v })}
-                    options={[{ value: '', label: t('tpl.scopePick') }, ...scopeOptions]} searchThreshold={4} />
-                  <span className="field-hint">{t('tpl.scopeHint')}</span></label>
-              : <label className="full-width"><span>{t('tpl.scope')}</span>
-                  <input disabled value={template.scope === 'general'
-                    ? t('tpl.scopeGeneral')
-                    : (template.team_name || teamName || t('tpl.scopeTeam'))} /></label>}
+              ? <FormField full label={t('tpl.scope')} required hint={t('tpl.scopeHint')}>
+                  {({ id }) => (
+                    <SearchableSelect id={id} value={form.scope} onChange={v => set({ scope: v })}
+                      options={[{ value: '', label: t('tpl.scopePick') }, ...scopeOptions]} searchThreshold={4} />
+                  )}
+                </FormField>
+              : <FormField full label={t('tpl.scope')}>
+                  {({ id }) => (
+                    <Input id={id} disabled value={template.scope === 'general'
+                      ? t('tpl.scopeGeneral')
+                      : (template.team_name || teamName || t('tpl.scopeTeam'))} />
+                  )}
+                </FormField>}
 
             {/* Kategori: kütüphanedeki ağaçta hangi dala düşeceğini belirler. Zorunlu DEĞİL —
                 seçilmezse "Diğer" dalında görünür; kategori bir düzenleme kolaylığıdır. */}
-            <label className="full-width"><span>{t('tpl.category')}</span>
-              <SearchableSelect value={form.category} onChange={v => set({ category: v })}
-                options={[{ value: '', label: t('tpl.categoryPick') }, ...categoryOptions(t)]}
-                searchThreshold={6} disabled={readOnly} />
-              <span className="field-hint">{t('tpl.categoryHint')}</span></label>
+            <FormField full label={t('tpl.category')} hint={t('tpl.categoryHint')}>
+              {({ id }) => (
+                <SearchableSelect id={id} value={form.category} onChange={v => set({ category: v })}
+                  options={[{ value: '', label: t('tpl.categoryPick') }, ...categoryOptions(t)]}
+                  searchThreshold={6} disabled={readOnly} />
+              )}
+            </FormField>
 
-            <div className="full-width sc-tpl-block">
-              <div className="kw-block-title">{t('tpl.tags')}</div>
+            <FormSection title={t('tpl.tags')}>
               <TagInput value={form.tags} onChange={v => set({ tags: v })} disabled={readOnly}
                 placeholder={t('tpl.tagsPlaceholder')} />
-            </div>
+            </FormSection>
 
-            {/* Katlanan dil bloğu — düzenlemede İNGİLİZCE alanlar (K6: kullanıcıya çeviri yükü
-                bindirme), İngilizce arayüzde GÖRÜNTÜLERKEN ise Türkçe aslı. İçerik hiçbir modda
+            {/* Katlanan dil bloğu (shadcn Collapsible) — düzenlemede İNGİLİZCE alanlar (K6: kullanıcıya
+                çeviri yükü bindirme), İngilizce arayüzde GÖRÜNTÜLERKEN ise Türkçe aslı. İçerik hiçbir modda
                 kaybolmaz, yalnız hangisinin "asıl" hangisinin "diğer" olduğu yer değiştirir. */}
-            <div className="full-width sc-tpl-block">
-              <Button type="button" variant="secondary" size="sm" onClick={() => setShowEn(v => !v)}>
-                {readOnly && en
-                  ? (showEn ? t('tpl.trHide') : t('tpl.trShow'))
-                  : (showEn ? t('tpl.enHide') : t('tpl.enShow'))}
-              </Button>
-              {showEn && (
-                <div className="form-grid form-grid--top sc-tpl-en">
-                  <label className="full-width"><span>{otherLangLabel('name')}</span>
-                    <input value={otherLangValue(form.name, form.nameEn)} disabled={readOnly}
-                      onChange={e => set({ nameEn: e.target.value })} /></label>
-                  <label className="full-width"><span>{otherLangLabel('description')}</span>
-                    <textarea rows={2} value={otherLangValue(form.description, form.descriptionEn)} disabled={readOnly}
-                      onChange={e => set({ descriptionEn: e.target.value })} /></label>
-                  <label className="full-width"><span>{otherLangLabel('whenToUse')}</span>
-                    <textarea rows={2} value={otherLangValue(form.whenToUse, form.whenToUseEn)} disabled={readOnly}
-                      onChange={e => set({ whenToUseEn: e.target.value })} /></label>
-                </div>
-              )}
-            </div>
+            <Collapsible open={showEn} onOpenChange={setShowEn}
+              className="flex min-w-0 flex-col gap-3 rounded-lg border bg-muted/30 px-3.5 py-3 sm:col-span-2">
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="secondary" size="sm" className="self-start">
+                  {readOnly && en
+                    ? (showEn ? t('tpl.trHide') : t('tpl.trShow'))
+                    : (showEn ? t('tpl.enHide') : t('tpl.enShow'))}
+                  <ChevronDown aria-hidden="true" className={cn('transition-transform duration-150 motion-reduce:transition-none', showEn && 'rotate-180')} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <FormGrid>
+                  <FormField full label={otherLangLabel('name')}>
+                    {({ id }) => (
+                      <Input id={id} value={otherLangValue(form.name, form.nameEn)} disabled={readOnly}
+                        onChange={e => set({ nameEn: e.target.value })} />
+                    )}
+                  </FormField>
+                  <FormField full label={otherLangLabel('description')}>
+                    {({ id }) => (
+                      <Textarea id={id} rows={2} className="min-h-[62px]" value={otherLangValue(form.description, form.descriptionEn)}
+                        disabled={readOnly} onChange={e => set({ descriptionEn: e.target.value })} />
+                    )}
+                  </FormField>
+                  <FormField full label={otherLangLabel('whenToUse')}>
+                    {({ id }) => (
+                      <Textarea id={id} rows={2} className="min-h-[62px]" value={otherLangValue(form.whenToUse, form.whenToUseEn)}
+                        disabled={readOnly} onChange={e => set({ whenToUseEn: e.target.value })} />
+                    )}
+                  </FormField>
+                </FormGrid>
+              </CollapsibleContent>
+            </Collapsible>
 
-            <div className="full-width sc-tpl-block">
-              <div className="kw-block-title sc-script-title">
-                <span>{t('tpl.script')} <span className="req-star">*</span></span>
-                <span className="sc-script-tools">
-                  {k6Version && <span className="sc-k6ver-chip">k6 {k6Version}</span>}
-                  {/* Şablonun asıl işi kopyalanmak: salt-okunur görünümde de dursun. */}
-                  {(form.script || '').trim() &&
-                    <CopyButton value={form.script} variant="secondary"
-                      label={t('tpl.scriptCopy')} copiedLabel={t('tpl.scriptCopied')} />}
-                </span>
-              </div>
+            <FormSection title={t('tpl.script')} required
+              action={<>
+                {k6Version && <Badge variant="outline" data-slot="k6-version" className="font-mono text-[11px]">k6 {k6Version}</Badge>}
+                {/* Şablonun asıl işi kopyalanmak: salt-okunur görünümde de dursun. */}
+                {(form.script || '').trim() &&
+                  <CopyButton value={form.script} variant="secondary"
+                    label={t('tpl.scriptCopy')} copiedLabel={t('tpl.scriptCopied')} />}
+              </>}>
               <CodeEditor value={form.script} onChange={code => set({ script: code })}
                 readOnly={readOnly} textareaId={`k6-template-${template?.id || 'new'}`}
                 placeholder={t('tpl.scriptPlaceholder')} />
-              <span className="field-hint">{t('tpl.scriptHint')}</span>
-            </div>
+              <FieldDescription className="text-xs">{t('tpl.scriptHint')}</FieldDescription>
+            </FormSection>
 
             {/* Env TANIMLARI — değer alanı bilinçli olarak YOK. */}
-            <div className="full-width sc-tpl-block">
-              <div className="kw-block-title">{t('tpl.env')}</div>
+            <FormSection title={t('tpl.env')}>
               {form.env.length > 0 &&
-                <div className="env-list">
+                <div className="flex flex-col gap-2">
                   {form.env.map((e, i) => (
-                    <div key={i} className="env-row sc-tpl-env-row">
-                      <input className="input env-name" placeholder={t('tpl.envName')} value={e.name}
-                        disabled={readOnly} onChange={ev => setEnvRow(i, { name: ev.target.value })} />
-                      <input className="input sc-tpl-env-desc" placeholder={t('tpl.envDesc')} value={e.desc || ''}
-                        disabled={readOnly} onChange={ev => setEnvRow(i, { desc: ev.target.value })} />
-                      <label className="checkbox-label env-secret" title={t('tpl.envSecret')}>
-                        <input type="checkbox" checked={!!e.secret} disabled={readOnly}
-                          onChange={ev => setEnvRow(i, { secret: ev.target.checked })} />
-                        {t('tpl.envSecret')}
-                      </label>
-                      {!readOnly &&
-                        <button type="button" className="icon-btn env-del" title={t('tpl.delete')}
-                          onClick={() => delEnvRow(i)}><Trash2 size={15} /></button>}
-                    </div>
+                    <EnvRow key={i} t={t} row={e} readOnly={readOnly}
+                      onPatch={patch => setEnvRow(i, patch)} onDelete={() => delEnvRow(i)} />
                   ))}
                 </div>}
               {!readOnly &&
-                <Button type="button" variant="secondary" size="sm" className="env-add" onClick={addEnvRow}>
-                  <Plus size={13} /> {t('tpl.envAdd')}
+                <Button type="button" variant="secondary" size="sm" className="self-start" onClick={addEnvRow}>
+                  <Plus size={13} aria-hidden="true" /> {t('tpl.envAdd')}
                 </Button>}
-              <span className="field-hint">{t('tpl.envHint')}</span>
-            </div>
+              <FieldDescription className="text-xs">{t('tpl.envHint')}</FieldDescription>
+            </FormSection>
 
             {/* Sürüm artışı yalnız mevcut şablonda anlamlı (yeni kayıt daima 1.0.0 ile doğar). */}
             {!isNew && !readOnly && (
-              <label><span>{t('tpl.bumpTitle')}</span>
-                <select value={form.bumpType} onChange={e => set({ bumpType: e.target.value })}>
-                  <option value="patch">{t('tpl.bumpPatch')}</option>
-                  <option value="minor">{t('tpl.bumpMinor')}</option>
-                  <option value="major">{t('tpl.bumpMajor')}</option>
-                </select>
-                <span className="field-hint">{t('tpl.bumpHint')}</span></label>
+              <FormField label={t('tpl.bumpTitle')} hint={t('tpl.bumpHint')}>
+                {({ id, describedBy }) => (
+                  <NativeSelect id={id} aria-describedby={describedBy} value={form.bumpType}
+                    onChange={e => set({ bumpType: e.target.value })}>
+                    <NativeSelectOption value="patch">{t('tpl.bumpPatch')}</NativeSelectOption>
+                    <NativeSelectOption value="minor">{t('tpl.bumpMinor')}</NativeSelectOption>
+                    <NativeSelectOption value="major">{t('tpl.bumpMajor')}</NativeSelectOption>
+                  </NativeSelect>
+                )}
+              </FormField>
             )}
-          </div>
+          </FormGrid>
         </>)}
     </ModalShell>
+  )
+}
+
+/**
+ * Tek env TANIM satırı: ad + açıklama + "gizli" kutusu + sil. DEĞER alanı bilinçli olarak YOK.
+ * shadcn Input / Checkbox + Label / ikon Button (ipucu Tooltip).
+ */
+function EnvRow({ t, row, readOnly, onPatch, onDelete }) {
+  const secretId = useId()
+  return (
+    <div data-slot="env-row" className="flex items-center gap-2">
+      <Input className="min-w-0 flex-1" placeholder={t('tpl.envName')} aria-label={t('tpl.envName')} value={row.name}
+        disabled={readOnly} onChange={ev => onPatch({ name: ev.target.value })} />
+      <Input className="min-w-0 flex-[2]" placeholder={t('tpl.envDesc')} aria-label={t('tpl.envDesc')} value={row.desc || ''}
+        disabled={readOnly} onChange={ev => onPatch({ desc: ev.target.value })} />
+      <div className="flex shrink-0 items-center gap-1.5">
+        <Checkbox id={secretId} checked={!!row.secret} disabled={readOnly}
+          onCheckedChange={v => onPatch({ secret: v === true })} />
+        <Label htmlFor={secretId} className="text-xs font-semibold whitespace-nowrap text-muted-foreground">{t('tpl.envSecret')}</Label>
+      </div>
+      {!readOnly &&
+        <SimpleTooltip content={t('tpl.delete')}>
+          <Button type="button" variant="outline" size="icon-sm"
+            className="shrink-0 hover:border-destructive hover:bg-destructive/10 hover:text-destructive"
+            aria-label={t('a11y.rowAction', row.name || t('tpl.envName'), t('tpl.delete'))}
+            onClick={onDelete}><Trash2 size={15} aria-hidden="true" /></Button>
+        </SimpleTooltip>}
+    </div>
   )
 }
 

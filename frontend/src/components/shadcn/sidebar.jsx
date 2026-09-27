@@ -31,7 +31,11 @@ const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
-const SidebarContext = React.createContext(null)
+// Context nesnesi globalThis'e SABİT (2026-09-26): Vite HMR bu dosyayı iki ayrı modül örneği olarak yükleyebiliyor
+// (yığında farklı `?t=` damgaları) — ağaçtaki SidebarProvider ESKİ örnekten, Nav/MobileTopBar'daki useSidebar YENİ
+// örnekten gelince iki ayrı context oluşuyor ve "useSidebar must be used within a SidebarProvider" ile çöküyordu.
+// i18n/index.jsx `LangCtx` ile aynı desen (frontend/docs/SHADCN.md §3.2).
+const SidebarContext = (globalThis.__smSidebarCtx ??= React.createContext(null))
 
 function useSidebar() {
   const context = React.useContext(SidebarContext)
@@ -465,7 +469,8 @@ function SidebarMenu({
     <ul
       data-slot="sidebar-menu"
       data-sidebar="menu"
-      className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+      // list-none: projede Tailwind preflight YOK (ul/li madde işareti sıfırlanmıyor) — 2026-09-26
+      className={cn("flex w-full min-w-0 list-none flex-col gap-1", className)}
       {...props}
     />
   )
@@ -652,7 +657,7 @@ function SidebarMenuSub({
       data-slot="sidebar-menu-sub"
       data-sidebar="menu-sub"
       className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-l border-sidebar-border px-2.5 py-0.5",
+        "mx-3.5 flex min-w-0 translate-x-px list-none flex-col gap-1 border-l border-sidebar-border px-2.5 py-0.5",
         "group-data-[collapsible=icon]:hidden",
         className
       )}
@@ -677,12 +682,15 @@ function SidebarMenuSubItem({
 
 function SidebarMenuSubButton({
   asChild = false,
+  as = "a",
   size = "md",
   isActive = false,
   className,
   ...props
 }) {
-  const Comp = asChild ? Slot.Root : "a"
+  // Proje uyarlaması (2026-09-26): `as` — Nav'ın alt sekmeleri bağlantı DEĞİL düğme (`?tab=` gezinmesi
+  // App durumundan; eski düz liste de düğmeydi). asChild + ham <button> yerine öğe türü burada seçilir.
+  const Comp = asChild ? Slot.Root : as
 
   return (
     <Comp

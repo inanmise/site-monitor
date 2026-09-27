@@ -161,4 +161,54 @@ public final class SessionScope {
         List<Long> v = viewTeamIds(session);
         return v != null && teamId != null && v.contains(teamId);
     }
+
+    /**
+     * İzleme üzerinde YAZMA/ÇALIŞTIRMA kapsamı — dokuz izleme türünün güncelleme/tetikleme kapısı. TEK kaynak:
+     * {@code MonitoringController#canOperateTeam} buraya delege eder; 7/24 (NOC) aç/kapa ucu da AYNI kapıyı
+     * kullanır (2026-09-27) — iki kopya zamanla ayrışır, bir uç diğerinin reddettiğini kabul ederdi.
+     *
+     * <p>Global admin → her takım; yönetim kapsamı (TEAM_ADMIN / kapsamlı müdür) → o takımlar; USER → ÜYESİ olduğu
+     * her takım (2026-09-18). {@code memberTeamIds} eski oturumda birincile düşer (rolling deploy) — daralma yok.
+     */
+    public static boolean canOperateTeam(HttpSession session, Long teamId) {
+        if (isGlobalAdmin(session)) return true;
+        if (teamId == null) return false;
+        if (canManage(session, teamId)) return true;
+        return isMemberOf(session, teamId) || teamId.equals(primaryTeamId(session));
+    }
+
+    /** Oturum sahibinin birincil takımı (session "teamId"; sayı ya da sayısal metin). */
+    public static Long primaryTeamId(HttpSession session) {
+        Object v = session != null ? session.getAttribute("teamId") : null;
+        if (v instanceof Number n) return n.longValue();
+        if (v != null) { try { return Long.valueOf(v.toString().trim()); } catch (Exception ignored) { } }
+        return null;
+    }
+
+    /**
+     * Envanter kaydını DEĞİŞTİRME kuralı — {@code PUT /api/admin/inventory/{id}} kapısı
+     * ({@code AdminController.requireInventoryWriter}) ile TEK kaynak: global admin, yönetim kapsamı
+     * (TEAM_ADMIN / kapsamlı müdür) ya da kaydın SY takımının ÜYESİ (USER, 2026-09-18).
+     *
+     * <p>Liste satırlarındaki {@code can_manage} bayrağı da bunu kullanır (2026-09-26, org geneli
+     * envanter görünürlüğü): arayüz başka takımın satırında eylemleri gizler, sunucu yine de her yazma
+     * ucunda kendi kapısını uygular. Silme/geri yükleme/toplu işlem/içe aktarma/yenileme planı ayrıca
+     * YÖNETİM kapsamı ister ({@link #canManage}) — bayrak "bu kayıt senin takımının mı" sorusunun
+     * cevabıdır, rol kapıları onun ÜSTÜNE uygulanır.
+     */
+    public static boolean canWriteInventory(HttpSession session, Long teamId) {
+        return canManage(session, teamId) || isMemberOf(session, teamId);
+    }
+
+    /**
+     * {@link #canWriteInventory} kuralının İSTEK BAŞINA bir kez kurulan hâli — satır başına oturum
+     * niteliği okunmaz, liste büyüklüğünden bağımsız tek küme (prod: 200–1000+ alan adı).
+     */
+    public static java.util.function.Predicate<Long> inventoryWriteTest(HttpSession session) {
+        if (isGlobalAdmin(session)) return teamId -> true;
+        java.util.Set<Long> teams = new java.util.HashSet<>(memberTeamIds(session));
+        List<Long> manage = manageTeamIds(session);
+        if (manage != null) teams.addAll(manage);
+        return teamId -> teamId != null && teams.contains(teamId);
+    }
 }

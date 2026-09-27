@@ -122,8 +122,12 @@ public class KeywordCheckerService {
             // SSRF: hedef host HER hop'ta doğrulanır (metadata/loopback/link-local blok; iç ağ ayara bağlı).
             HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders, viaProxy);
             byte[] bytes;
-            try (InputStream is = resp.body()) {
-                bytes = is.readNBytes(MAX_BODY_BYTES);   // bellek koruması: gövde tavanı
+            // Bellek koruması (gövde tavanı) + SÜRE koruması (prod kapısı 2026-09-25, N1): readNBytes EOF ya da
+            // tavan gelene dek bloklar; kalp atışı gönderen bir SSE ucunda bu günler sürer ve keyword sweep'i
+            // donardı. Gövde, başlık süresi kadar daha beklenir; dolarsa kontrol "zaman aşımı" hatasıyla biter.
+            try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(
+                    resp.body(), Math.max(1000, timeoutMs), "Keyword")) {
+                bytes = is.readNBytes(MAX_BODY_BYTES);
             }
             long ms = System.currentTimeMillis() - start;
             String body = new String(bytes, StandardCharsets.UTF_8);
@@ -200,7 +204,10 @@ public class KeywordCheckerService {
             // döner. HttpCheckerService:346 ile AYNI satır: elle takibe geçen iki çağıran da
             // Redirect.NORMAL'in davranışını korur (SafeRedirect.isDowngrade javadoc'u).
             if (next == null || SafeRedirect.isDowngrade(current, next)) return resp;
-            try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* bağlantı iadesi */ }
+            // Yönlendirme gövdesi: bağlantı iadesi için kısa okuma — süre sınırlı (N1), hata yok sayılır.
+            try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), Math.max(1000, timeoutMs), "Keyword")) {
+                is.readNBytes(4096);
+            } catch (Exception ignore) { /* bağlantı iadesi */ }
             current = next;
         }
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");

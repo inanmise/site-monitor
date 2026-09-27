@@ -1,4 +1,4 @@
-
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { XIcon } from "lucide-react"
 import { useT } from "@/i18n/index.jsx"
@@ -10,11 +10,10 @@ function Sheet({
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }
 
-function SheetTrigger({
-  ...props
-}) {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />
-}
+// forwardRef (React 18): asChild iç içe tetiklerde ref zinciri kopmasın (SHADCN.md §3.1).
+const SheetTrigger = React.forwardRef(function SheetTrigger(props, ref) {
+  return <SheetPrimitive.Trigger ref={ref} data-slot="sheet-trigger" {...props} />
+})
 
 function SheetClose({
   ...props
@@ -28,12 +27,15 @@ function SheetPortal({
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
 }
 
-function SheetOverlay({
+// forwardRef (React 18): SheetPortal çocuğunu Radix Presence'a ref'le bağlar; düz işlev bileşeni ref'i düşürür ve
+// her açılışta "Function components cannot be given refs" uyarısı basar (DialogOverlay ile aynı; 2026-09-26).
+const SheetOverlay = React.forwardRef(function SheetOverlay({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <SheetPrimitive.Overlay
+      ref={ref}
       data-slot="sheet-overlay"
       className={cn(
         "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
@@ -42,7 +44,7 @@ function SheetOverlay({
       {...props}
     />
   )
-}
+})
 
 function SheetContent({
   className,
@@ -72,8 +74,12 @@ function SheetContent({
         {...props}
       >
         {children}
+        {/* data-slot ŞART (2026-09-27): preflight yok — data-slot'suz <button> globals.css'in `button[data-slot]` sıfırlamasını
+            almaz ve tarayıcı-varsayılanı gri, kenarlıklı kutu olarak çizilirdi (takvim/yenileme süzgeç panelleri). 32 px,
+            dokunmatikte 40 px hedef. */}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
+          <SheetPrimitive.Close data-slot="sheet-close"
+            className="absolute top-3 right-3 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-80 ring-offset-background transition-opacity hover:bg-accent hover:text-foreground hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none pointer-coarse:size-10 motion-reduce:transition-none">
             <XIcon className="size-4" />
             <span className="sr-only">{t('app.close')}</span>
           </SheetPrimitive.Close>
@@ -116,7 +122,8 @@ function SheetTitle({
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("font-semibold text-foreground", className)}
+      // text-base: preflight yok → <h2> tarayıcının 1.5em başlığını alıyordu; shadcn aslı (preflight'lı) gövde boyutunda.
+      className={cn("text-base leading-snug font-semibold text-foreground", className)}
       {...props}
     />
   )

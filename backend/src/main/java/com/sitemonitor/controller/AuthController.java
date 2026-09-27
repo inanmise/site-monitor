@@ -259,11 +259,16 @@ public class AuthController {
         String lastLockoutAt = null;
         int failuresNeeded = 5;
         boolean userExists = false;
+        // Sayaç KANONİK adla tutulur (prod kapısı 2026-09-25, O-1): kimlik doğrulama harf duyarsız ama deneme
+        // sayacı (`a.actor = :actor`) duyarlıydı — "admin"/"ADMIN"/"Admin" ayrı sayılıp kilit hiç tetiklenmiyordu.
+        // Kullanıcı varsa kayıtlı adı, yoksa büyük harf (kanonik saklama biçimi) kullanılır.
+        String auditActor = username.toUpperCase(java.util.Locale.ROOT);
         if (!username.isBlank()) {
             var failedUser = userService.findByUsername(username);
             if (failedUser.isPresent()) {
                 userExists = true;
                 var u = failedUser.get();
+                auditActor = u.getUsername();
                 lastLockoutAt = u.getLastLockoutAt();
                 failuresNeeded = userService.failuresNeededForLevel(u.getFailedBlockCount());
                 // Kullanıcının güvenlik özeti için damga. applyProgressiveLockout'tan (aşağıda)
@@ -274,15 +279,15 @@ public class AuthController {
         }
         String reasonCode = userExists ? "BAD_PASSWORD" : "UNKNOWN_USER";
         com.sitemonitor.model.AuditLog logged = auditService.recordLogin(
-                username, null, null, null, clientIp,
+                username.isBlank() ? username : auditActor, null, null, null, clientIp,
                 request.getHeader("User-Agent"), null, false, reasonCode,
                 lastLockoutAt, failuresNeeded);
 
         if (!username.isBlank() && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
-            UserService.LockoutStatus ls = userService.applyProgressiveLockout(username);
+            UserService.LockoutStatus ls = userService.applyProgressiveLockout(auditActor);
             // Hesap kilit GEÇİŞİ — ayrık denetim olayı (altında yatan failed-login zaten kaydedildi).
-            auditService.recordAction("ACCOUNT_LOCKED", username, null, null, null, "USER", username,
+            auditService.recordAction("ACCOUNT_LOCKED", auditActor, null, null, null, "USER", auditActor,
                     ls.permanent() ? "{\"lock\":\"permanent\"}"
                             : "{\"lock\":\"temporary\",\"seconds\":" + ls.secondsRemaining() + "}",
                     auditService.resolveIp(request), auditService.resolveUa(request), null);
@@ -381,6 +386,9 @@ public class AuthController {
         if (username == null) {
             return ResponseEntity.status(401).body(Map.of("success", false, "error", "Not authenticated"));
         }
+        // Tek DB yüklemesi: hem profil alanları hem takım kapsamı tazelemesi (bayat oturum üyeliği) bundan.
+        java.util.Optional<AppUser> fresh = userService.findByUsername(username);
+        fresh.ifPresent(u -> refreshTeamScope(session, u));
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("username", username);
@@ -395,7 +403,7 @@ public class AuthController {
         resp.put("inactivity_minutes", inactivityMinutes());
         resp.put("inactivity_warn_seconds", inactivityWarnSeconds());
         // Profile fields (AD-provisioned). Loaded fresh so they reflect the latest sync.
-        userService.findByUsername(username).ifPresent(u -> {
+        fresh.ifPresent(u -> {
             resp.put("display_name", u.getDisplayName());
             resp.put("first_name", u.getFirstName());
             resp.put("last_name", u.getLastName());
@@ -835,13 +843,19 @@ public class AuthController {
         session.setAttribute("username", user.getUsername());
         session.setAttribute("displayName", resolveDisplayName(user));   // displayName → ad soyad → username
         session.setAttribute("userId", user.getId());
-        session.setAttribute("teamId", user.getTeamId());
         session.setAttribute("systemRole", user.getSystemRole());
         // Settings (SMTP/LDAP/secret/DB) gate'i için: kullanıcı konfigüre bootstrap admin mi?
         session.setAttribute("bootstrapAdmin",
                 user.getUsername() != null && user.getUsername().equalsIgnoreCase(bootstrapAdminUsername));
         session.setAttribute("mustChangePassword",
                 Boolean.TRUE.equals(user.getMustChangePassword()));
+        applyTeamScope(session, user, userService.computeViewTeamIds(user), userService.computeManageTeamIds(user),
+                userService.computeMemberTeamIds(user));
+    }
+
+    /** Oturumun TAKIM öznitelikleri (teamId/teamName/viewTeamIds/manageTeamIds/memberTeamIds) — giriş ve tazeleme ortak. */
+    private void applyTeamScope(HttpSession session, AppUser user, List<Long> view, List<Long> manage, List<Long> member) {
+        session.setAttribute("teamId", user.getTeamId());
         // Resolve team name
         String teamName = user.getTeamId() != null
                 ? userService.findTeamById(user.getTeamId()).map(Team::getName).orElse(null)
@@ -849,8 +863,6 @@ public class AuthController {
         session.setAttribute("teamName", teamName);
 
         // ── Team scope (Faz 3b): null = unrestricted (global admin / AUDIT) → no attribute. ──
-        List<Long> view = userService.computeViewTeamIds(user);
-        List<Long> manage = userService.computeManageTeamIds(user);
         if (view == null) session.removeAttribute("viewTeamIds");
         else session.setAttribute("viewTeamIds", new ArrayList<>(view));
         if (manage == null) session.removeAttribute("manageTeamIds");
@@ -860,7 +872,37 @@ public class AuthController {
         // view/manage'ın ikisi de bu soruyu cevaplamıyor — view müdürde astların takımlarını
         // içeriyor, manage USER'da boş. ASLA null bırakılmaz: yokluğu "kısıtsız" anlamına
         // gelmemeli, boş liste "hiçbir takımın üyesi değil" demeli.
-        session.setAttribute("memberTeamIds", new ArrayList<>(userService.computeMemberTeamIds(user)));
+        session.setAttribute("memberTeamIds", new ArrayList<>(member == null ? List.<Long>of() : member));
+    }
+
+    /**
+     * Oturumdaki takım kapsamını DB'deki GÜNCEL üyelikle eşitler (2026-09-25, kullanıcı isteği: "USER izleme/alan adı
+     * ekleyebilmeli"). Takım öznitelikleri yalnız girişte ({@link #populateSession}) yazılıyordu; kullanıcı sonradan bir
+     * takıma eklendiğinde ya da taşındığında oturum eski üyeliği taşıyor, {@code canOperateTeam} /
+     * {@code requireInventoryWriter} 403 dönüyor, {@code /me} de taze {@code team_ids} yanında bayat {@code team_id}
+     * veriyordu. SPA her sayfa yüklemesinde {@code /me} çağırdığı için tazeleme burada yapılır — zaten yüklenen kullanıcı
+     * satırından, yalnız fark varsa yazılır.
+     *
+     * <p><b>Rol semantiği DEĞİŞMEZ:</b> oturum rolü DB rolünden farklıysa (rol değişikliği) hiçbir şeye dokunulmaz —
+     * aksi hâlde eski rolle yeni rolün kapsamı karışırdı (ör. USER oturumunda {@code viewTeamIds} yokluğu "kısıtsız"
+     * okunurdu). Rol değişikliği mevcut yoldan (yeniden giriş) işler.
+     *
+     * @return kapsam güncellendi mi
+     */
+    boolean refreshTeamScope(HttpSession session, AppUser user) {
+        if (user == null || !java.util.Objects.equals(session.getAttribute("systemRole"), user.getSystemRole())) return false;
+        List<Long> view = userService.computeViewTeamIds(user);
+        List<Long> manage = userService.computeManageTeamIds(user);
+        List<Long> member = userService.computeMemberTeamIds(user);
+        boolean same = java.util.Objects.equals(session.getAttribute("teamId"), user.getTeamId())
+                && java.util.Objects.equals(session.getAttribute("viewTeamIds"), view)
+                && java.util.Objects.equals(session.getAttribute("manageTeamIds"), manage)
+                && java.util.Objects.equals(session.getAttribute("memberTeamIds"), member == null ? List.of() : member);
+        if (same) return false;
+        applyTeamScope(session, user, view, manage, member);
+        log.info("Oturum takım kapsamı DB'den tazelendi: user={} teamId={} member={}",
+                user.getUsername(), user.getTeamId(), member);
+        return true;
     }
 
     private Map<String, Object> buildMeResponse(AppUser user, HttpSession session,

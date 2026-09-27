@@ -132,6 +132,25 @@ class KeywordCheckerServiceTest {
     }
 
     @Test
+    @DisplayName("N1: gövdesini bitirmeyen uç (SSE kalp atışı) keyword sweep'ini DONDURMAZ — bütçede 'zaman aşımı' hatası")
+    void check_stalledBody_timesOut() throws Exception {
+        HttpServer server = HttpCheckerServiceTest.streamingServer();   // 200 + saniyede 10 bayt, sonsuz
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/";
+            long t0 = System.nanoTime();
+            Map<String, Object> r = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(10), () -> newChecker().check(url, "hedef", 2000));
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+
+            assertThat(r.get("found")).isEqualTo(false);
+            assertThat((String) r.get("error")).contains("tamamlanmadı");
+            assertThat(ms).isLessThan(8_000L);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @DisplayName("check: bağlantı reddi → found=false, count=0, error döner")
     void check_connectionError() {
         Map<String, Object> r = newChecker().check("http://127.0.0.1:1/", "x", 500);

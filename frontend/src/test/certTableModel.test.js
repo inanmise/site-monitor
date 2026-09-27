@@ -50,11 +50,13 @@ describe('certTableModel — süzgeç ↔ istek ↔ URL', () => {
   })
   it('URL eşlemesi gidiş-dönüş: c_* paramları yazılır, mount okuması aynı süzgeçleri kurar; bozuk değer yok sayılır', () => {
     const f = { ...EMPTY_FILTERS, domain: 'a.example.com', status: 'expired', window: '30', insecure: true, tier: '2', port: 'nonstd', fp: 'AB' }
-    const m = toUrlMapping(f, { page: 3, perPage: 100, sortBy: 'days_remaining|asc', defaultPerPage: 50 })
-    expect(m).toMatchObject({ c_q: 'a.example.com', c_st: 'expired', c_win: '30', c_sec: '1', c_tier: '2', c_port: 'nonstd', c_fp: 'AB', c_sort: 'days_remaining|asc', c_page: 3, c_ps: 100 })
+    const m = toUrlMapping(f, { sortBy: 'days_remaining|asc' })
+    expect(m).toMatchObject({ c_q: 'a.example.com', c_st: 'expired', c_win: '30', c_sec: '1', c_tier: '2', c_port: 'nonstd', c_fp: 'AB', c_sort: 'days_remaining|asc' })
+    // c_page / c_ps artık useServerPagination'ın (tek yazıcı) — model yazmaz
+    expect('c_page' in m || 'c_ps' in m).toBe(false)
     expect(m.c_iss).toBeNull(); expect(m.c_team).toBeNull()
     // Varsayılanlar URL'e yazılmaz
-    const d = toUrlMapping(EMPTY_FILTERS, { page: 1, perPage: 50, sortBy: 'priority|asc', defaultPerPage: 50 })
+    const d = toUrlMapping(EMPTY_FILTERS, { sortBy: 'priority|asc' })
     expect(Object.values(d).every((v) => v == null)).toBe(true)
     const read = (k) => ({ c_q: 'a.example.com', c_st: 'expired', c_win: '30', c_sec: '1', c_tier: '2', c_port: 'nonstd', c_fp: 'AB' })[k] ?? null
     expect(filtersFromUrl(read)).toEqual(f)

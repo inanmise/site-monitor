@@ -2,7 +2,8 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { api } from '../api/client'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 
-const PermissionsContext = createContext(null)
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const PermissionsContext = (globalThis.__smPermissionsCtx ??= createContext(null))
 
 /**
  * Tek seferde kullanıcının yetki snapshot'unu çeker ve periyodik 60sn refresh ile

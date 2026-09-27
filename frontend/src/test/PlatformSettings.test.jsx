@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -37,7 +37,12 @@ describe('PlatformSettings', () => {
     const rows = screen.getByTestId('plat-table').querySelectorAll('tbody tr')
     expect(rows[0].querySelector('[data-slot="button"][data-variant="destructive"]')).toBeDisabled()
     expect(rows[1].querySelector('[data-slot="button"][data-variant="destructive"]')).not.toBeDisabled()
-    expect(rows[1].classList.contains('mon-row-inactive')).toBe(true)
+    expect(rows[1]).toHaveAttribute('data-inactive', 'true')
+    expect(rows[0]).not.toHaveAttribute('data-inactive')
+    // shadcn Table + durum Badge; satır eylemlerinin adı satırı içerir (a11y.rowAction)
+    expect(screen.getByTestId('plat-table')).toHaveAttribute('data-slot', 'table')
+    expect(within(rows[0]).getByText(/^(Aktif|Active)$/).closest('[data-slot="badge"]')).toHaveAttribute('data-tone', 'success')
+    expect(within(rows[1]).getByRole('button', { name: /(Düzenle|Edit) — Linux sunucu/ })).toBeInTheDocument()
   })
 
   it('ekleme: kod büyük harfe çevrilir, create çağrılır, liste yenilenir; ad boşsa create ÇAĞRILMAZ', async () => {
@@ -56,7 +61,7 @@ describe('PlatformSettings', () => {
     render(<PlatformSettings />)
     await waitFor(() => expect(screen.getByTestId('plat-table')).toBeInTheDocument())
     const rows = screen.getByTestId('plat-table').querySelectorAll('tbody tr')
-    fireEvent.click(rows[0].querySelector('button[title="Düzenle"], button[title="Edit"]'))
+    fireEvent.click(within(rows[0]).getByRole('button', { name: /^(Düzenle|Edit) — / }))
     expect(screen.getByPlaceholderText('OPENSHIFT_PROD')).toBeDisabled()
     fireEvent.change(screen.getByPlaceholderText(/OpenShift Prod/), { target: { value: 'IIS 10' } })
     fireEvent.click(screen.getByRole('button', { name: /^Kaydet$|^Save$/ }))
@@ -64,7 +69,7 @@ describe('PlatformSettings', () => {
     // Kayıttan sonra liste yenilendi → satırları yeniden sorgula (eski düğüm referansı ayrılmış olabilir)
     await waitFor(() => expect(api.admin.listPlatforms).toHaveBeenCalledTimes(2))
     const rows2 = screen.getByTestId('plat-table').querySelectorAll('tbody tr')
-    fireEvent.click(rows2[0].querySelector('button[title="Pasife al"], button[title="Deactivate"]'))
+    fireEvent.click(within(rows2[0]).getByRole('button', { name: /^(Pasife al|Deactivate) — / }))
     await waitFor(() => expect(api.admin.updatePlatform).toHaveBeenCalledWith(1, { active: false }))
     await waitFor(() => expect(api.admin.listPlatforms).toHaveBeenCalledTimes(3))
     fireEvent.click(screen.getByTestId('plat-table').querySelectorAll('tbody tr')[1].querySelector('[data-slot="button"][data-variant="destructive"]'))

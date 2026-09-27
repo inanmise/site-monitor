@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
+import { render, fireEvent, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 import MonitorStatsSection from '../components/MonitorStatsSection.jsx'
 import { Activity } from 'lucide-react'
@@ -31,9 +31,10 @@ const setup = (props = {}) => {
   return { onToggle, onStatClick, onClearFilter }
 }
 
-const collapseBar = () => document.querySelector('.stats-collapse-bar')
-const filterBar   = () => document.querySelector('.stats-filter-bar')
-const statCards   = () => document.querySelectorAll('.stat-item')
+// shadcn: şerit başlığı Collapsible tetiği (Button), filtre çubuğu ui/AlertBanner (data-slot="alert").
+const collapseBar = () => document.querySelector('[data-slot="stats-toggle"]')
+const filterBar   = () => document.querySelector('[data-slot="alert"]')
+const statCards   = () => document.querySelectorAll('[data-slot="stat-item"]')
 
 describe('MonitorStatsSection', () => {
   it('yükleme sürerken hiçbir şey çizilmez (yarım sayıları gösterip yanıltmaz)', () => {
@@ -51,6 +52,7 @@ describe('MonitorStatsSection', () => {
   it('monitör varken şerit görünür ve tıklama aç/kapa çağırır', () => {
     const { onToggle } = setup()
     expect(collapseBar()).not.toBeNull()
+    expect(collapseBar().getAttribute('aria-expanded')).toBe('true')
     fireEvent.click(collapseBar())
     expect(onToggle).toHaveBeenCalledTimes(1)
   })
@@ -58,6 +60,7 @@ describe('MonitorStatsSection', () => {
   it('şerit KAPALIYKEN sayım kartları çizilmez ama başlık kalır', () => {
     setup({ statsVisible: false })
     expect(collapseBar()).not.toBeNull()
+    expect(collapseBar().getAttribute('aria-expanded')).toBe('false')
     expect(statCards()).toHaveLength(0)
   })
 
@@ -91,7 +94,7 @@ describe('MonitorStatsSection', () => {
 
   it('temizle düğmesi geri çağrıyı tetikler', () => {
     const { onClearFilter } = setup({ activeFilter: 'down' })
-    fireEvent.click(document.querySelector('.stats-filter-clear'))
+    fireEvent.click(within(filterBar()).getByRole('button', { name: /filtreyi kaldır|clear filter/i }))
     expect(onClearFilter).toHaveBeenCalledTimes(1)
   })
 

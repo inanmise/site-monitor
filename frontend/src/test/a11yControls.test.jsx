@@ -20,7 +20,7 @@ describe('WeekDatePicker — klavye (R14)', () => {
     return { onChange, trigger: screen.getByRole('button', { name: 'Pick a date…' }) }
   }
 
-  it('Enter ve Space seçiciyi AÇAR (eskiden yalnız fare basışı açıyordu)', async () => {
+  it('Enter ve Space seçiciyi AÇAR (eskiden yalnız fare basışı açıyordu); açılınca odak takvime geçer', async () => {
     const user = userEvent.setup()
     const { trigger } = setup()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -30,9 +30,12 @@ describe('WeekDatePicker — klavye (R14)', () => {
     await user.keyboard('{Enter}')
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: 'Previous month' })).toBeInTheDocument()
+    // shadcn Date Picker sözleşmesi: odak ızgaradaki güne (seçili yoksa bugüne) gider — ok tuşlarıyla gezilir.
+    await waitFor(() => expect(screen.getByRole('grid').contains(document.activeElement)).toBe(true))
 
-    await user.keyboard('{Enter}')   // tekrar: kapatır
+    await user.keyboard('{Escape}')   // kapatır ve odağı tetiğe iade eder
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await waitFor(() => expect(trigger).toHaveFocus())
     await user.keyboard(' ')
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
   })
@@ -41,17 +44,38 @@ describe('WeekDatePicker — klavye (R14)', () => {
     const user = userEvent.setup()
     const { trigger } = setup()
     await user.click(trigger)
-    const prev = screen.getByRole('button', { name: 'Previous month' })
-    const next = screen.getByRole('button', { name: 'Next month' })
-    const title = prev.nextElementSibling
-    const before = title.textContent
-    await user.click(next)
-    expect(title.textContent).not.toBe(before)
+    // Takvim düğmeleri ay değişince yeniden çizilir — her adımda güncel düğmeyi sorgula.
+    const nav = (name) => screen.getByRole('button', { name })
+    const monthName = () => screen.getByRole('grid').getAttribute('aria-label')
+    const before = monthName()
+    expect(before).toMatch(/\d{4}/)
+    await user.click(nav('Next month'))
+    expect(monthName()).not.toBe(before)
+    await user.click(nav('Previous month'))
+    expect(monthName()).toBe(before)
 
-    next.focus()
+    nav('Next month').focus()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('button', { name: 'Next month' })).toBeNull()
-    expect(trigger).toHaveFocus()
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('güne basmak o günü, hafta numarasına basmak haftanın PAZARTESİ\'sini yerel gün olarak seçer; rapor noktası adda', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<WeekDatePicker value="2026-09-16" onChange={onChange} placeholder="Pick a date…"
+      isMarked={(y, w) => y === 2026 && w === 38} />)
+    await user.click(screen.getByRole('button', { name: /16\/09\/2026|16\.09\.2026/ }))
+    // 38. hafta (14–20 Eylül 2026) raporlu: adı bunu söyler; basınca Pazartesi 14 Eylül seçilir.
+    const week38 = screen.getByRole('button', { name: /week 38 of 2026.*report/i })
+    await user.click(week38)
+    expect(onChange).toHaveBeenLastCalledWith('2026-09-14')
+    expect(screen.queryByRole('grid')).toBeNull()   // seçim pencereyi kapatır
+
+    await user.click(screen.getByRole('button', { name: /16\/09\/2026|16\.09\.2026/ }))
+    expect(screen.getByRole('button', { name: /week 37 of 2026$/i })).toBeInTheDocument()   // raporsuz: ekli ad yok
+    await user.click(screen.getByRole('button', { name: /Thursday, 17 September 2026/ }))
+    expect(onChange).toHaveBeenLastCalledWith('2026-09-17')
   })
 })
 
@@ -66,7 +90,7 @@ describe('DateTimeField — temizleme düğmesi (R14)', () => {
     expect(clear.parentElement.closest('button')).toBeNull()
     // Tab ona uğrar: tetikten sonraki durak.
     await user.tab()
-    expect(document.activeElement).toHaveClass('dp-trigger')
+    expect(document.activeElement).toHaveAttribute('data-slot', 'date-picker-trigger')
     await user.tab()
     expect(clear).toHaveFocus()
     await user.keyboard('{Enter}')

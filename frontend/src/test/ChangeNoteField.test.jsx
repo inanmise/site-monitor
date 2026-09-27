@@ -9,17 +9,20 @@ import ChangeNoteField from '../components/history/ChangeNoteField.jsx'
  * dolayısıyla formun geri kalanını biçimlendiren `.form-grid label input` kuralı ona hiç
  * uymuyordu. Sınıfsız input tarayıcı varsayılanına düşüyor — dolgu yok, ince gri kenarlık,
  * odak halkası yok, tema token'ları yok — ve yanındaki alanlarla yan yana durunca "stilsiz"
- * görünüyordu (kullanıcı bildirdi). Görünüm testle YAKALANMAZ ama sınıfın varlığı yakalanır;
- * bu test tam olarak o bağı pinler.
+ * görünüyordu (kullanıcı bildirdi). Görünüm testle YAKALANMAZ ama bileşenin varlığı yakalanır;
+ * bu test tam olarak o bağı pinler. (2026-09-25: `.input` sınıfının yerini shadcn Input aldı.)
  */
 const t = (k) => k
 
 describe('ChangeNoteField', () => {
-  it('input proje standardı `.input` sınıfını taşır (form-grid dışında olduğu için ŞART)', () => {
+  it('input shadcn Input (görünümünü kendisi taşır — form ızgarasının dışında olduğu için ŞART)', () => {
     render(<ChangeNoteField t={t} id="x-note" value="" onChange={() => {}} />)
     const input = document.getElementById('x-note')
     expect(input).toBeTruthy()
-    expect(input.className.split(/\s+/)).toContain('input')
+    expect(input.getAttribute('data-slot')).toBe('input')
+    // ipucu alana bağlı (ekran okuyucu odakta okur)
+    expect(input.getAttribute('aria-describedby')).toBe('x-note-hint')
+    expect(document.getElementById('x-note-hint').textContent).toBe('chg.changeNoteHint')
   })
 
   it('etiket input ile bağlı ve 300 karakter tavanı duruyor', () => {

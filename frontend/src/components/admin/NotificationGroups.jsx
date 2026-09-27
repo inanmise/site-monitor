@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useEffect, useMemo, useId } from 'react'
 import { Users, Star, Mail, Plus, Trash2, Pencil, History } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -14,8 +13,15 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import NotificationGroupHistory from './NotificationGroupHistory.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import HintPopover from '../ui/HintPopover.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Label } from '@/components/shadcn/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 /** Grup başına adres tavanı — backend {@code NotificationGroupService.MAX_EMAILS_PER_GROUP} ile AYNI. */
 const MAX_EMAILS = 15
@@ -25,13 +31,12 @@ const emptyForm = { team_id: '', name: '', emails: '', is_default: false }
 /**
  * Takım Bildirim Grupları — alarm e-postalarının gideceği adlandırılmış alıcı listeleri.
  *
- * <p><b>Sınıf dağarcığı:</b> ekran yeni sınıf UYDURMAZ; kardeş yönetim ekranlarının (özellikle
- * {@code EscalationContacts}) kullandığı sınıfları yeniden kullanır — {@code admin-section},
- * {@code admin-table-wrap}/{@code admin-table}, {@code audit-filters}, {@code badge badge-ok},
- * {@code checkbox-label}, {@code field-hint}. İlk sürümde uydurulmuş adlar ({@code ng-panel},
- * {@code data-table}, {@code text-danger} …) hiçbir CSS dosyasında tanımlı değildi: tarayıcı
- * bilinmeyen sınıfı sessizce yok sayar, ekran biçimsiz çizilir ve HİÇBİR yerde hata görünmez.
- * Kapı: {@code cssClasses.test.js}.
+ * <p><b>Sınıf dağarcığı:</b> ekran yeni sınıf UYDURMAZ. İlk sürümde uydurulmuş adlar ({@code ng-panel},
+ * {@code data-table}, {@code text-danger} …) hiçbir CSS dosyasında tanımlı değildi: tarayıcı bilinmeyen
+ * sınıfı sessizce yok sayar, ekran biçimsiz çizilir ve HİÇBİR yerde hata görünmez (kapı
+ * {@code cssClasses.test.js}). 2026-09-26 (D2): legacy sınıflar da kalktı — shadcn Table / Badge (ToneBadge) /
+ * Input / Checkbox + Tailwind; adres çipi ui/HintPopover (dokunmatikte de açılır; eskiden yalnız hover).
+ * Test kancaları: `data-slot="ng-header-actions|ng-team-filter|ng-mailchip|ng-audit-line"`, denetim hücresi `data-col="audit"`.
  *
  * <p><b>Dürüst boş durum:</b> grup yoksa ekran "hiçbir şey yok" demez; alarmların ŞU AN nereye
  * gittiğini (takımın kendi adresi) açıkça yazar. Kullanıcı grubun bir EK katman olduğunu, bir
@@ -60,9 +65,11 @@ export default function NotificationGroups({ teams = [], systemRole }) {
   // Degisiklik gecmisi — KAPALI baslar: her acilista denetim sorgusu atmak, ekrani asil isi
   // (gruplari yonetmek) icin acan kullaniciya bedava yuk bindirirdi.
   const [histOpen, setHistOpen] = useState(false)
-  const [histPage, setHistPage] = useState(0)     // sayfalı geçmiş (2026-09-20); süzgeç değişince başa döner
-  const [histSize, setHistSize] = useState(25)
   const [histGroup, setHistGroup] = useState(null)   // { id, name } | null → tek gruba suz
+  // Sayfalı geçmiş (2026-09-20) → standart sunucu kancası (2026-09-26): grup süzgeci değişince başa döner
+  // (değer karşılaştırmalı), panel ön ayarı, API 0-tabanlı.
+  const histPager = useServerPagination({ listKey: 'notify-group-history', preset: 'panel', resetDeps: [histGroup?.id ?? null], apiBase: 0 })
+  const { apiPage: histPage, pageSize: histSize } = histPager
   const [hist, setHist] = useState(null)
   const [histLoading, setHistLoading] = useState(false)
   const [histError, setHistError] = useState(null)
@@ -98,14 +105,13 @@ export default function NotificationGroups({ teams = [], systemRole }) {
     api.notificationGroups.history(histGroup?.id ?? null, { page: histPage, size: histSize })
       .then(res => {
         if (cancelled) return
-        if (res?.success) setHist(res.data)
+        if (res?.success) { setHist(res.data); histPager.bind(res) }
         else setHistError(res?.error ?? t('ng.histError'))
       })
       .catch(e => { if (!cancelled) setHistError(e?.message ?? String(e)) })
       .finally(() => { if (!cancelled) setHistLoading(false) })
     return () => { cancelled = true }
   }, [histOpen, histGroup, groups, histPage, histSize])   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { setHistPage(0) }, [histGroup, histSize])
 
   function openHistory(g) {
     setHistGroup(g ? { id: g.id, name: g.name } : null)
@@ -250,17 +256,19 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
   const teamOptions = writableTeamIds.map(id => ({ value: id, label: teamMap[id] ?? `#${id}` }))
 
+  const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
   return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <div>
-          <h3>{t('ng.title')}</h3>
-          <p className="section-desc">{t('ng.howBody')}</p>
+    <section className="mb-8 flex min-w-0 flex-col gap-4">
+      {/* Başlık + eylemler — telefonda alt alta */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-lg leading-tight font-semibold">{t('ng.title')}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('ng.howBody')}</p>
         </div>
-        <div className="hdr-actions">
+        <div data-slot="ng-header-actions" className="flex flex-wrap items-center gap-2">
           {/* 2026-09-20 (kullanıcı bildirimi): takım süzgeci "Grup Ekle" ile aynı hizada; varsayılan = tüm takımlar */}
           {teams.length > 1 && (
-            <div className="ng-team-filter">
+            <div data-slot="ng-team-filter" className="w-full min-w-0 sm:w-56">
               <SearchableSelect
                 value={fTeam}
                 onChange={setFTeam}
@@ -281,7 +289,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
       </div>
 
       {!loading && teamsAtRisk.length > 0 && (
-        <AlertBanner tone="warning" title={t('ng.riskTitle')}>
+        <AlertBanner tone="warning" title={t('ng.riskTitle')} className="mb-0">
           {t('ng.riskBody').replace('{teams}', teamsAtRisk.join(', '))}
         </AlertBanner>
       )}
@@ -300,51 +308,52 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           }
         />
       ) : (
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>{t('ng.colName')}</th>
-                <th>{t('ng.colTeam')}</th>
-                <th>{t('ng.colEmails')}</th>
-                <th>{t('ng.colAudit')}</th>
-                <th>{t('ng.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="overflow-hidden rounded-lg border bg-card">
+          <Table className="text-sm">
+            <TableHeader className="bg-muted/50">
+              <TableRow className="hover:bg-transparent">
+                <TableHead>{t('ng.colName')}</TableHead>
+                <TableHead>{t('ng.colTeam')}</TableHead>
+                <TableHead>{t('ng.colEmails')}</TableHead>
+                {/* Oluşturan / güncelleyen: telefonda düşük öncelik (tablo sığsın) */}
+                <TableHead className="hidden md:table-cell">{t('ng.colAudit')}</TableHead>
+                <TableHead className="w-12"><span className="sr-only">{t('ng.actions')}</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {visible.map(g => {
                 const count = (g.emails ?? []).length
                 return (
-                  <tr key={g.id}>
-                    <td>
-                      <strong>{g.name}</strong>
-                      {g.is_default && (
-                        <> <span className="badge badge-ok">
-                          <Star size={11} aria-hidden="true" /> {t('ng.default')}
-                        </span></>
-                      )}
-                      {!g.active && <> <span className="badge badge-deleted">{t('ng.deletedBadge')}</span></>}
-                    </td>
-                    <td>{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</td>
-                    <td>
-                      {/* Üzerine gelince / odaklanınca tanımlı adresler listelenir (2026-09-20) */}
-                      <EmailChip id={g.id} emails={g.emails ?? []} label={t('ng.emailCount').replace('{n}', count)} title={t('ng.colEmails')} />
-                    </td>
-                    <td className="ng-audit">
-                      <span className="ng-audit-line" title={g.created_by || ''}>
-                        <span className="ng-audit-lbl">{t('ng.createdBy')}</span>
-                        {g.created_by_name || g.created_by ? <UserBadge username={g.created_by} displayName={g.created_by_name} inline size="sm" /> : <span className="sys-muted">—</span>}
-                        {g.created_at && <span className="sys-muted"> · {formatDateSec(g.created_at)}</span>}
+                  <TableRow key={g.id}>
+                    <TableCell className="whitespace-normal">
+                      <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
+                        <strong className="font-semibold [overflow-wrap:anywhere]">{g.name}</strong>
+                        {g.is_default && (
+                          <ToneBadge tone="success"><Star aria-hidden="true" /> {t('ng.default')}</ToneBadge>
+                        )}
+                        {!g.active && <ToneBadge tone="muted" className="line-through">{t('ng.deletedBadge')}</ToneBadge>}
+                      </span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{teamMap[String(g.team_id)] ?? `#${g.team_id}`}</TableCell>
+                    <TableCell>
+                      {/* Dokun / tıkla → tanımlı adresler listelenir (2026-09-20; D2: hover-only balon → HintPopover) */}
+                      <EmailChip emails={g.emails ?? []} label={t('ng.emailCount').replace('{n}', count)} title={t('ng.colEmails')} />
+                    </TableCell>
+                    <TableCell data-col="audit" className="hidden align-top text-xs whitespace-normal md:table-cell">
+                      <span data-slot="ng-audit-line" className="flex flex-wrap items-center gap-1" title={g.created_by || ''}>
+                        <span className="font-semibold text-muted-foreground">{t('ng.createdBy')}</span>
+                        {g.created_by_name || g.created_by ? <UserBadge username={g.created_by} displayName={g.created_by_name} inline size="sm" /> : <span className="text-muted-foreground">—</span>}
+                        {g.created_at && <span className="text-muted-foreground"> · {formatDateSec(g.created_at)}</span>}
                       </span>
                       {(g.updated_at && g.updated_at !== g.created_at) || (g.updated_by && g.updated_by !== g.created_by) ? (
-                        <span className="ng-audit-line" title={g.updated_by || ''}>
-                          <span className="ng-audit-lbl">{t('ng.updatedBy')}</span>
-                          {g.updated_by_name || g.updated_by ? <UserBadge username={g.updated_by} displayName={g.updated_by_name} inline size="sm" /> : <span className="sys-muted">—</span>}
-                          {g.updated_at && <span className="sys-muted"> · {formatDateSec(g.updated_at)}</span>}
+                        <span data-slot="ng-audit-line" className="mt-0.5 flex flex-wrap items-center gap-1" title={g.updated_by || ''}>
+                          <span className="font-semibold text-muted-foreground">{t('ng.updatedBy')}</span>
+                          {g.updated_by_name || g.updated_by ? <UserBadge username={g.updated_by} displayName={g.updated_by_name} inline size="sm" /> : <span className="text-muted-foreground">—</span>}
+                          {g.updated_at && <span className="text-muted-foreground"> · {formatDateSec(g.updated_at)}</span>}
                         </span>
                       ) : null}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell className="text-right">
                       <KebabMenu
                         label={t('ng.actions')}
                         rowLabel={g.name}
@@ -362,22 +371,22 @@ export default function NotificationGroups({ teams = [], systemRole }) {
                           ] : []),
                         ]}
                       />
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
-      <div className="admin-section-header ng-hist-header">
-        <div>
-          <h3>{t('ng.histTitle')}</h3>
-          <p className="section-desc">{t('ng.histDesc')}</p>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-lg leading-tight font-semibold">{t('ng.histTitle')}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t('ng.histDesc')}</p>
         </div>
         <Button
-          variant="secondary"
+          variant="secondary" className="self-start"
           onClick={() => { if (histOpen) { setHistOpen(false); setHistGroup(null) } else setHistOpen(true) }}
         >
           <History size={15} aria-hidden="true" /> {histOpen ? t('ng.histHide') : t('ng.histShow')}
@@ -393,8 +402,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           error={histError}
           filterName={histGroup?.name}
           onClearFilter={() => setHistGroup(null)}
-          page={histPage} size={histSize} total={hist?.total ?? 0}
-          onPageChange={setHistPage} onPageSizeChange={setHistSize}
+          pagination={histPager.bar}
         />
       )}
 
@@ -421,26 +429,26 @@ export default function NotificationGroups({ teams = [], systemRole }) {
               {t('ng.inUseBody').replace('{n}', usageModal.usage.total)}
             </AlertBanner>
 
-            <div className="admin-table-wrap">
-              <table className="admin-table">
-                <thead>
-                  <tr><th>{t('ng.colName')}</th><th>{t('ng.colTeam')}</th></tr>
-                </thead>
-                <tbody>
+            <div className="mb-2 overflow-hidden rounded-lg border">
+              <Table className="text-sm">
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent"><TableHead>{t('ng.colName')}</TableHead><TableHead>{t('ng.colTeam')}</TableHead></TableRow>
+                </TableHeader>
+                <TableBody>
                   {(usageModal.usage.items ?? []).map(it => (
-                    <tr key={`${it.type}:${it.id}`}>
-                      <td>{it.name}</td>
-                      <td>{t(`ng.type.${it.type}`)}</td>
-                    </tr>
+                    <TableRow key={`${it.type}:${it.id}`}>
+                      <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{it.name}</TableCell>
+                      <TableCell className="whitespace-normal">{t(`ng.type.${it.type}`)}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
             {usageModal.usage.truncated && (
-              <span className="field-hint">
+              <p className={`${hint} mb-2`}>
                 {t('ng.inUseMore').replace('{n}',
                   usageModal.usage.total - (usageModal.usage.items ?? []).length)}
-              </span>
+              </p>
             )}
 
             <Field label={t('ng.moveTarget')}>
@@ -456,7 +464,7 @@ export default function NotificationGroups({ teams = [], systemRole }) {
               )}
             </Field>
             {moveTargets.length === 0 && (
-              <span className="field-hint">{t('ng.moveNoTarget')}</span>
+              <p className={hint}>{t('ng.moveNoTarget')}</p>
             )}
           </>
         )}
@@ -498,8 +506,8 @@ export default function NotificationGroups({ teams = [], systemRole }) {
 
         <Field label={t('ng.fieldName')} required hint={t('ng.fieldNameHint')}>
           {({ id, describedBy }) => (
-            <input
-              id={id} aria-describedby={describedBy} className="input" maxLength={100}
+            <Input
+              id={id} aria-describedby={describedBy} maxLength={100}
               value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               placeholder={t('ng.namePlaceholder')}
             />
@@ -523,38 +531,46 @@ export default function NotificationGroups({ teams = [], systemRole }) {
           )}
         </Field>
 
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={form.is_default}
-            onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))}
-          />
-          <span>{t('ng.makeDefaultField')}</span>
-        </label>
-        <span className="field-hint">{t('ng.makeDefaultHint')}</span>
+        <DefaultCheckbox checked={form.is_default} label={t('ng.makeDefaultField')}
+          onChange={v => setForm(f => ({ ...f, is_default: v }))} />
+        <p className={`${hint} mt-1`}>{t('ng.makeDefaultHint')}</p>
       </ModalShell>
+    </section>
+  )
+}
+
+/** "Takım varsayılanı yap" — shadcn Checkbox + bağlı etiket (form gönderimiyle gider). */
+function DefaultCheckbox({ checked, onChange, label }) {
+  const id = useId()
+  return (
+    <div className="flex items-center gap-2">
+      <Checkbox id={id} checked={!!checked} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
     </div>
   )
 }
 
 /**
- * "N adres" çipi — üzerine gelince / odaklanınca tanımlı adresler baloncukta listelenir (2026-09-20).
- * Baloncuk PORTAL ile body'ye çizilir: tablo sarmalayıcısının overflow'u onu kırpmasın (HelpTip deseni).
+ * "N adres" çipi — dokun / tıkla / odaklan → tanımlı adresler listelenir (2026-09-20). D2 (2026-09-26):
+ * eski yalnız-hover portal baloncuğu (`.ng-mailchip` / `.ng-mailpop`) telefonda HİÇ açılmıyordu; artık
+ * ui/HintPopover (shadcn Popover, tetik Button; Escape/dışarı dokunuş kapatır). Test kancası `data-slot="ng-mailchip"`.
  */
-function EmailChip({ id, emails, label, title }) {
-  const ref = useRef(null)
-  const [pos, setPos] = useState(null)
-  const show = () => { const r = ref.current?.getBoundingClientRect(); if (r) setPos({ top: r.bottom + 6, left: r.left }) }
-  const hide = () => setPos(null)
-  return (
-    <span ref={ref} className="ng-mailchip" tabIndex={0} aria-describedby={pos ? `ng-mails-${id}` : undefined}
-      onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
-      <Mail size={12} aria-hidden="true" /> {label}
-      {pos && emails.length > 0 && createPortal(
-        <span className="ng-mailpop" role="tooltip" id={`ng-mails-${id}`} style={{ top: pos.top, left: pos.left }}>
-          <span className="ng-mailpop-title">{title} · {emails.length}</span>
-          <ul>{emails.map(e => <li key={e} className="sys-mono">{e}</li>)}</ul>
-        </span>, document.body)}
+function EmailChip({ emails, label, title }) {
+  const chip = (
+    <span data-slot="ng-mailchip" className="inline-flex items-center gap-1 rounded-full border bg-muted/50 px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+      <Mail aria-hidden="true" className="size-3" /> {label}
     </span>
+  )
+  if (!emails.length) return chip
+  return (
+    <HintPopover triggerClassName="rounded-full pointer-coarse:min-h-10"
+      content={(
+        <span className="flex flex-col gap-1">
+          <span className="font-semibold">{title} · {emails.length}</span>
+          <ul className="flex list-none flex-col gap-0.5 p-0">{emails.map(e => <li key={e} className="font-mono break-all">{e}</li>)}</ul>
+        </span>
+      )}>
+      {chip}
+    </HintPopover>
   )
 }

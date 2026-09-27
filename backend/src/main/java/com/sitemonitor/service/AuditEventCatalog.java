@@ -132,6 +132,8 @@ public final class AuditEventCatalog {
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",
             "ISSUE_REPORT",
+            "ISSUE_REPORT_COMMENT",
+            "ISSUE_REPORT_REOPEN",
             "LDAP_QUERY_USER",
             "LDAP_SETTINGS_SAVE",
             "LDAP_TEST",
@@ -144,6 +146,7 @@ public final class AuditEventCatalog {
             "LOGIN_DISPUTED",
             "LOGIN_FAILED",
             "LOGIN_HELP_REPORT",
+            "LOGIN_ISSUE_COMMENT",
             "LOGIN_ISSUE_PURGE",
             "LOGIN_ISSUE_STATUS_CHANGE",
             "LOGOUT",
@@ -167,6 +170,16 @@ public final class AuditEventCatalog {
             "MONITOR_TEST",
             "MONITOR_TRIGGER",
             "MONITOR_UPDATE",
+            "NOC_CALL_LIST_UPDATE",
+            "NOC_CALL_LOG_ADD",
+            "NOC_CALL_LOG_DELETE",
+            "NOC_CONFIG_UPDATE",
+            "NOC_GROUP_CREATE",
+            "NOC_GROUP_DELETE",
+            "NOC_GROUP_TEST",
+            "NOC_GROUP_UPDATE",
+            "NOC_MONITOR_BULK",
+            "NOC_MONITOR_UPDATE",
             "NOTIFICATION_GROUP_CREATE",
             "NOTIFICATION_GROUP_DEFAULT",
             "NOTIFICATION_GROUP_DELETE",
@@ -208,6 +221,7 @@ public final class AuditEventCatalog {
             "SYSTEM_SHUTDOWN",
             "SYSTEM_STARTUP",
             "TEAM_CREATE",
+            "TEAM_LDAP_RESYNC",           // takım üyelerini AD'den yeniden eşitle (2026-09-26)
             "TEAM_MOVE_ASSETS",
             "TEAM_MEMBER_ADD",
             "TEAM_MEMBER_REMOVE",
@@ -227,6 +241,8 @@ public final class AuditEventCatalog {
             "TOUR_DISMISSED",
             "USER_CREATE",
             "USER_DELETE",
+            "USER_LDAP_RESYNC",           // yönetici: kullanıcıyı AD'den yeniden eşitle (2026-09-26)
+            "USER_LDAP_SYNC",             // giriş/müdür provizyonunda LDAP kaynaklı üyelik/müdür değişikliği (2026-09-26)
             "USER_ORG_ROLE_UNLOCK",
             "USER_PASSWORD_AUTO_RESET",
             "USER_PUSH_EXPORT",
@@ -292,6 +308,12 @@ public final class AuditEventCatalog {
         if (t.startsWith("USER_PUSH_")) return INTEGRATION;          // USER_* ten ÖNCE
         if (t.startsWith("USER_")) return USER;
         if (t.startsWith("TEAM_")) return TEAM;
+        // 7/24 İzleme Ekibi (2026-09-27): izleme başına aç/kapa bir İZLEME düzenlemesidir, arama listesi TAKIM
+        // yönetimidir; gruplar/yapılandırma bildirim ENTEGRASYONUdur (NOTIFICATION_GROUP_* ile aynı yer).
+        if (t.startsWith("NOC_MONITOR_")) return MONITOR;
+        if (t.startsWith("NOC_CALL_LIST")) return TEAM;
+        if (t.startsWith("NOC_CALL_LOG")) return INCIDENT;          // uyarı üzerinden arama kaydı (ALERT_* ile aynı yer)
+        if (t.startsWith("NOC_")) return INTEGRATION;
 
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE
         if (t.startsWith("WEEKLY_")) return REPORT;
@@ -311,7 +333,7 @@ public final class AuditEventCatalog {
                 || t.startsWith("RETENTION_")) return DATA;
 
         if (t.startsWith("SYSTEM_") || t.startsWith("SCHEDULER_") || t.equals("SCHEMA_PATCH")
-                || t.equals("CLIENT_ERROR_REPORT") || t.equals("ISSUE_REPORT")) return SYSTEM;
+                || t.equals("CLIENT_ERROR_REPORT") || t.startsWith("ISSUE_REPORT")) return SYSTEM;
 
         // Kalan her şey bir AYAR yüzeyidir (settings/branding/storm/guide-link/template…).
         if (t.startsWith("GENERAL_") || t.startsWith("BRANDING_") || t.startsWith("STORM_")

@@ -171,10 +171,11 @@ public class WebhookService {
         // her şeyi belleğe almak gereksiz (tek pod; OOM = kesinti).
         HttpResponse<java.io.InputStream> response =
                 httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        String preview;
-        try (java.io.InputStream is = response.body()) {
-            preview = new String(is.readNBytes(MAX_RESPONSE_BYTES), java.nio.charset.StandardCharsets.UTF_8);
-        }
+        // Gövde SÜRE sınırıyla (prod kapısı 2026-09-25, N1): istek zaman aşımı yalnız başlıklara kadar işler;
+        // başlığı gönderip gövdeyi bitirmeyen bir uç alarm iş parçacığını süresiz tutardı (EscalationService
+        // bu çağrıyı senkron yapıyor). Önizleme yalnız günlük içindir — süre dolarsa okunan kısım yeter.
+        String preview = new String(com.sitemonitor.util.HttpBodies.readPreview(response.body(), MAX_RESPONSE_BYTES,
+                timeoutSeconds * 1000L, "Webhook"), java.nio.charset.StandardCharsets.UTF_8);
         int status = response.statusCode();
         log.debug("Webhook response {}: {}", status, preview);
         // DURUM KODU KONTROLÜ: eskiden yalnız debug'a yazılıyordu, dolayısıyla silinmiş bir

@@ -111,7 +111,7 @@ public class WeeklyReportReminderService {
             String status = emailService.sendHtml(new String[]{teamEmail}, null, subject, html, null);
             sent++;
             log.info("Haftalık rapor hatırlatması: team={} week={} to={} status={}",
-                    team.getName(), weekLabel, teamEmail, status);
+                    team.getName(), weekLabel, SecretMask.maskEmails(teamEmail), status);
         }
 
         ReminderResult result = new ReminderResult(syTeams.size(), sent, skippedNoEmail, skippedDone, skippedDisabled);

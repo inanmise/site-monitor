@@ -3,7 +3,8 @@ import { Users } from 'lucide-react'
 import { useTeamDirectory } from './TeamDirectory.jsx'
 import TeamMembersModal from './TeamMembersModal.jsx'
 import { useT } from '../../i18n/index.jsx'
-import { Badge } from '@/components/shadcn/badge'
+import { Badge, badgeVariants } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 
 /*
@@ -15,6 +16,13 @@ import { cn } from '@/lib/utils'
  */
 const BADGE_BASE = 'min-w-0 max-w-full shrink px-1 py-0 align-middle text-[length:inherit]'
 const BADGE_INTERACTIVE = 'cursor-pointer hover:bg-accent hover:text-primary focus-visible:text-primary outline-none'
+/**
+ * Dokunma hedefi (2026-09-27, kart ajanları): rozet ~22 px — dokunmatikte 40 px kuralının altında. Görünür boyut
+ * DEĞİŞMEZ; `::after` yalnız dokunmatik işaretçide dikeyde 10'ar px taşar (≈42 px hedef). Yatayda taşmaz: meta
+ * satırında yanındaki düğmelerle çakışmasın. Badge tabanının `overflow-hidden`'ı bu katmanı kırpardı → yalnız
+ * dokunmatikte `overflow-visible` (ad kırpması içteki `truncate` span'inde, etkilenmez). Kalıp: TOUCH_CHIP.
+ */
+export const TEAM_BADGE_TOUCH = 'relative pointer-coarse:overflow-visible pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5'
 
 /**
  * Tıklanabilir takım rozeti: adın geçtiği her yerde aynı görünüm, tıklanınca üye modalı.
@@ -55,7 +63,7 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
     else setOpen(true)
   }
   const label = t('team.openMembers', name)
-  const cls = cn(BADGE_BASE, BADGE_INTERACTIVE, className)
+  const cls = cn(BADGE_BASE, BADGE_INTERACTIVE, TEAM_BADGE_TOUCH, className)
   return (
     <>
       {as === 'span' ? (
@@ -67,11 +75,11 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
           </span>
         </Badge>
       ) : (
-        <Badge asChild variant="ghost" data-slot="team-badge" className={cls}>
-          <button type="button" onClick={openIt} title={title || label} aria-label={label}>
-            {body}
-          </button>
-        </Badge>
+        // Tıklanabilir rozet: shadcn Button, Badge `ghost` görünümüyle (badgeVariants) — düğme boyu/dolgusu rozetinki.
+        <Button type="button" variant="ghost" size="xs" data-slot="team-badge" onClick={openIt} title={title || label} aria-label={label}
+          className={cn(badgeVariants({ variant: 'ghost' }), 'h-auto has-[>svg]:px-1', cls)}>
+          {body}
+        </Button>
       )}
       {open && (
         <TeamMembersModal open={open} onClose={() => setOpen(false)}

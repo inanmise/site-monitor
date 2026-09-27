@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import UserActivityPanel from '../components/admin/useractivity/UserActivityPanel.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * Kullanıcı / Oturum paneli (2026-09-13 zenginleştirme): bölümler, süzgeç ↔ URL, boşta bandı + kendi oturum koruması,
@@ -80,11 +81,11 @@ describe('UserActivityPanel', () => {
 
   it('oturum tablosu: boşta bandı, son sayfa etiketi, kendi oturumu sonlandırılamaz, sıralama düğmesi aria-sort taşır', () => {
     renderPanel()
-    const table = document.querySelector('.uact-table--sessions')
+    const table = screen.getByTestId('uact-sessions')
     expect(within(table).getByText(/Vade Takvimi|Expiry Forecast/)).toBeInTheDocument()        // last_tab → nav etiketi
-    expect(table.querySelector('.uact-idle--live')).not.toBeNull()
-    expect(table.querySelector('.uact-idle--away')).not.toBeNull()
-    const selfRow = table.querySelector('tr.is-self')
+    expect(table.querySelector('[data-idle="live"]')).not.toBeNull()
+    expect(table.querySelector('[data-idle="away"]')).not.toBeNull()
+    const selfRow = table.querySelector('tr[data-self="true"]')
     expect(selfRow).not.toBeNull()
     expect(within(selfRow).queryByRole('button', { name: /Sonlandır|Terminate/ })).toBeNull()
     const bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
@@ -97,7 +98,7 @@ describe('UserActivityPanel', () => {
 
   it('gerekçeli sonlandırma: modal → gerekçe → API gerekçeyle çağrılır, tazeleme tetiklenir', async () => {
     const { onRefresh } = renderPanel()
-    const table = document.querySelector('.uact-table--sessions')
+    const table = screen.getByTestId('uact-sessions')
     const bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
     fireEvent.click(within(bobRow).getByRole('button', { name: /Sonlandır|Terminate/ }))
     const dlg = await screen.findByRole('dialog')
@@ -110,14 +111,14 @@ describe('UserActivityPanel', () => {
   it('sayfa kullanımı: sayfalar, pay çubuğu, hiç açılmayan sekme çipleri; takım süzgeci listeleri daraltır ve URL u_team taşır', async () => {
     renderPanel()
     expect(screen.getByText('90%')).toBeInTheDocument()
-    expect(document.querySelectorAll('.uact-chip').length).toBeGreaterThan(10)   // 35 sekme − 2 kullanılan
+    expect(document.querySelectorAll('[data-unused-tab]').length).toBeGreaterThan(10)   // 35 sekme − 2 kullanılan
     // takım süzgeci: SearchableSelect (mousedown ile açılır)
-    const trig = document.querySelectorAll('.uact-filters button[role="combobox"]')[0]
+    const trig = within(screen.getByTestId('uact-filters')).getByRole('combobox', { name: /^Takım$|^Team$/ })
     fireEvent.mouseDown(trig)
     await waitFor(() => expect(document.querySelector('[role="option"]')).not.toBeNull())
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((el) => el.textContent === 'Takım B'))
     await waitFor(() => expect(window.location.search).toContain('u_team=9'))
-    const table = document.querySelector('.uact-table--sessions')
+    const table = screen.getByTestId('uact-sessions')
     expect(within(table).queryByText('Yönetici')).toBeNull()
     expect(table.textContent).toContain('bob')
     fireEvent.click(screen.getByRole('button', { name: /Süzgeçleri temizle|Clear filters/ }))
@@ -126,9 +127,9 @@ describe('UserActivityPanel', () => {
 
   it('giriş durumu pilleri (aktif/30+ gün/hiç girmemiş), takım "hiç girmedi" rozeti, kaynak "yeni" + ilk görülme', () => {
     renderPanel()
-    expect(document.querySelector('.uact-st--active')).not.toBeNull()
-    expect(document.querySelector('.uact-st--dormant')).not.toBeNull()
-    expect(document.querySelector('.uact-st--never')).not.toBeNull()
+    expect(document.querySelector('[data-status="active"]')).not.toBeNull()
+    expect(document.querySelector('[data-status="dormant"]')).not.toBeNull()
+    expect(document.querySelector('[data-status="never"]')).not.toBeNull()
     expect(screen.getByText(/1 hiç girmedi|1 never signed in/)).toBeInTheDocument()
     expect(screen.getByText(/^yeni$|^new$/)).toBeInTheDocument()
     expect(screen.getByText(/3 gün önce|3 d ago/)).toBeInTheDocument()
@@ -137,7 +138,7 @@ describe('UserActivityPanel', () => {
   it('anomali: sözlük açılır, onaysız satır onaylanır (not ile), onaylı satır onayı kaldırılabilir', async () => {
     const { onRefresh } = renderPanel()
     fireEvent.click(screen.getByRole('button', { name: /Bayrak sözlüğü|Flag glossary/ }))
-    expect(document.querySelector('.uact-glossary')).not.toBeNull()
+    expect(screen.getByTestId('uact-glossary')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^Onayla$|^Acknowledge$/ }))
     const dlg = await screen.findByRole('dialog')
     fireEvent.change(within(dlg).getByLabelText(/Not|Note/), { target: { value: 'inceledim' } })
@@ -150,7 +151,7 @@ describe('UserActivityPanel', () => {
 
   it('detay modalı: zaman çizelgesi API\'den gelir, sicil global admin değilse maskelenir, UA açılınca görünür', async () => {
     renderPanel()
-    const table = document.querySelector('.uact-table--sessions')
+    const table = screen.getByTestId('uact-sessions')
     const bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
     fireEvent.click(within(bobRow).getByRole('button', { name: /Detay|Details/ }))
     const dlg = await screen.findByRole('dialog')
@@ -160,7 +161,7 @@ describe('UserActivityPanel', () => {
     expect(within(dlg).queryByText('Firefox/1')).toBeNull()
     fireEvent.click(within(dlg).getByRole('button', { name: /User-Agent/ }))
     expect(within(dlg).getByText('Firefox/1')).toBeInTheDocument()
-    expect(document.querySelectorAll('.uact-tl').length).toBe(2)
+    expect(document.querySelectorAll('[data-tl]').length).toBe(2)
   })
 
   it('global admin sicil numarasını görür; dışa aktarma menüsü ve bağlantı kopyalama çökmeden çalışır', async () => {
@@ -171,8 +172,10 @@ describe('UserActivityPanel', () => {
     expect(within(dlg).getByText('E-1')).toBeInTheDocument()
     // Altlıktaki kapat düğmesi: başlıktaki X de artık adlı (i18n "Kapat/Close") — altlığa daraltılır.
     fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /Kapat|Close|Dismiss/i }))
-    fireEvent.click(screen.getByRole('button', { name: /Dışa aktar|Export/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Oturumlar \(CSV\)|Sessions \(CSV\)/ }))
+    // Dışa aktarma menüsü shadcn DropdownMenu (Radix pointerdown ile açılır; öğeler menuitem)
+    pressMenuTrigger(screen.getByRole('button', { name: /Dışa aktar|Export/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Oturumlar \(CSV\)|Sessions \(CSV\)/ }))
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())   // seçimden sonra menü kapanır
     fireEvent.click(screen.getByRole('button', { name: /Bağlantıyı kopyala|Copy link/ }))
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled())
   })

@@ -30,9 +30,28 @@ describe('StormSettings', () => {
     await waitFor(() => expect(api.monitoring.storm.getSettings).toHaveBeenCalled())
     const num = await screen.findByRole('spinbutton')       // eşik sayı input'u
     expect(num).toHaveValue(5)
-    const toggles = screen.getAllByRole('checkbox')          // [enabled, per_group]
+    const toggles = screen.getAllByRole('switch')            // [enabled, per_group] — shadcn Switch
     expect(toggles[0]).toBeChecked()                         // enabled=true
     expect(toggles[1]).not.toBeChecked()                     // per_group=false
+    // Zaman penceresi: shadcn Slider başparmağı adlı + okunur değerli
+    const thumb = screen.getByRole('slider')
+    expect(thumb).toHaveAttribute('aria-valuenow', '5')
+    expect(thumb.getAttribute('aria-valuetext')).toMatch(/5/)
+  })
+
+  it('master kapatılınca uyarı bandı çıkar; pencere klavyeyle değişir ve kayda gider', async () => {
+    api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })
+    api.monitoring.storm.saveSettings.mockResolvedValue({ success: true, data: cfg })
+    const { container } = render(<StormSettings />)
+    await screen.findByRole('spinbutton')
+    expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).toBeNull()
+    fireEvent.click(screen.getAllByRole('switch')[0])
+    expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).not.toBeNull()
+    fireEvent.keyDown(screen.getByRole('slider'), { key: 'ArrowRight' })
+    expect(screen.getByRole('slider')).toHaveAttribute('aria-valuenow', '6')
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.storm.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false, window_minutes: 6 })))
   })
 
   it('Kaydet → doğru payload ile saveSettings çağırır', async () => {

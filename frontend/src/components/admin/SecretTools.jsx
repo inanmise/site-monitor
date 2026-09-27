@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react'
-import { Eye, EyeOff, KeyRound, RefreshCw, Copy } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, RefreshCw, Copy, LockKeyhole } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import Field from '../ui/Field.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { Spinner } from '../ui/Progress.jsx'
+import { SETTINGS_STACK, helpLabel, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 
 /** Tarayıcıda kriptografik olarak güçlü rastgele anahtar üretir (32 bayt → base64). */
 function generateKey() {
@@ -58,104 +64,111 @@ export default function SecretTools() {
     }
   }
 
+  const MONO = 'font-mono'
   return (
-    <div className="ldap-settings">
-      <div className="admin-section">
-        <h3>{t('secret.title')}</h3>
-        <p className="section-desc">{t('secret.desc')}</p>
-        <div className="settings-warn">{t('secret.warn')}</div>
-      </div>
+    <div className={SETTINGS_STACK} data-testid="secret-tools">
+      <SettingsHeader icon={LockKeyhole} title={t('secret.title')} description={t('secret.desc')}>
+        <AlertBanner tone="warning" className="mb-0">{t('secret.warn')}</AlertBanner>
+      </SettingsHeader>
 
-      <div className="admin-section">
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><KeyRound size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />{t('secret.keyLabel')}<HelpTip helpKey="help.secret.key" label={t('secret.keyLabel')} /></label>
-            <input type="password" value={key} autoComplete="off" placeholder="SITE_MONITOR_SECRET_KEY"
-              onChange={(e) => setKey(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') run() }} />
-            <span className="hint">{t('secret.keyHint')}</span>
+      {/* Çözümleme + anahtar üreteci geniş ekranda yan yana */}
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+        <SettingsSection>
+          <Field label={<><KeyRound size={13} aria-hidden="true" />{helpLabel(t('secret.keyLabel'), 'help.secret.key')}</>}
+            hint={t('secret.keyHint')}>
+            {({ id, describedBy }) => (
+              <Input id={id} aria-describedby={describedBy} type="password" value={key} autoComplete="off"
+                placeholder="SITE_MONITOR_SECRET_KEY" className={MONO}
+                onChange={(e) => setKey(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') run() }} />
+            )}
+          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={() => run()} disabled={busy || !key.trim()} aria-busy={busy || undefined}>
+              {busy ? <Spinner size={15} inline decorative /> : null} {busy ? t('secret.decrypting') : t('secret.decrypt')}
+            </Button>
           </div>
-        </div>
-        <div className="ldap-actions">
-          <Button onClick={() => run()} disabled={busy || !key.trim()}>
-            {busy ? t('secret.decrypting') : t('secret.decrypt')}
-          </Button>
-        </div>
-      </div>
+        </SettingsSection>
 
-      {/* Güçlü anahtar üreteci — SITE_MONITOR_SECRET_KEY için değer üret (tarayıcıda, sunucuya gitmez) */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('secret.genTitle')}</h4>
-        <p className="section-desc">{t('secret.genDesc')}</p>
-        <div className="ldap-actions" style={{ marginBottom: 10 }}>
-          <Button onClick={() => setGenKey(generateKey())}>
-            <RefreshCw size={14} /> {t('secret.gen')}
-          </Button>
-        </div>
-        {genKey && (
-          <div className="threshold-field" style={{ maxWidth: 560 }}>
-            <label>{t('secret.genLabel')}</label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="text" readOnly value={genKey} style={{ flex: 1, fontFamily: 'monospace' }}
-                onFocus={(e) => e.target.select()} />
-              <Button type="button" variant="secondary" size="sm" onClick={copyGen} title={t('secret.copy')}>
-                <Copy size={14} />
-              </Button>
-            </div>
-            <span className="hint">{t('secret.genHint')}</span>
+        {/* Güçlü anahtar üreteci — SITE_MONITOR_SECRET_KEY için değer üret (tarayıcıda, sunucuya gitmez) */}
+        <SettingsSection title={t('secret.genTitle')} description={t('secret.genDesc')} contentClassName="flex flex-col gap-3">
+          <div>
+            <Button onClick={() => setGenKey(generateKey())}>
+              <RefreshCw size={14} /> {t('secret.gen')}
+            </Button>
           </div>
-        )}
+          {genKey && (
+            <Field label={t('secret.genLabel')} hint={t('secret.genHint')} className="mb-0">
+              {({ id, describedBy }) => (
+                <InputGroup>
+                  <InputGroupInput id={id} aria-describedby={describedBy} type="text" readOnly value={genKey} className={MONO}
+                    onFocus={(e) => e.target.select()} />
+                  <InputGroupAddon align="inline-end">
+                    {/* InputGroupButton ref almaz (forwardRef değil) → ipucu tetiği sarmalayıcı span */}
+                    <SimpleTooltip content={t('secret.copy')}>
+                      <span className="inline-flex">
+                        <InputGroupButton size="icon-xs" onClick={copyGen} aria-label={t('secret.copy')}><Copy /></InputGroupButton>
+                      </span>
+                    </SimpleTooltip>
+                  </InputGroupAddon>
+                </InputGroup>
+              )}
+            </Field>
+          )}
+        </SettingsSection>
       </div>
 
       {/* DEV varsayılan anahtarı — kayıtlı parolalar bununla mı şifrelenmiş test et */}
       {info?.dev_default_key && (
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('secret.devTitle')}</h4>
-          <p className="section-desc">{t('secret.devDesc')}</p>
-          <div className="threshold-field" style={{ maxWidth: 520 }}>
-            <label>{t('secret.devKeyLabel')}</label>
-            <input type="text" readOnly value={info.dev_default_key} style={{ fontFamily: 'monospace' }}
-              onFocus={(e) => e.target.select()} />
-          </div>
-          <div className="ldap-actions" style={{ marginTop: 10 }}>
+        <SettingsSection title={t('secret.devTitle')} description={t('secret.devDesc')} contentClassName="flex flex-col gap-3">
+          <Field label={t('secret.devKeyLabel')} className="mb-0 xl:max-w-2xl">
+            {({ id }) => (
+              <Input id={id} type="text" readOnly value={info.dev_default_key} className={MONO}
+                onFocus={(e) => e.target.select()} />
+            )}
+          </Field>
+          <div>
             <Button variant="secondary" disabled={busy}
               onClick={() => { setKey(info.dev_default_key); run(info.dev_default_key) }}>
               {t('secret.devTry')}
             </Button>
           </div>
-        </div>
+        </SettingsSection>
       )}
 
       {rows && (
-        <div className="admin-section">
-          <h4 className="ldap-subhdr">{t('secret.results')}</h4>
+        <SettingsSection title={t('secret.results')} contentClassName="flex flex-col gap-3.5">
           {usedKey && (
-            <p className="section-desc">
-              {t('secret.usedKey')}: <code style={{ fontWeight: 700, color: 'var(--text)' }}>{usedKey}</code>
+            <p className="text-sm break-all text-muted-foreground">
+              {t('secret.usedKey')}: <code className="font-mono font-bold text-foreground">{usedKey}</code>
               {info?.dev_default_key && usedKey === info.dev_default_key && <> — {t('secret.usedKeyDev')}</>}
             </p>
           )}
-          {rows.length === 0 && <p className="section-desc">{t('secret.none')}</p>}
-          {rows.map((r) => (
-            <div className="threshold-field" key={r.column} style={{ marginBottom: 14 }}>
-              <label>{r.label} <code style={{ fontWeight: 400, color: 'var(--text-light)' }}>{r.column}</code></label>
-              {!r.present ? (
-                <span className="hint">{t('secret.noValue')}</span>
-              ) : r.ok ? (
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type={reveal[r.column] ? 'text' : 'password'} readOnly value={r.value ?? ''}
-                    style={{ flex: 1, fontFamily: 'monospace' }} />
-                  <Button type="button" variant="secondary" size="sm"
-                    onClick={() => setReveal((p) => ({ ...p, [r.column]: !p[r.column] }))}>
-                    {reveal[r.column] ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </Button>
-                </div>
-              ) : (
-                <span style={{ color: 'var(--danger)', fontWeight: 600 }}>{t('secret.fail')}</span>
-              )}
-            </div>
-          ))}
-        </div>
+          {rows.length === 0 && <p className="text-sm text-muted-foreground">{t('secret.none')}</p>}
+          <div className="grid grid-cols-1 gap-x-6 xl:grid-cols-2">
+            {rows.map((r) => (
+              <Field key={r.column} className="mb-3"
+                label={<>{r.label} <code className="font-mono text-xs font-normal text-muted-foreground">{r.column}</code></>}>
+                {({ id }) => !r.present ? (
+                  <span className="text-xs text-muted-foreground">{t('secret.noValue')}</span>
+                ) : r.ok ? (
+                  <InputGroup>
+                    <InputGroupInput id={id} type={reveal[r.column] ? 'text' : 'password'} readOnly value={r.value ?? ''} className={MONO} />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupButton size="icon-xs" aria-pressed={!!reveal[r.column]}
+                        aria-label={t('a11y.rowAction', reveal[r.column] ? t('secret.hide') : t('secret.show'), r.label)}
+                        onClick={() => setReveal((p) => ({ ...p, [r.column]: !p[r.column] }))}>
+                        {reveal[r.column] ? <EyeOff /> : <Eye />}
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  </InputGroup>
+                ) : (
+                  <span className="text-sm font-semibold text-destructive" data-tone="danger">{t('secret.fail')}</span>
+                )}
+              </Field>
+            ))}
+          </div>
+        </SettingsSection>
       )}
     </div>
   )

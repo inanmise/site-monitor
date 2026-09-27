@@ -73,6 +73,33 @@ describe('MonitorModalActions', () => {
     expect(onCheck).not.toHaveBeenCalled()
   })
 
+  it('Sürdür YALNIZ onResume verilince (duraklatılmış izleme) — ilk sırada, birincil; sürerken kilitli', () => {
+    setup()
+    expect(screen.queryByRole('button', { name: /Sürdür|Resume/ })).toBeNull()
+    const onResume = vi.fn()
+    setup({ onResume })
+    const btn = screen.getByRole('button', { name: /^(Sürdür|Resume)$/ })
+    expect(btn).toHaveAttribute('data-variant', 'default')
+    expect(btn.parentElement.firstElementChild).toBe(btn)
+    fireEvent.click(btn)
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it('yeniden etkinleştirme sürerken Sürdür kilitli ve meşgul', () => {
+    const onResume = vi.fn()
+    setup({ onResume, resuming: true })
+    const btn = screen.getByRole('button', { name: /Sürdür|Resume/ })
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    fireEvent.click(btn)
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it('dokunmatikte ikon düğmeleri 40 px (pointer-coarse:size-10)', () => {
+    setup({ onCheck: vi.fn(), onEdit: vi.fn(), onDuplicate: vi.fn(), onDelete: vi.fn() })
+    for (const b of screen.getAllByRole('button')) expect(b.className).toMatch(/pointer-coarse:size-10/)
+  })
+
   it('children ayraçtan ÖNCE gelir (sayfaya özgü bağlantı-kopyala düğmesi)', () => {
     setup({ children: <button type="button">Bağlantı</button> })
     const all = screen.getAllByRole('button')

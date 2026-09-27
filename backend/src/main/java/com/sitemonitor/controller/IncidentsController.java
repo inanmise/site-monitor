@@ -226,11 +226,12 @@ public class IncidentsController {
         if (events.isEmpty()) return byEvent;
         Set<String> fams = events.stream().map(e -> family(e.getAlertType())).collect(Collectors.toSet());
         Map<String, Map<String, Object[]>> idx = new HashMap<>();   // family → (key → [name, id])
+        // Port/DNS: SİLİNMİŞ standalone satır indekse girmez (2026-09-27; bkz. MonitorRefResolver aynı kural).
         if (fams.contains("http"))    idx.put("http",    index(httpMonitorRepo.findAll(),    m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
-        if (fams.contains("port"))    idx.put("port",    index(portMonitorRepo.findAll(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
+        if (fams.contains("port"))    idx.put("port",    index(portMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
         if (fams.contains("keyword")) idx.put("keyword", index(keywordMonitorRepo.findAll(), m -> m.getUrl(),    m -> m.getName(), m -> m.getId()));
         if (fams.contains("ping"))    idx.put("ping",    index(pingMonitorRepo.findAll(),    m -> m.getHost(),   m -> m.getName(), m -> m.getId()));
-        if (fams.contains("dns"))     idx.put("dns",     index(dnsMonitorRepo.findAll(),     m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
+        if (fams.contains("dns"))     idx.put("dns",     index(dnsMonitorRepo.findAll().stream().filter(m -> m.getDeletedAt() == null).toList(),     m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
         if (fams.contains("domain"))  idx.put("domain",  index(domainMonitorRepo.findAll(),  m -> m.getDomain(), m -> m.getName(), m -> m.getId()));
         if (fams.contains("page"))     idx.put("page",     index(pageMonitorRepo.findAll(),     m -> m.getUrl(),  m -> m.getName(), m -> m.getId()));
         if (fams.contains("scripted")) idx.put("scripted", index(scriptedMonitorRepo.findAll(), m -> m.getName(), m -> m.getName(), m -> m.getId()));

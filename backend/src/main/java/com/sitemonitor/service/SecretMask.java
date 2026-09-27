@@ -115,6 +115,41 @@ public final class SecretMask {
         return QUERY_SENSITIVE.matcher(text).replaceAll("$1" + MASK);
     }
 
+    /**
+     * E-posta adresini günlük için maskeler: {@code kisi.adi@example.com → k***@example.com}
+     * (prod kapısı 2026-09-25, P4-1). Alan adı görünür kalır — "hangi kuruma/listeye gitti" teşhisi
+     * için yeterli; kişi adı düşer. Adres zaten {@code notification_log}'da tam hâliyle duruyor, uygulama
+     * günlüğü (INFO, 30 gün, {@code kubectl logs}) ise onu tekrar etmemeli. {@code @} yoksa değer
+     * adres DEĞİLDİR ama yine de kişi bilgisi olabilir → ilk karakter + yıldız.
+     */
+    public static String maskEmail(String email) {
+        if (email == null) return "-";
+        String e = email.trim();
+        if (e.isEmpty()) return "-";
+        int at = e.lastIndexOf('@');
+        if (at <= 0) return e.charAt(0) + "***";
+        return e.charAt(0) + "***" + e.substring(at);
+    }
+
+    /**
+     * Alıcı listesini maskeler — {@code String} (virgül/noktalı virgül ayraçlı), {@code String[]} ya da
+     * {@code Collection} kabul eder; günlük satırındaki {@code TO={}}/{@code cc={}} argümanları için.
+     */
+    public static String maskEmails(Object recipients) {
+        if (recipients == null) return "[]";
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        if (recipients instanceof String[] arr) {
+            for (String a : arr) if (a != null) parts.addAll(java.util.List.of(a.split("[,;]")));
+        } else if (recipients instanceof java.util.Collection<?> c) {
+            for (Object o : c) if (o != null) parts.addAll(java.util.List.of(o.toString().split("[,;]")));
+        } else {
+            parts.addAll(java.util.List.of(recipients.toString().split("[,;]")));
+        }
+        java.util.StringJoiner j = new java.util.StringJoiner(", ", "[", "]");
+        for (String p : parts) if (!p.isBlank()) j.add(maskEmail(p));
+        return j.toString();
+    }
+
     /** JDBC URL'e gömülü kimlik bilgilerini maskeler; host/port/db görünür kalır. */
     public static String maskJdbcUrl(String url) {
         if (url == null || url.isBlank()) return "(ayarsız)";

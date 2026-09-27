@@ -1,173 +1,339 @@
-import { useMemo, useState } from 'react'
-import { Network, Maximize2, Minimize2 } from 'lucide-react'
-import { useT } from '../../i18n/index.jsx'
-import { LoadingBlock } from '../ui/Progress.jsx'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowDownToLine, ArrowRightToLine, Download, Image as ImageIcon, Info, KeyRound, List, Network, Rows3, Columns3,
+  Search, SlidersHorizontal, X, FileCode2,
+} from 'lucide-react'
+import { useDateLocale, useT } from '../../i18n/index.jsx'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { LoadingBlock, Spinner } from '../ui/Progress.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/shadcn/command'
+import {
+  DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
+  DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
+import { Label } from '@/components/shadcn/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
+import { Switch } from '@/components/shadcn/switch'
+import ChoiceToggle from './sql/ChoiceToggle.jsx'
+import DiagramCanvas from './sql/diagram/DiagramCanvas.jsx'
+import DiagramListView from './sql/diagram/DiagramListView.jsx'
+import TablePanel from './sql/diagram/TablePanel.jsx'
+import { computeDiagram, neighbourhood } from './sql/diagram/layout.js'
+import { buildDiagramSvg, readPalette, svgToPngBlob } from './sql/diagram/exportDiagram.js'
+import { downloadBlob, downloadText, formatCompact, shortType, stampedFile } from './sql/sqlUtils.js'
 
-const NODE_W = 158
-const NODE_H = 30
-const GAP_X = 26
-const GAP_Y = 64
-const PAD = 28
-
-/**
- * SQL Playground — tablolar arası İLİŞKİ (hiyerarşi) diyagramı.
- * Saf SVG; bağımlılık yok. Katmanlı (Sugiyama-lite) düzen: referans EDİLEN (üst/parent) tablolar
- * üstte, referans EDEN (alt/child: log/check tabloları) altta. Düz çizgi = gerçek FK, kesik çizgi =
- * `*_id` kolonundan ÇIKARIM (bu şemada DB seviyesinde gerçek FK yok — ilişkiler örtük).
- */
-export default function SchemaDiagramModal({ data, loading, onClose }) {
-  const t = useT()
-  const { nodes, edges, width, height, isolatedCount } = useMemo(() => layout(data), [data])
-  const [fs, setFs] = useState(false)
-
+/** Arama: tablo bul → vurgula + ortala (Popover + Command; cmdk kendi süzer). */
+function TableFinder({ names, onPick, t }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className={`modal-box modal-wide sqlpg-diagram-modal${fs ? ' sqlpg-diag-fs' : ''}`}
-           onClick={(e) => e.stopPropagation()}>
-        <div className="modal-icon-hdr modal-icon-hdr--user">
-          <div className="modal-icon-hdr-badge"><Network size={20} /></div>
-          <h3>{t('sql.diag.title')}</h3>
-          <button type="button" className="sqlpg-diag-fs-btn" onClick={() => setFs(v => !v)}
-                  title={t(fs ? 'sql.diag.exitFs' : 'sql.diag.fullscreen')}>
-            {fs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
-        </div>
-
-        <div className="sqlpg-diag-legend">
-          <span><i className="sqlpg-diag-lg-line" /> {t('sql.diag.realFk')}</span>
-          <span><i className="sqlpg-diag-lg-line sqlpg-diag-lg-inf" /> {t('sql.diag.inferred')}</span>
-          <span className="sqlpg-diag-lg-note">{t('sql.diag.note')}</span>
-        </div>
-
-        {loading ? (
-          <LoadingBlock label={t('sql.td.loading')} className="sqlpg-td-loading" size={18} />
-        ) : nodes.length === 0 ? (
-          <div className="sqlpg-td-empty">{t('sql.diag.empty')}</div>
-        ) : (
-          <div className="sqlpg-diag-canvas">
-            <svg width={width} height={height} className="sqlpg-diag-svg">
-              <defs>
-                <marker id="sqlpg-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4"
-                        orient="auto" markerUnits="userSpaceOnUse">
-                  <path d="M0,0 L8,4 L0,8 z" className="sqlpg-diag-arrowhead" />
-                </marker>
-                <marker id="sqlpg-arrow-inf" markerWidth="9" markerHeight="9" refX="7" refY="4"
-                        orient="auto" markerUnits="userSpaceOnUse">
-                  <path d="M0,0 L8,4 L0,8 z" className="sqlpg-diag-arrowhead sqlpg-diag-arrowhead-inf" />
-                </marker>
-              </defs>
-
-              {edges.map((e, i) => {
-                if (e.from === e.to) return null   // self-ref (ör. manager_id) — diyagramda çizilmez
-                const x1 = e.p1.x + NODE_W / 2, y1 = e.p1.y                 // child üst-orta
-                const x2 = e.p2.x + NODE_W / 2, y2 = e.p2.y + NODE_H        // parent alt-orta
-                const my = (y1 + y2) / 2
-                const d = `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`
-                return (
-                  <path key={i} d={d}
-                        className={`sqlpg-diag-edge${e.inferred ? ' sqlpg-diag-edge-inf' : ''}`}
-                        markerEnd={`url(#sqlpg-arrow${e.inferred ? '-inf' : ''})`}>
-                    <title>{`${e.from}.${e.column} → ${e.to}`}</title>
-                  </path>
-                )
-              })}
-
-              {nodes.map((n) => (
-                <g key={n.name} transform={`translate(${n.x},${n.y})`}>
-                  <rect width={NODE_W} height={NODE_H} rx="6"
-                        className={`sqlpg-diag-node${n.refdBy >= 3 ? ' sqlpg-diag-node-hub' : ''}`} />
-                  <text x={NODE_W / 2} y={NODE_H / 2 + 4} textAnchor="middle" className="sqlpg-diag-node-label">
-                    {n.name}
-                  </text>
-                  <title>{t('sql.diag.nodeTip', n.name, n.refdBy, n.refs)}</title>
-                </g>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className="gap-1.5 pointer-coarse:h-10">
+          <Search /> {t('sql.diag.find')}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="z-(--z-menu) w-[min(20rem,calc(100vw-2rem))] p-0">
+        <Command>
+          <CommandInput placeholder={t('sql.diag.findPlaceholder')} className="text-base md:text-sm" />
+          <CommandList className="max-h-[min(20rem,50dvh)]">
+            <CommandEmpty>{t('sql.diag.noMatch')}</CommandEmpty>
+            <CommandGroup>
+              {names.map((n) => (
+                <CommandItem key={n} value={n} onSelect={() => { setOpen(false); onPick(n) }} className="font-mono text-xs">
+                  {n}
+                </CommandItem>
               ))}
-            </svg>
-          </div>
-        )}
-
-        <div className="modal-actions">
-          {isolatedCount > 0 && (
-            <span className="sqlpg-diag-isolated">{t('sql.diag.isolated', isolatedCount)}</span>
-          )}
-          <Button variant="secondary" onClick={onClose}>{t('sql.closeRowDetails')}</Button>
-        </div>
-      </div>
-    </div>
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 
-/** Katmanlı düzen hesabı: seviye = bir sink'e (referans etmeyen tabloya) en uzun çıkış yolu. */
-function layout(data) {
-  const tables = data?.tables ?? []
-  const rawEdges = (data?.edges ?? []).filter((e) => e && e.from && e.to)
+/**
+ * SQL Playground — tablolar arası İLİŞKİ (hiyerarşi) diyagramı. 2026-09-27 yeniden tasarım (shadcn, mobil duyarlı):
+ *
+ * - Kartlar: tablo adı + satır sayısı; kipe göre kolonlar (Ad · Anahtarlar · Tüm kolonlar), PK/FK rozetleri, tipler;
+ *   uzun tablo "N kolon daha" ile katlanır. Kenarlar FK satırından PK satırına eğri, ok (başvurulan) + kaz ayağı (çok).
+ *   Düz çizgi gerçek FK, kesik çizgi `*_id` çıkarımı (bu şemada DB seviyesinde FK yok denecek kadar az).
+ * - Otomatik katmanlı düzen (`sql/diagram/layout.js`): başvurulan tablo üstte/solda; yön değiştirilebilir; ilişkisiz
+ *   tablolar ayrı grupta.
+ * - Etkileşim: tekerlek/kıstır yakınlaştırma, sürükle kaydır, sığdır, %100, küçük harita; tablo ARA → ortala + kendisi
+ *   ve doğrudan komşuları vurgulu, diğerleri soluk; karta dokun → yan panel (kolonlar, ilişkiler, ayrıntı / sorgula).
+ * - Dışa aktar: SVG ve PNG (istemci tarafı, o anki temayla).
+ * - Telefonda (< 768 px) varsayılan LİSTE görünümü (başvurduğu / ona başvuranlar); diyagram yine kıstır/sürükle ile kullanılır.
+ * - Erişilebilirlik: kartlar gerçek düğme (Tab + Enter), kenar katmanı role="img" + metin karşılığı listesi.
+ */
+export default function SchemaDiagramModal({
+  data, loading, error, onClose, onRetry, tables, columnsMap, ensureColumns, onOpenDetails, onQuery, initialFocus = null,
+  focusRequest = null,
+}) {
+  const t = useT()
+  const locale = useDateLocale()
+  const toast = useToast()
+  const isMobile = useIsMobile()
+  const [view, setView] = useState('diagram')
+  const viewPicked = useRef(false)
+  const [mode, setMode] = useState('keys')
+  const [direction, setDirection] = useState('TB')
+  const [includeIsolated, setIncludeIsolated] = useState(true)
+  const [expanded, setExpanded] = useState(() => new Set())
+  const [focus, setFocus] = useState(initialFocus)
+  const [panel, setPanel] = useState(null)
+  const [colsLoading, setColsLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const canvasRef = useRef(null)
 
-  const tableSet = new Set(tables)
-  const targetsOf = new Map()
-  tables.forEach((t) => targetsOf.set(t, new Set()))
-  rawEdges.forEach((e) => {
-    if (e.from !== e.to && targetsOf.has(e.from) && tableSet.has(e.to)) targetsOf.get(e.from).add(e.to)
-  })
+  // Telefonda liste varsayılan (kullanıcı elle seçtiyse dokunulmaz).
+  useEffect(() => { if (isMobile && !viewPicked.current) setView('list') }, [isMobile])
+  const pickView = (v) => { viewPicked.current = true; setView(v) }
 
-  const level = new Map()
-  const visiting = new Set()
-  const lvl = (tname) => {
-    if (level.has(tname)) return level.get(tname)
-    if (visiting.has(tname)) return 0          // döngü kır (ör. karşılıklı *_id)
-    visiting.add(tname)
-    let m = 0
-    for (const tgt of targetsOf.get(tname) || []) m = Math.max(m, 1 + lvl(tgt))
-    visiting.delete(tname)
-    level.set(tname, m)
-    return m
+  const rowCounts = useMemo(() => Object.fromEntries((tables || []).map((r) => [r.table_name, r.live_rows ?? null])), [tables])
+  const model = useMemo(() => computeDiagram(data, {
+    mode, direction, columns: columnsMap, expanded, includeIsolated, rowCounts,
+  }), [data, mode, direction, columnsMap, expanded, includeIsolated, rowCounts])
+  const highlight = useMemo(() => neighbourhood(model.graph, focus), [model.graph, focus])
+  const allNames = useMemo(() => model.nodes.map((n) => n.name).sort(), [model.nodes])
+
+  // "Tüm kolonlar" kipi: eksik kolonlar tek seferde (sınırlı eşzamanlılıkla) yüklenir → tek yeniden yerleşim.
+  const columnsRef = useRef(columnsMap)
+  columnsRef.current = columnsMap
+  useEffect(() => {
+    if (mode !== 'columns' || !data || !ensureColumns) return undefined
+    const need = model.nodes.map((n) => n.name).filter((n) => !columnsRef.current?.[n])
+    if (!need.length) return undefined
+    let live = true
+    setColsLoading(true)
+    Promise.resolve(ensureColumns(need)).finally(() => { if (live) setColsLoading(false) })
+    return () => { live = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, data, includeIsolated])
+
+  // Panel açılınca o tablonun kolonları.
+  const [panelLoading, setPanelLoading] = useState(false)
+  useEffect(() => {
+    if (!panel || columnsRef.current?.[panel] || !ensureColumns) return undefined
+    let live = true
+    setPanelLoading(true)
+    Promise.resolve(ensureColumns([panel])).finally(() => { if (live) setPanelLoading(false) })
+    return () => { live = false }
+  }, [panel, ensureColumns])
+
+  const select = useCallback((name) => { setFocus(name); setPanel(name) }, [])
+  const toggleExpand = useCallback((name) => {
+    setExpanded((s) => { const n = new Set(s); if (n.has(name)) n.delete(name); else n.add(name); return n })
+  }, [])
+  const jumpTo = useCallback((name, { openPanel = false } = {}) => {
+    setFocus(name)
+    if (openPanel) setPanel(name)
+    if (!model.nodes.some((n) => n.name === name) && !includeIsolated) setIncludeIsolated(true)
+    requestAnimationFrame(() => canvasRef.current?.centreOn(name))
+  }, [model.nodes, includeIsolated])
+  const clearFocus = () => { setFocus(null); setPanel(null) }
+
+  // Açıkken gelen yeni odak isteği (ör. ayrıntı penceresinden "Diyagramda göster") — ilk açılış initialFocus'ta.
+  const lastRequest = useRef(focusRequest?.n)
+  useEffect(() => {
+    if (!focusRequest || focusRequest.n === lastRequest.current) return
+    lastRequest.current = focusRequest.n
+    if (!focusRequest.focus) return
+    viewPicked.current = true
+    setView('diagram')
+    const id = setTimeout(() => jumpTo(focusRequest.focus), 60)
+    return () => clearTimeout(id)
+  }, [focusRequest, jumpTo])
+
+  const openDetails = (name) => { setPanel(null); onOpenDetails?.(name) }
+  const query = (name) => { setPanel(null); onQuery?.(name) }
+  const showInDiagram = (name) => { pickView('diagram'); setTimeout(() => jumpTo(name), 60) }
+
+  const exportAs = async (kind) => {
+    setExporting(true)
+    try {
+      const svg = buildDiagramSvg(model, {
+        palette: readPalette(), title: t('sql.diag.title'),
+        rowsLabel: (n) => (n == null ? '' : t('sql.diag.rowsShort', formatCompact(n, locale))),
+        typeLabel: shortType, unrelatedLabel: t('sql.diag.unrelatedGroup', model.stats.isolated),
+        moreLabel: (n) => t('sql.diag.moreCols', n),
+      })
+      if (kind === 'svg') downloadText(stampedFile('schema-diagram', 'svg'), svg, 'image/svg+xml')
+      else {
+        const blob = await svgToPngBlob(svg, Math.ceil(model.width), Math.ceil(model.height))
+        if (!blob) throw new Error('png')
+        downloadBlob(stampedFile('schema-diagram', 'png'), blob)
+      }
+      toast.success(t('sql.diag.exported', kind.toUpperCase()))
+    } catch {
+      toast.error(t('sql.diag.exportFailed'))
+    } finally {
+      setExporting(false)
+    }
   }
 
-  // Sadece en az bir kenara dahil olan tablolar çizilir (izole olanlar diyagramı kalabalıklaştırmasın).
-  const connected = new Set()
-  rawEdges.forEach((e) => { if (tableSet.has(e.from)) connected.add(e.from); if (tableSet.has(e.to)) connected.add(e.to) })
-  const shown = tables.filter((tname) => connected.has(tname))
-  shown.forEach(lvl)
+  const modeOptions = [
+    { value: 'names', label: t('sql.diag.modeNames'), icon: Rows3 },
+    { value: 'keys', label: t('sql.diag.modeKeys'), icon: KeyRound },
+    { value: 'columns', label: t('sql.diag.modeColumns'), icon: Columns3 },
+  ]
+  const dirOptions = [
+    { value: 'TB', label: t('sql.diag.dirTB'), icon: ArrowDownToLine, hideLabel: true },
+    { value: 'LR', label: t('sql.diag.dirLR'), icon: ArrowRightToLine, hideLabel: true },
+  ]
+  const hasData = !loading && !error && data && model.stats.tables > 0
+  const diagramView = view === 'diagram'
 
-  const refdBy = new Map()
-  shown.forEach((tname) => refdBy.set(tname, 0))
-  rawEdges.forEach((e) => { if (e.from !== e.to && refdBy.has(e.to)) refdBy.set(e.to, refdBy.get(e.to) + 1) })
+  const exportMenuItems = (
+    <>
+      <DropdownMenuItem onSelect={() => exportAs('png')} disabled={exporting}><ImageIcon /> {t('sql.diag.exportPng')}</DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => exportAs('svg')} disabled={exporting}><FileCode2 /> {t('sql.diag.exportSvg')}</DropdownMenuItem>
+    </>
+  )
 
-  const byLevel = new Map()
-  shown.forEach((tname) => {
-    const L = level.get(tname) || 0
-    if (!byLevel.has(L)) byLevel.set(L, [])
-    byLevel.get(L).push(tname)
-  })
-  const levels = [...byLevel.keys()].sort((a, b) => a - b)
-  byLevel.forEach((row) => row.sort((a, b) => (refdBy.get(b) - refdBy.get(a)) || a.localeCompare(b)))
+  const toolbar = hasData && (
+    <div data-slot="diagram-toolbar" className="flex flex-wrap items-center gap-2">
+      <ChoiceToggle ariaLabel={t('sql.diag.viewLabel')} value={view} onChange={pickView} options={[
+        { value: 'diagram', label: t('sql.diag.viewDiagram'), icon: Network },
+        { value: 'list', label: t('sql.diag.viewList'), icon: List },
+      ]} />
+      {diagramView && <TableFinder names={allNames} onPick={(n) => jumpTo(n)} t={t} />}
+      {diagramView && !isMobile && (
+        <>
+          <ChoiceToggle ariaLabel={t('sql.diag.detailLabel')} value={mode} onChange={setMode} options={modeOptions} />
+          <ChoiceToggle ariaLabel={t('sql.diag.dirLabel')} value={direction} onChange={setDirection} options={dirOptions} />
+        </>
+      )}
+      {!isMobile && (
+        <div className="flex items-center gap-2 px-1">
+          <Switch id="sqlpg-diag-isolated" checked={includeIsolated} onCheckedChange={setIncludeIsolated} />
+          <Label htmlFor="sqlpg-diag-isolated" className="text-xs font-medium text-muted-foreground">
+            {t('sql.diag.showUnrelated', model.stats.isolated)}
+          </Label>
+        </div>
+      )}
+      {colsLoading && <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Spinner size={12} inline decorative />{t('sql.diag.loadingCols')}</span>}
+      <div className="ml-auto flex items-center gap-2">
+        {focus && (
+          <Badge variant="secondary" data-slot="diagram-focus" className="h-8 gap-1 pr-1 pl-2.5 font-mono text-xs">
+            <span className="max-w-[9rem] truncate">{focus}</span>
+            <Button type="button" variant="ghost" size="icon-xs" className="pointer-coarse:size-8" aria-label={t('sql.diag.clearFocus', focus)} onClick={clearFocus}><X /></Button>
+          </Badge>
+        )}
+        {diagramView && !isMobile && (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" size="sm" disabled={exporting} aria-busy={exporting || undefined}>
+                {exporting ? <Spinner size={14} inline decorative /> : <Download />} {t('sql.diag.export')}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="z-(--z-menu)">{exportMenuItems}</DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {isMobile && (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" size="icon" className="size-10" aria-label={t('sql.diag.options')}>
+                <SlidersHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="z-(--z-menu) w-60">
+              {diagramView && (
+                <>
+                  <DropdownMenuLabel>{t('sql.diag.detailLabel')}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={mode} onValueChange={setMode}>
+                    {modeOptions.map((o) => <DropdownMenuRadioItem key={o.value} value={o.value} className="min-h-10">{o.label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel>{t('sql.diag.dirLabel')}</DropdownMenuLabel>
+                  <DropdownMenuRadioGroup value={direction} onValueChange={setDirection}>
+                    {dirOptions.map((o) => <DropdownMenuRadioItem key={o.value} value={o.value} className="min-h-10">{o.label}</DropdownMenuRadioItem>)}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuCheckboxItem checked={includeIsolated} onCheckedChange={(v) => setIncludeIsolated(!!v)}
+                onSelect={(e) => e.preventDefault()} className="min-h-10">
+                {t('sql.diag.showUnrelated', model.stats.isolated)}
+              </DropdownMenuCheckboxItem>
+              {diagramView && <><DropdownMenuSeparator />{exportMenuItems}</>}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+    </div>
+  )
 
-  let maxRowW = 0
-  levels.forEach((L) => {
-    const row = byLevel.get(L)
-    maxRowW = Math.max(maxRowW, row.length * (NODE_W + GAP_X) - GAP_X)
-  })
+  const legend = (
+    <div data-slot="diagram-legend" onPointerDown={(e) => e.stopPropagation()}
+      className="absolute bottom-3 left-3 hidden max-w-[calc(100%-14rem)] flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-background/90 px-2.5 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur-sm sm:flex">
+      <span className="inline-flex items-center gap-1"><Badge variant="outline" className="h-4 rounded-sm border-amber-500/40 bg-amber-500/10 px-1 text-[9px] font-bold text-amber-700 dark:text-amber-300">PK</Badge>{t('sql.diag.legendPk')}</span>
+      <span className="inline-flex items-center gap-1"><Badge variant="outline" className="h-4 rounded-sm border-emerald-500/40 bg-emerald-500/10 px-1 text-[9px] font-bold text-emerald-700 dark:text-emerald-300">FK</Badge>{t('sql.diag.legendFk')}</span>
+      <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="w-6 border-t-2 border-muted-foreground" />{t('sql.diag.realFk')}</span>
+      <span className="inline-flex items-center gap-1.5"><i aria-hidden="true" className="w-6 border-t-2 border-dashed border-muted-foreground" />{t('sql.diag.inferred')}</span>
+      <span className="inline-flex items-center gap-1">
+        <svg aria-hidden="true" width="34" height="10" className="overflow-visible">
+          <path d="M1,5 L33,5" className="fill-none stroke-muted-foreground [stroke-width:1.3]" />
+          <path d="M1,0 L9,5 M1,5 L9,5 M1,10 L9,5" className="fill-none stroke-muted-foreground [stroke-width:1.3]" />
+          <path d="M26,1 L33,5 L26,9 z" className="fill-muted-foreground" />
+        </svg>
+        {t('sql.diag.legendEdge')}
+      </span>
+    </div>
+  )
 
-  const pos = new Map()
-  levels.forEach((L, rowIdx) => {
-    const row = byLevel.get(L)
-    const rowW = row.length * (NODE_W + GAP_X) - GAP_X
-    const startX = PAD + (maxRowW - rowW) / 2
-    row.forEach((tname, i) => {
-      pos.set(tname, { x: startX + i * (NODE_W + GAP_X), y: PAD + rowIdx * (NODE_H + GAP_Y) })
-    })
-  })
+  const footer = (
+    <div className="flex w-full flex-wrap items-center gap-2">
+      {hasData && (
+        <p data-slot="diagram-stats" className="mr-auto text-xs text-muted-foreground">
+          {t('sql.diag.stats', model.stats.connected, model.stats.edges, model.stats.real, model.stats.inferred, model.stats.isolated)}
+        </p>
+      )}
+      <Button type="button" variant="secondary" onClick={onClose}>{t('sql.closeRowDetails')}</Button>
+    </div>
+  )
 
-  const nodes = shown.map((tname) => ({
-    name: tname, ...pos.get(tname),
-    refs: (targetsOf.get(tname) || new Set()).size,
-    refdBy: refdBy.get(tname) || 0,
-  }))
-  const edges = rawEdges
-    .filter((e) => pos.has(e.from) && pos.has(e.to))
-    .map((e) => ({ ...e, p1: pos.get(e.from), p2: pos.get(e.to) }))
-
-  const width = Math.max(maxRowW + PAD * 2, 320)
-  const height = PAD * 2 + (levels.length > 0 ? (levels.length - 1) * (NODE_H + GAP_Y) + NODE_H : 0)
-  return { nodes, edges, width, height, isolatedCount: tables.length - shown.length }
+  return (
+    <ModalShell open onClose={onClose} title={t('sql.diag.title')} icon={Network} size="full" scrollBody
+      dismissOnEscape={!focus && !panel}
+      className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] max-w-[calc(100%-1rem)] gap-3 p-3 sm:h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-2rem)] sm:p-5"
+      footer={footer}>
+      <div className="flex h-full min-h-0 flex-col gap-2.5"
+        // Radix'in belge düzeyindeki Escape dinleyicisi (ModalShell, dismissOnEscape=false) olayı ÖNCE preventDefault
+        // eder — burada defaultPrevented'a bakılmaz; vurgu varken Escape pencereyi değil vurguyu kapatır.
+        onKeyDown={(e) => { if (e.key === 'Escape' && (focus || panel)) { e.preventDefault(); clearFocus() } }}>
+        {toolbar}
+        {hasData && (
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+            <span>{t('sql.diag.note')}</span>
+          </p>
+        )}
+        {loading ? (
+          <LoadingBlock label={t('sql.td.loading')} size={18} />
+        ) : error || !data ? (
+          <StatusBlock tone="danger" icon={Network} title={t('sql.diag.loadError')} description={error || undefined}
+            actions={onRetry && <Button type="button" variant="outline" onClick={onRetry}>{t('sql.retry')}</Button>} />
+        ) : model.stats.tables === 0 ? (
+          <StatusBlock icon={Network} title={t('sql.diag.empty')} />
+        ) : diagramView ? (
+          <DiagramCanvas ref={canvasRef} model={model} focus={focus} highlight={highlight} expanded={expanded}
+            onSelect={select} onToggleExpand={toggleExpand} fitKey={`${direction}|${mode}|${includeIsolated}`}
+            initialCentre={focus ?? initialFocus} className="flex-1">
+            {legend}
+          </DiagramCanvas>
+        ) : (
+          <DiagramListView model={model} focus={focus} prefix="sqlpg-dl"
+            onFocus={(n) => setFocus(n)} onOpenDetails={openDetails} onQuery={query} onShowInDiagram={showInDiagram} />
+        )}
+      </div>
+      <TablePanel name={panel} model={model} columns={panel ? columnsMap?.[panel] ?? null : null} columnsLoading={panelLoading}
+        side={isMobile ? 'bottom' : 'right'} onClose={() => setPanel(null)}
+        onFocusTable={(n) => jumpTo(n, { openPanel: true })} onOpenDetails={openDetails} onQuery={query} />
+    </ModalShell>
+  )
 }

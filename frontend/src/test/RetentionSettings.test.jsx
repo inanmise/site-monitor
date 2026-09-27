@@ -52,8 +52,11 @@ const overview = (over = {}) => ({
 
 /** Bir veri sınıfı akordiyonunu açar. */
 async function openClass(label) {
-  const bar = (await screen.findByText(label)).closest('.stats-collapse-bar')
+  // Ortak ui/CollapsibleSection tetiği (shadcn Collapsible, `data-slot="stats-toggle"`)
+  const bar = (await screen.findByText(label)).closest('[data-slot="stats-toggle"]')
+  expect(bar).toHaveAttribute('aria-expanded', 'false')
   fireEvent.click(bar)
+  expect(bar).toHaveAttribute('aria-expanded', 'true')
 }
 
 describe('RetentionSettings', () => {
@@ -77,7 +80,7 @@ describe('RetentionSettings', () => {
 
     // Kapalıyken hiçbir politika satırı DOM'da olmamalı
     expect(screen.queryByText('activity_log')).toBeNull()
-    expect(document.querySelectorAll('.ret-row').length).toBe(0)
+    expect(document.querySelectorAll('[data-slot="policy-row"]').length).toBe(0)
 
     await openClass('Personal Data')
     expect(await screen.findByText('activity_log')).toBeInTheDocument()
@@ -89,12 +92,12 @@ describe('RetentionSettings', () => {
     render(<RetentionSettings />)
     await openClass('Personal Data')
 
-    expect(document.querySelector('.ret-sticky-bar')).toBeNull()
+    expect(document.querySelector('[data-slot="retention-sticky-bar"]')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: '730' }))
 
-    expect(document.querySelector('.ret-row--changed')).not.toBeNull()
+    expect(document.querySelector('[data-slot="policy-row"][data-changed="true"]')).not.toBeNull()
     expect(screen.getByText('365 → 730')).toBeInTheDocument()
-    expect(document.querySelector('.ret-sticky-bar')).not.toBeNull()
+    expect(document.querySelector('[data-slot="retention-sticky-bar"]')).not.toBeNull()
     expect(screen.getByText(/1 pending|1 bekleyen/i)).toBeInTheDocument()
   })
 
@@ -132,25 +135,25 @@ describe('RetentionSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: /review and save|gözden geçir/i }))
 
     await screen.findByText(/SHORTENED|KISALTILIYOR/)
-    expect(document.querySelector('.ret-review-hdr--danger')).not.toBeNull()
-    expect(document.querySelector('.ret-review-row--down')).not.toBeNull()
+    expect(document.querySelector('[data-slot="retention-review"][data-tone="danger"]')).not.toBeNull()
+    expect(document.querySelector('[data-direction="down"]')).not.toBeNull()
     expect(screen.getByRole('button', { name: /save and shorten|kaydet ve kısalt/i })).toBeInTheDocument()
   })
 
   it('satır açılınca silme kuralı ve ayar anahtarı görünür', async () => {
     render(<RetentionSettings />)
     await openClass('Personal Data')
-    fireEvent.click(document.querySelector('.ret-row-toggle'))
+    fireEvent.click(screen.getByRole('button', { name: 'activity_log' }))
 
     expect(await screen.findByText('activity_time < ?')).toBeInTheDocument()
     expect(screen.getByText('site.monitor.activity.retention-days')).toBeInTheDocument()
     // Kişisel veri → uyum onayı satırı
-    expect(document.querySelector('.ret-approve')).not.toBeNull()
+    expect(document.querySelector('[data-approved="false"]')).not.toBeNull()
   })
 
   it('değişiklik geçmişi paneli kim/ne zaman/eski→yeni gösterir', async () => {
     render(<RetentionSettings />)
-    const bar = (await screen.findByText(/change history|değişiklik geçmişi/i)).closest('.stats-collapse-bar')
+    const bar = (await screen.findByText(/change history|değişiklik geçmişi/i)).closest('[data-slot="stats-toggle"]')
     fireEvent.click(bar)
 
     await waitFor(() => expect(api.admin.getRetentionChanges).toHaveBeenCalled())
@@ -171,7 +174,7 @@ describe('RetentionSettings', () => {
     render(<RetentionSettings />)
     await screen.findByText('Personal Data')
 
-    expect(document.querySelector('.ret-hold-banner')).not.toBeNull()
+    expect(screen.getByTestId('ret-hold-banner').closest('[data-slot="alert"]')).toHaveAttribute('data-tone', 'danger')
     expect(screen.getByRole('button', { name: /purge now|şimdi temizle/i })).toBeDisabled()
   })
 })

@@ -84,22 +84,30 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
   }
 
   const disabled = !!busy
+  // Alan bölmesi: ikon + seçici + "Uygula" — solunda ince ayraç (ui/BulkActionBar ile aynı dil).
+  const fieldCls = 'inline-flex items-center gap-1.5 border-l border-border pl-2 text-muted-foreground'
+  const selectAllLabel = allVisibleSelected ? t('bulk.unselectAll') : t('bulk.selectAll')
   return (
-    <div className="bulkbar ct-bulkbar" role="region" aria-label={t('bulk.aria')}>
-      <button type="button" className="bulkbar-all" onClick={onToggleAll} title={allVisibleSelected ? t('bulk.unselectAll') : t('bulk.selectAll')}>
-        {allVisibleSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-      </button>
-      <span className="bulkbar-count">{t('bulk.selected', domains.length)}</span>
-      <div className="bulkbar-actions">
+    // Görünüm Tailwind + shadcn (ui/BulkActionBar ile aynı yapışkan çubuk); eski App.css .bulkbar* ailesi yerine.
+    <div data-slot="cert-bulk-bar" role="region" aria-label={t('bulk.aria')}
+      className="sticky top-16 z-20 mb-2.5 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg md:top-2">
+      <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground"
+        onClick={onToggleAll} title={selectAllLabel} aria-label={selectAllLabel}>
+        {allVisibleSelected ? <CheckSquare size={15} /> : <Square size={15} />}
+      </Button>
+      <span className="font-bold">{t('bulk.selected', domains.length)}</span>
+      <div className="flex flex-wrap items-center gap-1.5">
         <Button type="button" size="sm" disabled={disabled} onClick={checkAll}>
           {busy === 'check' ? <Spinner size={12} inline decorative /> : <Play size={13} />}
           {busy === 'check' && progress != null ? `${progress}/${domains.length}` : t('tbl.bulkCheck')}
         </Button>
         {canManage && (
-          <span className="bulkbar-field">
-            <Layers size={13} />
-            <SearchableSelect value={tier} onChange={setTier} ariaLabel={t('tbl.colTier')}
-              options={[{ value: '', label: t('tbl.tierPick') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('tbl.tierClear') }]} />
+          <span className={fieldCls} data-bulk-field="tier">
+            <Layers size={13} aria-hidden="true" />
+            <span className="min-w-[140px]">
+              <SearchableSelect value={tier} onChange={setTier} ariaLabel={t('tbl.colTier')}
+                options={[{ value: '', label: t('tbl.tierPick') }, { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('tbl.tierClear') }]} />
+            </span>
             <Button type="button" variant="secondary" size="sm" disabled={disabled || !tier}
               onClick={() => bulk('tier', 'set-tier', tier === 'none' ? {} : { tier: Number(tier) })}>
               {busy === 'tier' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTier')}
@@ -107,10 +115,12 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
           </span>
         )}
         {globalAdmin && (
-          <span className="bulkbar-field">
-            <Users size={13} />
-            <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('app.teamLabel')}
-              options={[{ value: '', label: t('tbl.teamPick') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
+          <span className={fieldCls} data-bulk-field="team">
+            <Users size={13} aria-hidden="true" />
+            <span className="min-w-[140px]">
+              <SearchableSelect value={teamId} onChange={setTeamId} ariaLabel={t('app.teamLabel')}
+                options={[{ value: '', label: t('tbl.teamPick') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]} />
+            </span>
             <Button type="button" variant="secondary" size="sm" disabled={disabled || !teamId}
               onClick={() => bulk('team', 'set-team', { team_id: Number(teamId) })}>
               {busy === 'team' ? <Spinner size={12} inline decorative /> : null}{t('tbl.bulkSetTeam')}
@@ -124,7 +134,10 @@ export default function CertBulkBar({ selected, rows, cols, shared, canManage, g
         )}
         <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={csv}><Download size={13} />CSV</Button>
       </div>
-      <button type="button" className="bulkbar-close" onClick={onClear} aria-label={t('bulk.unselectAll')}><X size={16} /></button>
+      <Button type="button" variant="ghost" size="icon-sm" className="ml-auto text-muted-foreground"
+        onClick={onClear} aria-label={t('bulk.unselectAll')}>
+        <X size={14} />
+      </Button>
     </div>
   )
 }

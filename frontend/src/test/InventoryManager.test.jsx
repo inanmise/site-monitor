@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
@@ -34,8 +34,10 @@ vi.mock('../api/client', () => ({
   } }),
 }))
 // Yetki: USER için inventory.crud/edit AÇIK (2026-09-18 varsayılanı); satır kapısı üyeliğe bakar.
+// `permState`: tek testte ekleme yetkisini kapatmak için (openAddSignal kapısı, 2026-09-26).
+const permState = vi.hoisted(() => ({ canAdd: true, perms: {} }))
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
-  usePermissions: () => ({ perms: {}, canView: () => true, canEdit: (r) => r === 'inventory.crud', canExecute: () => false, refresh: () => {} }),
+  usePermissions: () => ({ perms: permState.perms, canView: () => true, canEdit: (r) => r === 'inventory.crud' && permState.canAdd, canExecute: () => false, refresh: () => {} }),
   PermissionsProvider: ({ children }) => children,
 }))
 vi.mock('../components/ui/Dialog.jsx', () => ({
@@ -72,8 +74,10 @@ async function openRowMenu(domain) {
   pressMenuTrigger(within(row).getByRole('button', { name: /işlem|actions/i }))
 }
 
-// Satır SEÇİM kutuları (ilk hücre) — aktif/pasif anahtarı da checkbox (2026-09-12, satır-içi düzenleme), o sayılmaz
-const checkboxes = () => [...document.querySelectorAll('tbody td:first-child input[type="checkbox"]')]
+// Satır SEÇİM kutuları (ilk hücre, shadcn Checkbox → role="checkbox") — aktif/pasif anahtarı shadcn Switch (role="switch"), o sayılmaz
+const checkboxes = () => [...document.querySelectorAll('tbody td:first-child [role="checkbox"]')]
+// Özet kartı (MonitorStatsBar düğmesi, 2026-09-27 — eski durum hapları `data-stat` yerine) — kancası `data-key`
+const tile = (key) => document.querySelector(`[data-slot="stat-item"][data-key="${key}"]`)
 
 describe('InventoryManager', () => {
   beforeEach(() => {
@@ -182,7 +186,7 @@ describe('InventoryManager', () => {
     fireEvent.click(checkboxes()[0])
     expect(await screen.findByText(/1 seçili|1 selected/)).toBeInTheDocument()
 
-    fireEvent.click(document.querySelector('.inv-stat-inactive'))   // filtre değişti (alan adı düğmesi de 'pasif' içerir → sınıfla seç)
+    fireEvent.click(tile('inactive'))   // filtre değişti (alan adı düğmesi de 'pasif' içerir → kancayla seç)
 
     await waitFor(() => expect(screen.queryByText(/seçili|selected/)).toBeNull())
   })
@@ -274,12 +278,12 @@ describe('InventoryManager', () => {
 
     // Süzgeç satırı ekranda kalır (kullanıcı ne yazdığını görür), tablo kaldırılmaz
     await waitFor(() => expect(screen.getByTestId('inv-filter-row')).toBeInTheDocument())
-    expect(document.querySelector('.inv-row-empty')).not.toBeNull()
+    expect(document.querySelector('[data-slot="table-empty-row"]')).not.toBeNull()
     expect(screen.queryByText('aktif-bir.example.com')).toBeNull()
 
-    fireEvent.click(within(document.querySelector('.inv-row-empty')).getByRole('button', { name: /Temizle|Clear/i }))
+    fireEvent.click(within(document.querySelector('[data-slot="table-empty-row"]')).getByRole('button', { name: /Temizle|Clear/i }))
     expect(await screen.findByText('aktif-bir.example.com')).toBeInTheDocument()
-    expect(document.querySelector('.inv-row-empty')).toBeNull()
+    expect(document.querySelector('[data-slot="table-empty-row"]')).toBeNull()
   })
 })
 
@@ -294,7 +298,7 @@ describe('InventoryManager — USER satır düzenleme kapısı', () => {
     const { container } = render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} /></LangProvider>)
     await screen.findByText('kendi.example.com')
     expect(screen.getByRole('button', { name: /Domain Ekle|Add Domain/i })).toBeInTheDocument()
-    expect(container.querySelector('thead input[type=checkbox]')).toBeNull()
+    expect(container.querySelector('thead [role="checkbox"]')).toBeNull()
 
     const own = screen.getByText('kendi.example.com').closest('tr')
     pressMenuTrigger(within(own).getByRole('button', { name: /işlem|actions/i }))
@@ -339,7 +343,7 @@ describe('InventoryManager — düzenlemede takım aktarımı (R4)', () => {
     await openRowMenu('aktif-bir.example.com')
     fireEvent.click(await screen.findByRole('menuitem', { name: /^(Düzenle|Edit)$/ }))
     const form = await waitFor(() => {
-      const el = document.querySelector('.modal-wide')
+      const el = document.querySelector('[role="dialog"]')   // envanter formu ModalShell (shadcn Dialog)
       if (!el) throw new Error('form henüz açılmadı')
       return el
     })
@@ -355,5 +359,91 @@ describe('InventoryManager — düzenlemede takım aktarımı (R4)', () => {
     const form = await openEditForm('TEAM_ADMIN')
     expect(form.getByRole('combobox', { name: /Takım|Team/ })).toBeDisabled()
     expect(form.getByRole('combobox', { name: /Grup|Group/ })).toBeEnabled()
+  })
+})
+
+const ADD_TITLE = /^(Domain Ekle|Add Domain)$/
+describe('InventoryManager — panodan "Domain Ekle" sinyali yetkiye uyar (2026-09-26)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: ITEMS })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+    api.admin.getAlerts.mockResolvedValue({ success: true, data: [] })
+  })
+  afterEach(() => { permState.canAdd = true; permState.perms = {} })
+
+  it('ekleme yetkisi olan USER: sinyal formu açar ve tüketilir', async () => {
+    const onAddConsumed = vi.fn()
+    render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} openAddSignal onAddConsumed={onAddConsumed} /></LangProvider>)
+    expect(await screen.findByRole('heading', { name: ADD_TITLE })).toBeInTheDocument()   // form başlığı (kabuk türünden bağımsız)
+    expect(onAddConsumed).toHaveBeenCalledTimes(1)
+  })
+
+  it('ekleme yetkisi YOK (yetki yüklendi): form AÇILMAZ, sinyal düşürülür; Ekle düğmesi de yok', async () => {
+    permState.canAdd = false
+    permState.perms = { 'inventory.crud': { view: true } }
+    const onAddConsumed = vi.fn()
+    render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} openAddSignal onAddConsumed={onAddConsumed} /></LangProvider>)
+    await screen.findByText('aktif-bir.example.com')
+    expect(onAddConsumed).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('heading', { name: ADD_TITLE })).toBeNull()
+    expect(screen.queryByRole('button', { name: /domain ekle|add domain/i })).toBeNull()
+  })
+
+  it('yetki henüz yüklenmediyse sinyal BEKLER (düşürülmez, form açılmaz)', async () => {
+    permState.canAdd = false
+    permState.perms = {}
+    const onAddConsumed = vi.fn()
+    render(<LangProvider><InventoryManager systemRole="USER" teams={[{ id: 5, name: 'SY-A' }]} openAddSignal onAddConsumed={onAddConsumed} /></LangProvider>)
+    await screen.findByText('aktif-bir.example.com')
+    expect(onAddConsumed).not.toHaveBeenCalled()
+    expect(screen.queryByRole('heading', { name: ADD_TITLE })).toBeNull()
+  })
+})
+
+// ── D1 dalgası (2026-09-26): durum süzgeci düğmeleri, Dışa aktar menüsü (DropdownMenu), Devret penceresi (ModalShell) ──
+describe('InventoryManager — shadcn üst çubuk ve Devret penceresi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getInventory.mockResolvedValue({ success: true, data: ITEMS })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }, { id: 9, name: 'SY-B' }] })
+    api.admin.transferCertSy.mockResolvedValue({ success: true })
+  })
+
+  it('durum düğmesi aria-pressed taşır; basınca süzer, yeniden basınca varsayılana döner', async () => {
+    renderIm()
+    await screen.findByText('aktif-bir.example.com')
+    const inactive = tile('inactive')
+    expect(inactive).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(inactive)
+    expect(inactive).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(screen.queryByText('aktif-bir.example.com')).toBeNull())
+    expect(screen.getByText('pasif.example.com')).toBeInTheDocument()
+    fireEvent.click(inactive)
+    expect(inactive).toHaveAttribute('aria-pressed', 'false')
+    expect(await screen.findByText('aktif-bir.example.com')).toBeInTheDocument()
+  })
+
+  it('Dışa aktar menüsü: CSV öğesi tüm envanteri (silinmişler hariç) çekip CSV üretir', async () => {
+    const { exportInventoryCsv } = await import('../utils/exportInventory')
+    renderIm()
+    await screen.findByText('aktif-bir.example.com')
+    pressMenuTrigger(screen.getByRole('button', { name: /^Export$|Dışa Aktar/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /CSV/i }))
+    await waitFor(() => expect(exportInventoryCsv).toHaveBeenCalled())
+    expect(api.admin.getInventory).toHaveBeenCalledWith(false, 'mine')   // dışa aktarma ekrandaki kapsamı taşır (2026-09-26)
+  })
+
+  it('Devret: satır menüsünden açılan pencerede yeni takım seçilir ve TAM o kayıt aktarılır', async () => {
+    renderIm()
+    await openRowMenu('aktif-bir.example.com')
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^(Devret|Transfer)$/ }))
+    const dialog = await screen.findByRole('dialog', { name: /aktif-bir\.example\.com/ })
+    const picker = within(dialog).getByRole('combobox', { name: /Yeni Takım|New Team/ })
+    fireEvent.mouseDown(picker)
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'SY-B' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /^(Devret|Transfer)$/ }))
+    await waitFor(() => expect(api.admin.transferCertSy).toHaveBeenCalledWith(1, 9))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 })

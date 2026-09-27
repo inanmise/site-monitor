@@ -46,30 +46,30 @@ describe('PingMonitorPage', () => {
     expect(screen.getByText('Y Sistemleri')).toBeInTheDocument()
   })
 
-  it('2026-09-24 kart: ICMP rozeti başlığın altında belirgin; IP sürümü "IPv4/IPv6" (eskiden v4 → "V4"), IPv6 → ICMPv6; paket sayısı; detay başlığında aynı gösterim (büyük)', async () => {
+  it('kart (2026-09-27): protokol ÇİPLERİ başlığın altında (shadcn Badge) — ICMP, IPv6 → ICMPv6; IP ailesi yalnız seçiliyse; paket sayısı; detay başlığında büyük gösterim', async () => {
     api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [
       { ...monitor, packet_count: 4 },
       { ...monitor, id: 2, host: '10.0.0.2', ip_version: 'v4', packet_count: 1 },
       { ...monitor, id: 3, host: 'fe80::1', ip_version: 'v6' }] })
     const { container } = render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await screen.findByText('fe80::1')
-    const ep = (host) => [...container.querySelectorAll('.upt-card')]
-      .find((c) => c.querySelector('.upt-card-domain')?.textContent === host).querySelector('.port-ep')
-    const auto = ep('10.0.0.1')
-    expect(auto.querySelector('.port-ep-proto').textContent).toBe('ICMP')
-    expect(auto.querySelector('.port-ep-proto').className).toContain('port-ep-proto--icmp')
-    expect(auto.querySelector('.port-ep-fam')).toBeNull()                         // otomatik → sürüm yazılmaz
-    expect(auto.querySelector('.port-ep-svc').textContent).toMatch(/^4 paket$|^packets: 4$/)
-    expect(auto).toHaveAttribute('title', expect.stringMatching(/^10\.0\.0\.1 · ICMP echo (isteği|request) \(ping\) · (IP sürümü otomatik|IP version chosen automatically) · /))
-    expect(ep('10.0.0.2').querySelector('.port-ep-fam').textContent).toBe('IPv4')
-    const v6 = ep('fe80::1')
-    expect(v6.querySelector('.port-ep-proto').textContent).toBe('ICMPv6')
-    expect(v6.querySelector('.port-ep-fam').textContent).toBe('IPv6')
-    expect(v6.querySelector('.port-ep-svc')).toBeNull()                           // paket sayısı yoksa uydurulmaz
-    expect(container.querySelector('.upt-card .upt-port-tag')).toBeNull()        // eski sağ üst gri yazı yok
+    const card = (host) => [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+      .find((c) => c.querySelector('[data-monitor-open]')?.textContent === host)
+    const chip = (host, kind) => card(host).querySelector(`[data-slot="ping-protocol"] [data-chip="${kind}"]`)
+    expect(chip('10.0.0.1', 'proto').textContent).toBe('ICMP')
+    expect(chip('10.0.0.1', 'proto')).toHaveAttribute('data-slot', 'badge')
+    expect(chip('10.0.0.1', 'family')).toBeNull()                                  // otomatik → aile yazılmaz
+    expect(chip('10.0.0.1', 'packets').textContent).toMatch(/^4 (paket|packets)$/)
+    expect(chip('10.0.0.2', 'family').textContent).toBe('IPv4')
+    expect(chip('10.0.0.2', 'packets').textContent).toMatch(/^1 (paket|packet)$/)
+    expect(chip('fe80::1', 'proto').textContent).toBe('ICMPv6')
+    expect(chip('fe80::1', 'family').textContent).toBe('IPv6')
+    expect(chip('fe80::1', 'packets')).toBeNull()                                   // paket sayısı yoksa uydurulmaz
+    // Protokol kartta YALNIZ bir kez (çip satırında) geçer; kayıtlı v4/v6 "V4" diye sızmaz.
+    for (const host of ['10.0.0.1', '10.0.0.2']) expect(card(host).textContent.match(/ICMP/g)).toHaveLength(1)
     expect(container.textContent).not.toMatch(/\bV4\b|\bV6\b/)
     fireEvent.click(screen.getByText('10.0.0.2'))
-    const head = await waitFor(() => { const h = document.querySelector('.upt-modal-header .port-ep.port-ep--lg'); expect(h).not.toBeNull(); return h })
+    const head = await waitFor(() => { const h = screen.getByRole('dialog').querySelector('.port-ep.port-ep--lg'); expect(h).not.toBeNull(); return h })
     expect(head.querySelector('.port-ep-proto').textContent).toBe('ICMP')
     expect(head.querySelector('.port-ep-fam').textContent).toBe('IPv4')
   })
@@ -86,8 +86,8 @@ describe('PingMonitorPage', () => {
     await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByText('10.0.0.1'))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /check history|kontrol/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /response chart|süre/i })).toBeInTheDocument()
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (ad "(Kopya)", host kullanıcı tarafından değiştirilir)', async () => {
@@ -98,7 +98,7 @@ describe('PingMonitorPage', () => {
       interval_seconds: 900, timeout_ms: 7000, packet_count: 7,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
       slow_response_enabled: true, slow_baseline_window_minutes: 25, slow_threshold_percent: 35,
-      active: false, notification_group_id: 7,
+      active: false, notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
     }] })
     api.monitoring.createPingMonitor.mockResolvedValue({ success: true, data: {} })
 
@@ -109,8 +109,8 @@ describe('PingMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
 
     // Ad "(Kopya)" sonekli — ad input'unun placeholder'ı form.host'tur (host değişmeden ÖNCE okunur)
     expect(screen.getByPlaceholderText('10.0.0.1').value).toMatch(/\(Kopya\)$/)
@@ -135,6 +135,8 @@ describe('PingMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanır: kopya, kaynağın alarmını ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -148,11 +150,12 @@ describe('PingMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
 
     // Opt-in: kutucuk işaretlenmeden eşik alanları EKRANDA DURMAZ (kapalıyken ölü sayı gösterilmez).
-    const box = screen.getByLabelText(/slowness alarm|yavaşlık alarmı/i)
-    expect(box.checked).toBe(false)
+    const box = screen.getByRole('checkbox', { name: /slowness alarm|yavaşlık alarmı/i })
+    expect(box).not.toBeChecked()
     expect(screen.queryByLabelText(/baseline window|taban çizgisi penceresi/i)).toBeNull()
 
     fireEvent.click(box)
+    expect(box).toBeChecked()
     const win = screen.getByLabelText(/baseline window|taban çizgisi penceresi/i)
     const pct = screen.getByLabelText(/deviation threshold|sapma eşiği/i)
     expect(win.value).toBe('10')
@@ -182,24 +185,24 @@ describe('PingMonitorPage', () => {
     await screen.findByText('10.0.0.1')
 
     // Pano varsayılan KAPALI → aç/kapa çubuğuna tıkla
-    expect(container.querySelector('.stats-panel')).toBeNull()
-    fireEvent.click(container.querySelector('.stats-collapse-bar'))
-    expect(container.querySelector('.stats-panel')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).toBeNull()
+    fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
+    expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
 
     // Sayımlar (dil-bağımsız: renk sınıfına göre)
-    expect(container.querySelector('.stat-item-total .stat-value').textContent).toBe('3')
-    expect(container.querySelector('.stat-item-critical .stat-value').textContent).toBe('1')  // Erişilemiyor
-    expect(container.querySelector('.stat-item-high .stat-value').textContent).toBe('1')       // Aktif alarm
-    expect(container.querySelector('.stat-item-paused .stat-value').textContent).toBe('1')      // Duraklatılmış
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="total"] [data-slot="stat-value"]').textContent).toBe('3')
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="critical"] [data-slot="stat-value"]').textContent).toBe('1')  // Erişilemiyor
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="high"] [data-slot="stat-value"]').textContent).toBe('1')       // Aktif alarm
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="paused"] [data-slot="stat-value"]').textContent).toBe('1')      // Duraklatılmış
 
     // "Erişilemiyor" kartına tıkla → yalnız down host kalır
-    fireEvent.click(container.querySelector('.stat-item-critical'))
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="critical"]'))
     await waitFor(() => expect(screen.queryByText('10.0.0.1')).not.toBeInTheDocument())
     expect(screen.getByText('10.0.0.2')).toBeInTheDocument()
     expect(screen.queryByText('10.0.0.3')).not.toBeInTheDocument()
 
     // Tekrar tıkla → filtre temizlenir (hepsi geri gelir)
-    fireEvent.click(container.querySelector('.stat-item-critical'))
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="critical"]'))
     await screen.findByText('10.0.0.1')
     expect(screen.getByText('10.0.0.3')).toBeInTheDocument()
   })
@@ -211,7 +214,7 @@ describe('PingMonitorPage', () => {
     const { container, unmount } = render(<PingMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPingMonitors).toHaveBeenCalled())
     await screen.findByText('h1.example.com')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
@@ -250,5 +253,38 @@ describe('PingMonitorPage', () => {
     } finally {
       window.history.replaceState({}, '', '/')
     }
+  })
+
+  it('kart yoğunluğu (2026-09-27): araç çubuğunun İLK öğesi Kompakt/Zengin seçici; her açılış Zengin, seçim ızgaraya + kartlara iner, toplu seçim ve detay çalışır; Kompakt KALICI DEĞİL', async () => {
+    const storedModes = () => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((k) => k && k.startsWith('sm.cardMode'))
+    const first = render(<PingMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('10.0.0.1')
+    const grid = document.querySelector('.upt-grid')
+    const toolbar = document.querySelector('.upt-toolbar')
+    expect(toolbar.firstElementChild).toHaveAttribute('data-slot', 'card-density-toggle')
+    expect(toolbar.firstElementChild.className).toMatch(/(^|\s)mr-auto(\s|$)/)
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(grid).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('radio', { name: /^(Compact|Kompakt)$/ }))
+    expect(grid).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).toBeNull()
+    expect(storedModes()).toEqual([])   // seçim tarayıcıya yazılmaz
+    // Kompakt'ta da toplu seçim çalışır ve başlık (stretched button) detayı açar
+    fireEvent.click(screen.getByRole('checkbox', { name: /^(Select 10\.0\.0\.1 for bulk action|10\.0\.0\.1 — toplu işlem için seç)$/ }))
+    await waitFor(() => expect(document.querySelector('[data-slot="bulk-action-bar"]')).toHaveTextContent(/1 (selected|seçili)/))
+    fireEvent.click(grid.querySelector('[data-monitor-open]'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    first.unmount()
+
+    // sayfaya dönüş (yeni bağlama) yeniden Zengin açılır — Kompakt hatırlanmaz
+    render(<PingMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('10.0.0.1')
+    expect(document.querySelector('.upt-grid')).toHaveAttribute('data-density', 'rich')
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(document.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
   })
 })

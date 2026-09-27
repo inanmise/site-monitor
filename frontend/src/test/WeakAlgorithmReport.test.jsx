@@ -126,14 +126,14 @@ describe('WeakAlgorithmReport — zengin rapor (2026-09-12)', () => {
     // İstisna çipi
     expect(screen.getByText(/İstisna · 2026-12-31|Exception · 2026-12-31/)).toBeInTheDocument()
     // KPI kartı = kayıtlı istisna sayısı (bölümle aynı) + zayıf bulguya bağlı olan alt satırda (QA ISSUE-008)
-    const kpi = [...document.querySelectorAll('.wa-kpi')].find((k) => /İstisna|Exceptions/i.test(k.querySelector('.wa-kpi-label')?.textContent || ''))
-    expect(kpi.querySelector('.wa-kpi-value').textContent).toBe('1')
-    expect(kpi.querySelector('.wa-kpi-sub').textContent).toMatch(/1 tanesi etkin zayıf bulguya bağlı|1 attached to an active weak finding/)
+    const kpi = [...document.querySelectorAll('[data-kpi]')].find((k) => /İstisna|Exceptions/i.test(k.querySelector('[data-kpi-label]')?.textContent || ''))
+    expect(kpi.querySelector('[data-kpi-value]').textContent).toBe('1')
+    expect(kpi.querySelector('[data-kpi-sub]').textContent).toMatch(/1 tanesi etkin zayıf bulguya bağlı|1 attached to an active weak finding/)
     // Trend
     fireEvent.click(screen.getByRole('button', { name: /Son 30 gün|Last 30 days/ }))
     expect(screen.getByText(/Tespit edilen \(1\)|Detected \(1\)/)).toBeInTheDocument()
     expect(screen.getByText(/gone\.example\.com/)).toBeInTheDocument()
-    expect(document.querySelectorAll('.wa-trend-bar').length).toBe(30)
+    expect(document.querySelectorAll('[data-trend-bar]').length).toBe(30)
   })
 
   it('eylemler: "Şimdi kontrol et" sağlık tazeleme ucunu çağırır; "Takıma bildir" onay sonrası notify ucunu çağırır ve sonucu bildirir', async () => {
@@ -156,15 +156,21 @@ describe('WeakAlgorithmReport — zengin rapor (2026-09-12)', () => {
     render(<WeakAlgorithmReport />)
     await screen.findByText('sha1.example.com')
     const row = screen.getByText('sha1.example.com').closest('tr')
-    fireEvent.click(within(row).getByRole('button', { name: /^(İstisna|Exception)$/ }))
+    // Satır eylemlerinin adı alanı içerir (a11y.rowAction: "İstisna — sha1.example.com")
+    fireEvent.click(within(row).getByRole('button', { name: /^(İstisna|Exception) — sha1\.example\.com$/ }))
     const dlg = await screen.findByRole('dialog')
     const save = within(dlg).getByRole('button', { name: /İstisnayı kaydet|Save exception/ })
     expect(save).toBeDisabled()   // tarih zorunlu
-    fireEvent.change(dlg.querySelector('input[type="date"]'), { target: { value: '2026-12-31' } })
-    fireEvent.change(dlg.querySelector('textarea'), { target: { value: 'planlı yenileme' } })
+    // Bitiş günü: shadcn Date Picker (Popover + Calendar). Kayan tarih — bu ayın 15'i (sabit fixture zaman bombası olurdu).
+    const day = new Date(); day.setDate(15)
+    const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-15`
+    fireEvent.click(within(dlg).getByRole('button', { name: /Geçerlilik|Valid until/ }))
+    const monthName = day.toLocaleString('en-GB', { month: 'long' })
+    fireEvent.click(within(screen.getByRole('grid')).getByRole('button', { name: new RegExp(`\\b15 ${monthName} ${day.getFullYear()}`) }))
+    fireEvent.change(within(dlg).getByRole('textbox'), { target: { value: 'planlı yenileme' } })
     expect(save).toBeEnabled()
     fireEvent.click(save)
-    await waitFor(() => expect(api.admin.setWeakAlgorithmException).toHaveBeenCalledWith('sha1.example.com', { reason: 'planlı yenileme', until: '2026-12-31' }))
+    await waitFor(() => expect(api.admin.setWeakAlgorithmException).toHaveBeenCalledWith('sha1.example.com', { reason: 'planlı yenileme', until: iso }))
 
     const accepted = screen.getByText('accepted.example.com').closest('tr')
     fireEvent.click(within(accepted).getByRole('button', { name: /İstisnayı kaldır|Remove exception/ }))
@@ -189,7 +195,7 @@ describe('WeakAlgorithmReport — zengin rapor (2026-09-12)', () => {
     const row = screen.getByText('sha1.example.com').closest('tr')
     expect(within(row).getByRole('button', { name: /Şimdi kontrol et|Check now/ })).toBeInTheDocument()
     expect(within(row).queryByRole('button', { name: /Takıma bildir|Notify team/ })).toBeNull()
-    expect(within(row).queryByRole('button', { name: /^(İstisna|Exception)$/ })).toBeNull()
+    expect(within(row).queryByRole('button', { name: /^(İstisna|Exception) — / })).toBeNull()
   })
 
   it('yükleme hatası: hata + "Yeniden dene" çizilir', async () => {

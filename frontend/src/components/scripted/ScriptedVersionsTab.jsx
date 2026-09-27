@@ -5,6 +5,10 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import CodeEditor from '../ui/CodeEditor.jsx'
 import VersionTimeline from './VersionTimeline.jsx'
 import { lineDiff, collapseContext, envNameDiff } from '../../utils/lineDiff.js'
+import SegmentedControl from '../ui/SegmentedControl.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { VersionChip } from './VersionTimeline.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -81,16 +85,15 @@ export default function ScriptedVersionsTab({ t, monitor, canEdit, onLoadIntoEdi
         <div className="sc-ver-preview">
           <div className="sc-ver-preview-head">
             <span className="sc-ver-preview-id">
-              <span className="sc-ver-chip sc-ver-chip--cell">v{sel.version}</span>
+              <VersionChip>v{sel.version}</VersionChip>
               {prev && <span className="sc-ver-vs">v{prev.version} → v{sel.version}</span>}
             </span>
             <span className="sc-ver-preview-tools">
-              <span className="seg-ctl">
-                <button type="button" className={`seg-ctl-btn${view === 'diff' ? ' active' : ''}`}
-                  onClick={() => setView('diff')} disabled={!prev}>{t('scripted.verTabDiff')}</button>
-                <button type="button" className={`seg-ctl-btn${view === 'script' ? ' active' : ''}`}
-                  onClick={() => setView('script')}>{t('scripted.verTabScript')}</button>
-              </span>
+              <SegmentedControl ariaLabel={t('scripted.verViewLabel')} value={view} onChange={setView}
+                options={[
+                  { value: 'diff', label: t('scripted.verTabDiff'), disabled: !prev },
+                  { value: 'script', label: t('scripted.verTabScript') },
+                ]} />
               {canEdit && detail && (
                 <Button size="sm" onClick={() => onLoadIntoEditor(sel, detail)}>
                   {t('scripted.versionLoad')}
@@ -124,9 +127,14 @@ function VersionRuns({ t, version }) {
   if (!runs) return null
   const fails = Number(version.fail_count || 0)
   return (
-    <span className={`sc-ver-runs${fails > 0 ? ' sc-ver-runs--bad' : ''}`} title={t('scripted.verRunsHint')}>
-      {fails > 0 ? t('scripted.verRunsBad', runs, fails) : t('scripted.verRunsOk', runs)}
-    </span>
+    <SimpleTooltip content={t('scripted.verRunsHint')}>
+      <Badge variant="secondary" data-slot="version-runs" data-bad={fails > 0 ? 'true' : undefined}
+        className={fails > 0
+          ? 'bg-destructive/10 text-destructive dark:bg-destructive/20'
+          : 'bg-success/15 text-success dark:bg-success/20'}>
+        {fails > 0 ? t('scripted.verRunsBad', runs, fails) : t('scripted.verRunsOk', runs)}
+      </Badge>
+    </SimpleTooltip>
   )
 }
 

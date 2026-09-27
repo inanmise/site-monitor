@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Info } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import { Button } from '@/components/shadcn/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { parseHttpDiag, phaseStates, routeOf, hitTimeout, STRIP_PHASES } from '../../utils/httpDiag.js'
 
 /**
@@ -36,7 +39,7 @@ export default function HttpErrorDetail({ check, t, className = '' }) {
 
       {!d ? (
         <>
-          <div className="hdiag-legacy"><Info size={13} /> {t('httpdiag.legacy')}</div>
+          <AlertBanner tone="info" icon={Info}>{t('httpdiag.legacy')}</AlertBanner>
           {check.error && <pre className="hdiag-raw">{check.error}</pre>}
           {!check.error && check.http_status != null && <div className="hdiag-kind">{t('httpdiag.kind.STATUS_MISMATCH')} · HTTP {check.http_status}</div>}
         </>
@@ -95,17 +98,19 @@ export default function HttpErrorDetail({ check, t, className = '' }) {
           </dl>
 
           {(d.exception || check.error) && (
-            <div className="hdiag-rawbox">
-              <button type="button" className="hdiag-rawtoggle" aria-expanded={raw} onClick={() => setRaw((v) => !v)}>
-                {raw ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {t('httpdiag.rawToggle')}
-              </button>
-              {raw && (
+            <Collapsible open={raw} onOpenChange={setRaw} className="hdiag-rawbox">
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" size="xs" className="-ml-2 text-muted-foreground">
+                  {raw ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronRight size={13} aria-hidden="true" />} {t('httpdiag.rawToggle')}
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
                 <pre className="hdiag-raw">
                   {check.error ? check.error + '\n' : ''}
                   {Array.isArray(d.cause_chain) && d.cause_chain.length ? d.cause_chain.join('\n  ↳ ') : (d.exception || '')}
                 </pre>
-              )}
-            </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </>
       )}

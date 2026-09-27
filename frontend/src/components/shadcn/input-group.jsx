@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils"
 
@@ -97,15 +98,17 @@ const inputGroupButtonVariants = cva(
   }
 )
 
-function InputGroupButton({
+// React 18: Tooltip tetiği (asChild) olarak ref'e muhtaç — forwardRef şart (2026-09-26, B2 bulgusu)
+const InputGroupButton = React.forwardRef(function InputGroupButton({
   className,
   type = "button",
   variant = "ghost",
   size = "xs",
   ...props
-}) {
+}, ref) {
   return (
     <Button
+      ref={ref}
       type={type}
       data-size={size}
       variant={variant}
@@ -113,7 +116,7 @@ function InputGroupButton({
       {...props}
     />
   )
-}
+})
 
 function InputGroupText({
   className,

@@ -46,7 +46,8 @@ const ITEMS = [
 ]
 
 const SKIPPED = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly']
-const saveBtn = (c) => c.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')
+// Kaydet: shadcn Button (varsayılan varyant), adı "Save"/"Kaydet" — HelpTip düğmeleri alan adını taşır, çakışmaz.
+const saveBtn = () => screen.queryByRole('button', { name: /^(save|kaydet)$/i })
 
 describe('GeneralSettings', () => {
   beforeEach(() => {
@@ -55,7 +56,7 @@ describe('GeneralSettings', () => {
     api.admin.saveGeneralSettings.mockResolvedValue({ success: true, data: ITEMS })
   })
 
-  const ready = async (c) => { await waitFor(() => expect(saveBtn(c)).not.toBeNull()); return c }
+  const ready = async (c) => { await waitFor(() => expect(saveBtn()).not.toBeNull()); return c }
 
   it('katalog yuklenir ve gorunur gruplar cizilir', async () => {
     const { container } = render(<GeneralSettings />)
@@ -80,7 +81,7 @@ describe('GeneralSettings', () => {
     const { container } = render(<GeneralSettings />)
     await ready(container)
 
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(saveBtn())
     await waitFor(() => expect(api.admin.saveGeneralSettings).not.toHaveBeenCalled())
   })
 
@@ -90,7 +91,7 @@ describe('GeneralSettings', () => {
 
     const numeric = container.querySelector('input[type="number"]')
     fireEvent.change(numeric, { target: { value: '9000' } })
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(saveBtn())
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     const body = api.admin.saveGeneralSettings.mock.calls[0][0]
@@ -103,7 +104,7 @@ describe('GeneralSettings', () => {
     await ready(container)
 
     fireEvent.change(container.querySelector('input[type="number"]'), { target: { value: '' } })
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(saveBtn())
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     // Bos dize "degisiklik yok" sayilirsa kullanici override'i asla kaldiramaz.
@@ -114,18 +115,21 @@ describe('GeneralSettings', () => {
     const { container } = render(<GeneralSettings />)
     await ready(container)
 
-    expect(container.querySelector('input[type="checkbox"]')).not.toBeNull()
-    expect(container.querySelector('select')).not.toBeNull()
-    expect(container.querySelector('textarea')).not.toBeNull()
-    expect(container.querySelector('input[type="number"]')).not.toBeNull()
+    // shadcn: BOOL → Switch, ENUM → NativeSelect, TEXT → Textarea, INT → Input
+    expect(screen.getByRole('switch')).toHaveAttribute('data-slot', 'switch')
+    expect(container.querySelector('select[data-slot="native-select"]')).not.toBeNull()
+    expect(container.querySelector('textarea[data-slot="textarea"]')).not.toBeNull()
+    expect(container.querySelector('input[type="number"][data-slot="input"]')).not.toBeNull()
+    // Etiket ↔ kontrol bağı (ui/Field): switch'in erişilebilir adı alanın etiketinden gelir
+    expect(screen.getByRole('switch').getAttribute('aria-describedby')).toBeTruthy()
   })
 
   it('BOOL girdisi dizeye cevrilerek gonderilir ("true"/"false")', async () => {
     const { container } = render(<GeneralSettings />)
     await ready(container)
 
-    fireEvent.click(container.querySelector('input[type="checkbox"]'))
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(saveBtn())
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     expect(api.admin.saveGeneralSettings.mock.calls[0][0].values['site.monitor.http.follow']).toBe('false')
@@ -139,13 +143,13 @@ describe('GeneralSettings', () => {
     const { container } = render(<GeneralSettings />)
     await ready(container)
 
-    expect(container.querySelector('.settings-warn')).not.toBeNull()
+    expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).not.toBeNull()
   })
 
   it('base-url gercek adres ise uyari CIKMAZ', async () => {
     const { container } = render(<GeneralSettings />)
     await ready(container)
-    expect(container.querySelector('.settings-warn')).toBeNull()
+    expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).toBeNull()
   })
 
   it('kaydetmeden sonra katalog sunucudan gelen surumle degistirilir', async () => {
@@ -156,7 +160,7 @@ describe('GeneralSettings', () => {
     await ready(container)
 
     fireEvent.change(container.querySelector('input[type="number"]'), { target: { value: '9000' } })
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(saveBtn())
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     await waitFor(() => expect(container.querySelector('input[type="number"]').value).toBe('9000'))
@@ -168,7 +172,7 @@ describe('GeneralSettings', () => {
     await ready(container)
 
     fireEvent.change(container.querySelector('input[type="number"]'), { target: { value: '9000' } })
-    fireEvent.click(saveBtn(container))
+    fireEvent.click(saveBtn())
 
     await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
     expect(await screen.findByText(/kaydedilemedi/)).toBeInTheDocument()
@@ -191,12 +195,12 @@ describe('GeneralSettings — read_only kalemler', () => {
     ]
     api.admin.getGeneralSettings.mockResolvedValue({ success: true, data: items })
     const { container } = render(<GeneralSettings />)
-    await waitFor(() => expect(container.querySelector('.ldap-actions [data-slot="button"][data-variant="default"]')).not.toBeNull())
+    await waitFor(() => expect(saveBtn()).not.toBeNull())
 
-    const field = (key) => [...container.querySelectorAll('.threshold-field')].find(f => f.textContent.includes(key))
+    const field = (key) => container.querySelector(`[data-setting-key="${key}"]`)
     expect(field('site.monitor.cors.allowed-origins').querySelector('input').disabled).toBe(true)
     expect(field('site.monitor.cors.allowed-origins').textContent).toMatch(/global (administrator|yönetici)/i)
-    expect(field('site.monitor.trust.auto-pin.enabled').querySelector('input[type=checkbox]').disabled).toBe(true)
+    expect(field('site.monitor.trust.auto-pin.enabled').querySelector('[role=switch]')).toBeDisabled()
     expect(field('site.monitor.scheduler.stale-minutes').querySelector('input').disabled).toBe(false)
     expect(field('site.monitor.scheduler.stale-minutes').textContent).not.toMatch(/global (administrator|yönetici)/i)
   })

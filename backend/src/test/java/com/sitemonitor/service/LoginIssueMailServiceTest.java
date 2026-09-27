@@ -115,6 +115,42 @@ class LoginIssueMailServiceTest {
         assertThat(m.getCc()).isNull();
     }
 
+    @Test
+    @DisplayName("dispatchAdminReply: bildirene gider, ADMIN_REPLY log satırı (konu + gövde + durum); MailKit belgesi EmailNotificationService'ten")
+    void dispatchAdminReply_logsAdminReply() {
+        when(emailService.sendIssueReply(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString(), anyBoolean()))
+                .thenReturn(new EmailNotificationService.LoginIssueMailResult("SENT", "noreply@cm", "Konu Y", "<html>y</html>"));
+
+        service.dispatchAdminReply(42L, "LIR-2026-000042", "reporter@x.com", "N1", "OPEN", "yanıt", "2026-09-26T08:00:00", "özet");
+
+        verify(emailService).sendIssueReply(eq("reporter@x.com"), eq(42L), eq("LIR-2026-000042"), eq("N1"), eq("OPEN"),
+                eq("yanıt"), eq("2026-09-26T08:00:00"), eq("özet"), eq(true));
+        LoginIssueMailLog m = capturedLog();
+        assertThat(m.getReportId()).isEqualTo(42L);
+        assertThat(m.getMailType()).isEqualTo(LoginIssueMailService.ADMIN_REPLY);
+        assertThat(m.getRecipientTo()).isEqualTo("reporter@x.com");
+        assertThat(m.getStatus()).isEqualTo("SENT");
+        assertThat(m.getSubject()).isEqualTo("Konu Y");
+        assertThat(m.getBodyHtml()).isEqualTo("<html>y</html>");
+    }
+
+    @Test
+    @DisplayName("dispatchStatusChange: STATUS_CHANGE log satırı; gönderim fırlatırsa FAILED loglanır, dışarı fırlatmaz")
+    void dispatchStatusChange_logsStatusChange() {
+        when(emailService.sendIssueStatusChange(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString(), anyString(), anyString(),
+                any(), anyString(), anyString(), anyBoolean()))
+                .thenThrow(new RuntimeException("smtp down"));
+
+        service.dispatchStatusChange(42L, "LIR-2026-000042", "reporter@x.com", "N1", "IN_PROGRESS", null, "2026-09-26T08:00:00", "özet");
+
+        LoginIssueMailLog m = capturedLog();
+        assertThat(m.getMailType()).isEqualTo(LoginIssueMailService.STATUS_CHANGE);
+        assertThat(m.getRecipientTo()).isEqualTo("reporter@x.com");
+        assertThat(m.getStatus()).startsWith("FAILED");
+        assertThat(m.getErrorMessage()).contains("smtp down");
+    }
+
     private LoginIssueMailLog capturedLog() {
         ArgumentCaptor<LoginIssueMailLog> cap = ArgumentCaptor.forClass(LoginIssueMailLog.class);
         verify(mailLogRepo).save(cap.capture());

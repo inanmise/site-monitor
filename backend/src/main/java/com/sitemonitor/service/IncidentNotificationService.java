@@ -131,7 +131,7 @@ public class IncidentNotificationService {
         String status = emailService.sendHtml(recipients.toArray(new String[0]), null, subject, html,
                 inline.isEmpty() ? null : inline);
         log.info("Incident notification ({}) team={} to={} status={} images={}",
-                kind, team.getId(), recipients, status, inline.size());
+                kind, team.getId(), SecretMask.maskEmails(recipients), status, inline.size());
     }
 
     /** Önizleme için olay bildirim HTML'i — KAYDETMEZ/GÖNDERMEZ. Görseller /api/incidents/images/{id} URL'siyle
@@ -172,10 +172,15 @@ public class IncidentNotificationService {
             Matcher m = INC_IMG_ID.matcher(v.toString());
             while (m.find()) ids.add(Long.parseLong(m.group(1)));
         }
+        // YALNIZ bu olayın görselleri eklenir (prod kapısı 2026-09-25, Y-1): markdown'a başka olayın görsel id'si
+        // yazılırsa o görsel bu olayın bildirim mailiyle dışarı gidiyordu.
+        Long incidentId = dto.get("id") instanceof Number n ? n.longValue() : null;
         List<EmailNotificationService.InlineImage> out = new ArrayList<>();
         for (Long id : ids) {
-            imageRepo.findById(id).ifPresent(img -> out.add(new EmailNotificationService.InlineImage(
-                    "incimg" + id, img.getData(), img.getContentType())));
+            imageRepo.findById(id)
+                    .filter(img -> incidentId != null && incidentId.equals(img.getIncidentId()))
+                    .ifPresent(img -> out.add(new EmailNotificationService.InlineImage(
+                            "incimg" + id, img.getData(), img.getContentType())));
         }
         return out;
     }

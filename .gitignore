@@ -6,6 +6,8 @@ backend/target/
 
 # ── Node / Frontend ───────────────────────────────────
 frontend/node_modules/
+# Kökten koşulan vitest önbelleği (node_modules/.vite) — asla commit edilmez
+/node_modules/
 frontend/dist/
 frontend/coverage/
 

@@ -180,7 +180,7 @@ class DeploymentNotifyServiceTest {
     // ── Gerçek HTML üreticisi: içerik sürüm + ortam taşır, Outlook-güvenli ────────────────────
 
     @Test
-    @DisplayName("buildDeploymentNoticeHtml: ortam, sürüm aralığı, tür, commit, öne çıkanlar; style bloğu yalnız MSO; rgba yok")
+    @DisplayName("buildDeploymentNoticeHtml: ortam, sürüm aralığı, tür, commit, öne çıkanlar; tek duyarlı style bloğu; rgba/sol şerit yok")
     void html_containsVersionAndEnvironment() {
         SmtpSettingsService settingsService = org.mockito.Mockito.mock(SmtpSettingsService.class);
         SmtpMailService smtpMailService = org.mockito.Mockito.mock(SmtpMailService.class);
@@ -199,9 +199,12 @@ class DeploymentNotifyServiceTest {
                 .contains("fix(cache): &lt;önbellek&gt;")
                 .contains("Kırıcı değişiklik")
                 .contains("cid:brand-logo")
-                .doesNotContain("rgba(");
-        // <style> yalnız MSO koşullu bloğunda (Outlook/Gmail kırpar — inline-only kural)
-        assertThat(html.replaceAll("<!--\\[if mso\\]>.*?<!\\[endif\\]-->", "")).doesNotContain("<style");
+                .doesNotContain("rgba(")
+                .doesNotContain("border-left");                 // kırıcı değişiklik uyarısı sol şeritli DEĞİL
+        // MSO dışında TEK <style>: duyarlı (mobil) blok — e-posta yeniden tasarımı 2026-09-26 (BRAND.md §5.1)
+        String outsideMso = html.replaceAll("(?s)<!--\\[if mso\\]>.*?<!\\[endif\\]-->", "");
+        assertThat(outsideMso.split("<style>", -1).length - 1).isEqualTo(1);
+        assertThat(outsideMso).contains("@media only screen and (max-width:620px)");
 
         String up = real.buildDeploymentNoticeHtml(new EmailNotificationService.DeploymentNotice(
                 "UPGRADE", "staging", "1.0.0", "1.1.0", null, null, List.of(), false));

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, within } from './test-utils.jsx'
 import SystemHealth from '../components/admin/SystemHealth.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -75,7 +75,8 @@ describe('SystemHealth load errors', () => {
     await waitFor(() => {
       expect(screen.getByText(/Failed to load/i)).toBeDefined()
     })
-    // HTTP section name should appear in the failed list
-    expect(screen.getByText(/HTTP/i)).toBeDefined()
+    // HTTP section name should appear in the failed list (2026-09-27: the HTTP section toggle is always rendered
+    // now, so the query is scoped to the alert — the contract itself is unchanged)
+    expect(within(screen.getByRole('alert')).getByText(/HTTP/i)).toBeDefined()
   })
 })

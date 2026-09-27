@@ -189,7 +189,7 @@ public class WeeklyAvailabilityReportService {
             record(team.getId(), w.year(), w.week(), status != null && status.startsWith("FAILED") ? "FAILED" : "SENT");
             sent++;
             log.info("Haftalık erişilebilirlik: team={} week={} domains={} to={} cc={} status={}",
-                    team.getName(), w.weekLabel(), domains.size(), Arrays.toString(report.to()), Arrays.toString(cc), status);
+                    team.getName(), w.weekLabel(), domains.size(), SecretMask.maskEmails(report.to()), SecretMask.maskEmails(cc), status);
         }
 
         SendResult result = new SendResult(teams.size(), sent, skipNoDomains, skipNoRecipient, skipDone, skipDisabled);
@@ -622,7 +622,7 @@ public class WeeklyAvailabilityReportService {
                 outageAttachment(team, w, report));
         saveNotificationLog(team, to, null, subject, report.html(), status, "WEEKLY_AVAILABILITY_TEST");
         log.info("Haftalık erişilebilirlik TEST maili: team={} week={} to={} status={}",
-                team.getName(), w.weekLabel(), email, status);
+                team.getName(), w.weekLabel(), SecretMask.maskEmails(email), status);
         return status;
     }
 
@@ -751,8 +751,7 @@ public class WeeklyAvailabilityReportService {
         long up = nonMaint.stream().filter(WeeklyAvailabilityReportService::isUp).count();
         // 2 ondalık hassasiyet; hiç down örnek varsa (up<total) asla 100.00 gösterme — yuvarlama
         // tek bir kesinti örneğini (örn. 2015/2016 = %99.95) yanıltıcı şekilde %100'e çekmesin.
-        double pct = Math.round(up * 10000.0 / total) / 100.0;
-        if (pct >= 100.0 && up < total) pct = 99.99;
+        double pct = com.sitemonitor.util.AvailabilityMath.pct(total, up, 2);   // tek kural (O-5)
 
         // Yanıt süreleri (yalnız up + responseMs dolu) — bakım hariç
         List<Long> resp = nonMaint.stream()

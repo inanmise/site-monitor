@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import { Clock, ChevronDown } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Popover, PopoverTrigger } from '@/components/shadcn/popover'
+import { DatePopoverContent, DateTimePopover } from './DatePickerParts.jsx'
 
 /** Hızlı aralıklar — dk cinsinden (Grafana benzeri). */
 export const QUICK_RANGES = [
@@ -18,53 +20,24 @@ export const QUICK_RANGES = [
   { key: '7d',  minutes: 10080 },
 ]
 
-const POP_WIDTH = 480
 const pad = (n) => String(n).padStart(2, '0')
+/** Date → yerel "yyyy-MM-ddTHH:mm" (eski datetime-local değer biçimi; sunucuya gitmeden resolveRange UTC'ye çevirir). */
 const toLocalInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+/** Yerel "yyyy-MM-ddTHH:mm" → Date (saat dilimi ekisiz ISO yerel saat olarak ayrıştırılır). */
+const fromLocalInput = (v) => { const d = v ? new Date(v) : null; return d && !isNaN(d.getTime()) ? d : null }
 
 /**
- * Grafana benzeri zaman-aralığı seçici. Buton (saat ikonu + etiket) → 2 sütunlu popover:
- * SOL = mutlak (From/To + Uygula), SAĞ = hızlı aralıklar (arama + liste).
- * Popover PORTAL ile body'ye render edilir + fixed konumlandırılır → hiçbir overflow'lu ataya takılıp KIRPILMAZ.
- * value = { type:'rel', minutes, key } | { type:'abs', from, to }; onChange(descriptor).
+ * Grafana benzeri zaman-aralığı seçici. Tetik (saat ikonu + etiket) → shadcn Popover, iki sütun:
+ * SOL = mutlak (Başlangıç/Bitiş — her biri Calendar + saat — ve Uygula), SAĞ = hızlı aralıklar (arama + liste).
+ * Popover body'ye portal'lanır → overflow'lu ataya takılıp kırpılmaz; telefonda sütunlar alt alta.
+ * value = { type:'rel', minutes, key } | { type:'abs', from, to } (from/to yerel "yyyy-MM-ddTHH:mm"); onChange(descriptor).
  */
 export default function TimeRangePicker({ value, onChange }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [pos, setPos] = useState({ top: 0, left: 0 })
-  const triggerRef = useRef(null)
-  const popRef = useRef(null)
-  const now = new Date()
-  const [from, setFrom] = useState(() => toLocalInput(new Date(now.getTime() - 3600_000)))
-  const [to, setTo] = useState(() => toLocalInput(now))
-
-  const place = () => {
-    const r = triggerRef.current?.getBoundingClientRect()
-    if (!r) return
-    let left = r.left
-    if (left + POP_WIDTH > window.innerWidth - 12) left = Math.max(12, window.innerWidth - POP_WIDTH - 12)
-    setPos({ top: r.bottom + 6, left })
-  }
-
-  useLayoutEffect(() => { if (open) place() }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e) => {
-      if (triggerRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return
-      setOpen(false)
-    }
-    const reposition = () => place()
-    document.addEventListener('mousedown', onDoc)
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)   // capture: iç scroll'larda da yeniden konumla
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
-    }
-  }, [open])
+  const [from, setFrom] = useState(() => toLocalInput(new Date(Date.now() - 3600_000)))
+  const [to, setTo] = useState(() => toLocalInput(new Date()))
 
   const label = value?.type === 'abs'
     ? `${value.from?.replace('T', ' ')} → ${value.to?.replace('T', ' ')}`
@@ -77,38 +50,45 @@ export default function TimeRangePicker({ value, onChange }) {
     t('range.' + r.key).toLowerCase().includes(search.trim().toLowerCase()))
 
   return (
-    <div className="trp-wrap">
-      <button ref={triggerRef} type="button" className="trp-trigger" onClick={() => setOpen(o => !o)}>
-        <Clock size={15} /><span className="trp-label">{label}</span><ChevronDown size={14} />
-      </button>
-      {open && createPortal(
-        <div ref={popRef} className="trp-pop" style={{ top: pos.top, left: pos.left, width: POP_WIDTH }}>
-          <div className="trp-col trp-col-abs">
-            <div className="trp-col-title">{t('range.absolute')}</div>
-            <label className="trp-field"><span>{t('range.from')}</span>
-              <input type="datetime-local" value={from} onChange={e => setFrom(e.target.value)} /></label>
-            <label className="trp-field"><span>{t('range.to')}</span>
-              <input type="datetime-local" value={to} onChange={e => setTo(e.target.value)} /></label>
-            <Button type="button" size="sm" className="trp-apply" onClick={applyAbs}>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="outline" data-slot="time-range-trigger"
+          className="group/trp h-9 max-w-full min-w-0 gap-2 px-3 font-normal has-[>svg]:px-3">
+          <Clock aria-hidden="true" />
+          <span className="min-w-0 truncate font-semibold">{label}</span>
+          <ChevronDown aria-hidden="true"
+            className="text-muted-foreground transition-transform duration-200 group-data-[state=open]/trp:rotate-180 motion-reduce:transition-none" />
+        </Button>
+      </PopoverTrigger>
+      <DatePopoverContent className="w-[calc(100vw-1rem)] sm:w-[480px]">
+        <div className="flex flex-col sm:flex-row">
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5 border-b p-3.5 sm:border-r sm:border-b-0">
+            <div className="text-sm font-bold">{t('range.absolute')}</div>
+            {/* Alan etiketi tetiğin İÇİNDE (erişilebilir ad "Başlangıç 26.09.2026 10:00" olur). */}
+            <DateTimePopover label={t('range.from')} value={fromLocalInput(from)} onChange={(d) => setFrom(toLocalInput(d))} />
+            <DateTimePopover label={t('range.to')} value={fromLocalInput(to)} onChange={(d) => setTo(toLocalInput(d))} />
+            <Button type="button" size="sm" className="mt-0.5 w-full" onClick={applyAbs}>
               {t('range.apply')}
             </Button>
           </div>
-          <div className="trp-col trp-col-quick">
-            <input className="trp-search" placeholder={t('range.search')} value={search}
+          <div className="flex min-w-0 flex-1 flex-col gap-2 p-3.5">
+            <Input placeholder={t('range.search')} aria-label={t('range.search')} value={search}
               onChange={e => setSearch(e.target.value)} />
-            <div className="trp-quick-list">
-              {filtered.map(r => (
-                <button key={r.key} type="button"
-                  className={`trp-quick${value?.type === 'rel' && value.key === r.key ? ' trp-quick-active' : ''}`}
-                  onClick={() => pickQuick(r)}>{t('range.' + r.key)}</button>
-              ))}
-              {filtered.length === 0 && <div className="trp-empty">—</div>}
+            <div className="flex max-h-[270px] flex-col gap-0.5 overflow-y-auto">
+              {filtered.map(r => {
+                const active = value?.type === 'rel' && value.key === r.key
+                return (
+                  <Button key={r.key} type="button" size="sm" variant={active ? 'default' : 'ghost'}
+                    aria-pressed={active} className="justify-start font-normal data-[variant=default]:font-semibold"
+                    onClick={() => pickQuick(r)}>{t('range.' + r.key)}</Button>
+                )
+              })}
+              {filtered.length === 0 && <div className="px-2.5 py-2 text-sm text-muted-foreground">—</div>}
             </div>
           </div>
-        </div>,
-        document.body
-      )}
-    </div>
+        </div>
+      </DatePopoverContent>
+    </Popover>
   )
 }
 

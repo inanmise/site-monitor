@@ -142,16 +142,28 @@ public class AuditController {
         // Dışa aktarma listeyle AYNI kapsamı taşır: ekip kullanıcısı yalnız ekip arkadaşlarının satırlarını indirir.
         TeamActorScope scope = auditReadScope(session);
 
-        int cap = 50_000;
-        List<AuditLog> rows = auditLogRepo.findAdvanced(
-                like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
-                nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
-                nil(since), nil(until), anomalyOnly, like(q),
-                scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
-                PageRequest.of(0, cap)).getContent();
-
+        // Bellek tavanı (prod kapısı 2026-09-25, Y-2): dışa aktarma bu sürümde her kullanıcıya açıldı; tek pod'da
+        // birkaç paralel 50k satırlık dışa aktarma heap'i doldurabiliyordu (ExitOnOutOfMemoryError = kesinti).
+        // Ekip kapsamı 5.000 satır; aynı anda en çok EXPORT_SLOTS dışa aktarma.
+        int cap = scope.all() ? 50_000 : 5_000;
+        if (!EXPORT_SLOTS.tryAcquire()) {
+            return ResponseEntity.status(429).header("Retry-After", "10")
+                    .body("Başka bir dışa aktarma sürüyor — birkaç saniye sonra yeniden deneyin.");
+        }
+        List<AuditLog> rows;
+        String body;
         boolean json = "json".equalsIgnoreCase(format);
-        String body = json ? toJson(rows) : toCsv(rows);
+        try {
+            rows = auditLogRepo.findAdvanced(
+                    like(actor), actorId, !csv(eventType).isEmpty(), typesOrDummy(eventType),
+                    nil(resourceType), nil(resourceId), nil(outcome), nil(ip),
+                    nil(since), nil(until), anomalyOnly, like(q),
+                    scope.all(), scope.teamIds(), scope.actorIds(), scope.actorNames(),
+                    PageRequest.of(0, cap)).getContent();
+            body = json ? toJson(rows) : toCsv(rows);
+        } finally {
+            EXPORT_SLOTS.release();
+        }
         // Denetimin denetimi: kim, hangi filtreyle, kaç kayıt dışa aktardı.
         auditService.recordAction("AUDIT_EXPORT", session, request, "AUDIT_LOG", "export",
                 "{\"format\":\"" + (json ? "json" : "csv") + "\",\"rows\":" + rows.size() + "}");
@@ -390,8 +402,11 @@ public class AuditController {
             permissionService.require(session, "audit_log.read", "view");
             return TeamActorScope.unrestricted();
         }
-        return TeamActorScope.ofTeams(SessionScope.viewTeamIds(session), appUserRepo);
+        return TeamActorScope.ofTeams(SessionScope.viewTeamIds(session), appUserRepo, true);
     }
+
+    /** Eşzamanlı denetim dışa aktarma üst sınırı (Y-2) — her biri satırları belleğe toplar. */
+    static final java.util.concurrent.Semaphore EXPORT_SLOTS = new java.util.concurrent.Semaphore(2);
 
     /** Ekip kapsamına HİÇ girmeyen aktör rolleri (kullanıcı kararı 2026-09-25, regresyon R2) — sorgudaki kuralla aynı. */
     private static final Set<String> SYSTEM_WIDE_ROLES = Set.of("ADMIN", "AUDIT");
@@ -430,7 +445,7 @@ public class AuditController {
      * istisnasını kaldırabiliyor ve ilgisiz bir takıma CRITICAL mail+push tetikleyebiliyordu
      * (kapsamlı müdür sınıfı: rol ADMIN ama yetki takım-kapsamlı).
      *
-     * <p>Kardeş emsali {@code MonitoringController.denyIfDomainNotViewable}; burada YAZMA
+     * <p>Kardeş emsali {@code MonitoringController.readDomain}; burada YAZMA
      * söz konusu olduğu için {@code canManage} kullanılır. Global admin/AUDIT (sistem-geneli
      * denetçi) her alandan geçer — {@code canManage} onlar için zaten true döner.
      */

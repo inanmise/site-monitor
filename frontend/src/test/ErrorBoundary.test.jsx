@@ -151,18 +151,24 @@ describe('ErrorBoundary', () => {
     expect(copied).toContain('Component stack:')
   })
 
-  it('kopyalama butonu <details> panelini ACIP KAPATMAZ', async () => {
-    // Buton <summary> icinde durdugu icin tiklama varsayilan olarak paneli toggle ederdi:
-    // kullanici kopyalarken metin gozunun onunden kaybolurdu.
+  it('kopyalama butonu ayrıntı panelini ACIP KAPATMAZ', async () => {
+    // Eskiden buton <summary> icinde durdugu icin tiklama varsayilan olarak paneli toggle ederdi:
+    // kullanici kopyalarken metin gozunun onunden kaybolurdu. Simdi shadcn Collapsible: buton
+    // basligin KARDESI, tetik degil.
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { writable: true, configurable: true, value: { writeText } })
     const { container } = render(<ErrorBoundary><Bomb /></ErrorBoundary>)
-    const details = container.querySelector('details')
-    details.open = true
+    const toggle = await screen.findByRole('button', { name: /technical detail/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(container.querySelector('pre')).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(container.querySelector('pre').textContent).toContain('BOOM')
 
-    fireEvent.click(await screen.findByRole('button', { name: /copy error text/i }))
+    fireEvent.click(screen.getByRole('button', { name: /copy error text/i }))
 
-    expect(details.open).toBe(true)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(container.querySelector('pre')).not.toBeNull()
   })
 
   it('kopyalama TOAST provider olmadan da calisir (cokme yuzeyi kendi patlamaz)', async () => {

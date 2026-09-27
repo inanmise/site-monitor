@@ -114,7 +114,7 @@ public class DomainExpiryReminderService {
                 String subject = "[Site Monitor] " + name + " — alan adı bitişine " + Math.max(days, 0) + " gün (hatırlatma · " + threshold + " gün eşiği)";
                 String html = email.buildDomainExpiryReminderHtml(name, m.getDomain(), days, expiry, threshold, registrar, level, m.getId());
                 String status = email.sendHtml(recipients.toArray(new String[0]), null, subject, html, null);
-                log.info("Alan adı hatırlatması: {} eşik={} kalan={} alıcı={} durum={}", m.getDomain(), threshold, days, recipients, status);
+                log.info("Alan adı hatırlatması: {} eşik={} kalan={} alıcı={} durum={}", m.getDomain(), threshold, days, SecretMask.maskEmails(recipients), status);
                 r.setRecipients(String.join(",", recipients));
             }
             if (pushOn) {

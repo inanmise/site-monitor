@@ -5,7 +5,8 @@ import { cn } from '@/lib/utils'
  * Segmented control — "bir grup içinde tek aktif seçim" için TEK standart bileşen.
  * İç uygulama shadcn ToggleGroup (type="single"); saf sunum, etiketler dışarıdan.
  *
- * options: [{ value, label, icon?, title? }] — icon lucide bileşeni (opsiyonel).
+ * options: [{ value, label, icon?, title?, disabled? }] — icon lucide bileşeni (opsiyonel);
+ * `disabled` o seçeneği seçilemez yapar (ör. karşılaştırılacak önceki sürüm yokken "Fark").
  *
  * Sözleşme notları (dış API değişmedi):
  *  • Radix öğe değerleri DİZE ister ve '' "seçim yok" demektir; seçenek değerleri ise sayı
@@ -45,6 +46,7 @@ export default function SegmentedControl({ value, onChange, options, ariaLabel, 
             aria-pressed={active}
             aria-checked={undefined}
             title={o.title}
+            disabled={o.disabled || undefined}
             className="h-7 gap-1.5 px-3 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50"
           >
             {Icon ? <Icon className="size-3.5" aria-hidden="true" /> : null}

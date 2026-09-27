@@ -49,6 +49,23 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
     @Modifying
     int deleteByMonitorIdAndKeepReason(Long monitorId, String keepReason);
 
+    /**
+     * Son ölçümün kırılımını DEĞİŞTİR: eski LATEST satırlarını sil + yenilerini yaz — TEK transaction.
+     *
+     * <p>BO4/O1 (bug regresyon 2026-09-27): bu ikili eskiden {@code SchedulerService.writeResourceBreakdown}
+     * içindeydi ve orada {@code @Transactional} taşıyordu, ama metot aynı sınıftan ({@code this.}) çağrıldığı
+     * için Spring proxy'si hiç devreye girmiyordu: silme kendi transaction'ında commit ediliyor, {@code saveAll}
+     * düşerse LATEST kırılımı silinmiş kalıyor, çağıran istisnayı {@code log.warn} ile yutuyordu → "Kaynak
+     * Kırılımı" ekranı bir sonraki başarılı kontrole kadar boş. Transaction sınırı artık repository
+     * proxy'sinde: hangi sınıftan çağrılırsa çağrılsın atomik. Kapı:
+     * {@code PageSpeedResourceRepositoryTest} ({@code NOT_SUPPORTED} ile, üretim koşulu).
+     */
+    @Transactional
+    default void replaceLatest(Long monitorId, List<PageSpeedResource> rows) {
+        deleteByMonitorIdAndKeepReason(monitorId, PageSpeedResource.KEEP_LATEST);
+        saveAll(rows);
+    }
+
     /** İzleme silinince tüm kırılımını temizle. */
     @Transactional
     @Modifying

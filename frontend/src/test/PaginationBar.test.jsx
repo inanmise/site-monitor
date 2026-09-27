@@ -1,10 +1,16 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent } from './test-utils.jsx'
 import PaginationBar, { pageNumbers } from '../components/ui/PaginationBar.jsx'
 
 const base = {
   page: 5, totalPages: 42, totalItems: 2084, rangeStart: 201, rangeEnd: 250,
   pageSize: 50, onPageChange: () => {}, onPageSizeChange: () => {},
+}
+
+/** "Per page" Select'i açıp bir boyut seçer (Radix Select: tetik ve öğe jsdom'da click ile çalışır). */
+function pickSize(n) {
+  fireEvent.click(screen.getByRole('combobox', { name: 'Per page' }))
+  fireEvent.click(screen.getByRole('option', { name: String(n) }))
 }
 
 describe('pageNumbers (pencereli üretici)', () => {
@@ -17,6 +23,8 @@ describe('pageNumbers (pencereli üretici)', () => {
 })
 
 describe('PaginationBar', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('pencereli numaralar + aria-current doğru butonda', () => {
     render(<PaginationBar {...base} />)
     for (const n of [1, 4, 5, 6, 42]) expect(screen.getByRole('button', { name: `Page ${n}` })).toBeInTheDocument()
@@ -32,10 +40,13 @@ describe('PaginationBar', () => {
     expect(nav).toBeInTheDocument()
     expect(screen.queryAllByRole('link')).toHaveLength(0)
     expect(nav.querySelector('a[href]')).toBeNull()
-    // Sayfa boyutu grubu görünür etiketiyle adlandırılır; etkin boyut basılı
-    const sizer = screen.getByRole('group', { name: 'Per page' })
-    expect(sizer).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '50' })).toHaveAttribute('aria-pressed', 'true')
+    // Sayfa boyutu: görünür etiketle adlandırılmış grup + shadcn Select (Data Table deseni); etkin boyut tetikte
+    expect(screen.getByRole('group', { name: 'Per page' })).toBeInTheDocument()
+    const sizer = screen.getByRole('combobox', { name: 'Per page' })
+    expect(sizer).toHaveAttribute('data-slot', 'select-trigger')
+    expect(sizer).toHaveTextContent('50')
+    // Eski ToggleGroup düğmeleri yok (her genişlikte TEK kontrol)
+    expect(screen.queryByRole('button', { name: '100' })).toBeNull()
   })
 
   it('sayfa 1de İlk/Önceki disabled; son sayfada Sonraki/Son disabled', () => {
@@ -49,7 +60,7 @@ describe('PaginationBar', () => {
     expect(screen.getByRole('button', { name: 'Last page' })).toBeDisabled()
   })
 
-  it('«→1, »→totalPages, numara tıklaması doğru değer; boyut tıklaması onPageSizeChange', () => {
+  it('«→1, »→totalPages, numara tıklaması doğru değer; boyut seçimi onPageSizeChange', () => {
     const onPage = vi.fn(); const onSize = vi.fn()
     render(<PaginationBar {...base} onPageChange={onPage} onPageSizeChange={onSize} />)
     fireEvent.click(screen.getByRole('button', { name: 'First page' }))
@@ -58,11 +69,14 @@ describe('PaginationBar', () => {
     expect(onPage).toHaveBeenLastCalledWith(42)
     fireEvent.click(screen.getByRole('button', { name: 'Page 6' }))
     expect(onPage).toHaveBeenLastCalledWith(6)
-    fireEvent.click(screen.getByRole('button', { name: '100' }))
+    // Select seçenekleri çubuğun listesidir; seçim SAYI döner
+    fireEvent.click(screen.getByRole('combobox', { name: 'Per page' }))
+    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['25', '50', '100', '200'])
+    fireEvent.click(screen.getByRole('option', { name: '100' }))
     expect(onSize).toHaveBeenCalledWith(100)
-    // Etkin boyuta yeniden basmak seçimi boşaltmaz ve çağrı üretmez
+    // Etkin boyutu yeniden seçmek çağrı üretmez
     onSize.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: '50' }))
+    pickSize(50)
     expect(onSize).not.toHaveBeenCalled()
   })
 
@@ -85,14 +99,26 @@ describe('PaginationBar', () => {
     expect(onPage).not.toHaveBeenCalled()                // boş → hiçbir şey
   })
 
-  it('totalItems=0 → bar render edilmez; totalPages=1 → nav yok, sizer + kayıt bilgisi var', () => {
+  it('totalItems=0 → bar render edilmez; totalPages=1 → nav yok, boyut seçici + kayıt bilgisi var', () => {
     const { container, unmount } = render(<PaginationBar {...base} totalItems={0} />)
     expect(container).toBeEmptyDOMElement()
     unmount()
     render(<PaginationBar {...base} totalPages={1} page={1} totalItems={30} rangeStart={1} rangeEnd={30} />)
     expect(screen.queryByRole('button', { name: 'Previous' })).toBeNull()
-    expect(screen.getByRole('button', { name: '50' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation')).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Per page' })).toBeInTheDocument()
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
+  })
+
+  it('liste en küçük boyuta sığıyorsa boyut Select\'i gizlenir (etkisiz kontrol çizilmez)', () => {
+    const { unmount } = render(<PaginationBar {...base} totalPages={1} page={1} totalItems={25} rangeStart={1} rangeEnd={25} pageSize={25} />)
+    expect(screen.queryByRole('combobox')).toBeNull()
+    expect(screen.queryByRole('group', { name: 'Per page' })).toBeNull()
+    expect(screen.getByText('1–25 of 25 records')).toBeInTheDocument()
+    unmount()
+    // modal listesi: min 10 → 11 kayıtta seçici görünür
+    render(<PaginationBar {...base} totalPages={2} page={1} totalItems={11} rangeStart={1} rangeEnd={10} pageSize={10} sizeOptions={[10, 25, 50]} compact />)
+    expect(screen.getByRole('combobox', { name: 'Per page' })).toHaveTextContent('10')
   })
 
   it('compact varyant: numara butonları yerine x/y göstergesi + temel kontroller', () => {
@@ -101,5 +127,46 @@ describe('PaginationBar', () => {
     expect(screen.getByText('5 / 42')).toBeInTheDocument()
     // Küçük varyant uygulandı: gezinme düğmeleri shadcn'in en küçük ikon boyutunda
     expect(screen.getByRole('button', { name: 'Previous' })).toHaveAttribute('data-size', 'icon-xs')
+  })
+
+  it('mobil düzen sözleşmesi: telefonda ‹ x / y › (numaralar ve «» gizli), dokunma hedefi 40 px, compact dâhil', () => {
+    const { unmount } = render(<PaginationBar {...base} />)
+    // jsdom medya sorgusu uygulamaz → sınıf sözleşmesi pinlenir; yerleşimin kendisi e2e/pagination.spec.js'te
+    expect(screen.getByText('5 / 42').closest('li')).toHaveClass('sm:hidden')
+    expect(screen.getByRole('button', { name: 'Page 4' }).closest('li')).toHaveClass('max-sm:hidden')
+    for (const name of ['First page', 'Last page']) expect(screen.getByRole('button', { name }).closest('li')).toHaveClass('max-sm:hidden')
+    for (const name of ['Previous', 'Next']) {
+      expect(screen.getByRole('button', { name })).toHaveClass('max-sm:size-10')
+      expect(screen.getByRole('button', { name }).closest('li')).not.toHaveClass('max-sm:hidden')
+    }
+    // "Sayfa x / y" metni telefonda göstergeye bırakılır; kayıt aralığı her zaman görünür ve duyurulur
+    expect(screen.getByText('Page 5 of 42')).toHaveClass('max-sm:hidden')
+    expect(screen.getByText('201–250 of 2,084 records')).toHaveAttribute('aria-live', 'polite')
+    unmount()
+    render(<PaginationBar {...base} compact />)
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveClass('max-sm:size-10')
+    expect(screen.getByText('5 / 42').closest('li')).not.toHaveClass('sm:hidden')
+  })
+
+  it('sayfa değişince liste başı görünüm alanının üstündeyse oraya kaydırır; görünüyorsa kaydırmaz', () => {
+    const onPage = vi.fn()
+    const { container } = render(
+      <div>
+        <ul data-testid="list"><li>satır</li></ul>
+        <PaginationBar {...base} onPageChange={onPage} />
+      </div>,
+    )
+    const list = container.querySelector('[data-testid="list"]')
+    const spy = vi.fn()
+    list.scrollIntoView = spy
+    // Baş görünüyor (top ≥ 0) → kaydırma yok
+    list.getBoundingClientRect = () => ({ top: 40, bottom: 400, left: 0, right: 0, width: 0, height: 360 })
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(onPage).toHaveBeenLastCalledWith(6)
+    expect(spy).not.toHaveBeenCalled()
+    // Baş yukarıda kaldı (kullanıcı alttaki çubuğa kaydırmış) → çubuktan önceki kardeş = liste başı
+    list.getBoundingClientRect = () => ({ top: -800, bottom: -20, left: 0, right: 0, width: 0, height: 780 })
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }))
   })
 })

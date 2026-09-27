@@ -11,7 +11,8 @@ import {
 } from '@/components/shadcn/alert-dialog'
 import { useT } from '../../i18n/index.jsx'
 
-const DialogCtx = createContext(null)
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const DialogCtx = (globalThis.__smDialogCtx ??= createContext(null))
 
 /**
  * Varyant → ikon + ton. Ton dekoratif ikon kutusunu renklendirir; onay düğmesi yıkıcı tonda

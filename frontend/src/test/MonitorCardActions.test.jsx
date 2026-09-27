@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
 
@@ -33,6 +33,14 @@ const setup = (props = {}) => {
 }
 
 const byName = (re) => screen.getByRole('button', { name: re })
+
+/** shadcn Tooltip: odakta açılır; metin role="tooltip" kopyasında. Sonra odak bırakılır (ipucu kapanır). */
+const tipOf = (btn) => {
+  act(() => { btn.focus() })
+  const text = screen.getByRole('tooltip').textContent
+  act(() => { btn.blur() })
+  return text
+}
 
 describe('MonitorCardActions', () => {
   it('üç düğme de çizilir ve kendi geri çağrılarını tetikler', () => {
@@ -115,8 +123,9 @@ describe('MonitorCardActions', () => {
   it('ipucu metinleri sayfadan gelir; her düğmenin erişilebilir adı vardır', () => {
     setup({ checkTitle: 'Şimdi kontrol et', editTitle: 'Kaydı düzenle' })
     // Yalnız ikon içerirler → aria-label olmazsa ekran okuyucuda isimsiz kalırlar.
+    // Kontrol düğmesi (ui/CheckRunning) hâlâ `title` taşır; Düzenle/Kopyala/Sil shadcn Tooltip.
     expect(byName(/^Şimdi kontrol et$/).getAttribute('title')).toBe('Şimdi kontrol et')
-    expect(byName(/^Kaydı düzenle$/).getAttribute('title')).toBe('Kaydı düzenle')
+    expect(tipOf(byName(/^Kaydı düzenle$/))).toBe('Kaydı düzenle')
     expect(byName(/kopyala|duplicate/i)).toBeInTheDocument()
   })
 
@@ -135,9 +144,9 @@ describe('MonitorCardActions', () => {
       </LangProvider>)
     for (const host of ['a.example.com', 'b.example.com']) {
       expect(byName(new RegExp(`^${host} — Kontrol Et$`))).toHaveAttribute('title', 'Kontrol Et')
-      expect(byName(new RegExp(`^${host} — Düzenle$`))).toHaveAttribute('title', 'Düzenle')
+      expect(tipOf(byName(new RegExp(`^${host} — Düzenle$`)))).toBe('Düzenle')
       expect(byName(new RegExp(`^${host} — (Kopyala|Duplicate)`, 'i'))).toBeInTheDocument()
-      expect(byName(new RegExp(`^${host} — Sil$`))).toHaveAttribute('title', 'Sil')
+      expect(tipOf(byName(new RegExp(`^${host} — Sil$`)))).toBe('Sil')
     }
     // Hiçbir düğme çıplak eylem adıyla kalmadı.
     expect(screen.queryByRole('button', { name: /^Sil$/ })).toBeNull()

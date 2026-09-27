@@ -173,7 +173,9 @@ public class TodayMonitorInsightsService {
                 httpRepo::findAll, portRepo::findAll, pingRepo::findAll, dnsRepo::findAll, keywordRepo::findAll,
                 pageRepo::findAll, pageSpeedRepo::findAll, scriptedRepo::findAll, domainRepo::findAll);
         for (Supplier<List<? extends MonitorSchedule>> src : sources) {
-            try { for (MonitorSchedule m : src.get()) if (m.getId() != null) out.put(key(m.scheduleType(), m.getId()), m); }
+            // SİLİNMİŞ DNS/Port standalone satır (deleted_at, 2026-09-27) hiçbir kartta yoktur — eskiden silme =
+            // duraklatma olduğu için silinen izlemeler "Duraklatılmış" kartında görünüyordu.
+            try { for (MonitorSchedule m : src.get()) if (m.getId() != null && !m.scheduleDeleted()) out.put(key(m.scheduleType(), m.getId()), m); }
             catch (Exception e) { log.debug("today/monitors izleme listesi okunamadı: {}", e.toString()); }
         }
         return out;

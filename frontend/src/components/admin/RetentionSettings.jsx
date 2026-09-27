@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Database, HardDrive, Trash2, Clock, PlayCircle, History, ShieldAlert,
-  Lock, FileText, ChevronDown, Users, Shield, FileBox, Activity, GitCompareArrows,
-  DatabaseBackup,
+  Lock, FileText, Users, Shield, FileBox, Activity, GitCompareArrows,
+  DatabaseBackup, Archive,
 } from 'lucide-react'
 import { api, formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import PolicyRow, { fmtBytes, fmtNum } from './retention/PolicyRow.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
 import RetentionReviewModal from './retention/RetentionReviewModal.jsx'
 import RetentionChangeLog from './retention/RetentionChangeLog.jsx'
 import RetentionRunsPanel from './retention/RetentionRunsPanel.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import Field from '../ui/Field.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import CollapsibleSection from '../ui/CollapsibleSection.jsx'
+import { KpiCard } from './HealthUi.jsx'
+import { helpLabel, SETTINGS_STACK, SettingsHeader, SettingsSection, ToggleRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { cn } from '@/lib/utils'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
 const CLASSES = [
@@ -209,131 +216,100 @@ export default function RetentionSettings() {
     // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
     // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
     if (loadError) {
-      return (
-        <div className="admin-section">
-          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-        </div>
-      )
+      return <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
     }
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
-  const kpi = (Icon, val, lbl, sub, variant) => (
-    <div className={`uact-kpi${variant ? ' uact-kpi--' + variant : ''}`}>
-      <span className="uact-kpi-icon"><Icon size={16} /></span>
-      <span className="uact-kpi-val">{val}</span>
-      <span className="uact-kpi-lbl">{lbl}</span>
-      {sub ? <span className="uact-kpi-sub">{sub}</span> : null}
-    </div>
-  )
-
-  const panelBar = (id, Icon, label, hint) => (
-    <div className="stats-collapse-bar" onClick={() => setOpenPanel(v => v === id ? null : id)}
-      role="button" tabIndex={0} aria-expanded={openPanel === id} aria-label={label}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenPanel(v => v === id ? null : id) } }}>
-      <span className="stats-collapse-icon"><Icon size={18} /></span>
-      <span className="stats-collapse-label">{label}</span>
-      {openPanel !== id && hint ? <span className="stats-collapse-hint">{hint}</span> : null}
-      <span className={`stats-collapse-chevron${openPanel === id ? ' open' : ''}`}><ChevronDown size={18} /></span>
-    </div>
+  /** Açılır bölüm — ortak ui/CollapsibleSection (shadcn Collapsible). Kapalıyken içerik DOM'da YOK. */
+  const section = ({ id, open, onToggle, Icon, label, extra, hint, children }) => (
+    <CollapsibleSection key={id} data-section={id} open={open} onOpenChange={onToggle} icon={Icon}
+      label={<>{label}{extra}</>} hint={hint} className="mb-3" contentClassName="pt-2.5"
+      triggerClassName="whitespace-normal [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-[1_1_0%] sm:[&>span:first-of-type]:flex-initial">
+      {children}
+    </CollapsibleSection>
   )
 
   return (
-    <div className="ret-settings uact-exec">
-      {/* ── Hero ── */}
-      <div className="uact-hero ret-hero">
-        <div className="uact-hero-title">
-          <span className="uact-hero-eyebrow">{t('ret.eyebrow')}</span>
-          <span className="uact-hero-h">{t('ret.title')}</span>
-        </div>
-        <div className="ret-hero-meta">
-          <span className="ret-hero-stat">{fmtNum(totals.rows)} <em>{t('ret.colRows')}</em></span>
-          <span className="ret-hero-sep">·</span>
-          <span className="ret-hero-stat">{fmtBytes(totals.bytes)}</span>
-          <span className="ret-hero-sep">·</span>
-          <span className="ret-hero-stat">{t('ret.kpiPolicies', totals.policies ?? 0)}</span>
-        </div>
-      </div>
-
-      <p className="section-desc ret-intro">{t('ret.desc')}</p>
-      {/* Saat dilimi de gösteriliyor: zone'suz bir "03:00" pod'un GMT'sinde 06:00 İstanbul demekti. */}
-      <p className="field-hint">
-        {t('ret.liveHint', data.cleanup_zone ? `${data.cleanup_cron} · ${data.cleanup_zone}` : data.cleanup_cron)}
-      </p>
+    <div className={cn(SETTINGS_STACK, 'gap-4 pb-2')} data-testid="retention-settings">
+      {/* ── Başlık (SettingsHeader): amaç + canlı ipucu; sayılar meta çipleri. Saat dilimi de gösteriliyor:
+             zone'suz bir "03:00" pod'un GMT'sinde 06:00 İstanbul demekti. ── */}
+      <SettingsHeader icon={Archive} title={t('ret.title')} description={t('ret.desc')}
+        hint={t('ret.liveHint', data.cleanup_zone ? `${data.cleanup_cron} · ${data.cleanup_zone}` : data.cleanup_cron)}
+        meta={<>
+          <Badge variant="outline" className="font-normal text-muted-foreground uppercase tracking-wider">{t('ret.eyebrow')}</Badge>
+          <Badge variant="outline" className="font-normal tabular-nums">{fmtNum(totals.rows)} {t('ret.colRows')}</Badge>
+          <Badge variant="outline" className="font-normal tabular-nums">{fmtBytes(totals.bytes)}</Badge>
+          <Badge variant="outline" className="font-normal tabular-nums">{t('ret.kpiPolicies', totals.policies ?? 0)}</Badge>
+        </>} />
 
       {holdOn && (
-        <div className="ret-hold-banner" role="alert">
-          <Lock size={18} />
-          <div>
-            <strong>{t('ret.holdActiveTitle')}</strong>
-            <span>{t('ret.holdActiveBody')}</span>
-          </div>
-        </div>
+        <AlertBanner tone="danger" role="alert" icon={Lock} title={t('ret.holdActiveTitle')} className="mb-0">
+          <span data-testid="ret-hold-banner">{t('ret.holdActiveBody')}</span>
+        </AlertBanner>
       )}
 
-      <div className="uact-kpi-grid ret-kpis">
-        {kpi(Database, fmtNum(totals.rows), t('ret.kpiRows'), t('ret.kpiTables', totals.tables ?? 0))}
-        {kpi(HardDrive, fmtBytes(totals.bytes), t('ret.kpiSize'))}
-        {kpi(Trash2, fmtNum(totals.purgeable), t('ret.kpiPurgeable'), null,
-          totals.purgeable > 0 ? 'danger' : undefined)}
-        {kpi(Clock, data.last_run ? fmtNum(data.last_run.total_deleted) : '—', t('ret.kpiLastRun'),
-          data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'),
-          data.last_run?.failed_count > 0 ? 'danger' : 'ok')}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard kpiKey="rows" icon={Database} value={fmtNum(totals.rows)} label={t('ret.kpiRows')} sub={t('ret.kpiTables', totals.tables ?? 0)} mini />
+        <KpiCard kpiKey="size" icon={HardDrive} value={fmtBytes(totals.bytes)} label={t('ret.kpiSize')} mini />
+        <KpiCard kpiKey="purgeable" icon={Trash2} value={fmtNum(totals.purgeable)} label={t('ret.kpiPurgeable')}
+          tone={totals.purgeable > 0 ? 'danger' : undefined} mini />
+        <KpiCard kpiKey="lastRun" icon={Clock} value={data.last_run ? fmtNum(data.last_run.total_deleted) : '—'} label={t('ret.kpiLastRun')}
+          sub={data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun')}
+          tone={data.last_run?.failed_count > 0 ? 'danger' : 'ok'} mini />
       </div>
 
       {/* ── Aksiyonlar ── */}
-      <div className="ldap-actions ret-actions">
-        <Button variant="secondary" onClick={dryRun} disabled={busy != null}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={dryRun} disabled={busy != null} aria-busy={busy === 'dry' || undefined}>
           {busy === 'dry' ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
           {t('ret.dryRun')}
         </Button>
-        <Button variant="secondary" onClick={backfillHourly} disabled={busy != null}
-          title={t('ret.backfillHint')}>
-          {busy === 'backfill' ? <Spinner size={15} inline decorative /> : <DatabaseBackup size={15} />}
-          {t('ret.backfill')}
-        </Button>
-        <Button variant="destructive" onClick={runNow} disabled={busy != null || holdOn}
-          title={holdOn ? t('ret.holdBlocks') : undefined}>
-          {busy === 'run' ? <Spinner size={15} inline decorative /> : <Trash2 size={15} />}
-          {t('ret.runNow')}
-        </Button>
+        <SimpleTooltip content={t('ret.backfillHint')}>
+          <Button variant="secondary" onClick={backfillHourly} disabled={busy != null} aria-busy={busy === 'backfill' || undefined}>
+            {busy === 'backfill' ? <Spinner size={15} inline decorative /> : <DatabaseBackup size={15} />}
+            {t('ret.backfill')}
+          </Button>
+        </SimpleTooltip>
+        {/* Devre dışı düğme ipucu almaz → span tetik; kilidin nedeni zaten üstteki hold şeridinde görünür metin */}
+        <SimpleTooltip content={holdOn ? t('ret.holdBlocks') : null}>
+          <span className="inline-flex">
+            <Button variant="destructive" onClick={runNow} disabled={busy != null || holdOn} aria-busy={busy === 'run' || undefined}>
+              {busy === 'run' ? <Spinner size={15} inline decorative /> : <Trash2 size={15} />}
+              {t('ret.runNow')}
+            </Button>
+          </span>
+        </SimpleTooltip>
       </div>
 
       {lastRun && (
-        <div className={`alert-msg${lastRun.failed_count > 0 ? ' alert-msg--err' : ''}`}>
+        <AlertBanner tone={lastRun.failed_count > 0 ? 'danger' : 'success'} className="mb-0">
           {lastRun.dry_run ? t('ret.dryRunResult', fmtNum(lastRun.total_rows))
                            : t('ret.runResult', fmtNum(lastRun.total_rows), lastRun.duration_ms)}
-        </div>
+        </AlertBanner>
       )}
 
-      {/* ── Veri sınıfı akordiyonları (varsayılan hepsi kapalı) ── */}
-      {CLASSES.map(({ key, Icon }) => {
-        const list = byClass[key] || []
-        if (!list.length) return null
-        const open = openClasses.has(key)
-        const rows = list.reduce((s, p) => s + (Number(p.rows) || 0), 0)
-        const bytes = list.reduce((s, p) => s + (Number(p.bytes) || 0), 0)
-        const dirty = pendingByClass[key] || 0
-        return (
-          <div className="stats-section" key={key}>
-            <div className="stats-collapse-bar" onClick={() => toggleClass(key)}
-              role="button" tabIndex={0} aria-expanded={openClasses.has(key)}
-              aria-label={t(`ret.class.${key}`)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleClass(key) } }}>
-              <span className="stats-collapse-icon"><Icon size={18} /></span>
-              <span className="stats-collapse-label">{t(`ret.class.${key}`)}</span>
-              <span className="ret-class-count">{list.length}</span>
-              {dirty > 0 && <span className="ret-dirty-badge">{t('ret.dirtyBadge', dirty)}</span>}
-              {!open && (
-                <span className="stats-collapse-hint">
-                  {fmtNum(rows)} {t('ret.colRows').toLocaleLowerCase('tr')} · {fmtBytes(bytes)}
-                </span>
-              )}
-              <span className={`stats-collapse-chevron${open ? ' open' : ''}`}><ChevronDown size={18} /></span>
-            </div>
-            {open && (
-              <div className="ret-class-body">
-                <p className="ret-class-desc">{t(`ret.classDesc.${key}`)}</p>
+      {/* ── Veri sınıfı akordiyonları (varsayılan hepsi kapalı, çoklu açılabilir) ── */}
+      <div>
+        {CLASSES.map(({ key, Icon }) => {
+          const list = byClass[key] || []
+          if (!list.length) return null
+          const open = openClasses.has(key)
+          const rows = list.reduce((s, p) => s + (Number(p.rows) || 0), 0)
+          const bytes = list.reduce((s, p) => s + (Number(p.bytes) || 0), 0)
+          const dirty = pendingByClass[key] || 0
+          return section({
+            id: key, open, onToggle: () => toggleClass(key), Icon, label: t(`ret.class.${key}`),
+            extra: (
+              <>
+                <Badge variant="secondary" className="ml-2 rounded-full align-middle tabular-nums">{list.length}</Badge>
+                {dirty > 0 && <Badge variant="warning" data-dirty={dirty} className="ml-2 rounded-full align-middle font-extrabold">{t('ret.dirtyBadge', dirty)}</Badge>}
+              </>
+            ),
+            hint: `${fmtNum(rows)} ${t('ret.colRows').toLocaleLowerCase('tr')} · ${fmtBytes(bytes)}`,
+            children: (
+              <div className="pb-1">
+                <p className="mx-0.5 mb-2.5 text-[12.5px] leading-normal text-muted-foreground">{t(`ret.classDesc.${key}`)}</p>
                 {list.map(p => (
                   <PolicyRow key={p.id} policy={p} maxRows={maxRows}
                     value={valueOf(p)} original={originalOf(p)}
@@ -343,68 +319,62 @@ export default function RetentionSettings() {
                     disabled={saving} />
                 ))}
               </div>
-            )}
-          </div>
-        )
-      })}
+            ),
+          })
+        })}
 
-      {/* ── Çalışma geçmişi ── */}
-      <div className="stats-section">
-        {panelBar('runs', History, t('ret.historyTitle'),
-          data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'))}
-        {openPanel === 'runs' && (
-          <div className="ret-panel">
-            <RetentionRunsPanel policies={policies} holdOn={holdOn} refreshKey={runsNonce} />
-          </div>
-        )}
-      </div>
+        {/* ── Çalışma geçmişi ── */}
+        {section({
+          id: 'runs', open: openPanel === 'runs', onToggle: () => setOpenPanel(v => v === 'runs' ? null : 'runs'),
+          Icon: History, label: t('ret.historyTitle'),
+          hint: data.last_run ? formatDateSec(data.last_run.started_at) : t('ret.neverRun'),
+          children: <RetentionRunsPanel policies={policies} holdOn={holdOn} refreshKey={runsNonce} />,
+        })}
 
-      {/* ── Değişiklik geçmişi ── */}
-      <div className="stats-section">
-        {panelBar('changes', GitCompareArrows, t('ret.changesTitle'), t('ret.changesHint'))}
-        {openPanel === 'changes' && (
-          <div className="ret-panel"><RetentionChangeLog rows={changes} /></div>
-        )}
+        {/* ── Değişiklik geçmişi ── */}
+        {section({
+          id: 'changes', open: openPanel === 'changes', onToggle: () => setOpenPanel(v => v === 'changes' ? null : 'changes'),
+          Icon: GitCompareArrows, label: t('ret.changesTitle'), hint: t('ret.changesHint'),
+          children: <RetentionChangeLog rows={changes} />,
+        })}
       </div>
 
       {/* ── Envanter çöp kutusu (#10) ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr"><Trash2 size={15} /> {t('ret.invPurgeTitle')}</h4>
-        <p className="section-desc">{t('ret.invPurgeDesc')}</p>
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ret.invPurgeDays')}<HelpTip helpKey="help.set.site.monitor.inventory.auto-purge-days" label={t('ret.invPurgeDays')} /></span></label>
-            <div className="ret-inline-field">
-              <input className="input input-sm" type="number" min={0} max={3650} value={invPurge} onChange={e => setInvPurge(e.target.value)} aria-label={t('ret.invPurgeDays')} />
-              <Button type="button" size="sm" disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)} onClick={saveInvPurge}>{t('ret.invPurgeApply')}</Button>
+      <SettingsSection title={<span className="inline-flex items-center gap-2"><Trash2 size={15} aria-hidden="true" /> {t('ret.invPurgeTitle')}</span>}
+        description={t('ret.invPurgeDesc')}>
+        <Field label={helpLabel(t('ret.invPurgeDays'), 'help.set.site.monitor.inventory.auto-purge-days')} className="mb-0 sm:max-w-md"
+          hint={<code className="font-mono">site.monitor.inventory.auto-purge-days</code>}>
+          {({ id, describedBy }) => (
+            <div className="flex items-center gap-2">
+              <Input id={id} aria-describedby={describedBy} type="number" min={0} max={3650} className="w-28"
+                value={invPurge} onChange={e => setInvPurge(e.target.value)} />
+              <Button type="button" size="sm" onClick={saveInvPurge}
+                disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)}>
+                {t('ret.invPurgeApply')}
+              </Button>
             </div>
-            <span className="hint"><code>site.monitor.inventory.auto-purge-days</code></span>
-          </div>
-        </div>
-      </div>
+          )}
+        </Field>
+      </SettingsSection>
 
       {/* ── Legal hold ── */}
-      <div className="admin-section ret-hold-section">
-        <h4 className="ldap-subhdr"><ShieldAlert size={15} /> {t('ret.holdTitle')}</h4>
-        <p className="section-desc">{t('ret.holdDesc')}</p>
-        <label className="ldap-toggle ldap-toggle-major">
-          <input type="checkbox" checked={holdOn} onChange={e => toggleHold(e.target.checked)} />
-          <span>{t('ret.holdToggle')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.retention.hold-enabled"
-          label={t('ret.holdToggle')} />
-        <p className="field-hint"><FileText size={12} /> {t('ret.docHint')}</p>
-      </div>
+      <SettingsSection title={<span className="inline-flex items-center gap-2"><ShieldAlert size={15} aria-hidden="true" /> {t('ret.holdTitle')}</span>}
+        description={t('ret.holdDesc')} contentClassName="flex flex-col gap-2">
+        <ToggleRow major checked={holdOn} onChange={toggleHold} label={t('ret.holdToggle')}
+          helpKey="help.set.site.monitor.retention.hold-enabled" />
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><FileText size={12} aria-hidden="true" /> {t('ret.docHint')}</p>
+      </SettingsSection>
 
-      {/* ── Yapışkan gözden geçir/kaydet çubuğu ── */}
+      {/* ── Yapışkan gözden geçir/kaydet çubuğu ── (telefonda güvenli alan payı) */}
       {pending.length > 0 && (
-        <div className="ret-sticky-bar">
-          <span className="ret-sticky-count">
-            <span className="ret-sticky-dot" />{t('ret.pendingCount', pending.length)}
+        <div data-slot="retention-sticky-bar"
+          className="sticky bottom-0 z-[60] mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-primary bg-card px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(0,0,0,.10)]">
+          <span className="mr-auto inline-flex items-center gap-2 text-[13px] font-bold">
+            <span aria-hidden="true" className="size-2.5 rounded-full bg-amber-500 ring-3 ring-amber-500/25" />
+            {t('ret.pendingCount', pending.length)}
           </span>
           <Button variant="secondary" onClick={() => setEdited({})}>{t('ret.discard')}</Button>
-          <Button onClick={() => setReview(pending)}>
-            {t('ret.reviewOpen')}
-          </Button>
+          <Button onClick={() => setReview(pending)}>{t('ret.reviewOpen')}</Button>
         </div>
       )}
 

@@ -61,7 +61,7 @@ class MonitorHistoryServiceTest {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("username", "N23456");
         s.setAttribute("userId", 42L);
-        s.setAttribute("fullName", "Ada Lovelace");
+        s.setAttribute("displayName", "Ada Lovelace");
         return s;
     }
 

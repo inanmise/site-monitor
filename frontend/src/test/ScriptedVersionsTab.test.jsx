@@ -71,7 +71,7 @@ describe('ScriptedVersionsTab', () => {
     // Bozuk sürüm kırmızı rozetle ayrışır — olayın tek bakışta okunması bunu gerektiriyordu.
     expect(container.textContent).toContain('8 koşum / 8 hata')
     expect(container.textContent).toContain('41 koşum · hepsi geçti')
-    expect(container.querySelector('.sc-ver-runs--bad')).not.toBeNull()
+    expect(container.querySelector('[data-slot="version-runs"][data-bad="true"]')).not.toBeNull()
   })
 
   /** Asıl soru: "hangi düzenleme bozdu?" — varsayılan görünüm doğrudan farkı göstermeli. */
@@ -79,7 +79,7 @@ describe('ScriptedVersionsTab', () => {
     const { container } = setup()
     await waitFor(() => expect(screen.getByText('v1.0.3')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByText('v1.0.3').closest('.sc-vt-row'))
+    fireEvent.click(screen.getByText('v1.0.3').closest('[data-slot="version-pick"]'))
     await waitFor(() => expect(container.querySelector('.sc-diff')).not.toBeNull())
 
     const added = container.querySelector('.sc-diff-row--add')
@@ -91,7 +91,7 @@ describe('ScriptedVersionsTab', () => {
   it('Script sekmesine geçilince salt-okunur gövde gösterilir', async () => {
     const { container } = setup()
     await waitFor(() => expect(screen.getByText('v1.0.3')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('v1.0.3').closest('.sc-vt-row'))
+    fireEvent.click(screen.getByText('v1.0.3').closest('[data-slot="version-pick"]'))
     await waitFor(() => expect(container.querySelector('.sc-diff')).not.toBeNull())
 
     fireEvent.click(screen.getByText('Script'))
@@ -103,7 +103,7 @@ describe('ScriptedVersionsTab', () => {
     const { container } = setup()
     await waitFor(() => expect(screen.getByText('v1.0.2')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByText('v1.0.2').closest('.sc-vt-row'))
+    fireEvent.click(screen.getByText('v1.0.2').closest('[data-slot="version-pick"]'))
     await waitFor(() => expect(container.textContent).toContain('İlk sürüm'))
     expect(container.querySelector('.sc-diff')).toBeNull()
   })
@@ -114,7 +114,7 @@ describe('ScriptedVersionsTab', () => {
 
     // Satır referansı BİR KEZ alınır: seçimden sonra önizleme başlığında da aynı sürüm
     // çipi olduğu için getByText('v1.0.3') iki eşleşme bulurdu.
-    const row = container.querySelector('.sc-vt-row')
+    const row = container.querySelector('[data-slot="version-pick"]')
     fireEvent.click(row)
     await waitFor(() => expect(container.querySelector('.sc-diff')).not.toBeNull())
     const afterFirst = api.monitoring.getScriptedVersion.mock.calls.length

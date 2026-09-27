@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { render, screen, fireEvent, within } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 vi.mock('../api/client', () => ({
   api: { notificationGroups: { list: vi.fn().mockResolvedValue({ success: true, data: { groups: [] } }) } },
@@ -23,10 +24,13 @@ describe('NotifyChannels', () => {
     />
   )
 
+  // Kutular shadcn Checkbox (role="checkbox"): 4 döşeme sırasıyla e-posta, SMS, sesli, webhook.
+  const channelBoxes = () => screen.getAllByRole('checkbox')
+
   it('e-posta ve webhook kutuları DEĞİŞTİRİLEBİLİR (ikisi de gerçek kanal)', () => {
     const onChange = vi.fn()
-    const { container } = draw({ onChange })
-    const boxes = [...container.querySelectorAll('.http-channel input[type="checkbox"]')]
+    draw({ onChange })
+    const boxes = channelBoxes()
 
     // 4 döşeme: e-posta, SMS, sesli, webhook
     expect(boxes).toHaveLength(4)
@@ -36,13 +40,20 @@ describe('NotifyChannels', () => {
     expect(onChange).toHaveBeenCalledWith({ notifyWebhook: false })
   })
 
+  it('döşemenin ETİKETİNE tıklamak da kutuyu değiştirir (seçim kartı)', () => {
+    const onChange = vi.fn()
+    draw({ onChange, notifyEmail: false })
+    fireEvent.click(screen.getByText(/^(E-posta|E-mail)$/))
+    expect(onChange).toHaveBeenCalledWith({ notifyEmail: true })
+  })
+
   it('SMS ve Sesli arama PASİF — ürün kararı, kullanıcı bunlara tıklayıp umutlanmasın', () => {
-    const { container } = draw()
-    const boxes = [...container.querySelectorAll('.http-channel input[type="checkbox"]')]
-    expect(boxes[1].disabled).toBe(true)
-    expect(boxes[2].disabled).toBe(true)
-    expect(boxes[0].disabled).toBe(false)
-    expect(boxes[3].disabled).toBe(false)
+    draw()
+    const boxes = channelBoxes()
+    expect(boxes[1]).toBeDisabled()
+    expect(boxes[2]).toBeDisabled()
+    expect(boxes[0]).not.toBeDisabled()
+    expect(boxes[3]).not.toBeDisabled()
   })
 
   it('HEDEF satırı doğruyu söyler: grup seçili değilse TAKIM adı', () => {
@@ -54,27 +65,31 @@ describe('NotifyChannels', () => {
     // Yanlış hedef göstermek en kötü hata olurdu: kullanıcı "takıma gidecek" sanıp
     // aslında bir gruba giden alarmı yanlış kişilerde arardı.
     const { container } = draw({ groupId: 3, groupName: 'Nöbetçi Grup' })
-    const target = container.querySelector('.http-ch-target')
+    const target = container.querySelector('[data-slot="notify-target"]')
     expect(target.textContent).toBe('Nöbetçi Grup')
   })
 
   it('onGroupChange verilmezse grup seçici çizilmez (kullanan formu zorlamaz)', () => {
     const { container } = draw({ onGroupChange: undefined })
-    expect(container.querySelectorAll('.http-channel')).toHaveLength(4)
+    expect(container.querySelectorAll('[data-slot="notify-channel"]')).toHaveLength(4)
+    expect(screen.queryByRole('combobox')).toBeNull()
   })
 
   // ── Alarm seviyesi (2026-09-19): varsayılan Uyarı; Yüksek/Kritik seçilebilir; onAlertLevelChange yoksa çizilmez ──
   it('alarm seviyesi seçici: onAlertLevelChange verilince üç düğme, seçili olan aria-pressed; tıklama seviyeyi geri verir; verilmezse yok', () => {
     const onLevel = vi.fn()
-    const { container } = draw({ alertLevel: 'WARNING', onAlertLevelChange: onLevel })
-    const btns = [...container.querySelectorAll('.notify-level-btn')]
+    const { unmount } = draw({ alertLevel: 'WARNING', onAlertLevelChange: onLevel })
+    const group = screen.getByRole('group', { name: /alarm seviyesi|alert level/i })
+    const btns = within(group).getAllByRole('button')
     expect(btns.map((b) => b.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/Uyarı|Warning/), expect.stringMatching(/Yüksek|High/), expect.stringMatching(/Kritik|Critical/)]))
     expect(btns[0].getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(btns[2])
+    pressMenuTrigger(btns[2])
     expect(onLevel).toHaveBeenCalledWith('CRITICAL')
-    const { container: c2 } = draw({ alertLevel: 'bogus', onAlertLevelChange: onLevel })
-    expect(c2.querySelector('.notify-level-btn--warning').getAttribute('aria-pressed')).toBe('true')   // bilinmeyen → Uyarı
+    unmount()
+    const { container: c2, unmount: u2 } = draw({ alertLevel: 'bogus', onAlertLevelChange: onLevel })
+    expect(c2.querySelector('[data-level="WARNING"]').getAttribute('aria-pressed')).toBe('true')   // bilinmeyen → Uyarı
+    u2()
     const { container: c3 } = draw({})
-    expect(c3.querySelector('.notify-level')).toBeNull()
+    expect(c3.querySelector('[data-slot="notify-level"]')).toBeNull()
   })
 })

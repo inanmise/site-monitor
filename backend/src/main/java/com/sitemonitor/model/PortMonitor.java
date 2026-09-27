@@ -9,7 +9,7 @@ import org.hibernate.annotations.ColumnDefault;
 @Table(name = "port_monitors")
 @Data
 @NoArgsConstructor
-public class PortMonitor implements MonitorAlertPrefs, MonitorSchedule {
+public class PortMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -146,8 +146,32 @@ public class PortMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
 
+    /** 7/24 İzleme Ekibi (NOC) bildirimi (2026-09-27) — null = KAPALI (varsayılan). Bkz. {@link NocTarget}. */
+    @jakarta.persistence.Column(name = "noc_notify")
+    private Boolean nocNotify;
+
+    /** Hedef NOC grupları (virgüllü kimlik); null = varsayılan gruplar. API'ye LİSTE olarak yazılır
+     *  ({@code noc_group_ids}) — ham virgüllü değer JSON'a çıkmaz. */
+    @jakarta.persistence.Column(name = "noc_group_ids", length = 500)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String nocGroupIds;
+
+    /**
+     * SİLİNME zamanı (UTC ISO) — yalnız standalone satırda yazılır (2026-09-27, kullanıcı kararı). Eskiden
+     * silme ile duraklatma AYNI durumu yazıyordu ({@code active=false}); liste standalone satırları
+     * {@code active=true} ile süzdüğü için duraklatılan izleme listeden kayboluyor, kullanıcı onu göremiyor
+     * ve sürdüremiyordu. Artık: silinmiş = {@code deletedAt != null} (hiçbir yerde görünmez, çalışmaz);
+     * duraklatılmış = {@code active=false, deletedAt=null} (listelenir, sürdürülebilir). Envanter-türevi
+     * satırda NULL kalır (onun "silme"si duraklatmadır). Nullable: dolu tabloya açık yama ekler
+     * ({@code SchedulerService.applySchemaPatches}); eski satırlar tek seferlik geri doldurmayla işaretlenir
+     * ({@code StandaloneMonitorDeletionBackfill}).
+     */
+    @Column(name = "deleted_at", length = 30)
+    private String deletedAt;
+
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "PORT"; }
     @Override public boolean scheduleStandalone() { return Boolean.TRUE.equals(standalone); }
     @Override public String scheduleTarget() { return host + ":" + port; }
+    @Override public boolean scheduleDeleted() { return deletedAt != null; }
 }

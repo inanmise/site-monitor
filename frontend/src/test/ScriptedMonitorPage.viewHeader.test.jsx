@@ -38,28 +38,28 @@ describe('ScriptedMonitorPage — başlık eylemleri görünüme göre', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
 
-    // Monitör görünümü: küme tam.
-    expect(container.querySelector('.upt-header-right')).not.toBeNull()
-    expect(screen.getByText(/otomatik yenileme|auto-refresh/i)).toBeInTheDocument()
+    // Monitör görünümü: küme tam (ortak başlık monitoring/MonitorPageHeader → ui/PageHeader yuvaları).
+    expect(container.querySelector('[data-slot="page-actions"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="monitor-refresh"]')?.textContent).toMatch(/sn sonra yenilenir|refreshes in/i)
     expect(screen.getByRole('button', { name: /^(yenile|refresh)$/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /nasıl doldurulur|how to fill/i })).toBeInTheDocument()
     // Toplu kontrol düğmesi de MONİTÖR görünümüne ait: şablon listesini kontrol etmez.
     expect(screen.getByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeInTheDocument()
     // k6 sürümü artık eylem kümesinde DEĞİL, başlığın künyesinde.
-    expect(container.querySelector('.upt-header-right .sc-k6ver')).toBeNull()
-    expect(container.querySelector('.upt-title .sc-title-k6')).not.toBeNull()
+    expect(container.querySelector('[data-slot="page-actions"] [data-slot="k6-version"]')).toBeNull()
+    expect(container.querySelector('[data-slot="page-title"] [data-slot="k6-title"]')).not.toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /şablonlar|templates/i }))
 
     expect(await screen.findByTestId('templates-tab')).toBeInTheDocument()
-    expect(container.querySelector('.upt-header-right')).toBeNull()
-    expect(screen.queryByText(/otomatik yenileme|auto-refresh/i)).toBeNull()
+    expect(container.querySelector('[data-slot="page-actions"]')).toBeNull()
+    expect(container.querySelector('[data-slot="monitor-refresh"]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^(yenile|refresh)$/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /nasıl doldurulur|how to fill/i })).toBeNull()
     expect(screen.queryByTitle(/bu sayfadaki .* izlemenin|check all .* monitors/i)).toBeNull()
     // Başlık künyesi KALIR ve bu BİLİNÇLİ: şablonlar da k6 script'idir, hangi motora
     // yazıldıkları burada da geçerli bir bilgi. Kalkan şey EYLEM kümesiydi.
-    expect(container.querySelector('.upt-title .sc-title-k6')).not.toBeNull()
+    expect(container.querySelector('[data-slot="page-title"] [data-slot="k6-title"]')).not.toBeNull()
     // Görünüm anahtarının kendisi kalır — kullanıcı geri dönebilmeli.
     expect(screen.getByRole('button', { name: /monitörler|monitors/i })).toBeInTheDocument()
   })

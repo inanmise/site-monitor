@@ -32,7 +32,8 @@ import java.util.regex.Pattern;
 /**
  * HTTP / Website uptime checker — bir URL'ye istek atıp yanıt durum kodunu + süresini ölçer.
  * SAĞLIKLI (ok) = durum kodu {@code expectedStatus} pattern'ine uyuyor ve hata yok.
- * Gövde okunmaz (yalnız durum kodu; {@link HttpResponse.BodyHandlers#discarding()}) → düşük maliyet.
+ * Gövde saklanmaz (yalnız durum kodu); bağlantı havuza dönsün diye tüketilir ama SÜRE SINIRIYLA
+ * ({@link #sendDrained} — akış yapan hedef sweep'i donduramaz) → düşük maliyet.
  *
  * {@code verifySsl=false} (varsayılan) → trust-all SSL (yalnız erişilebilirlik; iç-CA/self-signed dahil);
  * {@code verifySsl=true} → JVM cacerts VEYA Genel Ayarlar kurumsal CA paketi VEYA host'un otomatik
@@ -283,7 +284,7 @@ public class HttpCheckerService {
         Exception failure = null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
-            HttpResponse<Void> resp = sendFollowing(
+            HttpResponse<java.io.InputStream> resp = sendFollowing(
                     URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
@@ -327,7 +328,7 @@ public class HttpCheckerService {
      * birebir aynısı) ve HTTPS → düz HTTP düşürmesi {@code Redirect.NORMAL} gibi TAKİP EDİLMEZ.
      * Çok-A pin yolu ({@link #sendMultiAware}) her hop için ayrı ayrı çalışır.
      */
-    private HttpResponse<Void> sendFollowing(URI baseUri, String method, int timeoutMs,
+    private HttpResponse<java.io.InputStream> sendFollowing(URI baseUri, String method, int timeoutMs,
                                              boolean verifySsl, boolean followRedirects, boolean viaProxy,
                                              HttpFailureDiagnostics.Trace trace)
             throws java.io.IOException, InterruptedException {
@@ -342,7 +343,7 @@ public class HttpCheckerService {
                     throw new SsrfGuard.BlockedException("geçersiz yönlendirme hedefi: " + current);
                 ssrfGuard.validate(host);
             }
-            HttpResponse<Void> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace);
+            HttpResponse<java.io.InputStream> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (trace != null) trace.hop(next);
@@ -354,23 +355,23 @@ public class HttpCheckerService {
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
     }
 
-    private HttpResponse<Void> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy,
+    private HttpResponse<java.io.InputStream> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy,
                                               HttpFailureDiagnostics.Trace trace)
             throws java.io.IOException, InterruptedException {
         HttpClient shared = client(verifySsl, viaProxy);
         String host = baseUri.getHost();
         // Vekil yolunda çok-A pin uygulanmaz: hedefi vekil çözer, IP'ye yeniden yazmak CONNECT'i bozar.
         if (viaProxy && shared != client(verifySsl, false)) {
-            return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
         }
         if (host == null || NetworkResolver.isIpLiteral(host)) {
-            return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
         }
         long dns0 = System.currentTimeMillis();
         List<InetAddress> addrs = NetworkResolver.allAddresses(host);
         if (trace != null && trace.resolvedIps.isEmpty()) trace.resolved(addrs, System.currentTimeMillis() - dns0);
         if (addrs.size() <= 1) {
-            return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
         }
         // Strict (verifySsl) doğrulama host-bazlı auto-pin'e dayanır; IP'ye pinlemek trust manager'ın
         // gördüğü host'u (=IP) pin anahtarından (=hostname) ayırıp pin lookup'ını bozar. Bu yüzden çok-A
@@ -385,8 +386,8 @@ public class HttpCheckerService {
         if (pinned != null) {
             try {
                 URI pinnedUri = rewriteHostToIp(baseUri, reachable, port);
-                HttpResponse<Void> r = pinned.send(
-                        buildRequest(pinnedUri, method, timeoutMs, host), HttpResponse.BodyHandlers.discarding());
+                HttpResponse<java.io.InputStream> r = sendDrained(
+                        pinned, buildRequest(pinnedUri, method, timeoutMs, host), timeoutMs);
                 // Strict HTTPS: SNI=domain gönderdik ama URI=IP olduğundan yerleşik hostname doğrulaması
                 // kapalı → peer sertifikayı domain'e göre elle doğrula (güven zinciri TM'de zaten kontrol edildi).
                 if (!verifySsl || !https || peerHostnameMatches(r, host)) {
@@ -400,7 +401,29 @@ public class HttpCheckerService {
             }
         }
         // Fallback: bugünkü paylaşılan-client davranışı (pin başarısız/uygun değilse bugünden kötü değil).
-        return shared.send(buildRequest(baseUri, method, timeoutMs, null), HttpResponse.BodyHandlers.discarding());
+        return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
+    }
+
+    /**
+     * Gönderir ve gövdeyi SÜRE SINIRIYLA tüketir (prod kapısı 2026-09-25, N1).
+     *
+     * <p>Eskiden {@code BodyHandlers.discarding()} kullanılıyordu: {@code send()} gövde bitene kadar
+     * dönmüyor ve java.net.http'nin zaman aşımı yalnız başlıklara kadar işliyor. Başlığı gönderip
+     * gövdeyi bitirmeyen tek bir hedef (SSE, MJPEG kamera, radyo akışı) HTTP sweep'ini kalıcı olarak
+     * donduruyordu. Şimdi başlıklar geldiğinde yanıt alınır, gövde en çok {@code timeoutMs} daha
+     * tüketilir (normal sayfada davranış aynı: tam okunur, bağlantı havuza döner, response_ms gövdeyi
+     * kapsar). Süre dolarsa akış kesilir; sonuç YİNE durum koduna göre verilir — bu kontrolün sözleşmesi
+     * "yalnız durum kodu"dur ve akış yapan bir uç ayakta sayılmalıdır.
+     */
+    private static HttpResponse<java.io.InputStream> sendDrained(HttpClient client, HttpRequest req, int timeoutMs)
+            throws java.io.IOException, InterruptedException {
+        HttpResponse<java.io.InputStream> resp = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        boolean complete = com.sitemonitor.util.HttpBodies.drain(resp.body(), Math.max(1000, timeoutMs), "HTTP");
+        if (!complete) {
+            log.debug("HTTP check: {} gövdesi {} ms içinde bitmedi — akış kesildi, durum kodu {} kullanılıyor",
+                    req.uri(), Math.max(1000, timeoutMs), resp.statusCode());
+        }
+        return resp;
     }
 
     private HttpRequest buildRequest(URI uri, String method, int timeoutMs, String hostHeader) {

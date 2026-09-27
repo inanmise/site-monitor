@@ -25,11 +25,14 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     @Query("SELECT d.alertEventId, d.status, COUNT(d) FROM UserPushDelivery d WHERE d.alertEventId IN :ids GROUP BY d.alertEventId, d.status")
     List<Object[]> countByAlertEventIdInGroupByStatus(@Param("ids") java.util.Collection<Long> ids);
 
-    /** Saat tavanı: kullanıcı başına son bir saatte yazılmış GÖNDERİLEBİLİR satır sayısı. */
+    /** Saat tavanı: kullanıcı başına son bir saatte yazılmış GÖNDERİLEBİLİR satır sayısı — YALNIZ gerçekten
+     *  gönderilmek üzere kuyruğa giren/gönderilen satırlar (PENDING / SENT / FAILED). Eskiden RATE_LIMITED ve
+     *  CIRCUIT_OPEN satırlarını da sayıyordu (prod kapısı 2026-09-25, O-3): tavan kendi ret satırlarıyla
+     *  besleniyor, flapping izlemeli kullanıcı saatlerce "tavanda" kalıyordu — javadoc ile kod ayrışmıştı. */
     @Query("""
            SELECT COUNT(d) FROM UserPushDelivery d
            WHERE d.username = :username AND d.createdAt >= :since
-             AND d.status NOT IN ('SKIPPED_NO_ID','SKIPPED_USER_OPT_OUT')
+             AND d.status IN ('PENDING','SENT','FAILED')
            """)
     long countRecentForUser(@Param("username") String username, @Param("since") String since);
 

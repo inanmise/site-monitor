@@ -107,12 +107,27 @@ describe('CertInventoryReportSettings', () => {
     render(<CertInventoryReportSettings />)
     await screen.findByDisplayValue('pki@example.com')
 
-    const toggle = screen.getAllByRole('checkbox')[0]
-    expect(toggle.checked).toBe(true)
+    const toggle = screen.getAllByRole('switch')[0]   // shadcn Switch (ToggleRow)
+    expect(toggle).toBeChecked()
     fireEvent.click(toggle)
+    await waitFor(() => expect(api.admin.saveCertInvReportSettings).toHaveBeenCalledWith({ enabled: false }))
 
     // Başarısızlıkta eski hâline dönmeli — aksi halde arayüz kapalı görünür ama sunucu açık.
-    await waitFor(() => expect(toggle.checked).toBe(true))
+    await waitFor(() => expect(toggle).toBeChecked())
+  })
+
+  it('shadcn: kural seçicileri NativeSelect, arşiv Table + durum Badge', async () => {
+    api.admin.getCertInvReportHistory.mockResolvedValue({ success: true, data: [
+      { id: 1, month_label: 'Ağustos 2026', status: 'SENT', rows: 10, findings: 2, recipients: 'a@example.com', sent_at: '2026-08-28 10:00' },
+      { id: 2, month_label: 'Temmuz 2026', status: 'FAILED', rows: 9, findings: 1, recipients: '', sent_at: null },
+    ] })
+    render(<CertInventoryReportSettings />)
+    await screen.findByDisplayValue('pki@example.com')
+    expect(screen.getAllByRole('combobox')[0]).toHaveAttribute('data-slot', 'native-select')
+    const table = await screen.findByTestId('cir-history')
+    expect(table).toHaveAttribute('data-slot', 'table')
+    expect(screen.getByText('SENT')).toHaveAttribute('data-tone', 'success')
+    expect(screen.getByText('FAILED')).toHaveAttribute('data-tone', 'danger')
   })
 
   it('geçmiş listesi yüklenir (24 kayıt istenir)', async () => {

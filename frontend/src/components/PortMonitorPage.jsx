@@ -1,43 +1,41 @@
 import { LoadingBlock } from './ui/Progress.jsx'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
-import { createPortal } from 'react-dom'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
+import PortMonitorCard from './port/PortMonitorCard.jsx'
 import PortEndpoint from './ui/PortEndpoint.jsx'
 import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plug, Plus, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Plug, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot, Copy, Inbox } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -46,9 +44,21 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Slider } from '@/components/shadcn/slider'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { FieldDescription } from '@/components/shadcn/field'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, InlineField, LabelSlot,
+} from './monitoring/MonitorForm.jsx'
+import { cn } from '@/lib/utils'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -74,22 +84,23 @@ const intervalIdx = (secs) => {
 
 const REFRESH_INTERVAL = 60
 const PORT_TYPES = ['TCP', 'TLS', 'HTTP', 'BANNER', 'UDP']
-const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', useProxy: 'OFF', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '',
+const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', useProxy: 'OFF', expect: '', sendData: '', teamId: '', groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [],
   tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, ipVersion: 'auto', slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 300, timeoutMs: 5000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
-export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
-  const canWrite = isAdmin || isTeamAdmin                          // ekle/düzenle/sil butonu (takım-kapsamlı)
-  const myTeam = teamId != null ? String(teamId) : null
+  // USER ve üstü: kendi takımı için ekle (2026-09-26 — Port, sunucu kabul ettiği hâlde USER'dan "Ekle"yi saklayan TEK
+  // sayfaydı; diğer yedi tür USER'ı zaten içeriyordu). Silme ayrı kapıda (canDeleteRow: takım yöneticisi+).
+  const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)              // düzenle + kontrol (otomatik :443/team_id=null → yalnız admin)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -110,21 +121,21 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     return () => { alive = false }
   }, [])
   const sla = useSla('port')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
+  const [density, setDensity] = useCardDensity('port')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [defaults, setDefaults] = useState(null)
   const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeModal)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [detailTab, setDetailTab] = useState('control')
+  const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
@@ -170,6 +181,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updatePortMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -217,14 +233,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   async function openModal(m) {
     setSelected(m)
     setSummary({ total: 0, down: 0 })
-    setDetailTab('control')
+    setDetailTab(deepLinkTab())
   }
 
   function closeModal() { setSelected(null) }
 
   function openNew() {
     setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
@@ -237,7 +253,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     const derivedTeam = m.team_id == null && m.team_name ? teams.find(tm => tm.name === m.team_name) : null
     return { name: m.name || '', host: m.host || '', port: m.port ?? '', protocol: m.protocol || 'TCP', useProxy: m.use_proxy || 'OFF',
       expect: m.expect || '', sendData: m.send_data || '',
-      teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+      teamId: m.team_id != null ? String(m.team_id) : (derivedTeam ? String(derivedTeam.id) : ''), groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false, ipVersion: m.ip_version || 'auto',
       slowResponseEnabled: !!m.slow_response_enabled, slowThresholdMs: m.slow_threshold_ms ?? 3000,
       intervalSeconds: m.interval_seconds ?? 300, timeoutMs: m.timeout_ms ?? 5000,
@@ -275,6 +291,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
         slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -325,10 +342,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     // Onay projenin diyaloğuyla alınır. `window.confirm` tarayıcı-varsayılanı bir kutu
     // çiziyordu (tasarım sistemi dışı) ve hedefin adını göstermiyordu; kart üzerindeki
     // tek tık yıkıcı bir işlem tetiklediği için mesaj NEYİN silineceğini söylemeli.
+    // Türev satırda "sil" gerçekte "izlemeyi durdur"dur (sunucu yalnız duraklatır, satır listede kalır); bağımsız
+    // satır ise KALICI silinir (2026-09-27: silme ≠ duraklatma, deleted_at). DnsMonitorPage ikiziyle aynı metin ayrımı.
+    const derived = m.standalone !== true
+    const label = m.name || (m.host + ":" + m.port)
     const ok = await showConfirm({
       title: t('mon.deleteTitle'),
-      message: t('mon.deleteMsg', m.name || (m.host + ":" + m.port)),
-      confirmText: t('port.delete'),
+      message: derived ? t('port.deleteDerivedMsg', label) : t('mon.deleteMsg', label),
+      confirmText: derived ? t('port.deleteDerivedConfirm') : t('port.delete'),
       cancelText: t('port.cancel'),
       variant: 'danger',
     })
@@ -341,7 +362,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       // karttan silerken modal KAPALI oldugu icin 403/409 sessizce yutuluyordu — kullanici
       // silindi saniyordu. DnsMonitorPage ikiziyle ayni desen.
       if (!res?.success) { toast.error(res?.error || t('port.saveError')); return }
-      toast.success(t('port.deleted'))
+      toast.success(derived ? t('port.deletedDerived') : t('port.deleted'))
       await load()
       if (modal) closeEdit()
     } finally {
@@ -363,7 +384,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
+        // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
+        // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -458,7 +481,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'port-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
+    listKey: 'port-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -471,62 +494,217 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
-  /** Kart durum sınıfı — Port'ta {@code status} open/closed/unknown değerini taşır. */
-  function cardClass(m) {
-    if (m.active === false) return 'upt-card--unknown'
-    if (m.status === 'open') return 'upt-card--up'
-    if (m.status === 'closed') return 'upt-card--down'
-    return 'upt-card--unknown'
+  /** Kart durum anahtarı — Port'ta {@code status} open/closed/unknown değerini taşır; duraklatılmış = unknown. */
+  const cardStatus = (m) => {
+    if (m.active === false) return 'unknown'
+    if (m.status === 'open') return 'up'
+    if (m.status === 'closed') return 'down'
+    return 'unknown'
   }
+  /** Rozet / detay kenarı — yalnız port durumuna bakar (eski .upt-badge--* / .upt-modal--* ile aynı eşleme). */
+  const statusKey = (status) => (status === 'open' ? 'up' : status === 'closed' ? 'down' : 'unknown')
 
   function statusBadge(status) {
-    const cls = status === 'open' ? 'upt-badge--up' : status === 'closed' ? 'upt-badge--down' : 'upt-badge--unknown'
     const label = status === 'open' ? t('port.statusOpen') : status === 'closed' ? t('port.statusClosed') : t('port.statusUnknown')
-    return (
-      <span className={`upt-badge ${cls}`}>
-        <span className="upt-badge-dot" />
-        {label}
-      </span>
-    )
+    return <MonitorStatusBadge status={statusKey(status)}>{label}</MonitorStatusBadge>
   }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('port.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
-  }
+  const alarmLabel = (m) => `${t('port.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
 
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
-    : (teamName || t('app.noTeam'))
+    : (defaultTeamName || t('app.noTeam'))
+
+  // Gelişmiş ayarlar → istek zaman aşımı kaydırıcısı saniye cinsinden (1..60); form milisaniye tutar.
+  const timeoutSecs = Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={Plug} width={640}
+      title={modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('port.testing') : null}
+      footer={<>
+        <div className="mr-auto flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim() || !form.port}>
+            <FlaskConical size={14} />{t('port.test')}
+          </Button>
+          {modal !== 'new' && canDeleteRow(modal) && (
+            <Button variant="destructive" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</Button>
+          )}
+        </div>
+        <Button variant="secondary" onClick={closeEdit}>{t('port.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{t('port.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={Plug}>{t('port.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField label={t('port.host')} required>
+          {({ id }) => (
+            <Input id={id} value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('port.port')} required>
+          {({ id }) => (
+            <Input id={id} type="number" min="1" max="65535" value={form.port}
+              onChange={e => setForm(f => ({ ...f, port: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('port.name')}>
+          {({ id }) => (
+            <Input id={id} value={form.name} placeholder={form.host}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('port.checkType')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.protocol} onChange={v => setForm(f => ({ ...f, protocol: v }))}
+              options={PORT_TYPES.map(v => ({ value: v, label: t(`port.type.${v}`) }))} />
+          )}
+        </FormField>
+        {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
+          <FormField label={form.protocol === 'HTTP' ? t('port.pathLabel') : t('port.sendLabel')}>
+            {({ id }) => (
+              <Input id={id} value={form.sendData} placeholder={form.protocol === 'HTTP' ? '/health' : ''}
+                onChange={e => setForm(f => ({ ...f, sendData: e.target.value }))} />
+            )}
+          </FormField>
+        )}
+        {(form.protocol === 'HTTP' || form.protocol === 'BANNER') && (
+          <FormField label={form.protocol === 'HTTP' ? t('port.expectStatus') : t('port.expectResp')}>
+            {({ id }) => (
+              <Input id={id} value={form.expect} placeholder={form.protocol === 'HTTP' ? '200, 2xx, 200-399' : '220, +OK, SSH-2.0'}
+                onChange={e => setForm(f => ({ ...f, expect: e.target.value }))} />
+            )}
+          </FormField>
+        )}
+        {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
+          <FormHint>ⓘ {t(`port.typeHint.${form.protocol}`)}</FormHint>
+        )}
+        {/* Kurumsal vekil (2026-09-24): varsayılan Doğrudan — mevcut izlemeler yol değiştirmez; hangi portların
+            vekilden denetlenebileceği ve UDP/izinsiz port uyarıları hemen altında. */}
+        <LabelSlot full>
+          <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+            effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+        </LabelSlot>
+        <PortProxyNotes t={t} mode={form.useProxy} protocol={form.protocol} port={form.port} info={proxyInfo} />
+        <FormField label={t('port.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
+        </FormField>
+        <FormField label={t('port.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="PORT" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        {/* Etiketler */}
+        <FormSection title={t('port.tagsTitle')} required hint={t('port.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        {/* IP sürümü */}
+        <FormField label={t('port.ipVersion')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
+              options={[{ value: 'auto', label: t('port.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} />
+          )}
+        </FormField>
+
+        {/* Gelişmiş ayarlar — açılır/kapanır (kapalıyken içerik DOM'da yok: eski koşullu çizimle aynı) */}
+        <Collapsible open={advOpen} onOpenChange={setAdvOpen} className="min-w-0 rounded-lg border bg-muted/30 sm:col-span-2">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost" className="h-auto w-full justify-start gap-2 rounded-lg px-3.5 py-3 text-left font-semibold">
+              <ChevronDown size={16} aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', advOpen && 'rotate-180')} />
+              {t('port.advanced')}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="flex flex-col gap-3 px-3.5 pb-3.5">
+            <FormSection boxed={false} title={t('port.timeoutTitle')} hint={t('port.timeoutEvery').replace('{0}', timeoutSecs)}>
+              <Slider min={1} max={60} step={1} value={[timeoutSecs]}
+                onValueChange={([v]) => setForm(f => ({ ...f, timeoutMs: v * 1000 }))}
+                thumbProps={{ 'aria-label': t('port.timeoutTitle'), 'aria-valuetext': t('port.timeoutEvery').replace('{0}', timeoutSecs) }}
+                className="py-1.5" />
+            </FormSection>
+            <CheckField checked={form.slowResponseEnabled} onCheckedChange={v => setForm(f => ({ ...f, slowResponseEnabled: v }))} label={t('port.slowEnable')} />
+            {form.slowResponseEnabled && (
+              <InlineField label={t('port.slowThreshold')}>
+                {({ id }) => <Input id={id} type="number" min="100" step="100" className="h-8 w-36" value={form.slowThresholdMs}
+                  onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />}
+              </InlineField>
+            )}
+            <FormHint full={false}>{t('port.slowHint')}</FormHint>
+            <FormGrid>
+              <FormField label={t('port.confirmAttempts')}>
+                {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('port.confirmInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('port.recoveryChecks')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('port.recoveryInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+            </FormGrid>
+            <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('port.active')} />
+            <FormHint full={false}>ⓘ {t('port.confirmHint')}</FormHint>
+          </CollapsibleContent>
+        </Collapsible>
+      </FormGrid>
+
+      {testResult && (testResult.open === undefined && testResult.error
+        ? <AlertBanner className="mt-3" tone="danger">{testResult.error}</AlertBanner>
+        : (
+          <AlertBanner className="mt-3" tone={testResult.open ? 'success' : 'danger'}
+            icon={testResult.open ? undefined : AlertTriangle}
+            title={<>{testResult.open ? t('port.testPass') : t('port.testNoPass')}
+              {testResult.response_ms != null && <span className="font-semibold tabular-nums opacity-80"> · {testResult.response_ms} ms</span>}</>}>
+            {testResult.detail && <div>{t('port.testReturned')}: <b>{testResult.detail}</b></div>}
+            {testResult.via === 'proxy' && <div>{t('port.testVia')}: <b>{t('mon.proxy.effProxy')}</b></div>}
+            {testResult.proxy_bypassed && <div>{t('port.testBypassed')}</div>}
+            {testResult.error && <div className="text-destructive">{testResult.error}</div>}
+            <div className="mt-1 opacity-80">{testResult.open ? t('port.testNoteOk') : t('port.testNoteFail')}</div>
+          </AlertBanner>
+        ))}
+      {saveError && <AlertBanner className="mt-3" tone="danger">{saveError}</AlertBanner>}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı.
+          Form ızgarasının DIŞINDA, eylem çubuğunun hemen üstünde: sekiz izleme
+          sayfasında da aynı yerde dursun (ızgaraların iç düzeni sayfadan sayfaya değişiyor). */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
 
   return (
     <div className="mon-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('port.title')}</h2>
-          <p className="upt-subtitle">{t('port.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('port.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('port.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="port" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('port.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="port" title={t('port.title')} subtitle={t('port.subtitle')}
+        count={loading ? null : monitors.length} down={portCounts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('port.addMonitor')} />
 
       <MonitorHowBox bullets={[t('port.how1'), t('port.how2'), t('port.how3')]} />
 
@@ -539,6 +717,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', marginBottom: '14px', gap: 8 }}>
+          {/* Kart görünümü seçicisi satırın İLK öğesi (mr-auto): süzgeçler + arama sağda kalır; telefonda satır sarar */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasTeamOptions && (
             <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
           )}
@@ -546,8 +726,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
             <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />
           )}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
-          <input className="upt-search" type="text"
-            placeholder={t('port.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('port.searchPlaceholder')} aria-label={t('port.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -558,164 +737,88 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <div className="mon-empty">{t('port.noMonitors')}</div>
+        <StatusBlock tone="neutral" icon={Inbox} title={t('port.noMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PORT"
           api={{ update: api.monitoring.updatePortMonitor, remove: api.monitoring.deletePortMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id}
-              className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', `${m.host}:${m.port}`)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openModal(m) }
-              }}
-              onClick={() => openModal(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', `${m.host}:${m.port}`)} />
-                )}
-                {statusBadge(m.status)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.host} />
-                <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('port', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              {/* Baslik YALNIZ host (":" ile bolmek onu tek metin dugumu olmaktan cikariyordu); port + protokol
-                  hemen altinda belirgin uc nokta satirinda (2026-09-24 — eskiden sag ustte 11px gri yaziydi). */}
-              <div className="upt-card-domain upt-card-domain--tight" title={`${m.host}:${m.port}`}>{m.host}</div>
-              <div className="port-ep-row"><PortEndpoint host={m.host} port={m.port} protocol={m.protocol} path={m.send_data} /></div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                {m.response_ms != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.response_ms}ms</span>
-                    <span className="upt-metric-lbl">{t('port.colResponse')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
-                {/* Sinifsiz sarmalayici: MonitorCardActions kendi kokunu zaten
-                    "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
-                    kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={`${m.host}:${m.port}`}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('port.check')} editTitle={t('port.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('port.delete')} />
-                )}
-              </div>
-            </div>
+            /* Port kartı (port/PortMonitorCard, 2026-09-27): uç nokta kimliği (host · :port · tür · yaygın hizmet),
+               SONUÇ PANELİ (açık / reddedildi / filtreli / DNS … + tek satırlık neden), bağlantı süresi kutuları, kaynak
+               rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı parçalar BURADA kurulur ve yuva olarak
+               geçer — toplu seçim kutusu, meta, kart eylemleri (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü
+               detay penceresiyle ortak (cardStatus / statusBadge / alarmLabel). */
+            <PortMonitorCard key={m.id} monitor={m} density={density} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
+              onOpen={() => openModal(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', `${m.host}:${m.port}`)} />
+              )}
+              meta={<MonitorCardMeta monitor={m} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={`${m.host}:${m.port}`}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('port.check')} editTitle={t('port.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={m.standalone === true ? t('port.delete') : t('port.deleteDerivedTitle')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeModal}>
-          <div className={`upt-modal upt-modal--${selected.status === 'open' ? 'up' : selected.status === 'closed' ? 'down' : 'unknown'}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected.status)}
-                <span className="upt-modal-domain">{selected.host}</span>
-                <PortEndpoint host={selected.host} port={selected.port} protocol={selected.protocol} path={selected.send_data} size="lg" />
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('port.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('port.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('port.delete')}
-                onClose={closeModal}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric" title={t('port.sumUptimeHint')}>
-                <span className="upt-modal-metric-val">
-                  {summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}
-                </span>
-                <span className="upt-modal-metric-lbl">{t('port.sumUptime')}</span>
-              </div>
-              <div className="upt-modal-metric" title={t('port.sumTotalHint')}>
-                <span className="upt-modal-metric-val">{summary.total}</span>
-                <span className="upt-modal-metric-lbl">{t('port.sumTotal')}</span>
-              </div>
-              <div className="upt-modal-metric" title={t('port.sumIncidentsHint')}>
-                <span className="upt-modal-metric-val">{summary.down}</span>
-                <span className="upt-modal-metric-lbl">{t('port.sumIncidents')}</span>
-              </div>
-              {selected.response_ms != null && (
-                <div className="upt-modal-metric" title={t('port.responseMsHint')}>
-                  <span className="upt-modal-metric-val">{selected.response_ms}ms</span>
-                  <span className="upt-modal-metric-lbl">{t('port.responseMs')}</span>
-                </div>
-              )}
-              {selected.protocol && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val">{selected.protocol}</span>
-                  <span className="upt-modal-metric-lbl">{t('port.protocol')}</span>
-                </div>
-              )}
-              {selected.proxy_effective && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val"><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /></span>
-                  <span className="upt-modal-metric-lbl">{t('mon.proxy.label')}</span>
-                </div>
-              )}
-              {selected.interval_seconds != null && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val upt-modal-metric-time">{selected.interval_seconds}s</span>
-                  <span className="upt-modal-metric-lbl">{t('port.intervalLbl')}</span>
-                </div>
-              )}
-              {selected.timeout_ms != null && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val upt-modal-metric-time">{selected.timeout_ms}ms</span>
-                  <span className="upt-modal-metric-lbl">{t('port.timeoutLbl')}</span>
-                </div>
-              )}
-              {selected.checked_at && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val upt-modal-metric-time">{formatDate(selected.checked_at)}</span>
-                  <span className="upt-modal-metric-lbl">{t('port.lastCheck')}</span>
-                </div>
-              )}
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('port.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('port.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('port.tabGuide')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'control' && (
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeModal} status={statusKey(selected.status)} badge={statusBadge(selected.status)} title={selected.host} nocNotify={!!selected.noc_notify}
+          // Uç nokta satırı kartla AYNI gösterim (büyük boy) — ortak alt başlık yuvası (eski ":25" gri etiketi değil).
+          subtitle={<PortEndpoint host={selected.host} port={selected.port} protocol={selected.protocol} path={selected.send_data} size="lg" />}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('port.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('port.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('port.delete')}
+              onClose={closeModal}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-3" />
+          <DetailSummary items={[
+            { key: 'up', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—',
+              label: t('port.sumUptime'), hint: t('port.sumUptimeHint') },
+            { key: 'total', value: summary.total, label: t('port.sumTotal'), hint: t('port.sumTotalHint') },
+            { key: 'inc', value: summary.down, label: t('port.sumIncidents'), hint: t('port.sumIncidentsHint') },
+            selected.response_ms != null && { key: 'ms', value: `${selected.response_ms}ms`, label: t('port.responseMs'), hint: t('port.responseMsHint') },
+            selected.protocol && { key: 'proto', value: selected.protocol, label: t('port.protocol') },
+            selected.proxy_effective && { key: 'proxy', label: t('mon.proxy.label'),
+              value: <ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /> },
+            selected.interval_seconds != null && { key: 'iv', value: `${selected.interval_seconds}s`, label: t('port.intervalLbl'), time: true },
+            selected.timeout_ms != null && { key: 'to', value: `${selected.timeout_ms}ms`, label: t('port.timeoutLbl'), time: true },
+            selected.checked_at && { key: 'last', value: formatDate(selected.checked_at), label: t('port.lastCheck'), time: true },
+          ]} />
+          <DetailDivider />
+          <DetailTabs value={detailTab} onValueChange={setDetailTab}
+            countsFor={{ kind: 'port', monitorId: selected.id, notesType: 'PORT', notesTarget: `${selected.host}:${selected.port}`, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['control', t('hist.tab')], ['alerts', t('port.tabAlerts')], ['chart', t('port.tabChart')], ['notes', t('port.tabGuide')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="control">
               <CheckHistoryTab kind="port" monitorId={selected.id} listKey="port-history" reloadSignal={histReload}
                 columns={[t('port.colTime'), t('port.colStatus'), t('port.colResponse'), t('port.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
@@ -731,193 +834,34 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                       ? <span className="upt-rt-up">{t('port.detailOk')}</span>
                       : <span className="upt-rt-ms">—</span>}
                 </>)} />
-            )}
+            </TabsContent>
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.host} types={alertTypesFor('port')} />}
+            <TabsContent value="alerts"><AlertHistory domain={selected.host} types={alertTypesFor('port')} /></TabsContent>
 
-            {detailTab === 'chart' && (
+            <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="port" />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'notes' && (
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PORT" target={`${selected.host}:${selected.port}`} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="port" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── (overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
-              <div className="modal-icon-hdr-badge"><Plug size={20} /></div>
-              <h3>{modal === 'new' ? t('port.modalAdd') : t('port.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('port.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="port-type-banner"><Plug size={16} /><span>{t('port.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label><span>{t('port.host')} <span className="req-star">*</span></span>
-                <input value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, host: e.target.value }))} /></label>
-              <label><span>{t('port.port')} <span className="req-star">*</span></span>
-                <input type="number" min="1" max="65535" value={form.port}
-                  onChange={e => setForm(f => ({ ...f, port: e.target.value }))} /></label>
-              <label><span>{t('port.name')}</span>
-                <input value={form.name} placeholder={form.host}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('port.checkType')}</span>
-                <SearchableSelect value={form.protocol} onChange={v => setForm(f => ({ ...f, protocol: v }))}
-                  options={PORT_TYPES.map(v => ({ value: v, label: t(`port.type.${v}`) }))} /></label>
-              {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
-                <label><span>{form.protocol === 'HTTP' ? t('port.pathLabel') : t('port.sendLabel')}</span>
-                  <input value={form.sendData} placeholder={form.protocol === 'HTTP' ? '/health' : ''}
-                    onChange={e => setForm(f => ({ ...f, sendData: e.target.value }))} /></label>
-              )}
-              {(form.protocol === 'HTTP' || form.protocol === 'BANNER') && (
-                <label><span>{form.protocol === 'HTTP' ? t('port.expectStatus') : t('port.expectResp')}</span>
-                  <input value={form.expect} placeholder={form.protocol === 'HTTP' ? '200, 2xx, 200-399' : '220, +OK, SSH-2.0'}
-                    onChange={e => setForm(f => ({ ...f, expect: e.target.value }))} /></label>
-              )}
-              {(form.protocol === 'HTTP' || form.protocol === 'BANNER' || form.protocol === 'UDP') && (
-                <div className="full-width" style={{ fontSize: '.78em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                  ⓘ {t(`port.typeHint.${form.protocol}`)}
-                </div>
-              )}
-              {/* Kurumsal vekil (2026-09-24): varsayılan Doğrudan — mevcut izlemeler yol değiştirmez; hangi portların
-                  vekilden denetlenebileceği ve UDP/izinsiz port uyarıları hemen altında. */}
-              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
-              <PortProxyNotes t={t} mode={form.useProxy} protocol={form.protocol} port={form.port} info={proxyInfo} />
-              <label><span>{t('port.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('app.noTeam')} disabled />}</label>
-              <label><span>{t('port.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-              {/* Etiketler */}
-              <div className="full-width port-tags-block">
-                <div className="port-block-title">{t('port.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('port.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-
-
-              {/* IP sürümü */}
-              <label><span>{t('port.ipVersion')}</span>
-                <SearchableSelect value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
-                  options={[{ value: 'auto', label: t('port.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} /></label>
-
-              {/* Gelişmiş ayarlar — açılır/kapanır */}
-              <div className="full-width port-adv">
-                <button type="button" className="port-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
-                  <ChevronDown size={16} className={`port-adv-chevron${advOpen ? ' open' : ''}`} />
-                  <span>{t('port.advanced')}</span>
-                </button>
-                {advOpen && (
-                  <div className="port-adv-body">
-                    <div className="port-block-title">{t('port.timeoutTitle')}</div>
-                    <div className="field-hint" style={{ marginBottom: 8 }}>{t('port.timeoutEvery').replace('{0}', Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000))))}</div>
-                    <input type="range" className="port-interval-slider" min={1} max={60} step={1}
-                      value={Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))}
-                      onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) * 1000 }))} />
-                    <label className="checkbox-label" style={{ marginTop: 12 }}>
-                      <input type="checkbox" checked={form.slowResponseEnabled} onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('port.slowEnable')}</label>
-                    {form.slowResponseEnabled && (
-                      <div className="port-days-row">
-                        <span>{t('port.slowThreshold')}</span>
-                        <input type="number" min="100" step="100" value={form.slowThresholdMs} onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />
-                      </div>
-                    )}
-                    <div className="field-hint" style={{ marginBottom: 4 }}>{t('port.slowHint')}</div>
-                    <div className="port-adv-grid">
-                      <label><span>{t('port.confirmAttempts')}</span>
-                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-                      <label><span>{t('port.confirmInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-                      <label><span>{t('port.recoveryChecks')}</span>
-                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-                      <label><span>{t('port.recoveryInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-                    </div>
-                    <label className="checkbox-label" style={{ marginTop: 10 }}>
-                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('port.active')}</label>
-                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('port.confirmHint')}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {testResult && (testResult.open === undefined && testResult.error
-              ? <div className="mon-modal-error">{testResult.error}</div>
-              : (
-                <div className={`port-test-result ${testResult.open ? 'ptr-ok' : 'ptr-fail'}`}>
-                  <div className="ptr-head">
-                    {testResult.open ? '✓ ' + t('port.testPass') : '✕ ' + t('port.testNoPass')}
-                    {testResult.response_ms != null && <span className="ptr-ms"> · {testResult.response_ms} ms</span>}
-                  </div>
-                  {testResult.detail && <div className="ptr-row">{t('port.testReturned')}: <b>{testResult.detail}</b></div>}
-                  {testResult.via === 'proxy' && <div className="ptr-row">{t('port.testVia')}: <b>{t('mon.proxy.effProxy')}</b></div>}
-                  {testResult.proxy_bypassed && <div className="ptr-row">{t('port.testBypassed')}</div>}
-                  {testResult.error && <div className="ptr-row ptr-err">{testResult.error}</div>}
-                  <div className="ptr-note">{testResult.open ? t('port.testNoteOk') : t('port.testNoteFail')}</div>
-                </div>
-              ))}
-            {saveError && <div className="mon-modal-error">{saveError}</div>}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı.
-                Form ızgarasının DIŞINDA, eylem çubuğunun hemen üstünde: sekiz izleme
-                sayfasında da aynı yerde dursun (ızgaraların iç düzeni sayfadan sayfaya değişiyor). */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim() || !form.port}>
-                  <FlaskConical size={14} />{t('port.test')}
-                </Button>
-                {modal !== 'new' && canDeleteRow(modal) && (
-                  <Button variant="destructive" onClick={() => deleteMonitor(modal)}><Trash2 size={14} />{t('port.delete')}</Button>
-                )}
-              </div>
-              <Button variant="secondary" onClick={closeEdit}>{t('port.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.port || !form.teamId}>{t('port.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim
@@ -948,13 +892,17 @@ function PortProxyNotes({ t, mode, protocol, port, info }) {
   const list = ports.join(', ')
   const wantsProxy = mode === 'ON' || mode === 'AUTO'
   const n = Number(port)
+  // Satırlar shadcn FieldDescription (vekil alanının açıklaması); uyarılar `data-tone="warn"` + uyarı rengi.
+  const note = (text, warn = false) => (
+    <FieldDescription data-tone={warn ? 'warn' : undefined} className={cn('text-xs', warn && 'text-warning')}>{text}</FieldDescription>
+  )
   return (
-    <div className="full-width port-proxy-notes">
-      <span className="field-hint">ⓘ {t('port.proxyPorts', list)}</span>
-      {wantsProxy && protocol === 'UDP' && <span className="field-hint field-hint--warn">⚠ {t('port.proxyUdpWarn')}</span>}
-      {wantsProxy && protocol !== 'UDP' && n > 0 && !ports.includes(n) && <span className="field-hint field-hint--warn">⚠ {t('port.proxyPortWarn', n, list)}</span>}
-      {wantsProxy && info?.configured === false && <span className="field-hint field-hint--warn">⚠ {t('port.proxyNotConfigured')}</span>}
-      {wantsProxy && protocol !== 'UDP' && <span className="field-hint">{t('port.proxyMeaning')}</span>}
+    <div data-slot="port-proxy-notes" className="-mt-1.5 flex min-w-0 flex-col gap-0.5 sm:col-span-2">
+      {note(<>ⓘ {t('port.proxyPorts', list)}</>)}
+      {wantsProxy && protocol === 'UDP' && note(<>⚠ {t('port.proxyUdpWarn')}</>, true)}
+      {wantsProxy && protocol !== 'UDP' && n > 0 && !ports.includes(n) && note(<>⚠ {t('port.proxyPortWarn', n, list)}</>, true)}
+      {wantsProxy && info?.configured === false && note(<>⚠ {t('port.proxyNotConfigured')}</>, true)}
+      {wantsProxy && protocol !== 'UDP' && note(t('port.proxyMeaning'))}
     </div>
   )
 }

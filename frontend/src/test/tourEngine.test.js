@@ -87,3 +87,25 @@ describe('tourEngine — sayfa turu, liste, ayna, klavye', () => {
     expect(keyAction({ key: 'ArrowRight', target: { tagName: 'INPUT' } })).toBeNull()
   })
 })
+
+// 2026-09-27: 'card'/'modal' adımları eski `.modal.show` sınıfını bekliyordu; pencere shadcn Dialog'a taşınınca sınıf
+// kalktı → adım hiç ilerlemiyor, 'modal' adımı zaman aşımıyla atlanıyordu (jsdom testleri yeşildi). Seçiciler artık
+// özniteliğe bağlı olmalı; doIt.inner verilmişse o öznitelik gerçekten kaynakta bulunmalı.
+describe('tourSteps — seçiciler sınıf adına değil özniteliğe bağlı', () => {
+  const all = [...MAIN_STEPS, ...Object.values(PAGE_TOURS).flat()]
+  it('advanceOn.selector / requires / doIt.inner yalnız [data-…] öznitelik seçicisi', () => {
+    const bad = []
+    for (const s of all) {
+      for (const sel of [s.advanceOn?.selector, s.requires, s.doIt?.inner].filter(Boolean)) {
+        if (!/^\[data-[a-z0-9-]+(="[^"]*")?\]$/.test(sel)) bad.push(`${s.id}: ${sel}`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+  it('kart adımı: pencere açılınca sekme şeridine ilerler, "benim yerime yap" gerçek düğmeye tıklar', () => {
+    const card = MAIN_STEPS.find((s) => s.id === 'card')
+    expect(card.advanceOn.selector).toBe('[data-tour="cert-modal-tabs"]')
+    expect(card.doIt).toEqual({ click: 'first-card', inner: '[data-cert-open]' })
+    expect(MAIN_STEPS.find((s) => s.id === 'modal').requires).toBe('[data-tour="cert-modal-tabs"]')
+  })
+})

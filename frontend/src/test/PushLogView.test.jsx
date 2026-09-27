@@ -8,7 +8,11 @@ vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }) => <div data-testid="chart">{children}</div>,
   BarChart: ({ children, data, onClick }) => <div data-testid="barchart" onClick={() => onClick?.({ activePayload: [{ payload: data?.[0] }] })}>{data?.length ?? 0} kova{children}</div>,
   Bar: () => null, XAxis: () => null, YAxis: () => null, CartesianGrid: () => null, Tooltip: () => null,
+  Legend: () => null,   // shadcn Chart (ChartLegend) modül düzeyinde okur
 }))
+/** Ana tablonun veri satırları (shadcn Table, `data-testid="sml-table"`) ve kırılım paneli satırları. */
+const tableRows = () => screen.getByTestId('sml-table').querySelectorAll('tbody tr')
+const pbpRows = () => [...document.querySelectorAll('[data-pbp-row]')]
 const { pushLog } = vi.hoisted(() => ({ pushLog: { search: vi.fn(), summary: vi.fn(), export: vi.fn(), detail: vi.fn(), requeue: vi.fn() } }))
 vi.mock('../api/client', () => ({
   formatDate: (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : ''),
@@ -52,9 +56,9 @@ describe('PushLogView', () => {
     await screen.findByText('Internal error')
     expect(pushLog.summary.mock.calls[0][0].from).toBe(pushLog.search.mock.calls[0][0].from)
     expect(screen.getByText('%33.3')).toBeInTheDocument()
-    expect(document.querySelector('.rn-count').textContent).toMatch(/6 kayıt|6 records/)
+    expect(screen.getByText(/^(6 kayıt|6 records)$/)).toBeInTheDocument()
     expect(screen.getAllByText(/Sunucu hatası \(5xx\)|Server error \(5xx\)/).length).toBeGreaterThan(0)
-    expect(document.querySelectorAll('.sml-table tbody tr')).toHaveLength(3)
+    expect(tableRows()).toHaveLength(3)
     expect(screen.getByText(/3 deneme|3 attempts/)).toBeInTheDocument()
     expect(screen.getAllByText(/HTTP 500/).length).toBeGreaterThan(0)   // 'HTTP 500 · 3 deneme' aynı düğümde
     // 2026-09-25 (R15): satır eylemlerinin ADI kaydı ayırır (izleme + zaman) — yeniden kuyruğa alma
@@ -70,9 +74,9 @@ describe('PushLogView', () => {
     await screen.findByText('Internal error')
     fireEvent.click(screen.getByRole('button', { name: /1\s*Engellendi|1\s*Blocked/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'BLOCKED' })))
-    await waitFor(() => expect(document.querySelectorAll('.sml-table tbody tr')).toHaveLength(1))
+    await waitFor(() => expect(tableRows()).toHaveLength(1))
     // kırılım paneli v2 (2026-09-21): satırdaki RAKAM tıklanır — Toplam → yalnız boyut (durum süzgeci kalkar)
-    const rowOf = (re) => [...document.querySelectorAll('.pbp-row')].find((r) => re.test(r.textContent))
+    const rowOf = (re) => pbpRows().find((r) => re.test(r.textContent))
     fireEvent.click(within(rowOf(/HIGH/)).getByRole('button', { name: /Toplam|Total/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ level: 'HIGH', status: '' })))
     fireEvent.click(within(rowOf(/Üç Kullanıcı/)).getByRole('button', { name: /Toplam|Total/ }))
@@ -86,7 +90,7 @@ describe('PushLogView', () => {
     const nav = vi.fn(); window.addEventListener('sm:navigate', nav)
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
-    fireEvent.click(document.querySelectorAll('.sml-resend')[0])           // satır #2 FAILED → yeniden kuyruk
+    fireEvent.click(document.querySelectorAll('[data-action="resend"]')[0])           // satır #2 FAILED → yeniden kuyruk
     const confirm = await screen.findByRole('dialog')
     fireEvent.click(within(confirm).getByRole('button', { name: /Yeniden kuyruğa al|Requeue/ }))
     await waitFor(() => expect(pushLog.requeue).toHaveBeenCalledWith(2))
@@ -119,36 +123,36 @@ describe('PushLogView', () => {
   it('takım / alıcı rozetine tıklamak satır detayını AÇMAZ (2026-09-20 kullanıcı bildirimi); hata sınıfları paneli kaldırıldı, mini tablolar sabit yerleşimli', async () => {
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
-    const row = document.querySelector('.sml-table tbody tr.smtp-log-row')
-    const stop = row.querySelector('.sml-stop')
+    const row = tableRows()[0]
+    const stop = row.querySelector('[data-row-stop]')
     expect(stop).toBeTruthy()
     fireEvent.click(stop)
     expect(pushLog.detail).not.toHaveBeenCalled()
     fireEvent.click(row)
     await waitFor(() => expect(pushLog.detail).toHaveBeenCalled())
     expect(screen.queryByText(/^Hata sınıfları$|^Error classes$/)).toBeNull()
-    expect(document.querySelector('.pbp-row .pbp-num')).toBeTruthy()   // kırılım paneli v2
+    expect(document.querySelector('[data-pbp-row] button[aria-pressed]')).toBeTruthy()   // kırılım paneli v2
   })
 
   it('kırılım paneli v2: takım satırında "Başarısız" rakamı → teamId + status=FAILED; ikinci tıklama süzgeci kaldırır; izleme satırı q ile süzer; başlık daraltılır', async () => {
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
-    const rowOf = (re) => [...document.querySelectorAll('.pbp-row')].find((r) => re.test(r.textContent))
+    const rowOf = (re) => pbpRows().find((r) => re.test(r.textContent))
     const teamRow = rowOf(/Takım A/)
-    expect(teamRow.querySelector('.pbp-bar')).toBeTruthy()
+    expect(teamRow.querySelector('[data-pbp-bar]')).toBeTruthy()
     fireEvent.click(within(teamRow).getByRole('button', { name: /Başarısız|Failed/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: '1', status: 'FAILED' })))
-    await waitFor(() => expect(rowOf(/Takım A/).className).toContain('is-active'))
-    expect(within(rowOf(/Takım A/)).getByRole('button', { name: /Başarısız|Failed/ }).className).toContain('is-on')
+    await waitFor(() => expect(rowOf(/Takım A/)).toHaveAttribute('data-state', 'selected'))
+    expect(within(rowOf(/Takım A/)).getByRole('button', { name: /Başarısız|Failed/ })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(within(rowOf(/Takım A/)).getByRole('button', { name: /Başarısız|Failed/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: '', status: '' })))
     // izleme satırı: Gönderildi → q + SENT
     fireEvent.click(within(rowOf(/HTTPgw/)).getByRole('button', { name: /Gönderildi|Sent/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'gw', status: 'SENT' })))
     // panel daraltma
-    const head = document.querySelector('[data-testid=pbp] .pbp-head')
+    const head = document.querySelector('[data-testid=pbp] [data-slot="collapsible-trigger"]')
     fireEvent.click(head)
     expect(head.getAttribute('aria-expanded')).toBe('false')
-    expect(head.closest('[data-testid=pbp]').querySelector('.pbp-list')).toBeNull()
+    expect(head.closest('[data-testid=pbp]').querySelector('ul')).toBeNull()
   })
 })

@@ -47,15 +47,17 @@ const TEAM_STATS = {
   ],
 }
 
+// shadcn Collapsible tetiği (ui/CollapsibleSection) — açık/kapalı durumu aria-expanded'dan (2026-09-26)
 function collapseBar() {
-  return document.querySelector('.stats-collapse-bar')
+  return document.querySelector('[data-slot="stats-toggle"]')
 }
+const isOpen = () => collapseBar()?.getAttribute('aria-expanded') === 'true'
 
 describe('StatsView — katlanabilir takım istatistikleri', () => {
   it('bölüm VARSAYILAN KAPALI gelir; başlık çubuğu görünür', () => {
     render(<StatsView certs={CERTS} teamStats={TEAM_STATS} onRowClick={() => {}} />)
     expect(collapseBar()).toBeTruthy()
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeNull()
+    expect(isOpen()).toBe(false)
   })
 
   it('çubuğa tıklanınca bölüm AÇILIR ve takım isimleri çizilir', async () => {
@@ -65,7 +67,7 @@ describe('StatsView — katlanabilir takım istatistikleri', () => {
 
     await user.click(collapseBar())
 
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeTruthy()
+    expect(isOpen()).toBe(true)
     expect(document.body.textContent).toContain('Ödeme Sistemleri')
     expect(document.body.textContent).toContain('Altyapı')
   })
@@ -75,10 +77,10 @@ describe('StatsView — katlanabilir takım istatistikleri', () => {
     render(<StatsView certs={CERTS} teamStats={TEAM_STATS} onRowClick={() => {}} />)
 
     await user.click(collapseBar())
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeTruthy()
+    expect(isOpen()).toBe(true)
 
     await user.click(collapseBar())
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeNull()
+    expect(isOpen()).toBe(false)
   })
 
   it('personal modunda da açılır (tek takım biçimi)', async () => {
@@ -105,13 +107,13 @@ describe('StatsView — katlanabilir takım istatistikleri', () => {
 
     // Takım bölümündeki tıklanabilir ilk hücre/satır — bileşen yapısı değişse de
     // "açık bölümde etkileşim çalışıyor" iddiası korunur.
-    // Katlama çubuğu da role=button taşır (klavye erişimi) — onu seçmek bölümü geri kapatır.
-    const clickable = document.querySelector('.sv-root [role="button"]:not(.stats-collapse-bar), .sv-root tbody tr, .sv-root .sv-team-row')
+    // Katlama tetiği de bir düğmedir — onu seçmek bölümü geri kapatır, dışarıda bırakılır.
+    const clickable = document.querySelector('.sv-root [role="button"]:not([data-slot="stats-toggle"]), .sv-root tbody tr, .sv-root .sv-team-row')
     if (clickable) {
       await user.click(clickable)
       expect(onRowClick.mock.calls.length >= 0).toBe(true)
     }
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeTruthy()
+    expect(isOpen()).toBe(true)
   })
 })
 
@@ -127,7 +129,7 @@ describe('StatsView — kenar durumlar', () => {
 
     await user.click(collapseBar())
 
-    expect(document.querySelector('.stats-collapse-chevron.open')).toBeTruthy()
+    expect(isOpen()).toBe(true)
   })
 
   it('süresi dolmuş ve hatalı sertifikaları birlikte işler', () => {

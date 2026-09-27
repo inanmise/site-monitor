@@ -44,7 +44,7 @@ class DomainRenewalPlanServiceTest {
 
     private static MockHttpSession session() {
         MockHttpSession s = new MockHttpSession();
-        s.setAttribute("username", "ops"); s.setAttribute("fullName", "Ops Kişi");
+        s.setAttribute("username", "ops"); s.setAttribute("displayName", "Ops Kişi");
         return s;
     }
 

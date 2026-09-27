@@ -1,12 +1,22 @@
-import { useState } from 'react'
 import { useT } from '../../i18n/index.jsx'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { Card } from '@/components/shadcn/card'
+import { OrgRoleBadge, SystemRoleBadge } from '../admin/ToneBadge.jsx'
 
 /**
- * Takım üyesi kartları — TeamManager'daki satır-içi genişletmeden çıkarıldı (2026-09-10) ki
- * aynı kartlar takım-üyeleri modalında (her yüzeyden) çizilebilsin. Sıralama korunur:
- * müdür kartı → MANAGER → PO → diğer; sonra company_level büyükten küçüğe (tr, sayısal);
- * sonra ad (tr). Yönetici zinciri yalnız {@code usersById} verilirse (yönetim ekranı) kurulur;
- * kurum-geneli modalda projeksiyonun {@code manager_display_name}'i kullanılır.
+ * Takım üyesi kartları — takım-üyeleri modalında (her yüzeyden) çizilir. YALNIZ GERÇEK ÜYELER.
+ *
+ * <p><b>Prod hatası (2026-09-26):</b> eskiden {@code usersById} verilince üyelerden yukarı 2 kademe yönetim zinciri
+ * yürünüp müdürler (ve onların müdürleri) üye ızgarasına "Müdür" rozetiyle EKLENİYORDU — takımın üyesi olmayan kişi
+ * takımın içinde görünüyor, "N üye" sayacıyla kart sayısı tutmuyordu. Zincir yürüyüşü kaldırıldı; takım müdürü üye
+ * listesine değil yönetim ekranındaki Takım Müdürü sütununa aittir (`utils/teamManager.js`). Üyenin müdürü kartında
+ * yalnız ALAN olarak ("Müdür: …") görünür.
+ *
+ * <p>Sıralama: MANAGER → PO → diğer; sonra company_level büyükten küçüğe (tr, sayısal); sonra ad (tr).
+ * shadcn Card + Avatar + Badge; yönetici düzenleyebiliyorsa ad gerçek bir düğmedir ve kartın tamamını kaplar
+ * (MonitorCard'daki gerilmiş düğme deseni). Telefonda tek sütun.
  */
 function computeInitials(name) {
   if (!name) return '?'
@@ -23,7 +33,7 @@ const AVATAR_PALETTE = [
   'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
   'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
 ]
-function avatarStyleFor(seed) {
+export function avatarStyleFor(seed) {   // dışa açık (2026-09-27): kullanıcı menüsü aynı renk kimliğini kullanır
   const s = String(seed || '')
   let hash = 0
   for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
@@ -41,104 +51,85 @@ export function adSoyadInitials(m) {
   return computeInitials(m.display_name || m.username)
 }
 
-/** Üye kartı avatarı: LDAP fotoğrafı + altında baş harfler; foto yoksa baş harf rozeti.
+/** Üye avatarı: LDAP fotoğrafı; yüklenemezse baş harf rozeti (shadcn Avatar kendi düşüşünü yönetir).
  *  /api/users/{id}/photo oturum açmış herkese açık (admin ucu ACCESS_DENIED denetim satırı üretirdi). */
 export function MemberAvatar({ m }) {
-  const [err, setErr] = useState(false)
-  const initials = adSoyadInitials(m)
-  if (err) {
-    return (
-      <div className="tm-mc-avatar-wrap">
-        <div className="tm-mc-avatar" style={avatarStyleFor(m.username || m.display_name || String(m.id))}>{initials}</div>
-      </div>
-    )
-  }
   return (
-    <div className="tm-mc-avatar-wrap">
-      <img className="tm-mc-photo" alt="" src={`/api/users/${m.id}/photo`} onError={() => setErr(true)} />
-      <span className="tm-mc-initials">{initials}</span>
-    </div>
+    <Avatar className="size-11 shrink-0">
+      <AvatarImage src={`/api/users/${m.id}/photo`} alt="" className="object-cover" />
+      <AvatarFallback className="text-sm font-semibold" style={avatarStyleFor(m.username || m.display_name || String(m.id))}>
+        {adSoyadInitials(m)}
+      </AvatarFallback>
+    </Avatar>
   )
 }
 
-/** Kart listesi: üyeler (+ yönetim zinciri, usersById varsa) sıralanmış. */
-export function buildMemberCards(members, usersById) {
-  const memberIds = new Set(members.map(x => x.id))
-  const managerIds = new Set()
-  if (usersById) {
-    const MANAGER_LEVELS = 2
-    members.forEach(member => {
-      let cur = member
-      for (let lvl = 0; lvl < MANAGER_LEVELS; lvl++) {
-        const mid = cur?.manager_id
-        if (!mid) break
-        const mgr = usersById[mid]
-        if (!mgr) break
-        if (!memberIds.has(mid)) managerIds.add(mid)
-        cur = mgr
-      }
-    })
-  }
-  const managerCards = [...managerIds].map(id => usersById[id]).filter(Boolean)
-  const rankOf = (c) => c.isManager ? 0 : (c.m.org_role === 'MANAGER' ? 1 : (c.m.org_role === 'PO' ? 2 : 3))
-  return [
-    ...members.map(m => ({ m, isManager: false })),
-    ...managerCards.map(m => ({ m, isManager: true })),
-  ].sort((a, b) => {
+/** Yalnız üyeler, sıralı. (Eski `buildMemberCards(members, usersById)` zincir yürüyüşü KALDIRILDI — bkz. dosya başı.) */
+export function sortMembers(members) {
+  const rankOf = (m) => (m.org_role === 'MANAGER' ? 0 : (m.org_role === 'PO' ? 1 : 2))
+  return [...members].sort((a, b) => {
     if (rankOf(a) !== rankOf(b)) return rankOf(a) - rankOf(b)
-    const la = (a.m.company_level || '').toLowerCase()
-    const lb = (b.m.company_level || '').toLowerCase()
+    const la = (a.company_level || '').toLowerCase()
+    const lb = (b.company_level || '').toLowerCase()
     if (la !== lb) return lb.localeCompare(la, 'tr', { numeric: true })
-    return (a.m.display_name || a.m.username || '').localeCompare(b.m.display_name || b.m.username || '', 'tr')
+    return (a.display_name || a.username || '').localeCompare(b.display_name || b.username || '', 'tr')
   })
 }
 
-export default function TeamMemberCards({ members = [], usersById, leaderId, canManage = false, onSelect, managerLabelFor }) {
+export default function TeamMemberCards({ members = [], leaderId, canManage = false, onSelect, managerLabelFor }) {
   const t = useT()
-  if (!members.length) return <span className="field-hint">{t('team.noMembers')}</span>
-  const cards = buildMemberCards(members, usersById)
+  if (!members.length) return <p className="text-sm text-muted-foreground">{t('team.noMembers')}</p>
   const mgrLabel = (m) => (managerLabelFor ? managerLabelFor(m) : (m.manager_display_name || null))
+  const field = (label, value, extra) => value ? (
+    <>
+      <dt className="text-muted-foreground">{label}:</dt>
+      <dd className="min-w-0 break-words" {...extra}>{value}</dd>
+    </>
+  ) : null
+  // list-none: preflight yok — <ul> madde işaretini kendisi çizer (sayfalama çubuğu "•" hatasıyla aynı sınıf)
   return (
-    <div className="tm-member-cards">
-      {cards.map(({ m, isManager }) => (
-        <div
-          key={m.id}
-          className={`tm-member-card${canManage ? ' tm-member-card-clickable' : ''}`}
-          role={canManage ? 'button' : undefined}
-          tabIndex={canManage ? 0 : undefined}
-          onClick={canManage ? () => onSelect?.(m) : undefined}
-          onKeyDown={canManage ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(m) } } : undefined}
-          title={canManage ? t('usr.editTitle') : undefined}
-        >
-          <MemberAvatar m={m} />
-          <div className="tm-mc-body">
-            <strong className="tm-mc-name">
-              {m.display_name || m.username}
-              {isManager && <span className="tm-mc-mgr-badge">{t('team.managerBadge')}</span>}
-              {leaderId != null && Number(leaderId) === Number(m.id) && <span className="tm-mc-mgr-badge tmm-leader">{t('team.leaderBadge')}</span>}
-            </strong>
-            <dl className="tm-mc-fields">
-              <dt>{t('usr.colUsername')}:</dt>
-              <dd>{m.username}</dd>
-              {m.employee_id && (<><dt>{t('usr.colEmployeeId')}:</dt><dd>{m.employee_id}</dd></>)}
-              {m.email && (<><dt>{t('usr.colEmail')}:</dt><dd title={m.email}>{m.email}</dd></>)}
-              {m.system_role && (<>
-                <dt>{t('usr.colRole')}:</dt>
-                <dd><span className={`role-badge role-${m.system_role.toLowerCase()}`}>{m.system_role}</span></dd>
-              </>)}
-              {m.org_role && (<>
-                <dt>{t('usr.colOrgRole')}:</dt>
-                <dd><span className={`badge-role badge-role-${m.org_role}`}>{t('usr.orgRoleVal.' + m.org_role)}</span></dd>
-              </>)}
-              {m.title && (<><dt>{t('usr.colTitle')}:</dt><dd>{m.title}</dd></>)}
-              {m.phone && (<><dt>{t('usr.colPhone')}:</dt><dd>{m.phone}</dd></>)}
-              {m.department && (<><dt>{t('usr.colDept')}:</dt><dd>{m.department}</dd></>)}
-              {m.mudurluk_name && (<><dt>{t('usr.colMudurluk')}:</dt><dd>{m.mudurluk_name}</dd></>)}
-              {mgrLabel(m) && (<><dt>{t('team.memberManager')}:</dt><dd>{mgrLabel(m)}</dd></>)}
-            </dl>
-          </div>
-        </div>
-      ))}
-    </div>
+    <ul data-slot="team-member-cards" className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2">
+      {sortMembers(members).map((m) => {
+        const name = m.display_name || m.username
+        const isLeader = leaderId != null && Number(leaderId) === Number(m.id)
+        return (
+          <li key={m.id} className="min-w-0">
+            <Card data-slot="team-member-card" data-clickable={canManage ? 'true' : undefined}
+              className="relative h-full gap-0 p-3.5 shadow-none transition-colors has-[[data-slot=team-member-open]:hover]:bg-accent/40 motion-reduce:transition-none">
+              <div className="flex min-w-0 items-start gap-3">
+                <MemberAvatar m={m} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {canManage ? (
+                      // Gerilmiş düğme: ad gerçek bir düğme, ::after ile kartın tamamını tıklanabilir yapar
+                      <Button type="button" variant="link" data-slot="team-member-open" title={t('usr.editTitle')}
+                        onClick={() => onSelect?.(m)}
+                        className="h-auto min-w-0 p-0 text-left text-[15px] font-semibold whitespace-normal text-foreground after:absolute after:inset-0 after:rounded-xl after:content-['']">
+                        <span data-slot="team-member-name" className="break-words">{name}</span>
+                      </Button>
+                    ) : (
+                      <strong data-slot="team-member-name" className="min-w-0 text-[15px] break-words">{name}</strong>
+                    )}
+                    {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
+                  </div>
+                  <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[12.5px]">
+                    {field(t('usr.colUsername'), m.username, { className: 'min-w-0 font-mono break-all' })}
+                    {field(t('usr.colEmployeeId'), m.employee_id)}
+                    {field(t('usr.colEmail'), m.email, { title: m.email, className: 'min-w-0 break-all' })}
+                    {m.system_role && field(t('usr.colRole'), <SystemRoleBadge role={m.system_role} />)}
+                    {m.org_role && field(t('usr.colOrgRole'), <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>)}
+                    {field(t('usr.colTitle'), m.title)}
+                    {field(t('usr.colPhone'), m.phone)}
+                    {field(t('usr.colDept'), m.department)}
+                    {field(t('usr.colMudurluk'), m.mudurluk_name)}
+                    {field(t('team.memberManager'), mgrLabel(m))}
+                  </dl>
+                </div>
+              </div>
+            </Card>
+          </li>
+        )
+      })}
+    </ul>
   )
 }

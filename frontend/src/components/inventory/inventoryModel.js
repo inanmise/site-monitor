@@ -11,16 +11,16 @@ import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 /** Sütun kataloğu — `fixed` her zaman, `def` varsayılan açık. Anahtar sıralama için de kullanılır. */
 export const INVENTORY_COLUMNS = [
   { key: 'domain',       labelKey: 'inv.colDomain',       fixed: true,  sort: (r) => r.domain || '' },
-  { key: 'port',         labelKey: 'inv.colPort',         def: true,    sort: (r) => r.port ?? 443 },
+  { key: 'port',         labelKey: 'inv.colPort',         def: false,   sort: (r) => r.port ?? 443 },   // 2026-09-27: 443 dışı port alan adı hücresinde rozet; ayrı sütun isteğe bağlı
   { key: 'tier',         labelKey: 'inv.colTier',         def: true,    sort: (r) => r.tier ?? 9 },
   { key: 'team',         labelKey: 'inv.colTeam',         def: true,    sort: (r) => (r.team_name || '').toLowerCase() },
   { key: 'ug_team',      labelKey: 'inv.colUgTeam',       def: false,   sort: (r) => (r.ug_team_name || '').toLowerCase() },
-  { key: 'cert',         labelKey: 'inv.colCert',         def: true,    sort: (r) => certRank(r) },
+  { key: 'cert',         labelKey: 'inv.colCert',         def: false,   sort: (r) => certRank(r) },   // 2026-09-27: durum rozeti varsayılan olarak "Kalan gün" hücresinde; ayrı sütun isteğe bağlı
   { key: 'days',         labelKey: 'inv.colDays',         def: true,    sort: (r) => r.cert_days_remaining ?? 99999 },
-  { key: 'checked',      labelKey: 'inv.colLastCheck',    def: false,   sort: (r) => r.cert_checked_at || '' },
-  { key: 'group',        labelKey: 'inv.colGroup',        def: false,   sort: (r) => (r.group_name || '').toLowerCase() },
+  { key: 'checked',      labelKey: 'inv.colLastCheck',    def: true,    sort: (r) => r.cert_checked_at || '' },   // 2026-09-27 varsayılan açık
+  { key: 'group',        labelKey: 'inv.colGroup',        def: false,   sort: (r) => (r.group_name || '').toLowerCase() },   // 2026-09-27: grup çipi alan adı hücresinde; ayrı sütun isteğe bağlı
   { key: 'contacts',     labelKey: 'inv.colContacts',     def: true,    sort: (r) => filledContacts(r).length },
-  { key: 'flags',        labelKey: 'inv.colFlags',        def: true,    sort: (r) => activeFlags(r).length },
+  { key: 'flags',        labelKey: 'inv.colFlags',        def: false,   sort: (r) => activeFlags(r).length },   // 2026-09-27: bayraklar çekmecede; sütun isteğe bağlı
   { key: 'domain_exp',   labelKey: 'inv.colDomainExpiry', def: false,   sort: (r) => r.domain_expiry || '9999' },
   { key: 'interval',     labelKey: 'inv.colInterval',     def: false,   sort: (r) => r.check_interval_hours ?? 0 },
   { key: 'tags',         labelKey: 'inv.colTags',         def: false,   sort: (r) => (r.tags || '').toLowerCase() },
@@ -84,11 +84,119 @@ export function hasActiveFilter(f) {
     || f.domain || f.port || f.days || f.checked || f.flag || f.interval || f.tag || f.updated || f.active || f.platform)
 }
 
-function daysUntil(iso) {
+export function daysUntil(iso) {
   if (!iso) return null
   const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T00:00:00Z' : (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z'))
   if (Number.isNaN(d.getTime())) return null
   return Math.floor((d.getTime() - Date.now()) / 86400000)
+}
+
+// ── Özet kartları (2026-09-27 yeniden tasarım) — her kart mevcut bir süzgece eşlenir, YENİ süzgeç anahtarı yoktur ──
+// `status` = durum süzgeci (aktif/pasif/silinmiş), `filters` = süzgeç nesnesine yama. Tek doğruluk kaynağı: kart
+// basınca yama uygulanır, kartın "basılı" hâli de AYNI yamadan türetilir (URL/kayıtlı görünümle gelen süzgeç de kartı
+// basılı gösterir). Sıra ekrandaki sırayla aynı.
+export const TILES = [
+  { key: 'total' },
+  { key: 'active',     status: 'active' },
+  { key: 'valid',      filters: { cert: 'valid' } },
+  { key: 'expiring',   filters: { days: '30' } },
+  { key: 'expired',    filters: { days: 'expired' } },
+  { key: 'errors',     filters: { cert: 'error' } },
+  { key: 'noContacts', filters: { contacts: 'none' } },
+  { key: 'noPlatform', filters: { platform: 'none' } },
+  { key: 'tier1',      filters: { tier: '1' } },
+  { key: 'inactive',   status: 'inactive' },
+  { key: 'deleted',    status: 'deleted' },
+]
+
+/** Kart sayaçları — canlı (silinmemiş) kayıtlar üstünden; `deleted` çöp kutusu. Kesin kural: `applyFilters` ile aynı. */
+export function tileCounts(items) {
+  const live = (items || []).filter((r) => !r.deleted_at)
+  const c = { total: live.length, active: 0, inactive: 0, valid: 0, expiring: 0, expired: 0, errors: 0, noContacts: 0, noPlatform: 0, tier1: 0, deleted: (items || []).length - live.length }
+  for (const r of live) {
+    if (r.active) c.active++; else c.inactive++
+    const s = (r.cert_status || '').toLowerCase()
+    const d = r.cert_days_remaining
+    if (s === 'valid') c.valid++   // `cert: 'valid'` süzgeciyle birebir (kart sayısı = basınca görünen satır)
+    if (s === 'error') c.errors++
+    if (d != null && d < 0) c.expired++
+    if (d != null && d >= 0 && d <= 30) c.expiring++
+    if (filledContacts(r).length === 0) c.noContacts++
+    if (!r.platform) c.noPlatform++
+    if (String(r.tier ?? '') === '1') c.tier1++
+  }
+  return c
+}
+
+/** Basılı kart: durum süzgeci ya da süzgeç nesnesi kartın yamasını birebir taşıyorsa (ilk eşleşen). */
+export function activeTile(statusFilter, filters) {
+  for (const tile of TILES) {
+    if (tile.status) { if (statusFilter === tile.status) return tile.key; continue }
+    if (tile.filters && Object.entries(tile.filters).every(([k, v]) => (filters?.[k] ?? '') === v)) return tile.key
+  }
+  return null
+}
+
+/**
+ * Kart basışı → { statusFilter, filters }. Basılı karta yeniden basmak yamasını geri alır; başka karta basmak öncekini
+ * geri alıp yenisini uygular (kartlar arasında TEK seçim); `total` her kart yamasını kaldırır.
+ */
+export function applyTile(key, statusFilter, filters) {
+  const cur = activeTile(statusFilter, filters)
+  let status = statusFilter
+  let next = { ...filters }
+  const undo = (tile) => {
+    if (!tile) return
+    if (tile.status) status = 'default'
+    for (const k of Object.keys(tile.filters || {})) next[k] = EMPTY_FILTERS[k] ?? ''
+  }
+  undo(TILES.find((tl) => tl.key === cur))
+  if (key === 'total') {
+    // "Toplam": durum kartı VE eşleşen her süzgeç kartı birlikte kalkar (ikisi aynı anda basılı olabilir: URL/görünüm)
+    for (const tile of TILES) {
+      if (tile.status) { if (status === tile.status) status = 'default'; continue }
+      if (tile.filters && Object.entries(tile.filters).every(([k, v]) => (next[k] ?? '') === v)) undo(tile)
+    }
+    return { statusFilter: status, filters: next }
+  }
+  if (key === cur) return { statusFilter: status, filters: next }
+  const tile = TILES.find((tl) => tl.key === key)
+  if (tile?.status) status = tile.status
+  if (tile?.filters) next = { ...next, ...tile.filters }
+  return { statusFilter: status, filters: next }
+}
+
+/** Faset sayaçları: DURUM süzgecinden geçmiş satırlardan (kolon seçenekleriyle aynı kaynak) → { tier, platform, group, tag, cert, team }. */
+export function facetCounts(items) {
+  const bump = (m, k) => { if (k == null || k === '') return; m[k] = (m[k] || 0) + 1 }
+  const out = { tier: {}, platform: {}, group: {}, tag: {}, cert: {}, team: {} }
+  for (const r of items || []) {
+    bump(out.tier, r.tier != null ? String(r.tier) : 'none')
+    bump(out.platform, r.platform || 'none')
+    bump(out.group, r.group_name || 'none')
+    for (const tg of new Set(tagList(r.tags).map((x) => x.toLowerCase()))) bump(out.tag, tg)
+    const s = (r.cert_status || '').toLowerCase()
+    bump(out.cert, s ? (s === 'ok' ? 'valid' : s) : 'never')
+    if (['error', 'critical', 'high', 'warning'].includes(s)) bump(out.cert, 'problem')
+    bump(out.team, r.team_id != null ? String(r.team_id) : '')
+  }
+  return out
+}
+
+/** Etkin süzgeç çipleri: boş olmayan her süzgeç anahtarı (arama dâhil; bayraklar tek tek). Etiketleme bileşende. */
+export function activeFilterChips(f) {
+  const out = []
+  for (const [k, v] of Object.entries(f || {})) {
+    if (k === 'flags') { for (const flag of v || []) out.push({ key: 'flags', value: flag }); continue }
+    if (v != null && v !== '') out.push({ key: k, value: String(v) })
+  }
+  return out
+}
+
+/** Bir çipi kaldır → yeni süzgeç nesnesi (bayrakta yalnız o bayrak düşer). */
+export function removeFilterChip(f, chip) {
+  if (chip.key === 'flags') return { ...f, flags: (f.flags || []).filter((x) => x !== chip.value) }
+  return { ...f, [chip.key]: EMPTY_FILTERS[chip.key] ?? '' }
 }
 
 /** ISO zaman damgasından bu yana geçen saat; yoksa/bozuksa null. */
@@ -275,6 +383,8 @@ export const IMPORT_COLUMNS = [
   'domain', 'port', 'team', 'ug_team', 'tier', 'active', 'group', 'description', 'owner', 'tags',
   'purchased_by', 'platform', 'platform_detail', 'svc_mgmt_contact', 'app_dev_contact', 'iis_admin_contact', 'waf_admin_contact',
   ...INVENTORY_FLAGS.map(({ key }) => key), 'change_description',
+  // 7/24 izleme ekibi (2026-09-27): noc_notify (evet/hayır/1/0), noc_groups (grup ADLARI `;`/`|`; `-` = varsayılana dön)
+  'noc_notify', 'noc_groups',
 ]
 
 /** RFC-4180'e yakın: tırnaklı hücre, çift tırnak kaçışı, CRLF; ayırıcı otomatik (',' ya da ';'). */

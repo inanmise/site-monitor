@@ -140,6 +140,36 @@ describe('EscalationContacts', () => {
     expect(api.admin.getContacts).toHaveBeenCalledTimes(1)   // yeniden yükleme YOK
   })
 
+  it('"Kim bilgilendirilir?" simülatörü artık bu sayfada DEĞİL (2026-09-27, ayrı sekme)', async () => {
+    renderEc()
+    await screen.findByText('Ali V')
+    expect(screen.queryByTestId('recipient-sim')).toBeNull()
+    expect(document.querySelector('[data-slot="who-notified"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Open simulator|Simülatörü aç/ })).toBeNull()
+    // Bağlantı yalnız sekmeye geçiş verildiğinde çizilir
+    expect(screen.queryByRole('button', { name: 'Test who gets notified' })).toBeNull()
+  })
+
+  it('başlıktaki "Test who gets notified" bağlantısı sekmeye geçer; yöneticide seçili takım süzgeci taşınır', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=contacts&g_team=5')
+    const onOpenSimulator = vi.fn()
+    render(<LangProvider><EscalationContacts systemRole="ADMIN" onOpenSimulator={onOpenSimulator} /></LangProvider>)
+    await screen.findByText('Ali V')
+    fireEvent.click(screen.getByRole('button', { name: 'Test who gets notified' }))
+    expect(onOpenSimulator).toHaveBeenCalledWith({ g_team: '5' })
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('yönetici olmayan: bağlantı takım süzgecini TAŞIMAZ (o rolde süzgeç denetimi görünmüyor)', async () => {
+    window.history.replaceState(null, '', '/?tab=admin&g_tab=contacts&g_team=5')
+    const onOpenSimulator = vi.fn()
+    render(<LangProvider><EscalationContacts systemRole="TEAM_ADMIN" onOpenSimulator={onOpenSimulator} /></LangProvider>)
+    await screen.findByText('Ali V')
+    fireEvent.click(screen.getByRole('button', { name: 'Test who gets notified' }))
+    expect(onOpenSimulator).toHaveBeenCalledWith(undefined)
+    window.history.replaceState(null, '', '/')
+  })
+
   it('boş liste çökmez (API data:null döndürse bile)', async () => {
     api.admin.getContacts.mockResolvedValue({ success: true, data: [] })
     api.admin.getUsers.mockResolvedValue({ success: true, data: null })

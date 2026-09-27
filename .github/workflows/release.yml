@@ -416,10 +416,21 @@ jobs:
           body: |
             ## Installation
 
-            **Helm:**
+            **Prod:** follow `docs/PROD_DEPLOY_CHECKLIST.md` at this tag (before / during / after / rollback). Never a bare `helm install`: without `secret.existingSecret` the chart renders placeholder secrets over the live Secret. From a checkout of `${{ steps.ver.outputs.tag }}`, with `REL` / `NS` taken from `helm list -A`:
             ```sh
-            helm install sitemonitor oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart --version ${{ steps.ver.outputs.next }}
+            helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
+              -f helm/site-monitor/values.yaml \
+              -f helm/site-monitor/environments/master.yaml \
+              -f "$PRIVATE_VALUES" \
+              --set image.repository=ghcr.io/${{ github.repository_owner }}/site-monitor \
+              --set image.tag=${{ steps.ver.outputs.tag }} \
+              --set secret.existingSecret="$SECRET" \
+              --set config.logLevel=DEBUG \
+              --atomic --wait --timeout 10m
             ```
+            The image tag carries the `v` (only `:${{ steps.ver.outputs.tag }}` and `:latest` are pushed). No `--reuse-values`. `config.logLevel=DEBUG` is the deliberate prod level. Keep `SITE_MONITOR_SECRET_KEY` UNCHANGED - afterwards `grep -c "decrypt failed"` on the pod log must be 0.
+
+            **Helm chart (OCI, same content as `helm/site-monitor` at this tag):** `oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart --version ${{ steps.ver.outputs.next }}`
 
             **Docker:**
             ```sh
@@ -451,7 +462,5 @@ jobs:
           echo "| Changes | ${{ steps.ver.outputs.next }}: ${{ steps.changelog.outputs.total }} commit — feat ${{ steps.changelog.outputs.feat }} · fix ${{ steps.changelog.outputs.fix }} · diğer ${{ steps.changelog.outputs.other }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Release notes | \`/app/releases.json\` (docs/releases/index.json) |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Helm install" >> "$GITHUB_STEP_SUMMARY"
-          echo '```sh' >> "$GITHUB_STEP_SUMMARY"
-          echo "helm install sitemonitor oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart --version ${{ steps.ver.outputs.next }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "### Prod deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "Follow \`docs/PROD_DEPLOY_CHECKLIST.md\` at \`${{ steps.ver.outputs.tag }}\` - image tag \`${{ steps.ver.outputs.tag }}\` (with the v), no \`--reuse-values\`, \`SITE_MONITOR_SECRET_KEY\` unchanged." >> "$GITHUB_STEP_SUMMARY"

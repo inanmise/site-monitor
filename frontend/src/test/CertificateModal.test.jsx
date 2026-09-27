@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 /**
  * CertificateModal does live API fetches in useEffect. We mock the entire
@@ -71,6 +72,53 @@ describe('CertificateModal', () => {
     vi.clearAllMocks()
   })
 
+  // ── Sekme çubuğu yeniden tasarımı (2026-09-26): sekmeler + telefon bölüm seçicisi AYNI listeden; sayaç rozetleri ──
+  it('sekme çubuğu: her sekme ikon+etiket, telefon seçicisi aynı bölümleri sunar ve sekmeyi değiştirir; not/SAN sayaçları', async () => {
+    api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'example.com', status: 'valid', days_remaining: 90, san: ['example.com', 'www.example.com', 'api.example.com'] }] })
+    api.admin.getNotes.mockResolvedValue({ success: true, data: [
+      { id: 1, domain: 'example.com', note: 'a', category: 'NOTE', author_username: 'x', author_name: 'X', created_at: '2026-09-01T10:00:00' },
+      { id: 2, domain: 'example.com', note: 'b', category: 'NOTE', author_username: 'x', author_name: 'X', created_at: '2026-09-02T10:00:00', deleted_at: '2026-09-03T10:00:00' },
+    ] })
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    const dlg = await screen.findByRole('dialog')
+    const tabs = within(dlg).getAllByRole('tab')
+    expect(tabs.length).toBeGreaterThanOrEqual(7)
+    expect(tabs.every((tab) => tab.querySelector('svg'))).toBe(true)   // her sekmede ikon
+    // Sayaçlar: SAN 3 (Detaylar), not 1 (silinmiş sayılmaz) — rozet metni sekme adına girer
+    await within(dlg).findByRole('tab', { name: /(detay|details).*3/i })
+    expect(within(dlg).getByRole('tab', { name: /(notlar|notes).*1/i })).toBeInTheDocument()
+    // Telefon seçicisi: aynı bölümler, aynı sırada; seçim sekmeyi değiştirir
+    const picker = within(dlg).getByRole('combobox', { name: /bölüm|section/i })
+    expect([...picker.options].map((o) => o.value)).toEqual(tabs.map((tab) => tab.getAttribute('id').replace(/^.*-trigger-/, '')))
+    fireEvent.change(picker, { target: { value: 'details' } })
+    await waitFor(() => expect(within(dlg).getByRole('tab', { name: /detay|details/i })).toHaveAttribute('aria-selected', 'true'))
+    expect(picker.value).toBe('details')
+  })
+
+  // ── Org geneli görünürlük (2026-09-26): başka takımın kaydı SALT OKUNUR açılır ──
+  it('readOnly: kontrol / düzenle / tanıla / sil yok, Alarmlar sekmesi yok, not formu yok; rozet + sahibi takım var, okuma sekmeleri kalır', async () => {
+    api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'foreign.example.com', status: 'valid', days_remaining: 90, not_after: '2027-01-01T00:00:00', team_id: 9, team_name: 'Takım B' }] })
+    api.admin.getNotes.mockResolvedValue({ success: true, data: [{ id: 1, domain: 'foreign.example.com', note: 'Takım B notu', category: 'NOTE', author_username: 'admin', author_name: 'Yönetici', created_at: '2026-09-01T10:00:00' }] })
+    render(
+      // Notlar sekmesiyle açılır (Radix sekme tetiği jsdom'da tıklamayla geçmez): liste okunur, ekleme formu ve
+      // yazarın kendi düzenle/sil düğmeleri YOK; başlık eylemleri ve Alarmlar sekmesi de yok.
+      <CertificateModal domain="foreign.example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN"
+        readOnly readOnlyTeam={{ id: 9, name: 'Takım B' }} initialTab="notes"
+        onCheckNow={vi.fn()} onEdit={vi.fn()} />
+    )
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByText(/salt okunur|read only/i)).toBeInTheDocument()
+    expect(within(dlg).getAllByText('Takım B').length).toBeGreaterThan(0)
+    expect(within(dlg).queryByRole('button', { name: /çalıştır|^run$|kontrol/i })).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /tanıla|diagnos/i })).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /^sil$|^delete$/i })).toBeNull()
+    expect(within(dlg).queryByRole('tab', { name: /alarm|alert/i })).toBeNull()
+    expect(within(dlg).getByRole('tab', { name: /geçmiş|history/i })).toBeInTheDocument()
+    expect(await within(dlg).findByText('Takım B notu')).toBeInTheDocument()
+    expect(dlg.querySelector('[data-slot="cert-note-form"]')).toBeNull()
+    expect(within(dlg).queryByRole('button', { name: /düzenle|^edit$/i })).toBeNull()
+  })
+
   it('renders nothing when domain is null', () => {
     const { container } = render(
       <CertificateModal domain={null} onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />
@@ -116,8 +164,8 @@ describe('CertificateModal', () => {
         currentUserRole="ADMIN"
       />
     )
-    const invTab = await screen.findByRole('button', { name: 'Inventory Info' })
-    invTab.click()
+    // Sekmeler shadcn Tabs (Radix): role="tab", mousedown ile etkinleşir
+    pressMenuTrigger(await screen.findByRole('tab', { name: 'Inventory Info' }))
     // A language-independent field value from the mocked inventory record.
     expect(await screen.findByText('ACME-Buyer')).toBeDefined()
   })
@@ -141,8 +189,7 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
     const { api } = await import('../api/client')
     openModal()
 
-    const histTab = await screen.findByRole('button', { name: 'Check History' })
-    histTab.click()
+    pressMenuTrigger(await screen.findByRole('tab', { name: 'Check History' }))
 
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
     const [kind, id] = api.monitoring.getCheckHistory.mock.calls[0]
@@ -155,8 +202,7 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
     const { api } = await import('../api/client')
     openModal()
 
-    const chartTab = await screen.findByRole('button', { name: 'Certificate Chart' })
-    chartTab.click()
+    pressMenuTrigger(await screen.findByRole('tab', { name: 'Certificate Chart' }))
 
     // Grafik lazy() ile yükleniyor ve recharts ağır: tam süit altında varsayılan 1 sn'lik
     // waitFor penceresi yetişmiyordu (tek dosya koşumunda geçiyordu). Bekleme buna göre.
@@ -169,8 +215,8 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
 
     // previewMode'da domain hem başlıkta hem SSL panelinde geçiyor → findAllByText.
     await screen.findAllByText('example.com')
-    expect(screen.queryByRole('button', { name: 'Check History' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Certificate Chart' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Check History' })).toBeNull()
+    expect(screen.queryByRole('tab', { name: 'Certificate Chart' })).toBeNull()
   })
 })
 
@@ -194,17 +240,17 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
     )
     await screen.findByText('example.com')
 
-    const tabs = [...document.querySelectorAll('.modal-tab')]
+    const tabs = [...document.querySelectorAll('[role="tab"]')]
     expect(tabs.length, 'sekme çubuğu bulunamadı').toBeGreaterThan(1)
 
     for (const tab of tabs) {
       await user.click(tab)
       // Her tıklamadan sonra pencere ayakta olmalı (throw → test kırılır).
-      expect(document.querySelector('.modal-tab')).toBeTruthy()
+      expect(document.querySelector('[role="tab"]')).toBeTruthy()
     }
 
     // Son sekme gerçekten etkinleşmiş olmalı
-    expect(document.querySelector('.modal-tab.active')).toBeTruthy()
+    expect(document.querySelector('[role="tab"][data-state="active"]')).toBeTruthy()
   })
 
   it('sekmeler arasında ileri geri gidilebilir', async () => {
@@ -215,11 +261,11 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
     )
     await screen.findByText('example.com')
 
-    const tabs = [...document.querySelectorAll('.modal-tab')]
+    const tabs = [...document.querySelectorAll('[role="tab"]')]
     for (const tab of tabs.slice().reverse()) await user.click(tab)
     await user.click(tabs[0])
 
-    expect(document.querySelector('.modal-tab.active')).toBeTruthy()
+    expect(document.querySelector('[role="tab"][data-state="active"]')).toBeTruthy()
   })
 
   // -- A5: sertifika silme (dashboard karti) --------------------------------
@@ -234,7 +280,8 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
       <CertificateModal domain="example.com" onClose={onClose}
         currentUser="admin" currentUserRole="ADMIN" />
     )
-    const btn = await screen.findByTitle(/^sil$|^delete$/i)
+    // Başlık eylemleri ikon düğmesi + shadcn Tooltip: ad aria-label'da (title yok)
+    const btn = await screen.findByRole('button', { name: /^sil$|^delete$/i })
     fireEvent.click(btn)
 
     // Onay diyalogu: onayla. Baslik dugmesi de ayni ada sahip (title="Sil") -> SON eslesme
@@ -252,7 +299,7 @@ describe('CertificateModal — tüm sekmeler açılır', () => {
       <CertificateModal domain="example.com" onClose={() => {}}
         currentUser="admin" currentUserRole="ADMIN" />
     )
-    fireEvent.click(await screen.findByTitle(/^sil$|^delete$/i))
+    fireEvent.click(await screen.findByRole('button', { name: /^sil$|^delete$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /vazgeç|cancel/i }))
 
     await new Promise(r => setTimeout(r, 30))
@@ -413,7 +460,7 @@ describe('CertificateModal — Çalıştır sonrası Kontrol Geçmişi tazelenir
       <CertificateModal domain="example.com" onClose={() => {}} onCheckNow={onCheckNow}
         currentUser="admin" currentUserRole="ADMIN" />
     )
-    fireEvent.click(await screen.findByRole('button', { name: 'Check History' }))
+    pressMenuTrigger(await screen.findByRole('tab', { name: 'Check History' }))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalledTimes(1))
 
     fireEvent.click(screen.getByRole('button', { name: /^çalıştır$|^run$/i }))

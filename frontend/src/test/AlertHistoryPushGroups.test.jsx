@@ -48,14 +48,13 @@ async function openHistory(rows) {
   api.admin.getAlertPushDeliveries.mockResolvedValue({ success: true, data: rows })
   render(<AlertHistory />)
   await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
-  const card = document.querySelector('.alert-card')
-  fireEvent.click(Array.from(card.querySelectorAll('button'))
-    .find(b => /^geçmiş$|^history$/i.test(b.textContent.trim())))
+  // Bildirimler artık alarmın DETAY penceresinde (2026-09-27): kartın başlık düğmesi detayı açar.
+  fireEvent.click(document.querySelector('[data-alert-card] [data-alert-open]'))
   await waitFor(() => expect(api.admin.getAlertPushDeliveries).toHaveBeenCalledWith(900))
 
   // Bölümler artık KAPALI açılıyor (kullanıcı isteği: "hangisine basarsam o açılsın").
   // Testlerin iddiaları değişmedi; yalnız gerçek kullanıcının da yaptığı tıklama eklendi.
-  const pushHeader = Array.from(document.querySelectorAll('.nl-section-title--toggle'))
+  const pushHeader = Array.from(document.querySelectorAll('[data-slot="accordion-trigger"]'))
     .find(h => /Webhook/i.test(h.textContent))
   expect(pushHeader, 'webhook bölüm başlığı bulunamadı').toBeTruthy()
   fireEvent.click(pushHeader)
@@ -88,7 +87,7 @@ describe('Bildirim Geçmişi — webhook bölümü', () => {
 
   it('beş alıcılı gönderim TEK satırda toplanır ve kişi sayısını gösterir', async () => {
     await openHistory(FIVE)
-    const groups = document.querySelectorAll('.nl-modal .nl-card--initial')
+    const groups = document.querySelectorAll('[role="dialog"] [data-notif-card="initial"]')
     expect(groups).toHaveLength(1)
     expect(screen.getByText(/5 kişi|5 people/i)).toBeDefined()
   })
@@ -97,13 +96,13 @@ describe('Bildirim Geçmişi — webhook bölümü', () => {
     await openHistory(FIVE)
     expect(screen.queryByText(MESSAGE)).toBeNull()
 
-    fireEvent.click(document.querySelector('.nl-modal .nl-card--initial .nl-card-header'))
+    fireEvent.click(document.querySelector('[role="dialog"] [data-notif-card="initial"] [data-notif-head]'))
     await waitFor(() => expect(screen.getByText(MESSAGE)).toBeDefined())
   })
 
   it('açılan grup beş alıcının HEPSİNİ listeler', async () => {
     await openHistory(FIVE)
-    fireEvent.click(document.querySelector('.nl-modal .nl-card--initial .nl-card-header'))
+    fireEvent.click(document.querySelector('[role="dialog"] [data-notif-card="initial"] [data-notif-head]'))
     await waitFor(() => expect(screen.getByText(MESSAGE)).toBeDefined())
     for (const u of FIVE) expect(screen.getAllByText(u.display_name).length).toBeGreaterThan(0)
   })
@@ -111,7 +110,7 @@ describe('Bildirim Geçmişi — webhook bölümü', () => {
   it('tek alıcılı gönderim de açılabilir ve mesajını gösterir', async () => {
     await openHistory([FIVE[0]])
     expect(screen.queryByText(/kişi|people/i)).toBeNull()   // gereksiz gruplama katmanı yok
-    fireEvent.click(document.querySelector('.nl-modal .nl-card--initial .nl-card-header'))
+    fireEvent.click(document.querySelector('[role="dialog"] [data-notif-card="initial"] [data-notif-head]'))
     await waitFor(() => expect(screen.getByText(MESSAGE)).toBeDefined())
   })
 })
@@ -142,21 +141,19 @@ describe('Bildirim Geçmişi — akordiyon, sıralama, alıcı gösterimi', () =
     api.admin.getAlertPushDeliveries.mockResolvedValue({ success: true, data: FIVE })
     render(<AlertHistory />)
     await waitFor(() => expect(screen.getByText('foo.example.com')).toBeDefined())
-    const card = document.querySelector('.alert-card')
-    fireEvent.click(Array.from(card.querySelectorAll('button'))
-      .find(b => /^geçmiş$|^history$/i.test(b.textContent.trim())))
+    fireEvent.click(document.querySelector('[data-alert-card] [data-alert-open]'))
     await waitFor(() => expect(api.admin.getAlertPushDeliveries).toHaveBeenCalled())
 
-    const headers = Array.from(document.querySelectorAll('.nl-section-title--toggle'))
+    const headers = Array.from(document.querySelectorAll('[data-slot="accordion-trigger"]'))
     expect(headers.length).toBe(2)
     headers.forEach(h => expect(h).toHaveAttribute('aria-expanded', 'false'))
     // Kapalıyken hiçbir teslimat kartı çizilmemeli.
-    expect(document.querySelectorAll('.nl-card').length).toBe(0)
+    expect(document.querySelectorAll('[data-notif-card]').length).toBe(0)
   })
 
   it('AKORDİYON: biri açılınca diğeri kapanır', async () => {
     await openHistory(FIVE)   // push bölümünü açar
-    const headers = Array.from(document.querySelectorAll('.nl-section-title--toggle'))
+    const headers = Array.from(document.querySelectorAll('[data-slot="accordion-trigger"]'))
     const [email, push] = headers
     expect(push).toHaveAttribute('aria-expanded', 'true')
 
@@ -184,10 +181,10 @@ describe('Bildirim Geçmişi — akordiyon, sıralama, alıcı gösterimi', () =
    */
   it('her alıcı KENDİ kutusunda ve sicili yanında', async () => {
     await openHistory(FIVE)
-    fireEvent.click(document.querySelector('.nl-card-header'))
+    fireEvent.click(document.querySelector('[data-notif-head]'))
 
-    await waitFor(() => expect(document.querySelectorAll('.nl-who').length).toBe(5))
-    const ids = Array.from(document.querySelectorAll('.nl-who-id')).map(e => e.textContent)
+    await waitFor(() => expect(document.querySelectorAll('[data-who=""]').length).toBe(5))
+    const ids = Array.from(document.querySelectorAll('[data-who-id]')).map(e => e.textContent)
     expect(ids).toEqual(['u1', 'u2', 'u3', 'u4', 'u5'])
   })
 
@@ -197,9 +194,9 @@ describe('Bildirim Geçmişi — akordiyon, sıralama, alıcı gösterimi', () =
       sent_at: '2026-06-01T08:00:0' + i,
     }))
     await openHistory(sysRows)
-    fireEvent.click(document.querySelector('.nl-card-header'))
+    fireEvent.click(document.querySelector('[data-notif-head]'))
 
-    await waitFor(() => expect(document.querySelectorAll('.nl-who--system').length).toBe(2))
+    await waitFor(() => expect(document.querySelectorAll('[data-who="system"]').length).toBe(2))
   })
 
   /** Ham durum kodu "bu bozuk mu?" sorusunu üretiyordu; artık okunur karşılığı yazılıyor. */
@@ -208,7 +205,7 @@ describe('Bildirim Geçmişi — akordiyon, sıralama, alıcı gösterimi', () =
       status: 'SKIPPED_NO_RECIPIENTS', message: MESSAGE, sent_at: '2026-06-01T08:00:00' }]
     await openHistory(skipped)
 
-    const badge = document.querySelector('.userpush-badge')
+    const badge = document.querySelector('[data-push-status]')
     expect(badge.textContent).not.toBe('SKIPPED_NO_RECIPIENTS')
     expect(badge.textContent).toMatch(/seviyede alıcı yok|nobody qualifies/i)
     expect(badge).toHaveAttribute('title', 'SKIPPED_NO_RECIPIENTS')
@@ -242,10 +239,10 @@ describe('gönderim partileri ve sayaç', () => {
       { ...FIVE[0], id: 3, trigger: 'RESEND', dedupe_key: 'RESEND:bbbb', sent_at: '2026-06-02T09:00:00' },
     ]
     await openHistory(rows)
-    expect(document.querySelectorAll('.nl-modal .nl-card--manual')).toHaveLength(2)
-    fireEvent.click(document.querySelectorAll('.nl-modal .nl-card--manual .nl-card-header')[1])
-    await waitFor(() => expect(document.querySelectorAll('.nl-card-body .nl-who-id').length).toBe(2))
-    const ids = Array.from(document.querySelectorAll('.nl-card-body .nl-who-id')).map(e => e.textContent)
+    expect(document.querySelectorAll('[role="dialog"] [data-notif-card="manual"]')).toHaveLength(2)
+    fireEvent.click(document.querySelectorAll('[role="dialog"] [data-notif-card="manual"] [data-notif-head]')[1])
+    await waitFor(() => expect(document.querySelectorAll('[data-notif-body] [data-who-id]').length).toBe(2))
+    const ids = Array.from(document.querySelectorAll('[data-notif-body] [data-who-id]')).map(e => e.textContent)
     expect(new Set(ids).size).toBe(ids.length)
   })
 
@@ -255,9 +252,9 @@ describe('gönderim partileri ve sayaç', () => {
       { ...FIVE[0], id: 91, trigger: 'RESEND', dedupe_key: 'RESEND:x' },
     ]
     await openHistory(twice)
-    fireEvent.click(document.querySelector('.nl-modal .nl-card--manual .nl-card-header'))
+    fireEvent.click(document.querySelector('[role="dialog"] [data-notif-card="manual"] [data-notif-head]'))
     await waitFor(() => expect(screen.getByText(MESSAGE)).toBeDefined())
-    expect(document.querySelectorAll('.nl-who-id')).toHaveLength(1)
+    expect(document.querySelectorAll('[data-who-id]')).toHaveLength(1)
   })
 
   it('bölüm başlığı GÖNDERİM sayar (alıcı satırı değil) ve atlananları ayrı yazar', async () => {

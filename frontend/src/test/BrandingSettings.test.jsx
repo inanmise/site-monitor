@@ -44,11 +44,28 @@ describe('BrandingSettings', () => {
   it('yalnız değiştirilen key kaydedilir', async () => {
     render(<BrandingSettings />)
     await screen.findByText('White Label')
-    const appName = screen.getByText('App name').closest('.threshold-field').querySelector('input')
+    // ui/Field: etiket ↔ shadcn Input bağı (htmlFor)
+    const appName = screen.getByLabelText('App name')
+    expect(appName).toHaveAttribute('data-slot', 'input')
     fireEvent.change(appName, { target: { value: 'Example Monitor' } })
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => expect(api.admin.saveBrandingSettings).toHaveBeenCalledWith({
       values: { 'site.monitor.branding.app-name': 'Example Monitor' },
+    }))
+  })
+
+  it('duyuru şeridi shadcn Switch ile açılır → "true" dizesi kaydedilir; ton NativeSelect', async () => {
+    render(<BrandingSettings />)
+    await screen.findByText('White Label')
+    const sw = screen.getByRole('switch')
+    expect(sw).toHaveAttribute('data-slot', 'switch')
+    expect(sw).not.toBeChecked()
+    fireEvent.click(sw)
+    expect(sw).toBeChecked()
+    fireEvent.change(screen.getByDisplayValue('Info'), { target: { value: 'WARNING' } })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() => expect(api.admin.saveBrandingSettings).toHaveBeenCalledWith({
+      values: { 'site.monitor.branding.banner-enabled': 'true', 'site.monitor.branding.banner-tone': 'WARNING' },
     }))
   })
 

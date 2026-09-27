@@ -1,5 +1,12 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.mail.MailDoc;
+import com.sitemonitor.service.mail.MailKit;
+import com.sitemonitor.service.mail.MailKit.Badge;
+import com.sitemonitor.service.mail.MailKit.Point;
+import com.sitemonitor.service.mail.MailKit.Row;
+import com.sitemonitor.service.mail.MailTokens;
+import com.sitemonitor.service.mail.MailTokens.Tone;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,13 +20,15 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * TÜM alarm e-postaları (DOMAINMON_*, sertifika süre bitişi, uptime/ACCESSIBILITY, PORT_DOWN, DNS_*,
- * KEYWORD, PING_DOWN, network outage) tek merkezden bu builder'dan geçer — içerik veri parametre,
- * tasarım burada. Executive-premium, table-based, tümü inline CSS (Outlook/Exchange güvenli):
- * 640px ortalı kart, koyu-lacivert üst bant, kalan güne göre DİNAMİK aciliyet rengi (şerit+rozet+hero),
- * 72px gün sayacı + Outlook-güvenli progress bar (90 gün penceresi), mini zaman çizelgesi,
- * Türkçe açıklamalı EPP pill'leri, numaralı aksiyon planı, VML bulletproof CTA, footer.
- * HTML + plain-text pariteli (Row.text — stripHtml bitişikliği yaşanmaz).
+ * TÜM süre-bitişi ve kusur alarm e-postaları (DOMAINMON_*, sertifika süre bitişi/iptal/zincir,
+ * sayfa, sentetik, sayfa hızı, yavaşlık aileleri) tek merkezden bu builder'dan geçer — içerik veri
+ * parametre, tasarım {@link MailDoc}'ta (e-posta yeniden tasarımı 2026-09-26).
+ *
+ * <p>Düzen: nötr başlık (logo + alt-sistem) → önem rozeti (+ ≤3 günde ACİL) → alan adı başlığı →
+ * kalan gün metrik kartı (ilerleme çubuğu, 90 gün penceresi) ya da tonlu uyarı → zaman çizelgesi →
+ * ayrıntılar → envanter kartları → Önerilen Aksiyon kartı (adımlar + birincil buton) → olay
+ * aksiyonları → alt bilgi ("Neden bu e-postayı aldınız?"). Aciliyet rengi kalan günden gelir.
+ * HTML + plain-text pariteli ({@link #buildText} — stripHtml bitişikliği yaşanmaz).
  */
 @Component
 @RequiredArgsConstructor
@@ -30,14 +39,6 @@ public class EmailTemplateBuilder {
     @Value("${site.monitor.app.base-url:http://localhost:5173}")
     private String appBaseUrl;
 
-    // Severity renkleri (fallback) ve Türkçe etiketleri. Sistemdeki alarm seviyeleri: CRITICAL/HIGH/WARNING/MEDIUM/INFO.
-    private static final String C_CRITICAL = "#C0392B", C_HIGH = "#D68910", C_MEDIUM = "#2874A6", C_INFO = "#1E8449";
-    // Aciliyet skalası (kalan güne göre): yeşil → amber → turuncu → kırmızı → koyu kırmızı (ACİL).
-    private static final String U_GREEN = "#1E8449", U_AMBER = "#D68910", U_ORANGE = "#CA6F1E",
-            U_RED = "#C0392B", U_DARKRED = "#7B241C";
-    private static final String NAVY = "#0F1B2D", INK = "#1F2937", MUTED = "#6B7280", LINE = "#E5E8EC",
-            SOFT = "#F7F8FA", PILL_BG = "#EEF1F4", PILL_INK = "#475569", BAR_EMPTY = "#E5E8EC";
-
     /** Progress bar penceresi — "bitişe kalan gün / bu pencere" oranı çizilir. */
     private static final int PROGRESS_WINDOW_DAYS = 90;
 
@@ -46,9 +47,6 @@ public class EmailTemplateBuilder {
             DateTimeFormatter.ofPattern("d MMMM yyyy HH:mm", new Locale("tr", "TR"));
     private static final DateTimeFormatter SHORT =
             DateTimeFormatter.ofPattern("d MMM", new Locale("tr", "TR"));
-
-    private static final String LIGHT_SCHEME_META =
-            "<meta name='color-scheme' content='light only'><meta name='supported-color-schemes' content='light only'>";
 
     /** Bilinen EPP durum kodları → kısa Türkçe açıklama (anahtar: lowercase + boşluksuz normalize). */
     static final Map<String, String> EPP_TR = Map.ofEntries(
@@ -81,19 +79,15 @@ public class EmailTemplateBuilder {
     public record AlertMail(String alertType, String level, String domain, String message,
                             Integer daysRemaining, Map<String, Object> ctx, String teamName) {}
 
-    /** Detay satırı — HTML ve plain-text değerleri AYRI taşınır (stripHtml bitişikliği önlenir). */
-    private record Row(String label, String html, String text) {
-        static Row of(String label, String plain) { return new Row(label, esc(plain), plain); }
-    }
-
     // ── Severity / aciliyet ────────────────────────────────────────────────────
-    private static String severityColor(String level) {
-        if (level == null) return C_MEDIUM;
+    /** Önem → ton: KRİTİK kırmızı, YÜKSEK amber, ORTA mavi, BİLGİ nötr. */
+    static Tone severityTone(String level) {
+        if (level == null) return Tone.INFO;
         return switch (level.toUpperCase(Locale.ROOT)) {
-            case "CRITICAL" -> C_CRITICAL;
-            case "HIGH" -> C_HIGH;
-            case "INFO", "LOW" -> C_INFO;
-            default -> C_MEDIUM;   // WARNING/MEDIUM
+            case "CRITICAL" -> Tone.DESTRUCTIVE;
+            case "HIGH" -> Tone.WARNING;
+            case "INFO", "LOW" -> Tone.NEUTRAL;
+            default -> Tone.INFO;   // WARNING/MEDIUM
         };
     }
     static String severityLabel(String level) {
@@ -105,15 +99,23 @@ public class EmailTemplateBuilder {
             default -> "ORTA";
         };
     }
+    /** Önem rozeti — KRİTİK dolu kırmızı, diğerleri tonlu. */
+    static Badge severityBadge(String level) {
+        Tone t = severityTone(level);
+        return t == Tone.DESTRUCTIVE ? Badge.solid(severityLabel(level), t) : Badge.tint(severityLabel(level), t);
+    }
 
-    /** Kalan güne göre dinamik aciliyet rengi; gün yoksa severity fallback. */
+    /** Kalan güne göre aciliyet tonu (≤7 kırmızı, ≤30 amber, üstü yeşil); gün yoksa önem tonu. */
+    static Tone urgencyTone(Integer days, String level) {
+        if (days == null) return severityTone(level);
+        if (days <= 7)  return Tone.DESTRUCTIVE;
+        if (days <= 30) return Tone.WARNING;
+        return Tone.SUCCESS;
+    }
+
+    /** Aciliyet rengi (metrik rakamı, çubuk, vurgu) — {@link #urgencyTone} ile aynı skala. */
     static String urgencyColor(Integer days, String level) {
-        if (days == null) return severityColor(level);
-        if (days <= 3)  return U_DARKRED;
-        if (days <= 7)  return U_RED;
-        if (days <= 14) return U_ORANGE;
-        if (days <= 30) return U_AMBER;
-        return U_GREEN;
+        return urgencyTone(days, level).strong;
     }
 
     private static boolean isDomain(String t) {
@@ -166,130 +168,94 @@ public class EmailTemplateBuilder {
         return "dashboard";   // sertifika
     }
 
-    /** Gün sayacı yoksa hero'da gösterilen tip etiketi. */
+    /** Gün sayacı yoksa uyarı kutusunun başlığı (tip etiketi). */
     private static String heroLabel(String t) {
-        if (t == null) return "İZLEME UYARISI";
+        if (t == null) return "İzleme Uyarısı";
         return switch (t) {
-            case "DOMAINMON_EXPIRY", "DOMAIN_EXPIRY" -> "ALAN ADI SÜRE BİTİŞİ";
-            case "DOMAINMON_STATUS"  -> "ALAN ADI DURUM UYARISI";
-            case "DOMAINMON_CHANGED" -> "ALAN ADI DEĞİŞİKLİK UYARISI";
-            case "DOMAINMON_UNKNOWN" -> "ALAN ADI VERİ UYARISI";
-            case "DOMAINMON_TRANSFER_LOCK" -> "ALAN ADI TRANSFER KİLİDİ";
-            case "DOMAINMON_BLACKLIST" -> "ALAN ADI KARA LİSTE";
-            case "REVOKED"      -> "SERTİFİKA İPTAL UYARISI";
-            case "MISMATCH"     -> "SERTİFİKA DAĞITIM UYARISI";
-            case "CHAIN_BROKEN" -> "SERTİFİKA ZİNCİR UYARISI";
-            case "HOSTNAME_MISMATCH" -> "SERTİFİKA ALAN ADI UYUŞMAZLIĞI";
-            case "UNTRUSTED_CA" -> "GÜVENİLMEYEN SERTİFİKA UYARISI";
-            default -> "İZLEME UYARISI";
+            case "DOMAINMON_EXPIRY", "DOMAIN_EXPIRY" -> "Alan Adı Süre Bitişi";
+            case "DOMAINMON_STATUS"  -> "Alan Adı Durum Uyarısı";
+            case "DOMAINMON_CHANGED" -> "Alan Adı Değişiklik Uyarısı";
+            case "DOMAINMON_UNKNOWN" -> "Alan Adı Veri Uyarısı";
+            case "DOMAINMON_TRANSFER_LOCK" -> "Alan Adı Transfer Kilidi";
+            case "DOMAINMON_BLACKLIST" -> "Alan Adı Kara Liste";
+            case "REVOKED"      -> "Sertifika İptal Uyarısı";
+            case "MISMATCH"     -> "Sertifika Dağıtım Uyarısı";
+            case "CHAIN_BROKEN" -> "Sertifika Zincir Uyarısı";
+            case "HOSTNAME_MISMATCH" -> "Sertifika Alan Adı Uyuşmazlığı";
+            case "UNTRUSTED_CA" -> "Güvenilmeyen Sertifika Uyarısı";
+            default -> "İzleme Uyarısı";
         };
     }
 
     // ── HTML ─────────────────────────────────────────────────────────────────
     public String buildHtml(AlertMail m) {
         Integer days = m.daysRemaining();
-        String color = urgencyColor(days, m.level());
-        String badge = (days != null && days <= 3 ? "ACİL · " : "") + severityLabel(m.level());
-        String domain = esc(m.domain());
+        Tone tone = urgencyTone(days, m.level());
         String expiryIso = firstNonNull(strCtx(m.ctx(), "expiry_date"), strCtx(m.ctx(), "not_after"));
-
-        StringBuilder rows = new StringBuilder();
-        for (Row r : detailRows(m)) rows.append(row(r.label(), r.html()));
-
-        String cta = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        String href = cta + "/?tab=" + tabFor(m.alertType())
+        String href = liveBaseUrl() + "/?tab=" + tabFor(m.alertType())
                 + (m.domain() != null ? "&domain=" + urlenc(m.domain()) : "");
-
         String checkedAt = strCtx(m.ctx(), "checked_at");
+        String summary = shortSummary(m);
 
-        StringBuilder sb = new StringBuilder(8192);
-        sb.append("<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>")
-          .append("<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>")
-          .append(LIGHT_SCHEME_META)
-          .append("<!--[if mso]><style>table,td,div,p,a,h1,h2{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->")
-          .append("</head>")
-          .append("<body style='margin:0;padding:0;background:#EDEFF2;font-family:\"Segoe UI\",\"Helvetica Neue\",Arial,sans-serif;color:").append(INK).append("'>")
-          // Dış ortalayıcı
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#EDEFF2' style='background:#EDEFF2;mso-table-lspace:0;mso-table-rspace:0'>")
-          .append("<tr><td align='center' style='padding:26px 12px'>")
-          .append("<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:600px;max-width:600px;background:#FFFFFF;border:1px solid ").append(LINE).append(";border-radius:10px;overflow:hidden'>")
-          // Üst bant — logo lockup (BRAND.md §5.1: 32px logo + "Site Monitor", TEK logo) + ENTERPRISE
-          .append("<tr><td bgcolor='").append(NAVY).append("' style='background-color:").append(NAVY).append(";padding:12px 20px'>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
-          .append("<td align='left'>").append(BrandMailAssets.headerLockup()).append("</td>")
-          .append("<td align='right' style='font-size:10px;font-weight:700;letter-spacing:.18em;color:#8DA2BF'>ENTERPRISE</td>")
-          .append("</tr></table></td></tr>")
-          // Aciliyet şeridi (üst çizgi)
-          .append("<tr><td bgcolor='").append(color).append("' style='background-color:").append(color).append(";font-size:0;line-height:0;height:4px'>&nbsp;</td></tr>")
-          // Gövde
-          .append("<tr><td style='padding:26px 30px 8px'>")
-          // Rozet
-          .append("<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr>")
-          .append("<td bgcolor='").append(color).append("' style='background-color:").append(color).append(";border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#FFFFFF'>").append(esc(badge)).append("</td>")
-          .append("</tr></table>");
-        // Hero — dev gün sayacı ya da tip etiketi. Süre-DIŞI sertifika kusurlarında gün sayacı
-        // yanıltıcıdır (1775 gün geçerli ama kabul edilemez sertifika) → tip etiketi gösterilir.
+        MailDoc d = MailDoc.create("[Site Monitor] " + severityLabel(m.level()) + " · " + nz(m.domain()))
+                .preheader(summary)
+                .kicker(subsystemLabel(m.alertType()));
+        d.badges(severityBadge(m.level()), days != null && days <= 3 ? Badge.solid("ACİL", Tone.DESTRUCTIVE) : null);
+        // Süre-DIŞI sertifika kusurlarında gün sayacı yanıltıcıdır (1775 gün geçerli ama kabul
+        // edilemez sertifika) → metrik yerine tip etiketli uyarı gösterilir.
         if (days != null && EscalationService.isDurationAlert(m.alertType())) {
-            sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 2px'><tr>")
-              .append("<td style='font-size:72px;line-height:1;font-weight:300;color:").append(color).append("'>").append(days).append("</td>")
-              .append("<td valign='bottom' style='padding:0 0 8px 12px;font-size:13px;font-weight:700;letter-spacing:.14em;color:").append(MUTED).append("'>GÜN<br>KALDI</td>")
-              .append("</tr></table>")
-              .append(progressBar(days, color, expiryIso));
+            d.title(nz(m.domain()), summary);
+            d.metricCard(String.valueOf(days), "gün kaldı", tone.strong, Math.round(days * 100f / PROGRESS_WINDOW_DAYS),
+                    "Bitişe " + days + " gün" + (expiryIso != null ? " · Son tarih: " + formatHuman(expiryIso) : ""));
         } else {
-            sb.append("<div style='margin:18px 0 2px;font-size:24px;font-weight:300;letter-spacing:.06em;color:").append(color).append("'>")
-              .append(esc(heroLabel(m.alertType()))).append("</div>");
+            d.title(nz(m.domain()), null);
+            d.alert(tone, heroLabel(m.alertType()), summary);
         }
-        sb.append("<div style='font-size:22px;font-weight:700;color:").append(INK).append(";margin:10px 0 4px'>").append(domain).append("</div>")
-          .append("<div style='font-size:14px;line-height:1.55;color:").append(MUTED).append(";margin:0 0 4px'>").append(esc(shortSummary(m))).append("</div>")
-          .append("</td></tr>");
-        // Mini zaman çizelgesi
-        String timeline = timelineHtml(m, color, expiryIso);
-        if (!timeline.isEmpty()) sb.append("<tr><td style='padding:6px 30px 0'>").append(timeline).append("</td></tr>");
-        // Detay tablosu
-        sb.append("<tr><td style='padding:8px 30px 4px'>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>")
-          .append(rows)
-          .append("</table></td></tr>")
-          // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
-          // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel aksiyon adımlarını.
-          // CTA butonu aksiyon kartının içinde olduğu için bu bloklar ondan sonra gelemez.
-          .append(opsSection(m))
-          .append(contactsSection(m))
-          .append(changeDescSection(m))
-          // Önerilen Aksiyon — numaralı adımlar
-          .append("<tr><td style='padding:18px 30px 4px'>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='").append(SOFT).append("' style='background-color:").append(SOFT).append(";border:1px solid ").append(LINE).append(";border-radius:8px'>")
-          .append("<tr><td style='padding:16px 18px'>")
-          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:").append(MUTED).append(";margin:0 0 8px'>Önerilen Aksiyon</div>");
+        List<TlPoint> pts = timelinePoints(m, expiryIso);
+        if (!pts.isEmpty()) {
+            List<Point> points = new ArrayList<>();
+            for (TlPoint p : pts) points.add(new Point(p.label(), p.date(), p.emphasized()));
+            d.timeline(points, tone.strong);
+        }
+        d.keyValue("Ayrıntılar", detailRows(m));
+        // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
+        // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel adımları.
+        opsSection(d, m);
+        contactsSection(d, m);
+        changeDescSection(d, m);
+        actionSection(d, m, expiryIso, href);
+        MailCta.appendIncidentActions(d, liveBaseUrl(), m.ctx() == null ? null : m.ctx().get("alert_event_id"));
+        d.footerWhy(m.teamName())
+         .footerMeta("Bu e-posta Site Monitor " + subsystemLabel(m.alertType()) + " tarafından otomatik gönderilmiştir",
+                 checkedAt != null ? "Son kontrol: " + formatHuman(checkedAt) : null,
+                 "Bildirim ayarları için yöneticinize başvurun.");
+        return d.html();
+    }
+
+    /** "Önerilen Aksiyon" kartı: (≤7 gün) acil satırı + numaralı adımlar + birincil buton. */
+    private void actionSection(MailDoc d, AlertMail m, String expiryIso, String href) {
         String urgent = urgentLine(m, expiryIso);
-        if (urgent != null) {
-            sb.append("<div style='font-size:13px;font-weight:700;color:").append(U_DARKRED).append(";margin:0 0 10px'>").append(esc(urgent)).append("</div>");
-        }
         List<String> steps = actionSteps(m);
-        if (steps.size() == 1) {
-            sb.append("<div style='font-size:14px;line-height:1.55;color:").append(INK).append(";margin:0 0 14px'>").append(esc(steps.get(0))).append("</div>");
-        } else {
-            sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 14px'>");
-            for (int i = 0; i < steps.size(); i++) {
-                sb.append("<tr><td valign='top' style='padding:3px 8px 3px 0;font-size:14px;font-weight:700;color:").append(color).append("'>").append(i + 1).append(".</td>")
-                  .append("<td style='padding:3px 0;font-size:14px;line-height:1.55;color:").append(INK).append("'>").append(esc(steps.get(i))).append("</td></tr>");
-            }
-            sb.append("</table>");
+        StringBuilder html = new StringBuilder();
+        StringBuilder text = new StringBuilder();
+        if (urgent != null) {
+            html.append(MailKit.space(MailKit.alert(Tone.DESTRUCTIVE, MailKit.esc(urgent), null), 12));
+            text.append(urgent).append('\n');
         }
-        sb.append(ctaButton(href, "Site Monitor'de Görüntüle", color))
-          .append(incidentActions(m.ctx(), color))
-          .append("</td></tr></table></td></tr>")
-          // "Neden bu e-postayı aldınız?" — alıcı şeffaflığı (StatusCake "Why am I seeing this email" esini)
-          .append(whyReceivingBlock(m.teamName()))
-          // Footer
-          .append("<tr><td style='padding:22px 30px 24px'>")
-          .append("<div style='border-top:1px solid ").append(LINE).append(";padding-top:12px;font-size:11px;line-height:1.6;color:#9AA3AF'>")
-          .append("Bu e-posta Site Monitor ").append(esc(subsystemLabel(m.alertType()))).append(" tarafından otomatik gönderilmiştir")
-          .append(checkedAt != null ? " · Son kontrol: " + esc(formatHuman(checkedAt)) : "")
-          .append(" · Bildirim ayarları için yöneticinize başvurun.")
-          .append("</div></td></tr>")
-          .append("</table></td></tr></table></body></html>");
-        return sb.toString();
+        if (steps.size() == 1) {
+            html.append(MailKit.space(MailKit.paragraph(MailKit.esc(steps.get(0))), 16));
+            text.append(steps.get(0)).append('\n');
+        } else {
+            List<String> items = new ArrayList<>();
+            for (int i = 0; i < steps.size(); i++) {
+                items.add(MailKit.esc(steps.get(i)));
+                text.append(i + 1).append(". ").append(steps.get(i)).append('\n');
+            }
+            html.append(MailKit.space(MailKit.steps(items), 16));
+        }
+        html.append(MailKit.button(href, "Site Monitor'de Görüntüle", MailKit.Variant.PRIMARY, d.contentWidth() - 34));
+        text.append("Site Monitor'de Görüntüle: ").append(href);
+        d.card("Önerilen Aksiyon", null, html.toString(), text.toString());
     }
 
     /** Plain-text multipart alternatifi — sayaç/timeline/adımlar HTML ile pariteli. */
@@ -347,7 +313,7 @@ public class EmailTemplateBuilder {
         return sb.toString();
     }
 
-    // ── Çözüldü (resolved) — executive, INFO/yeşil + zengin bağlam ────────────
+    // ── Çözüldü (resolved) — yeşil rozet + zengin bağlam ─────────────────────
     public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt) {
         return buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, null, null);
     }
@@ -363,12 +329,11 @@ public class EmailTemplateBuilder {
         return buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, ctx, null);
     }
 
-    /** teamNames verilirse "Neden bu e-postayı aldınız?" alıcı-şeffaflık bloğu eklenir (recovery şeffaflığı). */
+    /** teamNames verilirse "Neden bu e-postayı aldınız?" alıcı-şeffaflık bloğu takım adıyla yazılır. */
     public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt,
                                     String createdAt, Map<String, Object> ctx, String teamNames) {
         String d = esc(domain);
-        String cta = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        String href = cta + "/?tab=" + tabFor(alertType) + (domain != null ? "&domain=" + urlenc(domain) : "");
+        String href = liveBaseUrl() + "/?tab=" + tabFor(alertType) + (domain != null ? "&domain=" + urlenc(domain) : "");
 
         boolean domainType = isDomain(alertType);
         String expiryIso = ctx == null ? null
@@ -376,128 +341,108 @@ public class EmailTemplateBuilder {
         String daysRem = ctx == null ? null
                 : firstNonNull(strCtx(ctx, "days_remaining"), strCtx(ctx, "days"));
 
-        // Yeni bitiş tarihini öne çıkaran vurgu şeridi (varsa) — "yeni expire ne oldu?" sorusuna doğrudan yanıt.
-        String hero = "";
-        if (expiryIso != null) {
-            String expiryHuman = formatHuman(expiryIso);
-            String daysChip = (daysRem != null)
-                    ? "<span style='display:inline-block;margin-left:8px;background:" + PILL_BG + ";color:" + PILL_INK + ";border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700'>" + esc(daysRem) + " gün kaldı</span>"
-                    : "";
-            hero = "<tr><td style='padding:4px 30px 4px'>"
-                    + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden'><tr>"
-                    + "<td width='5' bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-                    + "<td bgcolor='#F0FBF6' style='background-color:#F0FBF6;padding:14px 18px'>"
-                    + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + C_INFO + ";margin-bottom:4px'>"
-                    + (domainType ? "🔄 YENİ BİTİŞ TARİHİ" : "🔄 GÜNCEL BİTİŞ TARİHİ") + "</div>"
-                    + "<div style='font-size:18px;font-weight:800;color:" + INK + "'>" + esc(expiryHuman) + daysChip + "</div>"
-                    + "</td></tr></table></td></tr>";
-        }
-
-        StringBuilder rows = new StringBuilder();
-        rows.append(row("Alan Adı", "<strong>" + d + "</strong>"));
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Alan Adı", "<strong>" + d + "</strong>", nz(domain)));
         if (ctx != null) {
             if (expiryIso != null)
-                rows.append(row(domainType ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", esc(formatHuman(expiryIso))));
-            if (daysRem != null) rows.append(row("Kalan Süre", esc(daysRem) + " gün"));
+                rows.add(Row.of(domainType ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", formatHuman(expiryIso)));
+            if (daysRem != null) rows.add(Row.of("Kalan Süre", daysRem + " gün"));
             if (domainType) {
                 String reg = strCtx(ctx, "registrar");
-                if (reg != null) rows.append(row("Kayıt Kuruluşu", esc(reg)));
+                if (reg != null) rows.add(Row.of("Kayıt Kuruluşu", reg));
                 String src = strCtx(ctx, "source");
-                if (src != null) rows.append(row("Veri Kaynağı", esc(src)));
+                if (src != null) rows.add(Row.of("Veri Kaynağı", src));
                 String epp = strCtx(ctx, "status_codes");
-                if (epp != null && !epp.isBlank()) rows.append(row("EPP Durum Kodları", eppPills(epp)));
+                if (epp != null && !epp.isBlank()) rows.add(new Row("EPP Durum Kodları", eppPills(epp), eppText(epp)));
                 String ns = strCtx(ctx, "nameservers");
-                if (ns != null) rows.append(row("Ad Sunucuları", esc(ns)));
+                if (ns != null) rows.add(Row.of("Ad Sunucuları", ns));
             } else {
                 String ca = firstNonNull(strCtx(ctx, "issuer_cn"), strCtx(ctx, "issuer"));
-                if (ca != null) rows.append(row("Veren Kurum (CA)", esc(ca)));
+                if (ca != null) rows.add(Row.of("Veren Kurum (CA)", ca));
             }
         }
         // Sayfa Bütünlüğü / Sayfa Yüklenemiyor çözümü — "sorun neydi + ne çözüldü" (2026-08-04).
         // Alarm-anı anahtarları snapshotContext'ten, resolved_* anahtarları çözüm anındaki son PageCheck'ten gelir;
         // eski (bu sürümden önce açılmış) alarmların snapshot'ında anahtarlar yok → satırlar zarifçe atlanır.
-        // NOT: SCRIPTED_FAIL aynı şablona düşer ve aynı boşluğa sahiptir — follow-up (bkz. isScripted).
         if (ctx != null && isPage(alertType)) {
-            rows.append(row("Çözülen Alarm",
-                    "PAGE_DOWN".equals(alertType) ? "Sayfa Yüklenemiyor" : "Sayfa Bütünlüğü"));
+            rows.add(Row.of("Çözülen Alarm", "PAGE_DOWN".equals(alertType) ? "Sayfa Yüklenemiyor" : "Sayfa Bütünlüğü"));
             String detail = strCtx(ctx, "detail");
             if (detail != null && !detail.isBlank()) {
-                rows.append(row("Sorun (alarm anı)", esc(detail)));
+                rows.add(Row.of("Sorun (alarm anı)", detail));
             } else {
                 String b = strCtx(ctx, "broken_resources");
-                if (b != null) rows.append(row("Kırık Kaynak (alarm anı)", esc(b)));
+                if (b != null) rows.add(Row.of("Kırık Kaynak (alarm anı)", b));
                 String tmo = strCtx(ctx, "timeout_count");
-                if (tmo != null) rows.append(row("Zaman Aşımı (alarm anı)", esc(tmo)));
+                if (tmo != null) rows.add(Row.of("Zaman Aşımı (alarm anı)", tmo));
                 String mx = strCtx(ctx, "mixed_content_count");
-                if (mx != null) rows.append(row("Mixed Content (alarm anı)", esc(mx)));
+                if (mx != null) rows.add(Row.of("Mixed Content (alarm anı)", mx));
             }
             if ("PAGE_DOWN".equals(alertType)) {
                 String err = strCtx(ctx, "last_error");
-                if (err != null) rows.append(row("Son Hata", esc(err.length() > 120 ? err.substring(0, 120) + "…" : err)));
+                if (err != null) rows.add(Row.of("Son Hata", err.length() > 120 ? err.substring(0, 120) + "…" : err));
                 String hs = strCtx(ctx, "http_status");
-                if (hs != null) rows.append(row("HTTP Durumu", esc(hs)));
+                if (hs != null) rows.add(Row.of("HTTP Durumu", hs));
             }
             String tsv = strCtx(ctx, "problem_rows");
             if (tsv != null && !tsv.isBlank())
-                rows.append(row("Giderilen Sorunlu Kaynaklar", pageIssuesHtml(tsv, intCtx(ctx, "problem_total"))));
+                rows.add(new Row("Giderilen Sorunlu Kaynaklar", pageIssuesHtml(tsv, intCtx(ctx, "problem_total")),
+                        pageIssuesText(tsv, intCtx(ctx, "problem_total"))));
             String cur = strCtx(ctx, "resolved_page_status");
             if (cur != null) {
                 String tot  = strCtx(ctx, "resolved_total_resources");
                 String when = strCtx(ctx, "resolved_checked_at");
+                String curText = "OK".equals(cur)
+                        ? "Sağlıklı" + (tot != null ? " — " + tot + " kaynağın tümü erişilebilir" : "")
+                        : pageStatusTr(cur);
                 String curHtml = "OK".equals(cur)
-                        ? "<strong style='color:" + C_INFO + "'>Sağlıklı</strong>"
-                          + (tot != null ? " — " + esc(tot) + " kaynağın tümü erişilebilir" : "")
+                        ? MailKit.strong("Sağlıklı", MailTokens.SUCCESS) + (tot != null ? " — " + esc(tot) + " kaynağın tümü erişilebilir" : "")
                         : esc(pageStatusTr(cur));
-                if (when != null) curHtml += " <span style='color:" + MUTED + "'>(" + esc(formatHuman(when)) + ")</span>";
-                rows.append(row("Güncel Durum", curHtml));
+                if (when != null) {
+                    curHtml += " <span style=\"color:" + MailTokens.MUTED + "\">(" + esc(formatHuman(when)) + ")</span>";
+                    curText += " (" + formatHuman(when) + ")";
+                }
+                rows.add(new Row("Güncel Durum", curHtml, curText));
             }
         }
         String durHuman = durationHuman(createdAt, resolvedAt);
-        // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU
-        // (kodun kendi notu: "SCRIPTED_FAIL ayni sablona duser ve ayni bosluga sahiptir").
+        // Sentetik cozumu: alarm e-postasinda dolu bir dal vardi ama COZUM e-postasinda YOKTU.
         // Nobetci "ne duzeldi" bilgisini alamiyor, jenerik "alarm kapandi" cumlesiyle kaliyordu.
         if (ctx != null && "SCRIPTED_SLOW".equals(alertType)) {
-            rows.append(row("Çözülen Alarm", "Sentetik Yavaş Koşum"));
+            rows.add(Row.of("Çözülen Alarm", "Sentetik Yavaş Koşum"));
             String sMs = strCtx(ctx, "duration_ms");
             String sTh = strCtx(ctx, "threshold_ms");
-            if (sMs != null) rows.append(row("Süre (alarm anı)", esc(sMs) + " ms"));
-            if (sTh != null) rows.append(row("Eşik", esc(sTh) + " ms"));
+            if (sMs != null) rows.add(Row.of("Süre (alarm anı)", sMs + " ms"));
+            if (sTh != null) rows.add(Row.of("Eşik", sTh + " ms"));
         } else if (ctx != null && EscalationService.isScripted(alertType)) {
-            rows.append(row("Çözülen Alarm", "Sentetik İzleme"));
+            rows.add(Row.of("Çözülen Alarm", "Sentetik İzleme"));
             String sDetail = strCtx(ctx, "detail");
-            if (sDetail != null && !sDetail.isBlank()) rows.append(row("Sorun (alarm anı)", esc(sDetail)));
+            if (sDetail != null && !sDetail.isBlank()) rows.add(Row.of("Sorun (alarm anı)", sDetail));
             String sErr = firstNonNull(strCtx(ctx, "error"), strCtx(ctx, "last_error"));
             if (sErr != null && !sErr.isBlank())
-                rows.append(row("Hata (alarm anı)", esc(sErr.length() > 200 ? sErr.substring(0, 200) + "…" : sErr)));
+                rows.add(Row.of("Hata (alarm anı)", sErr.length() > 200 ? sErr.substring(0, 200) + "…" : sErr));
             String sFailed = strCtx(ctx, "failed_checks");
-            if (sFailed != null && !sFailed.isBlank()) rows.append(row("Düşen Doğrulamalar", esc(sFailed)));
+            if (sFailed != null && !sFailed.isBlank()) rows.add(Row.of("Düşen Doğrulamalar", sFailed));
         }
-        if (durHuman != null) rows.append(row("Alarm Süresi", esc(durHuman)));
-        if (resolvedAt != null) rows.append(row("Çözülme", esc(formatHuman(resolvedAt))));
-        rows.append(row("Çözen", esc(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)")));
+        if (durHuman != null) rows.add(Row.of("Alarm Süresi", durHuman));
+        if (resolvedAt != null) rows.add(Row.of("Çözülme", formatHuman(resolvedAt)));
+        rows.add(Row.of("Çözen", resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)"));
 
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
-                + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + LIGHT_SCHEME_META
-                + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]--></head>"
-                + "<body style='margin:0;padding:0;background:#EDEFF2;font-family:\"Segoe UI\",\"Helvetica Neue\",Arial,sans-serif;color:" + INK + "'>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#EDEFF2' style='background:#EDEFF2'>"
-                + "<tr><td align='center' style='padding:26px 12px'>"
-                + "<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#FFFFFF' style='width:600px;max-width:600px;background:#FFFFFF;border:1px solid " + LINE + ";border-radius:10px;overflow:hidden'>"
-                + "<tr><td bgcolor='" + NAVY + "' style='background-color:" + NAVY + ";padding:12px 20px'><table role='presentation' width='100%'><tr>"
-                + "<td align='left'>" + BrandMailAssets.headerLockup() + "</td>"
-                + "<td align='right' style='font-size:10px;font-weight:700;letter-spacing:.18em;color:#8DA2BF'>ENTERPRISE</td></tr></table></td></tr>"
-                + "<tr><td bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";font-size:0;line-height:0;height:4px'>&nbsp;</td></tr>"
-                + "<tr><td style='padding:26px 30px 8px'>"
-                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr><td bgcolor='" + C_INFO + "' style='background-color:" + C_INFO + ";border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;letter-spacing:.08em;color:#FFFFFF'>ÇÖZÜLDÜ</td></tr></table>"
-                + "<div style='font-size:22px;font-weight:700;color:" + INK + ";margin:16px 0 4px'>" + d + "</div>"
-                + "<div style='font-size:14px;color:" + MUTED + "'>" + esc(resolvedHeadline(alertType, expiryIso != null)) + "</div></td></tr>"
-                + hero
-                + "<tr><td style='padding:8px 30px 4px'><table role='presentation' width='100%' style='border-collapse:collapse'>" + rows + "</table></td></tr>"
-                + whyReceivingBlock(teamNames)
-                + "<tr><td style='padding:18px 30px 24px'>" + ctaButton(href, "Site Monitor'de Görüntüle", C_INFO)
-                + incidentActions(ctx, C_INFO)
-                + "<div style='border-top:1px solid " + LINE + ";margin-top:18px;padding-top:12px;font-size:11px;color:#9AA3AF'>Bu e-posta Site Monitor tarafından otomatik gönderilmiştir.</div></td></tr>"
-                + "</table></td></tr></table></body></html>";
+        String headline = resolvedHeadline(alertType, expiryIso != null);
+        MailDoc doc = MailDoc.create("[Site Monitor] ÇÖZÜLDÜ · " + nz(domain))
+                .preheader(headline)
+                .kicker(subsystemLabel(alertType));
+        doc.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS));
+        doc.title(nz(domain), headline);
+        // Yeni bitiş tarihini öne çıkaran vurgu (varsa) — "yeni expire ne oldu?" sorusuna doğrudan yanıt.
+        if (expiryIso != null) {
+            doc.alert(Tone.SUCCESS, (domainType ? "Yeni bitiş tarihi: " : "Güncel bitiş tarihi: ") + formatHuman(expiryIso),
+                    daysRem != null ? daysRem + " gün kaldı" : null);
+        }
+        doc.keyValue("Ayrıntılar", rows);
+        doc.button(href, "Site Monitor'de Görüntüle");
+        MailCta.appendIncidentActions(doc, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        doc.footerWhy(teamNames).footerMeta("Bu e-posta Site Monitor tarafından otomatik gönderilmiştir.");
+        return doc.html();
     }
 
     public String buildResolvedText(String domain, String alertType, String resolvedBy, String resolvedAt) {
@@ -597,24 +542,6 @@ public class EmailTemplateBuilder {
         return null;
     }
 
-    // ── Progress bar (Outlook-güvenli: iki td, width% + bgcolor) ─────────────
-    private static String progressBar(int days, String color, String expiryIso) {
-        int pct = Math.max(2, Math.min(100, Math.round(days * 100f / PROGRESS_WINDOW_DAYS)));
-        int rest = 100 - pct;
-        StringBuilder sb = new StringBuilder();
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:12px 0 0;border-collapse:collapse'><tr>")
-          .append("<td width='").append(pct).append("%' bgcolor='").append(color).append("' style='background-color:").append(color).append(";font-size:0;line-height:0;height:8px;border-radius:4px 0 0 4px'>&nbsp;</td>");
-        if (rest > 0) {
-            sb.append("<td width='").append(rest).append("%' bgcolor='").append(BAR_EMPTY).append("' style='background-color:").append(BAR_EMPTY).append(";font-size:0;line-height:0;height:8px;border-radius:0 4px 4px 0'>&nbsp;</td>");
-        }
-        sb.append("</tr></table>")
-          .append("<div style='margin:6px 0 0;font-size:12px;color:").append(MUTED).append("'>")
-          .append("Bitişe ").append(days).append(" gün");
-        if (expiryIso != null) sb.append(" · Son tarih: ").append(esc(formatHuman(expiryIso)));
-        sb.append("</div>");
-        return sb.toString();
-    }
-
     // ── Mini zaman çizelgesi ─────────────────────────────────────────────────
     /** Nokta: etiket + tarih (+ vurgu). */
     private record TlPoint(String label, String date, boolean emphasized) {}
@@ -629,26 +556,6 @@ public class EmailTemplateBuilder {
         if (checked != null) pts.add(new TlPoint("Son Kontrol", formatShort(checked), false));
         if (expiryIso != null) pts.add(new TlPoint("BİTİŞ", formatShort(expiryIso), true));
         return pts.size() >= 2 ? pts : List.of();
-    }
-
-    private String timelineHtml(AlertMail m, String color, String expiryIso) {
-        List<TlPoint> pts = timelinePoints(m, expiryIso);
-        if (pts.isEmpty()) return "";
-        int w = 100 / pts.size();
-        StringBuilder sb = new StringBuilder();
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:4px 0 8px'><tr>");
-        for (TlPoint p : pts) {
-            String dotColor = p.emphasized() ? color : "#B7BFC9";
-            String labelColor = p.emphasized() ? color : MUTED;
-            String weight = p.emphasized() ? "700" : "600";
-            sb.append("<td width='").append(w).append("%' align='center' valign='top' style='padding:6px 4px;border-top:2px solid ").append(LINE).append("'>")
-              .append("<span style='color:").append(dotColor).append(";font-size:14px;line-height:1'>&#9679;</span>")
-              .append("<div style='font-size:10px;font-weight:").append(weight).append(";letter-spacing:.05em;text-transform:uppercase;color:").append(labelColor).append(";margin:4px 0 1px'>").append(esc(p.label())).append("</div>")
-              .append("<div style='font-size:12px;color:").append(p.emphasized() ? color : INK).append(";font-weight:").append(weight).append("'>").append(esc(p.date())).append("</div>")
-              .append("</td>");
-        }
-        sb.append("</tr></table>");
-        return sb.toString();
     }
 
     private String timelineText(AlertMail m, String expiryIso) {
@@ -677,8 +584,7 @@ public class EmailTemplateBuilder {
             addIf(out, "Veren Kurum (CA)", firstNonNull(strCtx(c, "issuer_cn"), strCtx(c, "issuer")));
             addIf(out, "Sertifika CN", strCtx(c, "subject"));
             String fp = strCtx(c, "fingerprint");
-            if (fp != null) out.add(new Row("SHA-256 Parmak İzi",
-                    "<span style='font-family:Consolas,Menlo,monospace;font-size:12px'>" + esc(shortFp(fp)) + "</span>", shortFp(fp)));
+            if (fp != null) out.add(new Row("SHA-256 Parmak İzi", MailKit.mono(shortFp(fp)), shortFp(fp)));
             addIf(out, "Kalan Gün", m.daysRemaining() != null ? String.valueOf(m.daysRemaining()) : null);
         } else if (isPage(m.alertType())) {   // sayfa bütünlüğü
             addIf(out, "Durum", pageStatusTr(strCtx(c, "page_status")));
@@ -694,7 +600,7 @@ public class EmailTemplateBuilder {
                         pageIssuesText(rowsTsv, intCtx(c, "problem_total"))));
             } else {
                 String probs = strCtx(c, "problem_resources");   // geriye-uyum
-                if (probs != null) out.add(new Row("Sorunlu Kaynaklar", esc(probs).replace("\n", "<br>"), probs));
+                if (probs != null) out.add(new Row("Sorunlu Kaynaklar", MailKit.escBr(probs), probs));
             }
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
@@ -705,13 +611,14 @@ public class EmailTemplateBuilder {
             // nöbetçi "1✓/2✗" görüp k6 çıktısını açmak zorunda kalıyordu (Sayfa dalında zaten vardı).
             addIf(out, "Hata", firstNonNull(strCtx(c, "error"), strCtx(c, "last_error")));
             String failed = strCtx(c, "failed_checks");
-            if (failed != null) out.add(new Row("Başarısız Check'ler", "<ul style='margin:0;padding-left:18px'>"
-                    + java.util.Arrays.stream(failed.split("\n")).filter(s -> !s.isBlank())
-                        .map(s -> "<li>" + esc(s) + "</li>").reduce("", String::concat) + "</ul>", failed));
+            if (failed != null) {
+                List<String> items = new ArrayList<>();
+                for (String s : failed.split("\n")) if (!s.isBlank()) items.add(esc(s));
+                out.add(new Row("Başarısız Check'ler", MailKit.bullets(items), failed));
+            }
             String tail = strCtx(c, "output_tail");
             if (tail != null) out.add(new Row("Son Çıktı (maskeli)",
-                    "<pre style='margin:0;font-family:Consolas,Menlo,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;background:" + SOFT + ";padding:10px;border-radius:6px;color:" + INK + "'>"
-                            + esc(tail.length() > 2000 ? tail.substring(tail.length() - 2000) : tail) + "</pre>", tail));
+                    MailKit.pre(tail.length() > 2000 ? tail.substring(tail.length() - 2000) : tail), tail));
             addIf(out, "Son Kontrol", strCtx(c, "checked_at") != null ? formatHuman(strCtx(c, "checked_at")) : null);
         } else {   // uptime/port/dns/keyword/ping/network
             addIf(out, "Detay", firstNonNull(strCtx(c, "detail"), strCtx(c, "port"), strCtx(c, "record_type")));
@@ -769,7 +676,7 @@ public class EmailTemplateBuilder {
     /** ≤7 gün kaldıysa aksiyon listesinin başındaki uyarı satırı; değilse null. */
     private String urgentLine(AlertMail m, String expiryIso) {
         if (m.daysRemaining() == null || m.daysRemaining() > 7) return null;
-        return "⚠ Bugün aksiyon alın — son tarih " + (expiryIso != null ? formatHuman(expiryIso) : m.daysRemaining() + " gün sonra");
+        return "Bugün aksiyon alın — son tarih " + (expiryIso != null ? formatHuman(expiryIso) : m.daysRemaining() + " gün sonra");
     }
 
     private static String subsystemLabel(String t) {
@@ -783,19 +690,6 @@ public class EmailTemplateBuilder {
         if (isPageSpeed(t)) return "Sayfa Hızı İzleme";
         if (isScripted(t)) return "Sentetik İzleme";
         return "Sertifika İzleme";
-    }
-
-    /** "Neden bu e-postayı aldınız?" — alıcı şeffaflık bloğu (Outlook-güvenli). Dış link YOK (banka). */
-    static String whyReceivingBlock(String teamName) {
-        String team = (teamName != null && !teamName.isBlank()) ? esc(teamName) : "ilgili izleme grubuna";
-        String teamPhrase = (teamName != null && !teamName.isBlank()) ? "<strong>" + team + "</strong> ekibine" : team;
-        return "<tr><td style='padding:6px 30px 0'>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + SOFT + "' style='background-color:" + SOFT + ";border:1px solid " + LINE + ";border-radius:8px'>"
-                + "<tr><td style='padding:12px 16px'>"
-                + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
-                + "<div style='font-size:13px;line-height:1.55;color:" + INK + "'>Bu bildirim " + teamPhrase
-                + " tanımlı bir izleme için gönderildi. Site Monitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
-                + "</td></tr></table></td></tr>";
     }
 
     // ── Envanter bölümleri (yalnız sertifika alarmlarında, ctx doluysa) ───────
@@ -816,31 +710,13 @@ public class EmailTemplateBuilder {
     }
 
     /**
-     * OPERASYONEL BİLGİLER — envanterde "Evet" işaretli bayraklar, iki kolonlu çip ızgarası.
-     * Çipler {@code span background} değil {@code td bgcolor} ile boyanır (Outlook kuralı).
-     * Veri yoksa "" döner → boş kutu render edilmez.
+     * OPERASYONEL BİLGİLER — envanterde "Evet" işaretli bayraklar, satır sarabilen çipler.
+     * Çipler {@code td bgcolor} ile boyanır (Outlook kuralı). Veri yoksa kart hiç eklenmez.
      */
-    private static String opsSection(AlertMail m) {
+    private static void opsSection(MailDoc d, AlertMail m) {
         List<String> labels = opsLabels(m.ctx());
-        if (labels.isEmpty()) return "";
-        StringBuilder grid = new StringBuilder();
-        for (int i = 0; i < labels.size(); i += 2) {
-            grid.append("<tr>").append(opsChipCell(labels.get(i)));
-            grid.append(i + 1 < labels.size() ? opsChipCell(labels.get(i + 1))
-                                              : "<td width='50%' style='padding:3px 0'>&nbsp;</td>");
-            grid.append("</tr>");
-        }
-        return card("Operasyonel Bilgiler",
-                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'>"
-                        + grid + "</table>");
-    }
-
-    private static String opsChipCell(String label) {
-        return "<td width='50%' valign='top' style='padding:3px 6px 3px 0'>"
-                + "<table role='presentation' cellpadding='0' cellspacing='0' border='0'><tr>"
-                + "<td bgcolor='" + PILL_BG + "' style='background-color:" + PILL_BG + ";border-radius:4px;"
-                + "padding:5px 10px;font-size:12.5px;font-weight:600;color:" + PILL_INK + ";white-space:nowrap'>"
-                + "✓&nbsp;" + esc(label) + "</td></tr></table></td>";
+        if (labels.isEmpty()) return;
+        d.card("Operasyonel Bilgiler", null, MailKit.chips(labels), String.join(", ", labels));
     }
 
     /** ctx'teki {@code inv_contacts} haritasi (etiket → deger, yalniz DOLU alanlar, ekleme sirali). */
@@ -859,29 +735,20 @@ public class EmailTemplateBuilder {
      * SORUMLU EKIPLER — sertifikayi kimin yenileyecegi: Servis Yonetimi / Uygulama Gelistirme /
      * IISAdmin / WAFAdmin.
      *
-     * <p><b>Neden 4 sutunlu tablo DEGIL:</b> mail govdesi 600px sabittir
-     * ({@code EmailTemplateStandardTest}); dort sutuna bolununce sutun basina ~140px kalir ve
-     * kurumsal bir e-posta adresi iki-uc satira kirilir, Outlook'ta sutun genislikleri oynar.
-     * Etiket/deger satiri hem dar ekranda hem Outlook'ta guvenli.
-     *
-     * <p>Yalniz dolu alanlar basilir; hicbiri dolu degilse "" doner → kart HIC render edilmez.
+     * <p><b>Neden 4 sutunlu tablo DEGIL:</b> kurumsal bir e-posta adresi dar sutunda iki-uc satira
+     * kirilir, Outlook'ta sutun genislikleri oynar. Etiket/deger satiri (telefonda alt alta) hem dar
+     * ekranda hem Outlook'ta guvenli. Yalniz dolu alanlar basilir; hicbiri dolu degilse kart HIC eklenmez.
      */
-    private static String contactsSection(AlertMail m) {
+    private static void contactsSection(MailDoc d, AlertMail m) {
         Map<String, String> contacts = contactMap(m.ctx());
-        if (contacts.isEmpty()) return "";
-        StringBuilder rows = new StringBuilder(
-                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'>");
+        if (contacts.isEmpty()) return;
+        List<Row> rows = new ArrayList<>();
+        StringBuilder text = new StringBuilder();
         for (Map.Entry<String, String> e : contacts.entrySet()) {
-            rows.append("<tr>")
-                .append("<td width='40%' valign='top' style='padding:4px 10px 4px 0;font-size:11px;font-weight:700;")
-                .append("letter-spacing:.04em;text-transform:uppercase;color:").append(MUTED).append("'>")
-                .append(esc(e.getKey())).append("</td>")
-                .append("<td valign='top' style='padding:4px 0;font-size:13.5px;line-height:1.5;color:")
-                .append(INK).append(";word-break:break-word'>").append(linkifyEmails(e.getValue())).append("</td>")
-                .append("</tr>");
+            rows.add(new Row(e.getKey(), linkifyEmails(e.getValue()), e.getValue()));
+            text.append(e.getKey()).append(": ").append(e.getValue()).append('\n');
         }
-        rows.append("</table>");
-        return card("Sorumlu Ekipler", rows.toString());
+        d.card("Sorumlu Ekipler", null, MailKit.keyValue(rows), text.toString());
     }
 
     /** Serbest metin icindeki e-posta belirteci — kasten GEVSEK; amac linklemek, dogrulamak degil. */
@@ -900,8 +767,8 @@ public class EmailTemplateBuilder {
         while (mt.find()) {
             out.append(esc(raw.substring(last, mt.start())));
             String addr = mt.group();
-            out.append("<a href='mailto:").append(esc(addr)).append("' style='color:").append(NAVY)
-               .append(";text-decoration:underline'>").append(esc(addr)).append("</a>");
+            out.append("<a href=\"mailto:").append(esc(addr)).append("\" style=\"color:").append(MailTokens.PRIMARY)
+               .append(";text-decoration:underline\">").append(esc(addr)).append("</a>");
             last = mt.end();
         }
         out.append(esc(raw.substring(last)));
@@ -914,18 +781,17 @@ public class EmailTemplateBuilder {
      * yorumlanmaz: kaçırılmış düz metin + {@code <br>} en güvenli (enjeksiyon yok, Outlook'ta kırılmaz)
      * ve zaten "1." "2." diye yazılan numaralandırma görsel olarak aynı okunur.
      */
-    private static String changeDescSection(AlertMail m) {
+    private static void changeDescSection(MailDoc d, AlertMail m) {
         String desc = m.ctx() == null ? null : strCtx(m.ctx(), "inv_change_desc");
-        if (desc == null || desc.isBlank()) return "";
+        if (desc == null || desc.isBlank()) return;
         List<String> lines = descLines(desc);
-        if (lines.isEmpty()) return "";
-        StringBuilder body = new StringBuilder("<div style='font-size:13.5px;line-height:1.6;color:" + INK + "'>");
+        if (lines.isEmpty()) return;
+        StringBuilder body = new StringBuilder();
         for (int i = 0; i < lines.size(); i++) {
             if (i > 0) body.append("<br>");
             body.append(esc(lines.get(i)));
         }
-        body.append("</div>");
-        return card("Değişiklik Açıklaması", body.toString());
+        d.card("Değişiklik Açıklaması", null, MailKit.paragraph(body.toString()), String.join("\n", lines));
     }
 
     /** Boş satırları atar, satır ve karakter tavanını uygular; kırpıldıysa son satır uyarıdır. */
@@ -944,35 +810,18 @@ public class EmailTemplateBuilder {
         return out;
     }
 
-    /** Ortak kart iskeleti — "Önerilen Aksiyon" / "Neden bu e-postayı aldınız?" ile aynı dil. */
-    private static String card(String title, String bodyHtml) {
-        return "<tr><td style='padding:14px 30px 0'>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + SOFT + "' style='background-color:" + SOFT + ";border:1px solid " + LINE + ";border-radius:8px'>"
-                + "<tr><td style='padding:14px 18px'>"
-                + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:" + MUTED + ";margin:0 0 9px'>" + esc(title) + "</div>"
-                + bodyHtml
-                + "</td></tr></table></td></tr>";
-    }
-
     // ── Küçük render yardımcıları ────────────────────────────────────────────
-    private static String row(String label, String valueHtml) {
-        return "<tr>"
-                + "<td width='35%' valign='top' style='padding:9px 12px 9px 0;border-bottom:1px solid " + LINE + ";font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:" + MUTED + "'>" + esc(label) + "</td>"
-                + "<td valign='top' style='padding:9px 0;border-bottom:1px solid " + LINE + ";font-size:14px;color:" + INK + ";word-break:break-word'>" + valueHtml + "</td>"
-                + "</tr>";
-    }
 
-    /** EPP kodları — her kod kendi satırında pill + kısa Türkçe açıklama (Outlook-güvenli iç tablo). */
+    /** EPP kodları — her kod kendi satırında hap + kısa Türkçe açıklama (Outlook-güvenli iç tablo). */
     private static String eppPills(String csv) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>");
+        sb.append("<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:collapse\">");
         for (String p : csv.split(",")) {
             String v = p.trim();
             if (v.isEmpty()) continue;
             String desc = EPP_TR.get(normEppKey(v));
-            sb.append("<tr><td style='padding:2px 0'>")
-              .append("<span style='display:inline-block;background:" + PILL_BG + ";color:" + PILL_INK + ";border-radius:999px;padding:2px 9px;font-size:11px;white-space:nowrap'>").append(esc(v)).append("</span>")
-              .append("</td><td style='padding:2px 0 2px 8px;font-size:12px;color:" + MUTED + "'>")
+            sb.append("<tr><td valign=\"top\" style=\"padding:2px 8px 2px 0\">").append(MailKit.pill(v)).append("</td>")
+              .append("<td valign=\"top\" style=\"padding:3px 0;font-size:13px;line-height:18px;color:").append(MailTokens.MUTED).append("\">")
               .append(desc != null ? esc(desc) : "")
               .append("</td></tr>");
         }
@@ -1000,20 +849,6 @@ public class EmailTemplateBuilder {
     private String liveBaseUrl() {
         String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
         return (url == null || url.isBlank()) ? "" : url.replaceAll("/+$", "");
-    }
-
-    /** Olay aksiyon butonları (detay + yorum) — ctx'te alert_event_id yoksa "" (mevcut çıktı korunur). */
-    private String incidentActions(Map<String, Object> ctx, String accent) {
-        return MailCta.incidentActionRow(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"), accent);
-    }
-
-    /** VML/mso fallback'li bulletproof CTA butonu. Genişlik etiketten türetilir — sabit 220px
-     *  uzun Türkçe etiketlerde ("Site Monitor'de Görüntüle") Outlook'ta metni kırpıyordu. */
-    private static String ctaButton(String href, String label, String color) {
-        String h = esc(href);
-        return "<!--[if mso]><v:roundrect xmlns:v='urn:schemas-microsoft-com:vml' xmlns:w='urn:schemas-microsoft-com:office:word' href='" + h + "' style='height:40px;v-text-anchor:middle;width:" + MailCta.vmlWidth(label) + "px' arcsize='12%' strokecolor='" + color + "' fillcolor='" + color + "'>"
-                + "<w:anchorlock/><center style='color:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:14px;font-weight:600'>" + esc(label) + "</center></v:roundrect><![endif]-->"
-                + "<!--[if !mso]><!-- --><a href='" + h + "' style='display:inline-block;background:" + color + ";color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 22px;border-radius:6px'>" + esc(label) + "</a><!--<![endif]-->";
     }
 
     // ── Değer/format yardımcıları ────────────────────────────────────────────
@@ -1083,11 +918,10 @@ public class EmailTemplateBuilder {
     }
     private static String pageIssueTypeColor(String t) {
         return switch (t == null ? "" : t) {
-            case "TIMEOUT" -> "#A16207";
-            case "MIXED_CONTENT" -> "#B45309";
-            case "SLOW" -> "#0369A1";
-            case "BLOCKED" -> "#78716C";
-            default -> "#B91C1C";   // BROKEN
+            case "TIMEOUT", "MIXED_CONTENT" -> Tone.WARNING.text;
+            case "SLOW" -> Tone.INFO.text;
+            case "BLOCKED" -> MailTokens.MUTED;
+            default -> Tone.DESTRUCTIVE.text;   // BROKEN
         };
     }
     private static String truncUrl(String url) {
@@ -1095,10 +929,10 @@ public class EmailTemplateBuilder {
         return url.length() > 100 ? url.substring(0, 99) + "…" : url;
     }
 
-    /** Sorunlu kaynaklar — Outlook-güvenli iç tablo: her satır tür etiketi + kısaltılmış URL (+HTTP), ≤10 satır. */
+    /** Sorunlu kaynaklar — tür etiketi + kısaltılmış URL (+HTTP), ≤10 satır; URL kırılabilir (taşma yok). */
     private static String pageIssuesHtml(String tsv, Integer total) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>");
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:collapse\">");
         int shown = 0;
         for (String line : tsv.split("\n")) {
             if (line.isBlank()) continue;
@@ -1107,17 +941,17 @@ public class EmailTemplateBuilder {
             String url  = p.length > 1 ? p[1] : "";
             String http = p.length > 2 ? p[2] : "";
             sb.append("<tr>")
-              .append("<td valign='top' style='padding:5px 10px 5px 0;font-size:11px;font-weight:700;color:")
-              .append(pageIssueTypeColor(type)).append(";white-space:nowrap'>").append(esc(pageIssueTypeLabel(type))).append("</td>")
-              .append("<td valign='top' style='padding:5px 0;font-size:12px;line-height:1.45;color:").append(INK)
-              .append(";font-family:Consolas,Menlo,monospace;word-break:break-all'>").append(esc(truncUrl(url)));
-            if (!http.isBlank()) sb.append("<span style='color:").append(MUTED).append("'> · HTTP ").append(esc(http)).append("</span>");
+              .append("<td valign=\"top\" style=\"padding:4px 10px 4px 0;font-size:12px;line-height:18px;font-weight:600;color:")
+              .append(pageIssueTypeColor(type)).append(";white-space:nowrap\">").append(esc(pageIssueTypeLabel(type))).append("</td>")
+              .append("<td valign=\"top\" class=\"mono\" style=\"padding:4px 0;font-size:12px;line-height:18px;color:").append(MailTokens.FG)
+              .append(";font-family:").append(MailTokens.MONO).append(";word-break:break-all;overflow-wrap:anywhere\">").append(esc(truncUrl(url)));
+            if (!http.isBlank()) sb.append("<span style=\"color:").append(MailTokens.MUTED).append("\"> · HTTP ").append(esc(http)).append("</span>");
             sb.append("</td></tr>");
             shown++;
         }
         if (total != null && total > shown) {
-            sb.append("<tr><td colspan='2' style='padding:7px 0 0;font-size:12px;font-style:italic;color:").append(MUTED)
-              .append("'>… ve ").append(total - shown).append(" kaynak daha (toplam ").append(total).append(")</td></tr>");
+            sb.append("<tr><td colspan=\"2\" style=\"padding:6px 0 0;font-size:12px;line-height:18px;color:").append(MailTokens.MUTED)
+              .append("\">… ve ").append(total - shown).append(" kaynak daha (toplam ").append(total).append(")</td></tr>");
         }
         sb.append("</table>");
         return sb.toString();
@@ -1172,10 +1006,9 @@ public class EmailTemplateBuilder {
         }
     }
 
+    /** Tek kaçış kaynağı {@link MailKit#esc} (beş karakter). */
     static String esc(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                .replace("\"", "&quot;").replace("'", "&#39;");
+        return MailKit.esc(s);
     }
     private static String urlenc(String s) {
         return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);

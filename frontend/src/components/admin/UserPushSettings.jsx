@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef, useId } from 'react'
 import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
@@ -14,27 +14,44 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
 import UserBadge from '../ui/UserBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import Field from '../ui/Field.jsx'
+import { helpLabel, SETTINGS_STACK, SettingsHeader, ToggleRow } from './SettingsControls.jsx'
+import ToneBadge, { DecisionBadge } from './ToneBadge.jsx'
 import { formatDateSec } from '../../api/client'
 import { copyText } from '../../utils/copyText.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Switch } from '@/components/shadcn/switch'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { Toggle } from '@/components/shadcn/toggle'
+import { cn } from '@/lib/utils'
 
 /**
  * Kişi-bazlı Webhook Bildirimleri — mail hattından TAMAMEN bağımsız ikinci kanalın yönetimi.
  *
- * Tasarım dili (namethatui desenleri, proje dağarcığına uyarlanmış):
- * - Aç/kapa durumları CHECKBOX değil SWITCH (perm-pill — PermissionMatrix'teki pill switch'in
- *   aynısı): "Switch vs Checkbox" ayrımı — bunlar anında etkiyen durum anahtarları, form seçimi değil.
- * - Unvan grupları SEÇİLEBİLİR KART: ikon + ad + açıklama + switch + seviye rozeti; kart
- *   açıkken vurgu kenarlığı alır. Desen listesi kartın içinde (Token Field = TagInput).
- * - Tip/takım matrisi TOGGLE CHIP GRUBU: ikonlu, basılabilir çipler (aria-pressed) — 10 tip
+ * Tasarım dili (shadcn/ui, 2026-09-25 geçişi):
+ * - Aç/kapa durumları CHECKBOX değil shadcn SWITCH: "Switch vs Checkbox" ayrımı — bunlar anında
+ *   etkiyen durum anahtarları, form seçimi değil. (Başlıktaki "sır" işareti form seçeneği → Checkbox.)
+ * - Bölümler shadcn Collapsible + Card: başlık = CollapsibleTrigger; kapalıyken içerik DOM'da kalır
+ *   (forceMount + hidden) — girilen değerler kaybolmaz.
+ * - Unvan grupları SEÇİLEBİLİR KART (Card): ikon + ad + açıklama + Switch + seviye rozeti (Badge);
+ *   kart açıkken vurgu kenarlığı alır.
+ * - Tip/takım matrisi shadcn TOGGLE grubu: ikonlu, basılabilir çipler (aria-pressed) — 10 tip
  *   Nav'daki ikonlarıyla; kapalı çip soluk kalır, açık çip dolgulu.
- * - Şablon önizlemesi PUSH BİLDİRİM MAKETİ: kullanıcı metni tam olarak telefonda görüneceği
+ * - Şablon önizlemesi PUSH BİLDİRİM MAKETİ (Card): kullanıcı metni tam olarak telefonda görüneceği
  *   biçimde görür — düz italik satırdan çok daha az soyut.
- * - İstatistik şeridi KPI kartları (chg-kpi görsel dili); kanal kapalıyken CALLOUT.
+ * - İstatistik şeridi KPI kartları (Card); kanal kapalıyken uyarı (AlertBanner).
  *
  * Sır sözleşmesi değişmedi: başlık değerleri sunucudan MASKELİ gelir; kullanıcı değiştirmedikçe
  * maskeli değer geri gönderilir ve sunucu eski şifreli değeri korur (write-only).
@@ -58,8 +75,6 @@ const TYPES = [
   { key: 'scripted', Icon: FlaskConical }, { key: 'pagespeed', Icon: Gauge },
 ]
 
-/** Unvan grubu kartları: ikon + kalıcı görsel kimlik. */
-
 /** KPI pencereleri (2026-09-12): anahtar = backend STAT_WINDOWS ile aynı; ms + etiket anahtarı. */
 const WINDOWS = [
   { key: '24h', ms: 24 * 3600e3, label: 'userpush.stat24h' },
@@ -82,67 +97,123 @@ function readSections() {
   } catch { return null }
 }
 
+/** Teslimat durumu rozeti — ToneBadge (shadcn Badge); `data-tone` test kancası. */
+function StatusBadge({ status, tone }) {
+  return <ToneBadge tone={tone === 'ok' ? 'success' : tone} className="font-bold tracking-wide">{status}</ToneBadge>
+}
+
+/** Alt başlık (bölüm içi) — eski `.userpush-subsub`. */
+function SubHead({ children, className = '' }) {
+  return <h5 className={cn('mt-3.5 mb-1 flex items-center text-[0.95em] font-semibold', className)}>{children}</h5>
+}
+
 /**
- * Bölüm başlığı = açılır/kapanır düğme (2026-09-11, kullanıcı: "başlıkları açılır kapanır menüye
- * dönüştür, istediğim bölümü açıp değiştireyim"). Başlık düğmesi <button>; yardım ipucu (HelpTip)
- * kendi düğmesi olduğu için başlığın DIŞINDA, aynı satırda (iç içe button olmaz — TeamBadge dersi).
- * Kapalıyken bölüm içeriği CSS ile gizlenir (.cs-section:not(.is-open) > :not(.cs-head)).
+ * Açılır/kapanır bölüm (2026-09-11, kullanıcı: "başlıkları açılır kapanır menüye dönüştür,
+ * istediğim bölümü açıp değiştireyim"). shadcn Collapsible + Card: başlık = CollapsibleTrigger
+ * (Button); yardım ipucu (HelpTip) kendi düğmesi olduğu için tetiğin DIŞINDA, aynı satırda
+ * (iç içe button olmaz — TeamBadge dersi). İçerik forceMount + `hidden`: kapalıyken DOM'da kalır
+ * (girilen değerler korunur) ama görünmez ve erişilebilirlik ağacı dışındadır.
+ * Test kancaları: kök `data-section` + `data-state`, tetik `data-section-toggle`.
  */
-function SectionHead({ id, title, open, onToggle, children }) {
+function Section({ id, title, open, onToggle, help, description, className = '', children }) {
   return (
-    <div className="cs-head">
-      <button type="button" className="cs-toggle" aria-expanded={open} aria-controls={`cs-${id}`} onClick={onToggle}>
-        <ChevronDown size={16} className={`cs-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
-        <span className="cs-title">{title}</span>
-      </button>
-      {children}
-    </div>
+    <Collapsible open={open} onOpenChange={onToggle} data-section={id} className={className}>
+      <Card className="gap-0 py-0">
+        <CardHeader className="flex items-center gap-1.5 px-4 py-2">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost" data-section-toggle={id}
+              className="h-auto min-w-0 flex-1 justify-start gap-2 px-1 py-1 text-[1.02em] font-bold hover:bg-transparent hover:text-primary dark:hover:bg-transparent">
+              <ChevronDown aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', !open && '-rotate-90')} />
+              <span className="truncate">{title}</span>
+            </Button>
+          </CollapsibleTrigger>
+          {help}
+        </CardHeader>
+        <CollapsibleContent forceMount hidden={!open}>
+          <CardContent className="border-t px-4 pt-4 pb-5 border-border">
+            {description && <p className="mb-2 text-sm text-muted-foreground">{description}</p>}
+            {children}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   )
 }
 
 /**
  * Teslimat günlüğü satırı — başlık (durum · kişi · takım · izleme · tetik · zaman) + açılır ayrıntı.
  * Günlük listesi ve KPI pencere modalı AYNI satırı çizer; iki kopya zamanla ayrışırdı.
+ * shadcn Collapsible: başlık tetik (button), ayrıntı CollapsibleContent (kapalıyken DOM'da yok).
+ * Dar kapta (≤ 720px, `@container` liste kabı) başlık İKİ satıra kırılır.
  */
 function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
   return (
-    <div className={`userpush-log-row${isOpen ? ' is-open' : ''}`}>
-      <button type="button" className="userpush-log-head" aria-expanded={isOpen} onClick={onToggle}>
-        <span className={`userpush-badge userpush-badge--${statusTone(r.status)}`}>{r.status}</span>
-        <span className="userpush-log-who">
+    <Collapsible open={isOpen} onOpenChange={onToggle} className="overflow-hidden rounded-lg border border-border">
+      <CollapsibleTrigger
+        className="grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 gap-y-1 px-2.5 py-[7px] text-left hover:bg-muted/50 @min-[720px]:grid-cols-[auto_minmax(160px,1.3fr)_minmax(120px,1fr)_auto_auto] @min-[720px]:gap-y-2.5">
+        <StatusBadge status={r.status} tone={statusTone(r.status)} />
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5 whitespace-normal">
           {r.username === '-' ? <em>{t('userpush.systemRow')}</em>
             : <UserBadge username={r.username} displayName={r.display_name} size="sm" inline nameOnly />}
           {/* Kişinin takım(lar)ı — satır bir <button>, bu yüzden TeamBadge span modunda. */}
           {(userTeams[(r.username || '').toUpperCase()] || []).map((tn) => (
-            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="userpush-log-team" />
+            <TeamBadge key={tn} teamName={tn} size={11} as="span" className="ml-1.5 align-middle" />
           ))}
         </span>
-        <span className="userpush-log-mon">{r.monitor_name || '—'}</span>
-        <span className="userpush-log-trigger">{t('userpush.trigger.' + r.trigger)}</span>
-        <span className="userpush-log-when sys-mono">{formatDateSec(r.created_at)}</span>
-      </button>
-      {isOpen && (
-        <div className="userpush-log-detail">
-          {r.message && <NotifPreview title={r.title} message={r.message}
-            tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
-          <dl className="userpush-log-meta">
-            {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
-            {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
-            {r.notification_id && (
-              <><dt>notificationId</dt>
-                <dd>
-                  <button type="button" className="chg-ip sys-mono"
-                    onClick={() => copyText(r.notification_id)}>
-                    {r.notification_id}<Copy size={10} aria-hidden="true" />
-                  </button>
-                </dd></>
-            )}
-            {r.batch_id && <><dt>batch</dt><dd className="sys-mono">{r.batch_id}</dd></>}
-            {r.error && <><dt>{t('userpush.error')}</dt><dd className="userpush-log-err">{r.error}</dd></>}
-          </dl>
-        </div>
-      )}
-    </div>
+        <span className="col-start-2 truncate @min-[720px]:col-start-auto">{r.monitor_name || '—'}</span>
+        <span className="col-start-2 text-[0.8em] text-muted-foreground @min-[720px]:col-start-auto">{t('userpush.trigger.' + r.trigger)}</span>
+        <span className="col-start-2 font-mono text-[0.8em] whitespace-nowrap text-muted-foreground @min-[720px]:col-start-auto">{formatDateSec(r.created_at)}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t border-dashed px-3 pt-2 pb-2.5 border-border">
+        {r.message && <NotifPreview title={r.title} message={r.message}
+          tone={statusTone(r.status) === 'danger' ? 'danger' : 'info'} />}
+        <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[0.85em] [&_dt]:text-muted-foreground">
+          {r.http_status != null && <><dt>HTTP</dt><dd>{r.http_status}</dd></>}
+          {r.attempts != null && <><dt>{t('userpush.attempts')}</dt><dd>{r.attempts}</dd></>}
+          {r.notification_id && (
+            <><dt>notificationId</dt>
+              <dd>
+                <Button type="button" variant="ghost" size="xs" className="h-auto px-1 py-0 font-mono"
+                  onClick={() => copyText(r.notification_id)}>
+                  {r.notification_id}<Copy size={10} aria-hidden="true" />
+                </Button>
+              </dd></>
+          )}
+          {r.batch_id && <><dt>batch</dt><dd className="font-mono">{r.batch_id}</dd></>}
+          {r.error && <><dt>{t('userpush.error')}</dt><dd className="break-all text-destructive">{r.error}</dd></>}
+        </dl>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/** Teslimat listesi kabı — `@container`: satırlar dar kapta (modal) iki satıra kırılır. */
+function DeliveryList({ children }) {
+  return <div className="@container flex flex-col gap-1">{children}</div>
+}
+
+/**
+ * Basılabilir seçim çipi — shadcn Toggle (aria-pressed; kapalı = soluk, açık = dolgulu).
+ * Tip/takım matrisi ve KPI modalının durum/takım süzgeçleri aynı çipi kullanır.
+ */
+function ChipToggle({ pressed, onPress, title, children }) {
+  return (
+    <Toggle variant="outline" size="sm" pressed={!!pressed} onPressedChange={() => onPress()} title={title}
+      className="group/chip h-8 rounded-full px-3 text-[0.86em] font-normal text-muted-foreground hover:border-primary hover:bg-transparent hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:font-bold data-[state=on]:text-primary">
+      {children}
+    </Toggle>
+  )
+}
+
+/** Çip içi sayaç — açık çipte birincil tona geçer. */
+function ChipCount({ fail = false, children }) {
+  return (
+    <Badge variant="secondary"
+      className={cn('rounded-full px-1.5 py-0 text-[0.82em] group-data-[state=on]/chip:bg-primary/15 group-data-[state=on]/chip:text-primary',
+        fail && 'bg-destructive/15 text-destructive group-data-[state=on]/chip:bg-destructive/15 group-data-[state=on]/chip:text-destructive')}>
+      {children}
+    </Badge>
   )
 }
 
@@ -153,21 +224,24 @@ function DeliveryRow({ r, isOpen, onToggle, userTeams, t, statusTone }) {
  */
 function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusTone, userTeamsHint, onStatus, onOpenInLog, onClose, t }) {
   const [rows, setRows] = useState(null)
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(0)
   const [userTeams, setUserTeams] = useState(userTeamsHint || {})
   const [openRow, setOpenRow] = useState(null)
   // Takım süzgeci (2026-09-12, kullanıcı: "kutular takım bazlı adet versin"): çipler alarmın TAKIMINA
   // göre (teslimat satırındaki team_id) — kişinin üyelikleri değil. null = tüm takımlar.
   const [team, setTeam] = useState(null)
-  const SIZE = 25
-  const from = windowFrom(win)
+  // Pencere başlangıcı açılışta (ya da pencere değişince) BİR KEZ hesaplanır (2026-09-27 regresyon B2): her çizimde
+  // yeniden hesaplanan saniye hassasiyetli değer yükleme efektinin bağımlılığındaydı → yanıt → yeni çizim → yeni
+  // saniye → yeni istek döngüsü (liste yanıp sönüyor, uç boşuna dövülüyordu). `windowFrom` yalnız `win` + saate bağlı.
+  const from = useMemo(() => windowFrom(win), [win])   // eslint-disable-line react-hooks/exhaustive-deps
+  // Sayfalama standardı (2026-09-26): pencere içi liste → modal ön ayarı. Eskiden `SIZE = 25` + boyut seçicisi
+  // çizilen ama bağlı olmayan (ÖLÜ) çubuk ve mount'ta da koşan `useEffect(() => setPage(0), …)` vardı.
+  const winPager = useServerPagination({ listKey: 'userpush-window', preset: 'modal', resetDeps: [win, status, team], apiBase: 0 })
+  const { apiPage: page, pageSize: winSize, setTotal: setWinTotal } = winPager
 
-  useEffect(() => { setPage(0) }, [win, status, team])
   useEffect(() => {
     let alive = true
     setRows(null)
-    const params = { page, size: SIZE, from }
+    const params = { page, size: winSize, from }
     if (status) params.status = status
     if (team != null) params.teamId = team
     Promise.resolve(api.admin.userPush.getDeliveries(params))
@@ -175,13 +249,13 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
         if (!alive) return
         if (res?.success) {
           setRows(res.data?.deliveries || [])
-          setTotal(res.data?.total || 0)
+          setWinTotal(res.data?.total || 0)
           setUserTeams((prev) => ({ ...prev, ...(res.data?.user_teams || {}) }))
         } else setRows([])
       })
       .catch(() => { if (alive) setRows([]) })
     return () => { alive = false }
-  }, [win, status, team, page, from])
+  }, [win, status, team, page, winSize, from, setWinTotal])
 
   const title = t(winLabelKey(win))
   const sum = Object.entries(counts || {}).reduce((s, [, v]) => s + (Number(v) || 0), 0)
@@ -200,26 +274,26 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
           <Button type="button" size="sm" onClick={onClose}>{t('userpush.winClose')}</Button>
         </>
       )}>
-      <p className="section-desc">{t('userpush.winSince', formatDateSec(from + 'Z'))}</p>
-      <div className="up-chip-grid" role="group" aria-label={t('userpush.winStatusFilter')}>
+      <p className="mb-1.5 text-sm text-muted-foreground">{t('userpush.winSince', formatDateSec(from + 'Z'))}</p>
+      <div className="mt-2 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.winStatusFilter')}>
         {chips.map(([value, label, n]) => (
-          <button key={value || 'all'} type="button" className={`up-chip${status === value ? ' up-chip--on' : ''}`}
-            aria-pressed={status === value} onClick={() => onStatus(value)}>
-            <span>{label}</span><b className="up-chip-count">{n}</b>
-          </button>
+          <ChipToggle key={value || 'all'} pressed={status === value} onPress={() => onStatus(value)}>
+            <span>{label}</span><ChipCount>{n}</ChipCount>
+          </ChipToggle>
         ))}
       </div>
       {Array.isArray(teamRows) && teamRows.length > 0 && (
-        <div className="up-chip-grid up-team-chips" role="group" aria-label={t('userpush.winTeamFilter')}>
-          <button type="button" className={`up-chip${team == null ? ' up-chip--on' : ''}`} aria-pressed={team == null}
-            onClick={() => setTeam(null)}><span>{t('userpush.winAllTeams')}</span></button>
+        <div className="mt-0.5 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.winTeamFilter')}>
+          <ChipToggle pressed={team == null} onPress={() => setTeam(null)}>
+            <span>{t('userpush.winAllTeams')}</span>
+          </ChipToggle>
           {teamRows.filter((tr) => tr.team_id != null).map((tr) => (
-            <button key={tr.team_id} type="button" className={`up-chip${team === tr.team_id ? ' up-chip--on' : ''}`}
-              aria-pressed={team === tr.team_id} onClick={() => setTeam(team === tr.team_id ? null : tr.team_id)}
+            <ChipToggle key={tr.team_id} pressed={team === tr.team_id}
+              onPress={() => setTeam(team === tr.team_id ? null : tr.team_id)}
               title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
-              <span>{tr.team_name}</span><b className="up-chip-count">{tr.total}</b>
-              {tr.FAILED > 0 && <b className="up-chip-count up-chip-count--fail">{tr.FAILED}</b>}
-            </button>
+              <span>{tr.team_name}</span><ChipCount>{tr.total}</ChipCount>
+              {tr.FAILED > 0 && <ChipCount fail>{tr.FAILED}</ChipCount>}
+            </ChipToggle>
           ))}
         </div>
       )}
@@ -227,18 +301,14 @@ function WindowModal({ win, status, counts, teams: teamRows, windowFrom, statusT
         : rows.length === 0 ? (
           <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.winEmpty')} description={t('userpush.logEmpty')} />
         ) : (
-          <div className="userpush-log">
+          <DeliveryList>
             {rows.map((r) => (
               <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
                 userTeams={userTeams} t={t} statusTone={statusTone} />
             ))}
-          </div>
+          </DeliveryList>
         )}
-      <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / SIZE))}
-        totalItems={total} pageSize={SIZE}
-        rangeStart={total === 0 ? 0 : page * SIZE + 1}
-        rangeEnd={Math.min(total, (page + 1) * SIZE)}
-        onPageChange={(p) => setPage(p - 1)} />
+      <PaginationBar {...winPager.bar} />
     </ModalShell>
   )
 }
@@ -284,42 +354,57 @@ function preview(template) {
   return out.replace(/\s{2,}/g, ' ').trim()
 }
 
-/** perm-pill switch — PermissionMatrix/TeamManager'daki pill'in birebir aynısı. */
-function PillSwitch({ on, onToggle, label, disabled }) {
-  return (
-    <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={label}
-      disabled={disabled}
-      className={`perm-pill ${on ? 'perm-pill-on' : 'perm-pill-off'}`}
-      onClick={onToggle}>
-      <span className="perm-pill-knob" />
-    </button>
-  )
-}
-
-/** Toggle chip — basılabilir ikonlu seçim çipi (aria-pressed; kapalı = soluk). */
+/** Basılabilir ikonlu seçim çipi (tip/takım kapsamı) — açıkken onay işareti. */
 function ToggleChip({ on, onToggle, Icon, label }) {
   return (
-    <button type="button" className={`up-chip${on ? ' up-chip--on' : ''}`}
-      aria-pressed={!!on} onClick={onToggle}>
+    <ChipToggle pressed={on} onPress={onToggle}>
       {Icon && <Icon size={14} aria-hidden="true" />}
       <span>{label}</span>
-      {on && <Check size={13} className="up-chip-check" aria-hidden="true" />}
-    </button>
+      {on && <Check size={13} className="flex-none" aria-hidden="true" />}
+    </ChipToggle>
   )
 }
 
-/** Push bildirim maketi — şablonun telefonda görüneceği hâli. */
+/** Önizleme maketinin uygulama simgesi tonu (sol renk şeridi YOK — kullanıcı kararı 2026-09-26). */
+const NOTIF_ICON = {
+  danger: 'bg-destructive text-white', warn: 'bg-amber-500 text-white', ok: 'bg-success text-white', info: 'bg-primary text-primary-foreground',
+}
+
+/** Push bildirim maketi — şablonun telefonda görüneceği hâli (shadcn Card). */
 function NotifPreview({ title, message, tone }) {
   const t = useT()
+  const key = NOTIF_ICON[tone] ? tone : 'info'
   return (
-    <div className={`up-notif up-notif--${tone || 'info'}`}>
-      <div className="up-notif-head">
-        <span className="up-notif-appdot"><BellRing size={11} aria-hidden="true" /></span>
-        <span className="up-notif-app">{title || 'Site Monitor'}</span>
-        <span className="up-notif-when">{t('userpush.previewNow')}</span>
+    <Card data-slot="notif-preview" data-tone={key}
+      className="w-full max-w-[420px] gap-0.5 rounded-xl bg-muted px-3 py-2 shadow-none">
+      <div className="flex items-center gap-1.5">
+        <span className={cn('inline-flex size-[18px] flex-none items-center justify-center rounded-[5px]', NOTIF_ICON[key])}>
+          <BellRing size={11} aria-hidden="true" />
+        </span>
+        <span data-slot="notif-app" className="text-[0.74em] font-bold tracking-wide text-muted-foreground uppercase">{title || 'Site Monitor'}</span>
+        <span className="ml-auto text-[0.72em] text-muted-foreground">{t('userpush.previewNow')}</span>
       </div>
-      <div className="up-notif-msg">{message || '—'}</div>
-    </div>
+      <div data-slot="notif-msg" className="text-[0.9em] leading-snug break-words">{message || '—'}</div>
+    </Card>
+  )
+}
+
+/** Şablon kartındaki aile ikonu kutusu (ton). */
+const ICON_TONE = {
+  danger: 'bg-destructive/15 text-destructive',
+  warn: 'bg-amber-500/20 text-amber-700 dark:text-amber-300',
+  ok: 'bg-success/15 text-success',
+  info: 'bg-primary/10 text-primary',
+}
+
+/** Başlık satırındaki "sır" işareti — form seçeneği (Kaydet'le gider) → shadcn Checkbox + bağlı Label. */
+function SecretCheckbox({ checked, onChange, label }) {
+  const id = useId()
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
+    </span>
   )
 }
 
@@ -352,9 +437,6 @@ export default function UserPushSettings() {
 
   // Teslimat günlüğü
   const [rows, setRows] = useState(null)
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(0)
-  const [pageSize, setPageSize] = useState(25)   // secici artik CANLI (bkz. PaginationBar)
   const [fUser, setFUser] = useState('')
   const [fStatus, setFStatus] = useState('')
   const [fTrigger, setFTrigger] = useState('')
@@ -363,6 +445,10 @@ export default function UserPushSettings() {
   // aynı sayfadaki teslimat günlüğünde cevaplanır: kart pencereyi (24h/7d) süzgeç olarak uygular,
   // SENT/FAILED sayıları ayrıca durumu seçer, liste o bloğa kaydırılır.
   const [fWindow, setFWindow] = useState('')   // '' | '24h' | '7d'
+  // Sayfalama standardı (2026-09-26): süzgeç değişince sayfa 1'e dönüşü kanca yapar (her süzgeç düğmesine elle
+  // `setPage(0)` yazılmaz). Panel ön ayarı (25), API 0-tabanlı.
+  const logPager = useServerPagination({ listKey: 'userpush-log', preset: 'panel', resetDeps: [fUser, fStatus, fTrigger, fNotifId, fWindow], apiBase: 0 })
+  const { apiPage: page, pageSize } = logPager
   // 2026-09-11 (kullanıcı): "aynı takımdaki üyeye push gitmiyor, nedenini göremiyorum". Alıcı çözümünün
   // açıklamalı hâli: takım + seviye seç → her üye için karar (alır / grup yok / seviye altı / opt-out / pasif).
   const [exTeam, setExTeam] = useState('')
@@ -404,14 +490,13 @@ export default function UserPushSettings() {
       return next
     })
   }
-  const sec = (id, extra = '') => `admin-section cs-section${isOpen(id) ? ' is-open' : ''}${extra ? ' ' + extra : ''}`
   const allOpen = SECTIONS.every(isOpen)
   const pickWindow = (w, status) => setWinModal({ win: w, status: status || '' })
   const openInLog = () => {
     if (!winModal) return
     setFWindow(winModal.win)
     setFStatus(winModal.status || '')
-    setPage(0)
+    logPager.reset()
     setWinModal(null)
     if (!isOpen('log')) toggleSec('log')
     setTimeout(() => logRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 0)
@@ -556,7 +641,7 @@ export default function UserPushSettings() {
       if (res?.success) {
         setTestResult(res.data?.data ?? res.data)
         toast.success(t('userpush.testQueued'))
-        setPage(0)            // yeni satır ilk sayfada doğar
+        logPager.reset()      // yeni satır ilk sayfada doğar
         refreshLogSoon()      // durum PENDING → SENT/FAILED akışını ekranda göster
       }
       else toast.error(res?.error || t('userpush.testFailed'))
@@ -584,7 +669,7 @@ export default function UserPushSettings() {
     if (mySeq !== seqRef.current) return   // daha yeni bir istek var -> bu yaniti YOK SAY
     if (res?.success) {
       setRows(res.data?.deliveries || [])
-      setTotal(res.data?.total || 0)
+      logPager.setTotal(res.data?.total || 0)
       setUserTeams(res.data?.user_teams || {})
     } else {
       setRows([])
@@ -594,7 +679,7 @@ export default function UserPushSettings() {
   useEffect(() => { loadDeliveries() }, [loadDeliveries])
 
   if (loading) {
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
   const statusTone = (st) => st === 'SENT' ? 'ok' : (st === 'FAILED' || st === 'CIRCUIT_OPEN') ? 'danger'
@@ -602,169 +687,181 @@ export default function UserPushSettings() {
   // Beş pencere: yeni sözleşme stats.windows[key] = { counts, teams }; eski last24h/last7d yedek.
   const winStats = (w) => stats?.windows?.[w] || (w === '24h' ? { counts: stats?.last24h || {} } : w === '7d' ? { counts: stats?.last7d || {} } : { counts: {} })
 
+  const section = (id) => ({ id, open: isOpen(id), onToggle: () => toggleSec(id) })
+  const numField = (key, labelKey, helpKey, min, max, fallback) => (
+    <Field label={helpLabel(t(labelKey), helpKey)} className="mb-0">
+      {({ id, describedBy }) => (
+        <Input id={id} aria-describedby={describedBy} type="number" min={min} max={max} value={val(key, fallback)}
+          onChange={(e) => setVal(key, e.target.value)} />
+      )}
+    </Field>
+  )
+
   return (
-    <div className="ldap-settings userpush-settings">
-      {/* ── Başlık + KPI şeridi ── */}
-      <div className="admin-section">
-        <div className="cs-page-head">
-          <h3><BellRing size={18} style={{ verticalAlign: '-3px' }} /> {t('userpush.title')}</h3>
-          <Button type="button" variant="outline" size="sm" className="cs-all" onClick={() => setAllSections(!allOpen)}>
+    <div className={cn(SETTINGS_STACK, 'gap-4')} data-testid="userpush-settings">
+      {/* ── Başlık (SettingsHeader) + KPI şeridi ── */}
+      <SettingsHeader icon={BellRing} title={t('userpush.title')} description={t('userpush.desc')}
+        actions={(
+          <Button type="button" variant="outline" size="sm" className="flex-none" onClick={() => setAllSections(!allOpen)}>
             {allOpen ? t('userpush.collapseAll') : t('userpush.expandAll')}
           </Button>
-        </div>
-        <p className="section-desc">{t('userpush.desc')}</p>
+        )}>
         {stats && (
-          <div className="userpush-stats-row up-kpis">
+          // Düzenli ızgara (2026-09-27): telefonda 2, ≥640 px 3, masaüstünde 5 sütun — flex-wrap 2+1+1+1 sarıyordu
+          <div data-slot="userpush-kpis" className="grid grid-cols-2 gap-2.5 text-[0.9em] sm:grid-cols-3 lg:grid-cols-5">
             {WINDOWS.map(({ key, label }) => {
               const ws = winStats(key)
               const c = ws.counts || {}
               const top = (ws.teams || []).filter((tr) => tr.team_id != null).slice(0, 3)
+              const winName = t(label)
+              // Kart = pencere (tümü); içindeki SENT/FAILED sayıları ayrı düğme (durumu da seçer).
+              // "Stretched button" (monitoring/MonitorCard deseni): pencere adı GERÇEK düğme, ::after örtüsü kartı
+              // kaplar → kartın herhangi bir yerine basmak pencereyi açar; sayı düğmeleri örtünün ÜSTÜNDE (z-10).
+              // Eskiden kartın kendisi role="button" idi ve içinde gerçek düğmeler vardı (iç içe etkileşim).
               return (
-                <div key={key} className={`up-kpi up-kpi--btn${fWindow === key ? ' is-active' : ''}`} role="button" tabIndex={0}
-                  title={t('userpush.kpiHint')} aria-pressed={fWindow === key}
-                  onClick={() => pickWindow(key, '')}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickWindow(key, '') } }}>
-                  <span className="up-kpi-label">{t(label)}</span>
-                  <span className="up-kpi-nums">
-                    <b className="up-kpi-ok up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow(key, 'SENT') }}>{c.SENT || 0}</b><small>SENT</small>
-                    <b className="up-kpi-fail up-kpi-num" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); pickWindow(key, 'FAILED') }}>{c.FAILED || 0}</b><small>FAILED</small>
+                <Card key={key} data-window={key}
+                  title={t('userpush.kpiHint')}
+                  className={cn('relative min-w-0 gap-1 px-3.5 py-2.5 shadow-none transition-[border-color,box-shadow] hover:border-primary has-[[data-window-pick]:focus-visible]:border-primary motion-reduce:transition-none',
+                    fWindow === key && 'border-primary ring-2 ring-primary/25')}>
+                  <Button type="button" variant="ghost" data-window-pick="" aria-pressed={fWindow === key}
+                    onClick={() => pickWindow(key, '')}
+                    className="h-auto justify-start rounded-none p-0 text-[0.74em] font-bold tracking-wider text-muted-foreground uppercase hover:bg-transparent hover:text-muted-foreground focus-visible:ring-0 after:absolute after:inset-0 after:rounded-xl focus-visible:after:ring-[3px] focus-visible:after:ring-ring/50 dark:hover:bg-transparent">
+                    {winName}
+                  </Button>
+                  <span className="relative z-10 flex items-baseline gap-1 self-start">
+                    <Button type="button" variant="ghost" size="xs" className="h-auto px-1 py-0 text-[1.25em] font-bold text-success hover:text-success"
+                      aria-label={t('a11y.rowAction', winName, `SENT ${c.SENT || 0}`)}
+                      onClick={(e) => { e.stopPropagation(); pickWindow(key, 'SENT') }}>{c.SENT || 0}</Button>
+                    <small className="mr-2 text-[0.68em] text-muted-foreground">SENT</small>
+                    <Button type="button" variant="ghost" size="xs" className="h-auto px-1 py-0 text-[1.25em] font-bold text-destructive hover:text-destructive"
+                      aria-label={t('a11y.rowAction', winName, `FAILED ${c.FAILED || 0}`)}
+                      onClick={(e) => { e.stopPropagation(); pickWindow(key, 'FAILED') }}>{c.FAILED || 0}</Button>
+                    <small className="text-[0.68em] text-muted-foreground">FAILED</small>
                   </span>
                   {/* Takım kırılımı: en yoğun 3 takım (toplam · başarısız). Tamamı modalda. */}
                   {top.length > 0 && (
-                    <span className="up-kpi-teams">
+                    <span className="mt-1 flex flex-col gap-0.5 border-t border-dashed pt-1 text-[0.74em] text-muted-foreground border-border">
                       {top.map((tr) => (
-                        <span key={tr.team_id} className="up-kpi-team" title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
-                          <span className="up-kpi-team-name">{tr.team_name}</span>
-                          <b>{tr.total}</b>{tr.FAILED > 0 && <b className="up-kpi-fail">{tr.FAILED}</b>}
+                        <span key={tr.team_id} className="flex min-w-0 items-center gap-1.5" title={`SENT ${tr.SENT} · FAILED ${tr.FAILED}`}>
+                          <span className="min-w-0 flex-1 truncate">{tr.team_name}</span>
+                          <b className="font-bold text-foreground">{tr.total}</b>{tr.FAILED > 0 && <b className="font-bold text-destructive">{tr.FAILED}</b>}
                         </span>
                       ))}
-                      {(ws.teams || []).filter((tr) => tr.team_id != null).length > 3 && <span className="up-kpi-team-more">…</span>}
+                      {(ws.teams || []).filter((tr) => tr.team_id != null).length > 3 && <span className="text-muted-foreground">…</span>}
                     </span>
                   )}
-                </div>
+                </Card>
               )
             })}
             {health.circuit_open && (
-              <div className="up-kpi up-kpi--circuit">
-                <OctagonPause size={16} aria-hidden="true" />
-                <span>{t('userpush.circuitOpen')}</span>
-              </div>
+              <AlertBanner tone="danger" icon={OctagonPause} className="col-span-full mb-0 font-bold">
+                {t('userpush.circuitOpen')}
+              </AlertBanner>
             )}
           </div>
         )}
-      </div>
+      </SettingsHeader>
 
-      {/* ── Global anahtar — switch + durum callout'u ── */}
-      <div className="admin-section up-master">
-        <div className="up-master-row">
-          <PillSwitch on={enabled} label={t('userpush.enabled')}
-            onToggle={() => setVal('enabled', enabled ? 'false' : 'true')} />
-          <div>
-            <div className="up-master-title">{t('userpush.enabled')}
-              <HelpTip helpKey="help.set.site.monitor.userpush.enabled" label={t('userpush.enabled')} /></div>
-            <p className="hint" style={{ margin: 0 }}>{t('userpush.enabledHint')}</p>
-          </div>
-        </div>
-        {!enabled && (
-          <div className="alert-msg ldap-lookup-error up-callout" style={{ marginTop: 10 }}>
-            <OctagonPause size={15} aria-hidden="true" /> {t('userpush.disabledWarn')}
-          </div>
-        )}
-      </div>
+      {/* ── Global anahtar — switch + durum uyarısı ── */}
+      <Card className="gap-2.5 py-4">
+        <CardContent className="flex flex-col gap-1.5 px-4">
+          <ToggleRow major checked={enabled} onChange={(v) => setVal('enabled', v ? 'true' : 'false')}
+            label={t('userpush.enabled')} helpKey="help.set.site.monitor.userpush.enabled" />
+          <p className="text-xs text-muted-foreground">{t('userpush.enabledHint')}</p>
+          {!enabled && (
+            <AlertBanner tone="danger" icon={OctagonPause} className="mt-1.5 mb-0">{t('userpush.disabledWarn')}</AlertBanner>
+          )}
+        </CardContent>
+      </Card>
 
-      <div className={enabled ? undefined : 'up-dimmed'}>
+      <div className={cn('flex flex-col gap-4', !enabled && 'opacity-55')}>
         {/* ── Bağlantı ── */}
-        <div className={sec('conn')}>
-          <SectionHead id="conn" title={t('userpush.connTitle')} open={isOpen('conn')} onToggle={() => toggleSec('conn')}></SectionHead>
-          <p className="section-desc">{t('userpush.connDesc')}</p>
-          <label className="threshold-field"><span className="help-label-row">{t('userpush.url')}<HelpTip helpKey="help.set.site.monitor.userpush.url" label={t('userpush.url')} /></span>
-            <input type="text" className="input" value={val('url')} placeholder="http://..."
-              onChange={(e) => setVal('url', e.target.value)} />
-          </label>
-          <div className="userpush-grid2">
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.pipeline')}<HelpTip helpKey="help.set.site.monitor.userpush.pipeline" label={t('userpush.pipeline')} /></span>
-              <input type="text" className="input" value={val('pipeline')} placeholder=""
-                onChange={(e) => setVal('pipeline', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.titleField')}<HelpTip helpKey="help.set.site.monitor.userpush.title" label={t('userpush.titleField')} /></span>
-              <input type="text" className="input" value={val('title', 'Site Monitor')}
-                onChange={(e) => setVal('title', e.target.value)} />
-            </label>
+        <Section {...section('conn')} title={t('userpush.connTitle')} description={t('userpush.connDesc')}>
+          <Field label={helpLabel(t('userpush.url'), 'help.set.site.monitor.userpush.url')}>
+            {({ id, describedBy }) => (
+              <Input id={id} aria-describedby={describedBy} type="text" value={val('url')} placeholder="http://..."
+                onChange={(e) => setVal('url', e.target.value)} />
+            )}
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={helpLabel(t('userpush.pipeline'), 'help.set.site.monitor.userpush.pipeline')}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} type="text" value={val('pipeline')} placeholder=""
+                  onChange={(e) => setVal('pipeline', e.target.value)} />
+              )}
+            </Field>
+            <Field label={helpLabel(t('userpush.titleField'), 'help.set.site.monitor.userpush.title')}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} type="text" value={val('title', 'Site Monitor')}
+                  onChange={(e) => setVal('title', e.target.value)} />
+              )}
+            </Field>
           </div>
 
-          <h5 className="userpush-subsub">{t('userpush.headers')}<HelpTip helpKey="help.set.site.monitor.userpush.headers" label={t('userpush.headers')} /></h5>
-          <p className="hint">{t('userpush.headersHint')}</p>
-          {headers.map((h, i) => (
-            <div key={i} className="userpush-header-row">
-              <input type="text" className="input" placeholder={t('userpush.headerName')} value={h.name || ''}
-                onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-              <input type={h.secret ? 'password' : 'text'} className="input" placeholder={t('userpush.headerValue')}
-                value={h.value || ''}
-                onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
-              <label className="checkbox-label userpush-secret-toggle">
-                <input type="checkbox" checked={!!h.secret}
-                  onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: e.target.checked } : x))} />
-                <span>{t('userpush.headerSecret')}</span>
-              </label><HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
-              <Button type="button" variant="outline" size="sm" aria-label={t('userpush.headerDelete', h.name || String(i + 1))}
-                onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></Button>
-            </div>
-          ))}
+          <SubHead>{t('userpush.headers')}<HelpTip helpKey="help.set.site.monitor.userpush.headers" label={t('userpush.headers')} /></SubHead>
+          <p className="mb-2 text-xs text-muted-foreground">{t('userpush.headersHint')}</p>
+          {headers.map((h, i) => {
+            const rowName = h.name || String(i + 1)
+            return (
+              <div key={i} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[1fr_1.4fr_auto_auto] [&>input]:col-span-2 sm:[&>input]:col-span-1">
+                <Input type="text" placeholder={t('userpush.headerName')} value={h.name || ''}
+                  aria-label={t('a11y.rowAction', String(i + 1), t('userpush.headerName'))}
+                  onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                <Input type={h.secret ? 'password' : 'text'} placeholder={t('userpush.headerValue')}
+                  value={h.value || ''} aria-label={t('a11y.rowAction', rowName, t('userpush.headerValue'))}
+                  onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                <span className="inline-flex items-center">
+                  <SecretCheckbox checked={!!h.secret} label={t('userpush.headerSecret')}
+                    onChange={(v) => setHeaders(headers.map((x, j) => j === i ? { ...x, secret: v } : x))} />
+                  <HelpTip helpKey="help.userpush.headerRow" label={t('userpush.headerSecret')} />
+                </span>
+                <Button type="button" variant="outline" size="icon-sm" aria-label={t('userpush.headerDelete', rowName)}
+                  onClick={() => setHeaders(headers.filter((_, j) => j !== i))}><Trash2 size={14} /></Button>
+              </div>
+            )
+          })}
           <Button type="button" variant="outline" size="sm" onClick={() => setHeaders([...headers, { name: '', value: '', secret: true }])}>
             <Plus size={14} /> {t('userpush.addHeader')}
           </Button>
 
-          <div className="userpush-grid4" style={{ marginTop: 14 }}>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.timeoutConnect')}<HelpTip helpKey="help.set.site.monitor.userpush.timeout-connect-seconds" label={t('userpush.timeoutConnect')} /></span>
-              <input type="number" className="input" min={1} max={30} value={val('timeout-connect-seconds', '3')}
-                onChange={(e) => setVal('timeout-connect-seconds', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.timeoutTotal')}<HelpTip helpKey="help.set.site.monitor.userpush.timeout-total-seconds" label={t('userpush.timeoutTotal')} /></span>
-              <input type="number" className="input" min={1} max={60} value={val('timeout-total-seconds', '5')}
-                onChange={(e) => setVal('timeout-total-seconds', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.retryMax')}<HelpTip helpKey="help.set.site.monitor.userpush.retry-max" label={t('userpush.retryMax')} /></span>
-              <input type="number" className="input" min={0} max={5} value={val('retry-max', '2')}
-                onChange={(e) => setVal('retry-max', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.hourlyCap')}<HelpTip helpKey="help.set.site.monitor.userpush.hourly-cap" label={t('userpush.hourlyCap')} /></span>
-              <input type="number" className="input" min={1} max={500} value={val('hourly-cap', '30')}
-                onChange={(e) => setVal('hourly-cap', e.target.value)} />
-            </label>
+          <div className="mt-3.5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            {numField('timeout-connect-seconds', 'userpush.timeoutConnect', 'help.set.site.monitor.userpush.timeout-connect-seconds', 1, 30, '3')}
+            {numField('timeout-total-seconds', 'userpush.timeoutTotal', 'help.set.site.monitor.userpush.timeout-total-seconds', 1, 60, '5')}
+            {numField('retry-max', 'userpush.retryMax', 'help.set.site.monitor.userpush.retry-max', 0, 5, '2')}
+            {numField('hourly-cap', 'userpush.hourlyCap', 'help.set.site.monitor.userpush.hourly-cap', 1, 500, '30')}
             {/* Mesaj uzunlugu: ikisi de gomulu sabitti. Ust sinirlar bilerek dar - max-message
                 urun sozlesmesi (K6: <=200 karakter, tek satir), kaldirmak kanali sessizce deler. */}
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.maxMessageChars')}<HelpTip helpKey="help.set.site.monitor.userpush.max-message-chars" label={t('userpush.maxMessageChars')} /></span>
-              <input type="number" className="input" min={80} max={320} value={val('max-message-chars', '200')}
-                onChange={(e) => setVal('max-message-chars', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.reasonMaxChars')}<HelpTip helpKey="help.set.site.monitor.userpush.reason-max-chars" label={t('userpush.reasonMaxChars')} /></span>
-              <input type="number" className="input" min={40} max={280} value={val('reason-max-chars', '160')}
-                onChange={(e) => setVal('reason-max-chars', e.target.value)} />
-            </label>
+            {numField('max-message-chars', 'userpush.maxMessageChars', 'help.set.site.monitor.userpush.max-message-chars', 80, 320, '200')}
+            {numField('reason-max-chars', 'userpush.reasonMaxChars', 'help.set.site.monitor.userpush.reason-max-chars', 40, 280, '160')}
           </div>
-        </div>
+        </Section>
 
         {/* ── Unvan grupları — SEÇİLEBİLİR KARTLAR ── */}
-        <div className={sec('groups')}>
-          <SectionHead id="groups" title={t('userpush.groupsTitle')} open={isOpen('groups')} onToggle={() => toggleSec('groups')}><HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} /></SectionHead>
-          <p className="section-desc">{t('userpush.groupsDesc')}</p>
-          <div className="up-group-grid">
+        <Section {...section('groups')} title={t('userpush.groupsTitle')} description={t('userpush.groupsDesc')}
+          help={<HelpTip helpKey="help.set.site.monitor.userpush.role-groups" label={t('userpush.groupsTitle')} />}>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(260px,100%),1fr))] gap-3">
             {Object.entries(groupsSafe).map(([key, g]) => {
               const Icon = GROUP_META[key]?.Icon || UserCog
+              const name = t(`userpush.group.${key}`)
               return (
-                <div key={key} className={`up-group-card${g.enabled ? ' up-group-card--on' : ''}`}>
-                  <div className="up-group-head">
-                    <span className="up-group-icon"><Icon size={17} aria-hidden="true" /></span>
-                    <span className="up-group-name">{t(`userpush.group.${key}`)}</span>
-                    <PillSwitch on={!!g.enabled} label={t(`userpush.group.${key}`)}
-                      onToggle={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, enabled: !g.enabled } })} />
+                <Card key={key} data-state={g.enabled ? 'on' : 'off'}
+                  className={cn('gap-0 p-3.5 shadow-none transition-[border-color,box-shadow] motion-reduce:transition-none',
+                    g.enabled && 'border-primary ring-[3px] ring-primary/10')}>
+                  <div className="flex items-center gap-2">
+                    <span className={cn('inline-flex size-8 flex-none items-center justify-center rounded-[9px]',
+                      g.enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground')}>
+                      <Icon size={17} aria-hidden="true" />
+                    </span>
+                    <CardTitle className="font-bold">{name}</CardTitle>
+                    <Switch className="ml-auto" checked={!!g.enabled} aria-label={name}
+                      onCheckedChange={() => setRoleGroups({ ...groupsSafe, [key]: { ...g, enabled: !g.enabled } })} />
                   </div>
-                  <p className="up-group-desc">{t(`userpush.groupDesc.${key}`)}</p>
+                  <p className="mt-2 mb-1.5 min-h-[2.4em] text-[0.82em] text-muted-foreground">{t(`userpush.groupDesc.${key}`)}</p>
                   {/* Kademe = tek org rolü; rozet olarak yazılır, seçilemez (TIERS). */}
-                  <div className="up-group-badges" aria-label={t('userpush.groupRolesLabel')}>
-                    <span className="up-badge up-badge--muted">{t('userpush.groupOrgRole')}</span>
+                  <div role="group" className="mb-2 flex flex-wrap gap-1.5" aria-label={t('userpush.groupRolesLabel')}>
+                    <Badge variant="secondary" className="font-bold text-muted-foreground">{t('userpush.groupOrgRole')}</Badge>
                     {(g.patterns || []).map((code) => (
-                      <span key={code} className="up-badge up-badge--muted">{t(`usr.orgRoleVal.${code}`)}</span>
+                      <Badge key={code} variant="secondary" className="font-bold text-muted-foreground">{t(`usr.orgRoleVal.${code}`)}</Badge>
                     ))}
                   </div>
                   {/* Asgari seviye ARTIK DUZENLENEBILIR. Eskiden yalniz `minLevel === 'HIGH'`
@@ -773,32 +870,32 @@ export default function UserPushSettings() {
                       DEGISTIRILEMIYORDU. Uretimde UYARI seviyesindeki bir sertifika alarmi bu
                       yuzden hic push alici bulamiyor, ekran da nedenini soylemiyordu.
                       Merdiven backend ile ayni: KRITIK > YUKSEK > digerleri (UYARI). */}
-                  <div className="up-group-level">
-                    <span className="up-group-level-label">{t('userpush.groupMinLevel')}
-                      <HelpTip helpKey="help.userpush.groupMinLevel" label={t('userpush.groupMinLevel')} /></span>
+                  <div className="mt-0.5 mb-2 flex flex-col gap-1.5">
+                    <span className="flex items-center text-[0.78em] font-bold tracking-wide text-muted-foreground uppercase">
+                      {t('userpush.groupMinLevel')}
+                      <HelpTip helpKey="help.userpush.groupMinLevel" label={t('userpush.groupMinLevel')} />
+                    </span>
                     <SegmentedControl
                       value={g.minLevel || 'WARNING'}
-                      ariaLabel={`${t(`userpush.group.${key}`)} — ${t('userpush.groupMinLevel')}`}
+                      ariaLabel={`${name} — ${t('userpush.groupMinLevel')}`}
                       onChange={(v) => setRoleGroups({ ...groupsSafe, [key]: { ...g, minLevel: v } })}
                       options={[
                         { value: 'WARNING',  label: t('userpush.levelWarning') },
                         { value: 'HIGH',     label: t('userpush.levelHigh') },
                         { value: 'CRITICAL', label: t('userpush.levelCritical') },
                       ]} />
-                    <span className="hint">{t('userpush.groupMinLevelHint')}</span>
+                    <span className="text-[0.78em] text-muted-foreground">{t('userpush.groupMinLevelHint')}</span>
                   </div>
-                </div>
+                </Card>
               )
             })}
           </div>
-        </div>
+        </Section>
 
-        {/* ── Tip + Takım kapsamı — TOGGLE CHIP grupları ── */}
-        <div className={sec('scopes')}>
-          <SectionHead id="scopes" title={t('userpush.scopesTitle')} open={isOpen('scopes')} onToggle={() => toggleSec('scopes')}></SectionHead>
-          <p className="section-desc">{t('userpush.scopesDesc')}</p>
-          <h5 className="userpush-subsub">{t('userpush.typeMatrix')}<HelpTip helpKey="help.userpush.typeMatrix" label={t('userpush.typeMatrix')} /></h5>
-          <div className="up-chip-grid" role="group" aria-label={t('userpush.typeMatrix')}>
+        {/* ── Tip + Takım kapsamı — TOGGLE çip grupları ── */}
+        <Section {...section('scopes')} title={t('userpush.scopesTitle')} description={t('userpush.scopesDesc')}>
+          <SubHead>{t('userpush.typeMatrix')}<HelpTip helpKey="help.userpush.typeMatrix" label={t('userpush.typeMatrix')} /></SubHead>
+          <div className="mt-2 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.typeMatrix')}>
             {TYPES.map(({ key, Icon }) => (
               <ToggleChip key={key} Icon={Icon} label={t('userpush.type.' + key)}
                 on={scopeOn('TYPE', key)}
@@ -806,40 +903,42 @@ export default function UserPushSettings() {
             ))}
           </div>
 
-          <div className="up-team-toolbar">
-            <h5 className="userpush-subsub" style={{ margin: 0 }}>{t('userpush.teamMatrix')}
-              <HelpTip helpKey="help.userpush.teamMatrix" label={t('userpush.teamMatrix')} /></h5>
-            <input type="text" className="upt-search up-team-search" value={teamQuery}
-              placeholder={t('userpush.searchTeam')}
+          <div className="mt-4 flex flex-wrap items-center gap-2.5">
+            <SubHead className="m-0">{t('userpush.teamMatrix')}
+              <HelpTip helpKey="help.userpush.teamMatrix" label={t('userpush.teamMatrix')} /></SubHead>
+            <Input type="text" className="w-full sm:w-auto sm:max-w-[220px]" value={teamQuery}
+              placeholder={t('userpush.searchTeam')} aria-label={t('userpush.searchTeam')}
               onChange={(e) => setTeamQuery(e.target.value)} />
             <Button type="button" variant="outline" size="sm" onClick={() => bulkTeams(true)}>{t('userpush.enableAll')}</Button>
             <Button type="button" variant="outline" size="sm" onClick={() => bulkTeams(false)}>{t('userpush.disableAll')}</Button>
           </div>
-          <div className="up-chip-grid" role="group" aria-label={t('userpush.teamMatrix')}>
+          <div className="mt-2 mb-1 flex flex-wrap gap-2" role="group" aria-label={t('userpush.teamMatrix')}>
             {visibleTeams.map((tm) => (
               <ToggleChip key={tm.id} label={tm.name}
                 on={scopeOn('TEAM', tm.id)}
                 onToggle={() => toggleScope('TEAM', tm.id, scopeOn('TEAM', tm.id))} />
             ))}
-            {visibleTeams.length === 0 && <span className="hint">{t('userpush.noTeamMatch')}</span>}
+            {visibleTeams.length === 0 && <span className="text-xs text-muted-foreground">{t('userpush.noTeamMatch')}</span>}
           </div>
-        </div>
+        </Section>
 
         {/* ── Sessiz saatler + tekrar kuralı ── */}
-        <div className={sec('quiet')}>
-          <SectionHead id="quiet" title={t('userpush.quietTitle')} open={isOpen('quiet')} onToggle={() => toggleSec('quiet')}></SectionHead>
-          <p className="section-desc">{t('userpush.quietDesc')}</p>
-          <div className="up-quiet-row">
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.quietStart')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-start" label={t('userpush.quietStart')} /></span>
-              <input type="time" className="input" value={val('quiet-start')}
-                onChange={(e) => setVal('quiet-start', e.target.value)} />
-            </label>
-            <label className="threshold-field"><span className="help-label-row">{t('userpush.quietEnd')}<HelpTip helpKey="help.set.site.monitor.userpush.quiet-end" label={t('userpush.quietEnd')} /></span>
-              <input type="time" className="input" value={val('quiet-end')}
-                onChange={(e) => setVal('quiet-end', e.target.value)} />
-            </label>
-            <div className="threshold-field">
-              <span className="help-label-row">{t('userpush.quietMinLevel')}
+        <Section {...section('quiet')} title={t('userpush.quietTitle')} description={t('userpush.quietDesc')}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(140px,220px))]">
+            <Field label={helpLabel(t('userpush.quietStart'), 'help.set.site.monitor.userpush.quiet-start')}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} type="time" value={val('quiet-start')}
+                  onChange={(e) => setVal('quiet-start', e.target.value)} />
+              )}
+            </Field>
+            <Field label={helpLabel(t('userpush.quietEnd'), 'help.set.site.monitor.userpush.quiet-end')}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} type="time" value={val('quiet-end')}
+                  onChange={(e) => setVal('quiet-end', e.target.value)} />
+              )}
+            </Field>
+            <div className="flex flex-col gap-1.5">
+              <span className="flex items-center text-sm font-semibold">{t('userpush.quietMinLevel')}
                 <HelpTip helpKey="help.set.site.monitor.userpush.quiet-min-level" label={t('userpush.quietMinLevel')} /></span>
               <SegmentedControl value={val('quiet-min-level', 'CRITICAL')}
                 ariaLabel={t('userpush.quietMinLevel')}
@@ -853,45 +952,34 @@ export default function UserPushSettings() {
                   secilirse sessiz saatte hicbir sey bastirilmaz — bu bilincli bir tercih
                   olabilir ama surpriz olmamali, ipucu bunu soyluyor. */}
               {val('quiet-min-level', 'CRITICAL') === 'WARNING' && (
-                <span className="hint">{t('userpush.quietMinLevelWarnHint')}</span>
+                <span className="text-xs text-muted-foreground">{t('userpush.quietMinLevelWarnHint')}</span>
               )}
             </div>
           </div>
-          <div className="up-master-row" style={{ marginTop: 12 }}>
-            <PillSwitch on={val('realert-enabled', 'true') !== 'false'} label={t('userpush.realertEnabled')}
-              onToggle={() => setVal('realert-enabled', val('realert-enabled', 'true') !== 'false' ? 'false' : 'true')} />
-            <span className="help-label-row">{t('userpush.realertEnabled')}
-              <HelpTip helpKey="help.set.site.monitor.userpush.realert-enabled" label={t('userpush.realertEnabled')} /></span>
-          </div>
-        </div>
+          <ToggleRow className="mt-3" checked={val('realert-enabled', 'true') !== 'false'}
+            onChange={(v) => setVal('realert-enabled', v ? 'true' : 'false')}
+            label={t('userpush.realertEnabled')} helpKey="help.set.site.monitor.userpush.realert-enabled" />
+        </Section>
 
         {/* ── Haftalık rapor onayı (2026-09-13): takıma + müdüre push; e-posta ile aynı anda ── */}
-        <div className={sec('weekly')}>
-          <SectionHead id="weekly" title={t('userpush.weeklyTitle')} open={isOpen('weekly')} onToggle={() => toggleSec('weekly')}></SectionHead>
-          <p className="section-desc">{t('userpush.weeklyDesc')}</p>
-          <div className="up-master-row">
-            <PillSwitch on={val('weekly.team-enabled', 'true') !== 'false'} label={t('userpush.weeklyTeam')}
-              onToggle={() => setVal('weekly.team-enabled', val('weekly.team-enabled', 'true') !== 'false' ? 'false' : 'true')} />
-            <span className="help-label-row">{t('userpush.weeklyTeam')}
-              <HelpTip helpKey="help.set.site.monitor.userpush.weekly.team-enabled" label={t('userpush.weeklyTeam')} /></span>
+        <Section {...section('weekly')} title={t('userpush.weeklyTitle')} description={t('userpush.weeklyDesc')}>
+          <div className="flex flex-col gap-2">
+            <ToggleRow checked={val('weekly.team-enabled', 'true') !== 'false'}
+              onChange={(v) => setVal('weekly.team-enabled', v ? 'true' : 'false')}
+              label={t('userpush.weeklyTeam')} helpKey="help.set.site.monitor.userpush.weekly.team-enabled" />
+            <ToggleRow checked={val('weekly.manager-enabled', 'true') !== 'false'}
+              onChange={(v) => setVal('weekly.manager-enabled', v ? 'true' : 'false')}
+              label={t('userpush.weeklyManager')} helpKey="help.set.site.monitor.userpush.weekly.manager-enabled" />
           </div>
-          <div className="up-master-row" style={{ marginTop: 8 }}>
-            <PillSwitch on={val('weekly.manager-enabled', 'true') !== 'false'} label={t('userpush.weeklyManager')}
-              onToggle={() => setVal('weekly.manager-enabled', val('weekly.manager-enabled', 'true') !== 'false' ? 'false' : 'true')} />
-            <span className="help-label-row">{t('userpush.weeklyManager')}
-              <HelpTip helpKey="help.set.site.monitor.userpush.weekly.manager-enabled" label={t('userpush.weeklyManager')} /></span>
-          </div>
-          <p className="hint">{t('userpush.weeklyHint')}</p>
-        </div>
+          <p className="mt-2 text-xs text-muted-foreground">{t('userpush.weeklyHint')}</p>
+        </Section>
 
         {/* ── Şablonlar — push bildirim MAKETİ önizlemeli ── */}
-        <div className={sec('templates')}>
-          <SectionHead id="templates" title={t('userpush.templatesTitle')} open={isOpen('templates')} onToggle={() => toggleSec('templates')}></SectionHead>
-          <p className="section-desc">{t('userpush.templatesDesc')}</p>
-          <p className="hint userpush-placeholders">
+        <Section {...section('templates')} title={t('userpush.templatesTitle')} description={t('userpush.templatesDesc')}>
+          <p className="mb-2 text-xs break-all text-muted-foreground">
             {t('userpush.placeholders')}: {(defaults.placeholders || []).map((p) => `{${p}}`).join(' ')}
           </p>
-          <div className="up-template-grid">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-3">
             {TEMPLATE_KEYS.map((k) => {
               // HAM ayar okunur: val() kendi icinde `?? ''` uyguladigi icin hic kaydedilmemis
               // bir sablonda BOS DIZE dondurur — `??` zinciri o zaman defaults dalina HIC
@@ -902,53 +990,50 @@ export default function UserPushSettings() {
               const cur = saved ?? defaults.templates?.[k] ?? ''
               const meta = TEMPLATE_META[k]
               const MIcon = meta.Icon
+              const name = t(`userpush.template.${k}`)
               return (
-                <div key={k} className="up-template-card">
-                  <div className="up-template-head">
-                    <span className={`up-template-icon up-template-icon--${meta.tone}`}>
+                <Card key={k} className="gap-2 p-3 shadow-none">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('inline-flex size-7 flex-none items-center justify-center rounded-lg', ICON_TONE[meta.tone])}>
                       <MIcon size={15} aria-hidden="true" />
                     </span>
-                    <span className="up-template-name">{t(`userpush.template.${k}`)}
-                      <HelpTip helpKey={`help.set.site.monitor.userpush.template.${k}`} label={t(`userpush.template.${k}`)} /></span>
+                    <CardTitle className="flex items-center text-[0.92em] font-bold">{name}
+                      <HelpTip helpKey={`help.set.site.monitor.userpush.template.${k}`} label={name} /></CardTitle>
                   </div>
-                  <input type="text" className="input" value={cur} maxLength={220}
+                  <Input type="text" value={cur} maxLength={220} aria-label={name}
                     onChange={(e) => setVal(`template.${k}`, e.target.value)} />
                   <NotifPreview title={val('title', 'Site Monitor')} message={preview(cur)} tone={meta.tone} />
-                </div>
+                </Card>
               )
             })}
           </div>
-        </div>
+        </Section>
       </div>
 
       {/* ── Test gönderimi ── */}
-      <div className={sec('test')}>
-        <SectionHead id="test" title={t('userpush.testTitle')} open={isOpen('test')} onToggle={() => toggleSec('test')}></SectionHead>
-        <p className="section-desc">{t('userpush.testDesc')}</p>
+      <Section {...section('test')} title={t('userpush.testTitle')} description={t('userpush.testDesc')}>
         <TagInput label={t('userpush.testSicils')} value={testSicils} onChange={setTestSicils}
           placeholder="N00001" />
-        <div className="userpush-test-row">
+        <div className="mt-2.5 flex items-center gap-2.5">
           <SearchableSelect value={testTemplate} onChange={setTestTemplate}
             options={TEMPLATE_KEYS.map((k) => ({ value: k, label: t(`userpush.template.${k}`) }))}
             ariaLabel={t('userpush.testTemplateAria')} />
           <Button type="button" variant="outline" onClick={sendTest} disabled={testing || !enabled}
-            title={!enabled ? t('userpush.disabledWarn') : undefined}>
+            aria-busy={testing || undefined} title={!enabled ? t('userpush.disabledWarn') : undefined}>
             {testing ? <Spinner size={14} inline decorative /> : <Send size={14} />} {t('userpush.testSend')}
           </Button>
         </div>
         {testResult && (
-          <div className="userpush-test-result">
+          <Card className="mt-2.5 gap-2 px-3 py-2.5 shadow-none">
             <div>{t('userpush.testQueuedN', testResult.queued)}</div>
             <NotifPreview title={val('title', 'Site Monitor')} message={testResult.message} tone="info" />
-          </div>
+          </Card>
         )}
-      </div>
+      </Section>
 
       {/* ── Kim alır? (alıcı çözümü açıklaması) ── */}
-      <div className={sec('explain', 'up-explain')}>
-        <SectionHead id="explain" title={t('userpush.explainTitle')} open={isOpen('explain')} onToggle={() => toggleSec('explain')}></SectionHead>
-        <p className="section-desc">{t('userpush.explainDesc')}</p>
-        <div className="userpush-log-filters">
+      <Section {...section('explain')} title={t('userpush.explainTitle')} description={t('userpush.explainDesc')}>
+        <div className="mb-2.5 flex flex-wrap items-center gap-2">
           <SearchableSelect value={exTeam} onChange={(v) => setExTeam(v)} placeholder={t('userpush.explainPickTeam')} searchThreshold={4} ariaLabel={t('userpush.explainPickTeam')}
             options={[{ value: '', label: t('userpush.explainPickTeam') }, ...(teams || []).map(tm => ({ value: String(tm.id), label: tm.name }))]} />
           <SegmentedControl value={exLevel} onChange={setExLevel} ariaLabel={t('userpush.explainLevel')}
@@ -956,106 +1041,109 @@ export default function UserPushSettings() {
         </div>
         {exTeam && exLoading && <LoadingBlock label={t('modal.loading')} />}
         {exTeam && !exLoading && exRows && exRows.length === 0 && (
-          <div className="sqlpg-td-empty">{t('userpush.explainEmpty')}</div>
+          <StatusBlock tone="neutral" description={t('userpush.explainEmpty')} className="py-6" />
         )}
         {exTeam && !exLoading && exRows && exRows.length > 0 && (
-          <div className="admin-table-wrap">
-            <table className="admin-table up-explain-table">
-              <thead>
-                <tr>
-                  <th>{t('userpush.explainMember')}</th>
-                  <th>{t('userpush.explainTitleCol')}</th>
-                  <th>{t('userpush.explainGroup')}</th>
-                  <th>{t('userpush.explainDecision')}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-hidden rounded-lg border border-border">
+            <Table>
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  <TableHead>{t('userpush.explainMember')}</TableHead>
+                  <TableHead>{t('userpush.explainTitleCol')}</TableHead>
+                  <TableHead>{t('userpush.explainGroup')}</TableHead>
+                  <TableHead>{t('userpush.explainDecision')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {exRows.map((m, i) => (
-                  <tr key={m.username + i} className={m.decision === 'RECIPIENT' ? 'is-recipient' : 'is-skipped'}>
-                    <td><strong>{m.display_name || m.username}</strong> <span className="sys-muted sys-mono sys-small">{m.username}</span></td>
-                    <td className="sys-small">{m.title || '—'}{m.org_role ? <span className="sys-muted"> · {m.org_role}</span> : null}</td>
-                    <td className="sys-small">{m.group ? <>{m.group}{m.min_level ? <span className="sys-muted"> · ≥ {m.min_level}</span> : null}{m.group_enabled === false ? <span className="sys-muted"> · {t('userpush.explainGroupOff')}</span> : null}</> : '—'}</td>
-                    <td><span className={`up-decision up-decision--${m.decision}`}>{t('userpush.decision.' + m.decision)}</span></td>
-                  </tr>
+                  <TableRow key={m.username + i} data-decision={m.decision}
+                    className={m.decision === 'RECIPIENT' ? undefined : 'text-muted-foreground'}>
+                    <TableCell className="whitespace-normal"><strong>{m.display_name || m.username}</strong> <span className="font-mono text-xs text-muted-foreground">{m.username}</span></TableCell>
+                    <TableCell className="text-xs whitespace-normal">{m.title || '—'}{m.org_role ? <span className="text-muted-foreground"> · {m.org_role}</span> : null}</TableCell>
+                    <TableCell className="text-xs whitespace-normal">{m.group ? <>{m.group}{m.min_level ? <span className="text-muted-foreground"> · ≥ {m.min_level}</span> : null}{m.group_enabled === false ? <span className="text-muted-foreground"> · {t('userpush.explainGroupOff')}</span> : null}</> : '—'}</TableCell>
+                    <TableCell>
+                      <DecisionBadge decision={m.decision}>{t('userpush.decision.' + m.decision)}</DecisionBadge>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
-      </div>
+      </Section>
 
       {/* ── Teslimat günlüğü ── */}
-      <div className={sec('log')} ref={logRef}>
-        <SectionHead id="log" title={t('userpush.logTitle')} open={isOpen('log')} onToggle={() => toggleSec('log')} />
-        <p className="section-desc">{t('userpush.logDesc')}</p>
-        <div className="userpush-log-filters">
-          {fWindow && (
-            <Button type="button" variant="outline" size="sm" className="up-window-chip" onClick={() => { setFWindow(''); setPage(0) }}
-              title={t('userpush.windowClear')}>
-              {t('userpush.windowActive', t(winLabelKey(fWindow)))} ✕
+      <div ref={logRef} className="scroll-mt-4">
+        <Section {...section('log')} title={t('userpush.logTitle')} description={t('userpush.logDesc')}>
+          <div className="mb-2.5 flex flex-wrap items-center gap-2">
+            {fWindow && (
+              <Button type="button" variant="outline" size="sm" className="border-primary text-primary hover:text-primary"
+                onClick={() => { setFWindow('') }} title={t('userpush.windowClear')}>
+                {t('userpush.windowActive', t(winLabelKey(fWindow)))} ✕
+              </Button>
+            )}
+            <Input type="text" className="w-full sm:w-auto sm:max-w-[200px]" placeholder={t('userpush.filterSicil')} value={fUser}
+              aria-label={t('userpush.filterSicil')}
+              onChange={(e) => { setFUser(e.target.value) }} />
+            <SearchableSelect value={fStatus} onChange={(v) => { setFStatus(v) }}
+              options={[{ value: '', label: t('userpush.allStatuses') },
+                ...STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} searchThreshold={8} ariaLabel={t('flt.status')} />
+            <SearchableSelect value={fTrigger} onChange={(v) => { setFTrigger(v) }}
+              options={[{ value: '', label: t('userpush.allTriggers') },
+                ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} ariaLabel={t('flt.trigger')} />
+            <Input type="text" className="w-full sm:w-auto sm:max-w-[200px]" placeholder="notificationId" value={fNotifId}
+              aria-label={t('userpush.filterNotifId')}
+              onChange={(e) => { setFNotifId(e.target.value) }} />
+            <Button type="button" variant="outline" size="icon-sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>
+              <RefreshCw size={14} />
             </Button>
-          )}
-          <input type="text" className="upt-search" placeholder={t('userpush.filterSicil')} value={fUser}
-            onChange={(e) => { setFUser(e.target.value); setPage(0) }} />
-          <SearchableSelect value={fStatus} onChange={(v) => { setFStatus(v); setPage(0) }}
-            options={[{ value: '', label: t('userpush.allStatuses') },
-              ...STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} searchThreshold={8} ariaLabel={t('flt.status')} />
-          <SearchableSelect value={fTrigger} onChange={(v) => { setFTrigger(v); setPage(0) }}
-            options={[{ value: '', label: t('userpush.allTriggers') },
-              ...TRIGGERS.map((s) => ({ value: s, label: t('userpush.trigger.' + s) }))]} searchThreshold={8} ariaLabel={t('flt.trigger')} />
-          <input type="text" className="upt-search" placeholder="notificationId" value={fNotifId}
-            onChange={(e) => { setFNotifId(e.target.value); setPage(0) }} />
-          <Button type="button" variant="outline" size="sm" onClick={loadDeliveries} aria-label={t('app.refresh')}>
-            <RefreshCw size={14} />
-          </Button>
-          <Button asChild variant="outline" size="sm"><a href={api.admin.userPush.exportUrl({
-            ...(fUser ? { username: fUser } : {}), ...(fStatus ? { status: fStatus } : {}),
-            ...(fTrigger ? { trigger: fTrigger } : {}), ...(fNotifId ? { notificationId: fNotifId } : {}),
-            ...(windowFrom(fWindow) ? { from: windowFrom(fWindow) } : {}),
-          })} download>CSV</a></Button>
-        </div>
+            <Button asChild variant="outline" size="sm"><a href={api.admin.userPush.exportUrl({
+              ...(fUser ? { username: fUser } : {}), ...(fStatus ? { status: fStatus } : {}),
+              ...(fTrigger ? { trigger: fTrigger } : {}), ...(fNotifId ? { notificationId: fNotifId } : {}),
+              ...(windowFrom(fWindow) ? { from: windowFrom(fWindow) } : {}),
+            })} download>CSV</a></Button>
+          </div>
 
-        {rows === null ? <LoadingBlock label={t('modal.loading')} />
-          : rows.length === 0 ? (
-            <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.logEmptyTitle')}
-              description={t('userpush.logEmpty')} />
-          ) : (
-              <div className="userpush-log">
+          {rows === null ? <LoadingBlock label={t('modal.loading')} />
+            : rows.length === 0 ? (
+              <StatusBlock tone="neutral" icon={BellRing} title={t('userpush.logEmptyTitle')}
+                description={t('userpush.logEmpty')} />
+            ) : (
+              <DeliveryList>
                 {rows.map((r) => (
                   <DeliveryRow key={r.id} r={r} isOpen={openRow === r.id} onToggle={() => setOpenRow(openRow === r.id ? null : r.id)}
                     userTeams={userTeams} t={t} statusTone={statusTone} />
                 ))}
-              </div>
+              </DeliveryList>
             )}
-        {/* "Sayfa basina" secicisi ONCEDEN OLU kontroldu: onPageSizeChange verilmediginden
-            50/100/200'e tiklamak hicbir sey yapmiyor, secici yine de goruluyordu. */}
-        <PaginationBar page={page + 1} totalPages={Math.max(1, Math.ceil(total / pageSize))}
-          totalItems={total} pageSize={pageSize}
-          rangeStart={total === 0 ? 0 : page * pageSize + 1}
-          rangeEnd={Math.min(total, (page + 1) * pageSize)}
-          onPageChange={(p) => setPage(p - 1)}
-          onPageSizeChange={(n) => { setPageSize(n); setPage(0) }} />
+          {/* "Sayfa basina" secicisi ONCEDEN OLU kontroldu: onPageSizeChange verilmediginden
+              50/100/200'e tiklamak hicbir sey yapmiyor, secici yine de goruluyordu. */}
+          <PaginationBar {...logPager.bar} />
+        </Section>
       </div>
 
       {/* Yapışkan kayıt şeridi — HER ZAMAN görünür (2026-09-12, kullanıcı: "kaydet butonunu göremiyorum" —
           yalnız-değişince-beliren şerit keşfedilemiyordu). Temiz durumda "kaydedildi" + pasif Kaydet;
-          değişiklik varken vurgulu şerit + Geri al + etkin Kaydet. Sayfa nereye kaydırılırsa kaydırılsın altta. */}
+          değişiklik varken vurgulu şerit + Geri al + etkin Kaydet. Sayfa nereye kaydırılırsa kaydırılsın altta.
+          Test kancası: role="region" + `data-dirty`. */}
       {!loading && (
-        <div className={`up-savebar${dirty ? ' up-savebar--dirty' : ''}`} role="region"
-             aria-label={dirty ? t('userpush.unsavedTitle') : t('userpush.savedTitle')}>
-          <span className="up-savebar-msg">
+        <Card role="region" data-dirty={dirty ? 'true' : undefined}
+          aria-label={dirty ? t('userpush.unsavedTitle') : t('userpush.savedTitle')}
+          className={cn('sticky bottom-3 z-[5] mt-2 flex-row flex-wrap items-center justify-between gap-3 px-4 py-2.5 shadow-lg',
+            dirty && 'border-primary')}>
+          <span className={cn('inline-flex items-center gap-2 font-semibold', dirty ? 'text-foreground' : 'text-muted-foreground')}>
             {dirty ? <Save size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}
             {' '}{dirty ? t('userpush.unsaved') : t('userpush.allSaved')}
           </span>
-          <div className="up-savebar-actions">
+          <div className="flex gap-2">
             {dirty && (
               <Button type="button" variant="secondary" size="sm" onClick={discard} disabled={saving}>{t('userpush.discard')}</Button>
             )}
-            <Button type="button" size="sm" onClick={save} disabled={saving || !dirty}>
+            <Button type="button" size="sm" onClick={save} disabled={saving || !dirty} aria-busy={saving || undefined}>
               {saving ? <Spinner size={14} inline decorative /> : <Save size={14} />} {saving ? t('settings.saving') : t('settings.save')}
             </Button>
           </div>
-        </div>
+        </Card>
       )}
 
       {winModal && (

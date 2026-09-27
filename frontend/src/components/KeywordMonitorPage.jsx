@@ -1,36 +1,29 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { formatPercent } from '../i18n/dateLocale.js'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -43,15 +36,33 @@ import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
+import { useCardDensity } from '../hooks/useCardDensity.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import ModalShell from './ui/ModalShell.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Input } from '@/components/shadcn/input'
+import { Slider } from '@/components/shadcn/slider'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { Textarea } from '@/components/shadcn/textarea'
+import { cn } from '@/lib/utils'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import KeywordMonitorCard from './keyword/KeywordMonitorCard.jsx'
+import { metaRow as keywordMetaRow } from './keyword/keywordCardModel.js'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, InlineField, LabelSlot,
+} from './monitoring/MonitorForm.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -76,24 +87,23 @@ const intervalIdx = (secs) => {
 }
 const REFRESH_INTERVAL = 60
 const OP_SYM = { GTE: '≥', LTE: '≤', EQ: '=', GT: '>', LT: '<' }
-const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', notificationGroupId: '', teamId: '',
+const emptyForm = { name: '', url: '', keyword: '', operator: 'GTE', matchCount: 1, groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '',
   caseSensitive: false, useProxy: 'AUTO', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   checkSslErrors: false, sslExpiryReminders: false, domainExpiryReminders: false,
   sslReminderDays: '30,14,7', domainReminderDays: '30,14,7',
   slowResponseEnabled: false, slowThresholdMs: 3000,
   intervalSeconds: 60, timeoutMs: 10000, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, customHeaders: '', active: true }
 
-export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -105,15 +115,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   const sparks = useSparklines('keyword')   // kart mini trendi (2026-09-12)
   const sla = useSla('keyword')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — her açılış Zengin başlar; Kompakt seçimi yalnız sayfada kalındıkça
+  // geçerli, KALICI DEĞİL (kullanıcı kararı: sayfa değişip dönünce ya da yenileyince yeniden Zengin)
+  const [density, setDensity] = useCardDensity('keyword')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
+  const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -123,7 +133,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
   const [showCacheHelp, setShowCacheHelp] = useState(false)   // cache busting açıklama modal'ı
-  const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" accordion
+  const [advOpen, setAdvOpen] = useState(false)               // "Gelişmiş ayarlar" (shadcn Collapsible)
   const [saving, setSaving] = useState(false)
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
   // once biten, hala sureni kilitten cikarmasin.
@@ -132,6 +142,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
@@ -165,6 +176,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updateKeywordMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -205,12 +221,12 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
   useMonitorDeepLink(monitors, openDetail)
 
-  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       slowThresholdMs: defaults?.slowThresholdMs ?? emptyForm.slowThresholdMs })
@@ -219,7 +235,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
     return { name: m.name || '', url: m.url || '', keyword: m.keyword || '',
-      operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+      operator: m.operator || 'GTE', matchCount: m.match_count ?? 1, groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       teamId: m.team_id != null ? String(m.team_id) : '',
       caseSensitive: !!m.case_sensitive, useProxy: m.use_proxy || 'AUTO', tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       checkSslErrors: !!m.check_ssl_errors, sslExpiryReminders: !!m.ssl_expiry_reminders, domainExpiryReminders: !!m.domain_expiry_reminders,
@@ -277,6 +293,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         caseSensitive: form.caseSensitive, useProxy: form.useProxy || 'AUTO', tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         checkSslErrors: form.checkSslErrors, sslExpiryReminders: form.sslExpiryReminders, domainExpiryReminders: form.domainExpiryReminders,
         sslReminderDays: form.sslReminderDays?.trim() || '30,14,7', domainReminderDays: form.domainReminderDays?.trim() || '30,14,7',
@@ -385,7 +402,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
+        // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
+        // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -467,7 +486,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'keyword-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
+    listKey: 'keyword-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -492,25 +511,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  function cardClass(m) {
-    if (m.status === 'up') return 'upt-card--up'
-    if (m.status === 'unknown') return 'upt-card--unknown'
-    return 'upt-card--down'
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı): up | down | unknown ('error' de ihlal gibi kırmızı).
+  const statusKey = (m) => (m?.status === 'up' ? 'up' : m?.status === 'unknown' ? 'unknown' : 'down')
   function statusBadge(m) {
     const s = m?.status
-    const cls = s === 'up' ? 'upt-badge--up' : s === 'unknown' ? 'upt-badge--unknown' : 'upt-badge--down'
     const label = s === 'up' ? t('keyword.statusOk')
       : s === 'unknown' ? t('keyword.statusUnknown')
       : s === 'error' ? t('keyword.statusError') : t('keyword.statusViolation')
-    return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
-  }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('keyword.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
+    return <MonitorStatusBadge status={statusKey(m)}>{label}</MonitorStatusBadge>
   }
 
   // Operatör + adet → sağlıklı (alarmsız) koşul ifadesi — opPhrase aynası.
@@ -532,34 +540,225 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('keyword.noTeam'))
-    : (teamName || t('keyword.noTeam'))
+    : (defaultTeamName || t('keyword.noTeam'))
+
+  // İstek zaman aşımı çubuğu saniye cinsinden (1–60); form milisaniye tutar.
+  const timeoutSecs = Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))
+  const timeoutText = t('keyword.timeoutEvery').replace('{0}', timeoutSecs)
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={Target}
+      title={modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('keyword.testing') : null}
+      footer={<>
+        <Button variant="secondary" className="mr-auto" onClick={runTest}
+          aria-busy={testing || undefined} disabled={testing || !form.url.trim() || !form.keyword.trim()}>
+          <FlaskConical size={14} />{t('keyword.test')}
+        </Button>
+        {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</Button>}
+        <Button variant="secondary" onClick={closeEdit}>{t('keyword.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={Target}>{t('keyword.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('keyword.url')} required hint={t('keyword.urlHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
+          )}
+        </FormField>
+        {/* "Nasıl kullanılır?" bağlantısı ETİKETİN içinde değil ipucu satırında: <label> içinde düğme
+            geçersiz HTML'dir (etiketlenebilir öğe) ve düğme metni alanın erişilebilir adına karışıyordu. */}
+        <FormField full label={t('keyword.customHeaders')} hint={<>
+          {/* İsim listesi BOŞ olabilir: API adları yalnız global admin'e döndürüyor ve
+              kayıtlı metin "Ad: değer" biçiminde değilse ayrıştırılamıyor. Yer tutucuyu boş
+              dizeyle doldurmak "Kayıtlı başlıklar: ." gibi kırık bir cümle üretiyor ve
+              kullanıcıya hiçbir şey kayıtlı değilmiş izlenimi veriyordu. Yedek metin hem
+              cümleyi tamamlıyor hem kayıtlı değerin biçim sorununu işaret ediyor. */}
+          {modal !== 'new' && modal?.has_custom_headers
+            ? t('keyword.customHeadersSavedHint').replace('{0}',
+                (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
+            : t('keyword.customHeadersHint')}
+          {' '}
+          <Button type="button" variant="link" size="xs" className="h-auto p-0 align-baseline text-xs font-medium"
+            onClick={() => setShowCacheHelp(true)}>
+            {t('keyword.cacheBustLink')}
+          </Button>
+        </>}>
+          {({ id, describedBy }) => (
+            <Textarea id={id} aria-describedby={describedBy} rows={2} value={form.customHeaders} spellCheck={false}
+              placeholder={t('keyword.customHeadersPh')} disabled={!isAdmin}
+              onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('keyword.operator')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
+              options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
+                { value: 'EQ', label: t('keyword.opEq') }, { value: 'GT', label: t('keyword.opGt') },
+                { value: 'LT', label: t('keyword.opLt') }]} />
+          )}
+        </FormField>
+        <FormField label={t('keyword.matchCount')}>
+          {({ id }) => <Input id={id} type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} />}
+        </FormField>
+        {/* Koşulun canlı açıklaması — yazdıkça değişir; role="note": canlı bölge DEĞİL (her tuşta duyurulmasın). */}
+        <AlertBanner tone="info" role="note" className="mb-0 sm:col-span-2">
+          <div><Check size={12} aria-hidden="true" className="inline align-[-2px] text-success" /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
+          <div className="mt-1"><AlertTriangle size={12} aria-hidden="true" className="inline align-[-2px] text-destructive" /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
+        </AlertBanner>
+        <FormField label={t('keyword.keyword')} required>
+          {({ id }) => <Input id={id} value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} />}
+        </FormField>
+        <CheckField checked={form.caseSensitive} onCheckedChange={v => setForm(f => ({ ...f, caseSensitive: v }))} label={t('keyword.caseSensitive')} className="self-center" />
+        {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
+        <LabelSlot full>
+          <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+            effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+        </LabelSlot>
+        <FormField label={t('keyword.name')}>
+          {({ id }) => <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+        </FormField>
+        <FormField label={t('keyword.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('keyword.noTeam')} disabled />}
+        </FormField>
+        <FormField full label={t('keyword.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="KEYWORD" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+
+        {/* Etiketler */}
+        <FormSection title={t('keyword.tagsTitle')} required hint={t('keyword.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        {/* SSL + Domain kontrolleri */}
+        <FormSection title={t('keyword.sslSectionTitle')} icon={ShieldCheck}>
+          <CheckField checked={form.checkSslErrors} onCheckedChange={v => setForm(f => ({ ...f, checkSslErrors: v }))} label={t('keyword.checkSslErrors')} />
+          <CheckField checked={form.sslExpiryReminders} onCheckedChange={v => setForm(f => ({ ...f, sslExpiryReminders: v }))} label={t('keyword.sslExpiryReminders')} />
+          {form.sslExpiryReminders && (
+            <InlineField label={t('keyword.reminderDays')}>
+              {({ id }) => <Input id={id} className="h-8 w-36" value={form.sslReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, sslReminderDays: e.target.value }))} />}
+            </InlineField>
+          )}
+          <CheckField checked={form.domainExpiryReminders} onCheckedChange={v => setForm(f => ({ ...f, domainExpiryReminders: v }))} label={t('keyword.domainExpiryReminders')} />
+          {form.domainExpiryReminders && (
+            <InlineField label={t('keyword.reminderDays')}>
+              {({ id }) => <Input id={id} className="h-8 w-36" value={form.domainReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, domainReminderDays: e.target.value }))} />}
+            </InlineField>
+          )}
+          <FormHint full={false}>{t('keyword.whoisHint')}</FormHint>
+        </FormSection>
+
+        {/* Gelişmiş ayarlar — açılır/kapanır (shadcn Collapsible; kapalıyken içerik DOM'da yok, eskisi gibi) */}
+        <Collapsible open={advOpen} onOpenChange={setAdvOpen} className="min-w-0 rounded-lg border bg-muted/30 sm:col-span-2">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost"
+              className="h-auto w-full justify-start gap-2 rounded-lg px-3.5 py-3 font-semibold hover:bg-muted/50">
+              <ChevronDown size={16} aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', advOpen && 'rotate-180')} />
+              {t('keyword.advanced')}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="flex min-w-0 flex-col gap-3 px-3.5 pb-3.5">
+            <FormSection boxed={false} title={t('keyword.timeoutTitle')} hint={timeoutText}>
+              <Slider min={1} max={60} step={1} value={[timeoutSecs]}
+                onValueChange={([v]) => setForm(f => ({ ...f, timeoutMs: v * 1000 }))}
+                thumbProps={{ 'aria-label': t('keyword.timeoutTitle'), 'aria-valuetext': timeoutText }}
+                className="py-1.5" />
+            </FormSection>
+            <CheckField checked={form.slowResponseEnabled} onCheckedChange={v => setForm(f => ({ ...f, slowResponseEnabled: v }))} label={t('keyword.slowEnable')} />
+            {form.slowResponseEnabled && (
+              <InlineField label={t('keyword.slowThreshold')}>
+                {({ id }) => <Input id={id} type="number" min="100" step="100" className="h-8 w-36" value={form.slowThresholdMs} onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />}
+              </InlineField>
+            )}
+            <FormHint full={false}>{t('keyword.slowHint')}</FormHint>
+            <FormGrid>
+              <FormField label={t('keyword.confirmAttempts')}>
+                {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('keyword.confirmInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('keyword.recoveryChecks')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('keyword.recoveryInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+            </FormGrid>
+            <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('keyword.active')} />
+            <FormHint full={false}>ⓘ {t('keyword.confirmHint')}</FormHint>
+          </CollapsibleContent>
+        </Collapsible>
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.error ? 'danger' : testResult.condition_met ? 'success' : 'warning'}
+          icon={testResult.error || !testResult.condition_met ? AlertTriangle : Check}
+          title={testResult.error ? t('keyword.testError') : testResult.condition_met ? t('keyword.testMet') : t('keyword.testNotMet')}>
+          {testResult.error
+            ? testResult.error
+            : <>
+                {'« '}{form.keyword}{' » '}{testResult.occurrences} {t('keyword.testFound')} · {t('keyword.testRequired')}: {testResult.phrase}
+                {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
+                {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
+              </>}
+        </AlertBanner>
+      )}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="keyword-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+
+      {/* Cache busting yardımı — formun İÇİNDE çizilir: ModalShell derinliği React ağacından okur, yardım
+          penceresi formun (o da detayın içindeyse onun) ÜSTÜNDE katmanlanır; Escape yalnız yardımı kapatır. */}
+      <ModalShell open={showCacheHelp} onClose={() => setShowCacheHelp(false)} icon={Target} size="md" hideClose
+        title={t('keyword.cacheBustTitle')}
+        footer={<Button variant="secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</Button>}>
+        <div className="px-0.5 py-1 text-sm leading-relaxed">
+          <p className="mb-3">{t('keyword.cacheBustHint')}</p>
+          <div className="whitespace-pre-line">{t('keyword.cacheBustExamples')}</div>
+        </div>
+      </ModalShell>
+    </MonitorFormModal>
+  )
 
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('keyword.title')}</h2>
-          <p className="upt-subtitle">{t('keyword.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('keyword.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('keyword.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="keyword" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('keyword.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="keyword" title={t('keyword.title')} subtitle={t('keyword.subtitle')}
+        count={loading ? null : monitors.length} down={counts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('keyword.addMonitor')} />
 
       <MonitorHowBox bullets={[t('keyword.how1'), t('keyword.how2'), t('keyword.how3')]} />
 
@@ -572,11 +771,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {/* Kart görünümü (Kompakt / Zengin) araç çubuğunun İLK öğesi: mr-auto süzgeçleri sağda tutar; telefonda satır sarar */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('keyword.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('keyword.searchPlaceholder')} aria-label={t('keyword.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -590,146 +791,85 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('keyword.noMonitorsAdmin') : t('keyword.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="KEYWORD"
           api={{ update: api.monitoring.updateKeywordMonitor, remove: api.monitoring.deleteKeywordMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-card-top-right">
-                  <span className="upt-port-tag">
-                    {(OP_SYM[m.operator] || '≥') + (m.match_count ?? 1)} {t('keyword.times')}
-                  </span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('keyword', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.url}>{m.url}</div>
-              <div style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: 2, wordBreak: 'break-word' }}>
-                <Target size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />{m.keyword}
-              </div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.http_status ?? '—'}</span>
-                  <span className="upt-metric-lbl">HTTP</span>
-                </div>
-                {m.response_ms != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.response_ms}ms</span>
-                    <span className="upt-metric-lbl">{t('keyword.responseMs')}</span>
-                  </div>
-                )}
-                {m.occurrences != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.occurrences}</span>
-                    <span className="upt-metric-lbl">{t('keyword.occurrences')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.url}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('keyword.check')} editTitle={t('keyword.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('keyword.delete')} />
-                )}
-              </div>
-            </div>
+            /* Kart sunumu keyword/KeywordMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
+               yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada), meta (zorlanmış vekil kipinde yol rozeti kip
+               çipine bırakılır — metaRow) ve eylemler (yetki + işleyiciler burada). */
+            <KeywordMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
+              )}
+              meta={<MonitorCardMeta monitor={keywordMetaRow(m)} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('keyword.check')} editTitle={t('keyword.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('keyword.delete')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${selected.status === 'up' ? 'up' : selected.status === 'unknown' ? 'unknown' : 'down'}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.url}</span>
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('keyword.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('keyword.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('keyword.delete')}
-                onClose={closeDetail}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric" title={t('keyword.sumOkHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('keyword.sumOk')}</span>
-              </div>
-              <div className="upt-modal-metric" title={t('keyword.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('keyword.sumTotal')}</span></div>
-              <div className="upt-modal-metric" title={t('keyword.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('keyword.sumIncidents')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.keyword}</span><span className="upt-modal-metric-lbl">{t('keyword.keyword')}</span></div>
-              {selected.http_status != null && <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.http_status}</span><span className="upt-modal-metric-lbl">HTTP</span></div>}
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('keyword.lastCheck')}</span></div>}
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="kw-reqinfo">
-              <div className="kw-reqinfo-title">{t('keyword.reqSettings')}</div>
-              <div className="kw-reqinfo-row">
-                <span className="kw-reqinfo-k">{t('keyword.cacheBusting')}</span>
-                <span className={selected.url && selected.url.includes('{timestamp}') ? 'kw-on' : 'kw-off'}>
-                  {selected.url && selected.url.includes('{timestamp}') ? t('keyword.cbOn') : t('keyword.cbOff')}
-                </span>
-              </div>
-              <div className="kw-reqinfo-row">
-                <span className="kw-reqinfo-k">{t('keyword.customHeadersShort')}</span>
-                {/* Düz değer artık API'den GELMİYOR (şifreli). Yalnız varlık + ad listesi. */}
-                {selected.has_custom_headers
-                  ? <span className="kw-on">{(selected.custom_header_names || []).filter(Boolean).join(', ') || t('keyword.customHeadersSet')}</span>
-                  : <span className="kw-off">{t('keyword.none')}</span>}
-              </div>
-            </div>
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('keyword.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('keyword.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('keyword.tabGuide')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'control' && (
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('keyword.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('keyword.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('keyword.delete')}
+              onClose={closeDetail}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-0" />
+          <DetailSummary items={[
+            { key: 'ok', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—', label: t('keyword.sumOk'), hint: t('keyword.sumOkHint') },
+            { key: 'total', value: summary.total, label: t('keyword.sumTotal'), hint: t('keyword.sumTotalHint') },
+            { key: 'inc', value: summary.down, label: t('keyword.sumIncidents'), hint: t('keyword.sumIncidentsHint') },
+            { key: 'kw', value: selected.keyword, label: t('keyword.keyword') },
+            selected.http_status != null && { key: 'http', value: selected.http_status, label: 'HTTP' },
+            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('keyword.lastCheck'), time: true },
+          ]} />
+          <DetailDivider />
+          <DetailInfoCard title={t('keyword.reqSettings')} rows={[
+            [t('keyword.cacheBusting'), <OnOff key="cb" on={!!selected.url?.includes('{timestamp}')} onText={t('keyword.cbOn')} offText={t('keyword.cbOff')} />],
+            // Düz değer artık API'den GELMİYOR (şifreli). Yalnız varlık + ad listesi.
+            [t('keyword.customHeadersShort'), <OnOff key="ch" on={!!selected.has_custom_headers}
+              onText={(selected.custom_header_names || []).filter(Boolean).join(', ') || t('keyword.customHeadersSet')}
+              offText={t('keyword.none')} />],
+          ]} />
+          <DetailTabs value={detailTab} onValueChange={setDetailTab}
+            countsFor={{ kind: 'keyword', monitorId: selected.id, notesType: 'KEYWORD', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['control', t('hist.tab')], ['alerts', t('keyword.tabAlerts')], ['chart', t('keyword.tabChart')],
+              ['notes', t('keyword.tabGuide')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="control">
               <CheckHistoryTab kind="keyword" monitorId={selected.id} listKey="keyword-history" reloadSignal={histReload}
                 columns={[t('keyword.colTime'), t('keyword.colStatus'), 'HTTP', t('keyword.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
@@ -742,256 +882,40 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
                     <span className="upt-rt-ms">{c.http_status ?? '—'}</span>
                     {c.error
                       ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                      : <span style={{ whiteSpace: 'nowrap' }}
+                      : <span className="whitespace-nowrap"
                           title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
-                          <strong>{occ}</strong> {t('keyword.testFound')} <span style={{ color: 'var(--text-muted)' }}>· {cmp}</span>
+                          <strong>{occ}</strong> {t('keyword.testFound')} <span className="text-muted-foreground">· {cmp}</span>
                         </span>}
                   </>)
                 }} />
-            )}
+            </TabsContent>
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('keyword')} />}
+            <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('keyword')} /></TabsContent>
 
-            {detailTab === 'chart' && (
+            <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="keyword" />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'notes' && (
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="KEYWORD" target={selected.url} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="keyword" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--keyword">
-              <div className="modal-icon-hdr-badge"><Target size={20} /></div>
-              <h3>{modal === 'new' ? t('keyword.modalNew') : t('keyword.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('keyword.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="kw-type-banner"><Target size={16} /><span>{t('keyword.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('keyword.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('keyword.urlHint')}</div>
-              <label className="full-width"><span>{t('keyword.customHeaders')}{' '}
-                <button type="button" onClick={() => setShowCacheHelp(true)}
-                  style={{ background: 'none', border: 'none', color: 'var(--primary, #4f46e5)', cursor: 'pointer', fontSize: '.85em', textDecoration: 'underline', padding: 0, fontWeight: 500 }}>
-                  {t('keyword.cacheBustLink')}
-                </button></span>
-                <textarea rows={2} value={form.customHeaders} spellCheck={false} placeholder={t('keyword.customHeadersPh')}
-                  disabled={!isAdmin}
-                  onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>
-                {/* İsim listesi BOŞ olabilir: API adları yalnız global admin'e döndürüyor ve
-                    kayıtlı metin "Ad: değer" biçiminde değilse ayrıştırılamıyor. Yer tutucuyu boş
-                    dizeyle doldurmak "Kayıtlı başlıklar: ." gibi kırık bir cümle üretiyor ve
-                    kullanıcıya hiçbir şey kayıtlı değilmiş izlenimi veriyordu. Yedek metin hem
-                    cümleyi tamamlıyor hem kayıtlı değerin biçim sorununu işaret ediyor. */}
-                {modal !== 'new' && modal?.has_custom_headers
-                  ? t('keyword.customHeadersSavedHint').replace('{0}',
-                      (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
-                  : t('keyword.customHeadersHint')}
-              </div>
-              <label><span>{t('keyword.operator')}</span>
-                <SearchableSelect value={form.operator} onChange={v => setForm(f => ({ ...f, operator: v }))}
-                  options={[{ value: 'GTE', label: t('keyword.opGte') }, { value: 'LTE', label: t('keyword.opLte') },
-                    { value: 'EQ', label: t('keyword.opEq') }, { value: 'GT', label: t('keyword.opGt') },
-                    { value: 'LT', label: t('keyword.opLt') }]} /></label>
-              <label><span>{t('keyword.matchCount')}</span>
-                <input type="number" min="0" value={form.matchCount} onChange={e => setForm(f => ({ ...f, matchCount: Number(e.target.value) }))} /></label>
-              <div className="full-width" style={{ background: '#f4f4f5', borderLeft: '3px solid #1f3864', borderRadius: '0 6px 6px 0', padding: '9px 12px', fontSize: '.82em', lineHeight: 1.55, color: '#3f3f46' }}>
-                <div><Check size={12} style={{ verticalAlign: '-2px', color: '#15803d' }} /> <strong>{t('keyword.explHealthy')}:</strong> « {form.keyword?.trim() || t('keyword.theKeyword')} » {expectPhrase(form.operator, Number(form.matchCount) || 0)} bulunmalı.</div>
-                <div style={{ marginTop: 4 }}><AlertTriangle size={12} style={{ verticalAlign: '-2px', color: '#dc2626' }} /> <strong>{t('keyword.explAlarm')}:</strong> {triggerPhrase(form.operator, Number(form.matchCount) || 0, form.keyword)} tetiklenir.</div>
-              </div>
-              <label><span>{t('keyword.keyword')} <span className="req-star">*</span></span>
-                <input value={form.keyword} placeholder="SUCCESS" onChange={e => setForm(f => ({ ...f, keyword: e.target.value }))} /></label>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.caseSensitive} onChange={e => setForm(f => ({ ...f, caseSensitive: e.target.checked }))} />{t('keyword.caseSensitive')}</label>
-              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
-              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
-              <label><span>{t('keyword.name')}</span>
-                <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('keyword.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('keyword.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('keyword.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-
-              {/* Etiketler */}
-              <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('keyword.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('keyword.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-
-
-              {/* SSL + Domain kontrolleri */}
-              <div className="full-width kw-ssl-section">
-                <div className="kw-block-title"><ShieldCheck size={15} style={{ verticalAlign: '-2px', marginRight: 5 }} />{t('keyword.sslSectionTitle')}</div>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.checkSslErrors} onChange={e => setForm(f => ({ ...f, checkSslErrors: e.target.checked }))} />{t('keyword.checkSslErrors')}</label>
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.sslExpiryReminders} onChange={e => setForm(f => ({ ...f, sslExpiryReminders: e.target.checked }))} />{t('keyword.sslExpiryReminders')}</label>
-                {form.sslExpiryReminders && (
-                  <div className="kw-days-row">
-                    <span>{t('keyword.reminderDays')}</span>
-                    <input value={form.sslReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, sslReminderDays: e.target.value }))} />
-                  </div>
-                )}
-                <label className="checkbox-label">
-                  <input type="checkbox" checked={form.domainExpiryReminders} onChange={e => setForm(f => ({ ...f, domainExpiryReminders: e.target.checked }))} />{t('keyword.domainExpiryReminders')}</label>
-                {form.domainExpiryReminders && (
-                  <div className="kw-days-row">
-                    <span>{t('keyword.reminderDays')}</span>
-                    <input value={form.domainReminderDays} placeholder="30,14,7" onChange={e => setForm(f => ({ ...f, domainReminderDays: e.target.value }))} />
-                  </div>
-                )}
-                <div className="field-hint">{t('keyword.whoisHint')}</div>
-              </div>
-
-              {/* Gelişmiş ayarlar — açılır/kapanır */}
-              <div className="full-width kw-adv">
-                <button type="button" className="kw-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
-                  <ChevronDown size={16} className={`kw-adv-chevron${advOpen ? ' open' : ''}`} />
-                  <span>{t('keyword.advanced')}</span>
-                </button>
-                {advOpen && (
-                  <div className="kw-adv-body">
-                    <div className="kw-block-title">{t('keyword.timeoutTitle')}</div>
-                    <div className="field-hint" style={{ marginBottom: 8 }}>{t('keyword.timeoutEvery').replace('{0}', Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000))))}</div>
-                    <input type="range" className="kw-interval-slider" min={1} max={60} step={1}
-                      value={Math.min(60, Math.max(1, Math.round(Number(form.timeoutMs) / 1000)))}
-                      onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) * 1000 }))} />
-                    <label className="checkbox-label" style={{ marginTop: 12 }}>
-                      <input type="checkbox" checked={form.slowResponseEnabled} onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('keyword.slowEnable')}</label>
-                    {form.slowResponseEnabled && (
-                      <div className="kw-days-row">
-                        <span>{t('keyword.slowThreshold')}</span>
-                        <input type="number" min="100" step="100" value={form.slowThresholdMs} onChange={e => setForm(f => ({ ...f, slowThresholdMs: Number(e.target.value) }))} />
-                      </div>
-                    )}
-                    <div className="field-hint" style={{ marginBottom: 4 }}>{t('keyword.slowHint')}</div>
-                    <div className="kw-adv-grid">
-                      <label><span>{t('keyword.confirmAttempts')}</span>
-                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-                      <label><span>{t('keyword.confirmInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-                      <label><span>{t('keyword.recoveryChecks')}</span>
-                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-                      <label><span>{t('keyword.recoveryInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-                    </div>
-                    <label className="checkbox-label" style={{ marginTop: 10 }}>
-                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('keyword.active')}</label>
-                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('keyword.confirmHint')}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error
-                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
-                  : testResult.condition_met
-                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
-                {testResult.error || !testResult.condition_met
-                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.error
-                    ? <><strong>{t('keyword.testError')}:</strong> {testResult.error}</>
-                    : <>
-                        <strong>{testResult.condition_met ? t('keyword.testMet') : t('keyword.testNotMet')}</strong>
-                        {' — « '}{form.keyword}{' » '}{testResult.occurrences} {t('keyword.testFound')} · {t('keyword.testRequired')}: {testResult.phrase}
-                        {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
-                        {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
-                      </>}
-                </span>
-              </div>
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="keyword-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                aria-busy={testing || undefined} disabled={testing || !form.url.trim() || !form.keyword.trim()}>
-                <FlaskConical size={14} />{t('keyword.test')}
-              </Button>
-              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('keyword.delete')}</Button>}
-              <Button variant="secondary" onClick={closeEdit}>{t('keyword.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.keyword.trim() || !form.teamId}>{t('keyword.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {showCacheHelp && createPortal(
-        <div className="modal-overlay" onClick={() => setShowCacheHelp(false)}>
-          {/* Kısa bir yardım diyaloğu — bugünkü metinle taşmıyor. İç kaydırma yine de beyan
-              edilir: kural muaf listesi tutmaz (kısa/zoom'lu ekranda taşarsa kaydırma çubuğu
-              ekranın en sağında çıkar), ve taşma olmadıkça hiçbir görsel etkisi yok. */}
-          <div className="modal-box" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 560, maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--keyword">
-              <div className="modal-icon-hdr-badge"><Target size={20} /></div>
-              <h3>{t('keyword.cacheBustTitle')}</h3>
-            </div>
-            <div style={{ fontSize: '.9em', color: 'var(--text, #18181b)', lineHeight: 1.6, padding: '4px 2px' }}>
-              <p style={{ marginTop: 0 }}>{t('keyword.cacheBustHint')}</p>
-              <div style={{ whiteSpace: 'pre-line' }}>{t('keyword.cacheBustExamples')}</div>
-            </div>
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setShowCacheHelp(false)}>{t('sql.closeRowDetails')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

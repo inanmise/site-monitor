@@ -120,8 +120,11 @@ describe('CSS hijyeni', () => {
     // Kullanım CSS'te YA DA bir bileşenin satır içi stilinde olabilir: kendi stil sayfasını
     // enjekte eden kütüphaneler (shadcn Sonner — Toaster'ın z-index'i) katmana JSX `style`'ından
     // bağlanır; App.css'te o token'ı okuyan bir kural kalmaz. Yorumdaki anma kullanım sayılmaz.
+    // Tailwind v4 kısa biçimi de kullanımdır: `z-(--z-critical)` = `z-[var(--z-critical)]` (App.jsx oturum
+    // uyarısı şeridi; legacy `.inactivity-warning` kuralı 2026-09-26 ölü CSS temizliğinde kalktı).
     for (const tok of ['--z-announce', '--z-dialog', '--z-toast', '--z-critical']) {
-      const used = CSS.includes(`var(${tok})`) || FILES.some(([, src]) => src.includes(`var(${tok})`))
+      const used = CSS.includes(`var(${tok})`)
+        || FILES.some(([, src]) => src.includes(`var(${tok})`) || src.includes(`(${tok})`))
       expect(used, `${tok} hiç kullanılmıyor`).toBe(true)
     }
   })

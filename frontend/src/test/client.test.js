@@ -227,6 +227,24 @@ describe('api.admin.getInventory', () => {
       expect.any(Object)
     )
   })
+  // Org geneli görünürlük (2026-09-26): scope yalnız 'all' iken param üretir — 'mine' bugünkü URL'i değiştirmez
+  it('scope=all → &scope=all eklenir; scope=mine → URL değişmez', async () => {
+    mockFetch({ success: true, data: [] })
+    await api.admin.getInventory(true, 'all')
+    expect(global.fetch).toHaveBeenCalledWith('/api/admin/inventory?showDeleted=true&scope=all', expect.any(Object))
+    await api.admin.getInventory(false, 'mine')
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/admin/inventory?showDeleted=false', expect.any(Object))
+  })
+})
+
+describe('api.monitoring.getUptimeOverview', () => {
+  it("varsayılan yol değişmez; scope='all' → ?scope=all", async () => {
+    mockFetch({ success: true, data: [] })
+    await api.monitoring.getUptimeOverview()
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/monitoring/uptime/overview', expect.any(Object))
+    await api.monitoring.getUptimeOverview('all')
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/monitoring/uptime/overview?scope=all', expect.any(Object))
+  })
 })
 
 describe('api.admin.addInventory', () => {

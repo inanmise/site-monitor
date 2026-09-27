@@ -11,7 +11,15 @@ import java.util.Optional;
 
 public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> {
     List<PortMonitor> findByActiveTrue();
-    List<PortMonitor> findByStandaloneTrueAndActiveTrue();
+    /**
+     * Liste ucu (2026-09-27): SİLİNMEMİŞ standalone satırlar — duraklatılmışlar ({@code active=false}) DÂHİL.
+     * Yerini aldığı {@code findByStandaloneTrueAndActiveTrue} duraklatılanı da gizliyordu (silme ile aynı durum).
+     */
+    List<PortMonitor> findByStandaloneTrueAndDeletedAtIsNull();
+
+    /** Mükerrer guard'ı: aynı host:port için DURAKLATILMIŞ (silinmemiş) standalone satır var mı? Artık listede görünür. */
+    boolean existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(String host, int port);
+    boolean existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNullAndIdNot(String host, int port, Long id);
     /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
     long countByStandaloneTrueAndActiveTrue();
     List<PortMonitor> findAllByOrderByNameAsc();
@@ -22,7 +30,8 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
     boolean existsByHostAndPortAndActiveTrueAndIdNot(String host, int port, Long id);
 
     /** [teamId, grup adı, sayı] — TAKIM-bazlı grup listesi (boş/null hariç); satır çekmeden DB-side GROUP BY. */
-    @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM PortMonitor m WHERE m.groupName IS NOT NULL AND m.groupName <> '' GROUP BY m.teamId, m.groupName")
+    // Silinmiş standalone satır grup sayısına girmez (2026-09-27) — yoksa görünmeyen izleme grubu "dolu" gösterirdi.
+    @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM PortMonitor m WHERE m.groupName IS NOT NULL AND m.groupName <> '' AND m.deletedAt IS NULL GROUP BY m.teamId, m.groupName")
     List<Object[]> groupCountsByTeam();
 
     /** Bir TAKIMIN grup adını yeniden adlandır (yalnız o takımın monitörleri). Caller'da @Transactional zorunlu. */

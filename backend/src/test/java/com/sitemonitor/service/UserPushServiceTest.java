@@ -369,6 +369,49 @@ class UserPushServiceTest {
     }
 
     @Test
+    @DisplayName("N2: devre kesici AÇIKKEN doğan push PENDING yazılır ve kesici kapanınca TESLİM edilir (eskiden CIRCUIT_OPEN = kalıcı kayıp)")
+    void enqueueWhileCircuitOpen_isDeliveredAfterCooldown() throws Exception {
+        startServer();
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
+        recipients("N00001");
+        // Kesici ~1,5 sn açık (5 ardışık hatanın bıraktığı durum; cooldown kısaltıldı).
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "circuitOpenUntil",
+                System.currentTimeMillis() + 1_500L);
+
+        service.enqueueAlert(1L, "INITIAL", 5L, Map.of());
+
+        // Yazılan satır: tek satır, PENDING (boş listede geçen allMatch DEĞİL — hasSize ile).
+        List<UserPushDelivery> written = savedRows();
+        assertThat(written).hasSize(1);
+        assertThat(written.get(0).getStatus()).isIn("PENDING", "SENT");   // SENT: kesici kapandıktan sonra gönderildi
+        assertThat(written.get(0).getStatus()).isNotEqualTo("CIRCUIT_OPEN");
+        // Kesici açıkken GÖNDERİLMEZ (drain bekletir)…
+        assertThat(receivedBodies).isEmpty();
+        // …kapanınca drain kendi planlı turunda gönderir.
+        await().atMost(java.time.Duration.ofSeconds(8))
+                .until(() -> store.size() == 1 && "SENT".equals(store.get(0).getStatus()));
+        assertThat(receivedBodies).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("N2: kesici açıkken takım bildirimi / doğrudan bildirim / test gönderimi de PENDING yazar")
+    void otherEnqueuePaths_writePendingWhileCircuitOpen() {
+        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(java.util.List.of());   // yalnız yazılanı sına
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "circuitOpenUntil",
+                System.currentTimeMillis() + 60_000L);
+        recipients("N00001");
+
+        service.enqueueTeamNotice(5L, "WEAK_ALGO", "HIGH", "a.example.com", "mesaj", "k1");
+        service.enqueueDirect(List.of(new UserPushService.DirectRecipient("N00002", "N00002", false)),
+                5L, "WEEKLY", "INFO", "WEEKLY_REPORT", "rapor", "mesaj", "k2");
+        service.sendTest(List.of("N00003"), null, "not");
+
+        List<UserPushDelivery> rows = savedRows();
+        assertThat(rows).hasSize(3);
+        assertThat(rows).extracting(UserPushDelivery::getStatus).containsOnly("PENDING");
+    }
+
+    @Test
     @DisplayName("5xx yanıt → FAILED yolu (retry tavanı ve hata mesajı satırda)")
     void serverError_marksFailed() throws Exception {
         respStatus.set(503);
@@ -843,6 +886,21 @@ class UserPushServiceTest {
 
         assertThat(store).extracting(UserPushDelivery::getUsername).contains("N00001");
         assertThat(store).extracting(UserPushDelivery::getStatus).doesNotContain("SKIPPED_QUIET_HOURS");
+    }
+
+    @Test
+    @DisplayName("O-3: çözüm push'u saat tavanından MUAF — kullanıcı tavandayken bile PENDING (telefondaki alarm kapanmalı)")
+    void resolve_notRateLimited() {
+        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());   // yalnız yazılanı sına
+        when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
+        when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001")));
+        when(resolver.resolvePrior(List.of("N00001"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00001", "Bir", null)));
+        when(deliveryRepo.countRecentForUser(eq("N00001"), anyString())).thenReturn(999L);   // tavanın çok üstü
+
+        service.enqueueResolve(event(1L, "HIGH", "HTTP_DOWN"), Map.of());
+
+        assertThat(store).singleElement().extracting(UserPushDelivery::getStatus).isEqualTo("PENDING");
     }
 
     @Test

@@ -1,15 +1,20 @@
 import { useState, useEffect, useRef } from 'react'
-import { Upload, Trash2 } from 'lucide-react'
+import { Upload, Trash2, Palette, RotateCcw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import { downscaleImage } from '../../utils/imageDownscale.js'
-import { Spinner } from '../ui/Progress.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
+import Field from '../ui/Field.jsx'
+import { FIELD_GRID, SETTINGS_STACK, helpLabel, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Switch } from '@/components/shadcn/switch'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Card } from '@/components/shadcn/card'
 
 const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
@@ -18,6 +23,7 @@ const LOGO_MAX_BYTES = 200 * 1024
  * Branding (Beyaz Etiket) — login sayfası + uygulama kimliğini kurum-özel yapar ve duyuru
  * şeridini yönetir. GeneralSettings deseni: katalogtan yükler, yalnız değişen key'leri gönderir,
  * boş alan varsayılana döner (placeholder varsayılanı gösterir). Canlı yansır (restart yok).
+ * Tam sayfa düzen (2026-09-27): form + canlı önizleme geniş ekranda yan yana; "varsayılana dön" tehlike bölgesi.
  */
 export default function BrandingSettings() {
   const t = useT()
@@ -121,172 +127,141 @@ export default function BrandingSettings() {
     // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
     // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
     if (loadError) {
-      return (
-        <div className="admin-section">
-          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-        </div>
-      )
+      return <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
     }
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
+  const label = (labelKey, key) => helpLabel(t(labelKey), 'help.set.' + K(key))
   const textField = (key, labelKey) => (
-    <div className="threshold-grid" key={key}>
-      <div className="threshold-field">
-        <label>
-          <span className="help-label-row">
-            {t(labelKey)}
-            <HelpTip helpKey={'help.set.' + K(key)} label={t(labelKey)} />
-          </span>
-        </label>
-        <input type="text" value={valueOf(K(key))} placeholder={defaultOf(K(key))}
+    <Field key={key} label={label(labelKey, key)}>
+      {({ id, describedBy }) => (
+        <Input id={id} aria-describedby={describedBy} type="text" value={valueOf(K(key))} placeholder={defaultOf(K(key))}
           onChange={(ev) => set(K(key), ev.target.value)} />
-      </div>
-    </div>
+      )}
+    </Field>
   )
 
   const logo = valueOf(K('logo-data'))
   const primary = valueOf(K('primary-color'))
   const bannerOn = String(valueOf(K('banner-enabled'))) === 'true'
+  const dirty = Object.keys(edited).length > 0
 
   return (
-    <div className="ldap-settings">
-      <div className="admin-section">
-        <h3>{t('branding.title')}</h3>
-        <p className="section-desc">{t('branding.desc')}</p>
-        <p className="ldap-meta">{t('branding.emptyHint')}</p>
-      </div>
+    <div className={SETTINGS_STACK} data-testid="branding-settings">
+      <SettingsHeader icon={Palette} title={t('branding.title')} description={t('branding.desc')} hint={t('branding.emptyHint')} />
 
-      {/* ── Beyaz Etiket ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('branding.whiteLabel')}</h4>
-        {textField('app-name', 'branding.appName')}
-        {textField('tab-title', 'branding.tabTitle')}
-        {textField('login-title', 'branding.loginTitle')}
-        {textField('login-subtitle', 'branding.loginSubtitle')}
-        {textField('signin-label', 'branding.signinLabel')}
-        {textField('username-label', 'branding.usernameLabel')}
-        {textField('footer-text', 'branding.footerText')}
+      {/* Geniş ekranda form (2/3) + canlı önizleme (1/3, yapışkan) yan yana; telefonda alt alta */}
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+        <div className="flex min-w-0 flex-col gap-5">
+          {/* ── Beyaz Etiket ── */}
+          <SettingsSection title={t('branding.whiteLabel')}>
+            <div className={FIELD_GRID}>
+              {textField('app-name', 'branding.appName')}
+              {textField('tab-title', 'branding.tabTitle')}
+              {textField('login-title', 'branding.loginTitle')}
+              {textField('login-subtitle', 'branding.loginSubtitle')}
+              {textField('signin-label', 'branding.signinLabel')}
+              {textField('username-label', 'branding.usernameLabel')}
+              {textField('footer-text', 'branding.footerText')}
 
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('branding.primaryColor')}<HelpTip helpKey={'help.set.' + K('primary-color')} label={t('branding.primaryColor')} /></span></label>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="text" value={primary} placeholder={t('branding.primaryPlaceholder')}
-                onChange={(ev) => set(K('primary-color'), ev.target.value)} style={{ flex: 1 }} />
-              <span aria-hidden="true" style={{
-                width: 28, height: 28, borderRadius: 6, border: '1px solid #d4d4d8',
-                background: primary || 'var(--primary)', flexShrink: 0 }} />
+              <Field label={label('branding.primaryColor', 'primary-color')}>
+                {({ id, describedBy }) => (
+                  <div className="flex items-center gap-2">
+                    <Input id={id} aria-describedby={describedBy} type="text" value={primary} placeholder={t('branding.primaryPlaceholder')}
+                      onChange={(ev) => set(K('primary-color'), ev.target.value)} />
+                    {/* Renk örneği — değer dinamik (kullanıcı girdisi), bu yüzden satır içi arka plan */}
+                    <span aria-hidden="true" data-slot="color-swatch" className="size-7 shrink-0 rounded-md border"
+                      style={{ background: primary || 'var(--primary)' }} />
+                  </div>
+                )}
+              </Field>
             </div>
-          </div>
-        </div>
 
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('branding.logo')}<HelpTip helpKey={'help.set.' + K('logo-data')} label={t('branding.logo')} /></span></label>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Button type="button" variant="secondary" onClick={() => fileRef.current?.click()}>
-                <Upload size={14} /> {t('branding.logoUpload')}
-              </Button>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/svg+xml"
-                style={{ display: 'none' }} onChange={onLogoChosen} />
-              {logo && (
-                <>
-                  <img src={logo} alt="logo" style={{ maxHeight: 40, maxWidth: 200 }} />
-                  <Button type="button" variant="destructive" onClick={() => set(K('logo-data'), '')}>
-                    <Trash2 size={14} /> {t('branding.logoRemove')}
+            <Field label={label('branding.logo', 'logo-data')} hint={t('branding.logoHint')} className="mb-0">
+              {({ id, describedBy }) => (
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <Button type="button" variant="secondary" aria-describedby={describedBy} onClick={() => fileRef.current?.click()}>
+                    <Upload size={14} /> {t('branding.logoUpload')}
                   </Button>
-                </>
+                  <Input ref={fileRef} id={id} type="file" accept="image/png,image/jpeg,image/svg+xml"
+                    className="hidden" tabIndex={-1} onChange={onLogoChosen} />
+                  {logo && (
+                    <>
+                      <img src={logo} alt={t('branding.logo')} className="max-h-10 max-w-[200px]" />
+                      <Button type="button" variant="destructive" onClick={() => set(K('logo-data'), '')}>
+                        <Trash2 size={14} /> {t('branding.logoRemove')}
+                      </Button>
+                    </>
+                  )}
+                </div>
               )}
+            </Field>
+          </SettingsSection>
+
+          {/* ── Duyuru Şeridi ── */}
+          <SettingsSection title={t('branding.banner')} description={t('branding.bannerDesc')}>
+            <p className="mb-3 text-xs text-muted-foreground">{t('branding.bannerVersionHint')}</p>
+            <Field label={label('branding.bannerEnabled', 'banner-enabled')}>
+              {({ id, describedBy }) => (
+                <div className="flex items-center gap-2.5">
+                  <Switch id={id} aria-describedby={describedBy} checked={bannerOn}
+                    onCheckedChange={(on) => set(K('banner-enabled'), on ? 'true' : 'false')} />
+                  <span className="text-sm font-semibold">{bannerOn ? t('general.on') : t('general.off')}</span>
+                </div>
+              )}
+            </Field>
+            <div className={FIELD_GRID}>
+              {textField('banner-text', 'branding.bannerText')}
+              {textField('banner-link', 'branding.bannerLink')}
+              {textField('banner-link-label', 'branding.bannerLinkLabel')}
+              <Field label={label('branding.bannerTone', 'banner-tone')} className="[&>[data-slot=native-select-wrapper]]:w-full">
+                {({ id, describedBy }) => (
+                  <NativeSelect id={id} aria-describedby={describedBy} value={valueOf(K('banner-tone')) || 'INFO'}
+                    onChange={(ev) => set(K('banner-tone'), ev.target.value)}>
+                    <NativeSelectOption value="INFO">{t('branding.toneInfo')}</NativeSelectOption>
+                    <NativeSelectOption value="WARNING">{t('branding.toneWarning')}</NativeSelectOption>
+                    <NativeSelectOption value="CRITICAL">{t('branding.toneCritical')}</NativeSelectOption>
+                  </NativeSelect>
+                )}
+              </Field>
             </div>
-            <span className="hint">{t('branding.logoHint')}</span>
-          </div>
+          </SettingsSection>
+
+          {/* ── Tehlike bölgesi: varsayılana dön ── (dış çizgili yıkıcı düğme; onay penceresi useDialog) */}
+          <SettingsSection>
+            <AlertBanner tone="danger" title={t('branding.resetTitle')} className="mb-0"
+              actions={(
+                <Button type="button" variant="outline" onClick={resetToDefaults} disabled={saving}
+                  className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive">
+                  <RotateCcw size={14} aria-hidden="true" /> {t('branding.reset')}
+                </Button>
+              )}>
+              {t('branding.resetConfirm')}
+            </AlertBanner>
+          </SettingsSection>
         </div>
+
+        {/* ── Canlı login önizleme ── (marka rengi kullanıcı girdisi → satır içi arka plan) */}
+        <SettingsSection title={t('branding.preview')} className="xl:sticky xl:top-3">
+          <Card data-testid="branding-preview" className="mx-auto w-full max-w-[360px] gap-2.5 px-6 py-[22px] shadow-none">
+            {logo
+              ? <img src={logo} alt={t('branding.logo')} className="max-h-9 max-w-[180px] self-start" />
+              : <strong className="text-lg">{valueOf(K('app-name')) || defaultOf(K('app-name')) || 'SiteMonitor'}</strong>}
+            <div className="text-[17px] font-bold">{valueOf(K('login-title')) || t('login.heading')}</div>
+            {valueOf(K('login-subtitle')) && <div className="text-[13px] text-muted-foreground">{valueOf(K('login-subtitle'))}</div>}
+            <div className="text-xs text-muted-foreground">{valueOf(K('username-label')) || t('login.username')}</div>
+            <div aria-hidden="true" className="h-[30px] rounded-md border border-input" />
+            <Button type="button" tabIndex={-1} className="w-full cursor-default font-semibold text-white hover:opacity-100"
+              style={{ background: primary || 'var(--primary)' }}>
+              {valueOf(K('signin-label')) || t('login.submit')}
+            </Button>
+            {valueOf(K('footer-text')) && <div className="text-center text-[11px] text-muted-foreground">{valueOf(K('footer-text'))}</div>}
+          </Card>
+        </SettingsSection>
       </div>
 
-      {/* ── Duyuru Şeridi ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('branding.banner')}</h4>
-        <p className="section-desc">{t('branding.bannerDesc')}</p>
-        <p className="field-hint">{t('branding.bannerVersionHint')}</p>
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('branding.bannerEnabled')}<HelpTip helpKey={'help.set.' + K('banner-enabled')} label={t('branding.bannerEnabled')} /></span></label>
-            {/* threshold-field input{width:100%} kuralı checkbox'ı yayıp hizayı bozuyordu →
-                inline-stilli gerçek on/off switch (input yok, CSS çakışması yok). */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button type="button" role="switch" aria-checked={bannerOn}
-                onClick={() => set(K('banner-enabled'), bannerOn ? 'false' : 'true')}
-                style={{
-                  width: 46, height: 24, borderRadius: 999, padding: 0, cursor: 'pointer',
-                  border: '1px solid ' + (bannerOn ? 'transparent' : '#d4d4d8'),
-                  background: bannerOn ? 'var(--primary)' : '#e4e4e7',
-                  position: 'relative', flexShrink: 0, transition: 'background .15s',
-                }}>
-                <span style={{
-                  position: 'absolute', top: 2, left: bannerOn ? 23 : 2,
-                  width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                  boxShadow: '0 1px 2px rgba(0,0,0,.25)', transition: 'left .15s',
-                }} />
-              </button>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>
-                {bannerOn ? t('general.on') : t('general.off')}
-              </span>
-            </div>
-          </div>
-        </div>
-        {textField('banner-text', 'branding.bannerText')}
-        {textField('banner-link', 'branding.bannerLink')}
-        {textField('banner-link-label', 'branding.bannerLinkLabel')}
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('branding.bannerTone')}<HelpTip helpKey={'help.set.' + K('banner-tone')} label={t('branding.bannerTone')} /></span></label>
-            <select value={valueOf(K('banner-tone')) || 'INFO'}
-              onChange={(ev) => set(K('banner-tone'), ev.target.value)}>
-              <option value="INFO">{t('branding.toneInfo')}</option>
-              <option value="WARNING">{t('branding.toneWarning')}</option>
-              <option value="CRITICAL">{t('branding.toneCritical')}</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Canlı login önizleme ── */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('branding.preview')}</h4>
-        <div style={{
-          maxWidth: 360, border: '1px solid #e4e4e7', borderRadius: 10, padding: '22px 24px',
-          background: '#fff', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {logo
-            ? <img src={logo} alt="logo" style={{ maxHeight: 36, maxWidth: 180, alignSelf: 'flex-start' }} />
-            : <strong style={{ fontSize: 18 }}>{valueOf(K('app-name')) || defaultOf(K('app-name')) || 'SiteMonitor'}</strong>}
-          <div style={{ fontSize: 17, fontWeight: 700 }}>
-            {valueOf(K('login-title')) || t('login.heading')}
-          </div>
-          {(valueOf(K('login-subtitle'))) &&
-            <div style={{ fontSize: 13, color: '#71717a' }}>{valueOf(K('login-subtitle'))}</div>}
-          <div style={{ fontSize: 12, color: '#71717a' }}>
-            {valueOf(K('username-label')) || t('login.username')}
-          </div>
-          <div style={{ height: 30, border: '1px solid #d4d4d8', borderRadius: 6 }} />
-          <Button type="button" variant="outline" style={{
-            background: primary || 'var(--primary)', color: '#fff', border: 'none',
-            borderRadius: 6, padding: '8px 0', fontWeight: 600, cursor: 'default' }}>
-            {valueOf(K('signin-label')) || t('login.submit')}
-          </Button>
-          {(valueOf(K('footer-text'))) &&
-            <div style={{ fontSize: 11, color: '#a1a1aa', textAlign: 'center' }}>{valueOf(K('footer-text'))}</div>}
-        </div>
-      </div>
-
-      <div className="ldap-actions">
-        <Button onClick={save} disabled={saving}>
-          {saving ? t('settings.saving') : t('settings.save')}
-        </Button>
-        <Button variant="destructive" onClick={resetToDefaults} disabled={saving}>
-          {t('branding.reset')}
-        </Button>
-      </div>
+      <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={() => setEdited({})} />
     </div>
   )
 }

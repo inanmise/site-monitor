@@ -1,5 +1,10 @@
 import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskConical,
   Gauge, ShieldCheck, Folder, Wrench, Layers, FilePlus2, Pencil, Trash2 } from 'lucide-react'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { TONE_CLASS } from './ToneBadge.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * Tür kartları — "hangi izlemede ne kadar oluşturma / değişiklik / silme oldu" tek bakışta.
@@ -16,7 +21,8 @@ import { Globe, CalendarDays, Network, Search, Target, Radio, ScanSearch, FlaskC
  * aksi halde bir türe tıklandığında diğer kartlar sıfırlanır ve karşılaştırma kaybolurdu.
  */
 
-const ICONS = {
+// Dışa açık: İzleme Değişiklikleri listesi satırdaki tür ikonunu da buradan alır (tek ikon sözlüğü).
+export const ICONS = {
   http: Globe, domain: CalendarDays, port: Network, dns: Search, keyword: Target,
   ping: Radio, page: ScanSearch, pagespeed: Gauge, scripted: FlaskConical,
   inventory: ShieldCheck, group: Folder, maintenance: Wrench,
@@ -28,8 +34,23 @@ const BREAKDOWN = [
   { key: 'UPDATE', Icon: Pencil, tone: 'edit' },
   { key: 'DELETE', Icon: Trash2, tone: 'danger' },
 ]
+/** Kırılım çipi ve oran şeridi tonları (yeni = yeşil, düzenleme = marka mavisi, silme = kırmızı). */
+const CHIP_TONE = { new: TONE_CLASS.success, edit: TONE_CLASS.info, danger: TONE_CLASS.danger }
+const SEG_BG = { new: 'bg-success', edit: 'bg-primary', danger: 'bg-destructive' }
 
 const sum = (obj) => Object.values(obj || {}).reduce((a, b) => a + Number(b || 0), 0)
+
+/** Kart kabuğu — süzgeç düğmesi (shadcn outline Button, `aria-pressed`); seçili kart TÜM çerçevesiyle vurgulanır. */
+const CARD = 'h-auto min-w-0 flex-col items-stretch justify-start gap-1.5 px-3.5 py-3 text-left font-normal whitespace-normal shadow-none transition-[border-color,box-shadow,transform] hover:-translate-y-px hover:border-primary hover:bg-card hover:shadow-[0_0_0_2px_color-mix(in_srgb,var(--primary)_18%,transparent)] motion-reduce:hover:translate-y-0 aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:shadow-[0_0_0_2px_color-mix(in_srgb,var(--primary)_30%,transparent)]'
+
+function CardHead({ Icon, name }) {
+  return (
+    <span className="flex min-w-0 items-center gap-[7px]">
+      <span aria-hidden="true" className="inline-flex size-[26px] shrink-0 items-center justify-center rounded-[7px] bg-primary/10 text-primary"><Icon size={16} /></span>
+      <span className="truncate text-[0.82em] font-semibold text-muted-foreground">{name}</span>
+    </span>
+  )
+}
 
 export default function ChangeKindCards({ t, kindCounts = {}, selected = '', onSelect }) {
   // Sunucu yalnız KAYDI OLAN türleri döndürür; hiç değişiklik görmemiş tür kart üretmez
@@ -45,61 +66,52 @@ export default function ChangeKindCards({ t, kindCounts = {}, selected = '', onS
   const busiest = kinds[0]
 
   return (
-    <div className="chg-kpi-grid">
+    // Telefonda 2'li ızgara, geniş ekranda en az 190 px'lik otomatik sütunlar
+    <div data-slot="change-kind-grid" className="my-3 grid grid-cols-2 gap-2.5 sm:grid-cols-[repeat(auto-fill,minmax(190px,1fr))]">
       {/* "Tümü" kartı: hem genel toplam hem süzgeci temizleme yolu. */}
-      <button type="button"
-        className={`chg-kpi chg-kpi--all${selected === '' ? ' is-sel' : ''}`}
-        aria-pressed={selected === ''}
-        onClick={() => onSelect('')}>
-        <span className="chg-kpi-head">
-          <span className="chg-kpi-icon"><Layers size={16} /></span>
-          <span className="chg-kpi-name">{t('chg.allKinds')}</span>
-        </span>
-        <span className="chg-kpi-total">{grandTotal}</span>
-        <span className="chg-kpi-sub">{t('chg.kpiBusiest', t('chg.kind.' + busiest.kind))}</span>
-      </button>
+      <Button type="button" variant="outline" data-kind-card="all" aria-pressed={selected === ''}
+        className={cn(CARD, 'bg-primary/5')} onClick={() => onSelect('')}>
+        <CardHead Icon={Layers} name={t('chg.allKinds')} />
+        <span className="text-[1.6em] leading-none font-bold tabular-nums">{grandTotal}</span>
+        <span className="text-[0.74em] text-muted-foreground">{t('chg.kpiBusiest', t('chg.kind.' + busiest.kind))}</span>
+      </Button>
 
       {kinds.map(({ kind, events, total }) => {
         const Icon = ICONS[kind] || Layers
         const isSel = selected === kind
         return (
-          <button type="button" key={kind}
-            className={`chg-kpi${isSel ? ' is-sel' : ''}`}
-            aria-pressed={isSel}
-            title={t('chg.kpiFilterHint')}
-            onClick={() => onSelect(isSel ? '' : kind)}>
-            <span className="chg-kpi-head">
-              <span className="chg-kpi-icon"><Icon size={16} /></span>
-              <span className="chg-kpi-name">{t('chg.kind.' + kind)}</span>
-            </span>
-            <span className="chg-kpi-total">{total}</span>
+          <SimpleTooltip key={kind} content={t('chg.kpiFilterHint')}>
+            <Button type="button" variant="outline" data-kind-card={kind} aria-pressed={isSel}
+              className={CARD} onClick={() => onSelect(isSel ? '' : kind)}>
+              <CardHead Icon={Icon} name={t('chg.kind.' + kind)} />
+              <span className="text-[1.6em] leading-none font-bold tabular-nums">{total}</span>
 
-            {/* Kırılım: sıfır olan olay türü GÖSTERİLMEZ — "0 silme" bilgisi kartı doldurup
-                asıl sayıları bastırıyordu. */}
-            <span className="chg-kpi-breakdown">
-              {BREAKDOWN.filter(b => Number(events?.[b.key] || 0) > 0).map(b => (
-                <span key={b.key} className={`chg-kpi-chip chg-kpi-chip--${b.tone}`}
-                  title={t('chg.event' + b.key)}>
-                  <b.Icon size={11} aria-hidden="true" />{events[b.key]}
-                </span>
-              ))}
-            </span>
+              {/* Kırılım: sıfır olan olay türü GÖSTERİLMEZ — "0 silme" bilgisi kartı doldurup
+                  asıl sayıları bastırıyordu. Olay adı ekran okuyucuya sr-only metinle verilir. */}
+              <span className="flex flex-wrap gap-[5px]">
+                {BREAKDOWN.filter(b => Number(events?.[b.key] || 0) > 0).map(b => (
+                  <Badge key={b.key} variant="outline" data-kind-chip={b.tone} title={t('chg.event' + b.key)}
+                    className={cn('gap-[3px] rounded-full px-1.5 py-px text-[0.74em] font-semibold tabular-nums', CHIP_TONE[b.tone])}>
+                    <b.Icon aria-hidden="true" /><span className="sr-only">{t('chg.event' + b.key)}: </span><span>{events[b.key]}</span>
+                  </Badge>
+                ))}
+              </span>
 
-            {/* Oran şeridi: sayıları okumadan da "burada çok silme var" görülebilsin.
-                Genişlik YÜZDEYLE değil flex oranıyla veriliyor — bu bir doluluk göstergesi değil,
-                üç parçalı bir DAĞILIM. Flex hem aritmetiği kaldırıyor hem de elle yazılmış yüzde
-                çubuklarını yasaklayan bekçiye (progress-guard) takılmıyor; o kural tek değerli
-                ilerleme çubukları için var ve ProgressBar burada yanlış bileşen olurdu. */}
-            <span className="chg-kpi-bar" aria-hidden="true">
-              {BREAKDOWN.map(b => {
-                const n = Number(events?.[b.key] || 0)
-                return n > 0 ? (
-                  <i key={b.key} className={`chg-kpi-bar-seg chg-kpi-bar-seg--${b.tone}`}
-                    style={{ flexGrow: n }} />
-                ) : null
-              })}
-            </span>
-          </button>
+              {/* Oran şeridi: sayıları okumadan da "burada çok silme var" görülebilsin.
+                  Genişlik YÜZDEYLE değil flex oranıyla veriliyor — bu bir doluluk göstergesi değil,
+                  üç parçalı bir DAĞILIM. Flex hem aritmetiği kaldırıyor hem de elle yazılmış yüzde
+                  çubuklarını yasaklayan bekçiye (progress-guard) takılmıyor; o kural tek değerli
+                  ilerleme çubukları için var ve ProgressBar burada yanlış bileşen olurdu. */}
+              <span className="flex h-1 overflow-hidden rounded-full bg-border" aria-hidden="true">
+                {BREAKDOWN.map(b => {
+                  const n = Number(events?.[b.key] || 0)
+                  return n > 0 ? (
+                    <i key={b.key} data-seg={b.tone} className={cn('block h-full', SEG_BG[b.tone])} style={{ flexGrow: n }} />
+                  ) : null
+                })}
+              </span>
+            </Button>
+          </SimpleTooltip>
         )
       })}
     </div>

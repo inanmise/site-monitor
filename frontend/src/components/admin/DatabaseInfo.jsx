@@ -3,17 +3,21 @@ import { Database, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
+import Field from '../ui/Field.jsx'
+import { Spinner } from '../ui/Progress.jsx'
+import { FIELD_GRID_3, SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
 
-/** Salt-okunur etiket/değer alanı — boş değer "—" gösterir, tıklayınca seçilir. */
-function Field({ label, value }) {
+/** Salt-okunur etiket/değer alanı (ui/Field + shadcn Input readOnly) — boş değer "—", odaklanınca seçilir. */
+function InfoField({ label, value }) {
   const v = (value === null || value === undefined || value === '') ? '—' : String(value)
   return (
-    <div className="threshold-field">
-      <label>{label}</label>
-      <input type="text" readOnly value={v} title={v}
-        style={{ fontFamily: 'monospace' }} onFocus={(e) => e.target.select()} />
-    </div>
+    <Field label={label}>
+      {({ id }) => (
+        <Input id={id} type="text" readOnly value={v} className="font-mono" onFocus={(e) => e.target.select()} />
+      )}
+    </Field>
   )
 }
 
@@ -55,58 +59,53 @@ export default function DatabaseInfo() {
     : null
 
   return (
-    <div className="ldap-settings">
-      <div className="admin-section">
-        <h3><Database size={16} style={{ verticalAlign: '-3px', marginRight: 6 }} />{t('db.title')}</h3>
-        <p className="section-desc">{t('db.desc')}</p>
-        <div className="ldap-actions">
-          <Button variant="secondary" onClick={load} disabled={loading}>
-            <RefreshCw size={14} className={loading ? 'spin' : ''} /> {loading ? t('db.loading') : t('db.refresh')}
+    <div className={SETTINGS_STACK} data-testid="database-info">
+      <SettingsHeader icon={Database} title={t('db.title')} description={t('db.desc')}
+        actions={(
+          <Button variant="outline" onClick={load} disabled={loading} aria-busy={loading || undefined}>
+            {loading ? <Spinner size={14} inline decorative /> : <RefreshCw size={14} />} {loading ? t('db.loading') : t('db.refresh')}
           </Button>
-        </div>
-      </div>
+        )} />
 
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('db.secConnection')}</h4>
-        <div className="threshold-grid">
-          <Field label={t('db.database')} value={d.database} />
-          <Field label={t('db.user')} value={d.user} />
-          <Field label={t('db.host')} value={hostPort} />
-          <Field label={t('db.version')} value={d.version} />
-        </div>
-      </div>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <SettingsSection title={t('db.secConnection')}>
+          <div className={FIELD_GRID_3}>
+            <InfoField label={t('db.database')} value={d.database} />
+            <InfoField label={t('db.user')} value={d.user} />
+            <InfoField label={t('db.host')} value={hostPort} />
+            <InfoField label={t('db.version')} value={d.version} />
+          </div>
+        </SettingsSection>
 
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('db.secServer')}</h4>
-        <div className="threshold-grid">
-          <Field label={t('db.size')} value={d.size} />
-          <Field label={t('db.uptime')} value={d.uptime} />
-          <Field label={t('db.startTime')} value={d.start_time} />
-          <Field label={t('db.encoding')} value={d.encoding} />
-          <Field label={t('db.maxConnections')} value={d.max_connections} />
-          <Field label={t('db.activeConnections')} value={d.active_connections} />
-        </div>
-      </div>
+        <SettingsSection title={t('db.secServer')}>
+          <div className={FIELD_GRID_3}>
+            <InfoField label={t('db.size')} value={d.size} />
+            <InfoField label={t('db.uptime')} value={d.uptime} />
+            <InfoField label={t('db.startTime')} value={d.start_time} />
+            <InfoField label={t('db.encoding')} value={d.encoding} />
+            <InfoField label={t('db.maxConnections')} value={d.max_connections} />
+            <InfoField label={t('db.activeConnections')} value={d.active_connections} />
+          </div>
+        </SettingsSection>
 
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('db.secPool')}</h4>
-        <div className="threshold-grid">
-          <Field label={t('db.poolName')} value={p.name} />
-          <Field label={t('db.poolActive')} value={p.active} />
-          <Field label={t('db.poolIdle')} value={p.idle} />
-          <Field label={t('db.poolTotal')} value={p.total} />
-          <Field label={t('db.poolWaiting')} value={p.waiting} />
-          <Field label={t('db.poolMax')} value={p.max_size} />
-          <Field label={t('db.poolMin')} value={p.min_idle} />
-        </div>
-      </div>
+        <SettingsSection title={t('db.secPool')}>
+          <div className={FIELD_GRID_3}>
+            <InfoField label={t('db.poolName')} value={p.name} />
+            <InfoField label={t('db.poolActive')} value={p.active} />
+            <InfoField label={t('db.poolIdle')} value={p.idle} />
+            <InfoField label={t('db.poolTotal')} value={p.total} />
+            <InfoField label={t('db.poolWaiting')} value={p.waiting} />
+            <InfoField label={t('db.poolMax')} value={p.max_size} />
+            <InfoField label={t('db.poolMin')} value={p.min_idle} />
+          </div>
+        </SettingsSection>
 
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('db.secJdbc')}</h4>
-        <div className="threshold-grid">
-          <Field label={t('db.jdbcUrl')} value={d.jdbc_url} />
-          <Field label={t('db.driver')} value={driver} />
-        </div>
+        <SettingsSection title={t('db.secJdbc')}>
+          <div className="grid grid-cols-1 gap-x-4">
+            <InfoField label={t('db.jdbcUrl')} value={d.jdbc_url} />
+            <InfoField label={t('db.driver')} value={driver} />
+          </div>
+        </SettingsSection>
       </div>
     </div>
   )

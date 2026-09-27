@@ -303,14 +303,14 @@ public class MonitoringWeeklyStatsService {
             if (extraMode == ExtraMode.CHANGED_SUM && r.length > 3 && r[3] != null) changedSum += ((Number) r[3]).longValue();
             if (extraMode == ExtraMode.CLOSED_COUNT && s < t) closed++;
             String name = nameOf.apply(r[0]);
-            Double rate = t > 0 ? round1(100.0 * s / t) : null;
+            Double rate = com.sitemonitor.util.AvailabilityMath.pct(t, s, 1);   // O-5: hata varken %100 değil
             targets.add(new TopTarget(name, rate, c.perTarget().getOrDefault(name, 0)));
         }
-        Double rate = total > 0 ? round1(100.0 * success / total) : null;
+        Double rate = com.sitemonitor.util.AvailabilityMath.pct(total, success, 1);
 
         long pt = 0, ps = 0;
         for (Object[] r : prev) { pt += lng(r[1]); ps += lng(r[2]); }
-        Double prevRate = pt > 0 ? round1(100.0 * ps / pt) : null;
+        Double prevRate = com.sitemonitor.util.AvailabilityMath.pct(pt, ps, 1);
         Double rateDelta = (rate != null && prevRate != null) ? round1(rate - prevRate) : null;
         Integer openedDelta = aOpened - aOpenedPrev;
 

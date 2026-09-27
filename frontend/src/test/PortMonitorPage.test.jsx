@@ -48,29 +48,44 @@ describe('PortMonitorPage', () => {
     expect(await screen.findByText('10.0.0.1')).toBeInTheDocument()
   })
 
-  it('2026-09-24 kart: port ve protokol başlığın altında belirgin — büyük :port, türüne göre renkli protokol rozeti, HTTP yolu, bilinen portun hizmet adı; eski küçük gri etiket ve yinelenen Port ölçüsü yok', async () => {
+  it('2026-09-27 kart (port/PortMonitorCard): uç nokta kimliği — büyük :port, tür rozeti, HTTP yolu, bilinen portun "usually …" hizmeti; sonuç paneli; port kartta YALNIZ bir kez, legacy .port-ep kartta yok', async () => {
     api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [
       monitor, { ...monitor, id: 2, name: 'web', host: '10.0.0.2', port: 8443, protocol: 'HTTP', send_data: '/health' },
-      { ...monitor, id: 3, name: 'custom', host: '10.0.0.3', port: 7001, protocol: 'UDP' }] })
+      { ...monitor, id: 3, name: 'custom', host: '10.0.0.3', port: 7001, protocol: 'UDP', status: 'closed', response_ms: null, error: 'Connection refused' }] })
     const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('10.0.0.3')
-    const card = (host) => [...container.querySelectorAll('.upt-card')].find((c) => c.querySelector('.upt-card-domain')?.textContent === host)
-    const ep1 = card('10.0.0.1').querySelector('.port-ep')
-    expect(ep1.querySelector('.port-ep-port').textContent).toBe(':25')
-    expect(ep1.querySelector('.port-ep-proto').textContent).toBe('TCP')
-    expect(ep1.querySelector('.port-ep-proto').className).toContain('port-ep-proto--tcp')
-    expect(ep1.querySelector('.port-ep-svc').textContent).toBe('SMTP')
-    expect(ep1.querySelector('.port-ep-path')).toBeNull()                                   // yol yalnız HTTP türünde
-    expect(ep1).toHaveAttribute('title', expect.stringMatching(/^10\.0\.0\.1:25 · TCP — .+ · SMTP$/))
-    const ep2 = card('10.0.0.2').querySelector('.port-ep')
-    expect(ep2.querySelector('.port-ep-proto').className).toContain('port-ep-proto--http')
-    expect(ep2.querySelector('.port-ep-path').textContent).toBe('/health')
-    expect(ep2.querySelector('.port-ep-svc').textContent).toBe('HTTPS (alt)')
-    const ep3 = card('10.0.0.3').querySelector('.port-ep')
-    expect(ep3.querySelector('.port-ep-proto').className).toContain('port-ep-proto--udp')
-    expect(ep3.querySelector('.port-ep-svc')).toBeNull()                                    // bilinmeyen port → hizmet adı uydurulmaz
-    expect(container.querySelector('.upt-card .upt-port-tag')).toBeNull()
-    expect(card('10.0.0.1').querySelector('.upt-card-metrics').textContent).not.toMatch(/^Port|Port$/)
+    const card = (host) => [...container.querySelectorAll('.upt-grid > [data-slot="card"]')].find((c) => c.querySelector('[data-monitor-open]')?.textContent === host)
+    const ep1 = card('10.0.0.1').querySelector('[data-slot="port-endpoint"]')
+    expect(ep1.querySelector('[data-slot="port-number"]').textContent).toBe(':25')
+    expect(ep1.querySelector('[data-slot="port-protocol"]')).toHaveAttribute('data-protocol', 'TCP')
+    expect(ep1.querySelector('[data-slot="port-service"]').textContent).toMatch(/^(usually|genelde) SMTP$/)
+    expect(ep1.querySelector('[data-slot="port-path"]')).toBeNull()                          // yol yalnız HTTP türünde
+    expect(card('10.0.0.1').querySelector('[data-slot="port-result"]')).toHaveAttribute('data-state', 'open')
+    const ep2 = card('10.0.0.2').querySelector('[data-slot="port-endpoint"]')
+    expect(ep2.querySelector('[data-slot="port-protocol"]')).toHaveAttribute('data-protocol', 'HTTP')
+    expect(ep2.querySelector('[data-slot="port-path"]').textContent).toBe('/health')
+    expect(ep2.querySelector('[data-slot="port-service"]').textContent).toMatch(/^(usually|genelde) HTTPS \(alt\)$/)
+    const c3 = card('10.0.0.3')
+    expect(c3.querySelector('[data-slot="port-service"]')).toBeNull()                       // bilinmeyen port → hizmet adı uydurulmaz
+    expect(c3.querySelector('[data-slot="port-result"]')).toHaveAttribute('data-state', 'refused')
+    expect(c3).toHaveAttribute('data-status', 'down')
+    // Uç nokta kartta TEK kez; legacy .port-ep yalnız detay penceresinin başlığında kalır.
+    expect(card('10.0.0.1').textContent.match(/:25/g)).toHaveLength(1)
+    expect(card('10.0.0.1').querySelectorAll('[data-slot="port-protocol"]')).toHaveLength(1)
+    expect(container.querySelector('.upt-grid .port-ep')).toBeNull()
+    expect(card('10.0.0.1').textContent).not.toMatch(/\bPort\b/)
+  })
+
+  it('2026-09-27 kaynak: envanterden türeyen satırda sil düğmesinin adı "izlemeyi durdur", bağımsız satırda "Sil"; kaynak rozeti ve toplu seçim adı satırı taşır', async () => {
+    api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, standalone: null }, { ...monitor, id: 2, host: '10.0.0.2', standalone: true }] })
+    const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('10.0.0.2')
+    expect(screen.getByRole('button', { name: /^10\.0\.0\.1:25 — (Stop monitoring \(inventory-derived record is kept\)|İzlemeyi durdur \(envanter-türevi kayıt silinmez\))$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^10\.0\.0\.2:25 — (Delete|Sil)$/ })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /10\.0\.0\.1:25/ })).toBeInTheDocument()
+    expect([...container.querySelectorAll('.upt-grid [data-slot="port-source"]')].map((b) => b.getAttribute('data-source')))
+      .toEqual(['inventory', 'standalone'])
   })
 
   it('Yeni Monitör butonu ADMIN için modal açar (host/port/grup alanları)', async () => {
@@ -101,9 +116,9 @@ describe('PortMonitorPage', () => {
     render(<PortMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
-    const notes = await waitFor(() => { const n = document.querySelector('.port-proxy-notes'); expect(n).not.toBeNull(); return n })
+    const notes = await waitFor(() => { const n = document.querySelector('[data-slot="port-proxy-notes"]'); expect(n).not.toBeNull(); return n })
     expect(notes.textContent).toMatch(/443, 8443/)
-    expect(notes.querySelector('.field-hint--warn')).toBeNull()
+    expect(notes.querySelector('[data-tone="warn"]')).toBeNull()
     expect(screen.getByText(/^Doğrudan \(vekil kullanma\)$|^Direct \(no proxy\)$/)).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'mail.example.com' } })
     fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '25' } })
@@ -123,23 +138,47 @@ describe('PortMonitorPage', () => {
     // Vekil: Her zaman vekil üzerinden
     fireEvent.mouseDown(screen.getByRole('combobox', { name: /Kurumsal vekil|Corporate proxy/ }))
     fireEvent.mouseDown(screen.getByText(/^Her zaman vekil üzerinden$|^Always via proxy$/))
-    const warns = () => [...document.querySelectorAll('.port-proxy-notes .field-hint--warn')].map((w) => w.textContent)
+    const warns = () => [...document.querySelectorAll('[data-slot="port-proxy-notes"] [data-tone="warn"]')].map((w) => w.textContent)
     await waitFor(() => expect(warns().join(' ')).toMatch(/22.*443, 8443/))
     // izinli port → port uyarısı kalkar
     fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '443' } })
     await waitFor(() => expect(warns()).toHaveLength(0))
     // UDP → UDP uyarısı
-    const typeLabel = [...document.querySelectorAll('label > span:first-child')].find((sp) => /^(Kontrol Tipi|Check type)$/i.test(sp.textContent.trim()))
-    fireEvent.mouseDown(typeLabel.parentElement.querySelector('button[role="combobox"]'))
+    const typeTrigger = () => screen.getByRole('combobox', { name: /^(Kontrol Tipi|Check type)$/i })
+    fireEvent.mouseDown(typeTrigger())
     fireEvent.mouseDown(screen.getByText(/^UDP — /))
     await waitFor(() => expect(warns().join(' ')).toMatch(/UDP/))
     // TCP'ye dön, test et → yol satırı
-    fireEvent.mouseDown(typeLabel.parentElement.querySelector('button[role="combobox"]'))
+    fireEvent.mouseDown(typeTrigger())
     fireEvent.mouseDown(screen.getByText(/^TCP — /))
     fireEvent.click(screen.getByRole('button', { name: /^(Test|Test et|Dene|Kaydetmeden test)/i }))
     await waitFor(() => expect(api.monitoring.testPortMonitor).toHaveBeenCalled())
     expect(api.monitoring.testPortMonitor.mock.calls[0][0].useProxy).toBe('ON')
     expect(await screen.findByText(/^(Vekil üzerinden|Via proxy)$/)).toBeInTheDocument()
+  })
+
+  // shadcn geçişi (2026-09-25): elle aç-kapa blok → Collapsible; `<input type="range">` → shadcn Slider (saniye).
+  it('gelişmiş ayarlar Collapsible ile açılır (kapalıyken DOM\'da yok); istek zaman aşımı Slider\'ı klavyeyle değişir → payload timeoutMs', async () => {
+    api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<PortMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    const adv = screen.getByRole('button', { name: /^(gelişmiş ayarlar|advanced settings)$/i })
+    expect(adv).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('slider', { name: /istek zaman aşımı|request timeout/i })).toBeNull()
+    fireEvent.click(adv)
+    expect(adv).toHaveAttribute('aria-expanded', 'true')
+    const thumb = screen.getByRole('slider', { name: /istek zaman aşımı|request timeout/i })
+    expect(thumb).toHaveAttribute('aria-valuenow', '5')             // varsayılan 5000 ms → 5 sn
+    fireEvent.keyDown(thumb, { key: 'ArrowRight' })
+    expect(thumb).toHaveAttribute('aria-valuenow', '6')
+    expect(thumb.getAttribute('aria-valuetext')).toMatch(/\b6\b/)    // okunur değer saniyeyi söyler
+    fireEvent.change(screen.getByPlaceholderText(/1\.2\.3\.4/), { target: { value: 'mail.example.com' } })
+    fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '25' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPortMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPortMonitor.mock.calls[0][0].timeoutMs).toBe(6000)
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
@@ -151,7 +190,7 @@ describe('PortMonitorPage', () => {
       ip_version: 'v4', slow_response_enabled: true, slow_threshold_ms: 4500,
       interval_seconds: 900, timeout_ms: 7000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false, notification_group_id: 7,
+      active: false, notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
       use_proxy: 'ON', proxy_effective: 'proxy', proxy_source: 'monitor',   // vekil tercihi (2026-09-24) kopyaya taşınır
     }] })
     api.monitoring.createPortMonitor.mockResolvedValue({ success: true, data: {} })
@@ -163,8 +202,8 @@ describe('PortMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('10.0.0.1').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -181,6 +220,8 @@ describe('PortMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitmeye devam etsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -188,18 +229,18 @@ describe('PortMonitorPage', () => {
     api.monitoring.getMonitorNotes.mockResolvedValue({ success: true, data: { guide: null, notes: [] } })
     render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
-    fireEvent.click(await screen.findByText('10.0.0.1'))            // satıra tıkla → detay modali açılır
-    // Başlıkta kartla aynı belirgin uç nokta (büyük boy) — eski ":25" gri etiketi değil (2026-09-24)
-    const headEp = document.querySelector('.upt-modal-header .port-ep.port-ep--lg')
+    fireEvent.click(await screen.findByText('10.0.0.1'))            // karta tıkla → detay modali açılır
+    // Başlığın hemen altında kartla aynı belirgin uç nokta (büyük boy) — eski ":25" gri etiketi değil (2026-09-24)
+    const headEp = screen.getByRole('dialog').querySelector('.port-ep.port-ep--lg')
     expect(headEp).not.toBeNull()
     expect(headEp.querySelector('.port-ep-port').textContent).toBe(':25')
     expect(headEp.querySelector('.port-ep-proto').textContent).toBe('TCP')
     // 4 sekmeli parite çubuğu (ping/keyword ile aynı)
-    expect(screen.getByRole('button', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /alarm history|alarm geçmişi/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /response chart|süre grafiği/i })).toBeInTheDocument()
-    // Rehber & Notlar sekmesi → MonitorNotes type=PORT, target=host:port
-    fireEvent.click(screen.getByRole('button', { name: /guide & notes|rehber & notlar/i }))
+    expect(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /alarm history|alarm geçmişi/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /response chart|süre grafiği/i })).toBeInTheDocument()
+    // Rehber & Notlar sekmesi → MonitorNotes type=PORT, target=host:port (Radix Tabs mousedown ile değişir)
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /guide & notes|rehber & notlar/i }), { button: 0 })
     // MonitorNotes lazy import + mount → getMonitorNotes(type, target). Dinamik import (React.lazy) tam-suite
     // paralel worker'larda CPU çekişmesi altında ilk seferde 5sn'yi aşabiliyordu (izole koşuda hep geçer) → flaky.
     // Kök: test mantığı değil, dinamik-import gecikmesi; gerçekçi tavan (10sn) çekişme altında da güvenli.
@@ -213,7 +254,7 @@ describe('PortMonitorPage', () => {
     const { container, unmount } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     await screen.findByText('h1.example.com')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
@@ -337,9 +378,10 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
   async function openPortStats(container) {
     await waitFor(() => expect(api.monitoring.getPortMonitors).toHaveBeenCalled())
     await screen.findByText('10.0.0.1')
-    fireEvent.click(container.querySelector('.stats-collapse-bar'))
-    return () => container.querySelector('.stat-value-total')?.textContent
+    fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
+    return () => container.querySelector('[data-tone="total"] [data-slot="stat-value"]')?.textContent
   }
+  const searchBox = () => screen.getByRole('textbox', { name: /^(host ara|search host)/i })
 
   it('istatistik kartlari ARAMA ile daralir (kuresel sayida donup kalmaz)', async () => {
     threePorts()
@@ -348,11 +390,11 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
 
     expect(totalText()).toBe('3')
 
-    fireEvent.change(container.querySelector('.upt-search'), { target: { value: '192.0.2' } })
+    fireEvent.change(searchBox(), { target: { value: '192.0.2' } })
     await waitFor(() => expect(totalText()).toBe('1'))
 
     // Kapali/alarm sayaclari da kapsamdan gelir.
-    expect(container.querySelector('.stat-value-critical')?.textContent).toBe('1')
+    expect(container.querySelector('[data-tone="critical"] [data-slot="stat-value"]')?.textContent).toBe('1')
   })
 
   it('arama HICBIR seyi eslestirmese bile istatistik seridi CIZILMEYE devam eder', async () => {
@@ -360,10 +402,10 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
     const { container } = render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     const totalText = await openPortStats(container)
 
-    fireEvent.change(container.querySelector('.upt-search'), { target: { value: 'hicbiryerde-yok' } })
+    fireEvent.change(searchBox(), { target: { value: 'hicbiryerde-yok' } })
 
     await waitFor(() => expect(totalText()).toBe('0'))
-    expect(container.querySelector('.stats-collapse-bar')).not.toBeNull()
-    expect(container.querySelector('.stats-panel')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-toggle"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
   })
 })

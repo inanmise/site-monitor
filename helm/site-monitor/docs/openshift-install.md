@@ -56,9 +56,11 @@ oc adm policy add-scc-to-user anyuid \
 > The service account name follows the pattern `<release-name>-sitemonitor-chart`.
 > Verify with: `oc get sa -n site-monitor`
 
-### PostgreSQL subchart SCC (when `postgresql.enabled=true`)
+### PostgreSQL subchart — removed
 
-Bitnami PostgreSQL also runs as a fixed UID (1001). Grant `anyuid` to its service account:
+The bundled Bitnami PostgreSQL subchart was removed from the chart (see `Chart.yaml`). Use an external /
+managed PostgreSQL (section 4); `postgresql.enabled=true` is no longer supported. The command below is
+kept only for clusters that still run an old subchart-managed database:
 
 ```bash
 oc adm policy add-scc-to-user anyuid \
@@ -87,6 +89,9 @@ oc create route edge site-monitor \
   --service=site-monitor-sitemonitor-chart \
   --hostname=site-monitor.apps.<cluster-domain> \
   -n site-monitor
+# The HAProxy router cuts requests after 30 s by default; a manual page-integrity check can take
+# up to 120 s. Raise the route timeout above that:
+oc annotate route site-monitor haproxy.router.openshift.io/timeout=130s -n site-monitor
 ```
 
 ### Option B — NGINX Ingress Operator
@@ -103,21 +108,27 @@ Use `ingressClassName: nginx` in values (already the default).
 
 ## 4. Install — External PostgreSQL
 
-```bash
-helm dep update helm/site-monitor
+For production follow `docs/PROD_DEPLOY_CHECKLIST.md` (the one supported prod command, secret-key
+carry-over, rollback). The OpenShift-specific additions are the extra values file and `ingress.enabled=false`:
 
-helm upgrade --install site-monitor ./helm/site-monitor \
+```bash
+helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   -f helm/site-monitor/values.yaml \
   -f helm/site-monitor/environments/master.yaml \
+  -f /secure/path/prod-private.yaml \
   -f openshift-values.yaml \
-  --set image.tag=<VERSION> \
-  --set config.dbHost=<POSTGRES_HOST> \
-  --set secret.adminPassword=<ADMIN_PASSWORD> \
-  --set secret.dbPassword=<DB_PASSWORD> \
-  --set secret.smtpPassword=<SMTP_PASSWORD> \
+  --set image.repository=ghcr.io/<owner>/site-monitor \
+  --set image.tag=v<VERSION> \
+  --set secret.existingSecret=<existing-secret-name> \
   --set ingress.enabled=false \
-  -n site-monitor
+  --atomic --wait --timeout 10m
 ```
+
+- The image tag carries a `v` (`v20.86.0`): the release pipeline pushes only `:vX.Y.Z` and `:latest`.
+- `prod-private.yaml` (kept outside the repo) holds `config.dbHost`, `config.dbName`, `config.dbUser`.
+- `REL` / `NS` must be the real release name and namespace (`helm list -A`); another name installs a second release.
+- A fresh install without `existingSecret` must pass every `secret.*` value, including a new random
+  `secret.secretKey` (32+ characters). An existing install must keep its CURRENT `SITE_MONITOR_SECRET_KEY`.
 
 Minimal `openshift-values.yaml` for OCP 4.11+:
 
@@ -129,25 +140,9 @@ podSecurityContext:
 
 ---
 
-## 5. Install — Bundled PostgreSQL Subchart
+## 5. Install — Bundled PostgreSQL Subchart (removed)
 
-```bash
-helm dep update helm/site-monitor
-
-helm upgrade --install site-monitor ./helm/site-monitor \
-  -f helm/site-monitor/values.yaml \
-  -f helm/site-monitor/environments/master.yaml \
-  -f openshift-values.yaml \
-  --set image.tag=<VERSION> \
-  --set postgresql.enabled=true \
-  --set postgresql.auth.password=<DB_PASSWORD> \
-  --set secret.adminPassword=<ADMIN_PASSWORD> \
-  --set secret.smtpPassword=<SMTP_PASSWORD> \
-  --set ingress.enabled=false \
-  -n site-monitor
-```
-
-Then grant SCC to the PostgreSQL service account (see §2 above).
+No longer available: the subchart was removed from the chart. Provision PostgreSQL separately and use section 4.
 
 ---
 
@@ -182,11 +177,12 @@ oc logs -l app.kubernetes.io/name=sitemonitor-chart -n site-monitor
 
 # Expose health check
 oc port-forward svc/site-monitor-sitemonitor-chart 8080:80 -n site-monitor
-curl http://localhost:8080/actuator/health
+curl http://localhost:8080/health/readiness   # 200 once the app accepts traffic
+curl http://localhost:8080/health/liveness
 
 # If using Route
 oc get route -n site-monitor
-curl https://<route-host>/actuator/health
+curl https://<route-host>/health/readiness
 ```
 
 ---
@@ -196,7 +192,7 @@ curl https://<route-host>/actuator/health
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Pod stuck `CreateContainerConfigError` | SCC blocks UID 1000 | Grant `anyuid` SCC (§2) |
-| PostgreSQL pod `CrashLoopBackOff` | SCC blocks postgres UID | Grant `anyuid` to postgresql SA (§2) |
+| `ImagePullBackOff` | Tag passed without the `v` prefix, or a private registry without credentials | `--set image.tag=vX.Y.Z`; set `imagePullSecrets` |
 | Ingress 404 / no route | Ingress class not found | Use Route instead (§3 Option A) |
 | `ADMIN_PASSWORD` not set warning | Secret placeholder not overridden | Pass `--set secret.adminPassword=<val>` |
 | HPA `unknown` metrics | Metrics server absent | Install OpenShift metrics or disable HPA |

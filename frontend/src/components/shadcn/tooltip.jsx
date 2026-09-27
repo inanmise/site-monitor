@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Tooltip as TooltipPrimitive } from "radix-ui"
 
@@ -20,11 +21,10 @@ function Tooltip({
   return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 }
 
-function TooltipTrigger({
-  ...props
-}) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
-}
+// forwardRef (React 18): iç içe tetiklerde (Popover/DropdownMenu/Dialog tetiği içinde ipucu) ref zinciri kopmasın.
+const TooltipTrigger = React.forwardRef(function TooltipTrigger(props, ref) {
+  return <TooltipPrimitive.Trigger ref={ref} data-slot="tooltip-trigger" {...props} />
+})
 
 function TooltipContent({
   className,

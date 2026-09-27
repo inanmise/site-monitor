@@ -2,7 +2,11 @@ import { useState } from 'react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { KeyRound } from 'lucide-react'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
 
 /**
  * Admin auto-reset modal. The admin re-proves their own password; the
@@ -11,7 +15,7 @@ import { Button } from '@/components/shadcn/button'
  * next login forces a password change.
  *
  * The plaintext temp password is never shown in the UI — it only travels
- * via email.
+ * via email. Çizim: ui/ModalShell (shadcn Dialog) + ui/Field + shadcn Input.
  */
 export default function AdminAutoResetModal({ targetUser, onClose, onSuccess }) {
   const t = useT()
@@ -45,31 +49,26 @@ export default function AdminAutoResetModal({ targetUser, onClose, onSuccess }) 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-icon-hdr modal-icon-hdr--user">
-          <div className="modal-icon-hdr-badge"><KeyRound size={20} /></div>
-          <h3>{t('usr.autoResetTitle')}</h3>
-        </div>
-        <p className="field-hint" style={{ marginTop: 0 }}>
-          {t('usr.autoResetHint', targetUser.email || '—')}
-        </p>
-        <div className="form-grid">
-          <label className="full-width">
-            <span>{t('usr.pwdAdminConfirm')} <span className="req-star">*</span></span>
-            <input type="password" value={adminPwd}
-              onChange={(e) => setAdminPwd(e.target.value)}
-              autoFocus autoComplete="current-password" />
-          </label>
-        </div>
-        {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
-        <div className="modal-actions">
+    <ModalShell open onClose={onClose} size="sm" icon={KeyRound} title={t('usr.autoResetTitle')}
+      footer={(
+        <>
           <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
-          <Button onClick={submit} disabled={saving || !adminPwd}>
+          <Button onClick={submit} disabled={saving || !adminPwd} aria-busy={saving || undefined}>
             {saving ? t('usr.saving') : t('usr.autoResetSend')}
           </Button>
-        </div>
-      </div>
-    </div>
+        </>
+      )}>
+      <p className="mb-3 text-sm text-muted-foreground">
+        {t('usr.autoResetHint', targetUser.email || '—')}
+      </p>
+      <Field label={t('usr.pwdAdminConfirm')} required>
+        {({ id }) => (
+          <Input id={id} type="password" value={adminPwd}
+            onChange={(e) => setAdminPwd(e.target.value)}
+            autoFocus autoComplete="current-password" />
+        )}
+      </Field>
+      {msg && <AlertBanner tone="danger" className="mt-2">{msg}</AlertBanner>}
+    </ModalShell>
   )
 }

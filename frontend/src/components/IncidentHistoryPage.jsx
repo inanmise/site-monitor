@@ -1,22 +1,41 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
-import { useUrlQuerySync, readUrlInt } from '../hooks/useUrlQuerySync.js'
-import { readPageSize, writePageSize } from '../hooks/usePagination.js'
+import { useServerPagination } from '../hooks/useServerPagination.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
-import { RefreshCcw, Plus, ChevronRight, ChevronDown, Pencil, Trash2, ListChecks } from 'lucide-react'
+import {
+  RefreshCcw, Plus, Pencil, Trash2, ListChecks, BarChart3, Sigma, AlertOctagon, AlertTriangle, AlertCircle, ArrowDownCircle,
+  CircleDot, Search as SearchIcon, Shield, CheckCircle2, ShieldCheck, CalendarDays, CalendarRange, Calendar, Lock, X,
+} from 'lucide-react'
 import MarkdownEditor from './ui/MarkdownEditor.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { autoDurationMinutes } from '../utils/incidentMeta.js'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../utils/mailPreview.js'
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, Legend, Cell } from 'recharts'
 import { LoadingBlock } from './ui/Progress.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import ModalShell from './ui/ModalShell.jsx'
+import Field from './ui/Field.jsx'
+import CollapsibleSection from './ui/CollapsibleSection.jsx'
+import SegmentedControl from './ui/SegmentedControl.jsx'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
+import { useIsMobile } from '../hooks/use-mobile.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Label } from '@/components/shadcn/label'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import {
+  ChartContainer, ChartTooltip, ChartLegend, ChartLegendContent, BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell,
+} from '@/components/shadcn/chart'
+import { cn } from '@/lib/utils'
 
 const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 const STATUSES   = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -30,7 +49,7 @@ const SEV_BARS = [
   { key: 'critical', color: SEV_COLOR.CRITICAL, label: 'inc.sevCRITICAL' },
 ]
 
-// Günlük trend tooltip'i — temalı; gün + sıfır-olmayan önem kırılımı + toplam.
+// Günlük trend tooltip'i — temalı (shadcn yüzey jetonları); gün + sıfır-olmayan önem kırılımı + toplam.
 function TrendTooltip({ active, payload, label, t }) {
   if (!active || !payload || !payload.length) return null
   const p = payload[0]?.payload || {}
@@ -38,17 +57,27 @@ function TrendTooltip({ active, payload, label, t }) {
   const dstr = day.length >= 10 ? `${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)}` : day
   const rows = [['CRITICAL', p.critical], ['HIGH', p.high], ['MEDIUM', p.medium], ['LOW', p.low]].filter(([, v]) => v > 0)
   return (
-    <div style={{ background: 'var(--bg-card,#fff)', border: '1px solid var(--border)', borderRadius: 8,
-      padding: '7px 10px', fontSize: '.8em', boxShadow: '0 4px 16px rgba(0,0,0,.14)' }}>
-      <div style={{ fontWeight: 700, marginBottom: rows.length ? 3 : 0 }}>{dstr}</div>
+    <div className="rounded-lg border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg">
+      <div className={cn('font-bold', rows.length && 'mb-0.5')}>{dstr}</div>
       {rows.map(([k, v]) => (
-        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.5 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: SEV_COLOR[k], flexShrink: 0 }} />
+        <div key={k} className="flex items-center gap-1.5 leading-normal">
+          <span aria-hidden="true" className="size-2 shrink-0 rounded-[2px]" style={{ background: SEV_COLOR[k] }} />
           <span>{t('inc.sev' + k)}: <b>{v}</b></span>
         </div>
       ))}
-      <div style={{ marginTop: 3, color: 'var(--text-light)' }}>{t('inc.trendTotal')}: <b>{p.count || 0}</b></div>
+      <div className="mt-0.5 text-muted-foreground">{t('inc.trendTotal')}: <b>{p.count || 0}</b></div>
     </div>
+  )
+}
+
+/** Önem rozeti (tablo + kart) — önem renginin %12 zemini, kalıcı renk kimliği. */
+function SevBadge({ s, t }) {
+  const c = SEV_COLOR[s] || '#71717a'
+  return (
+    <Badge variant="outline" data-severity={s} className="border-transparent font-bold whitespace-nowrap"
+      style={{ color: c, background: c + '1f' }}>
+      {t('inc.sev' + s) || s}
+    </Badge>
   )
 }
 
@@ -82,31 +111,37 @@ const PROBLEM_TYPES = [
 ]
 
 // ── Modül seviyesi alan bileşenleri (stabil kimlik → input remount/odak kaybı OLMAZ) ──
+// shadcn (2026-09-26, D2): ui/Field (etiket ↔ kontrol bağı) + Input / NativeSelect / Checkbox / Badge; eski
+// `.form-grid label` / `.tag-chip` / `.checkbox-label` legacy sınıfları yerine. `full` → ızgarada tam satır.
+const FULL = 'col-span-full'
 function TextInput({ label, value, onChange, disabled, type = 'text', req, full }) {
   return (
-    <label className={full ? 'full-width' : undefined}>
-      <span>{label}{req && <span className="req-star"> *</span>}</span>
-      <input type={type} value={value ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)} />
-    </label>
+    <Field label={label} required={req} className={full ? FULL : undefined}>
+      {({ id }) => <Input id={id} type={type} value={value ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)}
+        inputMode={type === 'number' ? 'decimal' : undefined} />}
+    </Field>
   )
 }
 function DateInput({ label, value, onChange, disabled, req, min }) {
   return (
-    <label>
-      <span>{label}{req && <span className="req-star"> *</span>}</span>
-      <DateTimeField value={value} onChange={onChange} disabled={disabled}
-                     placeholder={label} clearable={!req} min={min} />
-    </label>
+    <Field label={label} required={req}>
+      {() => <DateTimeField value={value} onChange={onChange} disabled={disabled}
+                            placeholder={label} clearable={!req} min={min} />}
+    </Field>
   )
 }
 function SelectInput({ label, value, onChange, disabled, options, req }) {
   return (
-    <label>
-      <span>{label}{req && <span className="req-star"> *</span>}</span>
-      <select value={value ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)}>
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </label>
+    <Field label={label} required={req}>
+      {({ id }) => (
+        // NativeSelect sarmalayıcısı `w-fit` — alan genişliğini doldursun diye doğrudan çocuğa w-full
+        <div className="*:w-full">
+          <NativeSelect id={id} value={value ?? ''} disabled={disabled} onChange={e => onChange(e.target.value)}>
+            {options.map(o => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
+          </NativeSelect>
+        </div>
+      )}
+    </Field>
   )
 }
 /** Yönetilen dropdown (kanal/domain) — sabit liste + yeni değer ekleme (creatable).
@@ -114,17 +149,34 @@ function SelectInput({ label, value, onChange, disabled, options, req }) {
 function CreatableSelect({ label, value, onChange, options, disabled, onCreate, onDelete }) {
   const opts = [{ value: '', label: '—' }, ...options.map(o => ({ value: o, label: o }))]
   return (
-    <label>
-      <span>{label}</span>
-      <SearchableSelect value={value ?? ''} onChange={onChange} disabled={disabled}
-        options={opts} creatable={!disabled} onCreate={onCreate}
-        onDelete={disabled ? undefined : onDelete} placeholder="—" />
-    </label>
+    <Field label={label}>
+      {({ id }) => (
+        <SearchableSelect id={id} value={value ?? ''} onChange={onChange} disabled={disabled}
+          options={opts} creatable={!disabled} onCreate={onCreate}
+          onDelete={disabled ? undefined : onDelete} placeholder="—" />
+      )}
+    </Field>
   )
 }
+
+/** Renkli etiket çipi (shadcn Badge) + kaldırma düğmesi — ton `h` (0-360). */
+function HueChip({ value, hue, disabled, onRemove, removeLabel }) {
+  return (
+    <Badge variant="outline" data-tag={value} className="gap-1 rounded-full py-0.5 pr-1 pl-2.5 font-semibold"
+      style={{ background: `hsl(${hue},70%,93%)`, color: `hsl(${hue},65%,30%)`, borderColor: `hsl(${hue},70%,78%)` }}>
+      {value}
+      {!disabled && (
+        <Button type="button" variant="ghost" size="icon-xs" aria-label={removeLabel}
+          className="size-5 rounded-full hover:bg-black/10" style={{ color: `hsl(${hue},60%,38%)` }} onClick={onRemove}>
+          <X aria-hidden="true" className="size-3" />
+        </Button>
+      )}
+    </Badge>
+  )
+}
+
 /** Çoklu seçim + creatable — değer CSV string ('a, b, c'). Seçilenler kaldırılabilir chip;
- *  "Ekle" için tekil SearchableSelect (seçilenler hariç). Picker seçim sonrası boş kalır.
- *  tagHue/.tag-chip yeniden kullanılır (yeni CSS yok). */
+ *  "Ekle" için tekil SearchableSelect (seçilenler hariç). Picker seçim sonrası boş kalır. */
 function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete, placeholder }) {
   const t = useT()
   const selected = (value || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -139,28 +191,24 @@ function CreatableMultiSelect({ label, value, onChange, options, disabled, onCre
               .map(o => ({ value: o, label: o })),
   ]
   return (
-    <label>
-      <span>{label}</span>
-      {!disabled && (
-        <SearchableSelect value="" onChange={add} options={opts} creatable
-          onCreate={v => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder={placeholder || '—'} />
-      )}
-      {selected.length > 0 ? (
-        <div className="tag-chips">
-          {selected.map(val => {
-            const h = tagHue(val)
-            return (
-              <span key={val} className="tag-chip"
-                style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
-                {val}
-                {!disabled && <button type="button" className="tag-chip-x" aria-label={t('tag.removeTag', val)}
-                  style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(val)}>×</button>}
-              </span>
-            )
-          })}
+    <Field label={label}>
+      {({ id }) => (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          {!disabled && (
+            <SearchableSelect id={id} value="" onChange={add} options={opts} creatable
+              onCreate={v => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder={placeholder || '—'} />
+          )}
+          {selected.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {selected.map(val => (
+                <HueChip key={val} value={val} hue={tagHue(val)} disabled={disabled}
+                  removeLabel={t('tag.removeTag', val)} onRemove={() => remove(val)} />
+              ))}
+            </div>
+          ) : (disabled && <span className="text-sm">—</span>)}
         </div>
-      ) : (disabled && <span className="show-field-value">—</span>)}
-    </label>
+      )}
+    </Field>
   )
 }
 /** Zengin metin alanı — Weekly Reports ile aynı markdown editör (full-width).
@@ -175,19 +223,20 @@ function MdArea({ label, value, onChange, editable, incidentId, makeUniqueCaptio
       }
     : undefined
   return (
-    <div className="full-width" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <span style={{ fontSize: '.88em', fontWeight: 600 }}>{label}</span>
+    <div className={cn(FULL, 'mb-3.5 flex min-w-0 flex-col gap-1.5')}>
+      <span className="text-[0.88em] font-semibold">{label}</span>
       <MarkdownEditor value={value} onChange={onChange} editable={editable} height={240}
                       uploadImage={uploadImage} makeUniqueCaption={makeUniqueCaption} />
     </div>
   )
 }
 function CheckInput({ label, checked, onChange, disabled }) {
+  const id = useId()
   return (
-    <label className="checkbox-label">
-      <input type="checkbox" checked={!!checked} disabled={disabled} onChange={e => onChange(e.target.checked)} />
-      {label}
-    </label>
+    <div className="mb-3.5 flex min-h-9 items-center gap-2 self-end">
+      <Checkbox id={id} checked={!!checked} disabled={disabled} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
+    </div>
   )
 }
 /** İlk render karesi için deterministik yedek ton (effect rastgele atayana dek). */
@@ -223,29 +272,25 @@ function TagInput({ label, value, onChange, disabled, t }) {
   }
   const remove = (tag) => onChange(tags.filter(x => x !== tag).join(', '))
   return (
-    <label className="full-width">
-      <span>{label}</span>
-      {!disabled && (
-        <input type="text" value={text} placeholder={t('inc.tagsHint')}
-          onChange={e => setText(e.target.value)} onBlur={add}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
-      )}
-      {tags.length > 0 && (
-        <div className="tag-chips">
-          {tags.map(tag => {
-            const h = hues[tag] ?? tagHue(tag)
-            return (
-              <span key={tag} className="tag-chip"
-                style={{ background: `hsl(${h},70%,93%)`, color: `hsl(${h},65%,30%)`, borderColor: `hsl(${h},70%,78%)` }}>
-                {tag}
-                {!disabled && <button type="button" className="tag-chip-x" aria-label={t('tag.removeTag', tag)}
-                  style={{ color: `hsl(${h},60%,38%)` }} onClick={() => remove(tag)}>×</button>}
-              </span>
-            )
-          })}
+    <Field label={label} className={FULL}>
+      {({ id }) => (
+        <div className="flex min-w-0 flex-col gap-1.5">
+          {!disabled && (
+            <Input id={id} type="text" value={text} placeholder={t('inc.tagsHint')}
+              onChange={e => setText(e.target.value)} onBlur={add}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
+          )}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map(tag => (
+                <HueChip key={tag} value={tag} hue={hues[tag] ?? tagHue(tag)} disabled={disabled}
+                  removeLabel={t('tag.removeTag', tag)} onRemove={() => remove(tag)} />
+              ))}
+            </div>
+          )}
         </div>
       )}
-    </label>
+    </Field>
   )
 }
 
@@ -262,11 +307,10 @@ export default function IncidentHistoryPage() {
   const allowView = canView('incidents.view')
   const allowManage = canEdit('incidents.manage')
   const allowDelete = canExecute('incidents.delete') // silme yalnız TEAM_ADMIN/ADMIN
+  // Telefonda tablo yerine kart listesi (yapı farkı → useIsMobile). allowView erken-dönüşünün ÜSTÜNDE (hook sırası).
+  const phone = useIsMobile()
 
   const [rows, setRows]   = useState([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage]   = useState(() => readUrlInt('page', 1) - 1)
-  const [size, setSize]   = useState(() => readUrlInt('ps', null) || readPageSize('incident-history'))
   const [loading, setLoading] = useState(false)
   const [trends, setTrends]   = useState(null)
   const [filters, setFilters] = useState({ q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '' })
@@ -277,8 +321,20 @@ export default function IncidentHistoryPage() {
   const effFilters = useMemo(() => ({ ...filters, q: qTerm }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [filters.severity, filters.category, filters.status, filters.channel, filters.team_id, filters.since, filters.until, qTerm])
+  // Sayfalama standardı (2026-09-26). Eskiden `useEffect(() => setPage(0), [effFilters, size])` MOUNT'ta
+  // da koşuyor, `?page=3` derin bağlantısını ilk render'da 1'e düşürüyordu; kanca sıfırlamayı yalnız
+  // süzgecin DEĞERİ değişince yapar. URL page/ps (1-tabanlı, ps ön ayar listesine karşı doğrulanır).
+  // DİKKAT: aşağıdaki `allowView` erken-return'ünün ÜSTÜNDE kalmalı (hook sırası).
+  const sp = useServerPagination({ listKey: 'incident-history', preset: 'page', resetDeps: [effFilters],
+    url: { pageKey: 'page', sizeKey: 'ps' }, apiBase: 0 })
+  const { apiPage, pageSize: size } = sp
+  const page = sp.page
   // Fetch yarışı: (eski sayfa) + (sayfa 0) çift istekte eski yanıt sonra dönerse listeyi ezerdi.
   const loadSeq = useRef(0)
+  // Trend çekimleri de yarışır: özet tarih aralığı / günlük pencere (30→60→90) hızlı değişince geç dönen ESKİ yanıt
+  // yeni pencerenin grafiğini ezerdi. Yalnız EN SON isteğin yanıtı uygulanır.
+  const trendsSeq = useRef(0)
+  const trendDailySeq = useRef(0)
   const [modal, setModal] = useState(null) // { mode:'view'|'edit'|'create', form }
   const [saving, setSaving] = useState(false)
   const [channelOpts, setChannelOpts] = useState([])
@@ -301,20 +357,22 @@ export default function IncidentHistoryPage() {
       try {
         const res = await api.incidents.list({ ...effFilters,
           since: localDayToUtcIso(effFilters.since, false),
-          until: localDayToUtcIso(effFilters.until, true), page, size })
+          until: localDayToUtcIso(effFilters.until, true), page: apiPage, size })
         if (seq !== loadSeq.current) return   // bayat yanıt
-        if (res?.success) { setRows(res.data ?? []); setTotal(res.total ?? 0) }
+        if (res?.success) { setRows(res.data ?? []); sp.bind(res) }
         else toast.error(res?.error || t('inc.loadError'))
       } catch { if (seq === loadSeq.current) toast.error(t('inc.loadError')) }
     } finally {
       if (seq === loadSeq.current) setLoading(false)
     }
-  }, [effFilters, page, size, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effFilters, apiPage, size, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadTrends = useCallback(async () => {
     if (!allowView) return
+    const my = ++trendsSeq.current
     try {
       const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
+      if (my !== trendsSeq.current) return   // bayat yanıt — daha yeni bir aralık istendi
       if (res?.success) setTrends(res.data)
     } catch { /* sessiz — özet paneli boş kalır, liste yine çizilir (efektten fire-and-forget çağrılıyor) */ }
   }, [filters.since, filters.until, allowView])
@@ -367,15 +425,16 @@ export default function IncidentHistoryPage() {
     const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     const today = new Date()
     const since = ymd(new Date(today.getTime() - (trendDays - 1) * 86400000))
+    const my = ++trendDailySeq.current
     try {
       const res = await api.incidents.trends(localDayToUtcIso(since, false), localDayToUtcIso(ymd(today), true))
+      if (my !== trendDailySeq.current) return   // bayat yanıt — daha yeni bir pencere (30/60/90) istendi
       if (res?.success) setTrendDaily(res.data?.daily ?? [])
     } catch { /* sessiz — günlük trend grafiği boş kalır, sayfa ayakta (efektten fire-and-forget çağrılıyor) */ }
   }, [trendDays, allowView])
   useEffect(() => { loadTrendDaily() }, [loadTrendDaily])
   useEffect(() => { loadOptions() }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
-  useEffect(() => { setPage(0) }, [effFilters, size])
   useEffect(() => { setSelected(new Set()) }, [filters, page, size]) // sayfa/filtre değişince seçim sıfırlanır
 
   // E-posta deep-link: ?incident=<id> → o olayı çekip detay modalını aç, sonra paramı temizle
@@ -421,19 +480,12 @@ export default function IncidentHistoryPage() {
     return out
   }, [trendDaily, trendDays])
 
-  // Paylaşılabilir URL: sayfa/boyut (URL'de HEP 1-tabanlı).
-  // DİKKAT: bu çağrı aşağıdaki `allowView` erken-return'ünün ÜSTÜNDE kalmalı. Altında
-  // olduğunda yetkiler asenkron yüklendiği için `allowView` false→true dönüyor ve hook
-  // sayısı render'lar arasında değişiyordu ("Rendered more hooks than during the previous
-  // render"). Bu bileşene yeni hook eklerken de aynı kurala uyun.
-  useUrlQuerySync({
-    page: page > 0 ? page + 1 : null,
-    ps: (size !== 50 || page > 0) ? size : null,
-  })
+  // Paylaşılabilir URL (page/ps) artık useServerPagination'da (yukarıda, erken-return'ün ÜSTÜNDE).
+  // Yetkiler asenkron yüklendiği için `allowView` false→true döner; hook'lar erken-return'ün altına
+  // konursa hook sayısı render'lar arasında değişir. Bu bileşene yeni hook eklerken de aynı kurala uyun.
 
-  if (!allowView) return <div className="empty-state">{t('inc.noAccess')}</div>
+  if (!allowView) return <StatusBlock tone="neutral" icon={ListChecks} title={t('inc.noAccess')} />
 
-  const totalPages = Math.max(1, Math.ceil(total / size))
   const setF = (k, v) => setFilters(f => ({ ...f, [k]: v }))
   // Trend çubuğuna tıkla → o günü listede filtrele (since=until=gün); aynı güne tekrar tıkla → temizle.
   const toggleDay = (day) => {
@@ -535,105 +587,179 @@ export default function IncidentHistoryPage() {
     } else toast.error(res?.error || t('inc.saveError'))
   }
 
-  const sevBadge = (s) => <span style={{ color: SEV_COLOR[s] || '#71717a', fontWeight: 700 }}>{t('inc.sev' + s) || s}</span>
   const sum = trends?.summary || {}
   const bySev = trends?.by_severity || {}
   const byStatus = trends?.by_status || {}
 
+  // Özet kartları — MonitorStatsBar (tıklanınca süzgeç; etkin kart tekrar tıklanınca kalkar). Etkin kart,
+  // eski satır-içi `outline` koşuluyla AYNI kuraldan hesaplanır (tek etkin anahtar).
+  const isActiveKind = (kind) => (kind === 'critical' && filters.severity === 'CRITICAL')
+    || (kind === 'high' && filters.severity === 'HIGH')
+    || (kind === 'medium' && filters.severity === 'MEDIUM')
+    || (kind === 'low' && filters.severity === 'LOW')
+    || (kind === 'sla' && filters.slaBreached === true)
+    || (kind === 'open' && filters.open === true)
+    || (kind === 'investigating' && filters.status === 'INVESTIGATING')
+    || (kind === 'mitigated' && filters.status === 'MITIGATED')
+    || (kind === 'resolved' && filters.status === 'RESOLVED' && filters.slaBreached !== false)
+    || (kind === 'resolved_sla' && filters.status === 'RESOLVED' && filters.slaBreached === false)
+    || (kind === 'today' && filters._preset === 'today')
+    || (kind === 'last7d' && filters._preset === 'last7d')
+    || (kind === 'last30d' && filters._preset === 'last30d')
+    || (kind === 'total' && !filters.severity && !filters.status && filters.slaBreached === undefined
+        && filters.open === undefined && !filters.category && !filters.channel && !filters.q && !filters._preset)
+  const statItems = [
+    ['sumTotal', sum.total, 'total', 'total', Sigma],
+    ['sumCritical', sum.critical, 'critical', 'critical', AlertOctagon],
+    ['sumHigh', bySev.HIGH, 'high', 'high', AlertTriangle],
+    ['sumMedium', bySev.MEDIUM, 'warning', 'medium', AlertCircle],
+    ['sumLow', bySev.LOW, 'valid', 'low', ArrowDownCircle],
+    ['sumOpen', sum.open, 'alert', 'open', CircleDot],
+    ['sumInvestigating', byStatus.INVESTIGATING, 'total', 'investigating', SearchIcon],
+    ['sumMitigated', byStatus.MITIGATED, 'total', 'mitigated', Shield],
+    ['sumResolved', sum.resolved, 'valid', 'resolved', CheckCircle2],
+    ['sumSla', sum.sla_breached, 'expired', 'sla', Lock],
+    ['sumResolvedSla', sum.resolved_within_sla, 'valid', 'resolved_sla', ShieldCheck],
+    ['sumToday', sum.today, 'total', 'today', Calendar],
+    ['sumLast7d', sum.last_7d, 'total', 'last7d', CalendarRange],
+    ['sumLast30d', sum.last_30d, 'total', 'last30d', CalendarDays],
+  ].map(([k, v, cls, kind, Icon]) => ({ key: kind, label: t('inc.' + k), value: v ?? 0, cls, Icon, hint: t('inc.filterByCard') }))
+  const activeKind = statItems.find(it => isActiveKind(it.key))?.key ?? null
+
+  const chartConfig = Object.fromEntries(SEV_BARS.map(sv => [sv.key, { label: t(sv.label), color: sv.color }]))
+  const openRecord = (r) => setModal({ mode: 'view', form: { ...EMPTY, ...r } })
+  const rowKey = (e, fn) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); fn() } }
+  const TH = 'h-9 px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase'
+
+  const selectBox = (r) => (
+    // Ad satırı ayırır: toplu takım aktarımı onayı yalnız ADET söylüyor (2026-09-25, R5).
+    <Checkbox checked={selected.has(r.id)} onCheckedChange={() => toggleSel(r.id)}
+      aria-label={t('bulk.selectOneFor', r.title || r.id)} />
+  )
+  const editButton = (r, big = false) => (
+    <Button type="button" variant="outline" size={big ? 'icon' : 'icon-sm'} title={t('inc.edit')}
+      aria-label={t('a11y.rowAction', r.title || r.id, t('inc.edit'))}
+      onClick={e => { e.stopPropagation(); setModal({ mode: 'edit', form: { ...EMPTY, ...r } }) }}>
+      <Pencil aria-hidden="true" />
+    </Button>
+  )
+
+  // Masaüstü: shadcn Table (satır tıklaması ayrıntıyı açar; klavye Enter/Space). Düşük öncelikli sütunlar dar ekranda gizli.
+  const desktop = (
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <Table className="text-[0.88em]">
+        <TableHeader className="bg-muted/50">
+          <TableRow className="hover:bg-transparent">
+            {allowManage && (
+              <TableHead className={cn(TH, 'w-9')}>
+                <Checkbox checked={allOnPage} onCheckedChange={toggleAll} aria-label={t('inc.selectAll')} title={t('inc.selectAll')} />
+              </TableHead>
+            )}
+            <TableHead className={TH}>{t('inc.colTime')}</TableHead>
+            <TableHead className={TH}>{t('inc.colTitle')}</TableHead>
+            <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('inc.colTeam')}</TableHead>
+            <TableHead className={cn(TH, 'hidden xl:table-cell')}>{t('inc.colChannel')}</TableHead>
+            <TableHead className={cn(TH, 'hidden xl:table-cell')}>{t('inc.colService')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('inc.colCategory')}</TableHead>
+            <TableHead className={TH}>{t('inc.colSeverity')}</TableHead>
+            <TableHead className={cn(TH, 'hidden md:table-cell')}>{t('inc.colStatus')}</TableHead>
+            <TableHead className={cn(TH, 'hidden lg:table-cell')}>{t('inc.colSla')}</TableHead>
+            <TableHead className={cn(TH, 'w-12')}><span className="sr-only">{t('inc.edit')}</span></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map(r => (
+            <TableRow key={r.id} tabIndex={0} data-state={selected.has(r.id) ? 'selected' : undefined}
+              aria-label={t('a11y.openRow', r.title || r.id)}
+              className="cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+              onClick={() => openRecord(r)} onKeyDown={(e) => rowKey(e, () => openRecord(r))}>
+              {allowManage && <TableCell onClick={e => e.stopPropagation()}>{selectBox(r)}</TableCell>}
+              <TableCell className="whitespace-nowrap tabular-nums">{formatDate(r.occurred_at)}</TableCell>
+              <TableCell className="max-w-[22rem] min-w-[12rem] font-medium whitespace-normal [overflow-wrap:anywhere]">{r.title}</TableCell>
+              <TableCell className="hidden md:table-cell">{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</TableCell>
+              <TableCell className="hidden whitespace-normal xl:table-cell">{r.channel || '—'}</TableCell>
+              <TableCell className="hidden whitespace-normal xl:table-cell">{r.service || '—'}</TableCell>
+              <TableCell className="hidden lg:table-cell">{t('inc.cat' + r.category) || r.category}</TableCell>
+              <TableCell><SevBadge s={r.severity} t={t} /></TableCell>
+              <TableCell className="hidden md:table-cell">{t('inc.st' + r.status) || r.status}</TableCell>
+              <TableCell className="hidden lg:table-cell">{r.sla_breached ? <span className="font-bold text-destructive">✓</span> : '—'}</TableCell>
+              <TableCell className="text-right" onClick={e => e.stopPropagation()}>{allowManage && editButton(r)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+
+  // Telefon: kart listesi — başlık (sarar) + önem, zaman · durum · kategori, takım; seçim kutusu + düzenle ≥ 40 px.
+  const mobile = (
+    <ul className="flex list-none flex-col gap-2 p-0">
+      {rows.map(r => (
+        <li key={r.id} className={cn('min-w-0 overflow-hidden rounded-lg border bg-card', selected.has(r.id) && 'border-primary bg-primary/5')}>
+          <Button type="button" variant="ghost" onClick={() => openRecord(r)}
+            className="h-auto w-full flex-col items-stretch gap-1.5 rounded-none px-3 py-2.5 text-left font-normal whitespace-normal">
+            <span className="flex min-w-0 items-start justify-between gap-2">
+              <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{r.title}</span>
+              <SevBadge s={r.severity} t={t} />
+            </span>
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.84em] text-muted-foreground">
+              <span className="tabular-nums">{formatDate(r.occurred_at)}</span>
+              <span aria-hidden="true">·</span><span>{t('inc.st' + r.status) || r.status}</span>
+              <span aria-hidden="true">·</span><span>{t('inc.cat' + r.category) || r.category}</span>
+              {r.sla_breached && <><span aria-hidden="true">·</span><span className="font-bold text-destructive">{t('inc.colSla')} ✓</span></>}
+            </span>
+          </Button>
+          <div className="flex min-w-0 items-center justify-between gap-2 border-t px-3 py-1.5">
+            <span className="flex min-w-0 items-center gap-3">
+              {allowManage && <span className="inline-flex size-10 items-center justify-center">{selectBox(r)}</span>}
+              <span className="min-w-0">{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="text-muted-foreground">—</span>}</span>
+            </span>
+            {allowManage && editButton(r, true)}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+
   return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <h3>{t('inc.title')}</h3>
-        <div style={{ display: 'flex', gap: 8 }}>
+    <section data-slot="incident-history" className="mb-8 flex min-w-0 flex-col gap-3">
+      {/* Başlık + eylemler — telefonda alt alta */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <h3 className="text-lg leading-tight font-semibold">{t('inc.title')}</h3>
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" onClick={() => { load(); loadTrends(); loadTrendDaily() }} disabled={loading}>
-            <RefreshCcw size={13} /> {t('inc.refresh')}
+            <RefreshCcw aria-hidden="true" /> {t('inc.refresh')}
           </Button>
           {allowManage && (
             <Button size="sm" onClick={() => setModal({ mode: 'create', form: { ...EMPTY } })}>
-              <Plus size={14} /> {t('inc.new')}
+              <Plus aria-hidden="true" /> {t('inc.new')}
             </Button>
           )}
         </div>
       </div>
 
-      {/* Özet (executive kartlar + günlük trend) — akordiyon: varsayılan kapalı, "Göster" ile açılır */}
-      <button type="button" className="inc-summary-acc" aria-expanded={showSummary}
-              onClick={() => setShowSummary(s => !s)}>
-        {showSummary ? <ChevronDown size={16} className="inc-summary-acc-chev" />
-                     : <ChevronRight size={16} className="inc-summary-acc-chev" />}
-        <span className="inc-summary-acc-title">{t('inc.summary')}</span>
-        <span className="inc-summary-acc-action">{showSummary ? t('inc.hide') : t('inc.show')}</span>
-      </button>
+      {/* Özet (executive kartlar + günlük trend) — projenin tek katlanır şeridi (ui/CollapsibleSection); varsayılan kapalı */}
+      <CollapsibleSection open={showSummary} onOpenChange={setShowSummary} icon={BarChart3} label={t('inc.summary')}
+        hint={t('inc.show')} toggleLabel={showSummary ? t('inc.hide') : t('inc.show')} contentClassName="mt-3">
+        <MonitorStatsBar items={statItems} activeFilter={activeKind} onStatClick={applyCardFilter} />
 
-      {showSummary && (<>
-      {/* Executive özet kartları — tıklanınca filtre uygular (proje stats-panel deseni) */}
-      <div className="stats-panel" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
-        {[['sumTotal', sum.total, 'total', 'total'],
-          ['sumCritical', sum.critical, 'critical', 'critical'],
-          ['sumHigh', bySev.HIGH, 'high', 'high'],
-          ['sumMedium', bySev.MEDIUM, 'medium', 'medium'],
-          ['sumLow', bySev.LOW, 'low', 'low'],
-          ['sumOpen', sum.open, 'warning', 'open'],
-          ['sumInvestigating', byStatus.INVESTIGATING, 'investigating', 'investigating'],
-          ['sumMitigated', byStatus.MITIGATED, 'mitigated', 'mitigated'],
-          ['sumResolved', sum.resolved, 'valid', 'resolved'],
-          ['sumSla', sum.sla_breached, 'alert', 'sla'],
-          ['sumResolvedSla', sum.resolved_within_sla, 'resolvedsla', 'resolved_sla'],
-          ['sumToday', sum.today, 'today', 'today'],
-          ['sumLast7d', sum.last_7d, 'last7d', 'last7d'],
-          ['sumLast30d', sum.last_30d, 'last30d', 'last30d']].map(([k, v, variant, kind]) => {
-          const active = (kind === 'critical' && filters.severity === 'CRITICAL')
-            || (kind === 'high' && filters.severity === 'HIGH')
-            || (kind === 'medium' && filters.severity === 'MEDIUM')
-            || (kind === 'low' && filters.severity === 'LOW')
-            || (kind === 'sla' && filters.slaBreached === true)
-            || (kind === 'open' && filters.open === true)
-            || (kind === 'investigating' && filters.status === 'INVESTIGATING')
-            || (kind === 'mitigated' && filters.status === 'MITIGATED')
-            || (kind === 'resolved' && filters.status === 'RESOLVED' && filters.slaBreached !== false)
-            || (kind === 'resolved_sla' && filters.status === 'RESOLVED' && filters.slaBreached === false)
-            || (kind === 'today' && filters._preset === 'today')
-            || (kind === 'last7d' && filters._preset === 'last7d')
-            || (kind === 'last30d' && filters._preset === 'last30d')
-            || (kind === 'total' && !filters.severity && !filters.status && filters.slaBreached === undefined
-                && filters.open === undefined && !filters.category && !filters.channel && !filters.q && !filters._preset)
-          return (
-            <div key={k} className={`stat-item stat-item-${variant}`} role="button" tabIndex={0}
-                 title={t('inc.filterByCard')} onClick={() => applyCardFilter(kind)}
-                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); applyCardFilter(kind) } }}
-                 style={{ cursor: 'pointer', ...(active ? { outline: '2px solid var(--primary)', outlineOffset: '-2px' } : {}) }}>
-              <div className={`stat-value stat-value-${variant}`}>{v ?? 0}</div>
-              <span className="stat-label">{t('inc.' + k)}</span>
+        {/* Günlük trend — gün başına olay sayısı (olaysız günler dahil; tarih + adet etiketli). shadcn Chart. */}
+        {dailyChart.length > 0 && (
+          <div data-slot="incident-trend" className="mb-2 flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">{t('inc.trend')}</span>
+              <SegmentedControl value={String(trendDays)} onChange={v => setTrendDays(Number(v))} ariaLabel={t('inc.trend')}
+                options={[30, 60, 90].map(dd => ({ value: String(dd), label: `${dd}${t('inc.trendDayUnit')}` }))} />
             </div>
-          )
-        })}
-      </div>
-
-      {/* Günlük trend — gün başına olay sayısı (olaysız günler dahil; tarih + adet etiketli) */}
-      {dailyChart.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div className="show-section-header inc-trend-head">
-            <span>{t('inc.trend')}</span>
-            <span className="inc-trend-range">
-              {[30, 60, 90].map(dd => (
-                <button key={dd} type="button"
-                        className={`inc-trend-btn${trendDays === dd ? ' active' : ''}`}
-                        onClick={() => setTrendDays(dd)}>{dd}{t('inc.trendDayUnit')}</button>
-              ))}
-            </span>
-          </div>
-          <div style={{ marginTop: 4 }}>
-            <ResponsiveContainer width="100%" height={170}>
+            <ChartContainer config={chartConfig} className="aspect-auto h-[190px] w-full">
               <BarChart data={dailyChart} margin={{ top: 12, right: 8, bottom: 0, left: -18 }} barCategoryGap="16%">
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="day" tickFormatter={(d) => d.slice(8, 10) + '.' + d.slice(5, 7)}
-                  tick={{ fill: 'var(--text-light)', fontSize: 10 }} tickLine={false}
-                  axisLine={{ stroke: 'var(--border)' }} minTickGap={10}
+                  tick={{ fontSize: 10 }} tickLine={false} minTickGap={10}
                   interval={Math.max(0, Math.floor(dailyChart.length / 10))} />
-                <YAxis allowDecimals={false} tick={{ fill: 'var(--text-light)', fontSize: 10 }}
-                  width={26} tickLine={false} axisLine={false} />
-                <RTooltip content={<TrendTooltip t={t} />} cursor={{ fill: 'var(--primary)', fillOpacity: 0.08 }} />
-                <Legend wrapperStyle={{ fontSize: '.78em' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={26} tickLine={false} axisLine={false} />
+                <ChartTooltip content={<TrendTooltip t={t} />} cursor={{ fill: 'var(--primary)', fillOpacity: 0.08 }} />
+                <ChartLegend content={<ChartLegendContent />} />
                 {SEV_BARS.map((sv, si) => (
                   <Bar key={sv.key} dataKey={sv.key} stackId="s" name={t(sv.label)} fill={sv.color}
                     isAnimationActive={false} cursor="pointer"
@@ -647,135 +773,84 @@ export default function IncidentHistoryPage() {
                   </Bar>
                 ))}
               </BarChart>
-            </ResponsiveContainer>
-            <div style={{ fontSize: '.72em', color: 'var(--text-muted)', marginTop: 2 }}>{t('inc.trendClickHint')}</div>
+            </ChartContainer>
+            <p className="text-[0.72em] text-muted-foreground">{t('inc.trendClickHint')}</p>
           </div>
-        </div>
-      )}
-      </>)}
+        )}
+      </CollapsibleSection>
 
-      {/* Filtreler */}
-      <div className="inv-stats-pills" style={{ marginBottom: 12, gap: 8, alignItems: 'center' }}>
-        <input className="filter-input" placeholder={t('inc.search')} value={filters.q}
-               onChange={e => setF('q', e.target.value)} style={{ minWidth: 200 }} />
-        <select className="filter-select" value={filters.severity} onChange={e => setF('severity', e.target.value)}>
-          <option value="">{t('inc.filterSeverity')}</option>
-          {SEVERITIES.map(s => <option key={s} value={s}>{t('inc.sev' + s)}</option>)}
-        </select>
-        <select className="filter-select" value={filters.category} onChange={e => setF('category', e.target.value)}>
-          <option value="">{t('inc.filterCategory')}</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{t('inc.cat' + c)}</option>)}
-        </select>
-        <select className="filter-select" value={filters.status} onChange={e => setF('status', e.target.value)}>
-          <option value="">{t('inc.filterStatus')}</option>
-          {STATUSES.map(s => <option key={s} value={s}>{t('inc.st' + s)}</option>)}
-        </select>
-        <select className="filter-select" value={filters.channel} onChange={e => setF('channel', e.target.value)}>
-          <option value="">{t('inc.filterChannel')}</option>
-          {channelOpts.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select className="filter-select" value={filters.team_id} onChange={e => setF('team_id', e.target.value)}>
-          <option value="">{t('inc.filterTeam')}</option>
-          {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
-        </select>
-        <span className="inc-date-pair">
-          <span className="inc-date-lbl">{t('inc.since')}</span>
+      {/* Süzgeçler — mobil-önce: telefonda tam genişlik, alt alta; sm+ sarar */}
+      <div data-slot="incident-filters" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <InputGroup className="w-full sm:w-64">
+          <InputGroupInput type="search" placeholder={t('inc.search')} aria-label={t('inc.search')} value={filters.q}
+            onChange={e => setF('q', e.target.value)} />
+          <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
+        </InputGroup>
+        {/* Seçiciler: telefonda 2 sütunlu ızgara (NativeSelect sarmalayıcısı `w-fit` → *:w-full), sm+ tek satırda sarar */}
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:*:min-w-[150px]">
+          <div className="*:w-full"><NativeSelect aria-label={t('inc.colSeverity')} value={filters.severity} onChange={e => setF('severity', e.target.value)}>
+            <NativeSelectOption value="">{t('inc.filterSeverity')}</NativeSelectOption>
+            {SEVERITIES.map(s => <NativeSelectOption key={s} value={s}>{t('inc.sev' + s)}</NativeSelectOption>)}
+          </NativeSelect></div>
+          <div className="*:w-full"><NativeSelect aria-label={t('inc.colCategory')} value={filters.category} onChange={e => setF('category', e.target.value)}>
+            <NativeSelectOption value="">{t('inc.filterCategory')}</NativeSelectOption>
+            {CATEGORIES.map(c => <NativeSelectOption key={c} value={c}>{t('inc.cat' + c)}</NativeSelectOption>)}
+          </NativeSelect></div>
+          <div className="*:w-full"><NativeSelect aria-label={t('inc.colStatus')} value={filters.status} onChange={e => setF('status', e.target.value)}>
+            <NativeSelectOption value="">{t('inc.filterStatus')}</NativeSelectOption>
+            {STATUSES.map(s => <NativeSelectOption key={s} value={s}>{t('inc.st' + s)}</NativeSelectOption>)}
+          </NativeSelect></div>
+          <div className="*:w-full"><NativeSelect aria-label={t('inc.colChannel')} value={filters.channel} onChange={e => setF('channel', e.target.value)}>
+            <NativeSelectOption value="">{t('inc.filterChannel')}</NativeSelectOption>
+            {channelOpts.map(c => <NativeSelectOption key={c} value={c}>{c}</NativeSelectOption>)}
+          </NativeSelect></div>
+          <div className="*:w-full"><NativeSelect aria-label={t('inc.colTeam')} value={filters.team_id} onChange={e => setF('team_id', e.target.value)}>
+            <NativeSelectOption value="">{t('inc.filterTeam')}</NativeSelectOption>
+            {teams.map(tm => <NativeSelectOption key={tm.id} value={String(tm.id)}>{tm.name}</NativeSelectOption>)}
+          </NativeSelect></div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">{t('inc.since')}</span>
           <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.since')}
             value={filters.since} onChange={v => setF('since', v || '')} />
-        </span>
-        <span className="inc-date-pair">
-          <span className="inc-date-lbl">{t('inc.until')}</span>
+          <span className="text-xs font-semibold text-muted-foreground">{t('inc.until')}</span>
           <DateTimeField dateOnly clearable className="dtf-inline" placeholder={t('inc.until')}
             value={filters.until} onChange={v => setF('until', v || '')} />
-        </span>
+        </div>
       </div>
 
       {/* Toplu transfer çubuğu — seçim varken */}
       {allowManage && selected.size > 0 && (
-        <div className="inv-stats-pills" style={{ marginBottom: 10, gap: 8, alignItems: 'center',
-          background: '#f4f4f5', padding: '8px 12px', borderRadius: 6 }}>
-          <span style={{ fontWeight: 700, fontSize: '.9em' }}>{t('inc.selectedN', selected.size)}</span>
-          <select className="filter-select" value={transferTeam} onChange={e => setTransferTeam(e.target.value)}>
-            <option value="">{t('inc.transferTo')}</option>
-            {teams.map(tm => <option key={tm.id} value={String(tm.id)}>{tm.name}</option>)}
-          </select>
+        <div data-slot="incident-bulk" role="group" aria-label={t('inc.selectedN', selected.size)}
+          className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
+          <span className="text-[0.9em] font-bold">{t('inc.selectedN', selected.size)}</span>
+          <NativeSelect size="sm" aria-label={t('inc.transferTo')} value={transferTeam} onChange={e => setTransferTeam(e.target.value)}>
+            <NativeSelectOption value="">{t('inc.transferTo')}</NativeSelectOption>
+            {teams.map(tm => <NativeSelectOption key={tm.id} value={String(tm.id)}>{tm.name}</NativeSelectOption>)}
+          </NativeSelect>
           <Button size="sm" disabled={!transferTeam} onClick={doTransfer}>{t('inc.transferBtn')}</Button>
           <Button variant="secondary" size="sm" onClick={() => setSelected(new Set())}>{t('inc.clearSel')}</Button>
         </div>
       )}
 
-      {/* Tablo */}
+      {/* Liste — masaüstünde tablo, telefonda kart */}
       {loading && <LoadingBlock label={t('inc.loading')} fullWidth />}
-      {!loading && rows.length === 0 && <div className="empty-state">{t('inc.noResults')}</div>}
-      {!loading && rows.length > 0 && (
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead><tr>
-              {allowManage && <th style={{ width: 28 }}>
-                <input type="checkbox" checked={allOnPage} onChange={toggleAll} title={t('inc.selectAll')} />
-              </th>}
-              <th>{t('inc.colTime')}</th><th>{t('inc.colTitle')}</th><th>{t('inc.colTeam')}</th><th>{t('inc.colChannel')}</th><th>{t('inc.colService')}</th>
-              <th>{t('inc.colCategory')}</th><th>{t('inc.colSeverity')}</th><th>{t('inc.colStatus')}</th>
-              <th>{t('inc.colSla')}</th><th></th>
-            </tr></thead>
-            <tbody>
-              {rows.map(r => (
-                <tr key={r.id} style={{ cursor: 'pointer' }} tabIndex={0}
-                  aria-label={t('a11y.openRow', r.title || r.id)}
-                  onClick={() => setModal({ mode: 'view', form: { ...EMPTY, ...r } })}
-                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setModal({ mode: 'view', form: { ...EMPTY, ...r } }) } }}>
-                  {allowManage && <td onClick={e => e.stopPropagation()}>
-                    {/* Ad satırı ayırır: toplu takım aktarımı onayı yalnız ADET söylüyor (2026-09-25, R5). */}
-                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)}
-                      aria-label={t('bulk.selectOneFor', r.title || r.id)} />
-                  </td>}
-                  <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.occurred_at)}</td>
-                  <td>{r.title}</td>
-                  <td>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : '—'}</td>
-                  <td>{r.channel || '—'}</td>
-                  <td>{r.service || '—'}</td>
-                  <td>{t('inc.cat' + r.category) || r.category}</td>
-                  <td>{sevBadge(r.severity)}</td>
-                  <td>{t('inc.st' + r.status) || r.status}</td>
-                  <td>{r.sla_breached ? <span style={{ color: '#dc2626', fontWeight: 700 }}>✓</span> : '—'}</td>
-                  <td onClick={e => e.stopPropagation()}>
-                    {allowManage && (
-                      <Button variant="outline" size="sm" title={t('inc.edit')}
-                              aria-label={t('a11y.rowAction', r.title || r.id, t('inc.edit'))}
-                              onClick={() => setModal({ mode: 'edit', form: { ...EMPTY, ...r } })}>
-                        <Pencil size={13} />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {!loading && rows.length === 0 && <StatusBlock tone="neutral" icon={ListChecks} title={t('inc.noResults')} />}
+      {!loading && rows.length > 0 && (phone ? mobile : desktop)}
 
-      {/* Sayfalama */}
-      {!loading && (
-        <PaginationBar
-          page={page + 1} totalPages={totalPages} totalItems={total}
-          rangeStart={total === 0 ? 0 : page * size + 1}
-          rangeEnd={Math.min((page + 1) * size, total)}
-          pageSize={size}
-          onPageChange={p => setPage(p - 1)}
-          onPageSizeChange={n => { setSize(n); writePageSize('incident-history', n) }}
-        />
-      )}
+      {/* Sayfalama — standart çubuk; yüklenirken de yerinde kalır (sayfa değişiminde zıplamasın) */}
+      <PaginationBar {...sp.bar} />
 
       {modal && <IncidentModal modal={modal} setModal={setModal} save={save} remove={remove}
                                saving={saving} allowManage={allowManage} allowDelete={allowDelete} t={t} teams={teams}
                                channelOpts={channelOpts} domainOpts={domainOpts} errorCodeOpts={errorCodeOpts}
                                functionCodeOpts={functionCodeOpts} channelCodeOpts={channelCodeOpts}
                                onAddOption={addOption} onDeleteOption={deleteOption} />}
-    </div>
+    </section>
   )
 }
 
-/** Detay (read-only) / düzenle / oluştur modalı — proje form deseni (modal-box + form-grid). */
+/** Detay (read-only) / düzenle / oluştur modalı — ui/ModalShell + ui/Field ızgarası (shadcn, D2 2026-09-26). */
 function IncidentModal({ modal, setModal, save, remove, saving, allowManage, allowDelete, t, teams, channelOpts, domainOpts, errorCodeOpts, functionCodeOpts, channelCodeOpts, onAddOption, onDeleteOption }) {
   const editing = modal.mode !== 'view'
   const f = modal.form
@@ -844,19 +919,29 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
     return cand
   }, [])
 
+  // ui/ModalShell (shadcn Dialog). Dış tıklamada KAPANMAZ — giriş kaybını önlemek için (Escape/X/İptal kapatır);
+  // uzun form gövdesi kayar, eylem altlığı sabit. Mail önizlemesi iç içe ikinci kabuk (derinlik z'si üstte).
   return (
     <>
-    <div className="modal-overlay">
-      {/* Dış tıklamada KAPANMAZ — giriş kaybını önlemek için yalnız İptal/Kaydet ile kapanır */}
-      <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}>
-        <div className="modal-icon-hdr">
-          <div className="modal-icon-hdr-badge" style={{ background: 'linear-gradient(135deg,#09090b,#3f3f46)', color: '#fff' }}>
-            <ListChecks size={20} />
+    <ModalShell open onClose={() => setModal(null)} title={t(titleKey)} icon={ListChecks} size="xl" scrollBody
+      dismissOnBackdrop={false} busy={saving}
+      footer={(
+        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          {editing && <SendMailCheckbox checked={!!f.send_notification} label={t('inc.sendMail')} onChange={v => set('send_notification', v)} />}
+          <div className="flex flex-wrap justify-end gap-2">
+            {editing && <Button variant="secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</Button>}
+            {editing && <Button onClick={save} disabled={saving}>{t('inc.save')}</Button>}
+            {modal.mode === 'view' && (
+              <>
+                {allowManage && <Button variant="secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}><Pencil aria-hidden="true" />{t('inc.edit')}</Button>}
+                {allowDelete && <Button variant="destructive" onClick={() => remove(f)}><Trash2 aria-hidden="true" /> {t('inc.delete')}</Button>}
+              </>
+            )}
+            <Button variant="secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</Button>
           </div>
-          <h3>{t(titleKey)}</h3>
         </div>
-
-        <div className="form-grid form-grid--top">
+      )}>
+        <div data-slot="incident-form" className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-3">
           <TextInput label={t('inc.fTitle')} req full value={f.title} disabled={!editing} onChange={v => set('title', v)} />
           <DateInput label={t('inc.fOccurredAt')} req value={f.occurred_at} disabled={!editing} onChange={v => set('occurred_at', v)} />
           <SelectInput label={t('inc.fTeam')} req value={f.team_id != null ? String(f.team_id) : ''} disabled={!editing}
@@ -901,40 +986,24 @@ function IncidentModal({ modal, setModal, save, remove, saving, allowManage, all
           <MdArea label={t('inc.fResolution')} value={f.resolution_steps} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('resolution_steps', v)} />
           <MdArea label={t('inc.fBusinessImpact')} value={f.business_impact} editable={editing} incidentId={f.id} makeUniqueCaption={makeUniqueCaption} onChange={v => set('business_impact', v)} />
         </div>
-
-        <div className="modal-actions">
-          {editing && (
-            <label className="inc-sendmail" style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto', fontSize: '.85em', fontWeight: 600, cursor: 'pointer' }}>
-              <input type="checkbox" checked={!!f.send_notification} onChange={e => set('send_notification', e.target.checked)} />
-              {t('inc.sendMail')}
-            </label>
-          )}
-          {editing && <Button variant="secondary" onClick={openPreview} disabled={previewing}>{previewing ? t('inc.previewing') : t('inc.previewMail')}</Button>}
-          {editing && <Button onClick={save} disabled={saving}>{t('inc.save')}</Button>}
-          {modal.mode === 'view' && (
-            <>
-              {allowManage && <Button variant="secondary" onClick={() => setModal(m => ({ ...m, mode: 'edit' }))}>{t('inc.edit')}</Button>}
-              {allowDelete && <Button variant="destructive" onClick={() => remove(f)}><Trash2 size={13} /> {t('inc.delete')}</Button>}
-            </>
-          )}
-          <Button variant="secondary" onClick={() => setModal(null)}>{t('inc.cancel')}</Button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
     {/* Mail önizleme — kaydetmeden gidecek mailin görünümü (haftalık rapor deseni) */}
-    {previewHtml != null && (
-      <div className="modal-overlay" onClick={() => setPreviewHtml(null)}>
-        <div className="modal-box modal-wide" onClick={e => e.stopPropagation()}
-          style={{ maxWidth: 820, height: '85vh', display: 'flex', flexDirection: 'column' }}>
-          <h3>{t('inc.previewTitle')}</h3>
-          <iframe title="mail-preview" srcDoc={mailPreviewSrcDoc(previewHtml)} sandbox={MAIL_PREVIEW_SANDBOX}
-            style={{ flex: 1, border: '1px solid var(--border)', borderRadius: 8, background: '#f4f6f8' }} />
-          <div className="modal-actions">
-            <Button variant="secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</Button>
-          </div>
-        </div>
-      </div>
-    )}
+    <ModalShell open={previewHtml != null} onClose={() => setPreviewHtml(null)} title={t('inc.previewTitle')} size="lg"
+      footer={<Button variant="secondary" onClick={() => setPreviewHtml(null)}>{t('inc.cancel')}</Button>}>
+      <iframe title="mail-preview" srcDoc={mailPreviewSrcDoc(previewHtml ?? '')} sandbox={MAIL_PREVIEW_SANDBOX}
+        className="h-[70dvh] w-full rounded-lg border bg-[#f4f6f8]" />
+    </ModalShell>
     </>
+  )
+}
+
+/** "Mail gönder" (kaydetle birlikte) — shadcn Checkbox + bağlı etiket; telefonda altlığın üstünde tam satır. */
+function SendMailCheckbox({ checked, onChange, label }) {
+  const id = useId()
+  return (
+    <div className="flex items-center gap-2 sm:mr-auto">
+      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id} className="cursor-pointer text-[0.85em] font-semibold">{label}</Label>
+    </div>
   )
 }

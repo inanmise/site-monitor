@@ -53,24 +53,29 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(screen.getByText(/failed to fetch/i)).toBeInTheDocument()
   })
 
-  it('izleme kartını KANONİK upt-card yapısıyla listeler + "Yeni Monitör" görünür', async () => {
+  it('izleme kartını KANONİK kart ailesiyle (MonitorCard, shadcn Card) listeler + "Yeni Monitör" görünür', async () => {
     const { container } = render(<ScriptedMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
     expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /new monitor|yeni monitör/i })).toBeInTheDocument()
-    // Kanonik kart ailesi: upt-grid içinde upt-card, durum sınıfı + rozet + foot aksiyonları
-    expect(container.querySelector('.upt-grid')).not.toBeNull()
-    const card = container.querySelector('.upt-card')
-    expect(card).not.toBeNull()
-    expect(card.className).toContain('upt-card--up')          // PASS → up renk ailesi
-    expect(card.querySelector('.upt-badge')).not.toBeNull()
-    expect(card.querySelector('.upt-card-domain')).not.toBeNull()
-    // Aksiyonlar .upt-card-foot İÇİNDE (2026-08 şikayeti: butonlar kayıyordu)
+    // Kanonik kart ailesi: upt-grid ızgarasında shadcn Card; durum paylaşılan sözlükten + rozet + alt eylemler
+    const cards = container.querySelectorAll('.upt-grid > [data-slot="card"]')
+    expect(cards).toHaveLength(1)
+    const card = cards[0]
+    expect(card.dataset.status).toBe('up')                      // PASS → up renk ailesi
+    expect(card.querySelector('[data-slot="badge"][data-status="up"]')).not.toBeNull()
+    // Başlık GERÇEK düğme (stretched button) ve kartın adını taşır
+    const open = card.querySelector('[data-monitor-open]')
+    expect(open.tagName).toBe('BUTTON')
+    expect(open.textContent).toBe('OIDC Login')
+    // Aksiyonlar kartın ALT çubuğunda (2026-08 şikayeti: butonlar kayıyordu)
     // Ad kartı ayırır (izleme adı + eylem; 2026-09-25, R15) — ipucu kısa kalır
-    const run = within(card.querySelector('.upt-card-foot')).getByRole('button', { name: /^OIDC Login — (Şimdi Çalıştır|Run now)$/i })
+    const footer = card.querySelector('[data-slot="card-footer"]')
+    const run = within(footer).getByRole('button', { name: /^OIDC Login — (Şimdi Çalıştır|Run now)$/i })
     expect(run).toHaveAttribute('title', expect.stringMatching(/^(Şimdi Çalıştır|Run now)$/i))
-    expect(card.querySelector('.upt-card-foot .mon-act--edit')).not.toBeNull()
-    // Tanımsız eski sınıflar terk edildi
+    expect(within(footer).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i })).toBeInTheDocument()
+    // Tanımsız / legacy kart sınıfları terk edildi
+    expect(container.querySelector('.upt-card')).toBeNull()
     expect(container.querySelector('.mon-card')).toBeNull()
     expect(container.querySelector('.btn-xs')).toBeNull()
   })
@@ -81,12 +86,12 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     // çalıştığının künyesi — yeri başlık. Boş parantez ("( )") yazmamak için sürüm yoksa hiç çizilmez.
     const { container, unmount } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     const badge = await waitFor(() => {
-      const el = container.querySelector('.sc-title-k6')
+      const el = container.querySelector('[data-slot="k6-title"]')
       expect(el).not.toBeNull()
       return el
     })
     expect(badge.textContent).toContain('(k6 v0.49.0)')
-    expect(badge.closest('.upt-title')).not.toBeNull()   // başlığın İÇİNDE
+    expect(badge.closest('[data-slot="page-title"]')).not.toBeNull()   // başlığın İÇİNDE
     unmount()
 
     api.monitoring.getScriptedMonitors.mockResolvedValue({
@@ -94,7 +99,9 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     })
     const second = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
-    expect(second.container.querySelector('.sc-title-k6')).toBeNull()
+    // Vakum koruması: sayfa gerçekten çizildi (boş durum) — yoksa "yok" iddiası boşa geçerdi
+    await waitFor(() => expect(second.container.querySelector('[data-slot="empty"]')).not.toBeNull())
+    expect(second.container.querySelector('[data-slot="k6-title"]')).toBeNull()
   })
 
   it('anomali guard KAPATTIYSA kart ayrı bir rozet gösterir ve sebep detayda kalıcı durur', async () => {
@@ -116,9 +123,15 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
 
     expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
-    const badge = container.querySelector('.sc-autodisabled-badge')
+    const badge = container.querySelector('[data-slot="autodisabled-badge"]')
     expect(badge).not.toBeNull()
-    expect(badge.getAttribute('title')).toBe(REASON)   // tam sebep hover'da
+    // Tam sebep DOKUN-GÖR açıklamada (ui/HintPopover, 2026-09-26: telefonda hover yok) — rozet kart örtüsünün ÜSTÜNDE
+    fireEvent.click(badge.closest('[data-slot="hint-trigger"]'))
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REASON)
+    // Kapat (Radix ipucu çıkışta "geçiş alanı" bekler; Escape kesin kapatma yolu) — aksi hâlde sebep
+    // metni aşağıda hem ipucunda hem detayda bulunur.
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
 
     fireEvent.click(screen.getByText('OIDC Login'))
     expect(await screen.findByText(REASON)).toBeInTheDocument()
@@ -130,7 +143,31 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
   it('kapatma sebebi YOKSA rozet hiç çizilmez (pasif izleme sistem kapatması sanılmasın)', async () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
-    expect(container.querySelector('.sc-autodisabled-badge')).toBeNull()
+    await screen.findByText('OIDC Login')   // kart gerçekten çizildi (vakum koruması)
+    expect(container.querySelector('[data-slot="autodisabled-badge"]')).toBeNull()
+  })
+
+  it('duraklatılmış kartta tek tıkla "Sürdür": { active: true } yazılır ve liste tazelenir; etkin kartta düğme YOK', async () => {
+    // 2026-09-26 kullanıcı isteği: duraklatılan izleme karttan hızlıca yeniden açılabilmeli (tüm izleme sayfaları).
+    api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
+      k6_available: true, k6_version: 'v0.49.0', can_manage: true,
+      monitors: [
+        { id: 4, name: 'Duran Senaryo', status: 'PASS', team_id: 5, team_name: 'SY-A', active: false, checked_at: '2026-08-21T10:00:00' },
+        { id: 6, name: 'Calisan Senaryo', status: 'PASS', team_id: 5, team_name: 'SY-A', active: true, checked_at: '2026-08-21T10:00:00' },
+      ] } })
+    api.monitoring.updateScriptedMonitor.mockResolvedValue({ success: true, data: { id: 4 } })
+    const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('Duran Senaryo')
+
+    const [paused, running] = container.querySelectorAll('.upt-grid > [data-slot="card"]')
+    expect(paused.dataset.inactive).toBe('true')
+    expect(running.dataset.inactive).toBeUndefined()
+    expect(within(running).queryByRole('button', { name: /(Sürdür|Resume)$/i })).toBeNull()
+
+    const loadsBefore = api.monitoring.getScriptedMonitors.mock.calls.length
+    fireEvent.click(within(paused).getByRole('button', { name: /^Duran Senaryo — (Sürdür|Resume)$/i }))
+    await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalledWith(4, { active: true }))
+    await waitFor(() => expect(api.monitoring.getScriptedMonitors.mock.calls.length).toBeGreaterThan(loadsBefore))
   })
 
   it('k6 yoksa "devre dışı" banner gösterir', async () => {
@@ -147,7 +184,7 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     const { container, unmount } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
     await screen.findByText('SC-1')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
@@ -165,7 +202,7 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
   })
 
-  it('hiç koşmamış monitör (unknown, null metrikler): süre "—" gösterir, ✓/✗ metriği gizli', async () => {
+  it('hiç koşmamış monitör (unknown, null metrikler): "ilk koşu bekleniyor" paneli, ölçü kutusu/sayaç YOK, alt çubukta "Never run"', async () => {
     // Backend artık latest==null dalında checks_* anahtarlarını NULL koyar (0 değil).
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
       k6_available: true, can_manage: true,
@@ -174,11 +211,17 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('Hiç Koşmadı')
-    const card = container.querySelector('.upt-card')
-    expect(card.className).toContain('upt-card--unknown')
-    expect(card.querySelector('.upt-metric-val').textContent).toBe('—')   // 0ms DEĞİL
-    expect(card.textContent).not.toContain('0✓/0✗')                       // yanıltıcı sayaç yok
-    expect(screen.getByText(/never run|henüz çalışmadı/i)).toBeInTheDocument()
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    expect(card.dataset.status).toBe('unknown')
+    // Kart yeniden tasarımı (2026-09-27): koşmamış izlemede süre kutuları hiç çizilmez (0ms / "—" gürültüsü yok),
+    // sonuç paneli nötr "ilk koşusu bekleniyor" der; yanıltıcı sayaç (0/0) yok.
+    const result = card.querySelector('[data-slot="scripted-result"]')
+    expect(result).toHaveAttribute('data-tone', 'none')
+    expect(result.textContent).toMatch(/Waiting for its first run|İlk koşusu bekleniyor/)
+    expect(card.querySelector('[data-slot="scripted-metric"]')).toBeNull()
+    expect(card.querySelector('[data-slot="scripted-checks"]')).toBeNull()
+    expect(card.textContent).not.toMatch(/0ms|0✓\/0✗/)
+    expect(card.querySelector('[data-slot="card-footer"]').textContent).toMatch(/Never run|Henüz çalışmadı/)
   })
 
   it('NO_CHECKS: amber kart, "down" sayılmaz, etiketi görünür', async () => {
@@ -188,10 +231,10 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('Sessiz Script')
 
-    const card = container.querySelector('.upt-card')
-    expect(card.className).toContain('upt-card--warn')     // arıza kırmızısı DEĞİL
-    expect(card.className).not.toContain('upt-card--down')
-    expect(container.querySelector('.upt-badge--warn')).not.toBeNull()
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    expect(card.dataset.status).toBe('warn')               // arıza kırmızısı DEĞİL
+    expect(card.dataset.status).not.toBe('down')
+    expect(card.querySelector('[data-slot="badge"][data-status="warn"]')).not.toBeNull()
     expect(screen.getByText(/no checks|doğrulama yok/i)).toBeInTheDocument()
   })
 
@@ -203,38 +246,42 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     expect(container.querySelector('[data-slot="spinner"]')).toBeNull()   // dönen spinner yok
   })
 
-  it('kart klavyeyle açılır: role/tabIndex var, Enter ve Space detayı açar', async () => {
+  it('kart klavyeyle açılır: açma kontrolü GERÇEK düğme (adı izlemeyi taşır), detay penceresi Escape ile kapanır', async () => {
     // Kartlar yalnız fareyle açılabiliyordu; klavye kullanıcısı (ve ekran okuyucu) için
-    // sayfa ölü bir listeydi.
+    // sayfa ölü bir listeydi. Artık "stretched button": kartın başlığı gerçek bir <button>
+    // (Tab durağı, Enter/Space tarayıcıdan), kartın kendisi düğme DEĞİL (R18: iç içe etkileşim).
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
 
-    const card = container.querySelector('.upt-card')
-    expect(card.getAttribute('role')).toBe('button')
-    expect(card.getAttribute('tabindex')).toBe('0')
-    expect(card.getAttribute('aria-label')).toContain('OIDC Login')
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    expect(card.getAttribute('role')).toBeNull()
+    const open = within(card).getByRole('button', { name: /^OIDC Login — (detayları aç|open details)$/i })
+    expect(open.tagName).toBe('BUTTON')
+    expect(open.hasAttribute('data-monitor-open')).toBe(true)
 
-    fireEvent.keyDown(card, { key: 'Enter' })
-    await waitFor(() => expect(document.querySelector('.upt-modal')).not.toBeNull())
+    fireEvent.click(open)
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('tab', { name: /check history|kontrol geçmişi/i })).toBeInTheDocument()
 
-    fireEvent.click(document.querySelector('.upt-modal-overlay'))
-    await waitFor(() => expect(document.querySelector('.upt-modal')).toBeNull())
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
 
-    fireEvent.keyDown(card, { key: ' ' })
-    await waitFor(() => expect(document.querySelector('.upt-modal')).not.toBeNull())
+    fireEvent.click(open)
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
   })
 
-  it('kart içindeki düğmede Enter kartı AÇMAZ (tuş olayı baloncuklanıp çift eylem üretmesin)', async () => {
+  it('kart içindeki Düzenle düğmesi yalnız FORMU açar, detay penceresini AÇMAZ (çift eylem yok)', async () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
 
-    const card = container.querySelector('.upt-card')
-    const editBtn = card.querySelector('.mon-act--edit')
-    fireEvent.keyDown(editBtn, { key: 'Enter', bubbles: true })
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    fireEvent.click(within(card).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i }))
 
-    // Düzenleme düğmesinin kendi davranışı tarayıcıda click'e döner; burada önemli olan
-    // KARTİN detay modalını açmamış olması.
-    expect(document.querySelector('.upt-modal')).toBeNull()
+    // Tek pencere açık: düzenleme formu. Detay penceresi (sekmeli) açılmamış olmalı.
+    const dialogs = await screen.findAllByRole('dialog')
+    expect(dialogs).toHaveLength(1)
+    expect(within(dialogs[0]).queryByRole('tab')).toBeNull()
+    expect(within(dialogs[0]).getByRole('button', { name: /^save$|^kaydet$/i })).toBeInTheDocument()
   })
 
   /**
@@ -251,12 +298,44 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
 
-    const copyBtn = container.querySelector('.upt-card .upt-card-copy')
-    expect(copyBtn).not.toBeNull()
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    const copyBtn = within(card).getByRole('button', { name: /bağlantıyı kopyala|copy link/i })
     fireEvent.click(copyBtn)
 
     await waitFor(() => expect(writeText).toHaveBeenCalled())
     expect(writeText.mock.calls[0][0]).toContain('?tab=scripted&monitor=1')
-    expect(document.querySelector('.upt-modal')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('ScriptedMonitorPage — kart görünümü seçicisi (Kompakt / Zengin)', () => {
+  it('seçici araç çubuğunun İLK öğesi; Zengin açılır, Kompakt ızgarayı/kartı değiştirir; başlık yine detayı açar; seçim KALICI DEĞİL', async () => {
+    const { container, unmount } = render(<ScriptedMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
+    const grid = container.querySelector('.upt-grid')
+    expect(grid).toHaveAttribute('data-density', 'rich')
+    const toggle = container.querySelector('[data-slot="card-density-toggle"]')
+    expect(toggle.parentElement).toHaveClass('upt-toolbar')
+    expect(toggle.parentElement.firstElementChild).toBe(toggle)
+    expect(toggle.className).toMatch(/(^|\s)mr-auto(\s|$)/)
+    expect(grid.querySelector('[data-slot="scripted-result"]')).not.toBeNull()
+
+    fireEvent.click(within(toggle).getByRole('radio', { name: /Kompakt|Compact/ }))
+    expect(grid).toHaveAttribute('data-density', 'compact')
+    const card = grid.querySelector('[data-slot="card"]')
+    expect(card).toHaveAttribute('data-density', 'compact')
+    expect(card.querySelector('[data-slot="scripted-result"]')).toBeNull()
+    expect(card.querySelector('[data-slot="scripted-compact-run"]')).not.toBeNull()
+    // Kompakt'ta da: eylemler alt çubukta, başlık detayı açar
+    expect(within(card.querySelector('[data-slot="card-footer"]')).getByRole('button', { name: /^OIDC Login — (Şimdi Çalıştır|Run now)$/i })).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: /^OIDC Login — (open details|detayları aç)$/ }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    unmount()
+
+    // Sayfadan çıkıp yeniden açınca yine Zengin (kullanıcı kararı 2026-09-27: izleme sayfaları her açılışta Zengin)
+    const again = render(<ScriptedMonitorPage systemRole="TEAM_ADMIN" teamId={5} teamName="SY-A" />)
+    expect(await screen.findByText('OIDC Login')).toBeInTheDocument()
+    expect(again.container.querySelector('.upt-grid')).toHaveAttribute('data-density', 'rich')
+    expect(again.container.querySelector('.upt-grid [data-slot="card"]')).toHaveAttribute('data-density', 'rich')
   })
 })
