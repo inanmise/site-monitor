@@ -16,7 +16,7 @@ FROM grafana/k6:${K6_VERSION}@${K6_DIGEST} AS k6-bin
 
 # ── Stage 1: React build ─────────────────────────────
 # Node 24 LTS = the CI version (Node 20 reached end-of-life on 2026-04-30).
-FROM node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-build
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
