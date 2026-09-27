@@ -7,9 +7,20 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/inanmise/site-monitor
-  # Boş → Chart.AppVersion'a düşer (reproducible/rollback-safe; "latest" değil). Env overlay'leri override eder.
+  # Empty -> "v" + Chart.AppVersion (e.g. v20.86.0). release.yml pushes ONLY :vX.Y.Z and :latest,
+  # never the bare X.Y.Z, so an explicit tag must carry the "v" too (templates/_helpers.tpl).
+  # Reproducible/rollback-safe (never "latest"). develop/release overlays set their own tags.
   tag: ""
+  # Optional "sha256:<64 hex>": pins the exact image content (repository:tag@digest).
+  # Use it for a rollback to a known image; see docs/RUNBOOK.md -> Rollback.
+  digest: ""
   pullPolicy: Always
+
+# Registry credentials for a private registry (e.g. a private GHCR package or an internal mirror):
+#   imagePullSecrets:
+#     - name: ghcr-pull
+# Empty = the node / ServiceAccount must already be able to pull the image.
+imagePullSecrets: []
 
 nameOverride: ""
 fullnameOverride: ""
@@ -144,7 +155,7 @@ config:
   # Empty = public CAs only. Genel Ayarlar (site.monitor.trust.ca-bundle-pem)
   # can override live. To rotate: capture the new chain
   #   openssl s_client -connect data.iana.org:443 -proxy <proxy:port> -showcerts
-  # paste the PEM below (as a multiline block) and `helm upgrade`. See runbook.
+  # paste the PEM below (as a multiline block) and `helm upgrade`. See docs/RUNBOOK.md.
   caBundlePem: ""
   #   caBundlePem: |
   #     -----BEGIN CERTIFICATE-----
@@ -153,8 +164,20 @@ config:
 
 # Sensitive values — provide via --set or external secret manager
 # Do NOT commit real values here
+#
+# WARNING (prod gate P3-1): when existingSecret is EMPTY, every `helm upgrade` re-renders the
+# chart Secret from the values below and OVERWRITES the live Secret. "helm.sh/resource-policy: keep"
+# only prevents deletion, not this overwrite. Any key you do not pass falls back to the placeholder
+# here: REPLACE_ME passwords, the sample mailbox, an empty secretKey, empty proxy credentials.
+# Effects: empty secretKey -> prod refuses to start; wrong DB password -> no DB; placeholder SMTP
+# password / empty proxy credentials -> the pod starts but mail / RDAP fail SILENTLY; a different
+# adminUsername moves the bootstrap-admin identity. PROD: set existingSecret (docs/PROD_DEPLOY_CHECKLIST.md).
 secret:
-  # If existingSecret is set, an existing K8s Secret is used instead of creating one
+  # If existingSecret is set, an existing K8s Secret is used instead of creating one.
+  # It must hold: ADMIN_USERNAME, ADMIN_PASSWORD, DB_PASSWORD, SPRING_MAIL_USERNAME,
+  # SPRING_MAIL_PASSWORD, SITE_MONITOR_EMAIL_FROM, SITE_MONITOR_SECRET_KEY, HTTP_PROXY_USER,
+  # HTTP_PROXY_PASS. With existingSecret the pod is NOT restarted by a Secret edit (no checksum):
+  # run `kubectl rollout restart deploy/<name>` after changing it.
   existingSecret: ""
   adminUsername: "admin"
   adminPassword: "REPLACE_ME"
@@ -163,12 +186,18 @@ secret:
   smtpPassword: "REPLACE_WITH_GMAIL_APP_PASSWORD"
   emailFrom: "certmonitor01@gmail.com"
 
-  # Symmetric key (AES-GCM) for encrypting secrets the admin saves from the UI —
-  # the LDAP bind password and SMTP password. MUST be a stable, random value that
-  # stays the SAME across pods/restarts (otherwise saved secrets can't be decrypted).
-  # If left empty the app falls back to an insecure built-in dev key — set a real
-  # value (≥32 random chars) via --set or external-secrets before production use.
-  secretKey: ""   # ZORUNLU: deploy sirasinda --set secret.secretKey=$SECRET_KEY
+  # Symmetric key (AES-GCM) for secrets saved from the UI: LDAP bind password, SMTP
+  # password, HTTP/Keyword header secrets, personal-push header secrets, PageSpeed API
+  # key, scripted-check env secrets. MUST stay the SAME across pods, restarts and
+  # upgrades. With the prod profile an empty value stops the app at startup (fail-fast);
+  # only non-prod profiles fall back to the built-in dev key.
+  #
+  # NEVER CHANGE THE VALUE OF AN EXISTING INSTALLATION. A new key does not fail loudly:
+  # every stored secret decrypts to null ("SecretCipher: decrypt failed" WARN) -> LDAP
+  # logins, alert mail, header-secret monitors, push, PageSpeed and scripted checks break.
+  # There is no re-encryption tool yet; rotation is NOT supported (docs/RUNBOOK.md).
+  # Carry the CURRENT value over unchanged (preferably via existingSecret).
+  secretKey: ""   # new install only: >=32 random chars; existing install: the CURRENT value
   #   Yer tutucu bir DIZE BIRAKILAMAZ: SecretCipher fail-fast'i yalnizca "bos ya da
   #   gomulu dev anahtari" durumunu yakalar, dolayisiyla "REPLACE_WITH_..." gibi bir
   #   metin kapidan GECIYOR ve LDAP/SMTP secret'lari git'te duran bir anahtarla

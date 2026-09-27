@@ -61,6 +61,25 @@ public class ChainValidationService {
     private static final int MAX_OCSP_BYTES = 256 * 1024;
     private static final int MAX_CRL_BYTES  = 5 * 1024 * 1024;
 
+    /**
+     * TOPLAM süre bütçeleri (bağlantı + başlık + gövde; BO8, bug regresyon 2026-09-27). Bayt tavanı tek başına
+     * yetmiyordu: yavaş damlatan uç okuma-arası zaman aşımını hiç tetiklemeden OCSP'de ~256 KB × 5 sn, CRL'de
+     * ~5 MB × 10 sn boyunca certCheckExecutor iş parçacığını tutabiliyordu. Gerçek OCSP yanıtı milisaniyeler,
+     * büyük bir CRL yavaş vekil arkasında bile birkaç saniye sürer; süre dolarsa sonuç UNKNOWN (görünür
+     * "doğrulanamadı"), sessiz "temiz" değil.
+     *
+     * <p>Kesin üst sınır = bütçe + BİR okuma zaman aşımı (OCSP ≤ 20 sn, CRL ≤ 70 sn): gövde aşamasında süre
+     * dolunca JDK keep-alive akışını soketi kapatmadan temizleyiciye devreder; o anda bloklu olan tek okuma en
+     * çok {@code setReadTimeout} kadar sürer, sonraki okuma hiç yapılmaz. Eskiden sınır YOKTU.
+     */
+    static final long OCSP_TOTAL_MS = 15_000L;
+    static final long CRL_TOTAL_MS  = 60_000L;
+    /** Test dikişi: kapı testi süreleri kısaltır (gerçek 60+10 sn beklenmesin). Üretimde sabitlerin değeri. */
+    long ocspTotalMs = OCSP_TOTAL_MS;
+    long crlTotalMs  = CRL_TOTAL_MS;
+    int ocspReadTimeoutMs = 5_000;
+    int crlReadTimeoutMs  = 10_000;
+
     @Value("${site.monitor.cache.crl-max-size:200}")
     private int crlCacheMaxSize;
 
@@ -239,15 +258,18 @@ public class ChainValidationService {
             OCSPReq request = reqBuilder.build();
 
             HttpURLConnection conn = openWithProxy(ocspUrl);
-            try {
+            // TOPLAM süre (BO8): connect/read zaman aşımları yalnız TEK okumayı sınırlar; bayt bayt damlatan
+            // bir OCSP ucu (adres sertifikanın AIA'sından — karşı tarafın seçimi) iş parçacığını süresiz tutardı.
+            try (com.sitemonitor.util.HttpBodies.ConnectionDeadline dl =
+                         com.sitemonitor.util.HttpBodies.deadline(conn, ocspTotalMs, "OCSP")) {
                 conn.setRequestMethod("POST");
                 conn.setDoOutput(true);
                 conn.setRequestProperty("Content-Type", "application/ocsp-request");
                 conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
+                conn.setReadTimeout(ocspReadTimeoutMs);
                 conn.getOutputStream().write(request.getEncoded());
 
-                try (InputStream is = conn.getInputStream()) {
+                try (InputStream is = dl.open()) {
                     // TAVANLI: OCSP yanıtı ayrıştırılıyor ve adresi sertifikanın AIA uzantısından,
                     // yani izlenen sunucunun yazdığı bir dizeden geliyor. Gerçek yanıtlar birkaç KB;
                     // 256 KB fazlasıyla geniş. Tavan yokken sunucu istediği kadar veri akıtabilirdi
@@ -372,10 +394,13 @@ public class ChainValidationService {
         }
         try {
             HttpURLConnection conn = openWithProxy(url);
-            try {
+            // TOPLAM süre (BO8): CRL adresi sertifikanın CRL-DP'sinden gelir; yavaş damlatan uç 5 MB'lık tavana
+            // 10 sn'lik okuma aralıklarıyla ilerleyip iş parçacığını saatlerce tutabiliyordu.
+            try (com.sitemonitor.util.HttpBodies.ConnectionDeadline dl =
+                         com.sitemonitor.util.HttpBodies.deadline(conn, crlTotalMs, "CRL")) {
                 conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                try (InputStream is = conn.getInputStream()) {
+                conn.setReadTimeout(crlReadTimeoutMs);
+                try (InputStream is = dl.open()) {
                     // TAVANLI: CRL adresi sertifikanın CRL-DP uzantısından geliyor — izlenen
                     // sunucunun yazdığı bir dize. İzleme hedefini sıradan bir kullanıcı
                     // tanımlayabildiği için tavansız okuma, tek-pod üretimde OOM ile kesinti

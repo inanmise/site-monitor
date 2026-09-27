@@ -65,6 +65,15 @@ public class TeamAdminService {
     private final ScriptedMonitorRepository scriptedRepo;
     private final DomainMonitorRepository domainRepo;
 
+    /** Üyelik kaynak izi (2026-09-26): taşınan üyelik TEAM_MOVE olarak işaretlenir. Null-güvenli alan
+     *  enjeksiyonu — yapıcıyla kurulan birim testleri iz tutmadan çalışır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TeamMembershipSourceService teamSources;
+
+    void setTeamSources(TeamMembershipSourceService teamSources) {
+        this.teamSources = teamSources;
+    }
+
     /** İzleme türü → repo; tür adı UI etiketi anahtarıdır (todayMonitorRows ile aynı sözlük). */
     private Map<String, JpaRepository<? extends MonitorSchedule, Long>> monitorRepos() {
         Map<String, JpaRepository<? extends MonitorSchedule, Long>> m = new LinkedHashMap<>();
@@ -177,12 +186,19 @@ public class TeamAdminService {
             boolean member = u.getTeamIds() != null && u.getTeamIds().contains(from);
             if (!primary && !member) continue;
             LinkedHashSet<Long> ids = new LinkedHashSet<>(u.getTeamIds() == null ? List.of() : u.getTeamIds());
+            boolean alreadyInTarget = ids.contains(to) || Objects.equals(u.getTeamId(), to);
             ids.remove(from);
             ids.add(to);
             u.setTeamIds(ids);
             if (primary || u.getTeamId() == null) u.setTeamId(to);
             u.setTeamLocked(true);
             userRepo.save(u);
+            if (teamSources != null) {
+                teamSources.forget(u.getId(), List.of(from));
+                // Hedefe zaten üyeyse (ör. AD grubundan) mevcut izi EZME — üyelik taşımadan gelmedi.
+                if (!alreadyInTarget) teamSources.record(u.getId(), to, com.sitemonitor.model.UserTeamSource.TEAM_MOVE,
+                        "#" + from, TeamMembershipSourceService.currentActor());
+            }
             n++;
         }
         moved.put("users", n);

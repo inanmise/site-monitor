@@ -1,429 +1,369 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { api, formatDate, formatDateSec } from '../../api/client'
-import { useT } from '../../i18n/index.jsx'
-import { useToast } from '../ui/Toast.jsx'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Play, Download, History, BookOpen, ChevronRight, ChevronDown,
-  Database, AlertCircle, X, RefreshCw, Network, Table,
+  Database, Eraser, FileCode2, Gauge, ListTree, Network, PanelLeft, Play, ShieldCheck, Table2, TableProperties,
 } from 'lucide-react'
-import SqlRowDetailModal from './SqlRowDetailModal.jsx'
-import TableDetailsModal from './TableDetailsModal.jsx'
-import SchemaDiagramModal from './SchemaDiagramModal.jsx'
+import { api } from '../../api/client'
+import { useT } from '../../i18n/index.jsx'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { runWithConcurrency } from '../../utils/concurrentQueue.js'
+import HintPopover from '../ui/HintPopover.jsx'
+import PageHeader from '../ui/PageHeader.jsx'
 import { Spinner } from '../ui/Progress.jsx'
-import { csvCell } from '../../utils/csv.js'
+import { useToast } from '../ui/Toast.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { cn } from '@/lib/utils'
+import SchemaDiagramModal from './SchemaDiagramModal.jsx'
+import TableDetailsModal from './TableDetailsModal.jsx'
+import QueryPicker from './sql/QueryPicker.jsx'
+import ResultsPanel from './sql/ResultsPanel.jsx'
+import SchemaExplorer from './sql/SchemaExplorer.jsx'
+import SqlEditor from './sql/SqlEditor.jsx'
+import { MAX_ROWS, QUERY_TIMEOUT_SEC, tableQuery, wordAt } from './sql/sqlUtils.js'
 
-const DEFAULT_QUERY = ''
+/** Yerleşim sınıfı: telefon (< 768, useIsMobile) · tablet (< 1024) · masaüstü. Davranış farkı olduğu için JS'te. */
+function useLayoutMode() {
+  const phone = useIsMobile()
+  const [wide, setWide] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1024)
+  useEffect(() => {
+    const on = () => setWide(window.innerWidth >= 1024)
+    on()
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
+  return phone ? 'phone' : wide ? 'desktop' : 'tablet'
+}
 
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
+
+/**
+ * SQL Playground (Yönetim → SQL Playground, yalnız global yönetici). 2026-09-27 shadcn yeniden tasarımı:
+ *
+ * - `ui/PageHeader`: salt-okunur rozeti (kural metni dokun-gör), veritabanı sürümü (varsa), tablo sayısı, tavanlar;
+ *   eylemler Diyagram · Temizle · ÇALIŞTIR (Ctrl/⌘+Enter; seçim varsa yalnız seçim).
+ * - Masaüstü: solda şema gezgini, sağda düzenleyici (sözdizimi boyası + satır cetveli) ve sonuç paneli üst üste.
+ *   Tablet: gezgin soldan açılan Sheet. Telefon: Düzenleyici / Sonuçlar / Şema sekmeleri (durum korunur).
+ * - Sonuç: sıralama, süzgeç, sütun görünürlüğü, CSV/JSON indir, TSV/JSON kopyala, satır ayrıntısı, 1000 satır uyarısı.
+ * - Hata: veritabanı mesajı + konum (düzenleyicide göster) + teknik ayrıntı.
+ * - Tablo ayrıntısı (TableDetailsModal) ve ilişki diyagramı (SchemaDiagramModal) buradan açılır; kolon listeleri tek
+ *   önbellekte (sınırlı eşzamanlılık) paylaşılır.
+ * Arka uç salt okunur (tek SELECT/WITH, kara liste, JDBC read-only bağlantı, 30 sn, 1000 satır) — burada DEĞİŞMEDİ.
+ */
 export default function SqlPlayground() {
   const t = useT()
   const toast = useToast()
+  const layout = useLayoutMode()
 
-  const [tables, setTables]         = useState([])
+  const [tables, setTables] = useState([])
   const [tablesLoading, setTablesLoading] = useState(false)
-  const [expandedTable, setExpanded] = useState(null)
+  const [tablesError, setTablesError] = useState(null)
   const [columnsMap, setColumnsMap] = useState({})
-  const [sql, setSql]               = useState(DEFAULT_QUERY)
-  const [running, setRunning]       = useState(false)
-  const [result, setResult]         = useState(null)
-  const [samples, setSamples]       = useState([])
-  const [history, setHistory]       = useState([])
-  const [openMenu, setOpenMenu]     = useState(null)   // 'samples' | 'history' | null
-  const [rowDetail, setRowDetail]   = useState(null)   // { row, index, cols } | null
-  const [tableDetail, setTableDetail] = useState(null) // { table, details, loading } | null
-  const [diagram, setDiagram]       = useState(null)   // { data, loading } | null
+  const [pkMap, setPkMap] = useState({})
+  const [rel, setRel] = useState({ data: null, loading: false, error: null })
+  const [dbInfo, setDbInfo] = useState(null)
+  const [samples, setSamples] = useState([])
+  const [history, setHistory] = useState([])
+
+  const [sql, setSql] = useState('')
+  const [selection, setSelection] = useState('')
+  const [running, setRunning] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [result, setResult] = useState(null)
+  const seq = useRef(0)
+  const runningRef = useRef(false)
+  const tick = useRef(null)
+  useEffect(() => () => clearInterval(tick.current), [])
+
+  const [tableDetail, setTableDetail] = useState(null)   // { table, details, loading }
+  const [diagram, setDiagram] = useState(null)           // { focus, n }
+  const [phoneTab, setPhoneTab] = useState('editor')
+  const [explorerOpen, setExplorerOpen] = useState(false)
   const editorRef = useRef(null)
-  const samplesBtnRef = useRef(null)
-  const historyBtnRef = useRef(null)
 
-  useEffect(() => {
-    if (!openMenu) return
-    function onDocClick(e) {
-      if (samplesBtnRef.current?.contains(e.target)) return
-      if (historyBtnRef.current?.contains(e.target)) return
-      setOpenMenu(null)
-    }
-    function onKey(e) { if (e.key === 'Escape') setOpenMenu(null) }
-    document.addEventListener('mousedown', onDocClick)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDocClick)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [openMenu])
-
-  useEffect(() => {
-    refreshTables()
-    api.admin.sqlSamples().then(r => r?.success && setSamples(r.data ?? []))
-    loadHistory()
-  }, [])
-
-  const refreshTables = async () => {
+  const refreshTables = useCallback(async () => {
     setTablesLoading(true)
+    setTablesError(null)
     try {
       const r = await api.admin.sqlListTables()
-      if (r?.success) {
-        setTables(r.data ?? [])
-        // Drop cached columns so an expand re-fetches against the fresh schema
-        setColumnsMap({})
-      }
+      if (r?.success) { setTables(r.data ?? []); setColumnsMap({}) }
+      else setTablesError(r?.error || t('sql.ex.loadError'))
+    } catch (e) {
+      setTablesError(e?.message || t('sql.ex.loadError'))
     } finally {
       setTablesLoading(false)
     }
-  }
+  }, [t])
 
-  const loadHistory = () =>
-    api.admin.sqlHistory().then(r => r?.success && setHistory(r.data ?? []))
-
-  const toggleTable = async (name) => {
-    if (expandedTable === name) { setExpanded(null); return }
-    setExpanded(name)
-    if (!columnsMap[name]) {
-      const r = await api.admin.sqlListColumns(name)
-      if (r?.success) setColumnsMap(m => ({ ...m, [name]: r.data ?? [] }))
-    }
-  }
-
-  const onTableClick = (name) => {
-    setSql(`SELECT *\nFROM ${name}\nLIMIT 100;`)
-    setTimeout(() => editorRef.current?.focus(), 0)
-  }
-
-  const onColumnClick = (col, e) => {
-    e.stopPropagation()
-    navigator.clipboard?.writeText(col)
-    toast.success(t('sql.colCopied', col))
-  }
-
-  const openTableDetails = async (name, e) => {
-    e?.stopPropagation()
-    setTableDetail({ table: name, details: null, loading: true })
-    const r = await api.admin.sqlTableDetails(name)
-    setTableDetail({ table: name, details: r?.success ? r.data : null, loading: false })
-    if (!r?.success) toast.error(r?.error || t('sql.td.loadError'))
-  }
-
-  const openDiagram = async () => {
-    setDiagram({ data: null, loading: true })
-    const r = await api.admin.sqlRelations()
-    setDiagram({ data: r?.success ? r.data : null, loading: false })
-    if (!r?.success) toast.error(r?.error || t('sql.td.loadError'))
-  }
-
-  const run = useCallback(async () => {
-    if (!sql?.trim() || running) return
-    setRunning(true)
+  const loadRelations = useCallback(async () => {
+    setRel((s) => ({ ...s, loading: true, error: null }))
     try {
-      setResult(null)
-      const r = await api.admin.sqlExecute(sql)
-      setResult(r)
+      const r = await api.admin.sqlRelations()
+      setRel({ data: r?.success ? r.data : null, loading: false, error: r?.success ? null : (r?.error || t('sql.diag.loadError')) })
+    } catch (e) {
+      setRel({ data: null, loading: false, error: e?.message || t('sql.diag.loadError') })
+    }
+  }, [t])
+
+  const loadHistory = useCallback(() => {
+    api.admin.sqlHistory().then((r) => { if (r?.success) setHistory(r.data ?? []) }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    refreshTables()
+    loadRelations()
+    loadHistory()
+    api.admin.sqlSamples().then((r) => { if (r?.success) setSamples(r.data ?? []) }).catch(() => {})
+    // Veritabanı sürümü/adı — ayrı izin (settings.database); yoksa rozet çizilmez, hata gösterilmez.
+    api.admin.getDatabaseInfo?.().then((r) => { if (r?.success && r.data && !Array.isArray(r.data)) setDbInfo(r.data) }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Kolon önbelleği: eksikler en fazla 6 eşzamanlı istekle, sonuç TEK durum güncellemesiyle. */
+  const columnsRef = useRef(columnsMap)
+  columnsRef.current = columnsMap
+  const ensureColumns = useCallback(async (names) => {
+    const need = [...new Set(names)].filter((n) => !columnsRef.current[n])
+    if (!need.length) return
+    const got = {}
+    await runWithConcurrency(need, async (n) => {
+      try {
+        const r = await api.admin.sqlListColumns(n)
+        if (r?.success) got[n] = r.data ?? []
+      } catch { /* tek tablo düşerse diğerleri sürer */ }
+    }, { limit: 6 })
+    if (Object.keys(got).length) setColumnsMap((m) => ({ ...m, ...got }))
+  }, [])
+
+  /** FK haritası (tablo → kolon → { to, inferred }) — ilişki yanıtından; gezginde FK rozeti ve hedefi. */
+  const fkMap = useMemo(() => {
+    const m = new Map()
+    for (const e of rel.data?.edges ?? []) {
+      if (!e?.from || !e?.column) continue
+      if (!m.has(e.from)) m.set(e.from, new Map())
+      m.get(e.from).set(e.column, { to: e.to, inferred: !!e.inferred })
+    }
+    return m
+  }, [rel.data])
+
+  /** Düzenleyiciye yaz — tarayıcının geri alma yığını korunur; düzenleyici görünür değilse durum üzerinden. */
+  const writeEditor = useCallback((text, { replace = false } = {}) => {
+    const ed = editorRef.current
+    const ok = ed ? (replace ? ed.replaceAll(text) : ed.insert(text)) : false
+    if (!ok) setSql((s) => (replace || !s ? text : `${s}${/\s$/.test(s) ? '' : ' '}${text}`))
+    if (layout === 'phone') setPhoneTab('editor')
+    if (layout === 'tablet') setExplorerOpen(false)
+  }, [layout])
+
+  const run = useCallback(async (override) => {
+    const text = typeof override === 'string' ? override : sql
+    if (!text?.trim() || runningRef.current) return
+    runningRef.current = true
+    setRunning(true)
+    setElapsed(0)
+    const t0 = Date.now()
+    clearInterval(tick.current)
+    tick.current = setInterval(() => setElapsed(Date.now() - t0), 100)
+    let next
+    try {
+      const r = await api.admin.sqlExecute(text)
+      next = r || { success: false, error: t('sql.err.noResponse') }
       loadHistory()
-      if (r?.error) toast.error(r.error)
+    } catch (e) {
+      next = { success: false, error: e?.message || t('sql.err.noResponse') }
     } finally {
+      clearInterval(tick.current)
+      runningRef.current = false
       setRunning(false)
     }
-  }, [sql, running, toast])
+    seq.current += 1
+    setResult({ ...next, ranSql: text, seq: seq.current, finishedAt: Date.now() })
+    if (layout === 'phone') setPhoneTab('results')
+  }, [sql, layout, loadHistory, t])
 
-  const onEditorKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault()
-      run()
+  const runSelection = selection.trim() ? selection : null
+  const runNow = () => run(runSelection ?? undefined)
+
+  const revealError = useCallback((offset) => {
+    const [a, b] = wordAt(sql, offset)
+    if (layout === 'phone') setPhoneTab('editor')
+    requestAnimationFrame(() => requestAnimationFrame(() => editorRef.current?.select(a, b)))
+  }, [sql, layout])
+
+  const openTableDetails = useCallback(async (name) => {
+    setExplorerOpen(false)
+    setTableDetail({ table: name, details: null, loading: true })
+    try {
+      const r = await api.admin.sqlTableDetails(name)
+      setTableDetail((cur) => (cur?.table === name ? { table: name, details: r?.success ? r.data : null, loading: false } : cur))
+      if (r?.success) {
+        const pks = (r.data?.columns ?? []).filter((c) => c.is_pk).map((c) => c.column_name)
+        if (pks.length) setPkMap((m) => ({ ...m, [name]: pks }))
+      } else toast.error(r?.error || t('sql.td.loadError'))
+    } catch {
+      setTableDetail((cur) => (cur?.table === name ? { table: name, details: null, loading: false } : cur))
+      toast.error(t('sql.td.loadError'))
     }
+  }, [t, toast])
+
+  const openDiagram = useCallback((focus = null) => {
+    setExplorerOpen(false)
+    setDiagram((d) => ({ focus, n: (d?.n ?? 0) + 1 }))
+    if (!rel.data && !rel.loading) loadRelations()
+  }, [rel.data, rel.loading, loadRelations])
+
+  const queryTable = useCallback((name) => {
+    setDiagram(null)
+    setTableDetail(null)
+    writeEditor(tableQuery(name), { replace: true })
+  }, [writeEditor])
+
+  const onCaret = useCallback((c) => setSelection(c.text || ''), [])
+
+  // ── Parçalar ────────────────────────────────────────────────────────────────────
+  const rules = t('sql.pg.rules', MAX_ROWS.toLocaleString(), QUERY_TIMEOUT_SEC)
+  const meta = (
+    <>
+      <HintPopover content={rules} aria-label={t('sql.pg.readOnlyHint')}>
+        <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 font-medium text-success">
+          <ShieldCheck aria-hidden="true" /> {t('sql.pg.readOnly')}
+        </Badge>
+      </HintPopover>
+      {dbInfo?.version && (
+        <Badge variant="outline" className="gap-1 font-normal" title={dbInfo.version_full || undefined}>
+          <Database aria-hidden="true" /> {dbInfo.version}{dbInfo.database ? ` · ${dbInfo.database}` : ''}{dbInfo.size ? ` · ${dbInfo.size}` : ''}
+        </Badge>
+      )}
+      <Badge variant="outline" className="gap-1 font-normal tabular-nums"><Table2 aria-hidden="true" /> {t('sql.pg.tablesCount', tables.length)}</Badge>
+      <Badge variant="outline" className="gap-1 font-normal tabular-nums"><Gauge aria-hidden="true" /> {t('sql.pg.limits', MAX_ROWS.toLocaleString(), QUERY_TIMEOUT_SEC)}</Badge>
+    </>
+  )
+  const actions = (
+    <>
+      <Button type="button" variant="outline" onClick={() => openDiagram()} className="pointer-coarse:h-10">
+        <Network /> {t('sql.pg.diagram')}
+      </Button>
+      <Button type="button" variant="outline" onClick={() => writeEditor('', { replace: true })} disabled={!sql} className="pointer-coarse:h-10">
+        <Eraser /> {t('sql.clear')}
+      </Button>
+      <Button type="button" onClick={runNow} disabled={running || !sql.trim()} aria-busy={running || undefined}
+        aria-keyshortcuts={IS_MAC ? 'Meta+Enter' : 'Control+Enter'} className="pointer-coarse:h-10">
+        {running ? <Spinner size={14} inline decorative /> : <Play />}
+        {runSelection ? t('sql.runSelection') : t('sql.run')}
+        <KbdGroup className="ml-1 hidden sm:inline-flex" aria-hidden="true">
+          <Kbd className="bg-primary-foreground/15 text-primary-foreground">{IS_MAC ? '⌘' : 'Ctrl'}</Kbd>
+          <Kbd className="bg-primary-foreground/15 text-primary-foreground">↵</Kbd>
+        </KbdGroup>
+      </Button>
+    </>
+  )
+
+  const explorerProps = {
+    tables, loading: tablesLoading, error: tablesError, onRefresh: () => { refreshTables(); loadRelations() },
+    columnsMap, onLoadColumns: ensureColumns, fkMap, pkMap,
+    onQuery: queryTable, onInsert: (text) => writeEditor(text), onDetails: openTableDetails, onDiagram: openDiagram,
   }
 
-  const exportCsv = () => {
-    if (!result?.rows?.length) return
-    const cols = Object.keys(result.rows[0])
-    const csv = [
-      cols.map(csvCell).join(','),
-      ...result.rows.map(r => cols.map(c => csvCell(r[c])).join(',')),
-    ].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `query-${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+  const editorCard = (cls) => (
+    <section data-slot="sql-editor-card" aria-label={t('sql.ed.title')}
+      className={cn('flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm', cls)}>
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+        <FileCode2 aria-hidden="true" className="size-4 text-muted-foreground" />
+        <h3 className="text-sm font-semibold">{t('sql.ed.title')}</h3>
+        {layout === 'tablet' && (
+          <Button type="button" variant="outline" size="sm" onClick={() => setExplorerOpen(true)}>
+            <PanelLeft /> {t('sql.schema')}
+          </Button>
+        )}
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
+          <QueryPicker kind="samples" items={samples} onPick={(s) => writeEditor(s, { replace: true })} className="flex-1 pointer-coarse:h-10 sm:flex-none" />
+          <QueryPicker kind="history" items={history} onPick={(s) => writeEditor(s, { replace: true })} className="flex-1 pointer-coarse:h-10 sm:flex-none" />
+        </div>
+      </div>
+      <SqlEditor ref={editorRef} value={sql} onChange={setSql} onRun={(sel) => run(sel ?? undefined)} onCaret={onCaret}
+        label={t('sql.editorLabel')} placeholder={t('sql.editorPlaceholder')} className="min-h-0 flex-1"
+        statusExtra={t('sql.ed.status', IS_MAC ? '⌘' : 'Ctrl')} />
+    </section>
+  )
+
+  const resultsPanel = (cls, phone = false) => (
+    <ResultsPanel result={result} running={running} elapsedMs={elapsed} phone={phone} samples={samples}
+      onPickSample={(s) => writeEditor(s, { replace: true })} onRevealError={revealError} className={cls} />
+  )
+
+  let body
+  if (layout === 'phone') {
+    const resultCount = result && !result.error ? (result.rowCount ?? result.rows?.length ?? 0) : null
+    body = (
+      <Tabs value={phoneTab} onValueChange={setPhoneTab} className="gap-3">
+        <TabsList aria-label={t('sql.pg.sections')} className="grid h-11 w-full grid-cols-3">
+          <TabsTrigger value="editor" className="h-full"><FileCode2 /> {t('sql.ed.tab')}</TabsTrigger>
+          <TabsTrigger value="results" className="h-full">
+            <ListTree /> {t('sql.res.tab')}
+            {resultCount != null && <Badge variant="secondary" className="h-4 rounded-full px-1.5 text-[10px] tabular-nums">{resultCount}</Badge>}
+            {result?.error && <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" />}
+          </TabsTrigger>
+          <TabsTrigger value="schema" className="h-full"><TableProperties /> {t('sql.schema')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="editor" forceMount className="data-[state=inactive]:hidden">
+          {editorCard('h-[55dvh] min-h-72')}
+        </TabsContent>
+        <TabsContent value="results" forceMount className="data-[state=inactive]:hidden">
+          {resultsPanel('', true)}
+        </TabsContent>
+        <TabsContent value="schema" forceMount className="data-[state=inactive]:hidden">
+          <SchemaExplorer {...explorerProps} className="h-[70dvh]" />
+        </TabsContent>
+      </Tabs>
+    )
+  } else if (layout === 'tablet') {
+    body = (
+      <div className="flex min-w-0 flex-col gap-3">
+        {editorCard('h-80')}
+        {resultsPanel('max-h-[80dvh] min-h-80')}
+        <Sheet open={explorerOpen} onOpenChange={setExplorerOpen}>
+          <SheetContent side="left" className="w-[min(24rem,90vw)] gap-0 p-0 sm:max-w-sm">
+            <SheetHeader className="border-b pr-12">
+              <SheetTitle>{t('sql.schema')}</SheetTitle>
+              <SheetDescription className="text-xs">{t('sql.ex.sheetHint')}</SheetDescription>
+            </SheetHeader>
+            <SchemaExplorer {...explorerProps} headerless className="min-h-0 flex-1 rounded-none border-0 shadow-none" />
+          </SheetContent>
+        </Sheet>
+      </div>
+    )
+  } else {
+    body = (
+      <div className="grid h-[calc(100dvh-14.5rem)] min-h-[36rem] grid-cols-[18rem_minmax(0,1fr)] gap-3 xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <SchemaExplorer {...explorerProps} />
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
+          {editorCard('h-[36%] min-h-44 shrink-0')}
+          {resultsPanel('min-h-0 flex-1')}
+        </div>
+      </div>
+    )
   }
-
-  const clearEditor = () => setSql('')
-
-  const cols = result?.rows?.length ? Object.keys(result.rows[0]) : []
 
   return (
-    <div className="sqlpg">
-      <div className="sqlpg-pane sqlpg-schema">
-        <div className="sqlpg-pane-header">
-          <Database size={14} /> {t('sql.schema')}
-          <span className="sqlpg-tables-count">{tables.length}</span>
-          <button
-            type="button"
-            className="sqlpg-refresh-btn"
-            onClick={openDiagram}
-            title={t('sql.diag.open')}
-          >
-            <Network size={12} />
-          </button>
-          <button
-            type="button"
-            className="sqlpg-refresh-btn"
-            onClick={refreshTables}
-            disabled={tablesLoading}
-            title={t('sql.refreshTables')}
-          >
-            {tablesLoading
-              ? <Spinner size={12} inline decorative />
-              : <RefreshCw size={12} />}
-          </button>
-        </div>
-        <div className="sqlpg-tree">
-          {tables.map(tbl => (
-            <div key={tbl.table_name}>
-              <button
-                className={`sqlpg-table-btn${expandedTable === tbl.table_name ? ' is-expanded' : ''}`}
-                onClick={() => onTableClick(tbl.table_name)}
-              >
-                <span
-                  className="sqlpg-table-chev"
-                  onClick={(e) => { e.stopPropagation(); toggleTable(tbl.table_name) }}
-                  role="button" tabIndex={0}
-                  aria-label={`${tbl.table_name} — ${t('sql.toggleCols')}`}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleTable(tbl.table_name) } }}
-                  title={t('sql.toggleCols')}
-                >
-                  {expandedTable === tbl.table_name
-                    ? <ChevronDown size={12} />
-                    : <ChevronRight size={12} />}
-                </span>
-                <span className="sqlpg-table-name">
-                  {tbl.table_name}
-                  {(tbl.first_seen_at || tbl.last_change_at) && (
-                    <span className="sqlpg-table-meta"
-                      title={`${t('sql.meta.created')}: ${tbl.first_seen_at ? (tbl.first_seen_approx ? '≈ ' : '') + formatDateSec(tbl.first_seen_at) : t('sql.meta.unknown')} · ${t('sql.meta.lastChange')}: ${tbl.last_change_at ? formatDateSec(tbl.last_change_at) : t('sql.meta.unknown')}`}>
-                      <span className="sqlpg-table-meta-item">+{tbl.first_seen_at ? (tbl.first_seen_approx ? '≈' : '') + formatDate(tbl.first_seen_at) : '?'}</span>
-                      <span className="sqlpg-table-meta-item">↻{tbl.last_change_at ? formatDate(tbl.last_change_at) : '—'}</span>
-                    </span>
-                  )}
-                </span>
-                <span
-                  className="sqlpg-table-info"
-                  onClick={(e) => openTableDetails(tbl.table_name, e)}
-                  role="button" tabIndex={0}
-                  aria-label={`${tbl.table_name} — ${t('sql.td.open')}`}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openTableDetails(tbl.table_name, e) } }}
-                  title={t('sql.td.open')}
-                >
-                  <Table size={11} />
-                </span>
-              </button>
-              {expandedTable === tbl.table_name && (columnsMap[tbl.table_name] ?? []).map(c => (
-                <button
-                  key={c.column_name}
-                  className="sqlpg-col-btn"
-                  onClick={(e) => onColumnClick(c.column_name, e)}
-                  title={`${c.data_type}${c.is_nullable === 'YES' ? ' · NULL' : ''}`}
-                >
-                  <span className="sqlpg-col-name">{c.column_name}</span>
-                  <span className="sqlpg-col-type">{c.data_type}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="sqlpg-pane sqlpg-main">
-        <div className="sqlpg-toolbar">
-          <Button
-            className="sqlpg-run"
-            onClick={run}
-            disabled={running || !sql?.trim()}
-          >
-            {running ? <Spinner size={14} inline decorative /> : <Play size={14} />}
-            {t('sql.run')}
-            <kbd className="sqlpg-kbd">Ctrl+Enter</kbd>
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={exportCsv}
-            disabled={!result?.rows?.length}
-          >
-            <Download size={14} /> {t('sql.exportCsv')}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={clearEditor}
-            disabled={!sql}
-            title={t('sql.clear')}
-          >
-            <X size={14} /> {t('sql.clear')}
-          </Button>
-
-          <div className="sqlpg-menu-wrap" ref={samplesBtnRef}>
-            <Button
-              type="button"
-              variant="secondary" className={`sqlpg-menu-trigger ${openMenu === 'samples' ? ' is-open' : ''}`}
-              onClick={() => setOpenMenu(m => m === 'samples' ? null : 'samples')}
-            >
-              <BookOpen size={14} /> {t('sql.samples')}
-              <ChevronDown size={12} className="sqlpg-menu-chev" />
-            </Button>
-            {openMenu === 'samples' && (
-              <div className="sqlpg-menu sqlpg-menu-samples">
-                {samples.length === 0 && (
-                  <div className="sqlpg-menu-empty">{t('sql.noSamples')}</div>
-                )}
-                {samples.map((s, i) => (
-                  <button
-                    key={i}
-                    className="sqlpg-item"
-                    onClick={() => { setSql(s.sql); setOpenMenu(null) }}
-                    title={s.sql}
-                  >
-                    <div className="sqlpg-item-label">{s.label}</div>
-                    <div className="sqlpg-item-preview">{s.sql.substring(0, 80)}…</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="sqlpg-menu-wrap" ref={historyBtnRef}>
-            <Button
-              type="button"
-              variant="secondary" className={`sqlpg-menu-trigger ${openMenu === 'history' ? ' is-open' : ''}`}
-              onClick={() => setOpenMenu(m => m === 'history' ? null : 'history')}
-            >
-              <History size={14} /> {t('sql.history')}
-              <ChevronDown size={12} className="sqlpg-menu-chev" />
-            </Button>
-            {openMenu === 'history' && (
-              <div className="sqlpg-menu sqlpg-menu-history">
-                {history.length === 0 && (
-                  <div className="sqlpg-menu-empty">{t('sql.noHistory')}</div>
-                )}
-                {history.map(h => {
-                  const sqlText    = h.sql_text     ?? h.sqlText     ?? ''
-                  const executedBy = h.executed_by  ?? h.executedBy  ?? '—'
-                  const rowCount   = h.row_count    ?? h.rowCount
-                  const durationMs = h.duration_ms  ?? h.durationMs  ?? 0
-                  const executedAt = h.executed_at  ?? h.executedAt
-                  return (
-                    <button
-                      key={h.id}
-                      className={`sqlpg-item${!h.success ? ' is-error' : ''}`}
-                      onClick={() => { setSql(sqlText); setOpenMenu(null) }}
-                      title={sqlText}
-                    >
-                      <div className="sqlpg-item-label">
-                        <strong>{executedBy}</strong>
-                        <span className="sqlpg-item-meta">
-                          {rowCount ?? '—'} · {durationMs} ms
-                        </span>
-                      </div>
-                      <div className="sqlpg-item-preview">
-                        {sqlText.substring(0, 80)}…
-                      </div>
-                      <div className="sqlpg-item-date">{formatDate(executedAt)}</div>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <span className="sqlpg-limit-hint">{t('sql.limitHint')}</span>
-        </div>
-
-        <textarea
-          ref={editorRef}
-          className="sqlpg-editor"
-          value={sql}
-          onChange={e => setSql(e.target.value)}
-          onKeyDown={onEditorKeyDown}
-          placeholder={t('sql.editorPlaceholder')}
-          spellCheck={false}
-        />
-
-        {result && (
-          <div className="sqlpg-result">
-            <div className="sqlpg-result-meta">
-              {result.error ? (
-                <span className="sqlpg-result-err">
-                  <AlertCircle size={13} /> {result.error}
-                </span>
-              ) : (
-                <>
-                  <strong>{t('sql.rowsCount', result.rowCount)}</strong>
-                  <span className="sqlpg-result-dur">· {result.durationMs} ms</span>
-                  {result.executedSql && (
-                    <span className="sqlpg-executed-sql" title={result.executedSql}>
-                      · {result.executedSql.length > 80
-                          ? result.executedSql.substring(0, 80) + '…'
-                          : result.executedSql}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-            {!result.error && cols.length > 0 && (
-              <div className="sqlpg-result-table-wrap">
-                <table className="sqlpg-result-table">
-                  <thead>
-                    <tr>{cols.map(c => <th key={c}>{c}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {result.rows.map((row, i) => (
-                      <tr
-                        key={i}
-                        className="sqlpg-row-clickable"
-                        onDoubleClick={() => setRowDetail({ row, index: i, cols })}
-                        title={t('sql.dblClickHint')}
-                      >
-                        {cols.map(c => (
-                          <td key={c} title={row[c] == null ? 'NULL' : String(row[c])}>
-                            {row[c] == null
-                              ? <em className="sqlpg-null">NULL</em>
-                              : String(row[c])}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {!result.error && result.rowCount === 0 && (
-              <div className="sqlpg-result-empty">{t('sql.noRows')}</div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {rowDetail && (
-        <SqlRowDetailModal
-          row={rowDetail.row}
-          cols={rowDetail.cols}
-          index={rowDetail.index}
-          onClose={() => setRowDetail(null)}        />
-      )}
+    <div data-slot="sql-playground" data-layout={layout} className="flex min-w-0 flex-col">
+      <PageHeader icon={Database} title={t('app.sqlPlaygroundTitle')} description={t('sql.pg.desc')} meta={meta} actions={actions}
+        className="mb-3" />
+      {body}
 
       {tableDetail && (
-        <TableDetailsModal
-          table={tableDetail.table}
-          details={tableDetail.details}
-          loading={tableDetail.loading}
-          onClose={() => setTableDetail(null)}
-          onOpenTable={(name) => openTableDetails(name)}
-          onUseQuery={(q) => setSql(q)}        />
+        <TableDetailsModal table={tableDetail.table} details={tableDetail.details} loading={tableDetail.loading}
+          onClose={() => setTableDetail(null)} onOpenTable={openTableDetails}
+          onUseQuery={(q) => { setDiagram(null); writeEditor(q, { replace: true }) }}
+          onShowInDiagram={(name) => { setTableDetail(null); openDiagram(name) }} />
       )}
 
       {diagram && (
-        <SchemaDiagramModal
-          data={diagram.data}
-          loading={diagram.loading}
-          onClose={() => setDiagram(null)}        />
+        <SchemaDiagramModal data={rel.data} loading={rel.loading} error={rel.error} onRetry={loadRelations}
+          onClose={() => setDiagram(null)} tables={tables} columnsMap={columnsMap} ensureColumns={ensureColumns}
+          initialFocus={diagram.focus} focusRequest={diagram}
+          onOpenDetails={openTableDetails} onQuery={queryTable} />
       )}
     </div>
   )

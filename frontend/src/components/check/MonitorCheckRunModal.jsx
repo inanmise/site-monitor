@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useT } from '../../i18n/index.jsx'
-import CheckRunShell from './CheckRunShell.jsx'
+import CheckRunShell, { CELL } from './CheckRunShell.jsx'
 import { monitorCheckColumns } from './monitorCheckColumns.jsx'
 
 /**
@@ -19,7 +19,7 @@ export default function MonitorCheckRunModal({ run, type, onClose, onCancel }) {
 
   const allColumns = useMemo(() => [
     { key: 'target', label: t('mon.checkColTarget'),
-      thClassName: 'chk-th-target', tdClassName: 'chk-td-target',
+      thClassName: CELL.left, tdClassName: CELL.target,
       render: r => targetOf(r.monitor) || '—' },
     ...columns,
   ], [t, targetOf, columns])

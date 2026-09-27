@@ -112,7 +112,21 @@ describe('exportInventoryCsv', () => {
     const [head, row] = lastCsv.replace(/^﻿/, '').split('\r\n')
     expect(splitCsvLine(head)).toHaveLength(splitCsvLine(row).length)
     // Sabit sütunlar + bayraklar: sayı değişirse bu iddia da bilinçli güncellenmeli.
-    expect(splitCsvLine(head)).toHaveLength(17 + INVENTORY_FLAGS.length)   // 17: +platform, +platform_detail (2026-09-22)
+    // 19: +platform, +platform_detail (2026-09-22) · +7/24 bildirimi, +7/24 grupları (2026-09-27)
+    expect(splitCsvLine(head)).toHaveLength(19 + INVENTORY_FLAGS.length)
+  })
+
+  it('7/24 sütunları: bildirim evet/hayır, açık grup seçimi ADLARLA (bilinmeyen kimlik #id), varsayılan gruplar BOŞ', () => {
+    exportInventoryCsv([{ ...ITEM, noc_notify: true, noc_group_ids: [2, 9] }, { ...ITEM, domain: 'b.example.com', noc_notify: false, noc_group_ids: [] }],
+      TEAMS, t, { 2: 'Hafta Sonu Vardiyası' })
+    const [head, row1, row2] = lastCsv.replace(/^\uFEFF/, '').split('\r\n')
+    const cols = splitCsvLine(head)
+    const v1 = splitCsvLine(row1)
+    const v2 = splitCsvLine(row2)
+    expect(v1[cols.indexOf('nocf.csvNotify')]).toBe('inv.yes')
+    expect(v1[cols.indexOf('nocf.csvGroups')]).toBe('Hafta Sonu Vardiyası; #9')
+    expect(v2[cols.indexOf('nocf.csvNotify')]).toBe('inv.no')
+    expect(v2[cols.indexOf('nocf.csvGroups')]).toBe('')
   })
 
   it('Sorumlu Ekipler sütunları DOĞRU sırada ve doğru değerle çıkar', () => {

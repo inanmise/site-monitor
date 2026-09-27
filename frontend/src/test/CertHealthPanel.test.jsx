@@ -117,7 +117,7 @@ describe('CertHealthPanel', () => {
     const { container } = draw()
     await screen.findByText('Certificate has not been revoked')
 
-    const rows = [...container.querySelectorAll('.hlth-row-head')]
+    const rows = [...container.querySelectorAll('[data-slot="hlth-row-head"]')]
     const expiry = rows.find(r => r.textContent.includes('has not expired'))
     const revocation = rows.find(r => r.textContent.includes('has not been revoked'))
 
@@ -213,7 +213,7 @@ describe('CertHealthPanel', () => {
   it('cipher kopyalama kontrolü satır başlığı düğmesinin içinde İKİNCİ bir <button> DEĞİL (span role=button)', async () => {
     draw()
     const cipher = await screen.findByText('TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384', { selector: '.hlth-cipher' })
-    const head = cipher.closest('.hlth-row-head')
+    const head = cipher.closest('[data-slot="hlth-row-head"]')
     expect(head.tagName).toBe('BUTTON')
     expect(head.querySelectorAll('button')).toHaveLength(0)
     const copy = within(cipher).getByRole('button')
@@ -308,11 +308,11 @@ describe('CertHealthPanel', () => {
 
     // OK olmayan iki satır var (UNKNOWN + WARN).
     const btn = await screen.findByRole('button', { name: /Needs attention \(2\)/i })
-    expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(3)
+    expect(container.querySelectorAll('[data-slot="hlth-row-head"]')).toHaveLength(3)
 
     fireEvent.click(btn)
 
-    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(2))
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="hlth-row-head"]')).toHaveLength(2))
     // Temiz satır elenmeli; kalanlar OK DEĞİL.
     expect(screen.queryByText('Certificate has not expired')).toBeNull()
     expect(btn).toHaveAttribute('aria-pressed', 'true')
@@ -323,10 +323,10 @@ describe('CertHealthPanel', () => {
     await screen.findByText('Certificate has not expired')
 
     fireEvent.click(await screen.findByRole('button', { name: /Needs attention/i }))
-    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(2))
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="hlth-row-head"]')).toHaveLength(2))
 
     fireEvent.click(screen.getByRole('button', { name: /Show all/i }))
-    await waitFor(() => expect(container.querySelectorAll('.hlth-row-head')).toHaveLength(3))
+    await waitFor(() => expect(container.querySelectorAll('[data-slot="hlth-row-head"]')).toHaveLength(3))
   })
 
   it('FİLTRE: her satır temizken düğme HİÇ çizilmez (boş filtre sunma)', async () => {

@@ -18,20 +18,38 @@ import { Button } from '@/components/shadcn/button'
  * kartın kendi onClick'i detay modalını açıyor; durdurulmazsa "bağlantıyı kopyala" aynı
  * anda modalı da açardı. Modal başlığındaki eski kullanımda zararsızdır.
  */
-export default function CopyLinkButton({ className, variant = 'secondary', size, iconOnly = false, url = null }) {
+/**
+ * Kopyalama eylemi düğmesiz: menü öğesinden de çağrılabilsin (telefonda sayfa başlığının "Diğer" menüsü,
+ * monitoring/MonitorPageHeader). `copy(url?)` — url verilmezse adres çubuğu; geri bildirim aynı toast.
+ */
+export function useCopyLink() {
   const t = useT()
   const toast = useToast()
-
-  async function copy(e) {
-    if (e) e.stopPropagation()
+  return async function copyLink(url = null) {
     const target = url || window.location.href
     if (await copyText(target)) toast.success(t('share.copied'))
     else toast.error(target)   // son çare: URL'i göster, kullanıcı elle kopyalar
   }
+}
 
+/**
+ * `targetName` (isteğe bağlı, 2026-09-27 a11y A1): düğme bir LİSTE/IZGARA öğesinin içindeyse (izleme kartı) hedefin adı —
+ * erişilebilir ad "<hedef> — Bağlantıyı kopyala" olur; 50 kartlık ızgarada 50 özdeş "Bağlantıyı kopyala" duyulmaz.
+ * Görünen `title` kısa kalır. Verilmezse eski ad (sayfa başlığı / tek pencere kullanımları).
+ */
+export default function CopyLinkButton({ className, variant = 'secondary', size, iconOnly = false, url = null, targetName = null }) {
+  const t = useT()
+  const copyLink = useCopyLink()
+
+  async function copy(e) {
+    if (e) e.stopPropagation()
+    await copyLink(url)
+  }
+
+  const label = targetName ? t('a11y.rowAction', targetName, t('share.copyLink')) : t('share.copyLink')
   return (
     <Button type="button" variant={variant} size={size ?? (iconOnly ? 'icon-sm' : 'sm')} className={className} onClick={copy}
-      title={t('share.copyLink')} aria-label={t('share.copyLink')}>
+      title={t('share.copyLink')} aria-label={label}>
       <Link2 size={14} />{iconOnly ? null : <> {t('share.copyLink')}</>}
     </Button>
   )

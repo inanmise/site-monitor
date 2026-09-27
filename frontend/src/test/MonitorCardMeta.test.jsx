@@ -17,32 +17,40 @@ const meta = (monitor) => {
 }
 
 describe('MonitorCardMeta', () => {
+  it('rozetler TEK satırda yan yana ve dar kartta SARAR (2026-09-26: üç ayrı satırdı)', () => {
+    const c = meta({ team_name: 'SY-A', group_name: 'Kritik', proxy_effective: 'proxy' })
+    const row = c.querySelector('[data-slot="monitor-card-meta"]')
+    expect(row).toHaveClass('flex', 'flex-wrap')
+    expect([...row.children].map((el) => el.dataset.slot)).toEqual(['meta-team', 'meta-group', 'meta-proxy'])
+  })
+
   it('takım ve grup doluysa iki rozet de çizilir', () => {
     const c = meta({ team_name: 'SY-A', group_name: 'Kritik' })
-    expect(c.querySelectorAll('div')).toHaveLength(2)
+    expect(c.querySelectorAll('[data-slot^="meta-"]')).toHaveLength(2)
     expect(c.textContent).toContain('SY-A')
     expect(c.textContent).toContain('Kritik')
   })
 
   it('TAKIM yoksa o rozet HİÇ çizilmez (boş ikonlu satır bırakılmaz)', () => {
     const c = meta({ group_name: 'Kritik' })
-    expect(c.querySelectorAll('div')).toHaveLength(1)
+    expect(c.querySelectorAll('[data-slot^="meta-"]')).toHaveLength(1)
     expect(c.textContent).toBe('Kritik')
   })
 
   it('GRUP yoksa o rozet hiç çizilmez', () => {
     const c = meta({ team_name: 'SY-A' })
-    expect(c.querySelectorAll('div')).toHaveLength(1)
+    expect(c.querySelectorAll('[data-slot^="meta-"]')).toHaveLength(1)
     expect(c.textContent).toBe('SY-A')
   })
 
   it('ikisi de yoksa hiçbir şey çizilmez (kartta boşluk açılmaz)', () => {
-    expect(meta({}).querySelectorAll('div')).toHaveLength(0)
-    expect(meta({ team_name: null, group_name: undefined }).querySelectorAll('div')).toHaveLength(0)
+    expect(meta({}).querySelector('[data-slot="monitor-card-meta"]')).toBeNull()   // boş satır kabı da yok
+    expect(meta({}).querySelectorAll('[data-slot^="meta-"]')).toHaveLength(0)
+    expect(meta({ team_name: null, group_name: undefined }).querySelectorAll('[data-slot^="meta-"]')).toHaveLength(0)
   })
 
   it('BOŞ STRING de "yok" sayılır — envanter-türevi kayıtlarda sık', () => {
     const c = meta({ team_name: '', group_name: '' })
-    expect(c.querySelectorAll('div')).toHaveLength(0)
+    expect(c.querySelectorAll('[data-slot^="meta-"]')).toHaveLength(0)
   })
 })

@@ -30,6 +30,7 @@ class LoginIssueServiceTest {
     LoginIssueReportRepository reportRepo;
     LoginIssueReportImageRepository imageRepo;
     com.sitemonitor.repository.LoginIssueMailLogRepository mailLogRepo;
+    com.sitemonitor.repository.IssueReportCommentRepository commentRepo;
     LoginIssueService service;
 
     @BeforeEach
@@ -37,7 +38,8 @@ class LoginIssueServiceTest {
         reportRepo = mock(LoginIssueReportRepository.class);
         imageRepo = mock(LoginIssueReportImageRepository.class);
         mailLogRepo = mock(com.sitemonitor.repository.LoginIssueMailLogRepository.class);
-        service = new LoginIssueService(reportRepo, imageRepo, mailLogRepo);
+        commentRepo = mock(com.sitemonitor.repository.IssueReportCommentRepository.class);
+        service = new LoginIssueService(reportRepo, imageRepo, mailLogRepo, commentRepo);
     }
 
     @Test
@@ -217,5 +219,151 @@ class LoginIssueServiceTest {
         verify(imageRepo, never()).deleteByReportId(any());
         verify(mailLogRepo, never()).deleteByReportId(any());
         verify(reportRepo, never()).delete(any());
+    }
+
+    // ── Konuşma dizisi + "Bildirimlerim" (2026-09-26) ────────────────────────
+
+    private LoginIssueReport report(long id, String status, String username) {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(id); r.setStatus(status); r.setUsername(username); r.setReportedAt("2026-09-20T10:00:00");
+        if ("RESOLVED".equals(status)) { r.setResolutionNote("eski çözüm notu"); r.setResolvedBy("someadmin"); r.setResolvedAt("2026-09-21T10:00:00"); }
+        when(reportRepo.findById(id)).thenReturn(java.util.Optional.of(r));
+        when(reportRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(commentRepo.save(any())).thenAnswer(inv -> {
+            com.sitemonitor.model.IssueReportComment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId(100L);
+            return c;
+        });
+        return r;
+    }
+
+    private ArgumentCaptor<com.sitemonitor.model.IssueReportComment> commentCaptor(int times) {
+        ArgumentCaptor<com.sitemonitor.model.IssueReportComment> cap = ArgumentCaptor.forClass(com.sitemonitor.model.IssueReportComment.class);
+        verify(commentRepo, times(times)).save(cap.capture());
+        return cap;
+    }
+
+    @Test
+    @DisplayName("addComment (bildiren, RESOLVED): rapor IN_PROGRESS'e döner, çözüm sahipliği temizlenir, çözüm NOTU kalır, STATUS satırı düşer")
+    void reporterCommentOnResolvedReopens() {
+        LoginIssueReport r = report(5L, "RESOLVED", "Kullanici.X");
+
+        LoginIssueService.CommentResult res = service.addComment(5L, "kullanici.x", "USER", true, true, "Sorun devam ediyor");
+
+        assertThat(res.reopened()).isTrue();
+        assertThat(r.getStatus()).isEqualTo("IN_PROGRESS");
+        assertThat(r.getResolvedBy()).isNull();
+        assertThat(r.getResolvedAt()).isNull();
+        assertThat(r.getResolutionNote()).isEqualTo("eski çözüm notu");   // geçmiş olarak korunur
+        assertThat(r.getLastActivityAt()).isNotBlank();
+        assertThat(r.getLastAdminActivityAt()).isNull();                   // bildirenin KENDİ yorumu göstergeyi damgalamaz
+        assertThat(r.hasUnreadForReporter()).isFalse();
+        var rows = commentCaptor(2).getAllValues();
+        assertThat(rows).extracting(com.sitemonitor.model.IssueReportComment::getKind).containsExactly("COMMENT", "STATUS");
+        assertThat(rows.get(0).isInternal()).isFalse();                    // bildiren iç not YAZAMAZ (bayrak yok sayılır)
+        assertThat(rows.get(0).isByReporter()).isTrue();
+        assertThat(rows.get(1).getBody()).isEqualTo("IN_PROGRESS");
+        assertThat(rows.get(1).isByReporter()).isTrue();
+        assertThat(rows.get(1).isInternal()).isFalse();
+    }
+
+    @Test
+    @DisplayName("addComment (bildiren, OPEN): yeniden açma yok, tek COMMENT satırı")
+    void reporterCommentOnOpenDoesNotReopen() {
+        LoginIssueReport r = report(6L, "OPEN", "u");
+        LoginIssueService.CommentResult res = service.addComment(6L, "u", "USER", false, true, "ek bilgi");
+        assertThat(res.reopened()).isFalse();
+        assertThat(r.getStatus()).isEqualTo("OPEN");
+        assertThat(commentCaptor(1).getValue().getKind()).isEqualTo("COMMENT");
+    }
+
+    @Test
+    @DisplayName("addComment (yönetici, herkese açık): lastAdminActivityAt damgalanır → bildirende okunmamış; açılınca söner")
+    void adminPublicReplyStampsUnread() {
+        LoginIssueReport r = report(7L, "OPEN", "u");
+        r.setReporterSeenAt("2026-09-20T11:00:00");
+
+        service.addComment(7L, "someadmin", "ADMIN", false, false, "yanıt");
+
+        assertThat(r.getLastAdminActivityAt()).isNotBlank();
+        assertThat(r.hasUnreadForReporter()).isTrue();
+        service.markSeenByReporter(7L);
+        assertThat(r.hasUnreadForReporter()).isFalse();
+    }
+
+    @Test
+    @DisplayName("addComment (yönetici, İÇ not): bildirenin göstergesine dokunmaz, durum değişmez, satır internal=true")
+    void adminInternalNoteDoesNotStampOrReopen() {
+        LoginIssueReport r = report(8L, "RESOLVED", "u");
+
+        LoginIssueService.CommentResult res = service.addComment(8L, "someadmin", "ADMIN", true, false, "iç not");
+
+        assertThat(res.comment().isInternal()).isTrue();
+        assertThat(res.reopened()).isFalse();
+        assertThat(r.getStatus()).isEqualTo("RESOLVED");
+        assertThat(r.getLastAdminActivityAt()).isNull();
+        assertThat(r.hasUnreadForReporter()).isFalse();
+        assertThat(r.getLastActivityAt()).isNotBlank();   // "son etkinlik" yine de ilerler (yönetici listesi)
+        commentCaptor(1);
+    }
+
+    @Test
+    @DisplayName("addComment: boş ve 4001 karakter reddedilir (hiçbir satır yazılmaz); 4000 kabul")
+    void commentLengthLimits() {
+        report(9L, "OPEN", "u");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.addComment(9L, "u", "USER", false, true, "   "))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.addComment(9L, "u", "USER", false, true, "x".repeat(4001)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(commentRepo, never()).save(any());
+        service.addComment(9L, "u", "USER", false, true, "x".repeat(4000));
+        commentCaptor(1);
+    }
+
+    @Test
+    @DisplayName("updateStatus: gerçek geçişte STATUS satırı + lastAdminActivityAt; aynı durumu tekrar kaydetmek satır üretmez")
+    void updateStatusWritesTimelineRowOnlyOnRealChange() {
+        LoginIssueReport r = report(10L, "OPEN", "u");
+
+        service.updateStatus(10L, "IN_PROGRESS", "not", "someadmin", "ADMIN");
+
+        assertThat(r.getLastAdminActivityAt()).isNotBlank();
+        var row = commentCaptor(1).getValue();
+        assertThat(row.getKind()).isEqualTo("STATUS");
+        assertThat(row.getBody()).isEqualTo("IN_PROGRESS");
+        assertThat(row.isByReporter()).isFalse();
+        assertThat(row.getAuthorUsername()).isEqualTo("someadmin");
+
+        service.updateStatus(10L, "IN_PROGRESS", "yalnız not güncellendi", "someadmin", "ADMIN");
+        verify(commentRepo, times(1)).save(any());   // hâlâ 1
+        assertThat(r.getResolutionNote()).isEqualTo("yalnız not güncellendi");
+    }
+
+    @Test
+    @DisplayName("publicComments iç notları SÜZER; comments (yönetici) hepsini döner")
+    void publicCommentsFilterInternalNotes() {
+        com.sitemonitor.model.IssueReportComment a = new com.sitemonitor.model.IssueReportComment(); a.setId(1L); a.setInternal(true); a.setBody("gizli");
+        com.sitemonitor.model.IssueReportComment b = new com.sitemonitor.model.IssueReportComment(); b.setId(2L); b.setInternal(false); b.setBody("açık");
+        when(commentRepo.findByReportIdOrderByIdAsc(3L)).thenReturn(List.of(a, b));
+        assertThat(service.publicComments(3L)).containsExactly(b);
+        assertThat(service.comments(3L)).containsExactly(a, b);
+    }
+
+    @Test
+    @DisplayName("getMine / ownedBy: sahiplik büyük/küçük harf duyarsız; başkasının ve boş kullanıcı adının kaydı yok")
+    void getMineOwnershipIsCaseInsensitive() {
+        LoginIssueReport r = report(11L, "OPEN", "Kullanici.X");
+        assertThat(service.getMine(11L, "KULLANICI.x")).isPresent();
+        assertThat(service.getMine(11L, "baskasi")).isEmpty();
+        assertThat(service.getMine(11L, "")).isEmpty();
+        assertThat(LoginIssueService.ownedBy(r, null)).isFalse();
+    }
+
+    @Test
+    @DisplayName("purge: konuşma dizisi de silinir")
+    void purgeDeletesComments() {
+        report(12L, "RESOLVED", "u");
+        service.purge(12L);
+        verify(commentRepo).deleteByReportId(12L);
     }
 }

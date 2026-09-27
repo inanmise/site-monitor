@@ -80,26 +80,49 @@ seviyesinde durum için mevcut lucide ikon + renk sistemi kullanılmaya devam ed
 - **Tutarlılık:** UI'da varyant seçimi TEK bileşenden (`BrandLogo`), mailde TEK yardımcı metottan
   geçer. Sayfa sayfa elle logo dosyası import edilmez.
 
-### 5.1 E-posta HTML kuralları (Outlook-güvenli) — Rev. 2026-08-06
+### 5.1 E-posta HTML kuralları (Outlook-güvenli + mobil duyarlı) — Rev. 2026-09-26
 
 Saha bulgusu: Outlook masaüstü (Word render motoru) CSS genişliğini yok sayar; logo doğal
-boyutunda (320px) ve kart dışında dev şekilde render oldu. Bağlayıcı kurallar:
+boyutunda (320px) ve kart dışında dev şekilde render oldu. Kullanıcı kararı (2026-09-26):
+bütün e-postalar **mobil-web duyarlı** ve **shadcn görsel dilinde** olur — bu karar önceki
+"`<style>` bloğu YOK / sabit `width="600"`" kuralının yerini alır. Bağlayıcı kurallar:
 
+- **E-posta YALNIZ `MailDoc` ile kurulur** (`backend/…/service/mail/`: `MailDoc` kurucu,
+  `MailKit` parçalar, `MailTokens` renk/yazı belirteçleri). Elle HTML dizesi birleştirmek,
+  şablonda serbest hex yazmak YASAK — yeni bileşen gerekiyorsa `MailKit`'e eklenir. `MailDoc`
+  HTML ile düz metni birlikte yazar → her e-posta multipart/alternative gider.
+- Görsel dil = uygulamanın shadcn (zinc) belirteçleri: zemin `#f4f4f5`, kart `#ffffff` +
+  `#e4e4e7` kenarlık + 10px köşe; metin `#09090b`, ikincil `#71717a`; birincil `#2563eb`;
+  anlam tonları destructive/success/warning/info (tonlu zemin + tam kenarlık + ikon dairesi).
+  Başlık çubuğu **nötr beyazdır** (logo + alt-sistem etiketi); önem **rozet + tonlu uyarı
+  kutusuyla** anlatılır — renkli tam-genişlik başlık bandı ve üst aciliyet şeridi YOK.
+- **Renkli sol şerit YOK** (kart, uyarı, satır — hiçbir yerde `border-left` ya da 4–5px renkli
+  şerit hücresi); durum rozet/ton/ikonla verilir. `EmailResponsiveContractTest` bunu zorlar.
 - Logo mail gövdesinde **yalnız kart başlık çubuğunda**, "Site Monitor" yazısının solunda,
   **yazı satırıyla eş boyda (28–32px)** durur. Serbest yüzen header/banner logosu YASAK;
   gövdede ve footer'da ikinci logo YASAK.
 - `<img>` üzerinde `width` ve `height` **HTML attribute olarak zorunlu** (`width="32"
   height="32"`); inline `style` yalnız ikincil destek. CSS-only genişlik/`max-width`'e güvenme.
-- Yerleşim tablo tabanlıdır: `width="600"` ortalanmış tek kapsayıcı tablo; `<style>` bloğu,
-  `<div>`+float, arkaplan görseli, web font, `position` KULLANILMAZ; tüm stiller inline.
+- Yerleşim tablo tabanlı ve **akışkandır**: kart `width="100%"` + `max-width:600px` (veri-yoğun
+  raporlar 640px); Outlook için `[if mso]` hayalet tablosu sabit 600/640 genişliği kurar.
+  `[if mso]` dışında ≥500px sabit genişlik YASAK. Tüm stiller inline; **TEK izinli `<style>`
+  bloğu** `MailKit`'in duyarlı bloğudur (`@media (max-width:620px)`: `.px .stack .d-only .m-only
+  .col-opt .btn-full .kv-l/.kv-v .tile .nw`). Düzen önce "fluid-hybrid" kurulur (istatistik
+  kutuları ve buton grupları satır sarabilen inline-block) — stil bloğunu atan istemcide de
+  yatay kaydırma çıkmaz. `<div>`+float, div zemini, `rgba()`, arkaplan görseli, web font
+  yükleme, `position` KULLANILMAZ. `maximum-scale` viewport'a yazılmaz (yakınlaştırma serbest).
+- Mobil: veri tabloları telefonda satır başına istif karta döner (`.m-only`, Outlook'a gitmez),
+  anahtar-değer satırları alt alta iner, butonlar tam genişlik ve ≥44px dokunma hedefidir,
+  yazı ≥12px (gövde 15px). Doğrulama: `EmailGalleryTest` (tüm türler) +
+  `frontend/e2e/email-gallery.spec.js` (390/640px ekran görüntüsü, taşma kapısı).
 - E-posta varlığı olarak **fiziksel 32px** `logo-{v}-32.png` kopyaları kullanılır (1x — retina
   keskinliği bilinçli feda). Sebep (saha bulguları #2–#3, 2026-08-06): forward zincirleri
   (Gmail→Outlook) `width` attribute'unu VE inline img+span dizilimini yeniden yazabiliyor;
   192px ve 64px varlıklar doğal boyutta basıldı, yazı alt satıra düştü. Savunma iki katmanlı:
   fiziksel boyut = hedef boyut, ve lockup inline değil **tablo-hücreli** (`headerLockup()` —
   hiçbir istemci hücreleri kıramaz). `BrandMailAssetsTest` PNG başlığından 32px'i doğrular.
-- **Belgeli istisna:** haftalık rapor ailesi (PO onay / erişilebilirlik / hatırlatma, veri-yoğun
-  KPI tabloları) `width='850'` kartını korur; lockup ve diğer kurallar aynen uygulanır.
+- 850px rapor kartı ailesi **kaldırıldı** (2026-09-26): haftalık rapor, erişilebilirlik, aylık
+  envanter ve olay bildirimleri 640px akışkan karta, veri tabloları duyarlı `dataTable`'a taşındı.
 - Marka adı her yerde **"Site Monitor"** (bitişik "SiteMonitor" yazımı düzeltilir — subject,
   kart başlığı, footer dahil).
 

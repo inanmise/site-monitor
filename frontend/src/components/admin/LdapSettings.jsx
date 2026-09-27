@@ -1,22 +1,40 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Trash2 } from 'lucide-react'
+import { Search, Plus, Trash2, KeyRound } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SecretKeyWarning from './SecretKeyWarning.jsx'
-import { Spinner } from '../ui/Progress.jsx'
+import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import Field from '../ui/Field.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import {
+  FIELD_GRID as GRID, FIELD_GRID_3, SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar,
+  SettingsSection, TestResult, ToggleRow,
+} from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { Textarea } from '@/components/shadcn/textarea'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 // Role values match AppUser.systemRole tokens (used when provisioning is wired in a later phase).
 const ROLES = ['ADMIN', 'TEAM_ADMIN', 'USER', 'AUDIT']
 
+/**
+ * LDAP / Active Directory ayarları. Tam sayfa yeniden tasarım (2026-09-27): SettingsHeader + ana anahtar +
+ * konu kartları (bağlantı / kullanıcı arama / grup / rol eşleme / dizin sorgusu) + alt kayıt çubuğu
+ * (kirli durum kaydedilmiş anlık görüntüden; bind parolası kutusuna yazılan her şey kirli sayılır).
+ */
 export default function LdapSettings() {
   const t = useT()
   const toast = useToast()
 
   const [form, setForm] = useState(null)
+  const [loaded, setLoaded] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [bindPw, setBindPw] = useState('')
   const [saving, setSaving] = useState(false)
@@ -31,6 +49,8 @@ export default function LdapSettings() {
 
   useEffect(() => { load() }, [])
 
+  const normalise = (d) => ({ ...d, role_mappings: d.role_mappings || [] })
+
   async function load() {
     // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
     // DONDURMEZ, throw eder. try/catch olmadan promise reject oluyor ve ekran sonsuza
@@ -38,7 +58,8 @@ export default function LdapSettings() {
     try {
       const res = await api.admin.getLdapSettings()
       if (res?.success) {
-        setForm({ ...res.data, role_mappings: res.data.role_mappings || [] })
+        const d = normalise(res.data)
+        setForm(d); setLoaded(d)
         setSecretKeySet(res.secret_key_set !== false)
         setLoadError(null)
       } else {
@@ -76,13 +97,20 @@ export default function LdapSettings() {
       if (res?.success) {
         toast.success(res.message || t('settings.saved'))
         setBindPw('')
-        setForm({ ...res.data, role_mappings: res.data.role_mappings || [] })
+        const d = normalise(res.data)
+        setForm(d); setLoaded(d)
       } else {
         toast.error(res?.error || t('settings.saveError'))
       }
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Vazgeç: kaydedilmiş hâle dön (bind parolası kutusu da boşalır). */
+  function discard() {
+    if (loaded) setForm({ ...loaded })
+    setBindPw('')
   }
 
   // verify=true → kayıtlı "doğrulamayı atla" ayarı DEĞİŞMEDEN sertifika doğrulaması açık denenir;
@@ -117,154 +145,109 @@ export default function LdapSettings() {
     // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
     // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
     if (loadError) {
-      return (
-        <div className="admin-section">
-          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-        </div>
-      )
+      return <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
     }
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
+  const dirty = bindPw !== '' || (loaded != null && JSON.stringify(form) !== JSON.stringify(loaded))
+
+  // Metin alanı (Field + Input) — etiket yardım balonlu, ipucu aria-describedby ile bağlı.
+  const textField = (key, labelKey, helpKey, placeholder, hintKey) => (
+    <Field label={helpLabel(t(labelKey), helpKey)} hint={hintKey ? t(hintKey) : undefined}>
+      {({ id, describedBy }) => (
+        <Input id={id} aria-describedby={describedBy} type="text" value={form[key] || ''} placeholder={placeholder}
+          onChange={(e) => set(key, e.target.value)} />
+      )}
+    </Field>
+  )
+
   return (
-    <div className="ldap-settings">
-      {!secretKeySet && <SecretKeyWarning />}
-      {/* Header */}
-      <div className="admin-section">
-        <h3>{t('ldap.title')}</h3>
-        <p className="section-desc">{t('ldap.desc')}</p>
-        {form.updated_at && (
-          <p className="ldap-meta">{t('ldap.lastUpdated', form.updated_at, form.updated_by || '—')}</p>
-        )}
-      </div>
+    <div className={SETTINGS_STACK} data-testid="ldap-settings">
+      <SettingsHeader icon={KeyRound} title={t('ldap.title')} description={t('ldap.desc')}
+        hint={form.updated_at ? t('ldap.lastUpdated', form.updated_at, form.updated_by || '—') : undefined}
+        meta={<>
+          <ToneBadge tone={form.enabled ? 'success' : 'muted'} className="font-semibold">{form.enabled ? t('general.on') : t('general.off')}</ToneBadge>
+          {form.host && <Badge variant="outline" className="max-w-full font-mono font-normal break-all whitespace-normal">{form.host}{form.port ? `:${form.port}` : ''}</Badge>}
+        </>}>
+        {!secretKeySet && <SecretKeyWarning />}
+      </SettingsHeader>
 
       {/* Enable */}
-      <div className="admin-section">
-        <label className="ldap-toggle ldap-toggle-major">
-          <input type="checkbox" checked={!!form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
-          <span>{t('ldap.enable')}</span>
-        </label><HelpTip helpKey="help.ldap.enable" label={t('ldap.enable')} />
-        <p className="hint">{t('ldap.enableHint')}</p>
-      </div>
+      <MasterToggleCard checked={!!form.enabled} onChange={(v) => set('enabled', v)}
+        label={t('ldap.enable')} helpKey="help.ldap.enable" hint={t('ldap.enableHint')} />
 
       {/* Connection */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('ldap.connection')}</h4>
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ldap.host')}<HelpTip helpKey="help.ldap.host" label={t('ldap.host')} /></span></label>
-            <input type="text" value={form.host || ''} placeholder="ldap.corp.example.com"
-              onChange={(e) => set('host', e.target.value)} />
-          </div>
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ldap.port')}<HelpTip helpKey="help.ldap.port" label={t('ldap.port')} /></span></label>
-            <input type="number" value={form.port ?? ''} placeholder="636"
-              onChange={(e) => set('port', e.target.value === '' ? null : +e.target.value)} />
-            <span className="hint">{t('ldap.portHint')}</span>
-          </div>
+      <SettingsSection title={t('ldap.connection')}>
+        <div className={GRID}>
+          {textField('host', 'ldap.host', 'help.ldap.host', 'ldap.corp.example.com')}
+          <Field label={helpLabel(t('ldap.port'), 'help.ldap.port')} hint={t('ldap.portHint')}>
+            {({ id, describedBy }) => (
+              <Input id={id} aria-describedby={describedBy} type="number" value={form.port ?? ''} placeholder="636"
+                onChange={(e) => set('port', e.target.value === '' ? null : +e.target.value)} />
+            )}
+          </Field>
         </div>
-        <div className="ldap-toggles">
-          <label className="ldap-toggle">
-            <input type="checkbox" checked={!!form.use_ldaps} onChange={(e) => set('use_ldaps', e.target.checked)} />
-            <span>{t('ldap.useLdaps')}</span>
-          </label><HelpTip helpKey="help.ldap.useLdaps" label={t('ldap.useLdaps')} />
-          <label className="ldap-toggle">
-            <input type="checkbox" checked={!!form.start_tls} onChange={(e) => set('start_tls', e.target.checked)} />
-            <span>{t('ldap.startTls')}</span>
-          </label><HelpTip helpKey="help.ldap.startTls" label={t('ldap.startTls')} />
-          <label className="ldap-toggle">
-            <input type="checkbox" checked={!!form.skip_cert_verification}
-              onChange={(e) => set('skip_cert_verification', e.target.checked)} />
-            <span>{t('ldap.skipCert')}</span>
-          </label><HelpTip helpKey="help.ldap.skipCert" label={t('ldap.skipCert')} />
+        <div className="my-3 flex flex-wrap gap-x-6 gap-y-2.5">
+          <ToggleRow checked={!!form.use_ldaps} onChange={(v) => set('use_ldaps', v)}
+            label={t('ldap.useLdaps')} helpKey="help.ldap.useLdaps" />
+          <ToggleRow checked={!!form.start_tls} onChange={(v) => set('start_tls', v)}
+            label={t('ldap.startTls')} helpKey="help.ldap.startTls" />
+          <ToggleRow checked={!!form.skip_cert_verification} onChange={(v) => set('skip_cert_verification', v)}
+            label={t('ldap.skipCert')} helpKey="help.ldap.skipCert" />
         </div>
         {/* Trust-all açıkken zincir+hostname hiç doğrulanmaz; bind ve kullanıcı parolaları MITM'e açık. */}
         {form.skip_cert_verification && (
-          <div className="ldap-full field-hint field-hint--warn" style={{ marginTop: -4 }}>
+          <AlertBanner tone="warning">
             {t('ldap.skipCertWarn')}
             {form.ca_cert_pem ? ' ' + t('ldap.skipCertPemIgnored') : ''}
-          </div>
+          </AlertBanner>
         )}
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.caCert')}<HelpTip helpKey="help.ldap.caCert" label={t('ldap.caCert')} /></span></label>
-          <textarea className="ldap-textarea" rows={4} value={form.ca_cert_pem || ''}
-            placeholder="-----BEGIN CERTIFICATE-----" onChange={(e) => set('ca_cert_pem', e.target.value)} />
-          <span className="hint">{t('ldap.caCertHint')}</span>
+        <Field label={helpLabel(t('ldap.caCert'), 'help.ldap.caCert')} hint={t('ldap.caCertHint')}>
+          {({ id, describedBy }) => (
+            <Textarea id={id} aria-describedby={describedBy} rows={4} className="min-h-0 resize-y font-mono"
+              value={form.ca_cert_pem || ''} placeholder="-----BEGIN CERTIFICATE-----"
+              onChange={(e) => set('ca_cert_pem', e.target.value)} />
+          )}
+        </Field>
+        <div className={GRID}>
+          {textField('bind_dn', 'ldap.bindDn', 'help.ldap.bindDn', 'CN=svc,OU=Service Accounts,DC=corp,DC=com', 'ldap.bindDnHint')}
+          <Field label={helpLabel(t('ldap.bindPassword'), 'help.ldap.bindPassword')} hint={t('ldap.bindPwHint')}>
+            {({ id, describedBy }) => (
+              <Input id={id} aria-describedby={describedBy} type="password" value={bindPw} autoComplete="new-password"
+                placeholder={form.bind_password_set ? t('ldap.bindPwSet') : t('ldap.bindPwEmpty')}
+                onChange={(e) => setBindPw(e.target.value)} />
+            )}
+          </Field>
         </div>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.bindDn')}<HelpTip helpKey="help.ldap.bindDn" label={t('ldap.bindDn')} /></span></label>
-          <input type="text" value={form.bind_dn || ''} placeholder="CN=svc,OU=Service Accounts,DC=corp,DC=com"
-            onChange={(e) => set('bind_dn', e.target.value)} />
-          <span className="hint">{t('ldap.bindDnHint')}</span>
-        </div>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.bindPassword')}<HelpTip helpKey="help.ldap.bindPassword" label={t('ldap.bindPassword')} /></span></label>
-          <input type="password" value={bindPw} autoComplete="new-password"
-            placeholder={form.bind_password_set ? t('ldap.bindPwSet') : t('ldap.bindPwEmpty')}
-            onChange={(e) => setBindPw(e.target.value)} />
-          <span className="hint">{t('ldap.bindPwHint')}</span>
-        </div>
-      </div>
+      </SettingsSection>
 
       {/* User search */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('ldap.userSearch')}</h4>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.baseDn')}<HelpTip helpKey="help.ldap.baseDn" label={t('ldap.baseDn')} /></span></label>
-          <input type="text" value={form.base_dn || ''} placeholder="DC=corp,DC=com"
-            onChange={(e) => set('base_dn', e.target.value)} />
-          <span className="hint">{t('ldap.baseDnHint')}</span>
+      <SettingsSection title={t('ldap.userSearch')}>
+        <div className={GRID}>
+          {textField('base_dn', 'ldap.baseDn', 'help.ldap.baseDn', 'DC=corp,DC=com', 'ldap.baseDnHint')}
+          {textField('user_search_filter', 'ldap.userFilter', 'help.ldap.userFilter', '(objectclass=person)', 'ldap.userFilterHint')}
         </div>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.userFilter')}<HelpTip helpKey="help.ldap.userFilter" label={t('ldap.userFilter')} /></span></label>
-          <input type="text" value={form.user_search_filter || ''} placeholder="(objectclass=person)"
-            onChange={(e) => set('user_search_filter', e.target.value)} />
-          <span className="hint">{t('ldap.userFilterHint')}</span>
+        <div className={FIELD_GRID_3}>
+          {textField('user_attribute', 'ldap.userAttr', 'help.ldap.userAttr', 'sAMAccountName')}
+          {textField('email_attribute', 'ldap.emailAttr', 'help.ldap.emailAttr', 'mail')}
+          {textField('display_attribute', 'ldap.displayAttr', 'help.ldap.displayAttr', 'displayName')}
         </div>
-        <div className="threshold-grid">
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ldap.userAttr')}<HelpTip helpKey="help.ldap.userAttr" label={t('ldap.userAttr')} /></span></label>
-            <input type="text" value={form.user_attribute || ''} placeholder="sAMAccountName"
-              onChange={(e) => set('user_attribute', e.target.value)} />
-          </div>
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ldap.emailAttr')}<HelpTip helpKey="help.ldap.emailAttr" label={t('ldap.emailAttr')} /></span></label>
-            <input type="text" value={form.email_attribute || ''} placeholder="mail"
-              onChange={(e) => set('email_attribute', e.target.value)} />
-          </div>
-          <div className="threshold-field">
-            <label><span className="help-label-row">{t('ldap.displayAttr')}<HelpTip helpKey="help.ldap.displayAttr" label={t('ldap.displayAttr')} /></span></label>
-            <input type="text" value={form.display_attribute || ''} placeholder="displayName"
-              onChange={(e) => set('display_attribute', e.target.value)} />
-          </div>
-        </div>
-      </div>
+      </SettingsSection>
 
       {/* Group lookup */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('ldap.groupLookup')}</h4>
-        <p className="section-desc">{t('ldap.groupLookupDesc')}</p>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.groupSearchBase')}<HelpTip helpKey="help.ldap.groupSearchBase" label={t('ldap.groupSearchBase')} /></span></label>
-          <input type="text" value={form.group_search_base || ''} placeholder="OU=Groups,DC=corp,DC=com"
-            onChange={(e) => set('group_search_base', e.target.value)} />
+      <SettingsSection title={t('ldap.groupLookup')} description={t('ldap.groupLookupDesc')}>
+        <div className={GRID}>
+          {textField('group_search_base', 'ldap.groupSearchBase', 'help.ldap.groupSearchBase', 'OU=Groups,DC=corp,DC=com')}
+          {textField('group_filter', 'ldap.groupFilter', 'help.ldap.groupFilter', '(objectclass=group)')}
         </div>
-        <div className="threshold-field ldap-full">
-          <label><span className="help-label-row">{t('ldap.groupFilter')}<HelpTip helpKey="help.ldap.groupFilter" label={t('ldap.groupFilter')} /></span></label>
-          <input type="text" value={form.group_filter || ''} placeholder="(objectclass=group)"
-            onChange={(e) => set('group_filter', e.target.value)} />
-        </div>
-        <label className="ldap-toggle">
-          <input type="checkbox" checked={!!form.skip_member_of} onChange={(e) => set('skip_member_of', e.target.checked)} />
-          <span>{t('ldap.skipMemberOf')}</span>
-        </label><HelpTip helpKey="help.ldap.skipMemberOf" label={t('ldap.skipMemberOf')} />
-        <p className="hint">{t('ldap.skipMemberOfHint')}</p>
-      </div>
+        <ToggleRow checked={!!form.skip_member_of} onChange={(v) => set('skip_member_of', v)}
+          label={t('ldap.skipMemberOf')} helpKey="help.ldap.skipMemberOf" />
+        <p className="mt-1.5 text-xs text-muted-foreground">{t('ldap.skipMemberOfHint')}</p>
+      </SettingsSection>
 
       {/* Group → role mapping */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('ldap.roleMapping')}</h4>
-        <p className="section-desc">{t('ldap.roleMappingDesc')}</p>
+      <SettingsSection title={t('ldap.roleMapping')} description={t('ldap.roleMappingDesc')}>
         {/* Bu bölümün İKİ kontrolü de (eşlemeler ve varsayılan rol) kaydediliyor ama giriş
             yolunda HİÇ okunmuyor: rol dizin niteliklerinden türetiliyor
             (LdapProvisioningService — yönetici/ürün sahibi → TEAM_ADMIN, diğerleri → USER).
@@ -274,133 +257,146 @@ export default function LdapSettings() {
         <AlertBanner tone="warning" title={t('ldap.roleMappingInactiveTitle')}>
           {t('ldap.roleMappingInactive')}
         </AlertBanner>
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>{t('ldap.mapGroup')}<HelpTip helpKey="help.ldap.mapGroup" label={t('ldap.mapGroup')} /></th>
-                <th style={{ width: 180 }}>{t('ldap.mapRole')}<HelpTip helpKey="help.ldap.mapRole" label={t('ldap.mapRole')} /></th>
-                <th style={{ width: 48 }}></th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="overflow-hidden rounded-lg border border-border">
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead>{t('ldap.mapGroup')}<HelpTip helpKey="help.ldap.mapGroup" label={t('ldap.mapGroup')} /></TableHead>
+                <TableHead className="w-[180px]">{t('ldap.mapRole')}<HelpTip helpKey="help.ldap.mapRole" label={t('ldap.mapRole')} /></TableHead>
+                <TableHead className="w-12"><span className="sr-only">{t('ldap.removeMapping')}</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {(form.role_mappings || []).length === 0 && (
-                <tr><td colSpan={3} className="ldap-empty">{t('ldap.noMappings')}</td></tr>
+                <TableRow><TableCell colSpan={3} className="p-3.5 text-center text-muted-foreground">{t('ldap.noMappings')}</TableCell></TableRow>
               )}
-              {(form.role_mappings || []).map((m, i) => (
-                <tr key={i}>
-                  <td>
-                    <input type="text" value={m.group} placeholder="CN=CertAdmins"
-                      onChange={(e) => updateMapping(i, 'group', e.target.value)} />
-                  </td>
-                  <td>
-                    <select value={m.role} onChange={(e) => updateMapping(i, 'role', e.target.value)}>
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </td>
-                  <td>
-                    <Button variant="ghost" className="text-destructive" onClick={() => removeMapping(i)} title={t('ldap.removeMapping')}>
-                      <Trash2 size={15} />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              {(form.role_mappings || []).map((m, i) => {
+                const rowName = m.group || String(i + 1)
+                return (
+                  <TableRow key={i}>
+                    <TableCell>
+                      <Input type="text" value={m.group} placeholder="CN=CertAdmins"
+                        aria-label={t('a11y.rowAction', String(i + 1), t('ldap.mapGroup'))}
+                        onChange={(e) => updateMapping(i, 'group', e.target.value)} />
+                    </TableCell>
+                    <TableCell>
+                      <NativeSelect value={m.role} className="min-w-[150px]"
+                        aria-label={t('a11y.rowAction', rowName, t('ldap.mapRole'))}
+                        onChange={(e) => updateMapping(i, 'role', e.target.value)}>
+                        {ROLES.map((r) => <NativeSelectOption key={r} value={r}>{r}</NativeSelectOption>)}
+                      </NativeSelect>
+                    </TableCell>
+                    <TableCell>
+                      <SimpleTooltip content={t('ldap.removeMapping')}>
+                        <Button variant="ghost" size="icon-sm" className="text-destructive" onClick={() => removeMapping(i)}
+                          aria-label={t('a11y.rowAction', rowName, t('ldap.removeMapping'))}>
+                          <Trash2 size={15} />
+                        </Button>
+                      </SimpleTooltip>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
         </div>
-        <Button variant="secondary" className="ldap-add-map" onClick={addMapping}>
+        <Button variant="secondary" className="mt-2.5" onClick={addMapping}>
           <Plus size={14} /> {t('ldap.addMapping')}
         </Button>
-        <div className="threshold-field" style={{ maxWidth: 260, marginTop: 14 }}>
-          <label><span className="help-label-row">{t('ldap.defaultRole')}<HelpTip helpKey="help.ldap.defaultRole" label={t('ldap.defaultRole')} /></span></label>
-          <select value={form.default_role || 'ADMIN'} onChange={(e) => set('default_role', e.target.value)}>
-            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-          </select>
-          <span className="hint">{t('ldap.defaultRoleHint')}</span>
-        </div>
-      </div>
-
-      {/* Save / Test */}
-      <div className="ldap-actions">
-        <Button onClick={save} disabled={saving}>
-          {saving ? <Spinner size={15} inline decorative /> : null} {saving ? t('settings.saving') : t('settings.save')}
-        </Button>
-        <Button variant="secondary" onClick={() => test(false)} disabled={testing}>
-          {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testConnection')}
-        </Button>
-        {/* Ayarı kapatmadan önce doğrulamalı deneme — yeşilse "atla" güvenle kapatılabilir. */}
-        {form.skip_cert_verification && (
-          <Button variant="secondary" onClick={() => test(true)} disabled={testing}
-            title={t('ldap.testVerifiedHint')}>
-            {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testVerified')}
-          </Button>
-        )}
-        {testResult && (
-          <span className={`ldap-test-result ${testResult.success ? 'ok' : 'fail'}`}>
-            {testResult.success ? (testResult.message || t('ldap.testOk')) : (testResult.error || t('ldap.testFail'))}
-          </span>
-        )}
-      </div>
+        <Field className="mt-3.5 sm:max-w-xs" label={helpLabel(t('ldap.defaultRole'), 'help.ldap.defaultRole')}
+          hint={t('ldap.defaultRoleHint')}>
+          {({ id, describedBy }) => (
+            <NativeSelect id={id} aria-describedby={describedBy} value={form.default_role || 'ADMIN'}
+              className="min-w-[200px]" onChange={(e) => set('default_role', e.target.value)}>
+              {ROLES.map((r) => <NativeSelectOption key={r} value={r}>{r}</NativeSelectOption>)}
+            </NativeSelect>
+          )}
+        </Field>
+      </SettingsSection>
 
       {/* Directory user lookup — what AD returns for a username */}
-      <div className="admin-section ldap-lookup">
-        <h4 className="ldap-subhdr">{t('ldap.lookupTitle')}</h4>
-        <p className="section-desc">{t('ldap.lookupDesc')}</p>
-        <div className="ldap-lookup-row">
-          <select className="ldap-lookup-attr" value={queryAttr} onChange={(e) => setQueryAttr(e.target.value)}>
-            <option value="">{t('ldap.searchByDefault')}</option>
-            <option value="sAMAccountName">sAMAccountName</option>
-            <option value="mail">{t('ldap.searchByMail')}</option>
-            <option value="cn">cn</option>
-            <option value="displayName">{t('ldap.searchByDisplay')}</option>
-            <option value="userPrincipalName">userPrincipalName</option>
-            <option value="memberOf">{t('ldap.searchByMemberOf')}</option>
-            <option value="_raw_">{t('ldap.searchByRaw')}</option>
-          </select>
-          <input type="text" value={queryName}
+      <SettingsSection title={t('ldap.lookupTitle')} description={t('ldap.lookupDesc')}>
+        <div className="flex flex-col gap-2.5 sm:max-w-3xl sm:flex-row sm:items-stretch">
+          <NativeSelect value={queryAttr} className="w-full sm:w-[190px]" aria-label={t('ldap.lookupAttr')}
+            onChange={(e) => setQueryAttr(e.target.value)}>
+            <NativeSelectOption value="">{t('ldap.searchByDefault')}</NativeSelectOption>
+            <NativeSelectOption value="sAMAccountName">sAMAccountName</NativeSelectOption>
+            <NativeSelectOption value="mail">{t('ldap.searchByMail')}</NativeSelectOption>
+            <NativeSelectOption value="cn">cn</NativeSelectOption>
+            <NativeSelectOption value="displayName">{t('ldap.searchByDisplay')}</NativeSelectOption>
+            <NativeSelectOption value="userPrincipalName">userPrincipalName</NativeSelectOption>
+            <NativeSelectOption value="memberOf">{t('ldap.searchByMemberOf')}</NativeSelectOption>
+            <NativeSelectOption value="_raw_">{t('ldap.searchByRaw')}</NativeSelectOption>
+          </NativeSelect>
+          <Input type="text" value={queryName} aria-label={t('ldap.lookupQuery')} className="min-w-0 flex-1"
             placeholder={queryAttr === '_raw_' ? t('ldap.lookupRawPlaceholder')
               : queryAttr === 'memberOf' ? t('ldap.lookupMemberOfPlaceholder')
               : t('ldap.lookupPlaceholder')}
             onChange={(e) => setQueryName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') runQuery() }} />
-          <Button onClick={runQuery} disabled={querying || !queryName.trim()}>
+          <Button className="shrink-0" onClick={runQuery} disabled={querying || !queryName.trim()} aria-busy={querying || undefined}>
             {querying ? <Spinner size={15} inline decorative /> : <Search size={15} />} {t('ldap.lookupBtn')}
           </Button>
         </div>
 
         {queryResult && <LookupResult result={queryResult} t={t} />}
-      </div>
+      </SettingsSection>
+
+      {/* Save / Test — kirliyken alta yapışır */}
+      <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={discard}
+        result={testResult && (
+          <TestResult ok={!!testResult.success}>
+            {testResult.success ? (testResult.message || t('ldap.testOk')) : (testResult.error || t('ldap.testFail'))}
+          </TestResult>
+        )}>
+        <Button type="button" variant="outline" onClick={() => test(false)} disabled={testing} aria-busy={testing || undefined}>
+          {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testConnection')}
+        </Button>
+        {/* Ayarı kapatmadan önce doğrulamalı deneme — yeşilse "atla" güvenle kapatılabilir. */}
+        {form.skip_cert_verification && (
+          <Button type="button" variant="outline" onClick={() => test(true)} disabled={testing}
+            title={t('ldap.testVerifiedHint')}>
+            {testing ? <Spinner size={15} inline decorative /> : null} {t('ldap.testVerified')}
+          </Button>
+        )}
+      </SettingsSaveBar>
     </div>
   )
 }
 
+/** Sonuç tablosu kabı — kenarlıklı, köşeli kutu; kaydırma shadcn Table kabında. */
+const TABLE_BOX = 'overflow-hidden rounded-lg border border-border'
+const MONO = 'font-mono text-[0.92em]'
+
 function LookupResult({ result, t }) {
   if (!result.success) {
-    return <div className="alert-msg ldap-lookup-error">{result.error || t('ldap.lookupError')}</div>
+    return <AlertBanner tone="danger" className="mt-4">{result.error || t('ldap.lookupError')}</AlertBanner>
   }
   const data = result.data || {}
   if (!data.found) {
-    return <div className="alert-msg">{t('ldap.lookupNotFound')}{data.filter ? ` (${data.filter})` : ''}</div>
+    return <AlertBanner tone="info" className="mt-4">{t('ldap.lookupNotFound')}{data.filter ? ` (${data.filter})` : ''}</AlertBanner>
   }
   // Multiple matches (e.g. memberOf group-membership search) → compact member list.
   if ((data.count ?? (data.matches?.length ?? 0)) > 1) {
     return (
-      <div className="ldap-lookup-result">
-        <div className="ldap-dn">{t('ldap.matchCount', data.count)}</div>
-        <div className="admin-table-wrap">
-          <table className="admin-table">
-            <thead><tr><th>sAMAccountName</th><th>{t('ldap.colDisplay')}</th><th>mail</th><th>DN</th></tr></thead>
-            <tbody>
+      <div className="mt-4">
+        <div className="mb-2.5 text-sm break-all">{t('ldap.matchCount', data.count)}</div>
+        <div className={TABLE_BOX}>
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow><TableHead>sAMAccountName</TableHead><TableHead>{t('ldap.colDisplay')}</TableHead><TableHead>mail</TableHead><TableHead>DN</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
               {data.matches.map((m, i) => (
-                <tr key={i}>
-                  <td className="ldap-attr-name">{m.username || '—'}</td>
-                  <td>{m.displayName || '—'}</td>
-                  <td>{m.email || '—'}</td>
-                  <td className="ldap-attr-val"><code>{m.dn}</code></td>
-                </tr>
+                <TableRow key={i}>
+                  <TableCell className={`${MONO} font-bold`}>{m.username || '—'}</TableCell>
+                  <TableCell>{m.displayName || '—'}</TableCell>
+                  <TableCell>{m.email || '—'}</TableCell>
+                  <TableCell className="whitespace-normal break-words"><code className={MONO}>{m.dn}</code></TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       </div>
     )
@@ -408,25 +404,29 @@ function LookupResult({ result, t }) {
   const attrs = data.attributes || {}
   const keys = Object.keys(attrs).sort((a, b) => a.localeCompare(b))
   return (
-    <div className="ldap-lookup-result">
-      <div className="ldap-dn"><strong>DN:</strong> <code>{data.dn}</code></div>
-      <div className="admin-table-wrap">
-        <table className="admin-table ldap-attr-table">
-          <thead><tr><th>{t('ldap.attribute')}</th><th>{t('ldap.value')}</th></tr></thead>
-          <tbody>
+    <div className="mt-4">
+      <div className="mb-2.5 text-sm break-all"><strong>DN:</strong> <code className={MONO}>{data.dn}</code></div>
+      <div className={TABLE_BOX}>
+        <Table>
+          <TableHeader className="bg-muted/50">
+            <TableRow><TableHead>{t('ldap.attribute')}</TableHead><TableHead>{t('ldap.value')}</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
             {keys.map((k) => (
-              <tr key={k}>
-                <td className="ldap-attr-name">{k}</td>
-                <td className="ldap-attr-val">{renderVal(attrs[k])}</td>
-              </tr>
+              <TableRow key={k}>
+                <TableCell className={`${MONO} align-top font-bold`}>{k}</TableCell>
+                <TableCell className="align-top whitespace-normal break-words">{renderVal(attrs[k])}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       {Array.isArray(data.groups) && data.groups.length > 0 && (
-        <div className="ldap-groups">
+        <div className="mt-3.5 text-sm">
           <strong>{t('ldap.groups')} ({data.groups.length})</strong>
-          <ul>{data.groups.map((g, i) => <li key={i}><code>{g}</code></li>)}</ul>
+          <ul className="mt-1.5 list-disc pl-[18px]">
+            {data.groups.map((g, i) => <li key={i} className="my-0.5 break-all"><code className={MONO}>{g}</code></li>)}
+          </ul>
         </div>
       )}
     </div>
@@ -435,7 +435,7 @@ function LookupResult({ result, t }) {
 
 function renderVal(v) {
   if (Array.isArray(v)) {
-    return <ul className="ldap-multi">{v.map((x, i) => <li key={i}>{String(x)}</li>)}</ul>
+    return <ul className="list-disc pl-[18px]">{v.map((x, i) => <li key={i} className="my-px">{String(x)}</li>)}</ul>
   }
   return <span>{String(v)}</span>
 }

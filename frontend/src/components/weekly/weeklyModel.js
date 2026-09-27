@@ -3,6 +3,10 @@
  * geri sayım, Δ hesabı, yıl özeti CSV ve URL eşlemesi. Bileşen yalnız durum + çizim tutar.
  */
 import { csvRows } from '../../utils/csv.js'
+import { STATUS_COUNT_KEYS, statusCounts } from './editorModel.js'
+
+/** Satırın durum dağılımı hücreleri (liste satırı / pano takımı `status_counts` taşır; yoksa boş hücreler). */
+const countCells = (sc) => (sc && typeof sc === 'object' ? STATUS_COUNT_KEYS.map(({ key }) => statusCounts({ status_counts: sc })[key]) : STATUS_COUNT_KEYS.map(() => ''))
 
 export const STATUS_CHIPS = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SENT', 'REJECTED']
 
@@ -86,16 +90,17 @@ export function parsePrevContent(json) {
 
 /** Yıl özeti CSV: takım × hafta × durum × skor × kişiler. */
 export function buildYearCsv(reports, teamNameOf, t) {
-  const heads = [t('wr.colWeek'), t('wr.team'), t('wr.statusCol'), t('wr.colScore'), t('wr.colCreated'), t('wr.colUpdated'), t('wr.colApproved'), t('wr.colSent')]
+  const heads = [t('wr.colWeek'), t('wr.team'), t('wr.statusCol'), t('wr.colScore'), t('wr.colCreated'), t('wr.colUpdated'), t('wr.colApproved'), t('wr.colSent'),
+    ...STATUS_COUNT_KEYS.map(({ label }) => t(label))]   // Madde 1 durum dağılımı (2026-09-27)
   const rows = (reports || []).map((r) => [
     `${r.report_year}-W${String(r.week_no).padStart(2, '0')}`, teamNameOf(r.team_id) || r.team_id, effectiveStatus(r), r.score ?? '',
-    r.created_by || '', r.updated_at || '', r.approved_by || '', r.sent_at || '',
+    r.created_by || '', r.updated_at || '', r.approved_by || '', r.sent_at || '', ...countCells(r.status_counts),
   ])
   return csvRows([heads, ...rows])
 }
 
-/** URL eşlemesi (`w_` öneki). */
-export function toUrlMapping({ selectedId, selTeamId, year, weekFilter, statusChip, sort, currentYear }) {
+/** URL eşlemesi (`w_` öneki). `q` = liste arama kutusu (2026-09-27). */
+export function toUrlMapping({ selectedId, selTeamId, year, weekFilter, statusChip, sort, currentYear, q }) {
   return {
     w_id: selectedId || null,
     w_team: selTeamId || null,
@@ -103,7 +108,54 @@ export function toUrlMapping({ selectedId, selTeamId, year, weekFilter, statusCh
     w_week: weekFilter || null,
     w_st: statusChip || null,
     w_sort: sort && sort !== 'week|desc' ? sort : null,
+    w_q: String(q ?? '').trim() || null,
   }
+}
+
+/** ISO etiket: 2026 + 7 → "2026-W07" (sunucu week_label'ının ilk kısmı; tarih aralığı ayrıca yerelleştirilir). */
+export function isoWeekLabel(year, week) {
+  return `${year}-W${String(week).padStart(2, '0')}`
+}
+
+/**
+ * Liste arama eşleşmesi (2026-09-27): ISO etiketi ("2026-W37", "W37"), çizilen tarih aralığı, takım adı ve kişiler
+ * (oluşturan / son düzenleyen / onaylayan) — büyük/küçük harf ve Türkçe İ duyarsız.
+ */
+export function matchesSearch(r, q, { teamName = '', weekText = '' } = {}) {
+  const needle = String(q ?? '').trim().toLocaleLowerCase('tr')
+  if (!needle) return true
+  const hay = [isoWeekLabel(r.report_year, r.week_no), `w${r.week_no}`, weekText, teamName,
+    r.created_by, r.updated_by, r.approved_by, r.submitted_by].filter(Boolean).join(' | ').toLocaleLowerCase('tr')
+  return hay.includes(needle)
+}
+
+/** "Bu hafta" durum grubu: gönderildi (onayda / onaylı) · sürüyor (taslak / iade) · eksik. */
+export function thisWeekGroup(status) {
+  if (status === 'PENDING_APPROVAL' || status === 'APPROVED') return 'submitted'
+  if (status === 'MISSING') return 'missing'
+  return 'progress'
+}
+
+/**
+ * "Bu hafta" özeti (2026-09-27 kutucukları + sayfa başlığı çipleri): toplam / gönderilen / süren / eksik takım ve
+ * son giriş geçtiyse gecikenler (eksik + süren). `cd` = geri sayım ({@link countdown}).
+ */
+export function thisWeekSummary(data, now = Date.now()) {
+  const teams = data?.teams || []
+  const s = { total: teams.length, submitted: 0, progress: 0, missing: 0, overdue: 0, past: false, cd: null }
+  for (const x of teams) s[thisWeekGroup(x.status)]++
+  s.cd = countdown(data?.due_at, now)
+  s.past = !!s.cd?.past
+  s.overdue = s.past ? s.missing + s.progress : 0
+  return s
+}
+
+/** Kutucuk süzgeci: 'submitted' | 'progress' | 'missing' | 'overdue' ('' = hepsi). */
+export function matchesThisWeekFilter(x, filter, past) {
+  if (!filter) return true
+  const g = thisWeekGroup(x.status)
+  if (filter === 'overdue') return past && g !== 'submitted'
+  return g === filter
 }
 
 /** Yönetici yıl özeti (2026-09-13, ikinci tur): tamamlama panosundaki takım × hafta matrisinin
@@ -111,10 +163,13 @@ export function toUrlMapping({ selectedId, selTeamId, year, weekFilter, statusCh
 export function buildYearSummaryCsv(data, t) {
   const weeks = Array.from({ length: data?.weeks || 0 }, (_, i) => i + 1)
   const st = (k) => t(`wrc.status.${k}`)
-  const head = [t('wrc.team'), ...weeks.map((w) => `W${String(w).padStart(2, '0')}`), t('wrc.status.APPROVED'), t('wrc.missingShort')]
+  // Son iki blok (2026-09-27): takımın o yıldaki EN SON raporu + Madde 1 durum dağılımı (anlık görüntü)
+  const head = [t('wrc.team'), ...weeks.map((w) => `W${String(w).padStart(2, '0')}`), t('wrc.status.APPROVED'), t('wrc.missingShort'),
+    t('wr.ys.latest'), ...STATUS_COUNT_KEYS.map(({ label }) => t(label))]
   const rows = (data?.teams || []).map((tm) => {
     const byWeek = new Map((tm.cells || []).map((c) => [c.week, c]))
-    return [tm.team_name, ...weeks.map((w) => { const c = byWeek.get(w); return c ? (c.score != null ? `${st(c.status)} (${c.score})` : st(c.status)) : '' }), tm.approved ?? '', tm.missing ?? '']
+    return [tm.team_name, ...weeks.map((w) => { const c = byWeek.get(w); return c ? (c.score != null ? `${st(c.status)} (${c.score})` : st(c.status)) : '' }), tm.approved ?? '', tm.missing ?? '',
+      tm.latest_week ? `W${String(tm.latest_week).padStart(2, '0')}` : '', ...countCells(tm.status_counts)]
   })
   return csvRows([head, ...rows])
 }
@@ -137,7 +192,12 @@ export function buildYearSummaryHtml(data, t, { generatedAt = new Date() } = {})
       const txt = c?.score != null ? c.score : (k === 'MISSING' ? '' : '·')
       return `<td class="c" style="background:${YS_COLORS[k] || YS_COLORS.MISSING}" title="${escHtml(st(k))}">${escHtml(txt)}</td>`
     }).join('')
-    return `<tr><td class="tm">${escHtml(tm.team_name)}${tm.reminder === false ? ' <span class="mute">⏸</span>' : ''}</td>${cells}<td class="sum">${escHtml(tm.approved ?? 0)} / ${escHtml(tm.missing ?? 0)}</td></tr>`
+    // Madde 1 durum dağılımı (2026-09-27): takımın en son raporundaki anlık görüntü — takım hücresinde ikinci satır
+    const sc = tm.status_counts ? statusCounts({ status_counts: tm.status_counts }) : null
+    const scLine = sc && STATUS_COUNT_KEYS.some(({ key }) => sc[key] > 0)
+      ? `<div class="sc">${tm.latest_week ? `W${escHtml(String(tm.latest_week).padStart(2, '0'))} · ` : ''}${STATUS_COUNT_KEYS.map(({ key, label }) => `${escHtml(t(label))} ${escHtml(sc[key])}`).join(' · ')}</div>`
+      : ''
+    return `<tr><td class="tm">${escHtml(tm.team_name)}${tm.reminder === false ? ' <span class="mute">⏸</span>' : ''}${scLine}</td>${cells}<td class="sum">${escHtml(tm.approved ?? 0)} / ${escHtml(tm.missing ?? 0)}</td></tr>`
   }).join('')
   const legend = Object.keys(YS_COLORS).map((k) => `<span class="lg"><i style="background:${YS_COLORS[k]}"></i>${escHtml(st(k))}</span>`).join('')
   const title = `${escHtml(t('wr.yearSummary'))} · ${escHtml(data?.year ?? '')}`
@@ -150,6 +210,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #d4d4d8;padding
 th.w{font-size:9px;width:16px}th.cur,td.cur{outline:2px solid #2563eb}
 td.tm{text-align:left;font-weight:600;white-space:nowrap}td.c{font-size:9px;font-variant-numeric:tabular-nums}
 td.sum{white-space:nowrap;font-weight:600}.mute{color:#a1a1aa}
+.sc{font-weight:400;font-size:8.5px;color:#52525b;white-space:normal;margin-top:1px;max-width:200px}
 .legend{margin-top:8px;font-size:10px;color:#27272a;display:flex;gap:12px;flex-wrap:wrap}
 .lg i{display:inline-block;width:10px;height:10px;border:1px solid #a1a1aa;margin-right:3px;vertical-align:-1px}
 .note{margin-top:6px;font-size:9px;color:#71717a}

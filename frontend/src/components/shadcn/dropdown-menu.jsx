@@ -1,3 +1,4 @@
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
@@ -16,16 +17,16 @@ function DropdownMenuPortal({
   )
 }
 
-function DropdownMenuTrigger({
-  ...props
-}) {
+// forwardRef (React 18): <TooltipTrigger asChild><DropdownMenuTrigger> gibi iç içe tetiklerde ref düşmesin (SHADCN.md §3.1).
+const DropdownMenuTrigger = React.forwardRef(function DropdownMenuTrigger(props, ref) {
   return (
     <DropdownMenuPrimitive.Trigger
+      ref={ref}
       data-slot="dropdown-menu-trigger"
       {...props}
     />
   )
-}
+})
 
 function DropdownMenuContent({
   className,

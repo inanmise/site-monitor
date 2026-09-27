@@ -587,6 +587,18 @@ Delivery is idempotent per team and per week — a second email for the same wee
 
 Mail can be configured from environment variables at start-up, but after installation it is far more practical to manage it from **Settings → SMTP**: changes there are written to the database, take effect without a restart, and the screen can send a test message to prove the settings work.
 
+### 9.5 24/7 Monitoring Team (NOC) Notifications
+
+Many organisations have a 24/7 monitoring team (NOC) that watches screens round the clock and **phones** the team responsible when something goes wrong. If an outage happens overnight or at the weekend while the team is asleep, the NOC only knows about the monitors that notify it. Site Monitor builds that bridge by e-mail:
+
+- **Opt-in per monitor:** every monitor type and the certificate inventory have a "Notify the 24/7 monitoring team" switch — **off by default**. When it is on, the same alert that produces the team e-mail also e-mails the NOC groups.
+- **NOC groups:** e-mail lists defined under **Settings → 24/7 Monitoring Team**, independent of teams (1–50 addresses per group; active / default; a test e-mail button). If a monitor doesn't pick a group, the e-mail goes to the default groups, or to every active group if there is no default.
+- **Per-type switches:** if an administrator switches a type off (Ping, say), NOC e-mails stop for EVERY monitor of that type — even monitors that are opted in.
+- **Rules:** only alerts at or above the chosen level go out (default: critical only). Team quiet hours, level thresholds and personal mutes don't affect the NOC; maintenance windows and the global e-mail switch do. There is one opening e-mail per alert, and a "RESOLVED" e-mail follows if the opening one went to the NOC (this can be switched off). During a storm or mass outage the NOC, like the team, gets a single combined e-mail.
+- **What the e-mail contains:** the subject is `[Site Monitor] [7/24] <LEVEL> — <target> — <Team>`; the body covers what happened, the owning team, the **call list** (name · job title · tappable phone number, read live from Active Directory), the team manager, escalation contacts, the call instructions and a link to the monitor. The mail log files it under the `NOC` category.
+
+The **24/7 Coverage** screen shows which monitors don't reach the NOC (see §14.31); the warning strip on the dashboard takes you there.
+
 ---
 
 ## 10. Monitor Types
@@ -944,6 +956,7 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 | Alerts | Incidents | `?tab=incidents` | Everyone |
 | Alerts | Maintenance | `?tab=maintenance` | Everyone; managing depends on permission |
 | Alerts | Alert History | `?tab=alerthistory` | Everyone |
+| Alerts | 24/7 Coverage | `?tab=noc` | Everyone — monitors within your scope; switching on needs permission to edit the monitor |
 | Reports | Statistics | `?tab=stats` | Everyone |
 | Reports | Weak Algorithm Report | `?tab=weakalgo` | Permission-based |
 | Reports | Weekly Reports | `?tab=weeklyreports` | Permission-based |
@@ -1019,7 +1032,14 @@ Generates prioritised, plain-language recommendations for each certificate: crit
 
 ### 14.10 Renewal Guide
 
-A categorised collection of internal documents and external links about certificate renewal. It keeps the answers to "which CA portal, which internal procedure" in one place; an administrator adds, edits and orders the links.
+Brings your organisation's resources, CA portals and platform notes for renewing certificates together in one place. Most certificates are bought from a commercial certificate authority (CA), so the resources are the heart of the page; generating a key by hand sits folded away at the bottom. From top to bottom:
+
+- **Resources** (`guide_link`): internal documents and external links as a grid of cards, grouped by category. The search box filters on title, description, address and category; the category chips (each showing how many links it holds) narrow the list to one category. The order is always CA portals, then platforms (NetScaler, WAF, IIS, Kubernetes / OpenShift and so on), then tools. Each card shows the link type (web page, network folder or email), a title that opens in a new tab, the description, and a short address with a copy button — a browser may not open a network folder, so copy the path and open it in File Explorer. If there are no CA portal links yet, a placeholder heads the list, and an administrator can use it to open "Add the first link" with the category already filled in.
+- **Buying or renewing through a CA**: six short steps — order or renew in the CA portal, prove you control the domain (DCV: email, a DNS TXT record or an HTTP file), approval and issue, downloading the right format (PEM with the chain, or PFX), installing it on the endpoints, and checking it in Site Monitor. The details sit behind the information button next to each step, and the steps take you to the matching resource category, the platform notes, or All Certificates and Renewal Advice.
+- **Installing on your platform** (collapsible): short notes and copyable commands for NetScaler, IIS, Kubernetes / OpenShift and Nginx / Apache, plus a button to that platform's resource category when there is one. Your chosen platform is remembered in your browser.
+- **Advanced: generating your own key and CSR** (collapsible, closed to begin with): the manual route you'll rarely need — scope, key and CSR, matching the certificate to the key and building the chain, installing, checking and wrapping up. You can tick steps off as done; the ticks are only saved in this browser, and the heading shows your progress while the section is closed.
+
+The "On this page" row in the header jumps to each section (opening the collapsible ones); it isn't shown on phones. The header also has buttons for Renewal Advice and Domain Inventory, and administrators get **Add Link**. An administrator adds links, edits or deletes them from the card's Actions menu, and orders them by number.
 
 ### 14.11 Expiry Forecast
 
@@ -1142,6 +1162,7 @@ The application-wide configuration screen, reachable only by the bootstrap admin
 - Weekly availability — the Monday email, its history, a preview and the outage PDF.
 - Certificate inventory report — the scheduled monthly inventory report and its recipients.
 - Storm — alert storm thresholds and behaviour.
+- 24/7 Monitoring Team — NOC groups (multiple e-mail addresses, active/default, test e-mail), per-type switches, minimum level, the resolved e-mail and call instructions; a scoped administrator sees it read-only, with the addresses hidden.
 - Login anomaly — failed sign-in detection rules and recipients.
 - Directory — the LDAP connection, a test bind and an attribute viewer.
 - Domain diagnostics — a step-by-step trace of a registration lookup, and the tool that captures a proxy certificate chain as paste-ready text.
@@ -1184,6 +1205,20 @@ A user signing in for the **first time** sees a welcome card shortly after the d
 **What's-new tour:** when a release adds new stops, users who already finished the tour see a short "What's new" card at sign-in covering only the new stops; it, too, can be closed with "Not now" or "Don't show again".
 
 **For administrators:** the KPI under System Health → Users shows how many users completed, dismissed or never saw the tour. **Reset the tour** in the user edit window clears a person's tour state so they see the welcome card at their next sign-in. Completion, dismissal and reset are written to the audit log (`TOUR_COMPLETED`, `TOUR_DISMISSED`, `USER_TOUR_RESET`).
+
+### 14.31 24/7 Coverage
+
+If something breaks overnight your team may well be asleep, and the 24/7 monitoring team only hears about monitors that are set to notify it (see §9.5). This screen (`?tab=noc`) shows which monitors within your scope **don't** reach the 24/7 team, and why:
+
+| Part | What it shows |
+|---|---|
+| Summary | Total / covered / not covered / paused tiles (click to filter), the coverage percentage, and coverage bars per type |
+| Reasons | Monitor not opted in · Type disabled by admin · No active 24/7 group · Paused |
+| Filters | Search, team, type and reason; shareable address parameters with the `n_` prefix |
+| Actions | **Notify the 24/7 team** in one click on monitors you can edit; bulk selection with "Notify the 24/7 team (N)"; switching it off from the "…" menu on an opted-in monitor |
+| Call list | An ordered list of people per team — the team manager, a team administrator or an administrator edits it (move up/down, add/remove). Anyone with no phone number in Active Directory is flagged; if the list is empty, the e-mail shows the team manager instead |
+
+If there is no active group, an administrator sees a link to Settings and everyone else sees a note to ask their administrator. The dashboard strip "N monitors aren't set to alert the 24/7 monitoring team if they go down overnight" leads here and can be hidden for the session.
 
 ---
 

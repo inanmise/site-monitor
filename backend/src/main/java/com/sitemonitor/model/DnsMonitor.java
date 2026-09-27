@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "dns_monitors")
 @Data
 @NoArgsConstructor
-public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule {
+public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -139,8 +139,27 @@ public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule {
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
 
+    /** 7/24 İzleme Ekibi (NOC) bildirimi (2026-09-27) — null = KAPALI (varsayılan). Bkz. {@link NocTarget}. */
+    @jakarta.persistence.Column(name = "noc_notify")
+    private Boolean nocNotify;
+
+    /** Hedef NOC grupları (virgüllü kimlik); null = varsayılan gruplar. API'ye LİSTE olarak yazılır
+     *  ({@code noc_group_ids}) — ham virgüllü değer JSON'a çıkmaz. */
+    @jakarta.persistence.Column(name = "noc_group_ids", length = 500)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String nocGroupIds;
+
+    /**
+     * SİLİNME zamanı (UTC ISO) — yalnız standalone satırda (2026-09-27). Gerekçe ve anlam
+     * {@link PortMonitor#getDeletedAt()} ile aynı: silinmiş = {@code deletedAt != null}; duraklatılmış =
+     * {@code active=false, deletedAt=null} ve listelenir.
+     */
+    @Column(name = "deleted_at", length = 30)
+    private String deletedAt;
+
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "DNS"; }
     @Override public boolean scheduleStandalone() { return Boolean.TRUE.equals(standalone); }
     @Override public String scheduleTarget() { return domain; }
+    @Override public boolean scheduleDeleted() { return deletedAt != null; }
 }

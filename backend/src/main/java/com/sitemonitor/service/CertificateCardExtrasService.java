@@ -218,7 +218,7 @@ public class CertificateCardExtrasService {
         for (String d : new java.util.HashSet<>(union(totals.keySet(), last.keySet()))) {
             Map<String, Object> m = new LinkedHashMap<>();
             long[] t = totals.get(d);
-            m.put("pct24", t == null || t[0] == 0 ? null : Math.round(t[1] * 1000.0 / t[0]) / 10.0);
+            m.put("pct24", t == null ? null : com.sitemonitor.util.AvailabilityMath.pct(t[0], t[1], 1));   // O-5 kardeşi
             m.put("checks24", t == null ? 0 : t[0]);
             UptimeCheck u = last.get(d);
             m.put("last_status", u == null ? null : u.getStatus()); m.put("last_ms", u == null ? null : u.getResponseMs()); m.put("last_at", u == null ? null : u.getCheckedAt());

@@ -1,5 +1,14 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.mail.MailDoc;
+import com.sitemonitor.service.mail.MailKit;
+import com.sitemonitor.service.mail.MailKit.Badge;
+import com.sitemonitor.service.mail.MailKit.Cell;
+import com.sitemonitor.service.mail.MailKit.Col;
+import com.sitemonitor.service.mail.MailKit.Row;
+import com.sitemonitor.service.mail.MailKit.Stat;
+import com.sitemonitor.service.mail.MailTokens;
+import com.sitemonitor.service.mail.MailTokens.Tone;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +29,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +39,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * E-posta gönderim hunisi + tüm e-posta şablonları. Şablonlar {@link MailDoc} ile kurulur
+ * (e-posta yeniden tasarımı 2026-09-26, BRAND.md §5.1): mobil-web duyarlı, shadcn görsel dili,
+ * Outlook-güvenli; HTML ve düz metin aynı kurucudan çıkar → her e-posta multipart/alternative.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -49,7 +64,7 @@ public class EmailNotificationService {
      *  bildirim loguna geri-yazmak için (subject ile eşleştirilir). */
     private final com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
     private final AppSettingsService appSettings;
-    private final EmailTemplateBuilder templateBuilder;   // executive-premium alarm şablonu (tek merkez)
+    private final EmailTemplateBuilder templateBuilder;   // süre-bitişi / kusur alarm şablonu (tek merkez)
 
     /** Uygulama dış adresi — e-posta CTA deep-link'leri için. Spring @Value enjekte eder;
      *  birim testte (manuel new) initializer değeri kullanılır. */
@@ -130,15 +145,6 @@ public class EmailNotificationService {
 
     public String getEmailFrom() { return currentFrom(); }
 
-    /** Kart üstü marka barı — TÜM şablon aileleri bunu kullanır (BRAND.md §5.1 lockup + ENTERPRISE).
-     *  Mail başına TEK logo kuralının uygulandığı yer: lockup yalnız bu barda geçer. */
-    private static String brandBar() {
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#0F1B2D' style='background-color:#0F1B2D'>"
-                + "<tr><td align='left' style='padding:12px 20px'>" + BrandMailAssets.headerLockup() + "</td>"
-                + "<td align='right' style='padding:12px 20px;font-size:10px;font-weight:700;letter-spacing:.18em;color:#8DA2BF'>ENTERPRISE</td>"
-                + "</tr></table>";
-    }
-
     public String sendAlert(String to, String subject, String message) {
         return sendAlert(to, subject, message, null, null, null, null, null);
     }
@@ -147,7 +153,7 @@ public class EmailNotificationService {
                             String domain, String level, String alertType,
                             Integer daysRemaining, Map<String, Object> certContext) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — TO={} | KONU={}", to, subject);
+            log.info("⚠ Email devre dışı — TO={} | KONU={}", SecretMask.maskEmails(to), subject);
             return "SKIPPED_DISABLED";
         }
         try {
@@ -158,13 +164,12 @@ public class EmailNotificationService {
             helper.setSubject(subject);
             // Logo şablonun BAŞLIK ÇUBUĞUNDAN gelir (BRAND.md §5.1) — gönderim yalnız CID ekini iliştirir.
             String variant = BrandMailAssets.variantForLevel(level);
-            String html = buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext);
-            String text = buildAlertEmailText(subject, message, domain, level, alertType, daysRemaining, certContext);
-            helper.setText(text, html);   // multipart/alternative (plain + HTML)
-            BrandMailAssets.addInline(helper, html, variant);   // CID inline marka logosu (setText SONRASI)
+            MailDoc.Mail mail = alertMail(subject, message, domain, level, alertType, daysRemaining, certContext);
+            helper.setText(mail.text(), mail.html());   // multipart/alternative (plain + HTML)
+            BrandMailAssets.addInline(helper, mail.html(), variant);   // CID inline marka logosu (setText SONRASI)
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -173,7 +178,7 @@ public class EmailNotificationService {
                             String domain, String level, String alertType,
                             Integer daysRemaining, Map<String, Object> certContext) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — TO={} | KONU={}", Arrays.toString(toAddresses), subject);
+            log.info("⚠ Email devre dışı — TO={} | KONU={}", SecretMask.maskEmails(toAddresses), subject);
             return "SKIPPED_DISABLED";
         }
         try {
@@ -183,14 +188,12 @@ public class EmailNotificationService {
             applyFrom(helper);
             helper.setSubject(subject);
             String variant = BrandMailAssets.variantForLevel(level);
-            String html = buildAlertEmailHtml(subject, message, domain, level, alertType, daysRemaining, certContext);
-            helper.setText(
-                    buildAlertEmailText(subject, message, domain, level, alertType, daysRemaining, certContext),
-                    html);
-            BrandMailAssets.addInline(helper, html, variant);   // CID inline marka logosu (setText SONRASI)
+            MailDoc.Mail mail = alertMail(subject, message, domain, level, alertType, daysRemaining, certContext);
+            helper.setText(mail.text(), mail.html());
+            BrandMailAssets.addInline(helper, mail.html(), variant);   // CID inline marka logosu (setText SONRASI)
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
-            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
+            log.error("✗ E-posta hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(toAddresses), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -209,7 +212,7 @@ public class EmailNotificationService {
                                       String createdAt, Map<String, Object> certContext,
                                       String teamNames, UptimeSummary uptime) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", Arrays.toString(toAddresses));
+            log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", SecretMask.maskEmails(toAddresses));
             return "SKIPPED_DISABLED";
         }
         try {
@@ -219,15 +222,13 @@ public class EmailNotificationService {
             applyFrom(helper);
             helper.setSubject(subject);
             // Çözülme maili DAİMA "ok" varyantı — "sorun çözüldü, yapraklar yeşile döndü" (BRAND.md)
-            String html = buildResolutionEmailHtml(domain, alertType, alertLevel,
-                    daysRemaining, resolvedBy, resolvedAt, createdAt, certContext, teamNames, uptime);
-            helper.setText(
-                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext),
-                    html);
-            BrandMailAssets.addInline(helper, html, "ok");
+            MailDoc.Mail mail = resolutionMail(domain, alertType, alertLevel, daysRemaining, resolvedBy, resolvedAt,
+                    createdAt, certContext, teamNames, uptime);
+            helper.setText(mail.text(), mail.html());
+            BrandMailAssets.addInline(helper, mail.html(), "ok");
             return doSend(Arrays.toString(toAddresses), msg, 1);
         } catch (Exception e) {
-            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", Arrays.toString(toAddresses), e.getMessage(), e);
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(toAddresses), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -242,9 +243,9 @@ public class EmailNotificationService {
             currentSender().send(msg);
             long ms = System.currentTimeMillis() - t0;
             if (attempt == 1) {
-                log.info("✓ E-posta gönderildi: TO={}", to);
+                log.info("✓ E-posta gönderildi: TO={}", SecretMask.maskEmails(to));
             } else {
-                log.info("✓ E-posta gönderildi (retry #{}): TO={}", attempt - 1, to);
+                log.info("✓ E-posta gönderildi (retry #{}): TO={}", attempt - 1, SecretMask.maskEmails(to));
             }
             if (MAIL_LOG.isTraceEnabled()) {
                 MAIL_LOG.trace("✓ SMTP gönderim OK: TO={} | süre={}ms | messageId={} | boyut={}B",
@@ -265,7 +266,7 @@ public class EmailNotificationService {
                 // backoff: retryDelay × 2^(attempt-1) → base, 2×, 4× …
                 long delay = retry() * (1L << (attempt - 1));
                 log.warn("⏳ SMTP 421 rate limit (deneme {}/{}) — {}ms sonra async retry: TO={}",
-                        attempt, MAX_SEND_ATTEMPTS, delay, to);
+                        attempt, MAX_SEND_ATTEMPTS, delay, SecretMask.maskEmails(to));
                 if (MAIL_LOG.isTraceEnabled()) {
                     // Son arg `e` (Throwable) → TRACE'te tam stack de basılır.
                     MAIL_LOG.trace("⏳ SMTP 421 ayrıntı: TO={} | süre={}ms | {} | kök sebep={}",
@@ -274,7 +275,7 @@ public class EmailNotificationService {
                 // Bellek tavanı: kuyruk doluysa retry PLANLAMA (bkz. MAX_PENDING_RETRIES).
                 if (pendingRetries.get() >= MAX_PENDING_RETRIES) {
                     log.error("✗ 421 retry kuyruğu dolu ({} bekleyen) — retry PLANLANMADI, e-posta düşürüldü: TO={}",
-                            MAX_PENDING_RETRIES, to);
+                            MAX_PENDING_RETRIES, SecretMask.maskEmails(to));
                     if (attempt > 1) writeBackRetryStatus(msg, "FAILED: retry kuyruğu dolu");
                     return "FAILED: retry kuyruğu dolu";
                 }
@@ -284,7 +285,7 @@ public class EmailNotificationService {
                     () -> {
                         try { doSend(to, msg, attempt + 1); }
                         catch (Exception ex) {
-                            log.error("✗ Async retry başarısız: TO={} | HATA={}", to, ex.getMessage(), ex);
+                            log.error("✗ Async retry başarısız: TO={} | HATA={}", SecretMask.maskEmails(to), ex.getMessage(), ex);
                         } finally {
                             pendingRetries.decrementAndGet();
                         }
@@ -294,11 +295,11 @@ public class EmailNotificationService {
                 return attempt == 1 ? "QUEUED_RETRY: " + err : "QUEUED_RETRY";
             }
             if (errFull.contains("421")) {
-                log.error("✗ E-posta {} denemede de 421 rate limit ile gönderilemedi: TO={}", MAX_SEND_ATTEMPTS, to);
+                log.error("✗ E-posta {} denemede de 421 rate limit ile gönderilemedi: TO={}", MAX_SEND_ATTEMPTS, SecretMask.maskEmails(to));
             }
             // Son arg `e` (Throwable) → SLF4J tam stack trace'i ERROR'a HER ZAMAN basar
             // (TRACE açmaya gerek yok). SMTP bağlamı + mesaj ayrıntısı ek olarak TRACE'te.
-            log.error("✗ E-posta gönderilemedi: TO={} | süre={}ms | HATA={}", to, ms, err, e);
+            log.error("✗ E-posta gönderilemedi: TO={} | süre={}ms | HATA={}", SecretMask.maskEmails(to), ms, err, e);
             if (MAIL_LOG.isTraceEnabled()) {
                 MAIL_LOG.trace("✗ SMTP hata ayrıntı: TO={} | {} | {} | kök sebep={}",
                         to, describeMessage(msg), smtpContext(), rootMessage(e));
@@ -390,7 +391,7 @@ public class EmailNotificationService {
                                       Integer daysRemaining, String resolvedBy, String resolvedAt,
                                       String createdAt, Map<String, Object> certContext) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", to);
+            log.info("⚠ Email devre dışı — çözüm bildirimi: TO={}", SecretMask.maskEmails(to));
             return "SKIPPED_DISABLED";
         }
         try {
@@ -399,15 +400,13 @@ public class EmailNotificationService {
             helper.setTo(to);
             applyFrom(helper);
             helper.setSubject(subject);
-            String html = buildResolutionEmailHtml(domain, alertType, alertLevel,
-                    daysRemaining, resolvedBy, resolvedAt, createdAt, certContext);
-            helper.setText(
-                    buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext),
-                    html);
-            BrandMailAssets.addInline(helper, html, "ok");   // dizi-overload ile simetri (çözülme = ok)
+            MailDoc.Mail mail = resolutionMail(domain, alertType, alertLevel, daysRemaining, resolvedBy, resolvedAt,
+                    createdAt, certContext, null, null);
+            helper.setText(mail.text(), mail.html());
+            BrandMailAssets.addInline(helper, mail.html(), "ok");   // dizi-overload ile simetri (çözülme = ok)
             return doSend(to, msg, 1);
         } catch (Exception e) {
-            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            log.error("✗ Çözüm e-postası hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -421,6 +420,8 @@ public class EmailNotificationService {
      * istemci logonun yerinde kırık resim (X) gösteriyordu ("Failed-Login Anomaly test maili",
      * 2026-09-10). sendAlert/sendResolutionAlert ve sendHtml hunisi doğruydu; sınıf-kapatıcı kapı
      * {@code EmailBrandCidTest} (her elle kurulan gönderici Content-ID taşımalı + huni sayısı sabit).
+     *
+     * <p>Düz metin: MailDoc'un yazdığı metin (yoksa HTML'den türetilir) → multipart/alternative.
      */
     private String sendFramedHtml(String[] to, String subject, String html, String variant) throws Exception {
         MimeMessage msg = currentSender().createMimeMessage();
@@ -428,7 +429,9 @@ public class EmailNotificationService {
         helper.setTo(to);
         applyFrom(helper);
         helper.setSubject(subject);
-        helper.setText(html, true);
+        String text = MailKit.plainTextFor(html);
+        if (text != null && !text.isBlank()) helper.setText(text, html);
+        else helper.setText(html, true);
         BrandMailAssets.addInline(helper, html, variant);   // setText SONRASI (Spring helper sırası)
         return doSend(String.join(",", to), msg, 1);
     }
@@ -440,13 +443,13 @@ public class EmailNotificationService {
      */
     public String resendStoredHtml(String to, String subject, String html, String logoVariant) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — yeniden gönderim atlandı: TO={}", to);
+            log.info("⚠ Email devre dışı — yeniden gönderim atlandı: TO={}", SecretMask.maskEmails(to));
             return "SKIPPED_DISABLED";
         }
         try {
             return sendFramedHtml(new String[]{to}, subject, html, logoVariant);
         } catch (Exception e) {
-            log.error("✗ Yeniden gönderim hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            log.error("✗ Yeniden gönderim hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -461,23 +464,39 @@ public class EmailNotificationService {
     public String sendPasswordResetEmail(String toAddress, String username,
                                           String displayName, String tempPassword) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — şifre sıfırlama: TO={}", toAddress);
+            log.info("⚠ Email devre dışı — şifre sıfırlama: TO={}", SecretMask.maskEmails(toAddress));
             return "SKIPPED_DISABLED";
         }
         try {
             return sendFramedHtml(new String[]{toAddress}, "[Site Monitor] Şifreniz sıfırlandı — lütfen güncelleyin",
                     buildPasswordResetHtml(username, displayName, tempPassword), "ok");
         } catch (Exception e) {
-            log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
+            log.error("✗ Şifre sıfırlama e-postası hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(toAddress), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
 
+    String buildPasswordResetHtml(String username, String displayName, String tempPwd) {
+        String name = (displayName != null && !displayName.isBlank()) ? displayName : username;
+        MailDoc d = MailDoc.create("[Site Monitor] Şifreniz sıfırlandı")
+                .preheader("Hesabınızın şifresi bir yönetici tarafından sıfırlandı — geçici şifre 24 saat geçerli.")
+                .kicker("Hesap Güvenliği");
+        d.title("Şifreniz sıfırlandı", "Site Monitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.");
+        d.paragraphHtml("Sayın <strong>" + esc(name) + "</strong>,", "Sayın " + nzs(name) + ",");
+        d.keyValue(MailDoc.rows(
+                new Row("Kullanıcı adı", MailKit.mono(username), nzs(username)),
+                new Row("Geçici şifre", "<span class=\"mono\" style=\"font-family:" + MailTokens.MONO
+                        + ";font-size:16px;font-weight:600;letter-spacing:0.04em\">" + esc(tempPwd) + "</span>", nzs(tempPwd))));
+        d.alert(Tone.WARNING, "Bu şifre 24 saat geçerlidir.",
+                "Bu süre içinde giriş yapmazsanız geçici şifreniz devre dışı kalır ve yeni bir sıfırlama talep etmeniz gerekir.");
+        d.paragraph("İlk girişinizde sistem sizden kalıcı bir şifre belirlemenizi isteyecektir.");
+        d.note("Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.");
+        d.footerMeta("Site Monitor — Hesap Güvenliği", "Bu e-posta otomatik gönderilmiştir.");
+        return d.html();
+    }
+
     /**
      * "Yeni bir cihazdan giriş yapıldı" bilgi e-postası (E1).
-     *
-     * <p>Tier-3 Outlook-güvenli çerçeveyi kullanır (td bgcolor, düz hex, MSO/VML, LIGHT_SCHEME_META)
-     * — şifre sıfırlama e-postasıyla AYNI iskelet, ayrı bir HTML yazılmadı.
      *
      * <p>Ton bilinçli olarak SAKİN: bu bir alarm değil bilgilendirmedir; girişi yapan çoğu zaman
      * kullanıcının kendisidir. "Bu sen değilsen" yolu net ama panik yaratmadan verilir.
@@ -485,86 +504,39 @@ public class EmailNotificationService {
     public String sendNewDeviceEmail(String toAddress, String displayName, String deviceSummary,
                                      String ip, String location, String whenIso) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — yeni cihaz bildirimi: TO={}", toAddress);
+            log.info("⚠ Email devre dışı — yeni cihaz bildirimi: TO={}", SecretMask.maskEmails(toAddress));
             return "SKIPPED_DISABLED";
         }
         try {
             return sendFramedHtml(new String[]{toAddress}, "[Site Monitor] Hesabınıza yeni bir cihazdan giriş yapıldı",
                     buildNewDeviceHtml(displayName, deviceSummary, ip, location, whenIso), "ok");
         } catch (Exception e) {
-            log.error("✗ Yeni cihaz e-postası hazırlanamadı: TO={} | HATA={}", toAddress, e.getMessage(), e);
+            log.error("✗ Yeni cihaz e-postası hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(toAddress), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
 
-    private String buildNewDeviceHtml(String displayName, String deviceSummary,
-                                      String ip, String location, String whenIso) {
-        StringBuilder rows = new StringBuilder();
-        rows.append(newDeviceRow("Cihaz", deviceSummary));
-        if (whenIso != null && !whenIso.isBlank()) rows.append(newDeviceRow("Zaman", whenIso));
-        if (location != null && !location.isBlank()) rows.append(newDeviceRow("Konum", location));
-        if (ip != null && !ip.isBlank()) rows.append(newDeviceRow("IP", ip));
+    String buildNewDeviceHtml(String displayName, String deviceSummary,
+                              String ip, String location, String whenIso) {
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.of("Cihaz", deviceSummary));
+        if (whenIso != null && !whenIso.isBlank()) rows.add(Row.of("Zaman", whenIso));
+        if (location != null && !location.isBlank()) rows.add(Row.of("Konum", location));
+        if (ip != null && !ip.isBlank()) rows.add(Row.of("IP", ip));
 
-        return simpleFrameOpen(560)
-            + "<h2 style='color:#4f46e5;margin:0 0 12px;font-size:20px'>Yeni cihazdan giriş</h2>"
-            + "<p style='margin:0 0 10px'>Sayın <strong>" + escHtml(displayName) + "</strong>,</p>"
-            + "<p style='margin:0 0 10px'>Site Monitor hesabınıza daha önce görmediğimiz bir cihazdan "
-            + "giriş yapıldı.</p>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' "
-            + "style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
-            + rows
-            + "</table>"
-            + "<p style='margin:0 0 10px'><strong>Bu sizseniz</strong>, yapmanız gereken bir şey yok.</p>"
-            + "<p style='margin:0 0 10px'><strong>Bu siz değilseniz</strong>, parolanızı değiştirin ve "
-            + "\"Etkinliklerim → Cihaz Geçmişi\" ekranından hatırlanan cihazları iptal edin.</p>"
-            + simpleFrameClose();
-    }
-
-    private String newDeviceRow(String label, String value) {
-        return "<tr>"
-             + "<td bgcolor='#ffffff' style='padding:4px 12px 4px 0;color:#6b7280'>" + escHtml(label) + "</td>"
-             + "<td bgcolor='#ffffff' style='padding:4px 0;font-weight:600'>" + escHtml(value) + "</td>"
-             + "</tr>";
-    }
-
-    /** Tier-3 (sistem/admin) e-postaları için sade Outlook-güvenli çerçeve: dış bgcolor tablo → ortalanmış
-     *  sabit-genişlik beyaz kart → padding TD'de (Outlook div padding'ini ve max-width'i yok sayar).
-     *  İç içerik (h2/p/tablo/ul) olduğu gibi bu td'ye yerleştirilir; rich builder'lardaki gibi hep-açık. */
-    private String simpleFrameOpen(int maxWidth) {
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, marka barı kart üstünde.
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
-            + "</head>"
-            + "<body style='margin:0;padding:0;background:#f1f5f9;font-family:\"Segoe UI\",Arial,sans-serif;color:#1f2937'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td align='center' style='padding:24px 10px'>"
-            + "<table role='presentation' width='" + maxWidth + "' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='width:" + maxWidth + "px;max-width:" + maxWidth + "px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden'>"
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='#ffffff' style='padding:24px'>";
-    }
-
-    private String simpleFrameClose() {
-        return "</td></tr></table></td></tr></table></body></html>";
-    }
-
-    private String buildPasswordResetHtml(String username, String displayName, String tempPwd) {
-        String name = (displayName != null && !displayName.isBlank()) ? displayName : username;
-        return simpleFrameOpen(560)
-            + "<h2 style='color:#4f46e5;margin:0 0 12px;font-size:20px'>Şifreniz sıfırlandı</h2>"
-            + "<p style='margin:0 0 10px'>Sayın <strong>" + escHtml(name) + "</strong>,</p>"
-            + "<p style='margin:0 0 10px'>Site Monitor hesabınızın şifresi bir yönetici tarafından sıfırlandı.</p>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
-            + "<tr><td style='padding:4px 12px 4px 0;color:#64748b'>Kullanıcı adı:</td>"
-            + "<td style='padding:4px 0;font-family:Consolas,\"Courier New\",monospace;font-weight:600'>" + escHtml(username) + "</td></tr>"
-            + "<tr><td style='padding:4px 12px 4px 0;color:#64748b;vertical-align:top'>Geçici şifre:</td>"
-            + "<td style='padding:4px 0;font-family:Consolas,\"Courier New\",monospace;font-weight:700;letter-spacing:.04em;font-size:16px'>" + escHtml(tempPwd) + "</td></tr>"
-            + "</table>"
-            + "<p style='margin:0 0 10px'><strong>Bu şifre 24 saat geçerlidir.</strong> Bu süre içinde giriş yapmazsanız geçici şifreniz devre dışı kalır ve yeni bir sıfırlama talep etmeniz gerekir.</p>"
-            + "<p style='margin:0 0 10px'>İlk girişinizde sistem sizden kalıcı bir şifre belirlemenizi isteyecektir.</p>"
-            + "<p style='font-size:13px;color:#64748b;margin:0'>Bu işlemi siz başlatmadıysanız lütfen sistem yöneticinizle iletişime geçin.</p>"
-            + simpleFrameClose();
+        MailDoc d = MailDoc.create("[Site Monitor] Yeni cihazdan giriş")
+                .preheader("Hesabınıza daha önce görmediğimiz bir cihazdan giriş yapıldı.")
+                .kicker("Hesap Güvenliği");
+        d.badges(Badge.tint("BİLGİ", Tone.INFO));
+        d.title("Yeni cihazdan giriş", "Site Monitor hesabınıza daha önce görmediğimiz bir cihazdan giriş yapıldı.");
+        d.paragraphHtml("Sayın <strong>" + esc(displayName) + "</strong>,", "Sayın " + nzs(displayName) + ",");
+        d.keyValue(rows);
+        d.alertHtml(Tone.SUCCESS, "Bu sizseniz", "yapmanız gereken bir şey yok.", "Bu sizseniz, yapmanız gereken bir şey yok.");
+        d.alertHtml(Tone.WARNING, "Bu siz değilseniz",
+                "parolanızı değiştirin ve \"Etkinliklerim → Cihaz Geçmişi\" ekranından hatırlanan cihazları iptal edin.",
+                "Bu siz değilseniz, parolanızı değiştirin ve \"Etkinliklerim → Cihaz Geçmişi\" ekranından hatırlanan cihazları iptal edin.");
+        d.footerMeta("Site Monitor — Hesap Güvenliği", "Bu e-posta otomatik gönderilmiştir.");
+        return d.html();
     }
 
     // ── System admin — sürüm geçişi bildirimi (E3, opt-in) ───────────────────
@@ -573,7 +545,7 @@ public class EmailNotificationService {
     public record DeploymentNotice(String kind, String environment, String fromVersion, String toVersion,
                                    String commitShort, String startedAt, List<String> highlights, boolean breaking) {}
 
-    /** UPGRADE → yeşil (ok) logo, ROLLBACK → kırmızı (critical) logo; çerçeve şifre-sıfırlama ile aynı (Tier-3). */
+    /** UPGRADE → yeşil (ok) logo, ROLLBACK → kırmızı (critical) logo. */
     public String sendDeploymentNotice(String[] recipients, DeploymentNotice n) {
         if (!isEnabled()) {
             log.info("⚠ Email devre dışı — dağıtım bildirimi atlanıyor: {} {}→{}", n.environment(), n.fromVersion(), n.toVersion());
@@ -589,49 +561,40 @@ public class EmailNotificationService {
                     + n.environment() + " " + n.fromVersion() + " → " + n.toVersion();
             return sendFramedHtml(recipients, subject, buildDeploymentNoticeHtml(n), rollback ? "critical" : "ok");
         } catch (Exception e) {
-            log.error("✗ Dağıtım bildirimi hazırlanamadı: TO={} | HATA={}", Arrays.toString(recipients), e.getMessage(), e);
+            log.error("✗ Dağıtım bildirimi hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(recipients), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
 
-    /** Outlook-güvenli: td bgcolor, düz hex, MSO font fallback (simpleFrameOpen); TR ana metin + EN alt satır. */
+    /** Sürüm geçişi bildirimi — TR ana metin + EN alt satır. */
     public String buildDeploymentNoticeHtml(DeploymentNotice n) {
         boolean rollback = "ROLLBACK".equals(n.kind());
-        String color = rollback ? "#b91c1c" : "#15803d";
         String titleTr = rollback ? "Geri alma yapıldı" : "Yeni sürüm devreye alındı";
         String titleEn = rollback ? "Rollback deployed" : "New version deployed";
-        StringBuilder rows = new StringBuilder();
-        rows.append(newDeviceRow("Ortam / Environment", n.environment()));
-        rows.append(newDeviceRow("Sürüm / Version", n.fromVersion() + " → " + n.toVersion()));
-        rows.append(newDeviceRow("Tür / Kind", rollback ? "ROLLBACK (geri alma)" : "UPGRADE (yükseltme)"));
-        if (n.commitShort() != null && !n.commitShort().isBlank()) rows.append(newDeviceRow("Commit", n.commitShort()));
-        if (n.startedAt() != null && !n.startedAt().isBlank()) rows.append(newDeviceRow("Başlangıç / Started", n.startedAt()));
-        StringBuilder hl = new StringBuilder();
+        String range = n.fromVersion() + " → " + n.toVersion();
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.of("Ortam / Environment", n.environment()));
+        rows.add(new Row("Sürüm / Version", MailKit.strong(range, null), range));
+        rows.add(Row.of("Tür / Kind", rollback ? "ROLLBACK (geri alma)" : "UPGRADE (yükseltme)"));
+        if (n.commitShort() != null && !n.commitShort().isBlank()) rows.add(new Row("Commit", MailKit.mono(n.commitShort()), n.commitShort()));
+        if (n.startedAt() != null && !n.startedAt().isBlank()) rows.add(Row.of("Başlangıç / Started", n.startedAt()));
+
+        MailDoc d = MailDoc.create("[Site Monitor] " + titleTr + " — " + n.environment() + " " + range)
+                .preheader(titleEn + " · " + n.environment() + " " + range)
+                .kicker("Sürüm & Dağıtım");
+        d.badges(rollback ? Badge.solid("ROLLBACK", Tone.DESTRUCTIVE) : Badge.tint("UPGRADE", Tone.SUCCESS),
+                Badge.outline(n.environment()));
+        d.title(titleTr, titleEn);
+        d.keyValue(rows);
+        if (n.breaking()) d.alert(Tone.DESTRUCTIVE, "Kırıcı değişiklik içerir / Contains breaking changes.", null);
         if (n.highlights() != null && !n.highlights().isEmpty()) {
-            hl.append("<p style='margin:14px 0 6px;font-weight:700'>Öne çıkanlar / Highlights</p>")
-              .append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px'>");
-            for (String h : n.highlights()) {
-                hl.append("<tr><td bgcolor='#ffffff' style='padding:3px 8px 3px 0;color:#64748b;vertical-align:top'>•</td>")
-                  .append("<td bgcolor='#ffffff' style='padding:3px 0'>").append(escHtml(h)).append("</td></tr>");
-            }
-            hl.append("</table>");
+            d.heading("Öne çıkanlar / Highlights");
+            d.bullets(n.highlights());
         }
-        String breaking = n.breaking()
-                ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:12px 0'><tr>"
-                  + "<td bgcolor='#fef2f2' style='background:#fef2f2;border-left:4px solid #dc2626;padding:8px 12px;font-size:13px;color:#991b1b'>"
-                  + "<strong>Kırıcı değişiklik içerir / Contains breaking changes.</strong></td></tr></table>"
-                : "";
-        return simpleFrameOpen(560)
-            + "<h2 style='color:" + color + ";margin:0 0 4px;font-size:20px'>" + escHtml(titleTr) + "</h2>"
-            + "<p style='margin:0 0 12px;font-size:13px;color:#64748b'>" + escHtml(titleEn) + "</p>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:14px 0;font-size:14px'>"
-            + rows
-            + "</table>"
-            + breaking
-            + hl
-            + "<p style='font-size:13px;color:#64748b;margin:14px 0 0'>Ayrıntı: Sistem Sağlığı → Sürüm &amp; Dağıtım. "
-            + "Bu bildirim <em>site.monitor.deploy.notify.enabled</em> ayarı ile açılıp kapatılır.</p>"
-            + simpleFrameClose();
+        d.noteHtml("Ayrıntı: Sistem Sağlığı → Sürüm &amp; Dağıtım. Bu bildirim <em>site.monitor.deploy.notify.enabled</em> ayarı ile açılıp kapatılır.",
+                "Ayrıntı: Sistem Sağlığı → Sürüm & Dağıtım. Bu bildirim site.monitor.deploy.notify.enabled ayarı ile açılıp kapatılır.");
+        d.footerMeta("Site Monitor — Sistem Yöneticisi Bildirimi");
+        return d.html();
     }
 
     // ── System admin — network outage notifications ──────────────────────────
@@ -640,14 +603,14 @@ public class EmailNotificationService {
                                               int networkErrors, int total,
                                               double errorRate, double threshold) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — admin network alert: TO={}", to);
+            log.info("⚠ Email devre dışı — admin network alert: TO={}", SecretMask.maskEmails(to));
             return "SKIPPED_DISABLED";
         }
         try {
             return sendFramedHtml(new String[]{to}, "[Site Monitor] ⚠ Ağ Erişim Sorunu Tespit Edildi",
                     buildAdminNetworkAlertHtml(detectedAt, networkErrors, total, errorRate, threshold), "critical");
         } catch (Exception e) {
-            log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            log.error("✗ Admin network alert hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
@@ -656,16 +619,76 @@ public class EmailNotificationService {
                                                  long durationMs, int networkErrors, int total,
                                                  double errorRate) {
         if (!isEnabled()) {
-            log.info("⚠ Email devre dışı — admin network resolved: TO={}", to);
+            log.info("⚠ Email devre dışı — admin network resolved: TO={}", SecretMask.maskEmails(to));
             return "SKIPPED_DISABLED";
         }
         try {
             return sendFramedHtml(new String[]{to}, "[Site Monitor] ✅ Ağ Erişim Sorunu Çözüldü",
                     buildAdminNetworkResolvedHtml(detectedAt, resolvedAt, durationMs, networkErrors, total, errorRate), "ok");
         } catch (Exception e) {
-            log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", to, e.getMessage(), e);
+            log.error("✗ Admin network resolved hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
+    }
+
+    String buildAdminNetworkAlertHtml(String detectedAt, int networkErrors, int total,
+                                      double errorRate, double threshold) {
+        String ratePct = String.format("%.0f%%", errorRate * 100);
+        String threshPct = String.format("%.0f%%", threshold * 100);
+        MailDoc d = MailDoc.create("[Site Monitor] Ağ erişim sorunu tespit edildi")
+                .preheader(networkErrors + " / " + total + " domain ağ hatasıyla düştü (oran " + ratePct + ")")
+                .kicker("Sistem Yöneticisi");
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("Ağ Erişimi"));
+        d.title("Ağ erişim sorunu tespit edildi", "Site Monitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi.");
+        d.alertHtml(Tone.DESTRUCTIVE, "Outbound bağlantı sorunu olabilir",
+                "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü "
+                        + "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + ").",
+                "Tarama turunda " + networkErrors + " / " + total + " domain ağ-class hatasıyla düştü (oran: " + ratePct + ", eşik: " + threshPct + ").");
+        d.keyValue(MailDoc.rows(
+                Row.of("Tespit Zamanı", formatIso(detectedAt)),
+                Row.of("Etkilenen Domain", networkErrors + " / " + total),
+                new Row("Hata Oranı", MailKit.strong(ratePct, Tone.DESTRUCTIVE.strong), ratePct),
+                Row.of("Eşik", threshPct)));
+        d.heading("Sistemin Aksiyonu");
+        d.bulletsHtml(List.of("Yeni alarm üretimi <strong>geçici olarak duraklatıldı</strong>",
+                        "Auto-resolve işlemi <strong>askıya alındı</strong> (sahte resolved e-posta yağmuru engellenir)",
+                        "Dashboard'da operatörlere uyarı banner'ı gösterildi"),
+                List.of("Yeni alarm üretimi geçici olarak duraklatıldı",
+                        "Auto-resolve işlemi askıya alındı (sahte resolved e-posta yağmuru engellenir)",
+                        "Dashboard'da operatörlere uyarı banner'ı gösterildi"));
+        d.heading("Önerilen Kontroller");
+        d.bullets(List.of("Host'un internet bağlantısı (modem/router)", "Outbound proxy ayarları",
+                "Kurumsal firewall/NAT politikaları", "DNS sunucu erişilebilirliği"));
+        d.noteHtml("Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.",
+                "Ağ erişimi normale döner dönmez ayrıca bir \"Çözüldü\" e-postası alacaksınız.");
+        d.footerMeta("Site Monitor — System Admin Notification");
+        return d.html();
+    }
+
+    String buildAdminNetworkResolvedHtml(String detectedAt, String resolvedAt, long durationMs,
+                                         int networkErrors, int total, double errorRate) {
+        long durationMin = durationMs / 60000;
+        long durationSec = (durationMs / 1000) % 60;
+        String durationStr = durationMin + " dk " + durationSec + " sn";
+        String ratePct = String.format("%.0f%%", errorRate * 100);
+        MailDoc d = MailDoc.create("[Site Monitor] Ağ erişim sorunu çözüldü")
+                .preheader("Outbound bağlantı sorunu çözüldü — toplam süre " + durationStr)
+                .kicker("Sistem Yöneticisi");
+        d.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS), Badge.outline("Ağ Erişimi"));
+        d.title("Ağ erişim sorunu çözüldü", "Site Monitor host'unun outbound bağlantı sorunu çözüldü. Sertifika kontrolleri normal işleyişe döndü.");
+        d.keyValue(MailDoc.rows(
+                Row.of("Tespit Zamanı", formatIso(detectedAt)),
+                Row.of("Çözüm Zamanı", formatIso(resolvedAt)),
+                new Row("Toplam Süre", MailKit.strong(durationStr, Tone.SUCCESS.strong), durationStr),
+                Row.of("Tespit Anında Etkilenen", networkErrors + " / " + total + " (" + ratePct + ")")));
+        d.heading("Sistemin Aksiyonu");
+        d.bulletsHtml(List.of("Yeni alarm üretimi <strong>yeniden aktif</strong>", "Auto-resolve işlemi <strong>yeniden aktif</strong>",
+                        "Dashboard uyarı banner'ı kaldırıldı"),
+                List.of("Yeni alarm üretimi yeniden aktif", "Auto-resolve işlemi yeniden aktif", "Dashboard uyarı banner'ı kaldırıldı"));
+        d.alert(Tone.SUCCESS, null,
+                "Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.");
+        d.footerMeta("Site Monitor — System Admin Notification");
+        return d.html();
     }
 
     // ── System admin — başarısız-login anomali uyarısı ────────────────────────
@@ -706,102 +729,77 @@ public class EmailNotificationService {
         }
     }
 
-    private String buildLoginAnomalyHtml(FailedLoginAnomalyService.AnomalyReport r, String triggerLabel) {
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#dc2626;margin:0 0 4px;font-size:20px'>⚠ Başarısız login anomalisi</h2>");
-        if (triggerLabel != null && !triggerLabel.isBlank())
-            sb.append("<p style='margin:0 0 14px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.05em'>")
-              .append(escHtml(triggerLabel)).append("</p>");
-
-        sb.append("<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:14px'>");
-        sb.append(adminRow("Zaman penceresi", escHtml(r.windowStart()) + " → " + escHtml(r.windowEnd()) + " (UTC)"));
-        sb.append(adminRow("Toplam başarısız login", String.valueOf(r.total())));
-        sb.append(adminRow("Önceki dönem ort.",
-                FailedLoginAnomalyService.fmt1(r.baselineAvgPerWindow()) + " / " + r.windowMinutes() + " dk pencere"));
-        sb.append("</table>");
-
+    String buildLoginAnomalyHtml(FailedLoginAnomalyService.AnomalyReport r, String triggerLabel) {
         int n = (r.hits() == null) ? 0 : r.hits().size();
-        sb.append(laSectionTitle("Tetiklenen kurallar (" + n + ")"));
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
-        sb.append("<tr>").append(laTh("Kural")).append(laTh("Eşik")).append(laTh("Gerçekleşen")).append("</tr>");
-        if (r.hits() != null) for (FailedLoginAnomalyService.RuleHit h : r.hits()) {
-            sb.append("<tr>")
-              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb'>").append(escHtml(laRuleLabel(h.code())))
-              .append("<br><span style='color:#94a3b8;font-size:11px'>").append(escHtml(h.detail())).append("</span></td>")
-              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb'>≥ ").append(h.threshold()).append("</td>")
-              .append("<td style='padding:6px 10px;border:1px solid #e5e7eb;font-weight:700;color:#dc2626'>").append(h.actual()).append("</td>")
-              .append("</tr>");
-        }
-        sb.append("</table>");
+        MailDoc d = MailDoc.create("[Site Monitor] Başarısız login anomalisi")
+                .preheader(r.total() + " başarısız login / " + r.windowMinutes() + " dk — " + n + " kural tetiklendi")
+                .kicker("Güvenlik");
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE),
+                triggerLabel != null && !triggerLabel.isBlank() ? Badge.outline(triggerLabel) : null);
+        d.title("Başarısız login anomalisi", r.total() + " başarısız login · " + r.windowMinutes() + " dk pencere · " + n + " kural tetiklendi");
+        d.keyValue(MailDoc.rows(
+                Row.of("Zaman penceresi", r.windowStart() + " → " + r.windowEnd() + " (UTC)"),
+                new Row("Toplam başarısız login", MailKit.strong(String.valueOf(r.total()), Tone.DESTRUCTIVE.strong), String.valueOf(r.total())),
+                Row.of("Önceki dönem ort.", FailedLoginAnomalyService.fmt1(r.baselineAvgPerWindow()) + " / " + r.windowMinutes() + " dk pencere")));
 
-        sb.append(laKvSection("En çok hedeflenen hesaplar", r.topAccounts(), "deneme"));
-        sb.append(laKvSection("En aktif kaynak IP'ler", r.topIps(), "deneme"));
-        sb.append(laKvSection("IP → farklı kullanıcı (credential stuffing)", r.stuffingIps(), "kullanıcı"));
-        sb.append(laReasonSection(r.reasonDistribution()));
+        List<List<Cell>> rules = new ArrayList<>();
+        if (r.hits() != null) for (FailedLoginAnomalyService.RuleHit h : r.hits()) {
+            String label = laRuleLabel(h.code());
+            rules.add(List.of(
+                    Cell.html(esc(label) + "<br><span style=\"font-size:12px;font-weight:400;color:" + MailTokens.MUTED + "\">" + esc(h.detail()) + "</span>",
+                            label + " (" + nzs(h.detail()) + ")"),
+                    Cell.of("≥ " + h.threshold()),
+                    Cell.of(String.valueOf(h.actual()), Tone.DESTRUCTIVE.strong, true)));
+        }
+        if (!rules.isEmpty()) {
+            d.heading("Tetiklenen kurallar (" + n + ")");
+            d.table(List.of(Col.of("Kural"), Col.num("Eşik"), Col.num("Gerçekleşen")), rules, false);
+        }
+        laKvSection(d, "En çok hedeflenen hesaplar", "Hesap", r.topAccounts(), "deneme");
+        laKvSection(d, "En aktif kaynak IP'ler", "IP", r.topIps(), "deneme");
+        laKvSection(d, "IP → farklı kullanıcı (credential stuffing)", "IP", r.stuffingIps(), "kullanıcı");
+        laReasonSection(d, r.reasonDistribution());
 
         String cta = loginAnomalyCtaUrl(r.windowStart());
-        if (!cta.isEmpty())
-            sb.append("<div style='margin:18px 0 4px'>").append(ctaButton(cta, "Denetim kaydını aç", "#dc2626")).append("</div>");
-
-        sb.append(simpleFrameClose());
-        return sb.toString();
+        if (!cta.isEmpty()) d.button(cta, "Denetim kaydını aç");
+        d.footerMeta("Site Monitor — Güvenlik Bildirimi", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
-    private String buildLoginAnomalyResolvedHtml(String openedAt, String resolvedAt, long peakTotal) {
-        return simpleFrameOpen(560)
-            + "<h2 style='color:#16a34a;margin:0 0 12px;font-size:20px'>✅ Login anomalisi normale döndü</h2>"
-            + "<p style='margin:0 0 10px'>Takip eden kontrolde başarısız-login hacmi eşiklerin altına indi.</p>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:8px 0;font-size:14px'>"
-            + adminRow("Başlangıç", escHtml(openedAt) + " (UTC)")
-            + adminRow("Çözülme", escHtml(resolvedAt) + " (UTC)")
-            + adminRow("Zirve hacim", String.valueOf(peakTotal))
-            + "</table>"
-            + simpleFrameClose();
+    String buildLoginAnomalyResolvedHtml(String openedAt, String resolvedAt, long peakTotal) {
+        MailDoc d = MailDoc.create("[Site Monitor] Login anomalisi normale döndü")
+                .preheader("Başarısız-login hacmi eşiklerin altına indi.")
+                .kicker("Güvenlik");
+        d.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS));
+        d.title("Login anomalisi normale döndü", "Takip eden kontrolde başarısız-login hacmi eşiklerin altına indi.");
+        d.keyValue(MailDoc.rows(
+                Row.of("Başlangıç", nzs(openedAt) + " (UTC)"),
+                Row.of("Çözülme", nzs(resolvedAt) + " (UTC)"),
+                Row.of("Zirve hacim", String.valueOf(peakTotal))));
+        d.footerMeta("Site Monitor — Güvenlik Bildirimi", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
-    private String laSectionTitle(String t) {
-        return "<div style='font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#64748b;margin:0 0 6px'>"
-                + escHtml(t) + "</div>";
-    }
-
-    private String laTh(String t) {
-        return "<td bgcolor='#f8fafc' style='background-color:#f8fafc;padding:6px 10px;font-weight:600;border:1px solid #e5e7eb'>"
-                + escHtml(t) + "</td>";
-    }
-
-    private String laKvSection(String title, java.util.List<FailedLoginAnomalyService.KV> items, String unit) {
-        if (items == null || items.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder(laSectionTitle(title));
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
+    private void laKvSection(MailDoc d, String title, String keyLabel, java.util.List<FailedLoginAnomalyService.KV> items, String unit) {
+        if (items == null || items.isEmpty()) return;
+        List<List<Cell>> rows = new ArrayList<>();
         int i = 0;
         for (FailedLoginAnomalyService.KV kv : items) {
             if (i++ >= 5) break;
-            String zebra = (i % 2 == 0) ? "#f8fafc" : "#ffffff";
-            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;word-break:break-all'>").append(escHtml(kv.key()))
-              .append("</td><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;text-align:right;font-weight:600'>")
-              .append(kv.count()).append(' ').append(escHtml(unit)).append("</td></tr>");
+            rows.add(List.of(Cell.of(kv.key()), Cell.of(kv.count() + " " + unit)));
         }
-        sb.append("</table>");
-        return sb.toString();
+        d.heading(title);
+        d.table(List.of(Col.of(keyLabel), Col.num("Adet")), rows, false);
     }
 
-    private String laReasonSection(java.util.Map<String, Long> dist) {
-        if (dist == null || dist.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder(laSectionTitle("Başarısızlık nedeni dağılımı"));
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:0 0 16px;font-size:13px'>");
-        int i = 0;
+    private void laReasonSection(MailDoc d, java.util.Map<String, Long> dist) {
+        if (dist == null || dist.isEmpty()) return;
+        List<List<Cell>> rows = new ArrayList<>();
         for (java.util.Map.Entry<String, Long> e : dist.entrySet()) {
-            String zebra = (++i % 2 == 0) ? "#f8fafc" : "#ffffff";
-            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:6px 10px;border-top:1px solid #f1f5f9'>").append(escHtml(e.getKey()))
-              .append("</td><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:6px 10px;border-top:1px solid #f1f5f9;text-align:right;font-weight:600'>")
-              .append(e.getValue()).append("</td></tr>");
+            rows.add(List.of(Cell.of(e.getKey()), Cell.of(String.valueOf(e.getValue()))));
         }
-        sb.append("</table>");
-        return sb.toString();
+        d.heading("Başarısızlık nedeni dağılımı");
+        d.table(List.of(Col.of("Neden"), Col.num("Adet")), rows, false);
     }
 
     private static String laRuleLabel(String code) {
@@ -819,12 +817,13 @@ public class EmailNotificationService {
 
     /** CANLI base-url'den Denetim (audit) ekranına başarısız-login filtresiyle deep-link. */
     private String loginAnomalyCtaUrl(String windowStart) {
-        String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
+        String base = liveBaseUrl();
         if (base.isEmpty()) return "";
         String since = java.net.URLEncoder.encode(windowStart == null ? "" : windowStart, java.nio.charset.StandardCharsets.UTF_8);
         return base + "/?tab=system&a_eventType=LOGIN_FAILED&a_since=" + since;
     }
+
+    // ── Sorun bildirimi (login-issue / uygulama hatası / kullanıcı bildirimi) ─────
 
     /** Login-issue mail gönderim sonucu — {@code status} (SENT/FAILED/SKIPPED_*) + geçmişe yazılacak
      *  {@code from}/{@code subject}/{@code bodyHtml}. Alıcının gördüğü mailin aynısı ({@code bodyHtml}). */
@@ -853,32 +852,32 @@ public class EmailNotificationService {
     public LoginIssueMailResult sendClientErrorReport(String to, String refCode, String username,
                                        String errorText, String message,
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>🐞 Uygulama Hatası Bildirimi</h2>")
-          .append("<p style='margin:0 0 14px'>Uygulama içinde bir ekran hatası (çökme) yakalandı ve otomatik olarak bildirildi:</p>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
-          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı", "<strong>" + escHtml(username) + "</strong>"))
-          .append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
-          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
-          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
-          .append("</table>");
-        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Sayfa / Bağlam</div>")
-          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
-        if (errorText != null && !errorText.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Hata Ayrıntısı (Stack)</div>")
-              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word'>")
-              .append(escHtml(errorText)).append("</div></div>");
-        }
-        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Bu bildirim uygulamanın hata yakalayıcısı (ErrorBoundary) tarafından otomatik gönderilmiştir; kullanıcı ayrıca bir açıklama girmemiştir.</p>")
-          .append(simpleFrameClose());
-        String html = sb.toString();
+        String html = buildClientErrorHtml(refCode, username, errorText, message, clientIp, userAgent, reportedAt);
         String subject = "[Site Monitor] 🐞 Uygulama Hatası — " + refCode +
                 (username != null && !username.isBlank() ? " · " + username : "");
         String status = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    /** Ekran çökmesi bildirimi gövdesi (gönderimden ayrı — önizleme galerisi ve testler için). */
+    String buildClientErrorHtml(String refCode, String username, String errorText, String message,
+                                String clientIp, String userAgent, String reportedAt) {
+        MailDoc d = MailDoc.create("[Site Monitor] Uygulama hatası — " + nzs(refCode))
+                .preheader("Uygulama içinde bir ekran hatası (çökme) yakalandı — " + nzs(refCode))
+                .kicker("Sorun Bildirimi");
+        d.badges(Badge.tint("UYGULAMA HATASI", Tone.DESTRUCTIVE));
+        d.title("Uygulama hatası bildirimi", "Uygulama içinde bir ekran hatası (çökme) yakalandı ve otomatik olarak bildirildi.");
+        d.keyValue(MailDoc.rows(
+                new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)),
+                new Row("Kullanıcı", MailKit.strong(username, null), nzs(username)),
+                Row.of("Bildirim Zamanı", formatIso(reportedAt)),
+                Row.of("IP Adresi", clientIp != null ? clientIp : "—"),
+                Row.of("Tarayıcı", userAgent != null ? userAgent : "—")));
+        d.card("Sayfa / Bağlam", null, MailKit.paragraph(MailKit.escBr(message)), nzs(message));
+        d.pre("Hata Ayrıntısı (Stack)", errorText);
+        d.note("Bu bildirim uygulamanın hata yakalayıcısı (ErrorBoundary) tarafından otomatik gönderilmiştir; kullanıcı ayrıca bir açıklama girmemiştir.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
     /** Kullanıcı-tetiklemeli sorun bildirimi (USER_REPORT) — Sistem Yöneticisi'ne. Alarm DEĞİL:
@@ -888,50 +887,41 @@ public class EmailNotificationService {
                                        String tabKey, String appVersion, List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
         List<InlineImage> inline = images != null ? images : List.of();
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#1d4ed8;margin:0 0 12px;font-size:20px'>📝 Sorun Bildirimi</h2>")
-          .append("<p style='margin:0 0 14px'>Bir kullanıcı uygulama içinden sorun bildirdi:</p>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
-          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı", "<strong>" + escHtml(username) + "</strong>"));
-        if (reporterEmail != null && !reporterEmail.isBlank()) sb.append(adminRow("E-posta", escHtml(reporterEmail)));
-        if (category != null && !category.isBlank()) sb.append(adminRow("Önem", escHtml(labelForCategory(category))));
-        if (tabKey != null && !tabKey.isBlank()) sb.append(adminRow("Ekran/Sekme", escHtml(tabKey)));
-        if (appVersion != null && !appVersion.isBlank()) sb.append(adminRow("Uygulama Sürümü", escHtml(appVersion)));
-        if (linkedReference != null && !linkedReference.isBlank())
-            sb.append(adminRow("Bağlı Çökme Kaydı", escHtml(linkedReference)));
-        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
-          .append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
-          .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")))
-          .append("</table>");
-        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Kullanıcının Açıklaması</div>")
-          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
-        if (errorText != null && !errorText.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekrandaki Hata</div>")
-              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word'>")
-              .append(escHtml(errorText)).append("</div></div>");
-        }
-        if (!inline.isEmpty()) {
-            sb.append("<div style='margin:16px 0 0'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
-              .append(inline.size()).append(")</div>");
-            int i = 1;
-            for (InlineImage img : inline) {
-                sb.append("<div style='margin:0 0 10px'><img src='cid:").append(escHtml(img.cid()))
-                  .append("' alt='Ekran görüntüsü ").append(i++)
-                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' /></div>");
-            }
-            sb.append("</div>");
-        }
-        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Ayrıntılı otomatik bağlam (tema/dil/son başarısız istekler) Yönetim &gt; Sorun Bildirimleri ekranındadır.</p>")
-          .append(simpleFrameClose());
-        String html = sb.toString();
+        String html = buildUserIssueHtml(refCode, username, reporterEmail, category, message, errorText, linkedReference,
+                tabKey, appVersion, inline, clientIp, userAgent, reportedAt);
         String subject = "[Site Monitor] 📝 Sorun Bildirimi — " + refCode +
                 (username != null && !username.isBlank() ? " · " + username : "");
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    String buildUserIssueHtml(String refCode, String username, String reporterEmail, String category, String message,
+                              String errorText, String linkedReference, String tabKey, String appVersion,
+                              List<InlineImage> inline, String clientIp, String userAgent, String reportedAt) {
+        MailDoc d = MailDoc.create("[Site Monitor] Sorun bildirimi — " + nzs(refCode))
+                .preheader("Bir kullanıcı uygulama içinden sorun bildirdi — " + nzs(refCode))
+                .kicker("Sorun Bildirimi");
+        d.badges(category != null && !category.isBlank() ? Badge.tint(labelForCategory(category).toUpperCase(java.util.Locale.forLanguageTag("tr")),
+                "BLOCKER".equals(category) ? Tone.DESTRUCTIVE : "ANNOYANCE".equals(category) ? Tone.WARNING : Tone.INFO) : null);
+        d.title("Sorun bildirimi", "Bir kullanıcı uygulama içinden sorun bildirdi.");
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
+        rows.add(new Row("Kullanıcı", MailKit.strong(username, null), nzs(username)));
+        if (reporterEmail != null && !reporterEmail.isBlank()) rows.add(Row.of("E-posta", reporterEmail));
+        if (category != null && !category.isBlank()) rows.add(Row.of("Önem", labelForCategory(category)));
+        if (tabKey != null && !tabKey.isBlank()) rows.add(Row.of("Ekran/Sekme", tabKey));
+        if (appVersion != null && !appVersion.isBlank()) rows.add(Row.of("Uygulama Sürümü", appVersion));
+        if (linkedReference != null && !linkedReference.isBlank()) rows.add(Row.of("Bağlı Çökme Kaydı", linkedReference));
+        rows.add(Row.of("Bildirim Zamanı", formatIso(reportedAt)));
+        rows.add(Row.of("IP Adresi", clientIp != null ? clientIp : "—"));
+        rows.add(Row.of("Tarayıcı", userAgent != null ? userAgent : "—"));
+        d.keyValue(rows);
+        d.card("Kullanıcının Açıklaması", null, MailKit.paragraph(MailKit.escBr(message)), nzs(message));
+        d.pre("Ekrandaki Hata", errorText);
+        screenshots(d, inline, false);
+        d.note("Ayrıntılı otomatik bağlam (tema/dil/son başarısız istekler) Yönetim > Sorun Bildirimleri ekranındadır.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
     private static String labelForCategory(String category) {
@@ -946,23 +936,27 @@ public class EmailNotificationService {
     /** Günlük özet (digest) — {@code site.monitor.issue-reports.daily-digest} açıkken tekil mailler yerine
      *  son 24 saatin USER_REPORT bildirimleri tek mailde. Satır başına referans + kullanıcı + özet. */
     public LoginIssueMailResult sendIssueDigest(String to, List<Map<String, String>> items, String periodLabel, boolean force) {
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#1d4ed8;margin:0 0 12px;font-size:20px'>📝 Sorun Bildirimleri — Günlük Özet</h2>")
-          .append("<p style='margin:0 0 14px'>").append(escHtml(periodLabel)).append(" döneminde ")
-          .append(items.size()).append(" bildirim alındı:</p>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:13px'>");
-        for (Map<String, String> it : items) {
-            sb.append(adminRow(escHtml(it.getOrDefault("refCode", "—")),
-                    "<strong>" + escHtml(it.getOrDefault("username", "—")) + "</strong> · "
-                    + escHtml(it.getOrDefault("summary", ""))));
-        }
-        sb.append("</table>")
-          .append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Ayrıntılar Yönetim &gt; Sorun Bildirimleri ekranındadır.</p>")
-          .append(simpleFrameClose());
-        String html = sb.toString();
+        String html = buildIssueDigestHtml(items, periodLabel);
         String subject = "[Site Monitor] 📝 Sorun Bildirimleri Özeti — " + items.size() + " yeni bildirim";
         String status = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    String buildIssueDigestHtml(List<Map<String, String>> items, String periodLabel) {
+        MailDoc d = MailDoc.create("[Site Monitor] Sorun bildirimleri — günlük özet")
+                .preheader(periodLabel + " döneminde " + items.size() + " bildirim alındı")
+                .kicker("Sorun Bildirimi");
+        d.badges(Badge.tint("GÜNLÜK ÖZET", Tone.INFO));
+        d.title("Sorun bildirimleri — günlük özet", periodLabel + " döneminde " + items.size() + " bildirim alındı.");
+        List<List<Cell>> rows = new ArrayList<>();
+        for (Map<String, String> it : items) {
+            rows.add(List.of(Cell.of(it.getOrDefault("refCode", "—")), Cell.of(it.getOrDefault("username", "—")),
+                    Cell.of(it.getOrDefault("summary", ""))));
+        }
+        d.table(List.of(Col.nw("Referans"), Col.of("Kullanıcı"), Col.of("Özet")), rows);
+        d.note("Ayrıntılar Yönetim > Sorun Bildirimleri ekranındadır.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
     /** Bildiren kişiye "alındı" onayı — admin'e gidenle BENZER içerik (hata mesajı + görseller) +
@@ -992,60 +986,138 @@ public class EmailNotificationService {
         String[] ccArr = (to != null && cc != null) ? new String[]{ cc } : null;
         List<InlineImage> inline = images != null ? images : List.of();
 
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
-        sb.append("<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun çözümlendi</h2>")
-          .append("<p style='margin:0 0 14px'><strong>").append(escHtml(refCode))
-          .append("</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.</p>")
-          .append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
-          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username != null && !username.isBlank() ? username : "—") + "</strong>"));
-        if (reporterEmail != null && !reporterEmail.isBlank()) {
-            sb.append(adminRow("E-posta", escHtml(reporterEmail)));
-        }
-        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))))
-          .append(adminRow("Çözülme Zamanı", escHtml(formatIso(resolvedAt))))
-          .append("</table>");
-        // Orijinal sorun — alınan hata mesajı (varsa) + iletilen açıklama.
-        if (errorText != null && !errorText.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Alınan Hata Mesajı</div>")
-              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:13px;line-height:1.5;white-space:pre-wrap'>")
-              .append(escHtml(errorText)).append("</div></div>");
-        }
-        if (message != null && !message.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>İletilen Açıklama</div>")
-              .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div></div>");
-        }
-        // Ekran görüntüleri (CID inline) — bildirimdekiyle aynı, çözümlendi mailine de eklenir.
-        if (!inline.isEmpty()) {
-            sb.append("<div style='margin:16px 0 0'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
-              .append(inline.size()).append(")</div>");
-            int i = 1;
-            for (InlineImage img : inline) {
-                sb.append("<div style='margin:0 0 10px'>")
-                  .append("<div style='font-size:11px;color:#9ca3af;margin:0 0 4px'>Görsel ").append(i++).append("</div>")
-                  .append("<img src='cid:").append(escHtml(img.cid()))
-                  .append("' alt='Ekran görüntüsü ").append(i - 1)
-                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' />")
-                  .append("</div>");
-            }
-            sb.append("</div>");
-        }
-        // Çözüm notu.
-        if (resolutionNote != null && !resolutionNote.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Çözüm Notu</div>")
-              .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(resolutionNote)).append("</div></div>");
-        }
-        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.</p>")
-          .append(simpleFrameClose());
-
-        String html = sb.toString();
+        String html = buildLoginIssueResolvedHtml(refCode, username, reporterEmail, errorText, message, reportedAt,
+                resolutionNote, resolvedAt, inline);
         String subject = "[Site Monitor] ✅ Giriş sorunu çözümlendi — " + refCode;
         String status = sendHtml(toArr, ccArr, subject, html, inline, force);
         return new LoginIssueMailResult(status, currentFrom(), subject, html);
+    }
+
+    String buildLoginIssueResolvedHtml(String refCode, String username, String reporterEmail, String errorText,
+                                       String message, String reportedAt, String resolutionNote, String resolvedAt,
+                                       List<InlineImage> inline) {
+        MailDoc d = MailDoc.create("[Site Monitor] Giriş sorunu çözümlendi — " + nzs(refCode))
+                .preheader(nzs(refCode) + " referans numaralı giriş sorunu bildirimi çözümlendi.")
+                .kicker("Sorun Bildirimi");
+        d.badges(Badge.tint("ÇÖZÜMLENDİ", Tone.SUCCESS));
+        d.titleHtml("Sorun çözümlendi", "<strong>" + esc(refCode) + "</strong> referans numaralı giriş sorunu bildirimi çözümlenmiştir.",
+                nzs(refCode) + " referans numaralı giriş sorunu bildirimi çözümlenmiştir.");
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
+        String uname = username != null && !username.isBlank() ? username : "—";
+        rows.add(new Row("Kullanıcı Adı", MailKit.strong(uname, null), uname));
+        if (reporterEmail != null && !reporterEmail.isBlank()) rows.add(Row.of("E-posta", reporterEmail));
+        rows.add(Row.of("Bildirim Zamanı", formatIso(reportedAt)));
+        rows.add(new Row("Çözülme Zamanı", MailKit.strong(formatIso(resolvedAt), Tone.SUCCESS.strong), formatIso(resolvedAt)));
+        d.keyValue(rows);
+        // Çözüm notu — okuyanın asıl merak ettiği bilgi, orijinal sorundan ÖNCE.
+        if (resolutionNote != null && !resolutionNote.isBlank()) {
+            d.alert(Tone.SUCCESS, "Çözüm Notu", resolutionNote);
+        }
+        // Orijinal sorun — alınan hata mesajı (varsa) + iletilen açıklama.
+        d.pre("Alınan Hata Mesajı", errorText);
+        if (message != null && !message.isBlank()) {
+            d.card("İletilen Açıklama", null, MailKit.paragraph(MailKit.escBr(message)), message);
+        }
+        screenshots(d, inline, true);
+        d.note("Sorun devam ediyorsa lütfen tekrar bildiriniz. Bu e-posta otomatik gönderilmiştir.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi");
+        return d.html();
+    }
+
+    // ── Konuşma dizisi (2026-09-26): yönetici yanıtı / durum geçişi → bildirene KISA mail ──────────
+
+    /** Bildirenin görebileceği yönetici yanıtı — kısa mail: referans + durum + yanıt metni + "bildirimi aç" düğmesi. */
+    public LoginIssueMailResult sendIssueReply(String to, Long reportId, String refCode, String username, String status,
+                                               String replyBody, String repliedAt, String messageSummary, boolean force) {
+        if (to == null || to.isBlank()) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
+        String html = buildIssueReplyHtml(reportId, refCode, username, status, replyBody, repliedAt, messageSummary);
+        String subject = "[Site Monitor] Bildiriminize yanıt verildi — " + nzs(refCode);
+        String status0 = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status0, currentFrom(), subject, html);
+    }
+
+    /** Durum geçişi (OPEN ↔ IN_PROGRESS; RESOLVED ayrı zengin maille gider) — kısa mail. */
+    public LoginIssueMailResult sendIssueStatusChange(String to, Long reportId, String refCode, String username, String newStatus,
+                                                      String note, String changedAt, String messageSummary, boolean force) {
+        if (to == null || to.isBlank()) return new LoginIssueMailResult("SKIPPED_NO_RECIPIENT", currentFrom(), null, null);
+        String html = buildIssueStatusHtml(reportId, refCode, username, newStatus, note, changedAt, messageSummary);
+        String subject = "[Site Monitor] Bildiriminizin durumu güncellendi — " + nzs(refCode);
+        String status0 = sendHtml(new String[]{ to }, null, subject, html, List.of(), force);
+        return new LoginIssueMailResult(status0, currentFrom(), subject, html);
+    }
+
+    String buildIssueReplyHtml(Long reportId, String refCode, String username, String status,
+                               String replyBody, String repliedAt, String messageSummary) {
+        MailDoc d = MailDoc.create("[Site Monitor] Bildiriminize yanıt verildi — " + nzs(refCode))
+                .preheader(nzs(refCode) + " referans numaralı bildiriminize yönetici yanıt yazdı.")
+                .kicker("Sorun Bildirimi");
+        d.badges(Badge.tint("YANIT", Tone.INFO), issueStatusBadge(status));
+        d.titleHtml("Bildiriminize yanıt verildi",
+                "<strong>" + esc(refCode) + "</strong> referans numaralı bildiriminize bir yanıt yazıldı. "
+                        + "Yanıtınızı uygulamadaki bildirim sayfasından yazabilirsiniz.",
+                nzs(refCode) + " referans numaralı bildiriminize bir yanıt yazıldı. Yanıtınızı uygulamadaki bildirim sayfasından yazabilirsiniz.");
+        d.keyValue(issueRows(refCode, username, status, repliedAt, "Yanıt Zamanı"));
+        d.card("Yanıt", null, MailKit.paragraph(MailKit.escBr(replyBody)), nzs(replyBody));
+        issueSummary(d, messageSummary);
+        d.button(issueUrl(reportId), "Bildirimi aç");
+        d.note("Bu e-postayı yanıtlamayın — yanıtınızı uygulamadaki konuşma alanına yazın. Bu e-posta otomatik gönderilmiştir.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi");
+        return d.html();
+    }
+
+    String buildIssueStatusHtml(Long reportId, String refCode, String username, String newStatus,
+                                String note, String changedAt, String messageSummary) {
+        String label = issueStatusLabel(newStatus);
+        MailDoc d = MailDoc.create("[Site Monitor] Bildiriminizin durumu güncellendi — " + nzs(refCode))
+                .preheader(nzs(refCode) + " referans numaralı bildiriminizin durumu: " + label + ".")
+                .kicker("Sorun Bildirimi");
+        d.badges(issueStatusBadge(newStatus));
+        d.titleHtml("Bildiriminizin durumu güncellendi",
+                "<strong>" + esc(refCode) + "</strong> referans numaralı bildiriminiz artık <strong>" + esc(label) + "</strong> durumunda.",
+                nzs(refCode) + " referans numaralı bildiriminiz artık " + label + " durumunda.");
+        d.keyValue(issueRows(refCode, username, newStatus, changedAt, "Güncelleme Zamanı"));
+        if (note != null && !note.isBlank()) d.alert(Tone.INFO, "Çalışma Notu", note);
+        issueSummary(d, messageSummary);
+        d.button(issueUrl(reportId), "Bildirimi aç");
+        d.note("Gelişmeleri uygulamadaki bildirim sayfasından takip edebilir, soru ya da ek bilginizi oraya yazabilirsiniz. Bu e-posta otomatik gönderilmiştir.");
+        d.footerMeta("Site Monitor — Sorun Bildirimi");
+        return d.html();
+    }
+
+    private List<Row> issueRows(String refCode, String username, String status, String at, String atLabel) {
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
+        String uname = username != null && !username.isBlank() ? username : "—";
+        rows.add(new Row("Kullanıcı Adı", MailKit.strong(uname, null), uname));
+        rows.add(new Row("Durum", MailKit.strong(issueStatusLabel(status), issueStatusTone(status).strong), issueStatusLabel(status)));
+        rows.add(Row.of(atLabel, formatIso(at)));
+        return rows;
+    }
+
+    private static void issueSummary(MailDoc d, String messageSummary) {
+        if (messageSummary != null && !messageSummary.isBlank()) {
+            d.card("Bildiriminiz", null, MailKit.paragraph(MailKit.escBr(messageSummary)), messageSummary);
+        }
+    }
+
+    /** CANLI base-url'den bildirim sayfasına derin bağlantı (?tab=login-issues&ir_id=<id>); base-url yoksa düğme çizilmez. */
+    private String issueUrl(Long reportId) {
+        String base = liveBaseUrl();
+        return base.isEmpty() || reportId == null ? "" : base + "/?tab=login-issues&ir_id=" + reportId;
+    }
+
+    private static String issueStatusLabel(String status) {
+        if (status == null) return "—";
+        return switch (status) { case "IN_PROGRESS" -> "İşlemde"; case "RESOLVED" -> "Çözümlendi"; case "OPEN" -> "Açık"; default -> status; };
+    }
+
+    private static Tone issueStatusTone(String status) {
+        return "RESOLVED".equals(status) ? Tone.SUCCESS : Tone.WARNING;
+    }
+
+    private static Badge issueStatusBadge(String status) {
+        return Badge.tint(issueStatusLabel(status).toUpperCase(java.util.Locale.forLanguageTag("tr-TR")), issueStatusTone(status));
     }
 
     // NOT: login-issue mailleri artık LoginIssueMailService üzerinden ASYNC gönderilir + login_issue_mail_logs'a
@@ -1053,168 +1125,114 @@ public class EmailNotificationService {
 
     /** Login sorun bildirimi HTML'i — admin (forReporter=false: IP/UA + kimliksiz uyarısı) ve bildiren
      *  (forReporter=true: takip metni, IP/UA gizli) için ortak; her ikisinde referans no + hata + görseller. */
-    private String buildLoginIssueHtml(String refCode, String username, String reporterEmail, String errorText, String message,
-                                       List<InlineImage> images,
-                                       String clientIp, String userAgent, String reportedAt, boolean forReporter) {
-        StringBuilder sb = new StringBuilder(simpleFrameOpen(640));
+    String buildLoginIssueHtml(String refCode, String username, String reporterEmail, String errorText, String message,
+                               List<InlineImage> images,
+                               String clientIp, String userAgent, String reportedAt, boolean forReporter) {
+        MailDoc d = MailDoc.create(forReporter ? "[Site Monitor] Sorun bildiriminiz alındı — " + nzs(refCode)
+                        : "[Site Monitor] Giriş sorunu bildirimi — " + nzs(refCode))
+                .preheader(forReporter ? "Bildiriminiz kaydedildi — referans " + nzs(refCode)
+                        : "Bir kullanıcı login sayfasından giriş sorunu bildirdi — " + nzs(refCode))
+                .kicker("Sorun Bildirimi");
         if (forReporter) {
-            sb.append("<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Sorun bildiriminiz alındı</h2>")
-              .append("<p style='margin:0 0 14px'>Bildiriminiz kaydedildi. Aşağıdaki referans numarasıyla durumu takip edebilir, "
-                      + "bizimle iletişimde bu numarayı belirtebilirsiniz. Sorun çözüldüğünde bu e-posta adresine bilgi verilecektir.</p>");
+            d.badges(Badge.tint("ALINDI", Tone.SUCCESS));
+            d.title("Sorun bildiriminiz alındı", "Bildiriminiz kaydedildi. Aşağıdaki referans numarasıyla durumu takip edebilir, "
+                    + "bizimle iletişimde bu numarayı belirtebilirsiniz. Sorun çözüldüğünde bu e-posta adresine bilgi verilecektir.");
         } else {
-            sb.append("<h2 style='color:#b45309;margin:0 0 12px;font-size:20px'>🛟 Giriş Sorunu Bildirimi</h2>")
-              .append("<p style='margin:0 0 14px'>Bir kullanıcı login sayfasından giriş sorunu bildirdi:</p>");
+            d.badges(Badge.tint("GİRİŞ SORUNU", Tone.WARNING));
+            d.title("Giriş sorunu bildirimi", "Bir kullanıcı login sayfasından giriş sorunu bildirdi.");
         }
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;font-size:14px'>")
-          .append(adminRow("Referans Numarası", "<strong>" + escHtml(refCode) + "</strong>"))
-          .append(adminRow("Kullanıcı Adı", "<strong>" + escHtml(username) + "</strong>"));
+        List<Row> rows = new ArrayList<>();
+        rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
+        rows.add(new Row("Kullanıcı Adı", MailKit.strong(username, null), nzs(username)));
         // Bildirenin e-posta adresi — admin varyantında göster (yöneticinin iletişim için ihtiyacı var).
-        if (!forReporter && reporterEmail != null && !reporterEmail.isBlank()) {
-            sb.append(adminRow("E-posta", escHtml(reporterEmail)));
-        }
-        sb.append(adminRow("Bildirim Zamanı", escHtml(formatIso(reportedAt))));
+        if (!forReporter && reporterEmail != null && !reporterEmail.isBlank()) rows.add(Row.of("E-posta", reporterEmail));
+        rows.add(Row.of("Bildirim Zamanı", formatIso(reportedAt)));
         if (!forReporter) {
-            sb.append(adminRow("IP Adresi", escHtml(clientIp != null ? clientIp : "—")))
-              .append(adminRow("Tarayıcı", escHtml(userAgent != null ? userAgent : "—")));
+            rows.add(Row.of("IP Adresi", clientIp != null ? clientIp : "—"));
+            rows.add(Row.of("Tarayıcı", userAgent != null ? userAgent : "—"));
         }
-        sb.append("</table>");
-        if (errorText != null && !errorText.isBlank()) {
-            sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Alınan Hata Mesajı</div>")
-              .append("<div style='font-family:Consolas,\"Courier New\",monospace;font-size:13px;line-height:1.5;white-space:pre-wrap'>")
-              .append(escHtml(errorText)).append("</div></div>");
+        d.keyValue(rows);
+        d.pre("Alınan Hata Mesajı", errorText);
+        d.card(forReporter ? "İlettiğiniz Açıklama" : "Kullanıcının Açıklaması", null,
+                MailKit.paragraph(MailKit.escBr(message)), nzs(message));
+        screenshots(d, images, true);
+        if (forReporter) {
+            d.note("Bu e-posta Site Monitor tarafından otomatik gönderilmiştir. Yanıtlamayınız.");
+        } else {
+            d.alert(Tone.WARNING, null, "Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan "
+                    + "gönderilmiştir — içeriği buna göre değerlendirin.");
         }
-        sb.append("<div style='margin:16px 0 0;padding:12px 14px;border:1px solid #e5e7eb;border-radius:8px'>")
-          .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>")
-          .append(forReporter ? "İlettiğiniz Açıklama" : "Kullanıcının Açıklaması").append("</div>")
-          .append("<div style='font-size:14px;line-height:1.6;white-space:pre-wrap'>").append(escHtml(message)).append("</div>")
-          .append("</div>");
-        if (images != null && !images.isEmpty()) {
-            sb.append("<div style='margin:16px 0 0'>")
-              .append("<div style='font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:0 0 6px'>Ekran Görüntüleri (")
-              .append(images.size()).append(")</div>");
-            int i = 1;
-            for (InlineImage img : images) {
-                sb.append("<div style='margin:0 0 10px'>")
-                  .append("<div style='font-size:11px;color:#9ca3af;margin:0 0 4px'>Görsel ").append(i++).append("</div>")
-                  .append("<img src='cid:").append(escHtml(img.cid()))
-                  .append("' alt='Ekran görüntüsü ").append(i - 1)
-                  .append("' width='592' style='max-width:100%;width:592px;height:auto;border:1px solid #e5e7eb;border-radius:8px;display:block' />")
-                  .append("</div>");
-            }
-            sb.append("</div>");
+        d.footerMeta("Site Monitor — Sorun Bildirimi");
+        return d.html();
+    }
+
+    /** Ekran görüntüleri (CID inline) — akışkan görsel, içerik genişliğine sığar. */
+    private static void screenshots(MailDoc d, List<InlineImage> images, boolean captions) {
+        if (images == null || images.isEmpty()) return;
+        d.heading("Ekran Görüntüleri (" + images.size() + ")");
+        int i = 1;
+        for (InlineImage img : images) {
+            if (captions) d.note("Görsel " + i);
+            d.image("cid:" + img.cid(), "Ekran görüntüsü " + i, d.contentWidth());
+            i++;
         }
-        sb.append("<p style='font-size:13px;color:#64748b;margin:16px 0 0'>")
-          .append(forReporter
-                  ? "Bu e-posta Site Monitor tarafından otomatik gönderilmiştir. Yanıtlamayınız."
-                  : "Bu bildirim login sayfasındaki \"sorun bildir\" bağlantısından, kimlik doğrulaması yapılmadan gönderilmiştir — içeriği buna göre değerlendirin.")
-          .append("</p>")
-          .append(simpleFrameClose());
-        return sb.toString();
     }
 
-    /** Admin bilgi tablosu satırı — etiket hücresi bgcolor'lı (Outlook-güvenli), değer hücresi düz. */
-    private String adminRow(String label, String value) {
-        return "<tr>"
-            + "<td bgcolor='#f3f4f6' style='background-color:#f3f4f6;text-align:left;padding:7px 10px;border:1px solid #e5e7eb;font-weight:700;white-space:nowrap'>" + escHtml(label) + "</td>"
-            + "<td style='padding:7px 10px;border:1px solid #e5e7eb'>" + value + "</td></tr>";
-    }
-
-    private String buildAdminNetworkAlertHtml(String detectedAt, int networkErrors, int total,
-                                              double errorRate, double threshold) {
-        String ratePct = String.format("%.0f%%", errorRate * 100);
-        String threshPct = String.format("%.0f%%", threshold * 100);
-        return simpleFrameOpen(640)
-                + "<h2 style='color:#b91c1c;margin:0 0 12px;font-size:20px'>⚠ Site Monitor — Ağ Erişim Sorunu Tespit Edildi</h2>"
-                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>Site Monitor host'unun bir veya daha fazla sertifika kontrolünü tamamlayamadığı tespit edildi. "
-                + "Tarama turunda <strong>" + networkErrors + " / " + total + "</strong> domain ağ-class hatasıyla düştü "
-                + "(oran: <strong>" + ratePct + "</strong>, eşik: " + threshPct + "). "
-                + "Bu, host'un outbound bağlantısında bir problem olabileceğini gösteriyor.</p>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:16px 0;font-size:13px'>"
-                + adminRow("Tespit Zamanı", formatIso(detectedAt))
-                + adminRow("Etkilenen Domain", networkErrors + " / " + total)
-                + adminRow("Hata Oranı", ratePct)
-                + adminRow("Eşik", threshPct)
-                + "</table>"
-                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Sistemin Aksiyonu</h3>"
-                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
-                + "<li>Yeni alarm üretimi <strong>geçici olarak duraklatıldı</strong></li>"
-                + "<li>Auto-resolve işlemi <strong>askıya alındı</strong> (sahte resolved e-posta yağmuru engellenir)</li>"
-                + "<li>Dashboard'da operatörlere uyarı banner'ı gösterildi</li>"
-                + "</ul>"
-                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Önerilen Kontroller</h3>"
-                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
-                + "<li>Host'un internet bağlantısı (modem/router)</li>"
-                + "<li>Outbound proxy ayarları</li>"
-                + "<li>Kurumsal firewall/NAT politikaları</li>"
-                + "<li>DNS sunucu erişilebilirliği</li>"
-                + "</ul>"
-                + "<p style='font-size:13px;color:#6b7280;margin:24px 0 0'>Ağ erişimi normale döner dönmez ayrıca bir <strong>\"Çözüldü\"</strong> e-postası alacaksınız.</p>"
-                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitor — System Admin Notification</p>"
-                + simpleFrameClose();
-    }
-
-    private String buildAdminNetworkResolvedHtml(String detectedAt, String resolvedAt, long durationMs,
-                                                 int networkErrors, int total, double errorRate) {
-        long durationMin = durationMs / 60000;
-        long durationSec = (durationMs / 1000) % 60;
-        String durationStr = durationMin + " dk " + durationSec + " sn";
-        String ratePct = String.format("%.0f%%", errorRate * 100);
-        return simpleFrameOpen(640)
-                + "<h2 style='color:#15803d;margin:0 0 12px;font-size:20px'>✅ Site Monitor — Ağ Erişim Sorunu Çözüldü</h2>"
-                + "<p style='font-size:14px;line-height:1.55;margin:0 0 12px'>Site Monitor host'unun outbound bağlantı sorunu çözüldü. "
-                + "Sertifika kontrolleri normal işleyişe döndü.</p>"
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse;margin:16px 0;font-size:13px'>"
-                + adminRow("Tespit Zamanı", formatIso(detectedAt))
-                + adminRow("Çözüm Zamanı", formatIso(resolvedAt))
-                + adminRow("Toplam Süre", durationStr)
-                + adminRow("Tespit Anında Etkilenen", networkErrors + " / " + total + " (" + ratePct + ")")
-                + "</table>"
-                + "<h3 style='color:#374151;font-size:15px;margin:20px 0 8px'>Sistemin Aksiyonu</h3>"
-                + "<ul style='font-size:13px;line-height:1.6;margin:0 0 8px;padding-left:20px'>"
-                + "<li>Yeni alarm üretimi <strong>yeniden aktif</strong></li>"
-                + "<li>Auto-resolve işlemi <strong>yeniden aktif</strong></li>"
-                + "<li>Dashboard uyarı banner'ı kaldırıldı</li>"
-                + "</ul>"
-                // Renkli not: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
-                + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 0;border-radius:8px;overflow:hidden'><tr>"
-                + "<td width='4' bgcolor='#16a34a' style='background-color:#16a34a;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
-                + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:10px 14px;font-size:13px;color:#15803d'>"
-                + "<em>Not: Outage süresince üretilebilecek sahte alarmlar bastırıldığı için ekibinize ÇÖZÜLDÜ e-posta yağmuru gönderilmedi.</em></td></tr></table>"
-                + "<hr style='border:none;border-top:1px solid #e5e7eb;margin:24px 0 12px' />"
-                + "<p style='font-size:11px;color:#9ca3af;margin:0'>Site Monitor — System Admin Notification</p>"
-                + simpleFrameClose();
-    }
-
-    // ── Public HTML accessors (used to store sent HTML in notification log) ──
+    // ── Alarm / çözüm şablon seçimi ──────────────────────────────────────────
 
     private static final java.util.Set<String> MONITORING_OUTAGE_TYPES =
             java.util.Set.of("ACCESSIBILITY", "PORT_DOWN", "DNS_FAILURE");
 
-    /** Süre-bitişi ailesi (alan adı + sertifika) executive-premium şablondan (EmailTemplateBuilder) geçer;
-     *  izleme-kesintisi tipleri (uptime/port/dns/keyword/ping/dns-changed) tip-özel zengin şablonlarını korur. */
+    /**
+     * Alarm e-postası (HTML + düz metin). Süre-bitişi / kusur ailesi (alan adı, sertifika, sayfa,
+     * sentetik…) {@link EmailTemplateBuilder}'dan; izleme-kesintisi türleri (uptime/port/dns/keyword/
+     * ping/dns-changed) tür-özel belgelerinden; alan adı olmayan jenerik bildirim sade belgeden geçer.
+     */
+    MailDoc.Mail alertMail(String subject, String message, String domain, String level, String alertType,
+                           Integer daysRemaining, Map<String, Object> ctx) {
+        if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
+            return outageAlertDoc(message, domain, alertType, ctx).build();
+        }
+        if ("KEYWORD".equals(alertType)) return keywordAlertDoc(message, domain, ctx).build();
+        if ("PING_DOWN".equals(alertType)) return pingAlertDoc(message, domain, ctx).build();
+        if ("DNS_CHANGED".equals(alertType)) return dnsChangedDoc(message, domain, ctx).build();
+        if (domain == null) {
+            // Ton konu metninden TAHMİN EDİLMEZ (eski "KRİTİK geçiyor mu" taraması); seviye açıkça verilir.
+            Tone tone = EmailTemplateBuilder.severityTone(level);
+            return simpleDoc(subject, message, tone, level == null ? "BİLDİRİM" : EmailTemplateBuilder.severityLabel(level),
+                    true, null, null).build();
+        }
+        EmailTemplateBuilder.AlertMail m = new EmailTemplateBuilder.AlertMail(
+                alertType, level, domain, message, daysRemaining, ctx, teamNameOf(ctx));
+        return new MailDoc.Mail(templateBuilder.buildHtml(m), templateBuilder.buildText(m));
+    }
+
     public String buildAlertEmailHtml(String subject, String message,
                                        String domain, String level, String alertType,
                                        Integer daysRemaining, Map<String, Object> certContext) {
-        if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
-            return buildRichMonitoringOutageAlertHtml(message, domain, alertType, certContext);
-        }
-        if ("KEYWORD".equals(alertType)) return buildRichKeywordAlertHtml(message, domain, level, certContext);
-        if ("PING_DOWN".equals(alertType)) return buildRichPingAlertHtml(message, domain, level, certContext);
-        if ("DNS_CHANGED".equals(alertType)) return buildRichDnsChangedAlertHtml(message, domain, certContext);
-        if (domain == null) return buildSimpleAlertHtml(subject, message);
-        // Kalan hepsi = süre-bitişi ailesi (DOMAINMON_*, DOMAIN_EXPIRY, sertifika EXPIRY/REVOKED/MISMATCH/CHAIN) → executive
-        return templateBuilder.buildHtml(new EmailTemplateBuilder.AlertMail(
-                alertType, level, domain, message, daysRemaining, certContext, teamNameOf(certContext)));
+        return alertMail(subject, message, domain, level, alertType, daysRemaining, certContext).html();
     }
 
-    /** Alarm e-postasının plain-text (multipart) alternatifi. */
+    /** Alarm e-postasının plain-text (multipart) alternatifi — HTML ile AYNI belgeden. */
     public String buildAlertEmailText(String subject, String message,
                                       String domain, String level, String alertType,
                                       Integer daysRemaining, Map<String, Object> certContext) {
-        return templateBuilder.buildText(new EmailTemplateBuilder.AlertMail(
-                alertType, level, domain, message, daysRemaining, certContext, teamNameOf(certContext)));
+        return alertMail(subject, message, domain, level, alertType, daysRemaining, certContext).text();
+    }
+
+    /** Çözüm e-postası (HTML + düz metin) — alarm ailesiyle aynı ayrım. */
+    MailDoc.Mail resolutionMail(String domain, String alertType, String alertLevel, Integer daysRemaining,
+                                String resolvedBy, String resolvedAt, String createdAt, Map<String, Object> ctx,
+                                String teamNames, UptimeSummary uptime) {
+        if ("KEYWORD".equals(alertType)) return keywordResolvedDoc(domain, ctx, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
+        if ("PING_DOWN".equals(alertType)) return pingResolvedDoc(domain, ctx, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
+        if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
+            return monitoringResolvedDoc(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx).build();
+        }
+        // domain + sertifika → "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
+        return new MailDoc.Mail(
+                templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, ctx, teamNames),
+                templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt, createdAt, ctx));
     }
 
     public String buildResolutionEmailHtml(String domain, String alertType, String alertLevel,
@@ -1231,24 +1249,19 @@ public class EmailNotificationService {
                                             String resolvedAt, String createdAt,
                                             Map<String, Object> certContext,
                                             String teamNames, UptimeSummary uptime) {
-        if ("KEYWORD".equals(alertType)) return buildRichKeywordResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
-        if ("PING_DOWN".equals(alertType)) return buildRichPingResolvedHtml(domain, certContext, resolvedBy, resolvedAt, createdAt, teamNames, uptime);
-        if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
-            return buildRichMonitoringResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime, certContext);
-        }
-        // domain + sertifika → executive "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
-        return templateBuilder.buildResolvedHtml(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext, teamNames);
+        return resolutionMail(domain, alertType, alertLevel, daysRemaining, resolvedBy, resolvedAt, createdAt,
+                certContext, teamNames, uptime).html();
     }
 
     /** Çözüm e-postasının plain-text (multipart) alternatifi. */
     public String buildResolutionEmailText(String domain, String alertType, String resolvedBy, String resolvedAt) {
-        return templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt);
+        return buildResolutionEmailText(domain, alertType, resolvedBy, resolvedAt, null, null);
     }
 
-    /** Çözüm plain-text — alan/sertifika bağlamıyla zenginleştirilmiş sürüm. */
+    /** Çözüm plain-text — HTML ile aynı belgeden (zengin türlerde tür-özel metin). */
     public String buildResolutionEmailText(String domain, String alertType, String resolvedBy, String resolvedAt,
                                            String createdAt, Map<String, Object> certContext) {
-        return templateBuilder.buildResolvedText(domain, alertType, resolvedBy, resolvedAt, createdAt, certContext);
+        return resolutionMail(domain, alertType, null, null, resolvedBy, resolvedAt, createdAt, certContext, null, null).text();
     }
 
     private static String teamNameOf(Map<String, Object> ctx) {
@@ -1257,269 +1270,52 @@ public class EmailNotificationService {
         return v == null ? null : String.valueOf(v);
     }
 
-    private String tableRow2col(String label, String value) {
-        return "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
-            + "<td style='padding:9px 13px;font-size:14px;font-weight:600;color:#1e293b;word-break:break-all'>" + value + "</td>"
-            + "</tr>";
-    }
-
-    // ── DNS ESKİ→YENİ fark tablosu ────────────────────────────────────────────
-    /** Tabloda gösterilecek en fazla değer satırı; fazlası "…ve N tane daha" ile özetlenir. */
-    private static final int DNS_MAX_VALUE_ROWS = 6;
-    /** Tek bir değerin en fazla karakteri (uzun TXT/DKIM kayıtları düzeni bozmasın). */
-    private static final int DNS_MAX_VALUE_LEN = 160;
+    // ── Sade bildirim (alan adı olmayan alarm, haftalık rapor onay/iade) ──────
 
     /**
-     * ESKİ→YENİ değerleri SATIR-KİLİTLİ tek tabloda gösterir: i. eski ile i. yeni değer AYNI
-     * {@code <tr>}'de durur, aralarında yön oku. Eskiden iki BAĞIMSIZ iç tablo vardı; satır
-     * sayıları farklı olunca (2 eski → 1 yeni gibi tipik durumda) eşleşme kayıyor ve kolonlar
-     * hizasız görünüyordu. Değerler 11px gri yerine 15px kalın; silinen değer üstü çizik.
-     * Tamamen tablo tabanlı + td bgcolor + düz hex → Outlook güvenli, {@code <style>} bloğu YOK.
+     * Sade bildirim belgesi. Ton ÇAĞIRANDAN gelir (eski sürüm konu metninde "KRİTİK" arayıp
+     * başlık rengini tahmin ediyordu). Mesajın satır sonları korunur ({@code <br>}) — iade notu
+     * gibi çok satırlı metinler tek paragrafa ezilmez.
      */
-    private String dnsDiffTable(List<String> oldValues, List<String> newValues, String purple) {
-        List<String> olds = oldValues == null ? List.of() : oldValues;
-        List<String> news = newValues == null ? List.of() : newValues;
-        int rows = Math.max(olds.size(), news.size());
-        int shown = Math.min(rows, DNS_MAX_VALUE_ROWS);
-
-        StringBuilder body = new StringBuilder();
-        if (rows == 0) {
-            body.append("<tr><td colspan='3' bgcolor='#f8fafc' style='background-color:#f8fafc;"
-                    + "border-top:1px solid #e2e8f0;padding:14px;font-size:13px;font-style:italic;"
-                    + "color:#64748b;text-align:center'>Değişiklik ayrıntısı bu bildirimde taşınmıyor.</td></tr>");
-        }
-        for (int i = 0; i < shown; i++) {
-            String o = i < olds.size() ? olds.get(i) : null;
-            String n = i < news.size() ? news.get(i) : null;
-            body.append("<tr>")
-                .append(dnsValueCell(o, true, "#f8fafc", olds.isEmpty() ? "kayıt yoktu" : "—"))
-                .append("<td align='center' valign='top' bgcolor='#ffffff' style='background-color:#ffffff;"
-                        + "border-top:1px solid #e2e8f0;padding:12px 2px'>"
-                        + "<span style='font-size:17px;font-weight:700;color:" + purple + "'>&#8594;</span></td>")
-                .append(dnsValueCell(n, false, "#faf5ff", news.isEmpty() ? "kayıt kalmadı" : "—"))
-                .append("</tr>");
-        }
-        if (rows > shown) {
-            body.append("<tr><td colspan='3' bgcolor='#f8fafc' style='background-color:#f8fafc;"
-                    + "border-top:1px solid #e2e8f0;padding:9px 14px;font-size:12px;font-style:italic;"
-                    + "color:#64748b;text-align:center'>…ve ").append(rows - shown).append(" tane daha</td></tr>");
-        }
-
-        return "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;border-collapse:collapse'>"
-            + "<tr>"
-            + "<td width='46%' bgcolor='#475569' style='width:46%;background-color:#475569;padding:9px 14px;"
-            + "font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ESKİ DEĞERLER &#183; " + olds.size() + "</td>"
-            + "<td width='8%' bgcolor='#334155' style='width:8%;background-color:#334155'>&nbsp;</td>"
-            + "<td width='46%' bgcolor='" + purple + "' style='width:46%;background-color:" + purple + ";padding:9px 14px;"
-            + "font-size:11px;font-weight:700;letter-spacing:.1em;color:#f3e8ff'>YENİ DEĞERLER &#183; " + news.size() + "</td>"
-            + "</tr>" + body + "</table>";
+    private MailDoc simpleDoc(String subject, String message, Tone tone, String badge, boolean asAlert,
+                              String ctaUrl, String ctaLabel) {
+        String title = subject == null ? "Bildirim" : subject.replaceFirst("^\\[Site Monitor[^\\]]*\\]\\s*", "");
+        MailDoc d = MailDoc.create(subject).preheader(firstLine(message)).kicker("Bildirim");
+        if (badge != null) d.badges(tone == Tone.DESTRUCTIVE ? Badge.solid(badge, tone) : Badge.tint(badge, tone));
+        d.title(title, null);
+        if (asAlert) d.alert(tone, null, message);
+        else d.paragraph(message);
+        if (ctaUrl != null && !ctaUrl.isBlank()) d.button(ctaUrl, ctaLabel);
+        d.footerMeta("Site Monitor", nowStamp());
+        return d;
     }
 
-    /** Fark tablosunun tek değer hücresi. {@code removed=true} → solgun + üstü çizik (span'de:
-     *  Word, text-decoration'ı hücreden miras almıyor). Değer yoksa {@code emptyText} basılır. */
-    private static String dnsValueCell(String value, boolean removed, String bg, String emptyText) {
-        String color = removed ? "#64748b" : "#581c87";
-        String td = "<td valign='top' bgcolor='" + bg + "' style='background-color:" + bg + ";"
-                + "border-top:1px solid #e2e8f0;padding:12px 14px;font-family:Consolas,\"Courier New\",monospace;"
-                + "word-break:break-all;mso-line-height-rule:exactly;";
-        if (value == null || value.isBlank()) {
-            return td + "font-size:13px;font-style:italic;color:#94a3b8'>" + escHtml(emptyText) + "</td>";
-        }
-        String shown = escHtml(truncValue(value));
-        String inner = removed ? "<span style='text-decoration:line-through'>" + shown + "</span>" : shown;
-        return td + "font-size:" + dnsValueFontPx(value) + "px;font-weight:" + (removed ? "700" : "800")
-                + ";color:" + color + "'>" + inner + "</td>";
+    private static String firstLine(String s) {
+        if (s == null) return "";
+        String t = s.strip();
+        int nl = t.indexOf('\n');
+        String line = nl < 0 ? t : t.substring(0, nl);
+        return line.length() > 140 ? line.substring(0, 139) + "…" : line;
     }
 
-    /** Çok uzun tek değeri (DKIM TXT vb.) kırpar — düzen bozulmasın. */
-    private static String truncValue(String v) {
-        return v.length() <= DNS_MAX_VALUE_LEN ? v : v.substring(0, DNS_MAX_VALUE_LEN) + "…";
-    }
-
-    /** Uzun değerlerde punto düşür (CSS medya sorgusu kullanılamıyor; Java'da hesaplanır). */
-    private static int dnsValueFontPx(String v) {
-        return v.length() > 40 ? 13 : 15;
-    }
-
-    private String statusRow2col(String label, String value) {
-        boolean ok      = value.startsWith("✓");
-        boolean neutral = value.startsWith("~") || value.startsWith("—");
-        String bgAttr  = ok || neutral ? "" : " bgcolor='#fef2f2'";
-        String bgStyle = ok || neutral ? "" : "background-color:#fef2f2;";
-        String valueColor = ok ? "#15803d" : neutral ? "#6b7280" : "#dc2626";
-        return "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%'" + bgAttr + " style='" + bgStyle + "padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + label + "</td>"
-            + "<td" + bgAttr + " style='" + bgStyle + "padding:9px 13px;font-size:13px;font-weight:700;color:" + valueColor + "'>" + value + "</td>"
-            + "</tr>";
-    }
-
-    private String formatIsoFull(String iso) {
-        if (iso == null || iso.isBlank()) return "—";
-        try {
-            // UTC ISO'yu Europe/Istanbul'a çevir → kullanıcıya her zaman yerel saat
-            LocalDateTime dt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
-                    .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDateTime();
-            String[] months = {"Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
-                               "Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"};
-            String[] days = {"Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"};
-            String month   = months[dt.getMonthValue() - 1];
-            String dayName = days[dt.getDayOfWeek().getValue() - 1];
-            return dt.getDayOfMonth() + " " + month + " " + dt.getYear() + ", " + dayName
-                 + " — " + String.format("%02d:%02d", dt.getHour(), dt.getMinute());
-        } catch (Exception e) {
-            return formatIso(iso);
-        }
-    }
-
-    private String ctxStr(Map<String, Object> ctx, String key) {
-        if (ctx == null) return "";
-        Object v = ctx.get(key);
-        return v != null ? String.valueOf(v) : "";
-    }
-
-    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm" (yerel saat).
-     *  Tüm e-posta tarihleri buradan geçer; proje genelinde kullanıcıya her zaman local gösterilir. */
-    private String formatIso(String iso) {
-        if (iso == null || iso.isBlank()) return "—";
-        try {
-            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
-            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
-                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        } catch (Exception e) {
-            try {
-                // Beklenmeyen biçim — saat dilimi çevirmeden en azından okunur biçime getir
-                return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4)
-                     + " " + iso.substring(11, 16);
-            } catch (Exception e2) {
-                return iso;
-            }
-        }
-    }
-
-    /** Proje saat dilimi (UTC+3, DST yok). Stored ISO string'leri UTC kabul edilir. */
-    private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
-
-    /** Apple Mail/iOS dark-mode oto-inversiyonunu kapatır (beyaz kartlar kararmaz → hep-açık WebKit preview'a uyum).
-     *  Tüm builder head'lerinde viewport meta'sından sonra aynı iki satır kullanılır. */
-    private static final String LIGHT_SCHEME_META =
-            "<meta name='color-scheme' content='light only'><meta name='supported-color-schemes' content='light'>";
-
-    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm".
-     *  null/boş → null (footer'da ilgili satır gizlensin). */
-    private String formatIstanbul(String iso) {
-        if (iso == null || iso.isBlank()) return null;
-        try {
-            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
-            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
-                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        } catch (Exception e) {
-            return formatIso(iso);
-        }
-    }
-
-    private String buildSimpleAlertHtml(String subject, String message) {
-        return buildSimpleAlertHtml(subject, message, null, null);
-    }
-
-    /** Outlook (Word/VML v:roundrect — yuvarlak köşe + TAM-ALAN tıklanır) + diğer istemciler (HTML &lt;a&gt;) için
-     *  çift "bulletproof" CTA. mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür.
-     *  [if !mso] dalı eski çıktının bayt-bayt aynısı → Outlook-dışı (Apple Mail/Gmail/preview) SIFIR regresyon.
-     *  href + w:anchorlock roundrect ELEMENTİNDE → eski "bazı Outlook'ta tıklanmıyordu" sorunu çözülür
-     *  (aynı desen buildWeeklyReportReminderHtml'de kanıtlı çalışıyor). Genişlik VML'de sabit olmalı → vmlButtonWidth. */
-    private String ctaButton(String url, String label, String accent) {
-        if (url == null || url.isBlank()) return "";
-        String safe = escHtml(url);
-        int w = vmlButtonWidth(label);
-        return "<!--[if mso]>"
-            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr><td align='center'>"
-            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
-            + " href=\"" + safe + "\" style=\"height:44px;v-text-anchor:middle;width:" + w + "px;\""
-            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
-            + "<w:anchorlock/>"
-            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
-            + label + "</center>"
-            + "</v:roundrect>"
-            + "</td></tr></table>"
-            + "<![endif]-->"
-            + "<!--[if !mso]><!-->"
-            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0' align='center' style='margin:0 auto'><tr>"
-            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;mso-padding-alt:14px 32px'>"
-            + "<a href='" + safe + "' target='_blank' style='display:inline-block;padding:14px 32px;"
-            + "color:#ffffff;text-decoration:none;font-size:15px;font-weight:bold;border-radius:8px;"
-            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>" + label + "</a>"
-            + "</td></tr></table>"
-            + "<!--<![endif]-->";
-    }
-
-    /** VML v:roundrect auto-size yapamaz → görünür etiket uzunluğundan px genişlik türet
-     *  (HTML entity'ler ve olası etiketler ~1 karakter sayılır). Fazla tahmin butonu genişletir, asla kırpmaz. */
-    private static int vmlButtonWidth(String label) {
-        String visible = label == null ? "" : label
-                .replaceAll("&[a-zA-Z]+;|&#\\d+;", "x")   // &rarr; &nbsp; &#183; → tek karakter
-                .replaceAll("<[^>]+>", "");                // olası inline etiket
-        int w = visible.length() * 9 + 56;
-        return Math.max(200, Math.min(600, w));
-    }
-
-    private String buildSimpleAlertHtml(String subject, String message, String ctaUrl, String ctaLabel) {
-        String now = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String color = subject.contains("KRİTİK") || subject.contains("CRITICAL") ? "#dc2626"
-                : subject.contains("YÜKSEK") || subject.contains("HIGH") ? "#ea580c" : "#d97706";
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, marka barı üstte.
-        String cta = (ctaUrl != null && !ctaUrl.isBlank())
-            ? "<div style='text-align:center;margin-top:20px'>" + ctaButton(ctaUrl, ctaLabel, "#15803d") + "</div>"
-            : "";
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" + LIGHT_SCHEME_META + "</head>"
-            + "<body style='margin:0;padding:0;background:#f3f4f6;font-family:\"Segoe UI\",Arial,sans-serif'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='background:#f3f4f6;padding:24px 10px'>"
-            + "<tr><td align='center'>"
-            + "<table width='600' cellpadding='0' cellspacing='0' border='0'"
-            + " style='width:600px;max-width:600px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.12)'>"
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='" + color + "' style='background-color:" + color + ";padding:20px 24px;color:#fff'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#ffffff'>BİLDİRİM</div>"
-            + "<div style='font-size:18px;font-weight:800;margin-top:4px;word-break:break-word'>" + escHtml(subject) + "</div>"
-            + "</td></tr>"
-            + "<tr><td class='em-body' style='padding:24px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:0 8px 8px 0;overflow:hidden'><tr>"
-            + "<td width='4' bgcolor='" + color + "' style='background-color:" + color + ";width:4px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#fffbeb' style='background-color:#fffbeb;padding:14px 16px;color:#1c1917;font-size:14px;line-height:1.7'>"
-            + escHtml(message) + "</td></tr></table>"
-            + cta
-            + "<div style='text-align:center;color:#94a3b8;font-size:11px;margin-top:20px;"
-            + "padding-top:16px;border-top:1px solid #f1f5f9'>Site Monitor &nbsp;·&nbsp; " + now + "</div>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
-            + "</body></html>";
-    }
+    // ── İzleme kesintisi alarmı — ACCESSIBILITY / PORT_DOWN / DNS_FAILURE ─────
 
     /**
-     * İzleme kesintisi alarm maili — ACCESSIBILITY / PORT_DOWN / DNS_FAILURE
-     * için ortak şablon; etiketler tipe göre çözülür. ctx,
-     * MonitoringOutageService'in ürettiği kesinti bağlamıdır (port/protocol/
-     * record_type, first_failure_at, last_error, confirm_attempts,
-     * confirm_delay_ms, confirm_attempt_count). "Tekrar Bildir" yolu eksik
-     * context geçirebileceğinden TÜM okumalar null-toleranslıdır.
+     * İzleme kesintisi alarm belgesi — üç tür için ortak; etiketler tipe göre çözülür. ctx,
+     * MonitoringOutageService'in ürettiği kesinti bağlamıdır (port/protocol/record_type,
+     * first_failure_at, last_error, confirm_attempts, confirm_delay_ms, confirm_attempt_count).
+     * "Tekrar Bildir" yolu eksik context geçirebileceğinden TÜM okumalar null-toleranslıdır.
      */
-    @SuppressWarnings("unchecked")
-    private String buildRichMonitoringOutageAlertHtml(String message, String domain,
-                                                      String alertType, Map<String, Object> ctx) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String red = "#dc2626";
-
+    private MailDoc outageAlertDoc(String message, String domain, String alertType, Map<String, Object> ctx) {
         String kicker = switch (alertType) {
-            case "PORT_DOWN"   -> "PORT İZLEME";
-            case "DNS_FAILURE" -> "DNS İZLEME";
-            default            -> "ERİŞİLEBİLİRLİK İZLEME";
+            case "PORT_DOWN"   -> "Port İzleme";
+            case "DNS_FAILURE" -> "DNS İzleme";
+            default            -> "Erişilebilirlik İzleme";
         };
         String heroTitle = switch (alertType) {
-            case "PORT_DOWN"   -> "PORT ERİŞİLEMEZ";
-            case "DNS_FAILURE" -> "DNS ÇÖZÜLEMİYOR";
-            default            -> "SİTE ERİŞİLEMEZ";
+            case "PORT_DOWN"   -> "Port Erişilemez";
+            case "DNS_FAILURE" -> "DNS Çözülemiyor";
+            default            -> "Site Erişilemez";
         };
         String typeTrLabel = switch (alertType) {
             case "PORT_DOWN"   -> "Port Kesintisi";
@@ -1537,299 +1333,142 @@ public class EmailNotificationService {
         String recordType     = ctxStr(ctx, "record_type");
         String firstFailureAt = ctxStr(ctx, "first_failure_at");
         String lastError      = ctxStr(ctx, "last_error");
-        String attemptCount   = ctxStr(ctx, "confirm_attempt_count");
-        String delayMs        = ctxStr(ctx, "confirm_delay_ms");
         String endpoint = "DNS_FAILURE".equals(alertType)
-                ? escHtml(domain) + (!recordType.isEmpty() ? " · " + escHtml(recordType) + " kaydı" : "")
-                : escHtml(domain) + (!port.isEmpty() ? ":" + port : "");
-        String attemptsLabel  = !attemptCount.isEmpty() ? attemptCount : "Ardışık";
-        String delayLabel     = !delayMs.isEmpty()
-                ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
+                ? nzs(domain) + (!recordType.isEmpty() ? " · " + recordType + " kaydı" : "")
+                : nzs(domain) + (!port.isEmpty() ? ":" + port : "");
+        List<Map<String, Object>> attempts = attempts(ctx);
 
-        List<Map<String, Object>> attempts = (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l)
-                ? (List<Map<String, Object>>) l : List.of();
+        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + endpoint)
+                .preheader(heroTitle + " — " + endpoint)
+                .kicker(kicker);
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline(typeTrLabel));
+        d.title(endpoint, null);
+        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
 
+        List<Row> rows = new ArrayList<>();
+        rows.add(Row.of("Uç Nokta", endpoint));
+        if ("PORT_DOWN".equals(alertType) && !protocol.isEmpty()) rows.add(Row.of("Protokol", protocol));
+        rows.add(new Row(accessLabel, MailKit.strong("Erişilemiyor", Tone.DESTRUCTIVE.strong), "Erişilemiyor"));
+        if (!firstFailureAt.isEmpty()) rows.add(Row.of("İlk Hata", formatIsoFull(firstFailureAt)));
+        if (!lastError.isEmpty()) rows.add(Row.of("Son Hata", lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError));
+        rows.add(verificationRow(ctx, attempts, "deneme başarısız"));
+        rows.add(new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"));
+        rows.add(new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor"));
+        d.keyValue("Kesinti Bilgileri", rows);
+        attemptTable(d, attempts, "yanıt yok");
+        d.note("Sorun düzeldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir. "
+                + "Alarmı Site Monitor → Uyarılar → Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz.");
         // E-posta CTA: port/dns alarmında monitör detay deep-link'i (?tab=&monitor=<id>);
-        // accessibility (uptime) monitör-id taşımaz → CTA boş kalır.
+        // accessibility (uptime) monitör-id taşımaz → CTA basılmaz, olay aksiyonları yine görünür.
         String outageTab = "PORT_DOWN".equals(alertType) ? "port" : "DNS_FAILURE".equals(alertType) ? "dns" : null;
-        String ctaHtml = (outageTab != null && !monitorCtaUrl(outageTab, ctx).isBlank())
-                ? "<div style='text-align:center;margin-bottom:20px'>"
-                  + ctaButton(monitorCtaUrl(outageTab, ctx), "Monitörü Aç &rarr;", "#1e293b") + "</div>"
-                : "";
-
-        // ── Hero — kesinti bildirimi ──
-        String hero = "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin:20px 0;border-radius:14px;overflow:hidden;border:2px solid #fecaca'>"
-            + "<tr>"
-            + "<td class='em-hero-l' align='center' valign='middle' width='38%'"
-            + " bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 14px'>"
-            + "<div style='color:#fff;font-size:52px;line-height:1'>🔴</div>"
-            + "<div style='color:#fff;font-size:15px;font-weight:800;margin-top:8px;letter-spacing:.06em'>" + heroTitle + "</div>"
-            + "<div style='color:#ffe4e6;font-size:12px;margin-top:8px;padding:0 6px'>⚠ Acil müdahale gerekli</div>"
-            + "</td>"
-            + "<td class='em-hero-r' valign='middle' bgcolor='#fef2f2' style='background-color:#fef2f2;padding:20px 22px'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
-            + "<div style='font-size:24px;font-weight:900;color:" + red + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
-            + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' style='margin-top:12px'><tr>"
-            + "<td bgcolor='" + red + "' style='background-color:" + red + ";border-radius:6px;padding:6px 12px;font-size:12px;font-weight:800;color:#fff'>"
-            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</td>"
-            + "</tr></table>"
-            + "</td>"
-            + "</tr></table>";
-
-        // ── Sol kolon: kesinti bilgileri ──
-        StringBuilder outageRows = new StringBuilder();
-        outageRows.append(tableRow2col("🌐 Uç Nokta", endpoint));
-        if ("PORT_DOWN".equals(alertType) && !protocol.isEmpty()) {
-            outageRows.append(tableRow2col("🔌 Protokol", escHtml(protocol)));
-        }
-        if (!firstFailureAt.isEmpty()) {
-            outageRows.append(tableRow2col("🕐 İlk Hata", formatIso(firstFailureAt)));
-        }
-        if (!lastError.isEmpty()) {
-            String shortErr = lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError;
-            outageRows.append(tableRow2col("⚠ Son Hata", escHtml(shortErr)));
-        }
-        for (Map<String, Object> a : attempts) {
-            String at  = String.valueOf(a.getOrDefault("checked_at", ""));
-            String err = String.valueOf(a.getOrDefault("error", ""));
-            String time = formatIso(at); // her zaman yerel saat (Europe/Istanbul)
-            String detail = !err.isEmpty() && !"null".equals(err)
-                    ? time + " — " + escHtml(err.length() > 60 ? err.substring(0, 60) + "…" : err)
-                    : time + " — yanıt yok";
-            outageRows.append(tableRow2col("🔁 Deneme " + a.getOrDefault("attempt", "?"), detail));
-        }
-
-        // ── Sağ kolon: durum özeti ──
-        String statusRows = statusRow2col(accessLabel,  "✗ ERİŞİLEMİYOR")
-            + statusRow2col("Doğrulama",  "✗ " + (attempts.isEmpty() ? "Başarısız" : attempts.size() + "/" + attempts.size() + " deneme başarısız"))
-            + statusRow2col("Seviye",     "✗ KRİTİK")
-            + statusRow2col("İzleme",     "✓ Devam ediyor");
-
-        String twoColSection =
-            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' width='55%' style='width:55%;padding-right:8px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#1e293b' style='background-color:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>KESİNTİ BİLGİLERİ</td></tr>"
-            + outageRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' width='45%' style='width:45%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>DURUM ÖZETİ</td></tr>"
-            + statusRows + "</table></td>"
-            + "</tr></table>";
-
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, kart 600px, marka barı üstte.
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif !important}</style><![endif]-->"
-            + "</head>"
-            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif;"
-            + "-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%'>"
-
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td align='center' style='padding:24px 10px'>"
-
-            + "<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
-            + " style='width:600px;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
-            + "border:1px solid #d7dde5'>"
-
-            // ── Marka barı + Top bar (kırmızı) ──
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
-            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#ffffff;font-size:22px;font-weight:900;"
-            + "margin-top:10px;word-break:break-all;line-height:1.25'>🌐 " + endpoint + "</div>"
-            + "<div style='color:#ffe4e6;font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
-            + "</td></tr>"
-
-            // ── Body ──
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
-            + hero
-            + twoColSection
-
-            // Alarm detayı (sol aksan-şeritli tablo — border-left div değil)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:14px'><tr>"
-            + "<td width='5' bgcolor='" + red + "' style='background-color:" + red + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + red + ";margin-bottom:6px'>ALARM DETAYI</div>"
-            + escHtml(message)
-            + "</td></tr></table>"
-
-            // Otomatik kapanış notu
-            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
-            + "ℹ Sorun düzeldiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir. "
-            + "Alarmı Site Monitor &rarr; Uyarılar &rarr; Alarm Geçmişi ekranından onaylayabilir veya kapatabilirsiniz."
-            + "</div>"
-
-            + ctaHtml
-            // Olay aksiyonları — ctaHtml'DEN BAĞIMSIZ: ACCESSIBILITY dalında birincil CTA hiç
-            // basılmıyor (outageTab null), aksiyonlar yine de görünmeli.
-            + incidentActionsRow(ctx, "#1e293b")
-
-            // Footer
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + "Bildirim: " + generatedAt
-            + "</td></tr></table>"
-
-            + "</td></tr>"
-
-            + "</table>"             // em-card
-            + "</td></tr></table>"   // dış sarmalayıcı
-            + "</body></html>";
+        if (outageTab != null) d.button(monitorCtaUrl(outageTab, ctx), "Monitörü Aç →");
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNameOf(ctx)).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
     }
 
-    /** İzleme çözüm maili — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
-    private String buildRichMonitoringResolvedHtml(String domain, String alertType, String resolvedBy,
-                                                   String resolvedAt, String createdAt,
-                                                   String teamNames, UptimeSummary uptime,
-                                                   Map<String, Object> ctx) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String green = "#16a34a";
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> attempts(Map<String, Object> ctx) {
+        return (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l) ? (List<Map<String, Object>>) l : List.of();
+    }
+
+    /** "Doğrulama" satırı: "3/3 deneme başarısız · 30 sn arayla" (deneme listesi yoksa sayaç + "Başarısız"). */
+    private Row verificationRow(Map<String, Object> ctx, List<Map<String, Object>> attempts, String failWord) {
+        String ac = ctxStr(ctx, "confirm_attempt_count");
+        String delayMs = ctxStr(ctx, "confirm_delay_ms");
+        long delaySec = 0;
+        try { delaySec = delayMs.isEmpty() ? 0 : Long.parseLong(delayMs) / 1000; } catch (NumberFormatException ignore) { }
+        String base = !attempts.isEmpty() ? attempts.size() + "/" + attempts.size() + " " + failWord
+                : (!ac.isEmpty() ? ac + " ardışık deneme — tümü başarısız" : "Başarısız");
+        String text = base + (delaySec > 0 ? " · " + delaySec + " sn arayla" : "");
+        return new Row("Doğrulama", MailKit.strong(text, Tone.DESTRUCTIVE.strong), text);
+    }
+
+    /** Teyit denemeleri tablosu (Deneme / Zaman / Sonuç). */
+    private void attemptTable(MailDoc d, List<Map<String, Object>> attempts, String noAnswer) {
+        if (attempts.isEmpty()) return;
+        List<List<Cell>> rows = new ArrayList<>();
+        for (Map<String, Object> a : attempts) {
+            String at = String.valueOf(a.getOrDefault("checked_at", ""));
+            String err = String.valueOf(a.getOrDefault("error", ""));
+            String result = !err.isEmpty() && !"null".equals(err) ? (err.length() > 60 ? err.substring(0, 60) + "…" : err) : noAnswer;
+            rows.add(List.of(Cell.of("Deneme " + a.getOrDefault("attempt", "?")), Cell.of(formatIso(at)),
+                    Cell.of(result, Tone.DESTRUCTIVE.text, false)));
+        }
+        d.heading("Doğrulama Denemeleri");
+        d.table(List.of(Col.nw("Deneme"), Col.nw("Zaman"), Col.of("Sonuç")), rows);
+    }
+
+    // ── İzleme çözümü — ACCESSIBILITY / PORT_DOWN / DNS_FAILURE / DNS_CHANGED ──
+
+    /** İzleme çözüm belgesi — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
+    private MailDoc monitoringResolvedDoc(String domain, String alertType, String resolvedBy,
+                                          String resolvedAt, String createdAt,
+                                          String teamNames, UptimeSummary uptime,
+                                          Map<String, Object> ctx) {
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
         String duration = outageDurationDisplay(createdAt, resolvedAt);
         boolean dnsChanged = "DNS_CHANGED".equals(alertType);
+        String t = alertType != null ? alertType : "";
 
-        String kicker = switch (alertType != null ? alertType : "") {
-            case "PORT_DOWN"                 -> "PORT İZLEME";
-            case "DNS_FAILURE", "DNS_CHANGED" -> "DNS İZLEME";
-            default                          -> "ERİŞİLEBİLİRLİK İZLEME";
+        String kicker = switch (t) {
+            case "PORT_DOWN"                  -> "Port İzleme";
+            case "DNS_FAILURE", "DNS_CHANGED" -> "DNS İzleme";
+            default                           -> "Erişilebilirlik İzleme";
         };
-        String heroLine = switch (alertType != null ? alertType : "") {
+        String heroLine = switch (t) {
             case "PORT_DOWN"   -> "Port Yeniden Açıldı";
             case "DNS_FAILURE" -> "DNS Çözümleme Düzeldi";
             case "DNS_CHANGED" -> "DNS Değişikliği Alarmı Kapatıldı";
             default            -> "Erişim Yeniden Sağlandı";
         };
-        String typeTrLabel = switch (alertType != null ? alertType : "") {
+        String typeTrLabel = switch (t) {
             case "PORT_DOWN"   -> "Port Kesintisi";
             case "DNS_FAILURE" -> "DNS Çözümleme Hatası";
             case "DNS_CHANGED" -> "DNS Değişikliği";
             default            -> "Erişim Kesintisi";
         };
         String levelTrLabel = dnsChanged ? "YÜKSEK" : "KRİTİK";
-        String levelColor   = dnsChanged ? "#9333ea" : "#dc2626";
-        String durationLabel = dnsChanged ? "⏱ Alarm Süresi" : "⏱ Toplam Kesinti Süresi";
+        Tone levelTone = dnsChanged ? Tone.WARNING : Tone.DESTRUCTIVE;
+        String durationLabel = dnsChanged ? "Alarm Süresi" : "Toplam Kesinti Süresi";
         // Kesinti başlangıç→bitiş net çifti (StatusCake gibi); DNS-changed'de "alarm" terminolojisi korunur.
-        String startLabel = dnsChanged ? "📅 Alarm Başlangıcı" : "🔻 Kesinti Başlangıcı";
-        String endLabel   = dnsChanged ? "🕐 Çözülme Zamanı"    : "🔺 Yeniden Ulaşılabilir";
+        String startLabel = dnsChanged ? "Alarm Başlangıcı" : "Kesinti Başlangıcı";
+        String endLabel   = dnsChanged ? "Çözülme Zamanı"   : "Yeniden Ulaşılabilir";
 
-        String resolverRows = tableRow2col("👤 Çözen",     escHtml(by))
-            + tableRow2col(endLabel,   fmtOrDash(formatIstanbul(resolvedAt)))
-            + tableRow2col(startLabel, fmtOrDash(formatIstanbul(createdAt)));
+        MailDoc d = MailDoc.create("[Site Monitor] ÇÖZÜLDÜ · " + nzs(domain))
+                .preheader(heroLine + " — " + nzs(domain) + " · " + duration)
+                .kicker(kicker);
+        d.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS), Badge.outline(typeTrLabel));
+        d.title(nzs(domain), "Alarm kapatıldı, izleme devam ediyor.");
+        d.alertHtml(Tone.SUCCESS, esc(heroLine),
+                "<strong>" + esc(domain) + "</strong> için açık olan <strong>" + esc(typeTrLabel) + "</strong> alarmı kapatıldı. "
+                        + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ") + "<strong>" + esc(duration) + "</strong>.",
+                heroLine + " — " + nzs(domain) + " için açık olan " + typeTrLabel + " alarmı kapatıldı. "
+                        + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ") + duration + ".");
+        d.keyValue("Çözüm Bilgisi", MailDoc.rows(
+                Row.of("Çözen", by),
+                Row.of(endLabel, fmtOrDash(formatIstanbul(resolvedAt))),
+                Row.of(startLabel, fmtOrDash(formatIstanbul(createdAt))),
+                new Row(durationLabel, MailKit.strong(duration, Tone.SUCCESS.strong), duration),
+                Row.of("Alarm Tipi", typeTrLabel),
+                new Row("Seviye", MailKit.strong(levelTrLabel, levelTone.strong), levelTrLabel)));
+        uptimeSummary(d, uptime);
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNames).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
+    }
 
-        String outageRows = tableRow2col("🌐 Alan Adı",   escHtml(domain))
-            + tableRow2col("⚠ Alarm Tipi",  typeTrLabel)
-            + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
-            + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:" + levelColor + "'>" + levelTrLabel + "</td>"
-            + "</tr>"
-            + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>" + durationLabel + "</td>"
-            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
-            + "</tr>";
-
-        String twoColSection =
-            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px'><tr>"
-            + "<td class='em-col-l' valign='top' width='50%' style='width:50%;padding-right:8px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;"
-            + "letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
-            + resolverRows + "</table></td>"
-            + "<td class='em-col-r' valign='top' width='50%' style='width:50%'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;"
-            + "letter-spacing:.1em;color:#94a3b8'>KESİNTİ DETAYI</td></tr>"
-            + outageRows + "</table></td>"
-            + "</tr></table>";
-
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, kart 600px, marka barı üstte.
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif !important}</style><![endif]-->"
-            + "</head>"
-            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background-color:#f1f5f9;"
-            + "font-family:\"Segoe UI\",Tahoma,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%'>"
-
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td align='center' style='padding:24px 10px'>"
-
-            + "<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
-            + " style='width:600px;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
-            + "border:1px solid #d7dde5'>"
-
-            // ── Marka barı + Top bar (yeşil) — bgcolor'lı <td> (Outlook-safe) ──
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
-            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            + "<div class='em-domain' style='color:#ffffff;font-size:22px;font-weight:900;"
-            + "margin-top:10px;word-break:break-all;line-height:1.25'>&#9989; " + escHtml(domain) + "</div>"
-            + "<div style='color:#eafff1;font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
-            + "</td></tr>"
-
-            // ── Hero ✓ (daire = nested <td bgcolor>, div+border-radius değil) ──
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px 6px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr><td align='center'>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
-            + "<td width='80' height='80' align='center' valign='middle' bgcolor='#dcfce7'"
-            + " style='background-color:#dcfce7;border-radius:40px;border:3px solid " + green + ";"
-            + "color:#15803d;font-size:42px;line-height:80px;text-align:center'>&#10003;</td>"
-            + "</tr></table>"
-            + "<div style='margin-top:14px;font-size:20px;font-weight:800;color:#15803d;letter-spacing:-.3px'>" + heroLine + "</div>"
-            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div>"
-            + "</td></tr></table></td></tr>"
-
-            // ── İki kolon detay ──
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:18px 24px 4px'>" + twoColSection + "</td></tr>"
-
-            // ── Bilgi kutusu (sol aksan-şeritli tablo — border-left div değil) ──
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 22px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden'><tr>"
-            + "<td width='5' bgcolor='" + green + "' style='background-color:" + green + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
-            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel
-            + "</strong> alarmı kapatıldı. "
-            + (dnsChanged ? "Alarm süresi: " : "Toplam kesinti süresi: ")
-            + "<strong>" + duration + "</strong>."
-            + "</td></tr></table></td></tr>"
-
-            // ── Erişilebilirlik özeti (son 24s/7g) — yalnız HTTP uptime verisi olan tiplerde ──
-            + uptimeSummaryRow(uptime)
-            // ── "Neden bu e-postayı aldınız?" — alıcı şeffaflığı ──
-            + whyReceivingRow(teamNames)
-            // ── Olay aksiyonları — bu şablon ROW bağlamında (em-card <tr> dizisi) kurulduğu için sarılır ──
-            + rowWrap(incidentActionsRow(ctx, "#1f3864"))
-
-            // ── Footer ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;"
-            + "font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
-            + "</tr></table></td></tr>"
-
-            + "</table>"             // em-card
-            + "</td></tr></table>"   // dış sarmalayıcı
-            + "</body></html>";
+    /** Erişilebilirlik özeti (son 24s/7g uptime% + kesinti sayısı) — veri yoksa hiç eklenmez. */
+    private void uptimeSummary(MailDoc d, UptimeSummary u) {
+        if (u == null || u.pct24h() == null) return;
+        String p24 = String.format(java.util.Locale.US, "%.2f", u.pct24h());
+        String p7 = u.pct7d() != null ? String.format(java.util.Locale.US, "%.2f", u.pct7d()) : "—";
+        d.keyValue("Erişilebilirlik Özeti", MailDoc.rows(
+                Row.of("Son 24 saat", p24 + "% uptime · " + u.outages24h() + " kesinti"),
+                Row.of("Son 7 gün", p7 + "% uptime · " + u.outages7d() + " kesinti")));
     }
 
     // ── Alarm Fırtınası (Alert Storm) — çok monitör birden düştüğünde TEK toplu bildirim ──
-    // Outlook-safe: td+bgcolor (div bg değil), solid hex, LIGHT_SCHEME_META, mso font fallback, ctaButton VML.
 
     /** CANLI base-url (sondaki bölü işaretleri atılmış); @Value yalnız fallback. */
     private String liveBaseUrl() {
@@ -1837,37 +1476,10 @@ public class EmailNotificationService {
         return (url == null || url.isBlank()) ? "" : url.replaceAll("/+$", "");
     }
 
-    /** Olay aksiyon butonları (detay + yorum) — ctx'te alert_event_id yoksa "" (çıktı değişmez). */
-    private String incidentActionsRow(Map<String, Object> ctx, String accent) {
-        return MailCta.incidentActionRow(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"), accent);
-    }
-
-    /** Blok içeriği em-card <tr> dizisine sarar (row-bağlamlı şablonlar için); boşsa "" kalır. */
-    private static String rowWrap(String blockHtml) {
-        return (blockHtml == null || blockHtml.isEmpty()) ? ""
-            : "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 8px'>" + blockHtml + "</td></tr>";
-    }
-
     /** CANLI base-url'den olay (incidents) ekranına deep-link — reminder/approve/incident ile AYNI kaynak. */
     private String stormCtaUrl() {
-        String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
+        String base = liveBaseUrl();
         return base.isEmpty() ? "" : base + "/?tab=incidents";
-    }
-
-    private String stormTargetRows(List<String> targets, int truncatedExtra, String zebra) {
-        StringBuilder sb = new StringBuilder();
-        for (String t : targets) {
-            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:8px 14px;font-size:13px;color:#1c1917;border-top:1px solid #f1f5f9;word-break:break-all'>")
-              .append("🔴 ").append(escHtml(t)).append("</td></tr>");
-        }
-        if (truncatedExtra > 0) {
-            sb.append("<tr><td bgcolor='").append(zebra).append("' style='background-color:").append(zebra)
-              .append(";padding:8px 14px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;font-style:italic'>")
-              .append("+ ").append(truncatedExtra).append(" monitör daha…</td></tr>");
-        }
-        return sb.toString();
     }
 
     /** Duz-metin partlarinda satir sonu. Kacissiz sabit: kaynak uretimi sirasinda "\n" kacisinin
@@ -1925,77 +1537,37 @@ public class EmailNotificationService {
         return sb.toString();
     }
 
+    /** Hedef listesi + "+ N monitör daha…" kırpma satırı. */
+    private static List<String> targetItems(List<String> targets, int truncatedExtra) {
+        List<String> items = new ArrayList<>(targets == null ? List.of() : targets);
+        if (truncatedExtra > 0) items.add("+ " + truncatedExtra + " monitör daha…");
+        return items;
+    }
+
     /**
      * Toplu alarm fırtınası e-postası — {@code monitorCount} monitör birden erişilemez.
      * StormService promotion (INITIAL) + günlük toplu re-alert (DAILY_REALERT) bunu kullanır.
      */
     public String buildStormAlertHtml(int monitorCount, String scopeLabel, String rootCauseLabel,
                                       String startedAt, List<String> sampleTargets, int truncatedExtra) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String red = "#dc2626";
-        String ctaUrl = stormCtaUrl();
-        String cta = (!ctaUrl.isBlank())
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px'><tr><td align='center'>"
-              + ctaButton(ctaUrl, "Olayları Aç &rarr;", "#1e293b") + "</td></tr></table>"
-            : "";
-
-        String infoRows = tableRow2col("🌐 Kapsam",       escHtml(scopeLabel))
-            + tableRow2col("🧭 Ortak Kök-Neden", escHtml(rootCauseLabel))
-            + tableRow2col("🕐 Başlangıç",       fmtOrDash(formatIstanbul(startedAt)))
-            + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' bgcolor='#fef2f2' style='background-color:#fef2f2;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>📉 Etkilenen Monitör</td>"
-            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:9px 13px;font-size:16px;font-weight:800;color:" + red + "'>" + monitorCount + "</td>"
-            + "</tr>";
-
-        String listSection =
-            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#1e293b' style='background-color:#1e293b;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>ETKİLENEN MONİTÖRLER</td></tr>"
-            + stormTargetRows(sampleTargets, truncatedExtra, "#ffffff")
-            + "</table>";
-
-        String css = "<style>"
-            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
-            + "@media only screen and (max-width:620px){"
-            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}"
-            + "}"
-            + "</style>";
-
-        return "<!DOCTYPE html><html lang='tr'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
-            + css + "</head>"
-            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9'"
-            + " style='background-color:#f1f5f9'><tr><td align='center' style='padding:24px 10px'>"
-            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
-            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
-            // Marka barı (BRAND.md §5.1) + Top bar
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='" + red + "' style='background-color:" + red + ";padding:22px 24px'>"
-            + "<div style='color:#ffe4e6;font-size:11px;font-weight:700;letter-spacing:.12em'>İZLEME</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>🌩 ALARM FIRTINASI</div>"
-            + "<div style='color:#ffe4e6;font-size:15px;font-weight:700;margin-top:8px'>KRİTİK &nbsp;&#183;&nbsp; " + monitorCount + " monitör birden erişilemez</div>"
-            + "</td></tr>"
-            // Body
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:16px'><tr>"
-            + "<td width='5' bgcolor='" + red + "' style='background-color:" + red + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#fffbeb' style='background-color:#fffbeb;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
-            + "Kısa bir zaman penceresinde çok sayıda monitör birden erişilemez oldu — olası paylaşılan sunucu / ağ / veri merkezi kesintisi. "
-            + "Bireysel alarmlar bu TEK toplu bildirimde gruplandı; sorunlar giderildikçe tek bir toplu \"çözüldü\" e-postası gönderilecektir."
-            + "</td></tr></table>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>FIRTINA ÖZETİ</td></tr>"
-            + infoRows + "</table>"
-            + listSection
-            + cta
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
-            + "</tr></table>"
-            + "</td></tr></table></td></tr></table></body></html>";
+        MailDoc d = MailDoc.create("[Site Monitor] Alarm fırtınası — " + monitorCount + " monitör birden erişilemez")
+                .preheader(monitorCount + " monitör birden erişilemez — olası ortak kesinti")
+                .kicker("İzleme");
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("Alarm Fırtınası"));
+        d.title("Alarm fırtınası", monitorCount + " monitör birden erişilemez.");
+        d.alert(Tone.DESTRUCTIVE, "Olası ortak kesinti",
+                "Kısa bir zaman penceresinde çok sayıda monitör birden erişilemez oldu — olası paylaşılan sunucu / ağ / veri merkezi kesintisi. "
+                + "Bireysel alarmlar bu TEK toplu bildirimde gruplandı; sorunlar giderildikçe tek bir toplu \"çözüldü\" e-postası gönderilecektir.");
+        d.keyValue("Fırtına Özeti", MailDoc.rows(
+                Row.of("Kapsam", scopeLabel),
+                Row.of("Ortak Kök-Neden", rootCauseLabel),
+                Row.of("Başlangıç", fmtOrDash(formatIstanbul(startedAt))),
+                new Row("Etkilenen Monitör", MailKit.strong(String.valueOf(monitorCount), Tone.DESTRUCTIVE.strong), String.valueOf(monitorCount))));
+        d.heading("Etkilenen Monitörler");
+        d.bullets(targetItems(sampleTargets, truncatedExtra));
+        d.button(stormCtaUrl(), "Olayları Aç →");
+        d.footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
     /** Toplu alarm fırtınası ÇÖZÜLDÜ e-postası — fırtına sona erdi, {@code recoveredCount} monitör kurtarıldı. */
@@ -2011,202 +1583,50 @@ public class EmailNotificationService {
                                          String startedAt, String resolvedAt,
                                          List<String> sampleTargets, int truncatedExtra,
                                          List<String> stillDownTargets) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String green = "#16a34a";
         String duration = formatOutageDuration(startedAt, resolvedAt);
-        String ctaUrl = stormCtaUrl();
-        String cta = (!ctaUrl.isBlank())
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px'><tr><td align='center'>"
-              + ctaButton(ctaUrl, "Olayları Aç &rarr;", "#15803d") + "</td></tr></table>"
-            : "";
-
-        String infoRows = tableRow2col("🌐 Kapsam",         escHtml(scopeLabel))
-            + tableRow2col("📅 Başlangıç",     fmtOrDash(formatIstanbul(startedAt)))
-            + tableRow2col("🕐 Çözülme",       fmtOrDash(formatIstanbul(resolvedAt)))
-            + "<tr style='border-top:1px solid #e2e8f0'>"
-            + "<td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Süre</td>"
-            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td>"
-            + "</tr>"
-            + tableRow2col("✅ Kurtarılan",    recoveredCount + " monitör")
-            + (stillDownCount > 0 ? tableRow2col("⚠ Hâlâ İzlemede", stillDownCount + " monitör (bireysel alarma döndü)") : "");
-
-        String listSection =
-            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td bgcolor='#15803d' style='background-color:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>&#10003; KURTARILAN MONİTÖRLER</td></tr>"
-            + stormRecoveredRows(sampleTargets, truncatedExtra)
-            + "</table>"
-            + (stillDownTargets == null || stillDownTargets.isEmpty() ? "" :
-                "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #fecaca;border-radius:10px;overflow:hidden'>"
-                + "<tr><td bgcolor='#b91c1c' style='background-color:#b91c1c;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#fee2e2'>&#9888; HÂLÂ ERİŞİLEMEYEN (bireysel alarma döndü)</td></tr>"
-                + stormTargetRows(stillDownTargets, Math.max(0, stillDownCount - stillDownTargets.size()), "#ffffff")
-                + "</table>");
-
-        String css = "<style>"
-            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
-            + "@media only screen and (max-width:620px){"
-            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}"
-            + "}"
-            + "</style>";
-
-        return "<!DOCTYPE html><html lang='tr'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
-            + css + "</head>"
-            + "<body style='margin:0;padding:0;background-color:#eef2f6;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#eef2f6'"
-            + " style='background-color:#eef2f6'><tr><td align='center' style='padding:24px 10px'>"
-            + "<table role='presentation' class='em-card' width='640' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
-            + " style='width:640px;max-width:640px;background-color:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"   // BRAND.md §5.1 lockup
-            + "<tr><td bgcolor='" + green + "' style='background-color:" + green + ";padding:22px 24px'>"
-            + "<div style='color:#dcfce7;font-size:11px;font-weight:700;letter-spacing:.12em'>İZLEME</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>✅ ALARM FIRTINASI SONA ERDİ</div>"
-            + "<div style='color:#dcfce7;font-size:15px;font-weight:700;margin-top:8px'>" + recoveredCount + " monitör kurtarıldı</div>"
-            + "</td></tr>"
-            + "<tr><td class='em-body' bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>FIRTINA ÖZETİ</td></tr>"
-            + infoRows + "</table>"
-            + listSection
-            + cta
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td>"
-            + "</tr></table>"
-            + "</td></tr></table></td></tr></table></body></html>";
+        MailDoc d = MailDoc.create("[Site Monitor] Alarm fırtınası sona erdi — " + recoveredCount + " monitör kurtarıldı")
+                .preheader("Alarm fırtınası sona erdi — " + recoveredCount + " monitör kurtarıldı · " + duration)
+                .kicker("İzleme");
+        d.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS), Badge.outline("Alarm Fırtınası"));
+        d.title("Alarm fırtınası sona erdi", recoveredCount + " monitör kurtarıldı.");
+        List<Row> rows = new ArrayList<>(MailDoc.rows(
+                Row.of("Kapsam", scopeLabel),
+                Row.of("Başlangıç", fmtOrDash(formatIstanbul(startedAt))),
+                Row.of("Çözülme", fmtOrDash(formatIstanbul(resolvedAt))),
+                new Row("Toplam Süre", MailKit.strong(duration, Tone.SUCCESS.strong), duration),
+                Row.of("Kurtarılan", recoveredCount + " monitör")));
+        if (stillDownCount > 0) rows.add(Row.of("Hâlâ İzlemede", stillDownCount + " monitör (bireysel alarma döndü)"));
+        d.keyValue("Fırtına Özeti", rows);
+        d.heading("Kurtarılan Monitörler");
+        d.bullets(targetItems(sampleTargets, truncatedExtra));
+        if (stillDownTargets != null && !stillDownTargets.isEmpty()) {
+            d.alert(Tone.WARNING, "Hâlâ erişilemeyen (" + stillDownCount + ")", "Bu monitörler bireysel alarma döndü.");
+            d.bullets(targetItems(stillDownTargets, Math.max(0, stillDownCount - stillDownTargets.size())));
+        }
+        d.button(stormCtaUrl(), "Olayları Aç →");
+        d.footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d.html();
     }
 
-    private String stormRecoveredRows(List<String> targets, int truncatedExtra) {
-        StringBuilder sb = new StringBuilder();
-        for (String t : targets) {
-            sb.append("<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:8px 14px;font-size:13px;color:#1c1917;border-top:1px solid #f1f5f9;word-break:break-all'>")
-              .append("&#10003; ").append(escHtml(t)).append("</td></tr>");
-        }
-        if (truncatedExtra > 0) {
-            sb.append("<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:8px 14px;font-size:12px;color:#64748b;border-top:1px solid #f1f5f9;font-style:italic'>")
-              .append("+ ").append(truncatedExtra).append(" monitör daha…</td></tr>");
-        }
-        return sb.toString();
-    }
+    // ── Keyword / Ping izleme — kendine ÖZGÜ alarm + çözüm belgeleri ──────────
 
-    // ── Keyword / Ping izleme — kendine ÖZGÜ executive alarm + çözüm şablonları ──
-    // Cert/expiry şablonuyla hiçbir alan paylaşmaz; ortak yalnız kart/CSS iskeleti (aşağıdaki frame helper'ları).
-
-    /** Ortak executive alarm kartı (keyword/ping) — kimlik (accent/ikon/başlık) ve içerik dışarıdan gelir. */
     /** Monitör detayına deep-link CTA URL'si (?tab=<tab>&monitor=<id>); base/monitor yoksa boş. */
     private String monitorCtaUrl(String tab, Map<String, Object> ctx) {
         Object mid = ctx != null ? ctx.get("monitor_id") : null;
         if (mid == null) return "";
         // CANLI okunur (Genel Ayarlar'dan değişebilir); @Value yalnız fallback — reminder/approve/incident ile AYNI kaynak.
-        String url = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        String base = (url != null && !url.isBlank()) ? url.replaceAll("/+$", "") : "";
-        return base + "/?tab=" + tab + "&monitor=" + mid;
+        return liveBaseUrl() + "/?tab=" + tab + "&monitor=" + mid;
     }
 
-    /** Header'da izlenen hedefi beyaz stille gösterir. Gerçek URL ise (http/https) tıklanabilir &lt;a&gt;;
-     *  çıplak host (ping/port) ise şemasız kırık link yerine stillendirilmiş &lt;span&gt; (Outlook auto-link engeli korunur). */
-    private String endpointLink(String value) {
-        String esc = escHtml(value);
+    /** İzlenen hedef: gerçek URL ise (http/https) tıklanabilir bağlantı, çıplak host ise düz metin
+     *  (şemasız host'u linklemek kırık link üretir). */
+    private static String endpointHtml(String value) {
         boolean url = value != null && (value.startsWith("http://") || value.startsWith("https://"));
-        return url
-            ? "<a href='" + esc + "' target='_blank' style='color:#ffffff;text-decoration:none'>" + esc + "</a>"
-            : "<span style='color:#ffffff'>" + esc + "</span>";
+        return url ? MailKit.link(value, value) : esc(value);
     }
 
-    private String monitoringTypedAlert(String accent, String kicker, String emoji,
-            String heroTitle, String heroSub, String endpoint, String typeBadge,
-            String firstFailureAt, String attemptsLabel, String delayLabel,
-            String leftRows, String rightRows, String extraBox, String message, String infoNote, String ctaUrl,
-            String actionsHtml) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String cta = (ctaUrl != null && !ctaUrl.isBlank())
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 16px'><tr><td align='center'>"
-              + ctaButton(ctaUrl, "Monitörü Aç &rarr;", accent) + "</td></tr></table>"
-            : "";
-
-        String hero = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin:18px 0;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0'><tr>"
-            + "<td class='em-hero-l' align='center' valign='middle' width='38%' bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 14px'>"
-            + "<div style='color:#fff;font-size:46px;line-height:1'>" + emoji + "</div>"
-            + "<div style='color:#fff;font-size:14px;font-weight:800;margin-top:8px;letter-spacing:.04em'>" + heroTitle + "</div>"
-            + "<div style='color:#ffffff;font-size:12px;margin-top:8px;padding:0 6px'>" + heroSub + "</div>"
-            + "</td>"
-            + "<td class='em-hero-r' valign='middle' bgcolor='#f8fafc' style='background:#f8fafc;padding:20px 22px'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8;text-transform:uppercase;margin-bottom:10px'>İlk Hata Zamanı</div>"
-            + "<div style='font-size:24px;font-weight:900;color:" + accent + ";letter-spacing:-.5px'>" + formatIso(firstFailureAt) + "</div>"
-            + "<div style='font-size:13px;color:#475569;margin-top:6px;line-height:1.6'>" + formatIsoFull(firstFailureAt) + "</div>"
-            + "<div style='margin-top:12px;font-size:12px;font-weight:700;color:#475569'>"
-            + "🔁 " + attemptsLabel + " doğrulama denemesi " + delayLabel + "— tümü başarısız</div>"
-            + "</td></tr></table>";
-
-        // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
-        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>İZLEME BİLGİLERİ</td></tr>"
-            + leftRows + "</table>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>DOĞRULAMA ÖZETİ</td></tr>"
-            + rightRows + "</table>";
-
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK (Outlook/Gmail kırpar — tüm
-        // stiller zaten inline; mobil medya-iyileştirmesi bilinçli feda edildi), kart 600px.
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]--></head>"
-            // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
-            // dış padding TD'de (Outlook tablo padding'ini yok sayar); kart bgcolor='#ffffff' → dış gri içeri sızmaz.
-            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
-            + "<table width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
-            + brandBar()
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + accent + "' style='background-color:" + accent + "'><tr><td style='padding:22px 24px'>"
-            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (navy zeminde okunmaz).
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>" + emoji + " " + endpointLink(endpoint) + "</div>"
-            + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>KRİTİK &nbsp;&#183;&nbsp; " + typeBadge + "</div>"
-            + "</td></tr></table>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
-            // Sorunu en üstte, sade ve net (executive) — kırmızı şeritli uyarı kutusu
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 16px'><tr>"
-            + "<td bgcolor='#fef2f2' style='background:#fef2f2;border-left:5px solid #dc2626;padding:15px 18px'>"
-            + "<div style='font-size:12px;font-weight:800;letter-spacing:.07em;color:#dc2626;margin-bottom:6px'>⚠ SORUN TESPİT EDİLDİ</div>"
-            + "<div style='font-size:15px;font-weight:600;color:#1c1917;line-height:1.6'>" + escHtml(message) + "</div>"
-            + "</td></tr></table>"
-            + hero + twoCol + extraBox + cta + actionsHtml
-            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>" + infoNote + "</div>"
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
-    }
-
-    /** Ortak attempt satırları — keyword/ping alarm sol kolonunda teyit denemeleri. */
-    @SuppressWarnings("unchecked")
-    private String attemptRows(Map<String, Object> ctx) {
-        List<Map<String, Object>> attempts = (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l)
-                ? (List<Map<String, Object>>) l : List.of();
-        StringBuilder sb = new StringBuilder();
-        for (Map<String, Object> a : attempts) {
-            String at = String.valueOf(a.getOrDefault("checked_at", ""));
-            String err = String.valueOf(a.getOrDefault("error", ""));
-            String detail = !err.isEmpty() && !"null".equals(err)
-                    ? formatIso(at) + " — " + escHtml(err.length() > 60 ? err.substring(0, 60) + "…" : err)
-                    : formatIso(at) + " — doğrulanamadı";
-            sb.append(tableRow2col("🔁 Deneme " + a.getOrDefault("attempt", "?"), detail));
-        }
-        return sb.toString();
-    }
-
-    private static int attemptCount(Map<String, Object> ctx) {
-        return (ctx != null && ctx.get("confirm_attempts") instanceof List<?> l) ? l.size() : 0;
-    }
-
-    /** Keyword izleme alarmı — kurumsal lacivert, adet/operatör koşulu alanları. */
-    private String buildRichKeywordAlertHtml(String message, String url, String level, Map<String, Object> ctx) {
-        String accent = "#1f3864";   // Akbank kurumsal lacivert
+    /** Keyword izleme alarmı — adet/operatör koşulu alanları. */
+    private MailDoc keywordAlertDoc(String message, String url, Map<String, Object> ctx) {
         String keyword   = ctxStr(ctx, "keyword");
         String operator  = ctxStr(ctx, "operator"); if (operator.isEmpty()) operator = "GTE";
         int threshold = ctx != null && ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
@@ -2218,210 +1638,181 @@ public class EmailNotificationService {
         String snippet    = ctxStr(ctx, "snippet");
         String firstFailureAt = ctxStr(ctx, "first_failure_at");
         String lastError      = ctxStr(ctx, "last_error");
-        String ac = ctxStr(ctx, "confirm_attempt_count");
-        String delayMs = ctxStr(ctx, "confirm_delay_ms");
-        String attemptsLabel = !ac.isEmpty() ? ac : "Ardışık";
-        String delayLabel    = !delayMs.isEmpty() ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
-        int n = attemptCount(ctx);
+        List<Map<String, Object>> attempts = attempts(ctx);
+        String heroTitle = absent ? "İstenmeyen İfade Bulundu" : "Koşul Sağlanmadı";
 
-        StringBuilder left = new StringBuilder();
-        left.append(tableRow2col("🌐 Adres", escHtml(url)));
-        left.append(tableRow2col("🔎 Aranan kelime", escHtml(keyword)));
-        left.append(tableRow2col("⚙ Beklenen koşul", condPhrase + " bulunmalı"));
-        if (!occ.isEmpty()) left.append(tableRow2col("🔢 Bulunan adet", occ + " kez"));
-        if (!httpStatus.isEmpty()) left.append(tableRow2col("📡 HTTP durumu", escHtml(httpStatus)));
-        if (!responseMs.isEmpty()) left.append(tableRow2col("⏱ Yanıt süresi", escHtml(responseMs) + " ms"));
-        if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
+        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + nzs(url))
+                .preheader(heroTitle + " — " + nzs(url))
+                .kicker("İçerik (Keyword) İzleme");
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("İçerik Doğrulama"));
+        d.title(nzs(url), null);
+        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
+
+        List<Row> left = new ArrayList<>();
+        left.add(new Row("Adres", endpointHtml(url), nzs(url)));
+        left.add(Row.of("Aranan kelime", keyword));
+        left.add(Row.of("Beklenen koşul", condPhrase + " bulunmalı"));
+        if (!occ.isEmpty()) left.add(Row.of("Bulunan adet", occ + " kez"));
+        if (!httpStatus.isEmpty()) left.add(Row.of("HTTP durumu", httpStatus));
+        if (!responseMs.isEmpty()) left.add(Row.of("Yanıt süresi", responseMs + " ms"));
+        if (!firstFailureAt.isEmpty()) left.add(Row.of("İlk hata", formatIso(firstFailureAt)));
         if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
-            left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
+            left.add(Row.of("Son hata", lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError));
+        d.keyValue("İzleme Bilgileri", left);
 
-        String wordStatus = absent ? "✗ İstenmeyen ifade var"
-                : (!occ.isEmpty() ? "✗ " + occ + " kez · gerekli: " + condPhrase : "✗ Koşul sağlanmadı");
-        String right = statusRow2col("Kelime durumu", wordStatus)
-            + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
-            + statusRow2col("Seviye", "✗ KRİTİK")
-            + statusRow2col("İzleme", "✓ Devam ediyor");
-
-        String extraBox = (absent && !snippet.isEmpty())
-            ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:14px'><tr>"
-              + "<td bgcolor='#f8fafc' style='background-color:#f8fafc;border-left:4px solid " + accent + ";padding:12px 16px'>"
-              + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + accent + ";margin-bottom:6px'>EŞLEŞME BAĞLAMI</div>"
-              + "<div style='font-size:13px;color:#1c1917;font-family:Consolas,monospace;word-break:break-word'>…" + escHtml(snippet) + "…</div></td></tr></table>"
-            : "";
-
-        return monitoringTypedAlert(accent, "İÇERİK (KEYWORD) İZLEME", "🔎",
-                absent ? "İSTENMEYEN İFADE BULUNDU" : "KOŞUL SAĞLANMADI",
-                "⚠ İçerik doğrulaması başarısız", escHtml(url), "İçerik Doğrulama",
-                firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, extraBox, message,
-                "ℹ Koşul yeniden sağlandığında bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
-                monitorCtaUrl("keyword", ctx), incidentActionsRow(ctx, accent));
+        String wordStatus = absent ? "İstenmeyen ifade var"
+                : (!occ.isEmpty() ? occ + " kez · gerekli: " + condPhrase : "Koşul sağlanmadı");
+        d.keyValue("Doğrulama Özeti", MailDoc.rows(
+                new Row("Kelime durumu", MailKit.strong(wordStatus, Tone.DESTRUCTIVE.strong), wordStatus),
+                verificationRow(ctx, attempts, "başarısız"),
+                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"),
+                new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor")));
+        attemptTable(d, attempts, "doğrulanamadı");
+        if (absent && !snippet.isEmpty()) d.pre("Eşleşme Bağlamı", "…" + snippet + "…");
+        d.note("Koşul yeniden sağlandığında bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+        d.button(monitorCtaUrl("keyword", ctx), "Monitörü Aç →");
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNameOf(ctx)).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
     }
 
-    /** Ping (ICMP) izleme alarmı — kurumsal lacivert, erişilebilirlik alanları. */
-    private String buildRichPingAlertHtml(String message, String host, String level, Map<String, Object> ctx) {
-        String accent = "#1f3864";
+    /** Ping (ICMP) izleme alarmı — erişilebilirlik alanları. */
+    private MailDoc pingAlertDoc(String message, String host, Map<String, Object> ctx) {
         boolean na = "true".equalsIgnoreCase(ctxStr(ctx, "na"));
         String ipVersion  = ctxStr(ctx, "ip_version");
         String packetLoss = ctxStr(ctx, "packet_loss");
         String rttMs      = ctxStr(ctx, "rtt_ms");
         String firstFailureAt = ctxStr(ctx, "first_failure_at");
         String lastError      = ctxStr(ctx, "last_error");
-        String ac = ctxStr(ctx, "confirm_attempt_count");
-        String delayMs = ctxStr(ctx, "confirm_delay_ms");
-        String attemptsLabel = !ac.isEmpty() ? ac : "Ardışık";
-        String delayLabel    = !delayMs.isEmpty() ? (Long.parseLong(delayMs) / 1000) + " sn arayla " : "";
         String lossLabel     = !packetLoss.isEmpty() ? "%" + packetLoss : "%100";
-        int n = attemptCount(ctx);
+        List<Map<String, Object>> attempts = attempts(ctx);
+        String heroTitle = na ? "ICMP Kullanılamıyor" : "Host Yanıt Vermiyor";
 
-        StringBuilder left = new StringBuilder();
-        left.append(tableRow2col("🖥️ Host", escHtml(host)));
-        left.append(tableRow2col("🔢 IP sürümü", ipVersion.isEmpty() || "auto".equals(ipVersion) ? "Otomatik" : escHtml(ipVersion.toUpperCase())));
-        left.append(tableRow2col("📉 Paket kaybı", lossLabel));
-        if (!rttMs.isEmpty()) left.append(tableRow2col("⏱ RTT", escHtml(rttMs) + " ms"));
-        if (!firstFailureAt.isEmpty()) left.append(tableRow2col("🕐 İlk hata", formatIso(firstFailureAt)));
+        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + nzs(host))
+                .preheader(heroTitle + " — " + nzs(host))
+                .kicker("Ping (ICMP) İzleme");
+        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("Erişilebilirlik (Ping)"));
+        d.title(nzs(host), null);
+        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
+
+        List<Row> left = new ArrayList<>();
+        left.add(Row.of("Host", host));
+        left.add(Row.of("IP sürümü", ipVersion.isEmpty() || "auto".equals(ipVersion) ? "Otomatik" : ipVersion.toUpperCase(java.util.Locale.ROOT)));
+        left.add(new Row("Paket kaybı", MailKit.strong(lossLabel, Tone.DESTRUCTIVE.strong), lossLabel));
+        if (!rttMs.isEmpty()) left.add(Row.of("RTT", rttMs + " ms"));
+        if (!firstFailureAt.isEmpty()) left.add(Row.of("İlk hata", formatIso(firstFailureAt)));
         if (!lastError.isEmpty() && !"null".equalsIgnoreCase(lastError))
-            left.append(tableRow2col("⚠ Son hata", escHtml(lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError)));
+            left.add(Row.of("Son hata", lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError));
+        d.keyValue("İzleme Bilgileri", left);
 
-        String right = statusRow2col("Ping durumu", na ? "✗ ICMP kullanılamıyor" : "✗ Yanıt yok")
-            + statusRow2col("Paket kaybı", "✗ " + lossLabel)
-            + statusRow2col("Doğrulama", "✗ " + (n == 0 ? "Başarısız" : n + "/" + n + " başarısız"))
-            + statusRow2col("Seviye", "✗ KRİTİK")
-            + statusRow2col("İzleme", "✓ Devam ediyor");
-
-        return monitoringTypedAlert(accent, "PİNG (ICMP) İZLEME", "🖥️",
-                na ? "ICMP KULLANILAMIYOR" : "HOST YANIT VERMİYOR",
-                "⚠ Erişilebilirlik kaybı", escHtml(host), "Erişilebilirlik (Ping)",
-                firstFailureAt, attemptsLabel, delayLabel, left.toString(), right, "", message,
-                "ℹ Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.",
-                monitorCtaUrl("ping", ctx), incidentActionsRow(ctx, accent));
+        String pingStatus = na ? "ICMP kullanılamıyor" : "Yanıt yok";
+        d.keyValue("Doğrulama Özeti", MailDoc.rows(
+                new Row("Ping durumu", MailKit.strong(pingStatus, Tone.DESTRUCTIVE.strong), pingStatus),
+                verificationRow(ctx, attempts, "başarısız"),
+                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"),
+                new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor")));
+        attemptTable(d, attempts, "doğrulanamadı");
+        d.note("Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
+        d.button(monitorCtaUrl("ping", ctx), "Monitörü Aç →");
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNameOf(ctx)).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
     }
 
-    /** Ortak executive çözüm (yeşil) kartı — keyword/ping kimliğiyle. */
-    private String monitoringTypedResolved(String domain, String kicker, String heroLine,
-            String typeTrLabel, String emoji, String detailRows, String ctaUrl,
-            String resolvedBy, String resolvedAt, String createdAt,
-            String teamNames, UptimeSummary uptime, String actionsHtml) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String green = "#16a34a";
+    /** Ortak çözüm belgesi — keyword/ping kimliğiyle. */
+    private MailDoc typedResolvedDoc(String domain, String kicker, String heroLine, String typeTrLabel,
+                                     List<Row> detailRows, String ctaUrl,
+                                     String resolvedBy, String resolvedAt, String createdAt,
+                                     String teamNames, UptimeSummary uptime, Map<String, Object> ctx) {
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
         String duration = outageDurationDisplay(createdAt, resolvedAt);
-        String detailSection = (detailRows != null && !detailRows.isBlank())
-            ? "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-bottom:16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-              + "<tr><td bgcolor='#1f3864' style='background-color:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>ÇÖZÜLEN ALARM DETAYI</td></tr>"
-              + detailRows + "</table>"
-            : "";
-        String cta = (ctaUrl != null && !ctaUrl.isBlank())
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'><tr><td align='center'>"
-              + ctaButton(ctaUrl, "Monitörü Aç &rarr;", "#1f3864") + "</td></tr></table>"
-            : "";
-
-        String resolverRows = tableRow2col("👤 Çözen", escHtml(by))
-            + tableRow2col("🔺 Yeniden Ulaşılabilir", fmtOrDash(formatIstanbul(resolvedAt)))
-            + tableRow2col("🔻 Kesinti Başlangıcı", fmtOrDash(formatIstanbul(createdAt)));
-        String outageRows = tableRow2col("🌐 İzlenen", escHtml(domain))
-            + tableRow2col("⚠ Alarm Tipi", typeTrLabel)
-            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' style='padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>🔴 Seviye</td>"
-            + "<td style='padding:9px 13px;font-size:14px;font-weight:700;color:#dc2626'>KRİTİK</td></tr>"
-            // Vurgu satırı: <tr background> Outlook'ta beyaza düşer → her td'ye bgcolor (kardeş buildRichMonitoringResolvedHtml deseni)
-            + "<tr style='border-top:1px solid #e2e8f0'><td width='1%' bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:12px;color:#64748b;white-space:nowrap'>⏱ Toplam Kesinti Süresi</td>"
-            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:9px 13px;font-size:14px;font-weight:800;color:" + green + "'>" + duration + "</td></tr>";
-
-        // Tek-kolon (alt alta) — Outlook'ta yan-yana kolonlar kayıyordu; tam genişlik bölümler kaymaz.
-        String twoCol = "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border:1px solid #bbf7d0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#15803d' style='background:#15803d;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#dcfce7'>ÇÖZÜM BİLGİSİ</td></tr>"
-            + resolverRows + "</table>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden'>"
-            + "<tr><td colspan='2' bgcolor='#1f3864' style='background:#1f3864;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#cbd5e1'>KESİNTİ DETAYI</td></tr>"
-            + outageRows + "</table>";
-
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, kart 600px, marka barı üstte.
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            + "<!--[if mso]><style>table,td,div,p,a{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]--></head>"
-            // Dış arka plan (bgcolor attr) + tablo lspace/rspace sıfır (Outlook tabloya boşluk eklemesin → kayma);
-            // dış padding TD'de (Outlook tablo padding'ini yok sayar); kart bgcolor='#ffffff' → dış gri içeri sızmaz.
-            + "<body bgcolor='#f1f5f9' style='margin:0;padding:0;background:#f1f5f9;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f1f5f9' style='background:#f1f5f9;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td align='center' style='padding:24px 10px'>"
-            + "<table width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.15);mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:0'>"
-            + brandBar()
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + green + "' style='background-color:" + green + "'><tr><td style='padding:22px 24px'>"
-            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>" + kicker + "</div>"
-            // URL explicit beyaz <a> içinde — Outlook çıplak URL'yi otomatik linkleyip mavi yapıyor (yeşil zeminde okunmaz).
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;margin-top:10px;word-break:break-all;line-height:1.25'>✅ " + endpointLink(domain) + "</div>"
-            + "<div style='color:#ffffff;font-size:15px;font-weight:700;margin-top:8px;letter-spacing:.02em'>" + heroLine + " &nbsp;&#183;&nbsp; " + typeTrLabel + "</div>"
-            + "</td></tr></table>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' style='background-color:#ffffff'><tr><td class='em-body' style='padding:22px 24px'>"
-            + "<div style='text-align:center;margin:14px 0 22px'>"
-            + "<div style='font-size:54px;line-height:1;color:" + green + "'>✓</div>"
-            + "<div style='margin-top:8px;font-size:20px;font-weight:800;color:#15803d'>" + heroLine + "</div>"
-            + "<div style='margin-top:6px;font-size:13px;color:#64748b'>Alarm kapatıldı. İzleme devam etmektedir.</div></div>"
-            + twoCol
-            + detailSection
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:20px'><tr>"
-            + "<td width='5' bgcolor='" + green + "' style='background-color:" + green + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#f0fdf4' style='background-color:#f0fdf4;padding:14px 18px;color:#14532d;font-size:14px;line-height:1.7'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + green + ";margin-bottom:6px'>BİLGİ</div>"
-            + "<strong>" + escHtml(domain) + "</strong> için açık olan <strong>" + typeTrLabel + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + duration + "</strong>.</td></tr></table>"
-            + uptimeSummaryBlock(uptime)
-            + whyReceivingBlock(teamNames)
-            + cta + actionsHtml
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Bildirim: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table></td></tr></table></td></tr></table></body></html>";
+        MailDoc d = MailDoc.create("[Site Monitor] ÇÖZÜLDÜ · " + nzs(domain))
+                .preheader(heroLine + " — " + nzs(domain) + " · " + duration)
+                .kicker(kicker);
+        d.badges(Badge.tint("ÇÖZÜLDÜ", Tone.SUCCESS), Badge.outline(typeTrLabel));
+        d.title(nzs(domain), "Alarm kapatıldı, izleme devam ediyor.");
+        d.alertHtml(Tone.SUCCESS, esc(heroLine),
+                "<strong>" + esc(domain) + "</strong> için açık olan <strong>" + esc(typeTrLabel)
+                        + "</strong> alarmı kapatıldı. Toplam kesinti süresi: <strong>" + esc(duration) + "</strong>.",
+                heroLine + " — " + nzs(domain) + " için açık olan " + typeTrLabel + " alarmı kapatıldı. Toplam kesinti süresi: " + duration + ".");
+        d.keyValue("Çözüm Bilgisi", MailDoc.rows(
+                Row.of("Çözen", by),
+                Row.of("Yeniden Ulaşılabilir", fmtOrDash(formatIstanbul(resolvedAt))),
+                Row.of("Kesinti Başlangıcı", fmtOrDash(formatIstanbul(createdAt))),
+                new Row("Toplam Kesinti Süresi", MailKit.strong(duration, Tone.SUCCESS.strong), duration),
+                Row.of("Alarm Tipi", typeTrLabel),
+                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK")));
+        if (detailRows != null && !detailRows.isEmpty()) d.keyValue("Çözülen Alarm Detayı", detailRows);
+        uptimeSummary(d, uptime);
+        d.button(ctaUrl, "Monitörü Aç →");
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNames).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
     }
 
-    private String buildRichKeywordResolvedHtml(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
-                                                String createdAt, String teamNames, UptimeSummary uptime) {
-        StringBuilder d = new StringBuilder();
+    private MailDoc keywordResolvedDoc(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+                                       String createdAt, String teamNames, UptimeSummary uptime) {
+        List<Row> rows = new ArrayList<>();
         if (ctx != null) {
             String kw = ctxStr(ctx, "keyword");
             String op = ctxStr(ctx, "operator"); if (op.isEmpty()) op = "GTE";
             int n = ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
             String occ = ctxStr(ctx, "occurrences");
-            if (!kw.isEmpty()) d.append(tableRow2col("🔎 Aranan kelime", escHtml(kw)));
-            d.append(tableRow2col("⚙ Koşul", KeywordCheckerService.opPhrase(op, n) + " bulunmalı"));
-            if (!occ.isEmpty()) d.append(tableRow2col("🔢 Alarm anı bulunan", occ + " kez"));
+            if (!kw.isEmpty()) rows.add(Row.of("Aranan kelime", kw));
+            rows.add(Row.of("Koşul", KeywordCheckerService.opPhrase(op, n) + " bulunmalı"));
+            if (!occ.isEmpty()) rows.add(Row.of("Alarm anı bulunan", occ + " kez"));
         }
-        return monitoringTypedResolved(url, "İÇERİK (KEYWORD) İZLEME",
-                "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama", "🔎",
-                d.toString(), monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime,
-                incidentActionsRow(ctx, "#1f3864"));
+        return typedResolvedDoc(url, "İçerik (Keyword) İzleme", "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama",
+                rows, monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
     }
 
-    private String buildRichPingResolvedHtml(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
-                                             String createdAt, String teamNames, UptimeSummary uptime) {
-        StringBuilder d = new StringBuilder();
+    private MailDoc pingResolvedDoc(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+                                    String createdAt, String teamNames, UptimeSummary uptime) {
+        List<Row> rows = new ArrayList<>();
         if (ctx != null) {
             String ipv = ctxStr(ctx, "ip_version");
-            d.append(tableRow2col("🖥️ Host", escHtml(host)));
-            if (!ipv.isEmpty() && !"auto".equals(ipv)) d.append(tableRow2col("🔢 IP sürümü", escHtml(ipv.toUpperCase())));
+            rows.add(Row.of("Host", host));
+            if (!ipv.isEmpty() && !"auto".equals(ipv)) rows.add(Row.of("IP sürümü", ipv.toUpperCase(java.util.Locale.ROOT)));
         }
-        return monitoringTypedResolved(host, "PİNG (ICMP) İZLEME",
-                "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)", "🖥️",
-                d.toString(), monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime,
-                incidentActionsRow(ctx, "#1f3864"));
+        return typedResolvedDoc(host, "Ping (ICMP) İzleme", "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)",
+                rows, monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
     }
 
-    /**
-     * DNS kayıt değişikliği alarm maili (YÜKSEK, mor) — ESKİ | YENİ değerler
-     * iki kolon halinde. Teyit denemeleri bölümü yoktur (değişiklik başarılı
-     * sorgudan pozitif gözlemdir); alarm otomatik kapanmaz. ctx okumaları
-     * null-toleranslıdır ("Tekrar Bildir" yolu eksik context geçirebilir).
-     */
-    private String buildRichDnsChangedAlertHtml(String message, String domain, Map<String, Object> ctx) {
-        String generatedAt = LocalDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String purple = "#9333ea";
+    // ── DNS kayıt değişikliği ────────────────────────────────────────────────
 
+    /** Tabloda gösterilecek en fazla değer satırı; fazlası "…ve N tane daha" ile özetlenir. */
+    private static final int DNS_MAX_VALUE_ROWS = 6;
+    /** Tek bir değerin en fazla karakteri (uzun TXT/DKIM kayıtları düzeni bozmasın). */
+    private static final int DNS_MAX_VALUE_LEN = 160;
+
+    /**
+     * DNS kayıt değişikliği alarmı (YÜKSEK) — ESKİ→YENİ değerler satır-kilitli tabloda. Teyit
+     * denemeleri bölümü yoktur (değişiklik başarılı sorgudan pozitif gözlemdir); alarm otomatik
+     * kapanmaz. ctx okumaları null-toleranslıdır ("Tekrar Bildir" yolu eksik context geçirebilir).
+     */
+    private MailDoc dnsChangedDoc(String message, String domain, Map<String, Object> ctx) {
         String recordType = ctxStr(ctx, "record_type");
         String changedAt  = ctxStr(ctx, "changed_at");
         List<String> oldValues = ctxList(ctx, "old_values");
         List<String> newValues = ctxList(ctx, "new_values");
+        String lead = (!recordType.isEmpty() ? recordType + " kaydı" : "")
+                + (!changedAt.isEmpty() ? (recordType.isEmpty() ? "" : " · ") + "Tespit zamanı: " + formatIsoFull(changedAt) : "");
 
-        return buildDnsChangedHtmlInternal(message, domain, recordType, changedAt, oldValues, newValues, purple,
-                generatedAt, incidentActionsRow(ctx, purple));
+        MailDoc d = MailDoc.create("[Site Monitor] YÜKSEK · " + nzs(domain) + " — DNS değişikliği")
+                .preheader("DNS kaydı değişti — " + nzs(domain))
+                .kicker("DNS İzleme");
+        d.badges(Badge.tint("YÜKSEK", Tone.WARNING), Badge.outline("DNS Değişikliği"));
+        d.title(nzs(domain), lead.isBlank() ? null : lead);
+        d.alert(Tone.WARNING, "DNS Kaydı Değişti", message);
+        d.heading("Değişiklik");
+        d.raw(dnsDiffTable(oldValues, newValues),
+                "Eski değerler: " + (oldValues.isEmpty() ? "kayıt yoktu" : String.join(", ", oldValues))
+                + "\nYeni değerler: " + (newValues.isEmpty() ? "kayıt kalmadı" : String.join(", ", newValues)));
+        d.note("Bu alarm otomatik kapanmaz. Değişiklik planlı ise Site Monitor → Uyarılar → Alarm Geçmişi ekranından alarmı "
+                + "onaylayın ve kapatın. Beklenmedik bir değişiklikse (olası domain hijack / hatalı migrasyon) derhal ağ ekibiyle iletişime geçin.");
+        MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
+        d.footerWhy(teamNameOf(ctx)).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
+        return d;
     }
 
     @SuppressWarnings("unchecked")
@@ -2431,86 +1822,133 @@ public class EmailNotificationService {
         return v instanceof List<?> l ? (List<String>) l : List.of();
     }
 
-    private String buildDnsChangedHtmlInternal(String message, String domain, String recordType,
-                                               String changedAt, List<String> oldValues,
-                                               List<String> newValues, String purple, String generatedAt,
-                                               String actionsHtml) {
-        String twoColSection = dnsDiffTable(oldValues, newValues, purple);
+    /**
+     * ESKİ→YENİ değerleri SATIR-KİLİTLİ tek tabloda gösterir: i. eski ile i. yeni değer AYNI
+     * {@code <tr>}'de durur, aralarında yön oku. Silinen değer üstü çizik; uzun değer kırılır
+     * (telefonda taşma yok). Tamamen tablo tabanlı + td bgcolor + düz hex → Outlook güvenli.
+     */
+    private String dnsDiffTable(List<String> oldValues, List<String> newValues) {
+        List<String> olds = oldValues == null ? List.of() : oldValues;
+        List<String> news = newValues == null ? List.of() : newValues;
+        int rows = Math.max(olds.size(), news.size());
+        int shown = Math.min(rows, DNS_MAX_VALUE_ROWS);
+        String head = "background-color:" + MailTokens.SUBTLE + ";padding:10px 12px;border-bottom:1px solid " + MailTokens.BORDER
+                + ";font-size:12px;line-height:16px;font-weight:600;letter-spacing:0.04em;";
 
-        // Outlook-güvenli standart (BRAND.md §5.1): <style> bloğu YOK, kart 600px, marka barı üstte.
-        return "<!DOCTYPE html><html lang='tr'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + "<meta name='color-scheme' content='light only'>"
-            + "<meta name='supported-color-schemes' content='light'>"
-            + "<!--[if mso]><style>*{font-family:Arial,Helvetica,sans-serif !important}</style><![endif]-->"
-            + "</head>"
-            + "<body style='margin:0;padding:0;background-color:#f1f5f9;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+        StringBuilder body = new StringBuilder();
+        if (rows == 0) {
+            body.append("<tr><td colspan=\"3\" align=\"center\" style=\"padding:14px;font-size:13px;line-height:20px;color:")
+                .append(MailTokens.MUTED).append("\">Değişiklik ayrıntısı bu bildirimde taşınmıyor.</td></tr>");
+        }
+        for (int i = 0; i < shown; i++) {
+            String o = i < olds.size() ? olds.get(i) : null;
+            String n = i < news.size() ? news.get(i) : null;
+            String line = (i == shown - 1 && rows <= shown) ? "0" : "1px solid " + MailTokens.DIVIDER;
+            body.append("<tr>")
+                .append(dnsValueCell(o, true, olds.isEmpty() ? "kayıt yoktu" : "—", line))
+                .append("<td align=\"center\" valign=\"top\" style=\"padding:10px 4px;border-bottom:").append(line)
+                .append(";font-size:16px;line-height:20px;color:").append(MailTokens.MUTED).append("\">&#8594;</td>")
+                .append(dnsValueCell(n, false, news.isEmpty() ? "kayıt kalmadı" : "—", line))
+                .append("</tr>");
+        }
+        if (rows > shown) {
+            body.append("<tr><td colspan=\"3\" align=\"center\" style=\"padding:10px 12px;font-size:12px;line-height:18px;color:")
+                .append(MailTokens.MUTED).append("\">…ve ").append(rows - shown).append(" tane daha</td></tr>");
+        }
+        return "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;border:1px solid "
+            + MailTokens.BORDER + ";border-radius:8px;font-family:" + MailTokens.FONT + "\"><tr>"
+            + "<td width=\"46%\" bgcolor=\"" + MailTokens.SUBTLE + "\" style=\"width:46%;" + head + "color:" + MailTokens.MUTED
+            + ";border-radius:8px 0 0 0\">ESKİ DEĞERLER &#183; " + olds.size() + "</td>"
+            + "<td width=\"8%\" bgcolor=\"" + MailTokens.SUBTLE + "\" style=\"width:8%;" + head + "\">&nbsp;</td>"
+            + "<td width=\"46%\" bgcolor=\"" + MailTokens.SUBTLE + "\" style=\"width:46%;" + head + "color:" + Tone.WARNING.text
+            + ";border-radius:0 8px 0 0\">YENİ DEĞERLER &#183; " + news.size() + "</td>"
+            + "</tr>" + body + "</table>";
+    }
 
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#f1f5f9' style='background-color:#f1f5f9;mso-table-lspace:0;mso-table-rspace:0'>"
-            + "<tr><td align='center' style='padding:24px 10px'>"
+    /** Fark tablosunun tek değer hücresi. {@code removed=true} → solgun + üstü çizik (span'de:
+     *  Word, text-decoration'ı hücreden miras almıyor). Değer yoksa {@code emptyText} basılır. */
+    private static String dnsValueCell(String value, boolean removed, String emptyText, String line) {
+        String td = "<td valign=\"top\" class=\"mono\" style=\"padding:10px 12px;border-bottom:" + line + ";font-family:" + MailTokens.MONO
+                + ";font-size:13px;line-height:20px;word-break:break-all;overflow-wrap:anywhere;mso-line-height-rule:exactly;";
+        if (value == null || value.isBlank()) {
+            return td + "font-style:italic;color:" + MailTokens.MUTED + "\">" + esc(emptyText) + "</td>";
+        }
+        String shown = esc(truncValue(value));
+        String inner = removed ? "<span style=\"text-decoration:line-through\">" + shown + "</span>" : shown;
+        return td + "font-weight:" + (removed ? "400" : "600") + ";color:" + (removed ? MailTokens.MUTED : MailTokens.FG) + "\">" + inner + "</td>";
+    }
 
-            + "<table role='presentation' width='600' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'"
-            + " style='width:600px;max-width:600px;background-color:#ffffff;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.15)'>"
+    /** Çok uzun tek değeri (DKIM TXT vb.) kırpar — düzen bozulmasın. */
+    private static String truncValue(String v) {
+        return v.length() <= DNS_MAX_VALUE_LEN ? v : v.substring(0, DNS_MAX_VALUE_LEN) + "…";
+    }
 
-            // ── Marka barı + Top bar (mor) — bgcolor'lı <td> ──
-            + "<tr><td style='padding:0'>" + brandBar() + "</td></tr>"
-            + "<tr><td bgcolor='" + purple + "' style='background-color:" + purple + ";padding:22px 24px'>"
-            + "<div style='color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.12em'>DNS İZLEME</div>"
-            + "<div class='em-domain' style='color:#fff;font-size:22px;font-weight:900;"
-            + "margin-top:10px;word-break:break-all;line-height:1.25'>🔀 " + escHtml(domain)
-            + (!recordType.isEmpty() ? " <span style='font-size:15px;font-weight:700'>· " + escHtml(recordType) + " kaydı</span>" : "")
-            + "</div>"
-            + "<div style='color:#ffffff;font-size:15px;font-weight:700;"
-            + "margin-top:8px;letter-spacing:.02em'>YÜKSEK &nbsp;&#183;&nbsp; DNS Değişikliği</div>"
-            + "</td></tr>"
+    // ── Tarih biçimleri ──────────────────────────────────────────────────────
 
-            // ── Body ──
-            + "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:22px 24px'>"
+    private String formatIsoFull(String iso) {
+        if (iso == null || iso.isBlank()) return "—";
+        try {
+            // UTC ISO'yu Europe/Istanbul'a çevir → kullanıcıya her zaman yerel saat
+            LocalDateTime dt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+                    .atZone(ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDateTime();
+            String[] months = {"Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
+                               "Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"};
+            String[] days = {"Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"};
+            String month   = months[dt.getMonthValue() - 1];
+            String dayName = days[dt.getDayOfWeek().getValue() - 1];
+            return dt.getDayOfMonth() + " " + month + " " + dt.getYear() + ", " + dayName
+                 + " — " + String.format("%02d:%02d", dt.getHour(), dt.getMinute());
+        } catch (Exception e) {
+            return formatIso(iso);
+        }
+    }
 
-            // Hero (mor pill — bgcolor'lı <td>, inline-block div değil)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:16px 0 22px'><tr><td align='center'>"
-            + "<table role='presentation' cellpadding='0' cellspacing='0' border='0' align='center'><tr>"
-            + "<td bgcolor='" + purple + "' style='background-color:" + purple + ";border-radius:12px;padding:14px 32px;font-size:17px;font-weight:800;letter-spacing:.02em;color:#fff'>"
-            + "🔀 DNS KAYDI DEĞİŞTİ</td>"
-            + "</tr></table>"
-            + (!changedAt.isEmpty()
-                ? "<div style='margin-top:10px;font-size:13px;color:#64748b'>Tespit zamanı: " + formatIsoFull(changedAt) + "</div>" : "")
-            + "</td></tr></table>"
+    private String ctxStr(Map<String, Object> ctx, String key) {
+        if (ctx == null) return "";
+        Object v = ctx.get(key);
+        return v != null ? String.valueOf(v) : "";
+    }
 
-            + twoColSection
+    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm" (yerel saat).
+     *  Tüm e-posta tarihleri buradan geçer; proje genelinde kullanıcıya her zaman local gösterilir. */
+    private String formatIso(String iso) {
+        if (iso == null || iso.isBlank()) return "—";
+        try {
+            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        } catch (Exception e) {
+            try {
+                // Beklenmeyen biçim — saat dilimi çevirmeden en azından okunur biçime getir
+                return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4)
+                     + " " + iso.substring(11, 16);
+            } catch (Exception e2) {
+                return iso;
+            }
+        }
+    }
 
-            // Alarm detayı (sol aksan-şeritli tablo)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border-radius:10px;overflow:hidden;margin-bottom:14px'><tr>"
-            + "<td width='5' bgcolor='" + purple + "' style='background-color:" + purple + ";width:5px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#faf5ff' style='background-color:#faf5ff;padding:14px 18px;color:#1c1917;font-size:14px;line-height:1.7'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.08em;color:" + purple + ";margin-bottom:6px'>ALARM DETAYI</div>"
-            + escHtml(message)
-            + "</td></tr></table>"
+    /** Proje saat dilimi (UTC+3, DST yok). Stored ISO string'leri UTC kabul edilir. */
+    private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
 
-            // Manuel kapanış notu
-            + "<div style='font-size:12px;color:#64748b;line-height:1.6;margin-bottom:20px'>"
-            + "ℹ Bu alarm otomatik kapanmaz. Değişiklik planlı ise Site Monitor &rarr; Uyarılar &rarr; "
-            + "Alarm Geçmişi ekranından alarmı onaylayın ve kapatın. Beklenmedik bir değişiklikse "
-            + "(olası domain hijack / hatalı migrasyon) derhal ağ ekibiyle iletişime geçin."
-            + "</div>"
+    private static final DateTimeFormatter STAMP_FMT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
 
-            + actionsHtml
+    /** Şu an (Europe/Istanbul) "dd.MM.yyyy HH:mm" — alt bilgi damgası. */
+    private static String nowStamp() {
+        return LocalDateTime.now(IST).format(STAMP_FMT);
+    }
 
-            // Footer
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor</td>"
-            + "<td align='right' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + "Bildirim: " + generatedAt
-            + "</td></tr></table>"
-
-            + "</td></tr>"
-
-            + "</table>"
-            + "</td></tr></table>"
-            + "</body></html>";
+    /** UTC ISO ("yyyy-MM-dd'T'HH:mm:ss") → Europe/Istanbul "dd.MM.yyyy HH:mm".
+     *  null/boş → null (footer'da ilgili satır gizlensin). */
+    private String formatIstanbul(String iso) {
+        if (iso == null || iso.isBlank()) return null;
+        try {
+            LocalDateTime utc = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"));
+            return utc.atZone(ZoneOffset.UTC).withZoneSameInstant(IST)
+                    .format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        } catch (Exception e) {
+            return formatIso(iso);
+        }
     }
 
     // ── Haftalık rapor mailleri ──────────────────────────────────────────────
@@ -2531,19 +1969,27 @@ public class EmailNotificationService {
     private static final Parser MD_PARSER = Parser.builder().extensions(MD_EXTENSIONS).build();
     // softbreak("<br />\n"): tek satır-sonu (\n) HTML'de <br/> olur — kullanıcının alt alta yazdığı
     // satırlar (log/stack trace/adım listesi) mailde de alt alta görünür (yoksa markdown boşluğa düzlerdi).
+    // sanitizeUrls (prod kapısı 2026-09-25, D-3): escapeHtml ham HTML'i kaçırıyordu ama [x](javascript:…)
+    // bağlantısı href olarak KALIYORDU — olay/haftalık rapor önizlemesinde tıklamayla çalışırdı. İzinli
+    // şemalar açıkça verilir: commonmark'ın varsayılan listesi mailin CID görsellerini (cid:img…, cid:incimg…)
+    // boşaltır, data: ise bağlantıda tehlikelidir. Şemasız (göreli /api/… ya da #) adresler etkilenmez.
     private static final HtmlRenderer MD_RENDERER = HtmlRenderer.builder()
-            .extensions(MD_EXTENSIONS).escapeHtml(true).softbreak("<br />\n").build();
+            .extensions(MD_EXTENSIONS).escapeHtml(true).softbreak("<br />\n")
+            .sanitizeUrls(true)
+            .urlSanitizer(new org.commonmark.renderer.html.DefaultUrlSanitizer(
+                    List.of("http", "https", "mailto", "tel", "cid")))
+            .build();
+
+    /** Gönderen adres — rapor gönderim geçmişi kayıtları için (haftalık + aylık envanter). */
+    public String fromAddress() {
+        return currentFrom();
+    }
 
     /**
      * Genel amaçlı HTML mail — CC ve inline CID görsel desteğiyle.
      * ÖNEMLİ: setText(html, true) addInline'dan ÖNCE çağrılmalıdır
      * (MimeMessageHelper related multipart sıralaması).
      */
-    /** Gönderen adres — rapor gönderim geçmişi kayıtları için (haftalık + aylık envanter). */
-    public String fromAddress() {
-        return currentFrom();
-    }
-
     public String sendHtml(String[] to, String[] cc, String subject, String html,
                            List<InlineImage> inline) {
         return sendHtml(to, cc, subject, html, inline, false);
@@ -2589,7 +2035,7 @@ public class EmailNotificationService {
                                     List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
         if (!force && !isEnabled()) {
             log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
-                    Arrays.toString(to), Arrays.toString(cc != null ? cc : new String[0]), subject);
+                    SecretMask.maskEmails(to), SecretMask.maskEmails(cc), subject);
             return "SKIPPED_DISABLED";
         }
         try {
@@ -2600,7 +2046,10 @@ public class EmailNotificationService {
             if (cc != null && cc.length > 0) helper.setCc(cc);
             applyFrom(helper);
             helper.setSubject(subject);
-            if (plainText != null && !plainText.isBlank()) helper.setText(plainText, html);
+            // Çağıran metin vermediyse MailDoc'un aynı belge için yazdığı metin (yoksa HTML'den türetilir)
+            // → yeniden tasarımla (2026-09-26) TÜM sendHtml mailleri multipart/alternative gider.
+            String text = plainText != null ? plainText : MailKit.plainTextFor(html);
+            if (text != null && !text.isBlank()) helper.setText(text, html);
             else helper.setText(html, true);
             boolean brandAttached = false;
             if (inline != null) {
@@ -2622,13 +2071,14 @@ public class EmailNotificationService {
             }
             return doSend(Arrays.toString(to), msg, 1);
         } catch (Exception e) {
-            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", Arrays.toString(to), e.getMessage(), e);
+            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }
 
     /** Markdown → HTML (GFM tabloları destekli, raw HTML escape'li).
-     *  forEmail=true: /api/weekly-reports/images/{id} → cid:img{id}. */
+     *  forEmail=true: /api/weekly-reports/images/{id} → cid:img{id}. Blok stilleri HER İKİ yolda
+     *  satır içi — önizleme ile gönderilen mail aynı görünür (Outlook head stilini okumaz). */
     private String mdToHtml(String md, boolean forEmail, Map<Long, Integer> imageWidths, int maxWidth) {
         if (md == null || md.isBlank()) return "";
         String src = forEmail
@@ -2636,23 +2086,32 @@ public class EmailNotificationService {
                 : md;
         String html = MD_RENDERER.render(MD_PARSER.parse(src));
         html = inlineImageStyles(taskCheckboxesToSymbols(html), forEmail, imageWidths, maxWidth);
-        // Outlook <head><style>'ı yok sayar; markdown bloklarının .wr-md stillerini
-        // (liste girintisi, paragraf, tablo) maile inline et → Outlook = önizleme.
-        return forEmail ? inlineBlockStyles(html) : html;
+        return inlineBlockStyles(html);
     }
 
-    /** Markdown çıktısındaki blok elemanlara .wr-md ile birebir aynı inline stilleri
-     *  ekler (yalnız mail yolu). Yalnız markdown HTML'ine uygulanır — chip/section
-     *  tabloları ayrı üretildiğinden etkilenmez. GFM tablo align attr'ı korunur. */
+    /** Markdown çıktısındaki blok elemanlara belirteç renkleriyle satır içi stil ekler. Yalnız markdown
+     *  HTML'ine uygulanır. GFM tablo align attr'ı korunur; uzun kod/URL kırılır (telefonda taşma yok). */
     private String inlineBlockStyles(String html) {
         if (html == null || html.isEmpty()) return html;
+        String fg = MailTokens.FG, border = MailTokens.BORDER;
         return html
-            .replace("<ul>", "<ul style=\"margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b\">")
-            .replace("<ol>", "<ol style=\"margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b\">")
-            .replace("<p>",  "<p style=\"margin:6px 0;font-size:14px;line-height:1.6;color:#1e293b\">")
+            .replace("<ul>", "<ul style=\"margin:6px 0;padding-left:22px;font-size:14px;line-height:22px;color:" + fg + "\">")
+            .replace("<ol>", "<ol style=\"margin:6px 0;padding-left:22px;font-size:14px;line-height:22px;color:" + fg + "\">")
+            .replace("<p>",  "<p style=\"margin:6px 0;font-size:14px;line-height:22px;color:" + fg + ";word-break:break-word;overflow-wrap:anywhere\">")
             .replace("<table>", "<table style=\"border-collapse:collapse;width:100%;margin:8px 0\">")
-            .replaceAll("<th(\\s|>)", "<th style=\"border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left;background:#f8fafc;font-weight:700\"$1")
-            .replaceAll("<td(\\s|>)", "<td style=\"border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left\"$1");
+            .replace("<pre>", "<pre style=\"margin:8px 0;padding:10px 12px;background-color:" + MailTokens.SUBTLE + ";border:1px solid " + border
+                    + ";border-radius:6px;font-family:" + MailTokens.MONO + ";font-size:12px;line-height:18px;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere\">")
+            .replace("<code>", "<code style=\"font-family:" + MailTokens.MONO + ";font-size:13px\">")
+            .replace("<blockquote>", "<blockquote style=\"margin:8px 0;padding:8px 12px;background-color:" + MailTokens.SUBTLE + ";border:1px solid " + border
+                    + ";border-radius:6px;color:" + MailTokens.MUTED + "\">")
+            .replaceAll("<h[1-3]>", "<p style=\"margin:10px 0 4px;font-size:15px;line-height:22px;font-weight:600;color:" + fg + "\">")
+            .replaceAll("<h[4-6]>", "<p style=\"margin:8px 0 4px;font-size:14px;line-height:20px;font-weight:600;color:" + fg + "\">")
+            .replaceAll("</h[1-6]>", "</p>")
+            .replaceAll("<th(\\s|>)", "<th style=\"border:1px solid " + border + ";padding:6px 10px;font-size:13px;text-align:left;background-color:"
+                    + MailTokens.SUBTLE + ";font-weight:600;color:" + fg + "\"$1")
+            .replaceAll("<td(\\s|>)", "<td style=\"border:1px solid " + border + ";padding:6px 10px;font-size:13px;text-align:left;color:" + fg
+                    + ";word-break:break-word;overflow-wrap:anywhere\"$1")
+            .replace("<a href=", "<a style=\"color:" + MailTokens.PRIMARY + ";word-break:break-word;overflow-wrap:anywhere\" href=");
     }
 
     /** Görev listesi checkbox'larını sembole çevirir — mail istemcileri form
@@ -2670,19 +2129,18 @@ public class EmailNotificationService {
     }
 
     /** Outlook masaüstü (Word motoru) head'deki style bloğunu yok sayar — görsel
-     *  taşmasını ancak inline stil + açık width attribute engeller. Görsel
-     *  genişliği bulunduğu bölümün maxWidth'i ile sınırlanır (konuma göre
-     *  dinamik); width attr → Outlook, width:100%/max-width → modern, display:block
-     *  → Gmail alt boşluğu. */
-    /* package */ static final int MAIL_IMG_MAX_WIDTH = 720; // madde 1-3: kart 850 − iç boşluklar
-    /* package */ static final int MAIL_IMG_MAX_WIDTH_CHANNEL = 660; // madde 4 kanal alt-kartı (ekstra padding)
+     *  taşmasını ancak inline stil + açık width attribute engeller. Görsel genişliği bulunduğu
+     *  bölümün iç genişliği ile sınırlanır (konuma göre): 640px rapor kartı − bölüm kartı boşlukları.
+     *  width attr → Outlook, width:100%/max-width → modern, display:block → Gmail alt boşluğu. */
+    /* package */ static final int MAIL_IMG_MAX_WIDTH = 556; // madde 1-3: 640 kart − 2×24 − bölüm kartı (2×16+2)
+    /* package */ static final int MAIL_IMG_MAX_WIDTH_CHANNEL = 520; // madde 4 kanal alt-kartı (bir kart daha)
     private static final Pattern CID_IMG = Pattern.compile("<img src=\"cid:img(\\d+)\"");
     private static final Pattern API_IMG = Pattern.compile("<img src=\"(/api/weekly-reports/images/\\d+)\"");
 
     private String inlineImageStyles(String html, boolean forEmail, Map<Long, Integer> imageWidths, int maxWidth) {
         if (!forEmail) {
             return API_IMG.matcher(html).replaceAll(
-                    "<img style=\"max-width:100%;height:auto;border-radius:8px;margin:6px 0\" src=\"$1\"");
+                    "<img style=\"display:block;max-width:100%;height:auto;border-radius:8px;margin:6px 0\" src=\"$1\"");
         }
         Matcher m = CID_IMG.matcher(html);
         StringBuilder sb = new StringBuilder();
@@ -2698,31 +2156,12 @@ public class EmailNotificationService {
         return sb.toString();
     }
 
-    /**
-     * Haftalık rapor onay maili / önizleme HTML'i. contentJson şeması için
-     * bkz. WeeklyReportService.DEFAULT_TEMPLATE_JSON. forEmail=false UI
-     * önizlemesi içindir (görsel URL'leri /api olarak kalır).
-     */
-    /** PO onay-bekleyen mailinde rapor içeriğinin üstüne/altına eklenen onay CTA bloğu
-     *  (yeşil banner + bulletproof "Onayla" butonu). url boşsa boş döner. */
-    private String approveCtaBlock(String approveUrl) {
-        if (approveUrl == null || approveUrl.isBlank()) return "";
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'>"
-            + "<tr><td align='center' bgcolor='#ecfdf5' style='background:#ecfdf5;border:1px solid #a7f3d0;"
-            + "border-radius:10px;padding:16px'>"
-            + "<div style='font-size:14px;font-weight:700;color:#065f46;margin-bottom:10px'>"
-            + "Bu rapor onayınızı bekliyor</div>"
-            + ctaButton(approveUrl, "✅ Raporu onaylamak için tıklayınız &rarr;", "#15803d")
-            + "</td></tr></table>";
-    }
-
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail) {
         return buildWeeklyReportHtml(teamName, weekLabel, managerName, contentJson, forEmail, null);
     }
 
-    /** imageWidths: görsel id → gösterim genişliği px (Outlook width attr için);
-     *  null/eksik girişlerde 560 fallback. */
+    /** imageWidths: görsel id → gösterim genişliği px (Outlook width attr için); eksikse bölüm tavanı. */
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths) {
@@ -2732,7 +2171,6 @@ public class EmailNotificationService {
 
     /** Footer'a onay bilgisi ekler: approverName + approvedAtIso + sentAtIso (UTC ISO,
      *  Europe/Istanbul'a çevrilir). null olanlar gizlenir (örn. DRAFT önizleme). */
-    @SuppressWarnings("unchecked")
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
                                         String contentJson, boolean forEmail,
                                         Map<Long, Integer> imageWidths,
@@ -2751,8 +2189,14 @@ public class EmailNotificationService {
                 imageWidths, approverName, approvedAtIso, sentAtIso, approveCtaUrl, null);
     }
 
+    /** HTML + düz metin parçası (iç içe kart gövdeleri için). */
+    private record Part(String html, String text) {
+        static final Part EMPTY = new Part("", "");
+        boolean isEmpty() { return html == null || html.isBlank(); }
+    }
+
     /** {@code approveCtaUrl} doluysa (PO onay-bekleyen maili): rapor içeriğinin üstüne ve altına "Raporu onayla"
-     *  CTA bloğu eklenir. {@code kpiSummary} doluysa hero altında canlı KPI özet satırı (toplam/dolan/alarm/kritik/uptime)
+     *  CTA bloğu eklenir. {@code kpiSummary} doluysa başlık altında canlı KPI özeti (skor, aksiyonlar, göstergeler)
      *  gösterilir — WeeklyReportKpiService'ten (read-only). */
     @SuppressWarnings("unchecked")
     public String buildWeeklyReportHtml(String teamName, String weekLabel, String managerName,
@@ -2760,21 +2204,7 @@ public class EmailNotificationService {
                                         Map<Long, Integer> imageWidths,
                                         String approverName, String approvedAtIso, String sentAtIso,
                                         String approveCtaUrl, Map<String, Object> kpiSummary) {
-        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        // Footer sağ sütun — onay bilgisi (varsa) + oluşturma zamanı; hepsi Europe/Istanbul
-        StringBuilder footerRight = new StringBuilder();
-        if (approverName != null && !approverName.isBlank())
-            footerRight.append("Onaylayan: ").append(escHtml(approverName)).append("<br>");
-        String approvedIst = formatIstanbul(approvedAtIso);
-        if (approvedIst != null) footerRight.append("Onay: ").append(approvedIst).append("<br>");
-        String sentIst = formatIstanbul(sentAtIso);
-        if (sentIst != null) footerRight.append("Gönderim: ").append(sentIst).append("<br>");
-        footerRight.append("Oluşturuldu: ").append(generatedAt);
-        // Executive lacivert palet — arkaplanlar Outlook (Word motoru) için
-        // table/td + bgcolor ATTRIBUTE ile verilir; style yalnız yedektir.
-        String accent = "#1f3864";
-        String outerBg = "#f4f6f8";
-
+        String generatedAt = ZonedDateTime.now(IST).format(STAMP_FMT);
         Map<String, Object> c;
         try {
             c = WR_JSON.readValue(contentJson != null ? contentJson : "{}", Map.class);
@@ -2785,383 +2215,270 @@ public class EmailNotificationService {
         Map<String, Object> i2 = asMap(c.get("item2"));
         Map<String, Object> i3 = asMap(c.get("item3"));
         Map<String, Object> i4 = asMap(c.get("item4"));
+        String manager = managerName != null && !managerName.isBlank() ? managerName : "Yönetici";
 
-        // ── Madde 1 — sayı chip'leri + durum + takip linki ──
-        String item1Body =
-            numChipRow(
-                numChip("Toplam", i1.get("total"), "#334155"),
-                numChip("Acil",   i1.get("urgent"), "#dc2626"),
-                numChip("Yüksek", i1.get("high"),   "#ea580c"),
-                numChip("Orta",   i1.get("medium"), "#d97706"),
-                numChip("Düşük",  i1.get("low"),    "#16a34a"))
-            + metaLine("Durum", str(i1.get("status_text")))
-            + linkLine("Proaktif İyileştirme kayıtlarına erişmek için tıklayınız", str(i1.get("tracking_url")))
-            + mdToHtml(str(i1.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
+        MailDoc d = MailDoc.create("[Site Monitor] " + nzs(teamName) + " — Haftalık Rapor — " + nzs(weekLabel)).wide()
+                .preheader(nzs(teamName) + " ekibinin " + nzs(weekLabel) + " haftalık raporu")
+                .kicker("Haftalık Rapor");
+        d.title(nzs(teamName), weekLabel);
+        d.paragraphHtml("<strong>Sayın " + esc(manager) + ",</strong>", "Sayın " + manager + ",");
+        d.paragraphHtml(esc(teamName) + " ekibi olarak <strong>" + esc(weekLabel) + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.",
+                nzs(teamName) + " ekibi olarak " + nzs(weekLabel) + " haftası raporumuzu aşağıda paylaşıyoruz.");
+        // Onay CTA — hitabın hemen ardında, rapor içeriğinin ÜSTÜNDE (PO kaydırmadan görsün).
+        approveBlock(d, approveCtaUrl);
+        Part overview = weeklyOverview(kpiSummary);
+        if (!overview.isEmpty()) d.card("Haftalık Özet ve Göstergeler", null, overview.html(), overview.text());
 
-        // ── Madde 2 ──
-        // Üç sayı da 0 ise otomatik vurgulu "kayıt yok" notu (manuel yazıma gerek kalmaz)
+        // ── Madde 1 — sayı kutuları + durum + takip linki ──
+        Part s1 = join(
+                statsPart(List.of(numStat("Toplam", i1.get("total"), null), numStat("Acil", i1.get("urgent"), Tone.DESTRUCTIVE.strong),
+                        numStat("Yüksek", i1.get("high"), Tone.WARNING.strong), numStat("Orta", i1.get("medium"), Tone.INFO.strong),
+                        numStat("Düşük", i1.get("low"), Tone.SUCCESS.strong))),
+                item1StatusPart(i1),
+                linkLine("Proaktif İyileştirme kayıtlarına erişmek için tıklayınız", str(i1.get("tracking_url"))),
+                mdPart(str(i1.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH));
+        section(d, "1. Proaktif Servis İyileştirme Kayıtları", s1);
+
+        // ── Madde 2 — üç sayı da 0 ise otomatik vurgulu "kayıt yok" notu (manuel yazıma gerek kalmaz)
         boolean noItem2Records = intVal(i2.get("open_incidents")) == 0
                 && intVal(i2.get("problem_records")) == 0
                 && intVal(i2.get("postmortems")) == 0;
-        String item2AutoNote = noItem2Records
-            // Renkli kutu: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:8px 0;border-radius:8px;overflow:hidden'><tr>"
-              + "<td width='4' bgcolor='#16a34a' style='background-color:#16a34a;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
-              + "<td bgcolor='#e7f6ec' style='background-color:#e7f6ec;padding:8px 12px;font-size:13px;font-weight:700;color:#14532d'>"
-              + "✔ Bu hafta aşım yaşanan olay, problem veya açık postmortem kaydı bulunmamaktadır.</td></tr></table>"
-            : "";
-        String item2Body =
-            numChipRow(
-                numChip("Açık Olay",   i2.get("open_incidents"),  "#dc2626"),
-                numChip("Problem",     i2.get("problem_records"), "#ea580c"),
-                numChip("Postmortem",  i2.get("postmortems"),     "#7c3aed"))
-            + item2AutoNote
-            + linkLine("Açık olay kayıtları için tıklayınız", str(i2.get("incidents_url")))
-            + linkLine("Problem kayıtları için tıklayınız", str(i2.get("problems_url")))
-            + linkLine("Postmortem kayıtları için tıklayınız", str(i2.get("postmortems_url")))
-            + linkLine("İlgili kayıtlar için tıklayınız", str(i2.get("tracking_url"))) // eski raporlardaki genel link
-            + mdToHtml(str(i2.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
+        String noRec = "Bu hafta aşım yaşanan olay, problem veya açık postmortem kaydı bulunmamaktadır.";
+        Part s2 = join(
+                statsPart(List.of(numStat("Açık Olay", i2.get("open_incidents"), Tone.DESTRUCTIVE.strong),
+                        numStat("Problem", i2.get("problem_records"), Tone.WARNING.strong),
+                        numStat("Postmortem", i2.get("postmortems"), Tone.INFO.strong))),
+                noItem2Records ? new Part(MailKit.space(MailKit.alert(Tone.SUCCESS, null, esc(noRec)), 12), noRec) : Part.EMPTY,
+                linkLine("Açık olay kayıtları için tıklayınız", str(i2.get("incidents_url"))),
+                linkLine("Problem kayıtları için tıklayınız", str(i2.get("problems_url"))),
+                linkLine("Postmortem kayıtları için tıklayınız", str(i2.get("postmortems_url"))),
+                linkLine("İlgili kayıtlar için tıklayınız", str(i2.get("tracking_url"))), // eski raporlardaki genel link
+                mdPart(str(i2.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH));
+        section(d, "2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", s2);
 
         // ── Madde 3 ──
-        String item3Body = mdToHtml(str(i3.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH);
+        section(d, "3. Haftalık Katılım Sağlanan Çalışmalar", mdPart(str(i3.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH));
 
         // ── Madde 4 — kanal alt-kartları ──
-        StringBuilder item4Body = new StringBuilder();
-        Object channelsObj = i4.get("channels");
-        if (channelsObj instanceof List<?> channels) {
+        StringBuilder ch = new StringBuilder();
+        StringBuilder chText = new StringBuilder();
+        if (i4.get("channels") instanceof List<?> channels) {
             for (Object chObj : channels) {
-                Map<String, Object> ch = asMap(chObj);
-                item4Body.append("<div style='border:1px solid #e2e8f0;border-radius:10px;margin-bottom:10px;overflow:hidden'>")
-                    .append("<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
-                    .append("<td bgcolor='#eef1f5' style='background:#eef1f5;padding:8px 14px;")
-                    .append("font-size:13px;font-weight:800;color:#334155'>")
-                    .append(escHtml(str(ch.get("name")))).append("</td></tr></table>")
-                    .append("<div style='padding:10px 14px'>")
-                    .append(mdToHtml(str(ch.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH_CHANNEL))
-                    .append("</div></div>");
+                Map<String, Object> m = asMap(chObj);
+                Part md = mdPart(str(m.get("notes_md")), forEmail, imageWidths, MAIL_IMG_MAX_WIDTH_CHANNEL);
+                ch.append(MailKit.space(MailKit.card(str(m.get("name")), null,
+                        md.isEmpty() ? MailKit.note("—") : md.html()), 10));
+                chText.append(str(m.get("name"))).append('\n').append(md.text()).append("\n\n");
             }
         }
+        section(d, "4. Domain Bazlı Kritik İşlerin Durumu", new Part(ch.toString(), chText.toString()));
 
-        String css = "<style>"
-            + "body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
-            + ".wr-md table{border-collapse:collapse;width:100%;margin:8px 0}"
-            + ".wr-md th,.wr-md td{border:1px solid #e2e8f0;padding:6px 10px;font-size:13px;text-align:left}"
-            + ".wr-md th{background:#f8fafc;font-weight:700}"
-            + ".wr-md img{max-width:100%;height:auto;border-radius:8px;margin:6px 0}"
-            + ".wr-md p{margin:6px 0;font-size:14px;line-height:1.6;color:#1e293b}"
-            + ".wr-md ul,.wr-md ol{margin:6px 0;padding-left:22px;font-size:14px;color:#1e293b}"
-            + "@media only screen and (max-width:870px){"
-            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
-            + ".em-body{padding:14px!important}"
-            + "}"
-            + "</style>";
+        approveBlock(d, approveCtaUrl);
+        String approvedIst = formatIstanbul(approvedAtIso);
+        String sentIst = formatIstanbul(sentAtIso);
+        d.footerMeta("Site Monitor — Haftalık Rapor",
+                approverName != null && !approverName.isBlank() ? "Onaylayan: " + approverName : null,
+                approvedIst != null ? "Onay: " + approvedIst : null,
+                sentIst != null ? "Gönderim: " + sentIst : null,
+                "Oluşturuldu: " + generatedAt);
+        return d.html();
+    }
 
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml' xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + css + "</head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
+    /** Rapor bölüm kartı — gövde boşsa "—". */
+    private static void section(MailDoc d, String title, Part body) {
+        d.card(title, null, body.isEmpty() ? MailKit.note("—") : body.html(), body.isEmpty() ? "—" : body.text());
+    }
 
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
-            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
+    /** PO onay-bekleyen mailinde rapor içeriğinin üstüne/altına eklenen onay bloğu. url boşsa eklenmez. */
+    private static void approveBlock(MailDoc d, String approveUrl) {
+        if (approveUrl == null || approveUrl.isBlank()) return;
+        d.alert(Tone.SUCCESS, "Bu rapor onayınızı bekliyor", "Aşağıdaki butonla (giriş yapmadan) doğrudan onaylayabilirsiniz.");
+        d.button(approveUrl, "Raporu onaylamak için tıklayınız →");
+    }
 
-            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
-            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
-            + brandBar()   // BRAND.md §5.1 lockup
+    private static Part join(Part... parts) {
+        StringBuilder h = new StringBuilder(), t = new StringBuilder();
+        for (Part p : parts) {
+            if (p == null || p.isEmpty()) continue;
+            h.append(p.html());
+            if (p.text() != null && !p.text().isBlank()) t.append(p.text().strip()).append('\n');
+        }
+        return new Part(h.toString(), t.toString());
+    }
 
-            // ── Üst bar — div shading Outlook'ta güvenilmez; td + bgcolor attr ──
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>Site Monitor — Haftalık Rapor</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📋 "
-            + escHtml(teamName) + "</div>"
-            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
-            + escHtml(weekLabel) + "</div>"
-            + "</td></tr></table>"
+    private static Stat numStat(String label, Object value, String color) {
+        return new Stat(label, value != null ? String.valueOf(value) : "0", color, null);
+    }
 
-            // ── Gövde ──
-            // Gövde — div padding'i Outlook (Word) yok sayar → td padding'i (em-body class'ı td'de)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
+    private static Part statsPart(List<Stat> stats) {
+        StringBuilder t = new StringBuilder();
+        for (Stat s : stats) t.append(t.length() == 0 ? "" : " · ").append(s.label()).append(": ").append(s.value());
+        return new Part(MailKit.space(MailKit.stats(stats), 4), t.toString());
+    }
 
-            // Hitap + giriş
-            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
-            + escHtml(managerName != null && !managerName.isBlank() ? managerName : "Yönetici") + ",</strong></p>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
-            + escHtml(teamName) + " ekibi olarak <strong>" + escHtml(weekLabel)
-            + "</strong> haftası raporumuzu aşağıda paylaşıyoruz.</p>"
+    private Part mdPart(String md, boolean forEmail, Map<Long, Integer> imageWidths, int maxWidth) {
+        String html = mdToHtml(md, forEmail, imageWidths, maxWidth);
+        return html.isBlank() ? Part.EMPTY : new Part(html, md);
+    }
 
-            // Onay CTA — hitabın hemen ardında, rapor içeriğinin ÜSTÜNDE (PO kaydırmadan görsün);
-            // gövde ortasında (özet ile bölümler arasında) kalmasın.
-            + approveCtaBlock(approveCtaUrl)
+    /**
+     * Madde 1 kayıtlarının durum dağılımı (2026-09-27): sayılardan biri > 0 ise "Durum dağılımı" başlıklı dört istatistik
+     * kutusu (MailKit.stats — Outlook hayalet tablolu, medya sorgusuz sarar); hepsi 0 / alan yoksa eski raporların tekil
+     * {@code status_text} satırı (geriye uyum); o da yoksa hiçbir şey.
+     */
+    static Part item1StatusPart(Map<String, Object> i1) {
+        Map<String, Object> sc = asMap(i1.get("status_counts"));
+        int working = Math.max(0, intVal(sc.get("working"))), planned = Math.max(0, intVal(sc.get("planned")));
+        int onHold = Math.max(0, intVal(sc.get("on_hold"))), done = Math.max(0, intVal(sc.get("done")));
+        if (working + planned + onHold + done > 0) {
+            Part head = new Part("<p style=\"margin:10px 0 2px;font-size:13px;line-height:20px;font-weight:600;color:" + MailTokens.FG
+                    + "\">Durum dağılımı</p>", "Durum dağılımı");
+            return join(head, statsPart(List.of(numStat("Çalışılıyor", working, Tone.INFO.strong),
+                    numStat("Planlandı", planned, null), numStat("Beklemede", onHold, Tone.WARNING.strong),
+                    numStat("Tamamlandı", done, Tone.SUCCESS.strong))));
+        }
+        return metaLine("Durum", str(i1.get("status_text")));
+    }
 
-            + weeklyOverviewSection(kpiSummary, accent)
+    private static Part metaLine(String label, String value) {
+        if (value == null || value.isBlank()) return Part.EMPTY;
+        return new Part("<p style=\"margin:4px 0;font-size:14px;line-height:22px;color:" + MailTokens.FG + "\"><strong>"
+                + esc(label) + ":</strong> " + esc(value) + "</p>", label + ": " + value);
+    }
 
-            + reportSection("1. Proaktif Servis İyileştirme Kayıtları", item1Body, accent)
-            + reportSection("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları", item2Body, accent)
-            + reportSection("3. Haftalık Katılım Sağlanan Çalışmalar", item3Body, accent)
-            + reportSection("4. Domain Bazlı Kritik İşlerin Durumu", item4Body.toString(), accent)
-
-            + approveCtaBlock(approveCtaUrl)
-
-            // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Haftalık Rapor</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
-            + footerRight + "</td></tr></table>"
-
-            + "</td></tr></table>"   // em-body td + gövde tablosu
-            + "</td></tr></table>"   // kart iç td + kart tablosu
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table>"   // dış (wrap) td + tablo
-            + "</body></html>";
+    /** Takip linki satırı — URL açık yazılmaz; tıklanabilir metin etikettir
+     *  (kullanıcı isteği: mailde çıplak URL paylaşılmasın). */
+    private static Part linkLine(String label, String url) {
+        if (url == null || url.isBlank()) return Part.EMPTY;
+        // BD1 (bug regresyon 2026-09-27): takip bağlantıları raporun kullanıcı girdisidir ve sunucuda doğrulanmıyor;
+        // izinli şema (http/https/mailto) değilse TIKLANAMAZ düz metin — değer görünür kalır, bağlantı kurulmaz.
+        if (!MailKit.safeHref(url)) {
+            return new Part("<p style=\"margin:4px 0;font-size:14px;line-height:22px;color:" + MailTokens.FG + "\">"
+                    + esc(label) + ": <span style=\"word-break:break-word;overflow-wrap:anywhere\">" + esc(url) + "</span></p>",
+                    label + ": " + url);
+        }
+        return new Part("<p style=\"margin:4px 0;font-size:14px;line-height:22px\">" + MailKit.link(url, label) + "</p>", label + ": " + url);
     }
 
     /** PO'ya onay bekleyen rapor bilgilendirmesi. */
     public String buildWeeklyReportSubmittedHtml(String teamName, String weekLabel, String submittedBy,
                                                  String approveUrl) {
-        return buildSimpleAlertHtml(
+        return simpleDoc(
                 "[Site Monitor] " + teamName + " — " + weekLabel + " raporu onayınızı bekliyor",
                 teamName + " ekibinin " + weekLabel + " haftalık raporu "
                 + (submittedBy != null ? submittedBy : "ekip üyesi")
                 + " tarafından onayınıza sunuldu. Aşağıdaki butonla (giriş yapmadan) doğrudan "
                 + "onaylayabilir ya da Site Monitor → Raporlar → Haftalık Raporlar ekranından "
                 + "inceleyip düzeltme talebiyle iade edebilirsiniz.",
-                approveUrl, "✅ Raporu onaylamak için tıklayınız →");
+                Tone.INFO, "ONAY BEKLİYOR", false, approveUrl, "Raporu onaylamak için tıklayınız →").html();
     }
 
-    /** Takıma iade/düzeltme talebi bildirimi. */
+    /** Takıma iade/düzeltme talebi bildirimi — not satır sonlarıyla korunur. */
     public String buildWeeklyReportRejectedHtml(String teamName, String weekLabel,
                                                 String note, String rejectedBy) {
-        return buildSimpleAlertHtml(
-                "[Site Monitor] " + teamName + " — " + weekLabel + " raporu iade edildi",
-                weekLabel + " haftalık raporunuz "
-                + (rejectedBy != null ? rejectedBy : "PO")
-                + " tarafından düzeltme talebiyle iade edildi.\n\nDüzeltme notu: "
-                + (note != null ? note : "—")
-                + "\n\nRaporu güncelleyip tekrar onaya gönderebilirsiniz.");
+        String by = rejectedBy != null ? rejectedBy : "PO";
+        MailDoc d = MailDoc.create("[Site Monitor] " + teamName + " — " + weekLabel + " raporu iade edildi")
+                .preheader(weekLabel + " haftalık raporunuz " + by + " tarafından düzeltme talebiyle iade edildi.")
+                .kicker("Haftalık Rapor");
+        d.badges(Badge.tint("İADE EDİLDİ", Tone.WARNING));
+        d.title(nzs(teamName) + " — " + nzs(weekLabel) + " raporu iade edildi", null);
+        d.paragraph(weekLabel + " haftalık raporunuz " + by + " tarafından düzeltme talebiyle iade edildi.");
+        // Not çok satırlı olabilir (madde listesi) — escBr ile satır sonları korunur (eskiden tek paragrafa eziliyordu).
+        d.alert(Tone.WARNING, "Düzeltme notu", note != null && !note.isBlank() ? note : "—");
+        d.paragraph("Raporu güncelleyip tekrar onaya gönderebilirsiniz.");
+        d.footerMeta("Site Monitor — Haftalık Rapor", nowStamp());
+        return d.html();
     }
 
-    /** Cuma hatırlatma maili — executive lacivert şablon. Henüz raporunu girmemiş
-     *  SY takımlarına, bugün 15:00 son giriş hatırlatması + "nasıl girilir" kısa kılavuz
-     *  + doğrudan Haftalık Raporlar'a giden CTA link. Mail her zaman TR. */
+    /** Cuma hatırlatma maili. Henüz raporunu girmemiş SY takımlarına son giriş hatırlatması +
+     *  "nasıl girilir" kısa kılavuz + doğrudan Haftalık Raporlar'a giden CTA. Mail her zaman TR. */
     public String buildWeeklyReportReminderHtml(String teamName, String weekLabel, String reportUrl) {
         return buildWeeklyReportReminderHtml(teamName, weekLabel, reportUrl, "bugün saat 15:00");
     }
 
     /** {@code deadlineText} = "bugün saat 15:00" / "Perşembe saat 17:00" — canlı ayardan (2026-09-12). */
     public String buildWeeklyReportReminderHtml(String teamName, String weekLabel, String reportUrl, String deadlineText) {
-        String accent = "#1f3864";
-        String outerBg = "#f4f6f8";
-        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-
-        // CTA buton — "bulletproof": Outlook (Word) için VML v:roundrect (yuvarlak köşe +
-        // sabit genişlik), diğer istemciler için HTML <td>+<a> (beyaz metin <span> ile sabit).
-        // mso/non-mso koşullu yorumlarıyla her istemci yalnız kendi sürümünü görür.
-        String btnLabel = "📝 Haftalık raporu girmek için tıklayınız &rarr;";
-        String cta = (reportUrl != null && !reportUrl.isBlank())
-            ? "<div style='margin:4px 0 20px'>"
-              + "<!--[if mso]>"
-              + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
-              + " href=\"" + escHtml(reportUrl) + "\" style=\"height:48px;v-text-anchor:middle;width:380px;\""
-              + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
-              + "<w:anchorlock/>"
-              + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
-              + btnLabel + "</center>"
-              + "</v:roundrect>"
-              + "<![endif]-->"
-              + "<!--[if !mso]><!-->"
-              + "<table role='presentation' border='0' cellspacing='0' cellpadding='0'><tr>"
-              + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;"
-              + "padding:13px 26px;color:#ffffff'>"
-              + "<a href='" + escHtml(reportUrl) + "' target='_blank' style='color:#ffffff;text-decoration:none;"
-              + "font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-              + "<span style='color:#ffffff'>" + btnLabel + "</span></a>"
-              + "</td></tr></table>"
-              + "<!--<![endif]-->"
-              + "</div>"
-            : "";
-
+        MailDoc d = MailDoc.create("[Site Monitor] " + nzs(teamName) + " — Haftalık rapor hatırlatması (" + nzs(weekLabel) + ")")
+                .preheader("Bu haftanın raporu henüz girilmedi — son giriş " + nzs(deadlineText))
+                .kicker("Haftalık Rapor Hatırlatması");
+        d.badges(Badge.tint("HATIRLATMA", Tone.WARNING));
+        d.title(nzs(teamName), weekLabel);
+        d.paragraphHtml("<strong>Sayın " + esc(teamName) + " ekibi,</strong>", "Sayın " + nzs(teamName) + " ekibi,");
+        d.paragraphHtml("Bu haftanın (<strong>" + esc(weekLabel) + "</strong>) haftalık raporu sistemde henüz görünmüyor. "
+                        + "Mesai başlangıcıyla birlikte raporunuzu hatırlatmak isteriz.",
+                "Bu haftanın (" + nzs(weekLabel) + ") haftalık raporu sistemde henüz görünmüyor. Mesai başlangıcıyla birlikte raporunuzu hatırlatmak isteriz.");
+        d.alertHtml(Tone.WARNING, "Son giriş: " + esc(deadlineText),
+                "Lütfen bu haftanın raporunu Site Monitor üzerinden zamanında giriniz.",
+                "Son giriş: " + nzs(deadlineText) + " — lütfen bu haftanın raporunu Site Monitor üzerinden zamanında giriniz.");
+        d.button(reportUrl, "Haftalık raporu girmek için tıklayınız →");
         // "Nasıl girilir?" — sabit (güvenilir) HTML; <strong> kaçırılmaz
-        String stepsBody =
-            "<ol style='margin:0;padding-left:20px;font-size:14px;line-height:1.8;color:#1e293b'>"
-            + "<li>Sol menüden <strong>Raporlar → Haftalık Raporlar</strong>'a gidin.</li>"
-            + "<li><strong>Yeni Hafta Raporu</strong> ile yıl/hafta seçip <strong>Oluştur</strong>'a tıklayın.</li>"
-            + "<li>Dört maddeyi doldurun: Proaktif İyileştirmeler · Olay/Problem/Postmortem · Katılımlar · Domain bazlı kritik işler.</li>"
-            + "<li><strong>Kaydet</strong>; hazır olunca <strong>Onaya Gönder</strong>.</li>"
-            + "<li>PO onayından sonra rapor müdüre otomatik iletilir.</li>"
-            + "</ol>";
-
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<style>@media only screen and (max-width:870px){"
-            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
-            + ".em-body{padding:14px!important}}</style></head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
-            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
-
-            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
-            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;"
-            + "box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
-            // ── Marka barı (BRAND.md §5.1 lockup) + Üst bar ──
-            + brandBar()
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>HAFTALIK RAPOR HATIRLATMASI</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>⏰ "
-            + escHtml(teamName) + "</div>"
-            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>"
-            + escHtml(weekLabel) + "</div>"
-            + "</td></tr></table>"
-
-            // ── Gövde ── (div padding'i Outlook yok sayar → td-tabanlı em-body)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
-            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
-            + "Bu haftanın (<strong>" + escHtml(weekLabel) + "</strong>) haftalık raporu sistemde henüz görünmüyor. "
-            + "Mesai başlangıcıyla birlikte raporunuzu hatırlatmak isteriz.</p>"
-
-            // Son giriş uyarısı (vurgulu)
-            // Renkli kutu: <p background> Outlook'ta beyaza düşer → accent-şeritli tablo (td bgcolor)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 4px;border-radius:8px;overflow:hidden'><tr>"
-            + "<td width='4' bgcolor='#dc2626' style='background-color:#dc2626;width:4px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#fef2f2' style='background-color:#fef2f2;padding:10px 14px;font-size:14px;font-weight:700;color:#991b1b'>"
-            + "⏰ Son giriş <strong>" + escHtml(deadlineText) + "</strong> — lütfen bu haftanın raporunu Site Monitor üzerinden zamanında giriniz.</td></tr></table>"
-
-            + cta
-
-            + reportSection("Haftalık Rapor Nasıl Girilir?", stepsBody, accent)
-
-            // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Hatırlatma</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
-            + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
-
-            + "</td></tr></table>"   // em-body td + gövde tablosu
-            + "</td></tr></table>"   // kart iç td + kart tablosu
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table>"   // dış (wrap) td + tablo
-            + "</body></html>";
+        List<String> stepsHtml = List.of(
+                "Sol menüden <strong>Raporlar → Haftalık Raporlar</strong>'a gidin.",
+                "<strong>Yeni Hafta Raporu</strong> ile yıl/hafta seçip <strong>Oluştur</strong>'a tıklayın.",
+                "Dört maddeyi doldurun: Proaktif İyileştirmeler · Olay/Problem/Postmortem · Katılımlar · Domain bazlı kritik işler.",
+                "<strong>Kaydet</strong>; hazır olunca <strong>Onaya Gönder</strong>.",
+                "PO onayından sonra rapor müdüre otomatik iletilir.");
+        List<String> stepsText = List.of(
+                "Sol menüden Raporlar → Haftalık Raporlar'a gidin.",
+                "Yeni Hafta Raporu ile yıl/hafta seçip Oluştur'a tıklayın.",
+                "Dört maddeyi doldurun: Proaktif İyileştirmeler · Olay/Problem/Postmortem · Katılımlar · Domain bazlı kritik işler.",
+                "Kaydet; hazır olunca Onaya Gönder.",
+                "PO onayından sonra rapor müdüre otomatik iletilir.");
+        StringBuilder t = new StringBuilder();
+        for (int i = 0; i < stepsText.size(); i++) t.append(i + 1).append(". ").append(stepsText.get(i)).append('\n');
+        d.card("Haftalık Rapor Nasıl Girilir?", null, MailKit.steps(stepsHtml), t.toString());
+        d.footerMeta("Site Monitor — Otomatik Hatırlatma", "Oluşturuldu: " + nowStamp());
+        return d.html();
     }
 
     // ── Alan adı süre-bitişi hatırlatması (2026-09-22, madde E) ─────────────────────
 
     /**
-     * Eşik hatırlatması: "X alan adının kaydı N gün sonra doluyor" — Outlook-güvenli desen (td bgcolor, düz hex,
-     * LIGHT_SCHEME_META, MSO ghost-table, VML CTA), haftalık rapor hatırlatmasıyla aynı iskelet. CTA izleme
-     * detayına derin bağlantı (?tab=domain&monitor=id); base URL canlı ayardan.
+     * Eşik hatırlatması: "X alan adının kaydı N gün sonra doluyor". CTA izleme detayına derin
+     * bağlantı (?tab=domain&monitor=id); base URL canlı ayardan.
      */
     public String buildDomainExpiryReminderHtml(String name, String domain, int days, String expiryIso, int threshold,
                                                 String registrar, String level, Long monitorId) {
         boolean critical = "CRITICAL".equals(level);
         boolean expired = days < 0;
-        String accent = critical ? "#991b1b" : "WARNING".equals(level) ? "#b45309" : "#1f3864";
-        String outerBg = "#f4f6f8";
-        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        Tone tone = critical || expired ? Tone.DESTRUCTIVE : "WARNING".equals(level) ? Tone.WARNING : Tone.INFO;
         String expiryText = expiryIso == null ? "—" : expiryIso.length() >= 10 ? expiryIso.substring(8, 10) + "." + expiryIso.substring(5, 7) + "." + expiryIso.substring(0, 4) : expiryIso;
         String headline = expired
-                ? "⚠ " + escHtml(name) + " — alan adı kaydı " + Math.abs(days) + " gün önce DOLDU"
-                : "⏰ " + escHtml(name) + " — alan adı bitişine " + days + " gün";
+                ? nzs(name) + " — alan adı kaydı " + Math.abs(days) + " gün önce doldu"
+                : nzs(name) + " — alan adı bitişine " + days + " gün";
         String url = liveBaseUrl().isBlank() || monitorId == null ? "" : liveBaseUrl() + "/?tab=domain&monitor=" + monitorId;
-        String btnLabel = "Alan adı izlemesini aç &rarr;";
-        String cta = url.isBlank() ? "" :
-              "<div style='margin:4px 0 20px'>"
-            + "<!--[if mso]>"
-            + "<v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\""
-            + " href=\"" + escHtml(url) + "\" style=\"height:44px;v-text-anchor:middle;width:300px;\""
-            + " arcsize=\"16%\" strokecolor=\"" + accent + "\" fillcolor=\"" + accent + "\">"
-            + "<w:anchorlock/>"
-            + "<center style=\"color:#ffffff;font-family:'Segoe UI',Tahoma,Arial,sans-serif;font-size:15px;font-weight:bold;\">"
-            + btnLabel + "</center>"
-            + "</v:roundrect>"
-            + "<![endif]-->"
-            + "<!--[if !mso]><!-->"
-            + "<table role='presentation' border='0' cellspacing='0' cellpadding='0'><tr>"
-            + "<td align='center' bgcolor='" + accent + "' style='background:" + accent + ";border-radius:8px;padding:12px 24px;color:#ffffff'>"
-            + "<a href='" + escHtml(url) + "' target='_blank' style='color:#ffffff;text-decoration:none;font-size:15px;font-weight:800;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<span style='color:#ffffff'>" + btnLabel + "</span></a>"
-            + "</td></tr></table>"
-            + "<!--<![endif]-->"
-            + "</div>";
+        String daysText = expired ? Math.abs(days) + " gün önce doldu" : days + " gün";
 
-        String facts =
-              "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='font-size:14px;color:#1e293b;line-height:1.7'>"
-            + "<tr><td width='160' style='color:#64748b;padding:2px 0'>Alan adı</td><td style='padding:2px 0'><strong>" + escHtml(domain) + "</strong></td></tr>"
-            + "<tr><td style='color:#64748b;padding:2px 0'>Bitiş tarihi</td><td style='padding:2px 0'><strong>" + escHtml(expiryText) + "</strong></td></tr>"
-            + "<tr><td style='color:#64748b;padding:2px 0'>Kalan gün</td><td style='padding:2px 0'><strong style='color:" + accent + "'>" + (expired ? Math.abs(days) + " gün önce doldu" : days + " gün") + "</strong></td></tr>"
-            + "<tr><td style='color:#64748b;padding:2px 0'>Registrar</td><td style='padding:2px 0'>" + escHtml(registrar == null || registrar.isBlank() ? "—" : registrar) + "</td></tr>"
-            + "<tr><td style='color:#64748b;padding:2px 0'>Hatırlatma eşiği</td><td style='padding:2px 0'>" + threshold + " gün</td></tr>"
-            + "</table>";
-
-        String stepsBody =
-              "<ol style='margin:0;padding-left:20px;font-size:14px;line-height:1.8;color:#1e293b'>"
-            + "<li>Registrar panelinde alan adını yenileyin (otomatik yenileme açıksa ödeme yöntemini doğrulayın).</li>"
-            + "<li>Yenileme sonrası Site Monitor'de <strong>Şimdi Kontrol Et</strong> ile bitiş tarihinin ileri gittiğini görün — bu hatırlatma serisi yeni bitiş için sıfırdan başlar.</li>"
-            + "<li>Transfer kilidi yoksa (kartta \"Kilit yok\") registrar'dan kilidi açtırın.</li>"
-            + "</ol>";
-
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<style>@media only screen and (max-width:870px){"
-            + ".em-wrap{padding:0!important}.em-card{border-radius:0!important;width:100%!important}"
-            + ".em-body{padding:14px!important}}</style></head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";padding:24px 10px'>"
-            + "<tr><td align='center' bgcolor='" + outerBg + "'>"
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
-            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
-            + brandBar()
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#e2e8f0;font-size:11px;font-weight:700;letter-spacing:.12em'>ALAN ADI SÜRE BİTİŞİ HATIRLATMASI</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>" + headline + "</div>"
-            + "<div style='color:#e2e8f0;font-size:14px;font-weight:600;margin-top:8px'>" + escHtml(domain) + " · bitiş " + escHtml(expiryText) + "</div>"
-            + "</td></tr></table>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
-            + "Bu ileti izlemenin <strong>" + threshold + " gün</strong> hatırlatma eşiği için <strong>bir kez</strong> gönderilir; "
-            + "sonraki eşiklerde (" + "daha az gün kala" + ") yeniden hatırlatılır. Alan adı yenilenince seri kendiliğinden sıfırlanır.</p>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 14px;border-radius:8px;overflow:hidden'><tr>"
-            + "<td width='4' bgcolor='" + accent + "' style='background-color:" + accent + ";width:4px;font-size:0;line-height:0'>&nbsp;</td>"
-            + "<td bgcolor='#f8fafc' style='background-color:#f8fafc;padding:10px 14px'>" + facts + "</td></tr></table>"
-            + cta
-            + reportSection("Ne yapmalı?", stepsBody, accent)
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Hatırlatma</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8;line-height:1.7'>"
-            + "Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table>"
-            + "</body></html>";
+        MailDoc d = MailDoc.create("[Site Monitor] " + headline)
+                .preheader(nzs(domain) + " · bitiş " + expiryText + " · " + threshold + " gün hatırlatma eşiği")
+                .kicker("Alan Adı İzleme");
+        d.badges(tone == Tone.DESTRUCTIVE ? Badge.solid(critical ? "KRİTİK" : "SÜRESİ DOLDU", tone)
+                        : Badge.tint("WARNING".equals(level) ? "UYARI" : "BİLGİ", tone),
+                Badge.outline("Hatırlatma · " + threshold + " gün eşiği"));
+        d.title(headline, nzs(domain) + " · bitiş " + expiryText);
+        d.metricCard(String.valueOf(Math.abs(days)), expired ? "gün önce doldu" : "gün kaldı", tone.strong,
+                expired ? null : Math.round(Math.max(0, days) * 100f / 90), "Bitiş tarihi: " + expiryText);
+        d.keyValue(MailDoc.rows(
+                new Row("Alan adı", MailKit.strong(domain, null), nzs(domain)),
+                Row.of("Bitiş tarihi", expiryText),
+                new Row("Kalan gün", MailKit.strong(daysText, tone.strong), daysText),
+                Row.of("Registrar", registrar == null || registrar.isBlank() ? "—" : registrar),
+                Row.of("Hatırlatma eşiği", threshold + " gün")));
+        d.noteHtml("Bu ileti izlemenin <strong>" + threshold + " gün</strong> hatırlatma eşiği için <strong>bir kez</strong> gönderilir; "
+                        + "sonraki eşiklerde (daha az gün kala) yeniden hatırlatılır. Alan adı yenilenince seri kendiliğinden sıfırlanır.",
+                "Bu ileti izlemenin " + threshold + " gün hatırlatma eşiği için bir kez gönderilir; sonraki eşiklerde (daha az gün kala) "
+                        + "yeniden hatırlatılır. Alan adı yenilenince seri kendiliğinden sıfırlanır.");
+        d.button(url, "Alan adı izlemesini aç →");
+        List<String> stepsHtml = List.of(
+                "Registrar panelinde alan adını yenileyin (otomatik yenileme açıksa ödeme yöntemini doğrulayın).",
+                "Yenileme sonrası Site Monitor'de <strong>Şimdi Kontrol Et</strong> ile bitiş tarihinin ileri gittiğini görün — bu hatırlatma serisi yeni bitiş için sıfırdan başlar.",
+                "Transfer kilidi yoksa (kartta \"Kilit yok\") registrar'dan kilidi açtırın.");
+        d.card("Ne yapmalı?", null, MailKit.steps(stepsHtml),
+                "1. Registrar panelinde alan adını yenileyin (otomatik yenileme açıksa ödeme yöntemini doğrulayın).\n"
+                + "2. Yenileme sonrası Site Monitor'de Şimdi Kontrol Et ile bitiş tarihinin ileri gittiğini görün.\n"
+                + "3. Transfer kilidi yoksa registrar'dan kilidi açtırın.");
+        d.footerMeta("Site Monitor — Otomatik Hatırlatma", "Oluşturuldu: " + nowStamp());
+        return d.html();
     }
 
     // ── Haftalık Erişilebilirlik (availability) e-postası ───────────────────────
@@ -3228,9 +2545,8 @@ public class EmailNotificationService {
         return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, null);
     }
 
-    /** Sertifika sahibi takıma haftalık erişilebilirlik özeti (executive). rows en kötü
-     *  availability üstte sıralı gelir; down domainler ayrı vurgulanır.
-     *  {@code att} doluysa gövdeye ek duyuru bandı eklenir. */
+    /** Sertifika sahibi takıma haftalık erişilebilirlik özeti. rows en kötü availability üstte sıralı
+     *  gelir; down domainler ayrı vurgulanır. {@code att} doluysa gövdeye ek duyurusu eklenir. */
     public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps) {
@@ -3257,128 +2573,106 @@ public class EmailNotificationService {
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
                                               WeakAlgoWeekly weak, DomainExpiryWeekly dom) {
-        String accent = "#1f3864";
-        String outerBg = "#f4f6f8";
-        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        MailDoc d = MailDoc.create("[Site Monitor] " + nzs(teamName) + " — Haftalık Erişilebilirlik (" + nzs(weekLabel) + ")").wide()
+                .preheader("Ortalama erişilebilirlik " + pctText(s.avgAvailabilityPct()) + " · " + s.downDomainCount() + " domain kesinti yaşadı")
+                .kicker("Haftalık Erişilebilirlik");
+        d.title(nzs(teamName), weekLabel);
+        d.paragraphHtml("<strong>Sayın " + esc(teamName) + " ekibi,</strong>", "Sayın " + nzs(teamName) + " ekibi,");
+        d.paragraphHtml("Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + esc(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.",
+                "Aşağıda sahip olduğunuz domainlerin geçen haftaya (" + nzs(weekLabel) + ") ait erişilebilirlik özeti yer almaktadır.");
 
-        // KPI bandı (4 kart) — td+bgcolor (Outlook uyumlu)
-        String avgTxt = pctText(s.avgAvailabilityPct());
-        String kpi =
-            "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0'><tr>"
-            + kpiCard("İZLENEN DOMAIN", String.valueOf(s.domainCount()), "#1e293b", "#f8fafc")
-            + kpiCard("ORT. ERİŞİLEBİLİRLİK", avgTxt, pctColor(s.avgAvailabilityPct()), "#f8fafc")
-            + kpiCard("KESİNTİ YAŞAYAN", String.valueOf(s.downDomainCount()),
-                      s.downDomainCount() > 0 ? "#dc2626" : "#16a34a", "#f8fafc")
-            + kpiCard("EN YAKIN SERTİFİKA", s.nearestCertDays() != null ? s.nearestCertDays() + " gün" : "—",
-                      s.nearestCertDays() != null && s.nearestCertDays() <= 30 ? "#dc2626" : "#1e293b", "#f8fafc")
-            + "</tr></table>";
+        // KPI kutuları — medya sorgusu olmadan da sarar (4 → 2 → 1)
+        d.stats(List.of(
+                new Stat("İzlenen Domain", String.valueOf(s.domainCount()), null, null),
+                new Stat("Ort. Erişilebilirlik", pctText(s.avgAvailabilityPct()), pctColor(s.avgAvailabilityPct()), null),
+                new Stat("Kesinti Yaşayan", String.valueOf(s.downDomainCount()),
+                        s.downDomainCount() > 0 ? Tone.DESTRUCTIVE.strong : Tone.SUCCESS.strong, null),
+                new Stat("En Yakın Sertifika", s.nearestCertDays() != null ? s.nearestCertDays() + " gün" : "—",
+                        s.nearestCertDays() != null && s.nearestCertDays() <= 30 ? Tone.DESTRUCTIVE.strong : null, null)));
 
-        // Ek duyuru bandı — ekin ADI ve İÇERİĞİ gövdede yazılı olmazsa çoğu okuyucu eki kaçırır.
-        // Outlook-güvenli: td + bgcolor, düz hex (rgba yok), div arka planı yok.
-        String attachSection = "";
+        // Ek duyurusu — ekin ADI ve İÇERİĞİ gövdede yazılı olmazsa çoğu okuyucu eki kaçırır.
         if (att != null) {
             String what = att.alarmCount() == 0
                     ? "Bu hafta kesinti yaşanmadı; ek, kapsam ve yöntem notunu içerir."
                     : att.alarmCount() + " alarmın tamamı — izleme türü bazında gruplanmış detay, "
-                      + "kesinti zaman çizelgesi, gün/saat yoğunluğu ve erişilebilirlik tabloları. "
-                      + (att.stillOpenCount() > 0
-                         ? "<strong>" + att.stillOpenCount() + " alarm hâlâ açık.</strong>" : "");
-            attachSection =
-                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
-                + "<td bgcolor='#eff6ff' style='background:#eff6ff;border-left:4px solid #2563eb;"
-                + "border-radius:0 8px 8px 0;padding:12px 16px;font-size:13px;color:#1e293b'>"
-                + "<span style='font-weight:800;color:#1d4ed8'>📎 Ek: ayrıntılı kesinti raporu (PDF)</span><br>"
-                + "<span style='font-size:12px;color:#475569'>" + escHtml(att.fileName()) + "</span><br>"
-                + "<span style='font-size:12px;color:#334155'>" + what + "</span><br>"
-                + "<span style='font-size:11px;color:#64748b'>Ek, bu e-postadan DAHA GENİŞ bir kapsamı "
-                + "raporlar: " + att.monitorTypeCount() + " izleme türünün alarmları. Bu gövde ise yalnız "
-                + "sertifika envanterindeki domainlerin HTTP erişilebilirliğini gösterir — iki yerdeki "
-                + "sayılar bu yüzden birbirini tutmaz.</span>"
-                + "</td></tr></table>";
+                      + "kesinti zaman çizelgesi, gün/saat yoğunluğu ve erişilebilirlik tabloları."
+                      + (att.stillOpenCount() > 0 ? " " + att.stillOpenCount() + " alarm hâlâ açık." : "");
+            String scope = "Ek, bu e-postadan DAHA GENİŞ bir kapsamı raporlar: " + att.monitorTypeCount() + " izleme türünün alarmları. "
+                    + "Bu gövde ise yalnız sertifika envanterindeki domainlerin HTTP erişilebilirliğini gösterir — iki yerdeki sayılar bu yüzden birbirini tutmaz.";
+            d.alertHtml(Tone.INFO, "Ek: ayrıntılı kesinti raporu (PDF)",
+                    MailKit.mono(att.fileName()) + "<br>" + esc(what) + "<br><span style=\"font-size:12px\">" + esc(scope) + "</span>",
+                    "Ek: ayrıntılı kesinti raporu (PDF) — " + att.fileName() + "\n" + what + "\n" + scope);
         }
 
-        // Kesinti bölümü — varsa kırmızı liste, yoksa yeşil "kesinti yok" bandı (mail her durumda gider)
-        StringBuilder down = new StringBuilder();
-        for (AvailabilityRow r : rows) {
-            if (r.outageCount() > 0) {
-                down.append("<tr style='border-top:1px solid #fecaca'>")
-                    .append("<td style='padding:7px 12px;font-size:13px;font-weight:700;color:#991b1b'>").append(escHtml(r.domain())).append("</td>")
-                    .append("<td style='padding:7px 12px;font-size:13px;color:#b91c1c;white-space:nowrap'>").append(pctText(r.availabilityPct())).append("</td>")
-                    .append("<td style='padding:7px 12px;font-size:13px;color:#b91c1c;white-space:nowrap'>")
-                    .append(r.outageCount()).append(" kesinti · ").append(r.downtimeMinutes()).append(" dk</td>")
-                    .append("</tr>");
+        // Kesinti bölümü — varsa liste, yoksa "kesinti yok" (mail her durumda gider)
+        if (s.downDomainCount() > 0) {
+            List<List<Cell>> down = new ArrayList<>();
+            for (AvailabilityRow r : rows) {
+                if (r.outageCount() > 0) {
+                    down.add(List.of(Cell.of(r.domain(), Tone.DESTRUCTIVE.text, true),
+                            Cell.of(pctText(r.availabilityPct()), Tone.DESTRUCTIVE.strong, true),
+                            Cell.of(r.outageCount() + " kesinti · " + r.downtimeMinutes() + " dk", Tone.DESTRUCTIVE.text, false)));
+                }
             }
+            d.heading("Bu hafta kesinti yaşayan domainler (" + s.downDomainCount() + ")");
+            d.table(List.of(Col.of("Domain"), Col.num("Erişilebilirlik"), Col.num("Kesinti")), down);
+        } else {
+            d.alert(Tone.SUCCESS, "Bu hafta hiçbir domain kesinti yaşamadı", null);
         }
-        String downSection = s.downDomainCount() > 0
-            ? "<div style='margin:0 0 18px'>"
-              + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-              + "<td bgcolor='#dc2626' style='background:#dc2626;color:#fff;border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800'>"
-              + "⚠ Bu hafta kesinti yaşayan domainler (" + s.downDomainCount() + ")</td></tr></table>"
-              + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#fef2f2' style='background:#fef2f2;border:1px solid #fecaca;border-top:none;border-radius:0 0 8px 8px'>"
-              + down + "</table></div>"
-            : "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
-              + "<td bgcolor='#ecfdf5' style='background:#ecfdf5;border-left:4px solid #16a34a;border-radius:0 8px 8px 0;"
-              + "padding:12px 16px;font-size:14px;font-weight:700;color:#15803d'>✓ Bu hafta hiçbir domain kesinti yaşamadı 🎉</td>"
-              + "</tr></table>";
 
-        // ── Sayfa Hızı bölümü (opsiyonel) ────────────────────────────────────────────────
-        // Outlook-güvenli: td + bgcolor, düz hex (rgba yok), div arka planı yok.
-        // Bölüm KESİNTİ DEĞİL performans anlatır — başlık ve dip not bunu açıkça söyler ki
-        // okuyan yavaşlığı erişilebilirlik rakamlarıyla karıştırmasın.
-        String pageSpeedSection = "";
+        if (s.bestDomain() != null && s.worstDomain() != null && s.withDataCount() > 0) {
+            d.noteHtml("En yüksek: " + MailKit.strong(s.bestDomain(), Tone.SUCCESS.strong) + " (" + pctText(s.bestPct()) + ") · "
+                            + "En düşük: " + MailKit.strong(s.worstDomain(), pctColor(s.worstPct())) + " (" + pctText(s.worstPct()) + ")",
+                    "En yüksek: " + s.bestDomain() + " (" + pctText(s.bestPct()) + ") · En düşük: " + s.worstDomain() + " (" + pctText(s.worstPct()) + ")");
+        }
+
+        // Domain tablosu (en kötü üstte — servis sıralar)
+        List<List<Cell>> body = new ArrayList<>();
+        for (AvailabilityRow r : rows) {
+            String resp = (r.avgMs() != null) ? r.avgMs() + " / " + (r.p95Ms() != null ? r.p95Ms() : "—") + " ms" : "—";
+            String certTxt = r.certDaysRemaining() != null ? r.certDaysRemaining() + " gün" : "—";
+            String certColor = r.certDaysRemaining() != null && r.certDaysRemaining() <= 30 ? Tone.DESTRUCTIVE.strong
+                             : r.certDaysRemaining() != null && r.certDaysRemaining() <= 60 ? Tone.WARNING.strong : MailTokens.MUTED;
+            body.add(List.of(Cell.of(r.domain()),
+                    Cell.of(pctText(r.availabilityPct()), pctColor(r.availabilityPct()), true),
+                    Cell.of(r.outageCount() > 0 ? r.outageCount() + " · " + r.downtimeMinutes() + " dk" : "—",
+                            r.outageCount() > 0 ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, false),
+                    Cell.of(resp, MailTokens.MUTED, false),
+                    Cell.of(certTxt, certColor, true)));
+        }
+        if (!body.isEmpty()) {
+            d.heading("Domain Erişilebilirlik Detayı");
+            d.table(List.of(Col.of("Domain"), Col.num("Erişilebilirlik"), Col.num("Kesinti"), new Col("Yanıt (ort/p95)", true, true, true),
+                    Col.num("Sertifika")), body);
+        }
+
+        // ── Sayfa Hızı (opsiyonel) — PERFORMANS anlatır, kesinti değil
         if (ps != null && !ps.slowest().isEmpty()) {
-            StringBuilder psBody = new StringBuilder();
-            psBody.append("<tr>")
-                  .append(thCell("Sayfa", "left")).append(thCell("Ort. yükleme", "left"))
-                  .append(thCell("Geçen haftaya göre", "left")).append(thCell("Eşik aşımı", "left"))
-                  .append("</tr>");
+            List<List<Cell>> psRows = new ArrayList<>();
             for (PageSpeedWeeklyRow r : ps.slowest()) {
                 String load = r.avgLoadMs() != null ? r.avgLoadMs() + " ms" : "—";
                 String trend = "—";
-                String trendColor = "#64748b";
+                String trendColor = MailTokens.MUTED;
                 if (r.avgLoadMs() != null && r.prevAvgLoadMs() != null && r.prevAvgLoadMs() > 0) {
                     long diff = r.avgLoadMs() - r.prevAvgLoadMs();
                     long pct = Math.round(100.0 * diff / r.prevAvgLoadMs());
-                    if (pct > 0) { trend = "▲ %" + pct + " yavaşladı"; trendColor = "#b91c1c"; }
-                    else if (pct < 0) { trend = "▼ %" + Math.abs(pct) + " hızlandı"; trendColor = "#15803d"; }
+                    if (pct > 0) { trend = "▲ %" + pct + " yavaşladı"; trendColor = Tone.DESTRUCTIVE.strong; }
+                    else if (pct < 0) { trend = "▼ %" + Math.abs(pct) + " hızlandı"; trendColor = Tone.SUCCESS.strong; }
                     else { trend = "değişmedi"; }
                 }
-                psBody.append("<tr style='border-top:1px solid #e2e8f0'>")
-                      .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>")
-                      .append(escHtml(r.name())).append("</td>")
-                      .append("<td style='padding:9px 13px;font-size:14px;font-weight:800;color:#1e293b;white-space:nowrap'>")
-                      .append(load).append("</td>")
-                      .append("<td style='padding:9px 13px;font-size:13px;font-weight:700;color:").append(trendColor)
-                      .append(";white-space:nowrap'>").append(trend).append("</td>")
-                      .append("<td style='padding:9px 13px;font-size:13px;color:")
-                      .append(r.breachedChecks() > 0 ? "#b91c1c" : "#64748b").append(";white-space:nowrap'>")
-                      .append(r.breachedChecks() > 0 ? r.breachedChecks() + " ölçüm" : "—").append("</td>")
-                      .append("</tr>");
+                psRows.add(List.of(Cell.of(r.name()), Cell.of(load, null, true), Cell.of(trend, trendColor, true),
+                        Cell.of(r.breachedChecks() > 0 ? r.breachedChecks() + " ölçüm" : "—",
+                                r.breachedChecks() > 0 ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, false)));
             }
-            pageSpeedSection =
-                "<div style='margin:0 0 18px'>"
-                + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-                + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
-                + "padding:9px 14px;font-size:13px;font-weight:800'>Sayfa Hızı — en yavaş "
-                + ps.slowest().size() + " sayfa"
-                + (ps.breachedMonitorCount() > 0
-                   ? " · " + ps.breachedMonitorCount() + " izlemede eşik aşıldı" : "")
-                + "</td></tr></table>"
-                + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;"
-                + "border-top:none;border-collapse:collapse'>" + psBody + "</table>"
-                + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;border-top:none;"
-                + "border-radius:0 0 8px 8px;padding:8px 14px;font-size:11px;color:#64748b'>"
-                + "Bu bölüm PERFORMANSI anlatır, kesintiyi değil: yavaş bir sayfa yukarıdaki "
-                + "erişilebilirlik yüzdesini düşürmez. Ölçüm sunucudan çekilen HTML ve alt kaynaklarla "
-                + "yapılır; tarayıcı çalıştırılmadığı için JavaScript ile sonradan yüklenen kaynaklar "
-                + "sayıma girmez.</td></tr></table></div>";
+            d.heading("Sayfa Hızı — en yavaş " + ps.slowest().size() + " sayfa"
+                    + (ps.breachedMonitorCount() > 0 ? " · " + ps.breachedMonitorCount() + " izlemede eşik aşıldı" : ""));
+            d.table(List.of(Col.of("Sayfa"), Col.num("Ort. yükleme"), Col.nw("Geçen haftaya göre"), Col.num("Eşik aşımı")), psRows);
+            d.note("Bu bölüm PERFORMANSI anlatır, kesintiyi değil: yavaş bir sayfa yukarıdaki erişilebilirlik yüzdesini düşürmez. "
+                    + "Ölçüm sunucudan çekilen HTML ve alt kaynaklarla yapılır; tarayıcı çalıştırılmadığı için JavaScript ile sonradan "
+                    + "yüklenen kaynaklar sayıma girmez.");
         }
 
-        // ── Sürüm & Dağıtım satırı (E2) — Outlook-güvenli: td + bgcolor, düz hex ────────────────
-        // Okuyan "bu hafta ne değişti?" sorusunu kesinti tablosunun yanında görsün diye; geri alma
-        // varsa kenar çizgisi kırmızıya döner. TR ana satır + EN alt satır (rapor dili sabit TR).
-        String deploySection = "";
+        // ── Sürüm & Dağıtım (E2) — geri alma varsa ton kırmızı. TR ana satır + EN alt satır.
         if (dep != null) {
             String range = (dep.fromVersion() != null && dep.toVersion() != null && !dep.fromVersion().equals(dep.toVersion()))
                     ? " (v" + dep.fromVersion() + " → v" + dep.toVersion() + ")"
@@ -3391,70 +2685,26 @@ public class EmailNotificationService {
                     ? "No deployments this week; " + dep.restarts() + " restart(s), " + dep.rollbacks() + " rollback(s)"
                     : dep.deployments() + " deployment(s)" + range + ", " + dep.restarts()
                       + " restart(s), " + dep.rollbacks() + " rollback(s) this week";
-            String edge = dep.rollbacks() > 0 ? "#dc2626" : "#64748b";
-            deploySection =
-                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
-                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
-                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
-                + "<span style='font-weight:800;color:#334155'>🚀 Sürüm &amp; Dağıtım</span><br>"
-                + "<span style='font-size:13px;color:#334155'>" + escHtml(tr) + "</span><br>"
-                + "<span style='font-size:11px;color:#64748b'>" + escHtml(en) + "</span>"
-                + "</td></tr></table>";
+            bilingual(d, dep.rollbacks() > 0 ? Tone.DESTRUCTIVE : Tone.NEUTRAL, "Sürüm & Dağıtım", tr, en);
         }
 
-        // Zayıf algoritma bandı (2026-09-12): "temiz" raporun da kanıtı olsun — denetim/uyum ekibi
-        // "0 (tarandı: 212)" satırını görür; zayıf varsa kenar çizgisi kırmızı.
-        String weakSection = "";
+        // Zayıf algoritma (2026-09-12): "temiz" raporun da kanıtı olsun — "0 (tarandı: 212)" satırı görünür.
         if (weak != null) {
-            String edge = weak.weak() > 0 ? "#dc2626" : "#16a34a";
             String tr = weak.weak() == 0
                     ? "Zayıf algoritmalı sertifika yok (tarandı: " + weak.scanned() + " alan)"
                     : weak.weak() + " sertifika zayıf imza/anahtar kullanıyor (tarandı: " + weak.scanned() + " alan) — yenileme planı gerekli";
             String en = weak.weak() == 0
                     ? "No weak-algorithm certificates (" + weak.scanned() + " domains scanned)"
                     : weak.weak() + " certificate(s) use a weak signature/key (" + weak.scanned() + " domains scanned) — renewal plan needed";
-            weakSection =
-                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
-                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
-                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
-                + "<span style='font-weight:800;color:#334155'>🔐 Zayıf Algoritma</span><br>"
-                + "<span style='font-size:13px;color:#334155'>" + escHtml(tr) + "</span><br>"
-                + "<span style='font-size:11px;color:#64748b'>" + escHtml(en) + "</span>"
-                + "</td></tr></table>";
+            bilingual(d, weak.weak() > 0 ? Tone.DESTRUCTIVE : Tone.SUCCESS, "Zayıf Algoritma", tr, en);
         }
 
         // Alan adı (registrar) bitişleri (2026-09-22, madde G): sertifikadan AYRI vade sınıfı — kayıt dolarsa site kaybolur.
         // Boş pencere de raporlanır ("90 günde biten yok, izlenen N"): sessizlik "bakılmadı" ile karışmasın.
-        String domSection = "";
         if (dom != null) {
             boolean any = dom.rows() != null && !dom.rows().isEmpty();
-            String edge = any && dom.rows().stream().anyMatch(r -> r.daysRemaining() != null && r.daysRemaining() <= 30) ? "#dc2626" : any ? "#d97706" : "#16a34a";
-            StringBuilder rowsHtml = new StringBuilder();
-            if (any) {
-                rowsHtml.append("<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin-top:8px;border-collapse:collapse'>")
-                        .append("<tr>").append(thCell("Alan adı", "left")).append(thCell("Kalan", "left")).append(thCell("Bitiş", "left"))
-                        .append(thCell("Registrar", "left")).append(thCell("Kilit", "left")).append(thCell("Plan", "left")).append("</tr>");
-                for (DomainExpiryWeeklyRow r : dom.rows()) {
-                    Integer d = r.daysRemaining();
-                    String dc = d == null ? "#64748b" : d < 0 ? "#991b1b" : d <= 7 ? "#dc2626" : d <= 30 ? "#d97706" : "#1e293b";
-                    String dTxt = d == null ? "—" : d < 0 ? Math.abs(d) + " gün önce doldu" : d + " gün";
-                    String lock = r.transferLock() == null ? "—" : switch (r.transferLock()) {
-                        case "BOTH" -> "registrar+registry"; case "SERVER" -> "registry"; case "CLIENT" -> "registrar";
-                        case "NONE" -> "YOK"; default -> "doğrulanamadı"; };
-                    String lockColor = "NONE".equals(r.transferLock()) ? "#dc2626" : "#475569";
-                    String plan = r.plannedAt() == null ? "—" : (r.planOverdue() ? "GECİKMİŞ " : "") + r.plannedAt();
-                    String planColor = r.planOverdue() ? "#dc2626" : "#475569";
-                    rowsHtml.append("<tr style='border-top:1px solid #e2e8f0'>")
-                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>").append(escHtml(r.domain())).append("</td>")
-                        .append("<td style='padding:7px 12px;font-size:13px;font-weight:800;color:").append(dc).append(";white-space:nowrap'>").append(escHtml(dTxt)).append("</td>")
-                        .append("<td style='padding:7px 12px;font-size:13px;color:#475569;white-space:nowrap'>").append(escHtml(r.expiryDate() == null ? "—" : r.expiryDate().length() >= 10 ? r.expiryDate().substring(0, 10) : r.expiryDate())).append("</td>")
-                        .append("<td style='padding:7px 12px;font-size:12px;color:#475569'>").append(escHtml(r.registrar() == null ? "—" : r.registrar())).append("</td>")
-                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(lockColor).append(";white-space:nowrap'>").append(escHtml(lock)).append("</td>")
-                        .append("<td style='padding:7px 12px;font-size:12px;font-weight:700;color:").append(planColor).append(";white-space:nowrap'>").append(escHtml(plan)).append("</td>")
-                        .append("</tr>");
-                }
-                rowsHtml.append("</table>");
-            }
+            Tone tone = any && dom.rows().stream().anyMatch(r -> r.daysRemaining() != null && r.daysRemaining() <= 30) ? Tone.DESTRUCTIVE
+                    : any ? Tone.WARNING : Tone.SUCCESS;
             String head = any
                     ? dom.rows().size() + " alan adı önümüzdeki " + dom.windowDays() + " günde doluyor (izlenen: " + dom.monitorCount() + ")"
                     : "Önümüzdeki " + dom.windowDays() + " günde biten alan adı yok (izlenen: " + dom.monitorCount() + ")";
@@ -3464,106 +2714,38 @@ public class EmailNotificationService {
                     ? dom.rows().size() + (dom.rows().size() == 1 ? " domain expires" : " domains expire") + " within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)"
                     : "No domain expires within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)";
             String unlockedEn = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + (dom.unlockedCount() == 1 ? " domain has" : " domains have") + " no transfer lock" : "";
-            domSection =
-                "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 18px'><tr>"
-                + "<td bgcolor='#f8fafc' style='background:#f8fafc;border-left:4px solid " + edge + ";"
-                + "border-radius:0 8px 8px 0;padding:10px 16px;font-size:13px;color:#1e293b'>"
-                + "<span style='font-weight:800;color:#334155'>🌐 Alan Adı Bitişleri</span><br>"
-                + "<span style='font-size:13px;color:#334155'>" + escHtml(head + unlocked) + "</span><br>"
-                + "<span style='font-size:11px;color:#64748b'>" + escHtml(headEn + unlockedEn) + "</span>"
-                + rowsHtml
-                + "</td></tr></table>";
+            d.heading("Alan Adı Bitişleri");
+            bilingual(d, tone, null, head + unlocked, headEn + unlockedEn);
+            if (any) {
+                List<List<Cell>> domRows = new ArrayList<>();
+                for (DomainExpiryWeeklyRow r : dom.rows()) {
+                    Integer dd = r.daysRemaining();
+                    String dc = dd == null ? MailTokens.MUTED : dd < 0 ? Tone.DESTRUCTIVE.text : dd <= 7 ? Tone.DESTRUCTIVE.strong
+                            : dd <= 30 ? Tone.WARNING.strong : MailTokens.FG;
+                    String dTxt = dd == null ? "—" : dd < 0 ? Math.abs(dd) + " gün önce doldu" : dd + " gün";
+                    String lock = r.transferLock() == null ? "—" : switch (r.transferLock()) {
+                        case "BOTH" -> "registrar+registry"; case "SERVER" -> "registry"; case "CLIENT" -> "registrar";
+                        case "NONE" -> "YOK"; default -> "doğrulanamadı"; };
+                    String plan = r.plannedAt() == null ? "—" : (r.planOverdue() ? "GECİKMİŞ " : "") + r.plannedAt();
+                    domRows.add(List.of(Cell.of(r.domain()), Cell.of(dTxt, dc, true),
+                            Cell.of(r.expiryDate() == null ? "—" : r.expiryDate().length() >= 10 ? r.expiryDate().substring(0, 10) : r.expiryDate(), MailTokens.MUTED, false),
+                            Cell.of(r.registrar() == null ? "—" : r.registrar(), MailTokens.MUTED, false),
+                            Cell.of(lock, "NONE".equals(r.transferLock()) ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, "NONE".equals(r.transferLock())),
+                            Cell.of(plan, r.planOverdue() ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, r.planOverdue())));
+                }
+                d.table(List.of(Col.of("Alan adı"), Col.num("Kalan"), new Col("Bitiş", false, true, true), Col.opt("Registrar"),
+                        Col.nw("Kilit"), Col.opt("Plan")), domRows);
+            }
         }
+        d.footerMeta("Site Monitor — Otomatik Haftalık Rapor", "Oluşturuldu: " + nowStamp());
+        return d.html();
+    }
 
-        // Domain tablosu (en kötü üstte — servis sıralar)
-        StringBuilder body = new StringBuilder();
-        body.append("<tr>")
-            .append(thCell("Domain", "left")).append(thCell("Erişilebilirlik", "left"))
-            .append(thCell("Kesinti", "left")).append(thCell("Yanıt (ort/p95)", "left"))
-            .append(thCell("Sertifika", "left")).append("</tr>");
-        for (AvailabilityRow r : rows) {
-            String pc = pctColor(r.availabilityPct());
-            String resp = (r.avgMs() != null)
-                ? r.avgMs() + " / " + (r.p95Ms() != null ? r.p95Ms() : "—") + " ms" : "—";
-            String certTxt = r.certDaysRemaining() != null ? r.certDaysRemaining() + " gün" : "—";
-            String certColor = r.certDaysRemaining() != null && r.certDaysRemaining() <= 30 ? "#dc2626"
-                             : r.certDaysRemaining() != null && r.certDaysRemaining() <= 60 ? "#d97706" : "#475569";
-            body.append("<tr style='border-top:1px solid #e2e8f0'>")
-                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#1e293b;word-break:break-all'>").append(escHtml(r.domain())).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:14px;font-weight:800;color:").append(pc).append(";white-space:nowrap'>").append(pctText(r.availabilityPct())).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:").append(r.outageCount() > 0 ? "#b91c1c" : "#64748b").append(";white-space:nowrap'>")
-                .append(r.outageCount() > 0 ? r.outageCount() + " · " + r.downtimeMinutes() + " dk" : "—").append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>").append(resp).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:").append(certColor).append(";white-space:nowrap'>").append(certTxt).append("</td>")
-                .append("</tr>");
-        }
-        String table =
-            "<div style='margin:0 0 18px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800'>Domain Erişilebilirlik Detayı</td></tr></table>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;border-collapse:collapse'>"
-            + body + "</table></div>";
-
-        String bestWorst = (s.bestDomain() != null && s.worstDomain() != null && s.withDataCount() > 0)
-            ? "<p style='font-size:13px;color:#475569;margin:0 0 14px;line-height:1.7'>"
-              + "En yüksek: <strong style='color:#15803d'>" + escHtml(s.bestDomain()) + "</strong> (" + pctText(s.bestPct()) + ") · "
-              + "En düşük: <strong style='color:" + pctColor(s.worstPct()) + "'>" + escHtml(s.worstDomain()) + "</strong> (" + pctText(s.worstPct()) + ")</p>"
-            : "";
-
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            // Outlook (Word motoru) yazı tipi fallback'i — Segoe UI yoksa Arial
-            + "<!--[if mso]><style>table,td,div,p{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
-            + "<style>@media only screen and (max-width:870px){"
-            + ".em-pad{padding:16px 0!important}.em-card{border-radius:0!important;width:100%!important}"
-            + ".em-body{padding:14px!important}}</style></head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            // Dış padding TABLO style'ında değil merkez TD'sinde — Outlook tablo padding'ini yok sayar
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td align='center' class='em-pad' bgcolor='" + outerBg + "' style='padding:24px 10px'>"
-            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
-            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'>"
-            + "<tr><td bgcolor='#ffffff' style='padding:0'>"
-            // Marka barı (BRAND.md §5.1) + Üst bar
-            + brandBar()
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>HAFTALIK ERİŞİLEBİLİRLİK</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>📊 " + escHtml(teamName) + "</div>"
-            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(weekLabel) + "</div>"
-            + "</td></tr></table>"
-            // Gövde — div padding'i Outlook yok sayar → td padding'i (em-body class'ı td'de)
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
-            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın " + escHtml(teamName) + " ekibi,</strong></p>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
-            + "Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + escHtml(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.</p>"
-            + kpi
-            + attachSection
-            + downSection
-            + bestWorst
-            + table
-            + pageSpeedSection
-            + deploySection
-            + weakSection
-            + domSection
-            // Footer
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Haftalık Rapor</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table>"   // em-body td + gövde tablosu
-            + "</td></tr></table>"   // kart iç td + kart tablosu
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table></body></html>";   // merkez td + dış tablo
+    /** İki dilli tonlu bant (TR ana satır + EN alt satır). */
+    private static void bilingual(MailDoc d, Tone tone, String title, String tr, String en) {
+        d.alertHtml(tone, title == null ? null : esc(title),
+                esc(tr) + "<br><span style=\"font-size:12px;line-height:18px\">" + esc(en) + "</span>",
+                (title == null ? "" : title + ": ") + tr + "\n" + en);
     }
 
     // ── Aylık sertifika envanteri raporu ─────────────────────────────────────
@@ -3576,346 +2758,184 @@ public class EmailNotificationService {
     public record InventoryFindingGroup(String title, int total, List<String[]> samples, int hidden) { }
 
     /**
-     * Aylık sertifika envanteri raporu — 850px "haftalık aile" düzeni.
-     * Sıra: marka barı → başlık → KPI bandı (Aktif/Pasif/Silinmiş/Toplam) → kalan süre tablosu
-     * → hijyen bulguları → ek notu → CTA → footer.
+     * Aylık sertifika envanteri raporu (640px rapor kartı). Sıra: başlık → KPI kutuları
+     * (Aktif/Pasif/Toplam) → kalan süre tablosu → hijyen bulguları → ek notu → CTA → alt bilgi.
      */
     public String buildCertInventoryReportHtml(String monthLabel, Map<String, Integer> counts,
                                                List<InventoryReportRow> rows,
                                                List<InventoryFindingGroup> findings,
                                                List<String> attachmentNames) {
-        String accent = "#1f3864";
-        String outerBg = "#eef2f7";
-        String generatedAt = java.time.ZonedDateTime.now(java.time.ZoneId.of("Europe/Istanbul"))
-                .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-
+        MailDoc d = MailDoc.create("[Site Monitor] Aylık Sertifika Envanteri — " + nzs(monthLabel)).wide()
+                .preheader(nzs(monthLabel) + " envanter özeti · " + counts.getOrDefault("active", 0) + " aktif kayıt")
+                .kicker("Aylık Sertifika Envanteri");
+        d.title("Envanter Raporu", monthLabel);
+        d.paragraphHtml("<strong>Sayın Sertifika Ekibi,</strong>", "Sayın Sertifika Ekibi,");
+        d.paragraphHtml("Aşağıda sertifika envanterinin <strong>" + esc(monthLabel) + "</strong> dönemi özeti yer almaktadır. "
+                        + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.",
+                "Aşağıda sertifika envanterinin " + nzs(monthLabel) + " dönemi özeti yer almaktadır. "
+                        + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.");
         // Silinmiş kayıtlar raporda YOK — sahibinden aksiyon beklenmeyen satırlar gürültü yapıyordu.
-        String kpi = "<table width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " style='margin:4px 0 18px;border-collapse:separate;border-spacing:8px 0'><tr>"
-            + kpiCard("AKTİF", String.valueOf(counts.getOrDefault("active", 0)), "#16a34a", "#f0fdf4")
-            + kpiCard("PASİF", String.valueOf(counts.getOrDefault("passive", 0)), "#64748b", "#f8fafc")
-            + kpiCard("TOPLAM", String.valueOf(counts.getOrDefault("total", 0)), "#0f172a", "#f1f5f9")
-            + "</tr></table>";
+        d.stats(List.of(
+                new Stat("Aktif", String.valueOf(counts.getOrDefault("active", 0)), Tone.SUCCESS.strong, null),
+                new Stat("Pasif", String.valueOf(counts.getOrDefault("passive", 0)), MailTokens.MUTED, null),
+                new Stat("Toplam", String.valueOf(counts.getOrDefault("total", 0)), null, null)));
 
-        StringBuilder body = new StringBuilder();
-        body.append("<tr>")
-            .append(thCell("Domain", "left")).append(thCell("Takım", "left")).append(thCell("Tier", "left"))
-            .append(thCell("Kalan Gün", "left")).append(thCell("Bitiş", "left")).append(thCell("Durum", "left"))
-            .append("</tr>");
+        List<List<Cell>> body = new ArrayList<>();
         for (InventoryReportRow r : rows) {
-            String color = daysColor(r.daysRemaining());
-            body.append("<tr>")
-                .append("<td style='padding:9px 13px;font-size:13px;font-weight:600;color:#0f172a'>").append(escHtml(r.domain())).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:#475569'>").append(escHtml(nzText(r.teamName()))).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>")
-                .append(r.tier() == null ? "—" : "T" + r.tier()).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;font-weight:700;color:").append(color).append(";white-space:nowrap'>")
-                .append(r.daysRemaining() == null ? "veri yok" : r.daysRemaining() + " gün").append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:#475569;white-space:nowrap'>")
-                .append(escHtml(nzText(r.notAfter()))).append("</td>")
-                .append("<td style='padding:9px 13px;font-size:13px;color:#475569'>").append(escHtml(nzText(r.status()))).append("</td>")
-                .append("</tr>");
+            body.add(List.of(Cell.of(r.domain()), Cell.of(nzText(r.teamName()), MailTokens.MUTED, false),
+                    Cell.of(r.tier() == null ? "—" : "T" + r.tier(), MailTokens.MUTED, false),
+                    Cell.of(r.daysRemaining() == null ? "veri yok" : r.daysRemaining() + " gün", daysColor(r.daysRemaining()), true),
+                    Cell.of(nzText(r.notAfter()), MailTokens.MUTED, false),
+                    Cell.of(nzText(r.status()), MailTokens.MUTED, false)));
         }
-        String table =
-            "<div style='margin:0 0 18px'>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#fff;border-radius:8px 8px 0 0;"
-            + "padding:9px 14px;font-size:13px;font-weight:800'>Sertifika Kalan Süreleri</td></tr></table>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;"
-            + "border-top:none;border-radius:0 0 8px 8px;border-collapse:collapse'>" + body + "</table></div>";
+        if (!body.isEmpty()) {
+            d.heading("Sertifika Kalan Süreleri");
+            d.table(List.of(Col.of("Domain"), Col.nw("Takım"), new Col("Tier", false, true, true), Col.num("Kalan Gün"),
+                    new Col("Bitiş", false, true, true), Col.opt("Durum")), body);
+        }
 
-        StringBuilder hy = new StringBuilder();
         if (findings == null || findings.isEmpty()) {
-            hy.append("<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>")
-              .append("<td bgcolor='#f0fdf4' style='background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;")
-              .append("padding:12px 14px;font-size:13px;color:#15803d;font-weight:700'>")
-              .append("✓ Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.</td></tr></table>");
+            d.alert(Tone.SUCCESS, "Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.", null);
         } else {
             for (InventoryFindingGroup g : findings) {
-                StringBuilder lines = new StringBuilder();
-                for (String[] s : g.samples()) {
-                    lines.append("<tr><td style='padding:6px 13px;font-size:13px;font-weight:600;color:#0f172a;")
-                         .append("border-top:1px solid #f1f5f9;white-space:nowrap'>").append(escHtml(s[0])).append("</td>")
-                         .append("<td style='padding:6px 13px;font-size:13px;color:#b45309;border-top:1px solid #f1f5f9'>")
-                         .append(escHtml(s[1])).append("</td></tr>");
-                }
-                if (g.hidden() > 0) {
-                    lines.append("<tr><td colspan='2' style='padding:6px 13px;font-size:12px;color:#94a3b8;")
-                         .append("border-top:1px solid #f1f5f9'>+").append(g.hidden())
-                         .append(" kayıt daha — tamamı ekteki dosyalarda</td></tr>");
-                }
-                hy.append(reportSection(g.title() + " (" + g.total() + ")",
-                        "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'>"
-                        + lines + "</table>", "#b45309"));
+                List<List<Cell>> lines = new ArrayList<>();
+                for (String[] s : g.samples()) lines.add(List.of(Cell.of(s[0]), Cell.of(s[1], Tone.WARNING.text, false)));
+                d.heading(g.title() + " (" + g.total() + ")");
+                d.table(List.of(Col.of("Kayıt"), Col.of("Bulgu")), lines);
+                if (g.hidden() > 0) d.note("+" + g.hidden() + " kayıt daha — tamamı ekteki dosyalarda");
             }
         }
 
         // Her dosya adı AYRI escape edilir; ayırıcı işaretleme escape'in DIŞINDA kalmalı —
         // eskiden tüm birleşik metin escape edilince kullanıcı ham "</strong>, <strong>" görüyordu.
-        String attachNote = (attachmentNames == null || attachmentNames.isEmpty()) ? ""
-            : "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-              + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
-              + "padding:12px 14px;font-size:13px;color:#334155'>"
-              + "📎 Envanterin tamamı ektedir: "
-              + attachmentNames.stream().map(n -> "<strong>" + escHtml(n) + "</strong>")
-                    .collect(java.util.stream.Collectors.joining(", "))
-              + "</td></tr></table>";
-
+        if (attachmentNames != null && !attachmentNames.isEmpty()) {
+            d.alertHtml(Tone.NEUTRAL, "Envanterin tamamı ektedir",
+                    attachmentNames.stream().map(n -> "<strong>" + esc(n) + "</strong>").collect(java.util.stream.Collectors.joining(", ")),
+                    "Envanterin tamamı ektedir: " + String.join(", ", attachmentNames));
+        }
         // Sertifika Envanteri ekranının sekmesi "domains" (App.jsx) — "inventory" diye bir sekme yok.
-        String cta = ctaButton(appSettings.getString("site.monitor.app.base-url", appBaseUrl) + "/?tab=domains",
-                "Sertifika Envanterini Görüntüle", accent);
-
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'>"
-            + "<head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<meta http-equiv='X-UA-Compatible' content='IE=edge'>"
-            + "<!--[if mso]><style>table,td,div,p{font-family:'Segoe UI',Arial,sans-serif!important}</style><![endif]-->"
-            + "<style>@media only screen and (max-width:870px){"
-            + ".em-pad{padding:16px 0!important}.em-card{border-radius:0!important;width:100%!important}"
-            + ".em-body{padding:14px!important}}</style></head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";-webkit-text-size-adjust:100%;font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='" + outerBg + "' style='background:" + outerBg + ";mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td align='center' class='em-pad' bgcolor='" + outerBg + "' style='padding:24px 10px'>"
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0'"
-            + " bgcolor='#ffffff' style='max-width:850px;width:100%;background:#ffffff;"
-            + "border:1px solid #d7dde5;border-radius:14px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'>"
-            + "<tr><td bgcolor='#ffffff' style='padding:0'>"
-            + brandBar()
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#aebed8;font-size:11px;font-weight:700;letter-spacing:.12em'>AYLIK SERTİFİKA ENVANTERİ</div>"
-            + "<div style='color:#ffffff;font-size:22px;font-weight:900;margin-top:10px;line-height:1.25'>Envanter Raporu</div>"
-            + "<div style='color:#dbe3ef;font-size:15px;font-weight:700;margin-top:8px'>" + escHtml(monthLabel) + "</div>"
-            + "</td></tr></table>"
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
-            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın Sertifika Ekibi,</strong></p>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 14px'>"
-            + "Aşağıda sertifika envanterinin <strong>" + escHtml(monthLabel) + "</strong> dönemi özeti yer almaktadır. "
-            + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.</p>"
-            + kpi
-            + table
-            + hy
-            + attachNote
-            + "<div style='margin:18px 0 4px'>" + cta + "</div>"
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Site Monitor — Otomatik Aylık Envanter Raporu</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table>"
-            + "</td></tr></table>"
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table></body></html>";
+        d.button(liveBaseUrl() + "/?tab=domains", "Sertifika Envanterini Görüntüle");
+        d.footerMeta("Site Monitor — Otomatik Aylık Envanter Raporu", "Oluşturuldu: " + nowStamp());
+        return d.html();
     }
 
-    /** Kalan güne göre renk — EmailTemplateBuilder.urgencyColor ile aynı skala. */
+    /** Kalan güne göre renk — EmailTemplateBuilder aciliyet skalasıyla aynı tonlar. */
     private static String daysColor(Integer days) {
-        if (days == null) return "#94a3b8";
-        if (days < 0) return "#7B241C";
-        if (days <= 7) return "#C0392B";
-        if (days <= 15) return "#CA6F1E";
-        if (days <= 30) return "#D68910";
-        return "#1E8449";
+        if (days == null) return MailTokens.MUTED;
+        if (days < 0) return Tone.DESTRUCTIVE.text;
+        if (days <= 7) return Tone.DESTRUCTIVE.strong;
+        if (days <= 30) return Tone.WARNING.strong;
+        return Tone.SUCCESS.strong;
     }
 
     private static String nzText(String s) { return s == null || s.isBlank() ? "—" : s; }
 
-    private String kpiCard(String label, String value, String valueColor, String bg) {
-        return "<td width='25%' bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid #e2e8f0;"
-            + "border-radius:10px;padding:12px 14px' valign='top'>"
-            + "<div style='font-size:22px;font-weight:900;color:" + valueColor + ";line-height:1.1'>" + escHtml(value) + "</div>"
-            + "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#94a3b8;margin-top:5px'>" + escHtml(label) + "</div>"
-            + "</td>";
-    }
-
-    private String thCell(String label, String align) {
-        return "<td bgcolor='#1e293b' align='" + align + "' style='background:#1e293b;padding:9px 13px;"
-            + "font-size:11px;font-weight:700;letter-spacing:.06em;color:#cbd5e1;white-space:nowrap'>" + escHtml(label) + "</td>";
-    }
-
     /** Availability %'sine göre renk: ≥99.9 yeşil, ≥99 amber, <99 kırmızı, null gri. */
     private static String pctColor(Double pct) {
-        if (pct == null) return "#94a3b8";
-        if (pct >= 99.9) return "#16a34a";
-        if (pct >= 99.0) return "#d97706";
-        return "#dc2626";
+        if (pct == null) return MailTokens.MUTED;
+        if (pct >= 99.9) return Tone.SUCCESS.strong;
+        if (pct >= 99.0) return Tone.WARNING.strong;
+        return Tone.DESTRUCTIVE.strong;
     }
     private static String pctText(Double pct) {
         if (pct == null) return "veri yok";
         return String.format(java.util.Locale.US, "%.2f%%", pct);
     }
 
-    private String reportSection(String title, String bodyHtml, String accent) {
-        return "<div style='margin-bottom:20px'>"
-            // Başlık şeridi: div shading yerine td + bgcolor (Outlook uyumu)
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";color:#ffffff;"
-            + "border-radius:8px 8px 0 0;padding:9px 14px;font-size:13px;font-weight:800;"
-            + "letter-spacing:.02em'>" + title + "</td></tr></table>"
-            // Gövde kabı TABLO+TD: Word <div> padding'i yok sayar, <td> padding'ini onurlandırır
-            // → iç boşluk (başlık ile içerik arası dahil) Outlook'ta da render olur.
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0' style='border-collapse:collapse'><tr>"
-            + "<td class='wr-md' style='border:1px solid #e2e8f0;border-top:none;border-radius:0 0 8px 8px;"
-            + "padding:14px'>"
-            + (bodyHtml == null || bodyHtml.isBlank()
-                ? "<p style='color:#94a3b8;font-size:13px;margin:0'>—</p>" : bodyHtml)
-            + "</td></tr></table></div>";
-    }
+    // ── Olay & Hata bildirimi (manuel SRE kaydı) ─────────────────────────────
 
-    /**
-     * Olay & Hata bildirimi — executive Outlook/Mac-safe şablon (table + bgcolor attr,
-     * inline stil; div shading'e güvenmez). Önem'e göre renklenen başlık, künye tablosu,
-     * RCA / iş etkisi / çözüm bölümleri ve olayı açma CTA'sı. {@code inc} = controller dto
-     * (snake_case alanlar). Mevcut buildWeeklyReportHtml deseniyle birebir uyumlu.
-     */
     /** 4-arg: mail gönderimi için (forEmail=true → görseller CID inline). */
     public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
                                                 String kind, String ctaUrl) {
         return buildIncidentNotificationHtml(inc, managerName, kind, ctaUrl, true);
     }
 
-    /** forEmail=false: UI önizlemesi (iframe) — markdown görselleri /api/incidents/images/{id} URL'siyle
-     *  kalır (CID'e çevrilmez), iframe oturum çerezi ile yükler. */
+    /**
+     * Olay & Hata bildirimi — önem rozeti, künye, RCA / iş etkisi / çözüm bölümleri ve olayı açma
+     * CTA'sı. {@code inc} = controller dto (snake_case alanlar). forEmail=false: UI önizlemesi (iframe) —
+     * markdown görselleri /api/incidents/images/{id} URL'siyle kalır (CID'e çevrilmez).
+     */
     public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
                                                 String kind, String ctaUrl, boolean forEmail) {
         boolean resolved = "RESOLVED".equals(kind);
         boolean isNew = "NEW".equals(kind);
         String sev = str(inc.get("severity"));
-        // Çözüldüde önem rengi yerine YEŞİL (iyi haber); aksi halde önem rengi.
-        String accent = resolved ? "#15803d" : switch (sev == null ? "" : sev) {
-            case "CRITICAL" -> "#b91c1c";
-            case "HIGH"     -> "#c2410c";
-            case "MEDIUM"   -> "#b45309";
-            case "LOW"      -> "#15803d";
-            default          -> "#1f3864";
-        };
-        String outerBg = "#f4f6f8";
         String title = str(inc.get("title"));
         String teamName = str(inc.get("team_name"));
-        String generatedAt = ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-        String eyebrow = resolved ? "Site Monitor — Olay Çözüldü ✓"
-                       : isNew    ? "Site Monitor — Yeni Olay Bildirimi"
-                                  : "Site Monitor — Olay Güncellendi";
+        String status = str(inc.get("status"));
+        String eyebrow = resolved ? "Olay Çözüldü" : isNew ? "Yeni Olay Bildirimi" : "Olay Güncellendi";
+        Tone sevTone = switch (sev) {
+            case "CRITICAL" -> Tone.DESTRUCTIVE;
+            case "HIGH", "MEDIUM" -> Tone.WARNING;
+            case "LOW" -> Tone.NEUTRAL;
+            default -> Tone.INFO;
+        };
 
-        StringBuilder facts = new StringBuilder()
-            .append(kvRow("Önem", sevBadgeText(sev)))
-            .append(kvRow("Durum", statusText(str(inc.get("status"))), statusColor(str(inc.get("status")))))
-            .append(kvRow("Takım", teamName))
-            .append(kvRow("Kanal", str(inc.get("channel"))))
-            .append(kvRow("Servis / Domain", str(inc.get("service"))))
-            .append(kvRow("Kategori", str(inc.get("category"))))
-            .append(kvRow("Oluş Zamanı", fmtOrDash(formatIstanbul(str(inc.get("occurred_at"))))))
-            .append(kvRow("Tespit Zamanı", fmtOrDash(formatIstanbul(str(inc.get("detected_at"))))))
-            .append(kvRow("Çözülme Zamanı", fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))))));
-        if (inc.get("duration_minutes") != null) facts.append(kvRow("Süre", inc.get("duration_minutes") + " dk"));
-        if (Boolean.TRUE.equals(inc.get("sla_breached"))) facts.append(kvRow("SLA", "İHLAL EDİLDİ"));
-        if (inc.get("error_budget_burn_pct") != null) facts.append(kvRow("Error Budget Tüketimi", inc.get("error_budget_burn_pct") + "%"));
+        MailDoc d = MailDoc.create("[Site Monitor] " + eyebrow + " — " + title).wide()
+                .preheader(sevBadgeText(sev) + " · " + teamName + " — " + title)
+                .kicker(eyebrow);
+        d.badges(sevTone == Tone.DESTRUCTIVE ? Badge.solid(sevBadgeText(sev), sevTone) : Badge.tint(sevBadgeText(sev), sevTone),
+                Badge.tint(statusText(status), statusTone(status)));
+        d.title(title, sevBadgeText(sev) + " · " + teamName);
+        String manager = managerName != null && !managerName.isBlank() ? managerName : "Yetkili";
+        d.paragraphHtml("<strong>Sayın " + esc(manager) + ",</strong>", "Sayın " + manager + ",");
+        d.paragraphHtml(resolved ? "Ekibinize ait bir olay/hata kaydı <strong>çözüldü</strong>. Çözüm özeti aşağıdadır."
+                        : isNew ? "Ekibinize ait yeni bir olay/hata kaydı oluşturuldu. Yönetici özeti aşağıdadır."
+                        : "Ekibinize ait bir olay/hata kaydı güncellendi. Güncel yönetici özeti aşağıdadır.",
+                resolved ? "Ekibinize ait bir olay/hata kaydı çözüldü. Çözüm özeti aşağıdadır."
+                        : isNew ? "Ekibinize ait yeni bir olay/hata kaydı oluşturuldu. Yönetici özeti aşağıdadır."
+                        : "Ekibinize ait bir olay/hata kaydı güncellendi. Güncel yönetici özeti aşağıdadır.");
+        if (resolved) {
+            String resolvedAt = fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))));
+            String dur = inc.get("duration_minutes") != null ? inc.get("duration_minutes") + " dk" : "—";
+            d.alertHtml(Tone.SUCCESS, "Bu olay çözüldü",
+                    "Çözülme: <strong>" + esc(resolvedAt) + "</strong> &middot; Süre: <strong>" + esc(dur) + "</strong>",
+                    "Bu olay çözüldü — Çözülme: " + resolvedAt + " · Süre: " + dur);
+        }
+        d.button(ctaUrl, "Olay kaydını açmak için tıklayınız →");
 
-        String factsTable = "<table width='100%' cellpadding='0' cellspacing='0' border='0' "
-            + "style='border-collapse:collapse'>" + facts + "</table>";
+        List<Row> facts = new ArrayList<>();
+        facts.add(Row.of("Önem", sevBadgeText(sev)));
+        facts.add(new Row("Durum", MailKit.strong(statusText(status), statusColor(status)), statusText(status)));
+        facts.add(Row.of("Takım", nzText(teamName)));
+        facts.add(Row.of("Kanal", nzText(str(inc.get("channel")))));
+        facts.add(Row.of("Servis / Domain", nzText(str(inc.get("service")))));
+        facts.add(Row.of("Kategori", nzText(str(inc.get("category")))));
+        facts.add(Row.of("Oluş Zamanı", fmtOrDash(formatIstanbul(str(inc.get("occurred_at"))))));
+        facts.add(Row.of("Tespit Zamanı", fmtOrDash(formatIstanbul(str(inc.get("detected_at"))))));
+        facts.add(Row.of("Çözülme Zamanı", fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))))));
+        if (inc.get("duration_minutes") != null) facts.add(Row.of("Süre", inc.get("duration_minutes") + " dk"));
+        if (Boolean.TRUE.equals(inc.get("sla_breached"))) facts.add(new Row("SLA", MailKit.strong("İHLAL EDİLDİ", Tone.DESTRUCTIVE.strong), "İHLAL EDİLDİ"));
+        if (inc.get("error_budget_burn_pct") != null) facts.add(Row.of("Error Budget Tüketimi", inc.get("error_budget_burn_pct") + "%"));
+        d.card("Olay Künyesi", null, MailKit.keyValue(facts), kvText(facts));
 
-        String cta = (ctaUrl != null && !ctaUrl.isBlank())
-            ? "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:2px 0 18px'>"
-              + "<tr><td align='center'>" + ctaButton(ctaUrl, "Olay kaydını açmak için tıklayınız &rarr;", accent)
-              + "</td></tr></table>"
-            : "";
-
-        return "<!DOCTYPE html><html lang='tr' xmlns:v='urn:schemas-microsoft-com:vml'"
-            + " xmlns:o='urn:schemas-microsoft-com:office:office'><head><meta charset='UTF-8'>"
-            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1'>"
-            + LIGHT_SCHEME_META
-            + "<style>body,table,td{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}"
-            + ".inc-md p{margin:0;font-size:14px;line-height:1.7;color:#1e293b}"
-            + "@media only screen and (max-width:870px){.em-wrap{padding:0!important}"
-            + ".em-card{border-radius:0!important;width:100%!important}.em-body{padding:14px!important}}</style></head>"
-            + "<body bgcolor='" + outerBg + "' style='margin:0;padding:0;background:" + outerBg
-            + ";font-family:\"Segoe UI\",Tahoma,Arial,sans-serif'>"
-            + "<table class='em-wrap' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='" + outerBg
-            + "' style='background:" + outerBg + ";padding:24px 10px'><tr><td align='center' bgcolor='" + outerBg + "'>"
-            // MSO ghost-table: Outlook'ta kartı 850px sabit + ortalı tutar (availability deseni)
-            + "<!--[if mso]><table role='presentation' width='850' align='center' cellpadding='0' cellspacing='0' border='0'><tr><td><![endif]-->"
-            + "<table class='em-card' width='850' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff' "
-            + "style='max-width:850px;width:100%;background:#ffffff;border:1px solid #d7dde5;border-radius:14px;"
-            + "overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.10)'><tr><td bgcolor='#ffffff' style='padding:0'>"
-            + brandBar()   // BRAND.md §5.1 lockup
-            // ── Başlık (önem rengi) ──
-            + "<table width='100%' cellpadding='0' cellspacing='0' border='0'><tr>"
-            + "<td bgcolor='" + accent + "' style='background:" + accent + ";padding:22px 24px'>"
-            + "<div style='color:#ffffff;opacity:.78;font-size:11px;font-weight:700;letter-spacing:.12em'>"
-            + escHtml(eyebrow) + "</div>"
-            + "<div style='color:#ffffff;font-size:21px;font-weight:900;margin-top:10px;line-height:1.3'>"
-            + escHtml(title) + "</div>"
-            + "<div style='color:#ffffff;opacity:.92;font-size:14px;font-weight:700;margin-top:8px'>"
-            + escHtml(sevBadgeText(sev)) + " &middot; " + escHtml(teamName) + "</div>"
-            + "</td></tr></table>"
-            // ── Gövde ── (div padding'i Outlook yok sayar → td-tabanlı em-body)
-            + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#ffffff'><tr>"
-            + "<td class='em-body' bgcolor='#ffffff' style='padding:22px 24px'>"
-            + "<p style='font-size:15px;color:#0f172a;margin:0 0 6px'><strong>Sayın "
-            + escHtml(managerName != null && !managerName.isBlank() ? managerName : "Yetkili") + ",</strong></p>"
-            + "<p style='font-size:14px;color:#334155;line-height:1.7;margin:0 0 18px'>"
-            + (resolved ? "Ekibinize ait bir olay/hata kaydı <strong>çözüldü</strong>. Çözüm özeti aşağıdadır."
-                     : isNew ? "Ekibinize ait yeni bir olay/hata kaydı oluşturuldu. Yönetici özeti aşağıdadır."
-                     : "Ekibinize ait bir olay/hata kaydı güncellendi. Güncel yönetici özeti aşağıdadır.")
-            + "</p>"
-            + (resolved ? resolvedBanner(inc) : "")
-            + cta
-            + reportSection("Olay Künyesi", factsTable, accent)
-            + reportSection("Kök Neden (RCA)", textBlock(str(inc.get("rca_summary")), forEmail), accent)
-            + incidentSectionOpt("Teknik Açıklama", str(inc.get("description")), accent, forEmail)
-            + reportSection("İş Etkisi", textBlock(str(inc.get("business_impact")), forEmail), accent)
-            + reportSection("Çözüm / Müdahale Adımları", textBlock(str(inc.get("resolution_steps")), forEmail), accent)
-            + cta
-            // ── Footer ──
-            + "<table width='100%' cellpadding='0' cellspacing='0'><tr>"
-            + "<td valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;color:#94a3b8'>"
-            + "Site Monitor — Olay & Hata Bildirimi</td>"
-            + "<td align='right' valign='top' style='border-top:1px solid #f1f5f9;padding-top:12px;font-size:11px;"
-            + "color:#94a3b8'>Oluşturuldu: " + generatedAt + "</td></tr></table>"
-            + "</td></tr></table></td></tr></table>"
-            + "<!--[if mso]></td></tr></table><![endif]-->"
-            + "</td></tr></table></body></html>";
+        incidentSection(d, "Kök Neden (RCA)", str(inc.get("rca_summary")), forEmail, true);
+        incidentSection(d, "Teknik Açıklama", str(inc.get("description")), forEmail, false);
+        incidentSection(d, "İş Etkisi", str(inc.get("business_impact")), forEmail, true);
+        incidentSection(d, "Çözüm / Müdahale Adımları", str(inc.get("resolution_steps")), forEmail, true);
+        d.button(ctaUrl, "Olay kaydını açmak için tıklayınız →");
+        d.footerMeta("Site Monitor — Olay & Hata Bildirimi", "Oluşturuldu: " + nowStamp());
+        return d.html();
     }
 
-    /** Çözüldü banner'ı — yeşil başarı kutusu + çözülme zamanı/süre. */
-    private String resolvedBanner(Map<String, Object> inc) {
-        String resolvedAt = fmtOrDash(formatIstanbul(str(inc.get("resolved_at"))));
-        String dur = inc.get("duration_minutes") != null ? inc.get("duration_minutes") + " dk" : "—";
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'>"
-            + "<tr><td bgcolor='#ecfdf5' style='background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:14px 16px'>"
-            + "<div style='font-size:15px;font-weight:800;color:#065f46'>&#10003; Bu olay çözüldü</div>"
-            + "<div style='font-size:13px;color:#047857;margin-top:6px'>Çözülme: <strong>" + escHtml(resolvedAt)
-            + "</strong> &middot; Süre: <strong>" + escHtml(dur) + "</strong></div>"
-            + "</td></tr></table>";
+    private static String kvText(List<Row> rows) {
+        StringBuilder t = new StringBuilder();
+        for (Row r : rows) t.append(r.label()).append(": ").append(r.text()).append('\n');
+        return t.toString();
     }
 
-    /** Künye satırı (label/value) — Outlook-safe td+bgcolor. */
-    private String kvRow(String label, String value) {
-        String v = (value == null || value.isBlank()) ? "—" : escHtml(value);
-        return "<tr>"
-            + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;padding:8px 12px;"
-            + "font-size:13px;font-weight:700;color:#475569;width:38%;vertical-align:top'>" + escHtml(label) + "</td>"
-            + "<td style='border:1px solid #e2e8f0;padding:8px 12px;font-size:13px;color:#0f172a;"
-            + "vertical-align:top;word-break:break-word'>" + v + "</td></tr>";
-    }
-
-    /** Künye satırı — renkli + kalın değer (örn. Durum: Çözüldü=yeşil). */
-    private String kvRow(String label, String value, String valueColor) {
-        String v = (value == null || value.isBlank()) ? "—" : escHtml(value);
-        return "<tr>"
-            + "<td bgcolor='#f8fafc' style='background:#f8fafc;border:1px solid #e2e8f0;padding:8px 12px;"
-            + "font-size:13px;font-weight:700;color:#475569;width:38%;vertical-align:top'>" + escHtml(label) + "</td>"
-            + "<td style='border:1px solid #e2e8f0;padding:8px 12px;font-size:13px;color:" + valueColor + ";"
-            + "font-weight:700;vertical-align:top;word-break:break-word'>" + v + "</td></tr>";
+    /** Olay bölüm kartı (markdown gövde); {@code always=false} ise boş gövdede kart çizilmez. */
+    private void incidentSection(MailDoc d, String title, String md, boolean forEmail, boolean always) {
+        String body = textBlock(md, forEmail);
+        if (body.isBlank() && !always) return;
+        d.card(title, null, body.isBlank() ? MailKit.note("—") : body, md == null || md.isBlank() ? "—" : md);
     }
 
     /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
     private static final Pattern INC_CID_IMG = Pattern.compile("<img src=\"cid:incimg(\\d+)\"");
     private static final Pattern INC_API_IMG = Pattern.compile("<img src=\"(/api/incidents/images/\\d+)\"");
+    /** Olay görseli tavanı: 640 rapor kartı − 2×24 − bölüm kartı boşlukları. */
+    private static final int INC_IMG_MAX_WIDTH = 556;
 
     /** Olay markdown alanı → HTML: TAM markdown (GFM tablo/liste/kalın/görev kutusu) + gömülü görseller.
      *  forEmail=true → /api/incidents/images/{id} CID inline (mail; InlineImage'ları IncidentNotificationService
@@ -3929,24 +2949,18 @@ public class EmailNotificationService {
         String html = taskCheckboxesToSymbols(MD_RENDERER.render(MD_PARSER.parse(src)));
         html = forEmail
                 ? INC_CID_IMG.matcher(html).replaceAll(
-                    "<img width=\"680\" border=\"0\" alt=\"Olay görseli\" style=\"display:block;width:100%;max-width:680px;height:auto;"
-                    + "border-radius:8px;margin:8px 0;border:1px solid #e2e8f0\" src=\"cid:incimg$1\"")
+                    "<img width=\"" + INC_IMG_MAX_WIDTH + "\" border=\"0\" alt=\"Olay görseli\" style=\"display:block;width:100%;max-width:"
+                    + INC_IMG_MAX_WIDTH + "px;height:auto;border-radius:8px;margin:8px 0;border:1px solid " + MailTokens.BORDER + "\" src=\"cid:incimg$1\"")
                 : INC_API_IMG.matcher(html).replaceAll(
                     "<img style=\"display:block;max-width:100%;height:auto;border-radius:8px;margin:8px 0;"
-                    + "border:1px solid #e2e8f0\" src=\"$1\"");
+                    + "border:1px solid " + MailTokens.BORDER + "\" src=\"$1\"");
         return inlineBlockStyles(html);
-    }
-
-    /** Boş değilse bölüm kutusu üretir (boş markdown alanında boş kutu render etmemek için). */
-    private String incidentSectionOpt(String title, String md, String accent, boolean forEmail) {
-        String body = textBlock(md, forEmail);
-        return body.isBlank() ? "" : reportSection(title, body, accent);
     }
 
     private static String fmtOrDash(String s) { return (s == null || s.isBlank()) ? "—" : s; }
 
     private static String sevBadgeText(String sev) {
-        if (sev == null) return "—";
+        if (sev == null || sev.isBlank()) return "—";
         return switch (sev) {
             case "CRITICAL" -> "KRİTİK"; case "HIGH" -> "YÜKSEK";
             case "MEDIUM"   -> "ORTA";   case "LOW"  -> "DÜŞÜK";
@@ -3955,7 +2969,7 @@ public class EmailNotificationService {
     }
 
     private static String statusText(String st) {
-        if (st == null) return "—";
+        if (st == null || st.isBlank()) return "—";
         return switch (st) {
             case "OPEN" -> "Açık"; case "INVESTIGATING" -> "İnceleniyor";
             case "MITIGATED" -> "Hafifletildi"; case "RESOLVED" -> "Çözüldü";
@@ -3963,123 +2977,86 @@ public class EmailNotificationService {
         };
     }
 
-    /** Durum rengi (künye "Durum" hücresi) — severity renk deseninin eşi. */
-    private static String statusColor(String st) {
-        if (st == null) return "#6b7280";
+    private static Tone statusTone(String st) {
+        if (st == null) return Tone.NEUTRAL;
         return switch (st) {
-            case "RESOLVED"      -> "#15803d";  // yeşil
-            case "OPEN"          -> "#dc2626";  // kırmızı
-            case "INVESTIGATING" -> "#ea580c";  // turuncu
-            case "MITIGATED"     -> "#f59e0b";  // amber
-            default              -> "#6b7280";  // gri
+            case "RESOLVED"      -> Tone.SUCCESS;
+            case "OPEN"          -> Tone.DESTRUCTIVE;
+            case "INVESTIGATING", "MITIGATED" -> Tone.WARNING;
+            default              -> Tone.NEUTRAL;
         };
     }
 
-    /** Sayı rozeti — tek tablo HÜCRESİ. E-posta-güvenli: inline-block/margin/
-     *  border-radius/8-haneli-hex YOK (Outlook/Apple Mail bunları bozar). Düz
-     *  açık zemin (bgcolor attribute) + tam renk kenarlık. numChipRow ile sarılır. */
-    private String numChip(String label, Object value, String color) {
-        String v = value != null ? String.valueOf(value) : "0";
-        String bg = tint(color, 0.12);
-        return "<td bgcolor='" + bg + "' style='background:" + bg + ";border:1px solid " + color
-            + ";padding:8px 13px;font-size:14px;font-weight:700;color:" + color
-            + ";white-space:nowrap;text-align:center'>" + escHtml(label) + ": " + escHtml(v) + "</td>";
+    /** Durum rengi (künye "Durum" hücresi) — severity renk deseninin eşi. */
+    private static String statusColor(String st) {
+        return statusTone(st).strong;
     }
 
-    /** Rozet hücrelerini tek satırlık tabloya sarar. Yerleşim INLINE: Outlook (Word)
-     *  &lt;head&gt;&lt;style&gt; sınıf kurallarını (.wr-md table) yok sayar, önizleme
-     *  (iframe/tarayıcı) onurlandırır. Aynı görünüm için width:100% + border-collapse
-     *  + eşit kolon genişlikleri satır-içinde verilir. */
-    private String numChipRow(String... cells) {
-        int n = cells.length;
-        String w = (n > 0 ? Math.round(100.0 / n) : 100) + "%";
-        StringBuilder tds = new StringBuilder();
-        for (String c : cells) {
-            // Her hücreye eşit yüzde: Word otomatik dağıtım yerine eşit kolon kullansın
-            tds.append(c.replaceFirst("<td ", "<td width='" + w + "' "));
-        }
-        // Üst boşluk artık bölüm gövdesi <td> padding'inden gelir (Outlook+önizleme aynı);
-        // chip tablosunun üst marjı 0 — yoksa önizlemede çift boşluk olurdu (Word marjı yok sayar).
-        return "<table role='presentation' border='0' cellspacing='0' cellpadding='0' width='100%'"
-            + " style='width:100%;border-collapse:collapse;margin:0 0 10px'><tr>"
-            + tds + "</tr></table>";
+    // ── Haftalık rapor özet bloğu (KPI / skor / izleme göstergeleri / alan adı koruması) ──
+
+    /** Özet + KPI + izleme göstergeleri + alan adı koruması — "Haftalık Özet ve Göstergeler" kartının gövdesi.
+     *  İçerik yoksa (eski/veri-yok) boş döner → kart hiç çizilmez. */
+    private Part weeklyOverview(Map<String, Object> k) {
+        return join(weeklySummaryBlock(k), weeklyKpiBlock(k), weeklyMonitoringBlock(k), weeklyDomainProtectionBlock(k));
     }
 
-    /** Haftalık rapor e-postası hero KPI özeti — canlı cert/alarm/uptime (WeeklyReportKpiService.current).
+    /** Haftalık rapor KPI özeti — canlı cert/alarm/uptime (WeeklyReportKpiService.current).
      *  Anahtarlar: total_certs, expiring, alarms, critical, uptime_pct. null/boş → hiç gösterilmez. */
-    private String weeklyKpiBlock(Map<String, Object> k) {
-        if (k == null || k.isEmpty()) return "";
+    private Part weeklyKpiBlock(Map<String, Object> k) {
+        if (k == null || k.isEmpty()) return Part.EMPTY;
         Object up = k.get("uptime_pct");
         String uptime = up instanceof Number n ? String.format(java.util.Locale.US, "%.2f%%", n.doubleValue()) : "—";
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 16px'>"
-            + "<tr><td style='font-size:11px;font-weight:700;letter-spacing:.08em;color:#64748b;"
-            + "padding-bottom:8px;text-transform:uppercase'>Haftalık Özet</td></tr>"
-            + "<tr><td>"
-            + numChipRow(
-                numChip("Toplam Sertifika", k.get("total_certs"), "#334155"),
-                numChip("Bu Hafta Dolan",   k.get("expiring"),    "#d97706"),
-                numChip("Açılan Alarm",     k.get("alarms"),      "#dc2626"),
-                numChip("Kritik ≤7",   k.get("critical"),    "#ea580c"),
-                numChip("Uptime",           uptime,               "#16a34a"))
-            + "</td></tr></table>";
+        Part stats = statsPart(List.of(
+                numStat("Toplam Sertifika", k.get("total_certs"), null),
+                numStat("Bu Hafta Dolan", k.get("expiring"), Tone.WARNING.strong),
+                numStat("Açılan Alarm", k.get("alarms"), Tone.DESTRUCTIVE.strong),
+                numStat("Kritik ≤7", k.get("critical"), Tone.DESTRUCTIVE.strong),
+                new Stat("Uptime", uptime, Tone.SUCCESS.strong, null)));
+        return new Part(subHead("Haftalık Özet") + stats.html(), "Haftalık Özet: " + stats.text());
     }
 
-    /** Özet + KPI şeridini "Haftalık Özet ve Göstergeler" başlıklı rapor bölümüne sarar (ekrandaki akordeonla tutarlı).
-     *  İçerik yoksa (eski/veri-yok) boş bölüm ÇİZMEZ. */
-    private String weeklyOverviewSection(Map<String, Object> kpiSummary, String accent) {
-        String body = weeklySummaryBlock(kpiSummary) + weeklyKpiBlock(kpiSummary)
-                + weeklyMonitoringBlock(kpiSummary) + weeklyDomainProtectionBlock(kpiSummary);
-        return body.isBlank() ? "" : reportSection("Haftalık Özet ve Göstergeler", body, accent);
+    /** İç başlık (kart içinde küçük bölüm etiketi). */
+    private static String subHead(String t) {
+        return "<p style=\"margin:10px 0 6px;font-size:12px;line-height:16px;font-weight:600;letter-spacing:0.04em;color:"
+                + MailTokens.MUTED + "\">" + esc(t.toUpperCase(java.util.Locale.forLanguageTag("tr"))) + "</p>";
     }
 
     /**
-     * Alan adı koruması — kara listede / transfer kilidi olmayan domain sayısı. Outlook-safe
-     * (satır içi hex, rgba yok, tablo düzeni).
+     * Alan adı koruması — kara listede / transfer kilidi olmayan domain sayısı.
      *
      * <p>"Doğrulanamadı" AYRI yazılır: kilidi doğrulayamamak ile kilidin olmaması aynı şey
      * değildir ve tek rakama katmak yönetime yanlış bir tablo gösterirdi. Sorun yoksa bölüm
      * yine çizilir — "her şey yolunda" da bir bilgidir.
      */
-    @SuppressWarnings("unchecked")
-    private String weeklyDomainProtectionBlock(Map<String, Object> k) {
+    private Part weeklyDomainProtectionBlock(Map<String, Object> k) {
         Object p = k == null ? null : k.get("domain_protection");
-        if (!(p instanceof Map<?, ?> prot)) return "";
+        if (!(p instanceof Map<?, ?> prot)) return Part.EMPTY;
         int total = prot.get("total") instanceof Number n ? n.intValue() : 0;
-        if (total == 0) return "";
+        if (total == 0) return Part.EMPTY;
         int listed = prot.get("listed") instanceof Number n ? n.intValue() : 0;
         int unlocked = prot.get("unlocked") instanceof Number n ? n.intValue() : 0;
         int unverified = prot.get("lock_unverified") instanceof Number n ? n.intValue() : 0;
-
-        String head = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;"
-                + "text-transform:uppercase;margin:12px 0 4px'>Alan Adı Koruması</div>";
-        StringBuilder rows = new StringBuilder();
-        rows.append(protRow("İzlenen alan adı", total, "#334155"));
-        rows.append(protRow("Kara listede", listed, listed > 0 ? "#dc2626" : "#16a34a"));
-        rows.append(protRow("Transfer kilidi yok", unlocked, unlocked > 0 ? "#dc2626" : "#16a34a"));
-        if (unverified > 0) rows.append(protRow("Kilit doğrulanamadı", unverified, "#64748b"));
-        return head + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' "
-                + "style='margin:0 0 12px;border-collapse:collapse'>" + rows + "</table>";
+        List<Row> rows = new ArrayList<>();
+        rows.add(protRow("İzlenen alan adı", total, MailTokens.FG));
+        rows.add(protRow("Kara listede", listed, listed > 0 ? Tone.DESTRUCTIVE.strong : Tone.SUCCESS.strong));
+        rows.add(protRow("Transfer kilidi yok", unlocked, unlocked > 0 ? Tone.DESTRUCTIVE.strong : Tone.SUCCESS.strong));
+        if (unverified > 0) rows.add(protRow("Kilit doğrulanamadı", unverified, MailTokens.MUTED));
+        return new Part(subHead("Alan Adı Koruması") + MailKit.keyValue(rows), "Alan Adı Koruması:\n" + kvText(rows));
     }
 
-    private String protRow(String label, int value, String color) {
-        return "<tr>"
-             + "<td style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>"
-             + escHtml(label) + "</td>"
-             + "<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:" + color
-             + ";border-bottom:1px solid #eef1f4'>" + value + "</td>"
-             + "</tr>";
+    private static Row protRow(String label, int value, String color) {
+        return new Row(label, MailKit.strong(String.valueOf(value), color), String.valueOf(value));
     }
 
-    /** İzleme göstergeleri — tür başına tek satır (tür · izleme · erişim% · sorun), Outlook-safe.
+    /** İzleme göstergeleri — tür başına tek satır (tür · izleme · erişim% · sorun).
      *  Anahtar: monitoring (List&lt;Map&gt;: type/active/success_pct/alarms). İzlemesi 0 olan tür satırı gizlenir; hiç yoksa boş. */
-    @SuppressWarnings("unchecked")
-    private String weeklyMonitoringBlock(Map<String, Object> k) {
+    private Part weeklyMonitoringBlock(Map<String, Object> k) {
         Object mon = k == null ? null : k.get("monitoring");
-        if (!(mon instanceof List<?> list) || list.isEmpty()) return "";
+        if (!(mon instanceof List<?> list) || list.isEmpty()) return Part.EMPTY;
         // Etiketler KANONİK katalogdan. Buradaki yerel kopyada "scripted" ve "page" yoktu; o türler
         // e-postada ham anahtarıyla ("scripted") yazılıyordu — bkz. MonitorTypeCatalog.
         Map<String, String> labels = MonitorTypeCatalog.LABELS_TR;
-        StringBuilder rows = new StringBuilder();
+        List<List<Cell>> rows = new ArrayList<>();
         for (Object o : list) {
             if (!(o instanceof Map<?, ?> row)) continue;
             int active = row.get("active") instanceof Number n ? n.intValue() : 0;
@@ -4088,78 +3065,64 @@ public class EmailNotificationService {
             Object rate = row.get("success_pct");
             String rateStr = rate instanceof Number rn ? String.format(java.util.Locale.US, "%.1f%%", rn.doubleValue()) : "—";
             int alarms = row.get("alarms") instanceof Number an ? an.intValue() : 0;
-            String alarmColor = alarms > 0 ? "#dc2626" : "#64748b";
-            rows.append("<tr>")
-              .append("<td style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>").append(escHtml(label)).append("</td>")
-              .append("<td align='right' style='padding:5px 8px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>").append(active).append("</td>")
-              .append("<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:#334155;border-bottom:1px solid #eef1f4'>").append(rateStr).append("</td>")
-              .append("<td align='right' style='padding:5px 8px;font-size:13px;font-weight:700;color:").append(alarmColor).append(";border-bottom:1px solid #eef1f4'>").append(alarms).append("</td>")
-              .append("</tr>");
+            rows.add(List.of(Cell.of(label), Cell.of(String.valueOf(active)), Cell.of(rateStr, null, true),
+                    Cell.of(String.valueOf(alarms), alarms > 0 ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, alarms > 0)));
         }
-        if (rows.length() == 0) return "";
-        String head = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;text-transform:uppercase;margin:12px 0 4px'>İzleme Göstergeleri</div>";
-        String th = "<tr>"
-              + "<td style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Tür</td>"
-              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>İzleme</td>"
-              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Erişim</td>"
-              + "<td align='right' style='padding:5px 8px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;border-bottom:1px solid #e5e8ec'>Sorun</td>"
-              + "</tr>";
-        return head + "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border-collapse:collapse'>"
-                + th + rows + "</table>";
+        if (rows.isEmpty()) return Part.EMPTY;
+        StringBuilder t = new StringBuilder("İzleme Göstergeleri:\n");
+        for (List<Cell> r : rows) t.append("- ").append(r.get(0).text()).append(" · İzleme: ").append(r.get(1).text())
+                .append(" · Erişim: ").append(r.get(2).text()).append(" · Sorun: ").append(r.get(3).text()).append('\n');
+        return new Part(subHead("İzleme Göstergeleri") + MailKit.space(MailKit.dataTable(
+                List.of(Col.of("Tür"), Col.num("İzleme"), Col.num("Erişim"), Col.num("Sorun")), rows, false), 8), t.toString());
     }
 
-    /** Executive özet bloğu (e-posta) — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 30 gün).
-     *  Anahtarlar: score/score_band/manager_text/actions/lookahead. Skor yoksa (eski/veri-yok) → boş. Outlook-safe. */
+    /** Executive özet bloğu — sağlık skoru + yönetici paragrafı + iki kompakt tablo (aksiyon, 30 gün).
+     *  Anahtarlar: score/score_band/manager_text/actions/lookahead. Skor yoksa (eski/veri-yok) → boş. */
     @SuppressWarnings("unchecked")
-    private String weeklySummaryBlock(Map<String, Object> k) {
-        if (k == null || k.get("score") == null) return "";
+    private Part weeklySummaryBlock(Map<String, Object> k) {
+        if (k == null || k.get("score") == null) return Part.EMPTY;
         int score = ((Number) k.get("score")).intValue();
         String band = String.valueOf(k.getOrDefault("score_band", "red"));
-        String bandColor = "green".equals(band) ? "#16a34a" : "amber".equals(band) ? "#d97706" : "#dc2626";
-        String para = escHtml(String.valueOf(k.getOrDefault("manager_text", "")));
-        String head =
-            "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 14px'><tr>"
-            + "<td valign='top' width='120' style='padding:0 16px 0 0;white-space:nowrap'>"
-            + "<div style='font-size:34px;font-weight:800;color:" + bandColor + ";line-height:1'>" + score
-            + "<span style='font-size:15px;color:#94a3b8'>/100</span></div>"
-            + "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#94a3b8;text-transform:uppercase;margin-top:2px'>Haftalık Sağlık Skoru</div>"
-            + "</td>"
-            + "<td valign='top' style='font-size:14px;line-height:1.7;color:#334155'>" + para + "</td>"
+        String bandColor = "green".equals(band) ? Tone.SUCCESS.strong : "amber".equals(band) ? Tone.WARNING.strong : Tone.DESTRUCTIVE.strong;
+        String paraText = String.valueOf(k.getOrDefault("manager_text", ""));
+        // Skor + paragraf: masaüstünde yan yana, telefonda alt alta (.stack).
+        String head = "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>"
+            + "<td class=\"stack\" valign=\"top\" width=\"140\" style=\"width:140px;padding:0 16px 12px 0\">"
+            + MailKit.metric(String.valueOf(score), "/100", bandColor)
+            + "<p style=\"margin:4px 0 0;font-size:12px;line-height:16px;font-weight:500;color:" + MailTokens.MUTED + "\">Haftalık Sağlık Skoru</p></td>"
+            + "<td class=\"stack\" valign=\"top\" style=\"padding:0 0 12px;font-size:14px;line-height:22px;color:" + MailTokens.FG
+            + ";word-break:break-word;overflow-wrap:anywhere\">" + esc(paraText) + "</td>"
             + "</tr></table>";
         // Önümüzdeki 30 Gün: kayıt yoksa bölüm hiç eklenmez (kullanıcı isteği) — Aksiyon tablosu ise boşken "Kayıt yok" gösterir.
         List<Map<String, Object>> lookahead = (List<Map<String, Object>>) k.get("lookahead");
-        return head
-            + summaryActionTable("Aksiyon Gerektirenler", (List<Map<String, Object>>) k.get("actions"))
-            + (lookahead == null || lookahead.isEmpty() ? "" : summaryActionTable("Önümüzdeki 30 Gün", lookahead));
+        Part actions = summaryActionTable("Aksiyon Gerektirenler", (List<Map<String, Object>>) k.get("actions"));
+        Part ahead = lookahead == null || lookahead.isEmpty() ? Part.EMPTY : summaryActionTable("Önümüzdeki 30 Gün", lookahead);
+        return join(new Part(head, "Haftalık Sağlık Skoru: " + score + "/100\n" + paraText), actions, ahead);
     }
 
-    /** Özet aksiyon/14-gün tablosu — td/bgcolor tier şeridi, sağa hizalı gün (Outlook-safe). Boş → "Kayıt yok". */
-    private String summaryActionTable(String title, List<Map<String, Object>> items) {
-        String hdr = "<div style='font-size:10px;font-weight:700;letter-spacing:.08em;color:#64748b;"
-                + "text-transform:uppercase;margin:8px 0 4px'>" + escHtml(title) + "</div>";
+    /** Özet aksiyon/30-gün tablosu — tier rengi nokta (sol şerit DEĞİL), sağa hizalı gün. Boş → "Kayıt yok". */
+    private Part summaryActionTable(String title, List<Map<String, Object>> items) {
         if (items == null || items.isEmpty()) {
-            return hdr + "<div style='font-size:13px;color:#94a3b8;margin-bottom:10px'>Kayıt yok</div>";
+            return new Part(subHead(title) + MailKit.space(MailKit.note("Kayıt yok"), 8), title + ": Kayıt yok");
         }
-        StringBuilder sb = new StringBuilder(hdr);
-        sb.append("<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='margin:0 0 12px;border-collapse:collapse'>");
+        List<List<Cell>> rows = new ArrayList<>();
+        StringBuilder t = new StringBuilder(title).append(":\n");
         for (Map<String, Object> a : items) {
-            String stripe = tierColor(a.get("tier"));
             String type = "domain".equals(a.get("type")) ? "Domain" : "Sertifika";
             Object days = a.get("days_left");
-            sb.append("<tr>")
-              .append("<td width='4' bgcolor='").append(stripe).append("' style='background-color:").append(stripe)
-              .append(";width:4px;font-size:0;line-height:0'>&nbsp;</td>")
-              .append("<td style='padding:6px 10px;font-size:13px;color:#334155;border-bottom:1px solid #eef1f4'>")
-              .append(escHtml(String.valueOf(a.get("name")))).append(" <span style='color:#94a3b8;font-size:11px'>").append(type).append("</span></td>")
-              .append("<td align='right' style='padding:6px 10px;font-size:13px;font-weight:700;color:#334155;border-bottom:1px solid #eef1f4;white-space:nowrap'>")
-              .append(days != null ? days + " gün" : "—").append("</td></tr>");
+            String name = String.valueOf(a.get("name"));
+            String dot = "<span style=\"color:" + tierColor(a.get("tier")) + ";font-size:14px\">&#9679;</span>&nbsp;";
+            rows.add(List.of(Cell.html(dot + esc(name) + " <span style=\"font-size:12px;font-weight:400;color:" + MailTokens.MUTED + "\">"
+                            + type + "</span>", name + " (" + type + ")"),
+                    Cell.of(days != null ? days + " gün" : "—", null, true)));
+            t.append("- ").append(name).append(" (").append(type).append("): ").append(days != null ? days + " gün" : "—").append('\n');
         }
-        return sb.append("</table>").toString();
+        return new Part(subHead(title) + MailKit.space(MailKit.dataTable(List.of(Col.of("Kayıt"), Col.num("Kalan")), rows, false), 8), t.toString());
     }
 
     private static String tierColor(Object tier) {
         int t = tier instanceof Number n ? n.intValue() : 0;
-        return switch (t) { case 1 -> "#dc2626"; case 2 -> "#d97706"; case 3 -> "#2563eb"; default -> "#94a3b8"; };
+        return switch (t) { case 1 -> Tone.DESTRUCTIVE.strong; case 2 -> Tone.WARNING.strong; case 3 -> Tone.INFO.strong; default -> "#a1a1aa"; };
     }
 
     /** Hex rengi beyazla harmanlar (ratio=renk payı) → düz açık ton. 8-haneli
@@ -4172,20 +3135,6 @@ public class EmailNotificationService {
         g = (int) Math.round(g * ratio + 255 * (1 - ratio));
         b = (int) Math.round(b * ratio + 255 * (1 - ratio));
         return String.format("#%02x%02x%02x", r, g, b);
-    }
-
-    private String metaLine(String label, String value) {
-        if (value == null || value.isBlank()) return "";
-        return "<p style='font-size:13px;color:#334155;margin:4px 0'><strong>" + label + ":</strong> "
-            + escHtml(value) + "</p>";
-    }
-
-    /** Takip linki satırı — URL açık yazılmaz; tıklanabilir metin etikettir
-     *  (kullanıcı isteği: mailde çıplak URL paylaşılmasın). */
-    private String linkLine(String label, String url) {
-        if (url == null || url.isBlank()) return "";
-        return "<p style='font-size:13px;margin:4px 0'>🔗 <a href='" + escHtml(url)
-            + "' style='color:#1f3864;font-weight:700'>" + escHtml(label) + "</a></p>";
     }
 
     @SuppressWarnings("unchecked")
@@ -4243,56 +3192,11 @@ public class EmailNotificationService {
         return (clock == null || "—".equals(words)) ? words : words + " · " + clock;
     }
 
-    // ── Recovery-mail zenginleştirme yardımcıları (iç tablo + iki bağlam sarmalayıcısı) ──
+    private static String nzs(String s) { return s == null ? "" : s; }
 
-    /** "Neden bu e-postayı aldınız?" iç tablosu (alıcı şeffaflığı; Outlook-güvenli). */
-    private String whyReceivingInner(String teamNames) {
-        String phrase = (teamNames != null && !teamNames.isBlank())
-                ? "<strong>" + escHtml(teamNames) + "</strong> ekibine" : "ilgili izleme grubuna";
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' bgcolor='#f8fafc' style='background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;mso-table-lspace:0pt;mso-table-rspace:0pt'><tr><td style='padding:12px 16px'>"
-            + "<div style='font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b;margin-bottom:5px'>Neden bu e-postayı aldınız?</div>"
-            + "<div style='font-size:13px;line-height:1.55;color:#1f2937'>Bu bildirim " + phrase
-            + " tanımlı bir izleme için gönderildi. Site Monitor otomatik bir izleme sistemidir; bildirim tercihleri için sistem yöneticinize başvurun.</div>"
-            + "</td></tr></table>";
-    }
-
-    /** Erişilebilirlik özeti iç tablosu (son 24s/7g uptime% + kesinti sayısı). Veri yoksa boş. */
-    private String uptimeSummaryInner(UptimeSummary u) {
-        if (u == null || u.pct24h() == null) return "";
-        String p24 = String.format(java.util.Locale.US, "%.2f", u.pct24h());
-        String p7 = u.pct7d() != null ? String.format(java.util.Locale.US, "%.2f", u.pct7d()) : "—";
-        return "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' border='0' style='border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;mso-table-lspace:0pt;mso-table-rspace:0pt'>"
-            + "<tr><td colspan='2' bgcolor='#334155' style='background-color:#334155;padding:9px 14px;font-size:11px;font-weight:700;letter-spacing:.1em;color:#94a3b8'>ERİŞİLEBİLİRLİK ÖZETİ</td></tr>"
-            + tableRow2col("📈 Son 24 saat", p24 + "% uptime · " + u.outages24h() + " kesinti")
-            + tableRow2col("🗓 Son 7 gün", p7 + "% uptime · " + u.outages7d() + " kesinti")
-            + "</table>";
-    }
-
-    /** Row-bağlam (em-card <tr> dizisi) sarmalayıcıları — buildRichMonitoringResolvedHtml için. */
-    private String uptimeSummaryRow(UptimeSummary u) {
-        String inner = uptimeSummaryInner(u);
-        return inner.isEmpty() ? "" : "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 14px'>" + inner + "</td></tr>";
-    }
-    private String whyReceivingRow(String teamNames) {
-        return "<tr><td bgcolor='#ffffff' style='background-color:#ffffff;padding:0 24px 18px'>" + whyReceivingInner(teamNames) + "</td></tr>";
-    }
-    /** Block-bağlam (tek gövde <td>'si içinde ardışık tablolar) — monitoringTypedResolved için (alt boşluklu). */
-    private String uptimeSummaryBlock(UptimeSummary u) {
-        String inner = uptimeSummaryInner(u);
-        return inner.isEmpty() ? "" : "<div style='margin:0 0 14px'>" + inner + "</div>";
-    }
-    private String whyReceivingBlock(String teamNames) {
-        return "<div style='margin:0 0 14px'>" + whyReceivingInner(teamNames) + "</div>";
-    }
-
-    /** Kardeş {@code EmailTemplateBuilder.esc} ve {@code MailCta.esc} ile AYNI küme: tek tırnak da
-     *  kaçırılır. Bu dosyada href/src öznitelikleri TEK tırnakla yazılıyor
-     *  ({@code "<a href='" + escHtml(...) + "'"}) ve değer kullanıcının girdiği monitör URL'i;
-     *  içinde tek tırnak geçen (tamamen geçerli) bir URL özniteliği kapatıp alarm mailinin
-     *  başlığını bozuyor, linki kırıyor ve öznitelik enjeksiyonuna açık bırakıyordu. */
-    private static String escHtml(String s) {
-        if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                .replace("\"", "&quot;").replace("'", "&#39;");
+    /** TEK kaçış kaynağı {@link MailKit#esc} (beş karakter: href/src öznitelikleri tek ve çift tırnakla
+     *  yazılıyor; içinde tek tırnak geçen geçerli bir URL özniteliği kapatıp enjeksiyona açık bırakıyordu). */
+    private static String esc(String s) {
+        return MailKit.esc(s);
     }
 }

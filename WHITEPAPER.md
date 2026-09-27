@@ -735,6 +735,18 @@ site.monitor.email.from=gonderen@adres
 
 SMTP ayarlarını çalışma anında **Ayarlar → SMTP** ekranından da yönetebilir ve test e-postası gönderebilirsiniz; kayıtlı parola AES-GCM ile şifrelenir.
 
+### 9.5 7/24 İzleme Ekibi (NOC) Bildirimleri
+
+Kurumsal 7/24 izleme ekibi (NOC) ekranları sürekli izler ve bir sorun gördüğünde sorumlu takımı **telefonla** arar. Gece ya da hafta sonu takım uyurken bir kesinti olursa NOC yalnız kendisine bildirilen izlemelerden haberdar olur. Site Monitor bu köprüyü e-postayla kurar:
+
+- **İzleme başına seçim:** her izleme türünde ve sertifika envanterinde "7/24 izleme ekibine bildir" anahtarı vardır — **varsayılan kapalıdır**. Açıksa, takım e-postasını üreten aynı alarm açılışı NOC gruplarına da e-posta gönderir.
+- **NOC grupları:** **Ayarlar → 7/24 İzleme Ekibi** bölümünde tanımlanan, takımdan bağımsız e-posta listeleri (grup başına 1–50 adres; aktif / varsayılan; test e-postası). İzleme özel bir grup seçmezse e-posta varsayılan gruplara, hiç varsayılan yoksa tüm aktif gruplara gider.
+- **Tür anahtarları:** yönetici bir türü (ör. Ping) kapatırsa o türdeki TÜM izlemelerin NOC e-postası durur — izleme "bildir" dese bile.
+- **Kurallar:** yalnız seçilen seviye ve üstü gider (varsayılan: yalnız kritik). Takımın sessiz saatleri, seviye eşikleri ve kişisel susturmalar NOC'u etkilemez; bakım pencereleri ve genel e-posta kapatma etkiler. Alarm başına tek açılış e-postası gider; açılış NOC'a gittiyse çözülünce "ÇÖZÜLDÜ" e-postası da gider (kapatılabilir). Fırtına / toplu kesintide NOC da takım gibi tek toplu e-posta alır.
+- **E-posta içeriği:** konu `[Site Monitor] [7/24] <SEVİYE> — <hedef> — <Takım>`; gövdede ne olduğu, sahibi takım, **arama listesi** (ad · unvan · tıklanabilir telefon — telefon Active Directory'den canlı okunur), Takım Müdürü, eskalasyon kişileri, arama talimatı ve izleme bağlantısı. Posta günlüğünde kategori `NOC`.
+
+Hangi izlemelerin NOC'a gitmediği **7/24 Kapsamı** ekranında görünür (bkz. §14.31); Genel Bakış'taki uyarı şeridi oraya götürür.
+
 ---
 ## 10. İzleme Türleri
 
@@ -1044,7 +1056,7 @@ Kendi yetkinizi merak ediyorsanız kullanıcı menüsünden profilinize bakabili
 ---
 ## 14. Kullanıcı Ekranları ve Aksiyonlar
 
-Bu bölüm arayüzün sekme sekme gezisidir. Sekmeler kenar çubuğunda gruplanır: Sertifikalar, İzleme, Uyarılar, Raporlar, Kayıtlar ve Yönetim. İzleme sekmelerinin kavramsal ayrıntısı [10. İzleme Türleri](#10-izleme-turleri) bölümündedir; burada ekran davranışlarına odaklanılır. Önce tüm ekranlarda geçerli olan ortak davranışlarla başlıyoruz — bunları bir kez öğrendiğinizde her sayfada işinize yarayacaklar.
+Bu bölüm arayüzün sekme sekme gezisidir. Sekmeler kenar çubuğunda, her birinin kendi ikonu olan bölümlerde gruplanır: Genel Bakış, Sertifikalar, İzleme, Alarmlar, Raporlar, Kayıtlar ve Yönetim; Yardım en altta ayrı durur. Etkin sekmenin bölümü kendiliğinden açılır. Kenar çubuğu Ctrl+B ile ikon görünümüne daraltılabilir; bu görünümde bir bölüm ikonuna tıklamak o bölümün sekmelerini yanda açar. Telefonda kenar çubuğu üst çubuktaki menü düğmesiyle kayarak açılır ve bir sekmeye dokununca kapanır; bildirim zili üst çubuktadır. İzleme sekmelerinin kavramsal ayrıntısı [10. İzleme Türleri](#10-izleme-turleri) bölümündedir; burada ekran davranışlarına odaklanılır. Önce tüm ekranlarda geçerli olan ortak davranışlarla başlıyoruz — bunları bir kez öğrendiğinizde her sayfada işinize yarayacaklar.
 
 ### 14.1 Tüm Ekranlarda Ortak Davranışlar
 
@@ -1052,9 +1064,9 @@ Arayüz tek sayfa uygulamasıdır; sekmeler arasında geçiş sayfa yenilemez. B
 
 **Paylaşılabilir bağlantı.** Ekranda gördüğünüz durumun tamamı adres çubuğuna yazılır: sekme, takım ve grup filtresi, arama metni, istatistik kartı seçimi, sıralama, sayfa numarası ve açık olan detay penceresi. Örneğin `?tab=keyword&group=Odeme&q=api&page=2&monitor=42` adresini kopyalayıp bir meslektaşınıza gönderdiğinizde o kişi birebir aynı görünümü açar. Her izleme sayfasında ve her detay penceresinde bir **Bağlantıyı Kopyala** butonu vardır; adres panoya kopyalanır ve size bildirim gösterilir. Varsayılan değerler adrese yazılmaz, yani gereksiz filtre uygulamadığınızda bağlantı temiz kalır. Sekme değiştirdiğinizde önceki sayfanın parametreleri temizlenir. E-postalardan gelen eski `?monitor=` bağlantıları çalışmaya devam eder.
 
-**Sayfalama.** Hiçbir liste ekranı aynı anda ikiyüzden fazla kayıt çizmez. Tüm liste görünümleri — dokuz izleme sayfası, Durum İzleme, panodaki sertifika kartları, envanter, bakım pencereleri ve sunucu taraflı listeler — aynı sayfalama bileşenini kullanır. Sayfa boyutunu 25 / 50 / 100 / 200 arasından seçersiniz (varsayılan 50) ve seçiminiz o görünüm için hatırlanır. Alt çubukta "Sayfa X/Y · A–B / N kayıt" bilgisi ile İlk / Önceki / numaralı / Sonraki / Son gezinme bulunur; on sayfadan fazlasında doğrudan sayfa numarası yazabileceğiniz bir kutu çıkar. Filtre veya aramayı değiştirdiğinizde ilk sayfaya dönersiniz; altmış saniyelik otomatik yenileme sayfa konumunuzu bozmaz; bir derin bağlantı hedeflediği kayıt hangi sayfada olursa olsun çalışır.
+**Sayfalama.** Hiçbir liste ekranı aynı anda ikiyüzden fazla kayıt çizmez. Tüm liste görünümleri — dokuz izleme sayfası, Durum İzleme, panodaki sertifika kartları, envanter, bakım pencereleri ve sunucu taraflı listeler — aynı sayfalama bileşenini kullanır. Sayfa boyutunu "Sayfa başına" seçicisinden 25 / 50 / 100 / 200 arasından seçersiniz (sayfalarda varsayılan 50, panellerde 25; pencerelerin içindeki kısa listeler 10 / 25 / 50) ve seçiminiz o görünüm için hatırlanır. Alt çubukta "Sayfa X/Y · A–B / N kayıt" bilgisi ile İlk / Önceki / numaralı / Sonraki / Son gezinme bulunur; on sayfadan fazlasında doğrudan sayfa numarası yazabileceğiniz bir kutu çıkar. Telefonda çubuk sadeleşir: "‹ 3 / 42 ›" ve sayfaya git kutusu üstte, kayıt aralığı ve sayfa boyutu altta. Bağlantıdaki sayfa numarası son sayfayı aşıyorsa son sayfaya gidilir. Filtre veya aramayı değiştirdiğinizde ilk sayfaya dönersiniz; altmış saniyelik otomatik yenileme sayfa konumunuzu bozmaz; bir derin bağlantı hedeflediği kayıt hangi sayfada olursa olsun çalışır.
 
-**Dil, tema ve kimlik.** Kenar çubuğunun altındaki kullanıcı adınıza tıkladığınızda açılan menüde son giriş bilgilerinizi görür, parolanızı değiştirir, dili (Türkçe / İngilizce) ve temayı (açık / koyu) değiştirirsiniz; dil ve tema tarayıcınızda saklanır. Yetkiliyseniz **Ayarlar** ekranına da buradan ulaşırsınız; **Sorun Bildir** hemen altında, her ekrandan erişilebilir.
+**Dil, tema ve kimlik.** Kenar çubuğunun altındaki kullanıcı adınıza tıkladığınızda açılan menüde son giriş bilgilerinizi görür, parolanızı değiştirir, dili (Türkçe / İngilizce) ve temayı (açık / koyu) değiştirirsiniz; dil ve tema tarayıcınızda saklanır. Yetkiliyseniz **Ayarlar** ekranına da buradan ulaşırsınız; **Sorun Bildir** hemen altında, her ekrandan erişilebilir. **Çıkış yap** bu menünün en altındadır.
 
 **İzleme menüsü.** İzleme türleri üç ara başlık altında durur: **Erişilebilirlik** (HTTP / Website, Ping, Port — ayakta mı?), **Alan Adı ve DNS** (DNS, Alan Adı — adres doğru ve geçerli mi?) ve **İçerik ve Deneyim** (Keyword, Sayfa Bütünlüğü, Sayfa Hızı, Sentetik — sayfa doğru, eksiksiz ve hızlı mı?).
 
@@ -1081,10 +1093,11 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 | İzleme | Ping İzleme | `?tab=ping` | Herkes |
 | İzleme | Sayfa Bütünlüğü | `?tab=page` | Herkes |
 | İzleme | Sentetik İzleme | `?tab=scripted` | Görüntüleme herkes; yazma ayrı yetki ister |
-| Uyarılar | Uyarılar | `?tab=warnings` | Herkes |
-| Uyarılar | Olaylar | `?tab=incidents` | Herkes |
-| Uyarılar | Bakım | `?tab=maintenance` | Herkes (yönetim yetkiye bağlı) |
-| Uyarılar | Alarm Geçmişi | `?tab=alerthistory` | Herkes |
+| Alarmlar | Uyarılar | `?tab=warnings` | Herkes |
+| Alarmlar | Olaylar | `?tab=incidents` | Herkes |
+| Alarmlar | Bakım | `?tab=maintenance` | Herkes (yönetim yetkiye bağlı) |
+| Alarmlar | Alarm Geçmişi | `?tab=alerthistory` | Herkes |
+| Alarmlar | 7/24 Kapsamı | `?tab=noc` | Herkes — görüş kapsamındaki izlemeler; açma, izlemeyi düzenleyebilene |
 | Raporlar | İstatistikler | `?tab=stats` | Herkes |
 | Raporlar | Zayıf Algoritma Raporu | `?tab=weakalgo` | Yetkiye bağlı |
 | Raporlar | Haftalık Raporlar | `?tab=weeklyreports` | Yetkiye bağlı |
@@ -1118,9 +1131,9 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 
 ### 14.4 Genel Bakış
 
-Giriş sonrası açılan ana ekrandır. Genişletilebilir istatistik paneli (Toplam / Geçerli / Uyarı / Hata / 30 günde doluyor / Süresi dolmuş) ve her sertifika için domain, kalan gün, durum rozeti, veren kurum ve son kontrol bilgisini taşıyan kartlardan oluşur.
+Giriş sonrası açılan ana ekrandır. En üstte sayfa başlığı ve eylem çubuğu bulunur: başlığın altında sertifika sayısı ile son güncelleme zamanı, sağında **Yenile**, **Şimdi Kontrol Et** (tarama sürerken ilerleme düğmenin üstünde yazar) ve yetkiliyseniz **Domain Ekle** (telefonda düğmeler başlığın altına iner). Altında genişletilebilir istatistik paneli (Toplam / Geçerli / Uyarı / Yüksek / Kritik / Hata / 7 günde / 30 günde doluyor / Süresi dolmuş / zayıf algoritma / sertifika sorunu; kutucuklar alanı ekran genişliğine göre dengeli doldurur), onunla aynı hizada **Sizin için — bugün** paneli ve her sertifika için domain, kalan gün, durum rozeti, veren kurum ve son kontrol bilgisini taşıyan **Sertifika kartları** gelir; kart listesinin başlık satırında Kompakt/Zengin görünüm seçici, alan adı arama, Platform süzgeci ve SSL Checker alanı vardır.
 
-**Sizin için — bugün.** Ekranın üstündeki katlanır panel, görebildiğiniz takımlar için ilgilenilmesi gerekenleri kartlar hâlinde toplar: 30 gün altı sertifikalar, açık alarmlar, kararsız / yavaşlayan / sessiz izlemeler, dolan alan adı kayıtları, teslim edilemeyen bildirimler, sertifika sağlık bulguları ve bu haftanın raporu. Yalnız içinde bir şey olan kartlar çizilir; sayısı sıfır olanlar alttaki tek satırlık **Sorun yok** şeridinde adıyla listelenir. **Susturulmuş ve bakımda** kartı ise sistemin bilerek sustuğu yerleri gösterir: şu an süren ya da 24 saat içinde başlayacak bakım pencereleri, duraklatılmış izlemeler (ne zamandır duraklatıldığıyla; 7 günü geçen duraklatma unutulmuş olabilir diye uyarı renginde) ve 7 gün içinde süresi dolacak zayıf algoritma istisnaları. Her kartın sayısının yanındaki **▲ / ▼** göstergesi dün bu saate göre farkı verir (artış kırmızı, azalış yeşil); panel başlığının altındaki şerit son 24 saatte açılan ve çözülen alarmları ve yenilenen sertifikaları özetler. Karşılaştırma saatlik bir anlık görüntüye dayanır, bu yüzden kurulumdan ya da uzun bir kesintiden sonraki ilk gün gösterge görünmez.
+**Sizin için — bugün.** İstatistiklerin hemen altındaki katlanır panel, görebildiğiniz takımlar için ilgilenilmesi gerekenleri kartlar hâlinde toplar: 30 gün altı sertifikalar, açık alarmlar, kararsız / yavaşlayan / sessiz izlemeler, dolan alan adı kayıtları, teslim edilemeyen bildirimler, sertifika sağlık bulguları ve bu haftanın raporu. Yalnız içinde bir şey olan kartlar çizilir; sayısı sıfır olanlar alttaki tek satırlık **Sorun yok** şeridinde adıyla listelenir. **Susturulmuş ve bakımda** kartı ise sistemin bilerek sustuğu yerleri gösterir: şu an süren ya da 24 saat içinde başlayacak bakım pencereleri, duraklatılmış izlemeler (ne zamandır duraklatıldığıyla; 7 günü geçen duraklatma unutulmuş olabilir diye uyarı renginde) ve 7 gün içinde süresi dolacak zayıf algoritma istisnaları. Her kartın sayısının yanındaki **▲ / ▼** göstergesi dün bu saate göre farkı verir (artış kırmızı, azalış yeşil); panel başlığının altındaki şerit son 24 saatte açılan ve çözülen alarmları ve yenilenen sertifikaları özetler. Karşılaştırma saatlik bir anlık görüntüye dayanır, bu yüzden kurulumdan ya da uzun bir kesintiden sonraki ilk gün gösterge görünmez.
 
 | Aksiyon | Açıklama |
 |---|---|
@@ -1129,7 +1142,9 @@ Giriş sonrası açılan ana ekrandır. Genişletilebilir istatistik paneli (Top
 | Arama kutusu | Domain/issuer üzerinde anlık filtre |
 | Sıralama ve sayfa boyutu | Önceliğe veya kalan güne göre sıralar |
 | Karta tıklama | Sertifika detay penceresini açar |
-| "Şimdi Kontrol Et" (yetkili) | Anlık arka plan taraması başlatır |
+| "Şimdi Kontrol Et" (yetkili) | Başlık çubuğunda; takım seçtirip anlık arka plan taraması başlatır |
+| "Domain Ekle" (yetkili) | Başlık çubuğunda; Domain Envanteri'ne geçip ekleme penceresini açar |
+| "Yenile" | Başlık çubuğunda; listeyi ve sayaçları beklemeden tazeler |
 | Dil / tema değiştirme | Kullanıcı menüsünden TR/EN ve Açık/Koyu arasında geçiş |
 
 ### 14.5 Sertifika Detay Penceresi
@@ -1160,7 +1175,14 @@ Her sertifika için öncelik sıralı Türkçe aksiyon önerileri üretir: Kriti
 
 ### 14.10 Değişim Rehberi
 
-Sertifika yenileme süreçlerine dair kurumsal dokümanların ve dış bağlantıların kategorize koleksiyonudur (`guide_link`). Yenileme sırasında "hangi CA portalı, hangi iç prosedür" sorularının cevabını tek yerde tutar; bağlantıları yönetici ekler, düzenler ve sıralar.
+Sertifika yenileme için kurum kaynaklarını, CA portallarını ve platform yönergelerini tek yerde toplar. Sertifikaların çoğu ticari bir sertifika otoritesinden (CA) satın alındığı için sayfanın ana içeriği kaynaklardır; elle anahtar üretimi en altta, katlanmış durur. Yukarıdan aşağıya:
+
+- **Kaynaklar** (`guide_link`): kurumsal dokümanlar ve dış bağlantılar kart ızgarasında, kategori kategori. Arama kutusu başlık, açıklama, adres ve kategoride süzer; kategori çipleri (her birinde bağlantı sayısı) tek kategoriye daraltır. Sıra her zaman CA portalı → platformlar (NetScaler, WAF, IIS, Kubernetes / OpenShift…) → yardımcı araçlardır. Kartta tür simgesi (web sayfası, ağ klasörü, e-posta), yeni sekmede açılan başlık, açıklama ve kısa adres + kopyala düğmesi bulunur; ağ klasörü yolları tarayıcıda açılmayabileceği için kopyalanıp Dosya Gezgini'nde açılır. Henüz CA portalı bağlantısı yoksa listenin başında bir yer tutucu görünür; yönetici oradan kategorisi önceden dolu "İlk bağlantıyı ekle" penceresini açar.
+- **CA üzerinden satın alma ve yenileme**: altı kısa adım — CA portalında sipariş ya da yenileme, alan adı doğrulaması (DCV: e-posta, DNS TXT ya da HTTP dosyası), onay ve düzenlenme, doğru biçimde indirme (zincirli PEM ya da PFX), uç noktalara yükleme ve Site Monitor'da doğrulama. Ayrıntılar adımın yanındaki bilgi düğmesindedir; adımlar ilgili kaynak kategorisine, platform notlarına ve Tüm Sertifikalar / Yenileme Önerileri ekranlarına götürür.
+- **Platformunuza yükleme** (katlanır): NetScaler, IIS, Kubernetes / OpenShift ve Nginx / Apache için kısa not ve kopyalanabilir komutlar; o platforma ait kaynak kategorisi varsa oraya geçiş düğmesi. Seçtiğiniz platform tarayıcınızda hatırlanır.
+- **Gelişmiş: kendi anahtarınızı ve CSR'nizi üretmek** (katlanır, kapalı başlar): nadiren gereken elle yol — kapsam, anahtar ve CSR, sertifika–anahtar eşleşmesi ve zincir, yükleme, doğrulama, kapanış. Adımları "tamamlandı" olarak işaretleyebilirsiniz; işaretler yalnız bu tarayıcıda saklanır ve bölüm kapalıyken başlıkta ilerleme görünür.
+
+Başlıktaki "Bu sayfada" satırı bölümlere atlar (katlanır bölümleri açarak); telefonda gösterilmez. Başlık çubuğunda Yenileme Önerileri ve Sertifika Envanteri'ne geçiş düğmeleri, yöneticide **Link Ekle** bulunur. Bağlantıları yönetici ekler, kart menüsünden (İşlemler) düzenler ya da siler ve sıra numarasıyla sıralar.
 
 ### 14.11 Vade Takvimi
 
@@ -1287,6 +1309,7 @@ Yalnız bootstrap admin hesabına açık, sol menülü yapılandırma merkezi. D
 | SMTP | Sunucu/port/STARTTLS, kimlik bilgileri, test e-postası |
 | Haftalık Erişilebilirlik | Haftalık erişilebilirlik maili yapılandırması |
 | Fırtına | Alarm fırtınası gruplama eşikleri ve aç/kapat |
+| 7/24 İzleme Ekibi | NOC grupları (çoklu e-posta, aktif/varsayılan, test e-postası), tür bazlı anahtarlar, en düşük seviye, çözüldü e-postası, arama talimatı; kapsamlı müdür salt okunur görür (adresler gizli) |
 | Login Anomali | Anomali algılama pencereleri |
 | LDAP | Sunucu URL, base DN, bind kimliği (AES-GCM), öznitelik eşlemeleri, bağlantı testi + öznitelik görüntüleyici |
 | Domain Tanılama | Alan adı vade sorgusu adım izi, proxy CA zinciri yakalama (PEM) |
@@ -1338,6 +1361,20 @@ Uygulamaya **ilk kez giren** kullanıcıya, veriler yüklendikten kısa süre so
 **Yenilikler turu:** yeni bir sürüm tura yeni adımlar eklediğinde, turu tamamlamış kullanıcılara girişte yalnız yeni adımları anlatan kısa bir "Yenilikler" kartı çıkar; o da "Şimdi değil" / "Bir daha gösterme" ile kapatılabilir.
 
 **Yöneticiler için:** Sistem Sağlığı → Kullanıcılar bölümündeki KPI turu tamamlayan / kapatan / hiç görmeyen kullanıcı sayılarını gösterir. Kullanıcı düzenleme penceresindeki **Turu sıfırla** düğmesi kişinin tur durumunu siler; bir sonraki girişte karşılama kartını yeniden görür. Tamamlama, kapatma ve sıfırlama denetim kaydına düşer (`TOUR_COMPLETED`, `TOUR_DISMISSED`, `USER_TOUR_RESET`).
+
+### 14.31 7/24 Kapsamı
+
+Gece bir kesinti olduğunda takımınız uyuyor olabilir; 7/24 izleme ekibi yalnız "bildir" açık izlemelerden haberdar olur (bkz. §9.5). Bu ekran (`?tab=noc`) görüş kapsamınızdaki izlemelerden hangilerinin 7/24 ekibine **gitmediğini** ve nedenini gösterir:
+
+| Öğe | İçerik |
+|---|---|
+| Özet | Toplam / kapsanan / kapsanmayan / duraklatılmış kutucukları (tıklanınca süzer), kapsam yüzdesi, tür bazında kapsam çubukları |
+| Nedenler | İzleme 7/24 ekibine bildirmiyor · Tür yönetici tarafından kapatıldı · Aktif 7/24 grubu yok · Duraklatıldı |
+| Süzgeçler | Arama, takım, tür, neden; adres çubuğunda `n_` önekli paylaşılabilir paramlar |
+| Eylemler | Düzenleme yetkiniz olan izlemede tek tıkla **7/24'e bildir**; toplu seçim + "Seçilenleri bildir"; bildirimi açık izlemede "…" menüsünden kapatma |
+| Arama listesi | Takım başına sıralı kişi listesi — takım müdürü, takım yöneticisi ve yönetici düzenler (yukarı/aşağı, ekle/çıkar). Active Directory'de telefonu olmayan kişi işaretlenir; liste boşsa e-postada Takım Müdürü gösterilir |
+
+Hiç aktif grup yoksa yönetici Ayarlar bağlantısını, diğer kullanıcılar "yöneticinize sorun" notunu görür. Genel Bakış'taki "N izleme gece kesintisinde 7/24 izleme ekibine bildirilmiyor" şeridi bu ekrana götürür ve oturum boyunca gizlenebilir.
 
 ---
 
@@ -1765,7 +1802,7 @@ Güvenlik ve ağ:
 |---|---|---|
 | `site.monitor.lockout.failures-needed` | `5,3,2,1` | Her kademede gerekli hata sayısı |
 | `site.monitor.lockout.durations-seconds` | `30,120,600,1800` | Her kademede bekleme |
-| `site.monitor.lockout.permanent-failures` | 5 | Kalıcı kilit eşiği |
+| *(otomatik kalıcı kilit yok)* | — | 2026-09-26'dan beri son kademeden sonra her yeni ihlal 30 dakikalık kilidi tekrarlar; hesap otomatik olarak kalıcı kilitlenmez. Kilitliyken yapılan denemeler sayılmaz. Daha önce kalıcı kilitlenmiş hesapları yönetici açar. |
 | `site.monitor.remember-me.validity-seconds` | 604800 | "Beni Hatırla" süresi (7 gün) |
 | `site.monitor.inactivity-timeout-minutes` | 5 | Hareketsizlik zaman aşımı |
 | `PASSWORD_MIN_LENGTH` / `MAX_LENGTH` / `HISTORY_COUNT` | 6 / 64 / 5 | Parola politikası |

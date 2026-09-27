@@ -1,16 +1,21 @@
-import { useState, useEffect, useCallback } from 'react'
-import { CalendarClock, Send, Eye, PlayCircle, Save } from 'lucide-react'
+import { useState, useEffect, useCallback, useId } from 'react'
+import { CalendarClock, Send, Eye, PlayCircle, FileText } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { Spinner, LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
 import Field from '../ui/Field.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import { helpLabel, MasterToggleCard, SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 const WEEKDAYS = [
   { v: 'MON', k: 'cir.mon' }, { v: 'TUE', k: 'cir.tue' }, { v: 'WED', k: 'cir.wed' },
@@ -83,6 +88,7 @@ export default function CertInventoryReportSettings() {
   const [result, setResult] = useState(null)
   const [history, setHistory] = useState(null)
   const [viewer, setViewer] = useState(null)
+  const blockedId = useId()   // "Şimdi çalıştır" devre dışıyken görünür neden metni
 
   const load = useCallback(async () => {
     // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
@@ -125,6 +131,15 @@ export default function CertInventoryReportSettings() {
     const res = await api.admin.saveCertInvReportSettings({ enabled: next })
     if (res?.success) { setStatus(res.data); toast.success(t('settings.saved')) }
     else { setStatus(s => ({ ...s, enabled: !next })); toast.error(res?.error || t('settings.saveError')) }
+  }
+
+  /** Vazgeç: alıcı/cc/cron alanlarını kaydedilmiş duruma döndürür. */
+  function discard() {
+    setRecipients(status?.extra_recipients ?? '')
+    setCc(status?.cc ?? '')
+    setCron(status?.cron ?? '')
+    setRule(parseCron(status?.cron))
+    setDirty(false)
   }
 
   async function saveRecipients() {
@@ -186,202 +201,184 @@ export default function CertInventoryReportSettings() {
   if (!status) {
     // Yukleme basarisizsa LoadingBlock sonsuza kadar donerdi.
     if (loadError) {
-      return (
-        <div className="admin-section">
-          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-        </div>
-      )
+      return <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
     }
     return <LoadingBlock label={t('settings.loading')} />
   }
 
   const noRecipients = !status.recipients
+  const HISTORY_TONE = { SENT: 'success', NO_RECIPIENT: 'warning' }
+  const SELECT_FULL = '[&>[data-slot=native-select-wrapper]]:w-full'
 
   return (
-    <div className="admin-section">
-      <h3>{t('cir.title')}</h3>
-      <p className="section-desc">{t('cir.desc')}</p>
+    <div className={SETTINGS_STACK} data-testid="certinv-report-settings">
+      <SettingsHeader icon={FileText} title={t('cir.title')} description={t('cir.desc')}
+        meta={status.next_run ? <Badge variant="outline" className="font-normal text-muted-foreground">{t('cir.nextRun', status.next_run)}</Badge> : null} />
 
       {/* ── Ana anahtar ── */}
-      <label className="cir-toggle">
-        <input type="checkbox" checked={!!status.enabled} onChange={e => toggleEnabled(e.target.checked)} />
-        <span>{t('cir.enabled')}</span>
-      </label><HelpTip helpKey="help.set.site.monitor.cert-inventory-report.enabled" label={t('cir.enabled')} />
-      {!status.enabled && <AlertBanner tone="warning">{t('cir.disabledNote')}</AlertBanner>}
-      {status.enabled && noRecipients && (
-        <AlertBanner tone="warning">{t('cir.noRecipientsNote')}</AlertBanner>
-      )}
+      <MasterToggleCard checked={!!status.enabled} onChange={toggleEnabled} label={t('cir.enabled')}
+        helpKey="help.set.site.monitor.cert-inventory-report.enabled">
+        {!status.enabled && <AlertBanner tone="warning" className="mb-0">{t('cir.disabledNote')}</AlertBanner>}
+        {status.enabled && noRecipients && (
+          <AlertBanner tone="warning" className="mb-0">{t('cir.noRecipientsNote')}</AlertBanner>
+        )}
+      </MasterToggleCard>
 
       {/* ── Zamanlama (canlı düzenlenebilir) ── */}
-      <div className="cir-schedule">
-        <CalendarClock size={15} />
-        <span>{t('cir.scheduleLabel', cronLabel(cron, t))}</span>
-        {status.next_run && <strong>{t('cir.nextRun', status.next_run)}</strong>}
-      </div>
-      {/* Alanlar Field ile kuruluyor: buradaki <label>'ların hiçbiri htmlFor taşımıyor ve
-          kontrolü sarmıyordu, yani ekran okuyucu için alanların adı yoktu; ipuçları da
-          aria-describedby ile bağlı değildi. */}
-      <div className="cir-schedule-grid">
-        <Field label={<span className="help-label-row">{t('cir.dayRule')}<HelpTip helpKey="help.cir.dayRule" label={t('cir.dayRule')} /></span>}>
-          {({ id }) => (
-            <select id={id} className="input" value={rule.kind}
-              onChange={e => applyRule({ ...rule, kind: e.target.value })}>
-              <option value="lastWeekday">{t('cir.ruleLastWeekday')}</option>
-              <option value="dayOfMonth">{t('cir.ruleDayOfMonth')}</option>
-              <option value="custom">{t('cir.ruleCustom')}</option>
-            </select>
-          )}
-        </Field>
-        {rule.kind === 'lastWeekday' && (
-          <Field label={<span className="help-label-row">{t('cir.weekday')}<HelpTip helpKey="help.cir.weekday" label={t('cir.weekday')} /></span>}>
+      <SettingsSection
+        title={<span className="inline-flex items-center gap-2"><CalendarClock size={15} aria-hidden="true" />{t('cir.scheduleLabel', cronLabel(cron, t))}</span>}
+        description={status.next_run ? <strong className="text-foreground">{t('cir.nextRun', status.next_run)}</strong> : null}>
+        {/* Alanlar ui/Field ile kuruluyor: etiket ↔ kontrol bağı + ipucu aria-describedby. */}
+        <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(180px,1fr))]">
+          <Field label={helpLabel(t('cir.dayRule'), 'help.cir.dayRule')} className={SELECT_FULL}>
             {({ id }) => (
-              <select id={id} className="input" value={rule.weekday}
-                onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
-                {WEEKDAYS.map(d => <option key={d.v} value={d.v}>{t(d.k)}</option>)}
-              </select>
+              <NativeSelect id={id} value={rule.kind} onChange={e => applyRule({ ...rule, kind: e.target.value })}>
+                <NativeSelectOption value="lastWeekday">{t('cir.ruleLastWeekday')}</NativeSelectOption>
+                <NativeSelectOption value="dayOfMonth">{t('cir.ruleDayOfMonth')}</NativeSelectOption>
+                <NativeSelectOption value="custom">{t('cir.ruleCustom')}</NativeSelectOption>
+              </NativeSelect>
             )}
           </Field>
-        )}
-        {rule.kind === 'dayOfMonth' && (
-          <Field label={<span className="help-label-row">{t('cir.dayOfMonth')}<HelpTip helpKey="help.cir.dayOfMonth" label={t('cir.dayOfMonth')} /></span>} hint={t('cir.dayOfMonthHint')}>
+          {rule.kind === 'lastWeekday' && (
+            <Field label={helpLabel(t('cir.weekday'), 'help.cir.weekday')} className={SELECT_FULL}>
+              {({ id }) => (
+                <NativeSelect id={id} value={rule.weekday} onChange={e => applyRule({ ...rule, weekday: e.target.value })}>
+                  {WEEKDAYS.map(d => <NativeSelectOption key={d.v} value={d.v}>{t(d.k)}</NativeSelectOption>)}
+                </NativeSelect>
+              )}
+            </Field>
+          )}
+          {rule.kind === 'dayOfMonth' && (
+            <Field label={helpLabel(t('cir.dayOfMonth'), 'help.cir.dayOfMonth')} hint={t('cir.dayOfMonthHint')}>
+              {({ id, describedBy }) => (
+                <Input id={id} aria-describedby={describedBy} type="number" min="1" max="28" value={rule.day}
+                  onChange={e => applyRule({ ...rule, day: e.target.value })} />
+              )}
+            </Field>
+          )}
+          {rule.kind !== 'custom' && (
+            <Field label={helpLabel(t('cir.time'), 'help.cir.time')}>
+              {({ id }) => (
+                <Input id={id} type="time" value={rule.time} onChange={e => applyRule({ ...rule, time: e.target.value })} />
+              )}
+            </Field>
+          )}
+          <Field label={helpLabel(t('cir.cronExpr'), 'help.set.site.monitor.cert-inventory-report.cron')} hint={t('cir.cronHint')}>
             {({ id, describedBy }) => (
-              <input id={id} aria-describedby={describedBy} className="input"
-                type="number" min="1" max="28" value={rule.day}
-                onChange={e => applyRule({ ...rule, day: e.target.value })} />
+              <Input id={id} aria-describedby={describedBy} value={cron} className="font-mono"
+                onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
             )}
           </Field>
+        </div>
+        {status.next_runs?.length > 0 && (
+          <p className="text-xs text-muted-foreground">{t('cir.nextRuns')}: {status.next_runs.join(' · ')}</p>
         )}
-        {rule.kind !== 'custom' && (
-          <Field label={<span className="help-label-row">{t('cir.time')}<HelpTip helpKey="help.cir.time" label={t('cir.time')} /></span>}>
-            {({ id }) => (
-              <input id={id} className="input" type="time" value={rule.time}
-                onChange={e => applyRule({ ...rule, time: e.target.value })} />
-            )}
-          </Field>
-        )}
-        <Field label={<span className="help-label-row">{t('cir.cronExpr')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.cron" label={t('cir.cronExpr')} /></span>} hint={t('cir.cronHint')}>
-          {({ id, describedBy }) => (
-            <input id={id} aria-describedby={describedBy} className="input" value={cron}
-              onChange={e => { setCron(e.target.value); setRule(r => ({ ...r, kind: 'custom' })); setDirty(true) }} />
-          )}
-        </Field>
-      </div>
-      {status.next_runs?.length > 0 && (
-        <div className="hint">{t('cir.nextRuns')}: {status.next_runs.join(' · ')}</div>
-      )}
+      </SettingsSection>
 
       {/* ── Alıcılar: sahibi olan takımlardan OTOMATİK ── */}
-      {/* Kontrol yok, yalnız salt-okunur liste: <label> DEĞİL düz başlık kullanılıyor
-          (kontrolsüz label ekran okuyucuda sahipsiz kalır). */}
-      <div className="form-field">
-        <span className="form-field-label">{t('cir.autoRecipients')}</span>
-        {/* Takım adı + adres: kaynağın envanterdeki sahiplik olduğu bakar bakmaz anlaşılsın. */}
-        <div className="cir-auto-list">
+      <SettingsSection title={t('cir.autoRecipients')} description={t('cir.autoRecipientsHint')} contentClassName="flex flex-col gap-3">
+        {/* Kontrol yok, yalnız salt-okunur liste (etiket DEĞİL başlık) — takım adı + adres: kaynağın
+            envanterdeki sahiplik olduğu bakar bakmaz anlaşılsın. */}
+        <div className="flex flex-wrap gap-1.5" data-testid="cir-auto-recipients">
           {(status.owner_recipients ?? []).length === 0
-            ? <span className="hint">{t('cir.autoRecipientsEmpty')}</span>
+            ? <span className="text-xs text-muted-foreground">{t('cir.autoRecipientsEmpty')}</span>
             : (status.owner_recipients ?? []).map(r => (
-                <span key={r.email} className="cir-chip">
-                  <strong className="cir-chip-team">{r.team}</strong>
-                  <span className="cir-chip-sep">·</span>
+                <Badge key={r.email} variant="outline" className="max-w-full gap-1.5 font-normal whitespace-normal break-all">
+                  <strong className="font-semibold">{r.team}</strong>
+                  <span aria-hidden="true" className="text-muted-foreground">·</span>
                   {r.email}
-                </span>
+                </Badge>
               ))}
         </div>
-        <span className="hint">{t('cir.autoRecipientsHint')}</span>
-      </div>
-      {(status.teams_without_email ?? []).length > 0 && (
-        <AlertBanner tone="warning">
-          {t('cir.teamsWithoutEmail', status.teams_without_email.join(', '))}
-        </AlertBanner>
-      )}
-
-      <Field label={<span className="help-label-row">{t('cir.recipients')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.recipients" label={t('cir.recipients')} /></span>} hint={t('cir.recipientsHint')}>
-        {({ id, describedBy }) => (
-          <input id={id} aria-describedby={describedBy} className="input"
-            value={recipients} placeholder="pki@example.com"
-            onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
+        {(status.teams_without_email ?? []).length > 0 && (
+          <AlertBanner tone="warning" className="mb-0">
+            {t('cir.teamsWithoutEmail', status.teams_without_email.join(', '))}
+          </AlertBanner>
         )}
-      </Field>
-      <Field label={<span className="help-label-row">{t('cir.cc')}<HelpTip helpKey="help.set.site.monitor.cert-inventory-report.cc" label={t('cir.cc')} /></span>}>
-        {({ id }) => (
-          <input id={id} className="input" value={cc} placeholder=""
-            onChange={e => { setCc(e.target.value); setDirty(true) }} />
+
+        <div className="grid grid-cols-1 gap-x-4 md:grid-cols-2">
+          <Field label={helpLabel(t('cir.recipients'), 'help.set.site.monitor.cert-inventory-report.recipients')} hint={t('cir.recipientsHint')}>
+            {({ id, describedBy }) => (
+              <Input id={id} aria-describedby={describedBy} value={recipients} placeholder="pki@example.com"
+                onChange={e => { setRecipients(e.target.value); setDirty(true) }} />
+            )}
+          </Field>
+          <Field label={helpLabel(t('cir.cc'), 'help.set.site.monitor.cert-inventory-report.cc')}>
+            {({ id }) => (
+              <Input id={id} value={cc} onChange={e => { setCc(e.target.value); setDirty(true) }} />
+            )}
+          </Field>
+        </div>
+      </SettingsSection>
+
+      {/* ── Aksiyonlar + test gönderimi ── */}
+      <SettingsSection contentClassName="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={preview} disabled={previewing} aria-busy={previewing || undefined}>
+            {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />}
+            {t('cir.preview')}
+          </Button>
+          <Button variant="secondary" onClick={runNow} disabled={running || noRecipients} aria-busy={running || undefined}
+            aria-describedby={noRecipients ? blockedId : undefined}>
+            {running ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
+            {t('cir.runNow')}
+          </Button>
+          {/* Devre dışı düğmenin nedeni görünür metin (dokunmatikte ipucu açılmaz) */}
+          {noRecipients && <span id={blockedId} className="text-xs text-muted-foreground">{t('cir.noRecipientsNote')}</span>}
+        </div>
+        <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
+          <Input type="email" value={testEmail} placeholder={t('cir.testPlaceholder')} aria-label={t('cir.sendTest')} className="min-w-0 flex-1"
+            onChange={e => setTestEmail(e.target.value)} />
+          <Button variant="secondary" onClick={sendTest} className="shrink-0"
+            disabled={sending || !testEmail.includes('@')} aria-busy={sending || undefined}>
+            {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
+            {t('cir.sendTest')}
+          </Button>
+        </div>
+        {result && (
+          <AlertBanner tone="success" className="mb-0">
+            {t('cir.resultLine', result.rows ?? 0, result.findings ?? 0, result.status ?? '')}
+          </AlertBanner>
         )}
-      </Field>
-      <div className="ldap-actions">
-        <Button onClick={saveRecipients} disabled={!dirty || saving} aria-busy={saving}>
-          {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />}
-          {t('settings.save')}
-        </Button>
-      </div>
-
-      {/* ── Aksiyonlar ── */}
-      <div className="ldap-actions">
-        <Button variant="secondary" onClick={preview} disabled={previewing} aria-busy={previewing}>
-          {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />}
-          {t('cir.preview')}
-        </Button>
-        <Button variant="secondary" onClick={runNow} disabled={running || noRecipients}
-          aria-busy={running} title={noRecipients ? t('cir.noRecipientsNote') : undefined}>
-          {running ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
-          {t('cir.runNow')}
-        </Button>
-      </div>
-
-      {/* ── Test gönderimi ── */}
-      <div className="cir-test">
-        <input className="input" type="email" value={testEmail} placeholder={t('cir.testPlaceholder')}
-          onChange={e => setTestEmail(e.target.value)} />
-        <Button variant="secondary" onClick={sendTest}
-          disabled={sending || !testEmail.includes('@')} aria-busy={sending}>
-          {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
-          {t('cir.sendTest')}
-        </Button>
-      </div>
-
-      {result && (
-        <AlertBanner tone="success">
-          {t('cir.resultLine', result.rows ?? 0, result.findings ?? 0, result.status ?? '')}
-        </AlertBanner>
-      )}
+      </SettingsSection>
 
       {/* ── Gönderim arşivi ── */}
-      <h4 className="cir-history-title">{t('cir.historyTitle')}</h4>
-      {!history ? <LoadingBlock label={t('settings.loading')} size={16} />
-        : history.length === 0 ? <StatusBlock title={t('cir.historyEmpty')} /> : (
-        <table className="health-dbtable">
-          <thead>
-            <tr>
-              <th>{t('cir.colMonth')}</th>
-              <th>{t('cir.colStatus')}</th>
-              <th>{t('cir.colRows')}</th>
-              <th>{t('cir.colFindings')}</th>
-              <th>{t('cir.colRecipients')}</th>
-              <th>{t('cir.colSentAt')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map(h => (
-              <tr key={h.id}>
-                <td>{h.month_label ?? `${h.year}-${h.month}`}</td>
-                <td>
-                  <span className={`nl-status ${h.status === 'SENT' ? 'nl-status-ok'
-                    : h.status === 'NO_RECIPIENT' ? 'nl-status-warn' : 'nl-status-err'}`}>{h.status}</span>
-                </td>
-                <td>{h.rows ?? '—'}</td>
-                <td>{h.findings ?? '—'}</td>
-                <td>{h.recipients || '—'}</td>
-                <td>{h.sent_at ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <SettingsSection title={t('cir.historyTitle')}>
+        {!history ? <LoadingBlock label={t('settings.loading')} size={16} />
+          : history.length === 0 ? <StatusBlock title={t('cir.historyEmpty')} /> : (
+          <div className="overflow-hidden rounded-lg border">
+            <Table data-testid="cir-history">
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  <TableHead>{t('cir.colMonth')}</TableHead>
+                  <TableHead>{t('cir.colStatus')}</TableHead>
+                  <TableHead className="text-right">{t('cir.colRows')}</TableHead>
+                  <TableHead className="text-right">{t('cir.colFindings')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('cir.colRecipients')}</TableHead>
+                  <TableHead>{t('cir.colSentAt')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.map(h => (
+                  <TableRow key={h.id}>
+                    <TableCell>{h.month_label ?? `${h.year}-${h.month}`}</TableCell>
+                    <TableCell><ToneBadge tone={HISTORY_TONE[h.status] || 'danger'} className="font-semibold">{h.status}</ToneBadge></TableCell>
+                    <TableCell className="text-right tabular-nums">{h.rows ?? '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{h.findings ?? '—'}</TableCell>
+                    <TableCell className="hidden max-w-[320px] break-all whitespace-normal md:table-cell">{h.recipients || '—'}</TableCell>
+                    <TableCell className="tabular-nums">{h.sent_at ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </SettingsSection>
 
-      {/* ── Önizleme penceresi ── */}
-      {/* ModalShell'e taşındı: eskiden role="dialog"/Escape/odak yönetimi yoktu ve kapatma
-          butonu App.css'te HİÇ tanımlı olmayan .modal-close-x sınıfını kullanıyordu
-          (aria-label'ı da çevrilmemiş sabit "close" idi). */}
+      {/* ── Zamanlama + alıcı değişiklikleri: alt kayıt çubuğu (kirliyken yapışkan) ── */}
+      <SettingsSaveBar dirty={dirty} saving={saving} onSave={saveRecipients} onDiscard={discard} />
+
+      {/* ── Önizleme penceresi ── ui/ModalShell (shadcn Dialog) */}
       <ModalShell
         open={!!viewer}
         onClose={() => setViewer(null)}
@@ -389,10 +386,12 @@ export default function CertInventoryReportSettings() {
         icon={Eye}
         closeLabel={t('cir.close')}
         size="lg"
+        scrollBody
         footer={<Button variant="secondary" onClick={() => setViewer(null)}>{t('cir.close')}</Button>}
       >
+        {/* Mail önizlemesi her zaman açık zeminde (e-posta istemcisinin görünümü) */}
         <iframe title="cert-inventory-preview" srcDoc={mailPreviewSrcDoc(viewer || '')}
-          sandbox={MAIL_PREVIEW_SANDBOX} className="cir-preview-frame" />
+          sandbox={MAIL_PREVIEW_SANDBOX} className="h-[65dvh] min-h-[360px] w-full rounded-md border bg-white" />
       </ModalShell>
     </div>
   )

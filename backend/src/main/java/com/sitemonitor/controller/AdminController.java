@@ -62,6 +62,18 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class AdminController {
 
+    /** 7/24 İzleme Ekibi (NOC) alanları (2026-09-27) — isteğe bağlı: dilimli test bağlamında yokken grup kimliği olduğu gibi kalır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocMonitorService nocMonitors;
+
+    /**
+     * 7/24 arama kaydı (2026-09-27) — isteğe bağlı: dilimli test bağlamında yokken uyarı uçları eskisi gibi (özet yok,
+     * 7/24 operatörüne ek görünürlük yok). Varken: uyarı listesi/tekil uyarı/teslimat okuma uçlarında izin sahibi
+     * ({@code noc_calls.write}) TÜM takımları görür; yazma eylemlerinin (sahiplen/çöz/tekrar bildir) kapsamı DEĞİŞMEZ.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
+
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
 
@@ -75,7 +87,7 @@ public class AdminController {
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "tlsMode", "purchasedBy", "platform", "platformDetail", "changeDescription", "expectedFingerprint", "expectedSubject",
-        "teamId", "groupName", "deletedAt", "notificationGroupId",
+        "teamId", "groupName", "deletedAt", "notificationGroupId", "nocNotify", "nocGroupIds",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
         "timeoutSeconds", "checkIntervalHours"
     };
@@ -152,21 +164,63 @@ public class AdminController {
 
     // ── Inventory ─────────────────────────────────────────────────────────────
 
+    /**
+     * Org geneli envanter görünürlüğü (2026-09-26). İsteğe bağlı enjeksiyon: @WebMvcTest dilimlerinde bean
+     * yoksa {@code scope=all} sessizce {@code mine}'a düşer ve by-domain/not okumaları bugünkü gibi takım
+     * kapsamlı kalır (kapı kapalı = eski davranış). Yazma kapıları bu alanı HİÇ okumaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.InventoryVisibility inventoryVisibility;
+
+    private boolean wantsAllInventory(HttpSession session, String scope) {
+        return inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
+    }
+
+    private boolean readableOrgWide(HttpSession session, CertificateInventory inv) {
+        return inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv);
+    }
+
+    /**
+     * Başka takımın kaydını OKUYANA kişisel veri gitmez: {@code created_ip} kaydı açan kişinin cihaz
+     * adresidir (takım arkadaşları için künye, başka takım için kişisel veri). Varlık kopuk (open-in-view
+     * kapalı, uç işlem dışı) ve bu yoldan asla kaydedilmez — alan yalnız YANITTAN düşer.
+     */
+    private static void redactForForeignReader(CertificateInventory inv) {
+        inv.setCreatedIp(null);
+    }
+
+    /**
+     * Envanter listesi.
+     *
+     * <p>{@code scope}: {@code mine} (varsayılan — bugünkü davranış: global görüntüleyici hepsini, diğerleri
+     * görüş kapsamındaki takımların kayıtlarını) ya da {@code all} (2026-09-26, org geneli görünürlük: ayar
+     * açık ve {@code inventory.list/view} izni varsa silinmemiş TÜM kayıtlar). Ayar kapalıyken {@code all}
+     * {@code mine}'a düşer; yanıttaki {@code scope} GERÇEKTE uygulananı söyler. {@code showDeleted} yalnız
+     * global görüntüleyicide (admin/AUDIT) etkili — değişmedi.
+     *
+     * <p>Her satır {@code can_manage} taşır ({@link SessionScope#canWriteInventory}; küme istek başına bir kez
+     * kurulur). Takım adları ve son kontrol haritası tek okumayla çözülür — {@code all} N+1 eklemez.
+     */
     @GetMapping("/inventory")
     public ResponseEntity<Map<String, Object>> listInventory(
             @RequestParam(defaultValue = "false") boolean showDeleted,
+            @RequestParam(defaultValue = "mine") String scope,
             HttpSession session) {
         requirePerm(session, "inventory.list", "view");
         List<CertificateInventory> items;
+        boolean orgWide = false;
         if (isAdminOrAudit(session)) {                     // global admin / AUDIT → all
             items = showDeleted
                     ? inventoryRepo.findAllByOrderByDomainAsc()
                     : inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
+        } else if (wantsAllInventory(session, scope)) {    // org geneli okuma (silinmişler hariç)
+            items = inventoryRepo.findByDeletedAtIsNullOrderByDomainAsc();
+            orgWide = true;
         } else {                                           // scoped (müdür/PO/USER)
-            List<Long> scope = viewScope(session);
-            items = (scope == null || scope.isEmpty())
+            List<Long> view = viewScope(session);
+            items = (view == null || view.isEmpty())
                     ? List.of()
-                    : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(scope);
+                    : inventoryRepo.findByTeamIdInAndDeletedAtIsNullOrderByDomainAsc(view);
         }
         // SY/UG takım adlarını sunucuda çöz — USER rolü tüm takım listesini çekemediğinden
         // (kendi takımıyla filtreli) liste kolonlarında takım adları boş kalmasın.
@@ -179,6 +233,7 @@ public class AdminController {
         Map<String, LatestCheck> latest = new HashMap<>();
         try { for (LatestCheck lc : latestCheckRepo.findAll()) if (lc.getDomain() != null) latest.put(lc.getDomain(), lc); }
         catch (Exception e) { log.debug("Envanter listesi: latest_checks okunamadı: {}", e.toString()); }
+        java.util.function.Predicate<Long> writable = SessionScope.inventoryWriteTest(session);
         for (CertificateInventory it : items) {
             if (it.getTeamId() != null)   it.setTeamName(teamNames.get(it.getTeamId()));
             if (it.getUgTeamId() != null) it.setUgTeamName(teamNames.get(it.getUgTeamId()));
@@ -191,25 +246,36 @@ public class AdminController {
                 it.setCertIssuer(lc.getIssuerCn() != null ? lc.getIssuerCn() : lc.getIssuer());
                 it.setCertError(lc.getError());
             }
+            it.setCanManage(writable.test(it.getTeamId()));
+            if (orgWide && !SessionScope.canView(session, it.getTeamId())) redactForForeignReader(it);
         }
-        return ok(Map.of("data", items));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", items);
+        body.put("scope", orgWide || isAdminOrAudit(session) && "all".equalsIgnoreCase(scope.trim()) ? "all" : "mine");
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
+        return ok(body);
     }
 
     /** Tek domain'in envanter kaydı (kart modalındaki "Envanter Bilgileri" tab'ı için).
-     *  listInventory ile AYNI izin + kapsam; domain tekil → en fazla tek kayıt (yoksa data:null). */
+     *  listInventory ile AYNI izin + kapsam; domain tekil → en fazla tek kayıt (yoksa data:null).
+     *  2026-09-26: org geneli görünürlük açıksa başka takımın SİLİNMEMİŞ kaydı da TAM döner (salt okunur,
+     *  {@code can_manage=false}); kendi kapsamı dışındaki silinmiş kayıt yine {@code null}. */
     @GetMapping("/inventory/by-domain")
     public ResponseEntity<Map<String, Object>> getInventoryByDomain(
             @RequestParam String domain,
             HttpSession session) {
         requirePerm(session, "inventory.list", "view");
         CertificateInventory rec = inventoryRepo.findByDomain(domain).orElse(null);
+        boolean foreign = false;
         // Kapsam: admin/audit değilse yalnız kendi görüş kapsamındaki takımın kaydı görünür
-        // (çapraz-takım sızıntısı olmasın — listInventory'deki viewScope semantiği).
+        // (çapraz-takım sızıntısı olmasın — listInventory'deki viewScope semantiği) — ya da org geneli okuma.
         if (rec != null && !isAdminOrAudit(session)) {
             List<Long> scope = viewScope(session);
-            if (scope == null || scope.isEmpty()
-                    || rec.getTeamId() == null || !scope.contains(rec.getTeamId())) {
-                rec = null;
+            boolean own = scope != null && !scope.isEmpty()
+                    && rec.getTeamId() != null && scope.contains(rec.getTeamId());
+            if (!own) {
+                if (readableOrgWide(session, rec)) foreign = true;
+                else rec = null;
             }
         }
         if (rec != null) {
@@ -219,6 +285,8 @@ public class AdminController {
             }
             if (rec.getTeamId() != null)   rec.setTeamName(teamNames.get(rec.getTeamId()));
             if (rec.getUgTeamId() != null) rec.setUgTeamName(teamNames.get(rec.getUgTeamId()));
+            rec.setCanManage(SessionScope.canWriteInventory(session, rec.getTeamId()));
+            if (foreign) redactForForeignReader(rec);
         }
         Map<String, Object> body = new HashMap<>();
         body.put("data", rec);   // Map.of null değer almaz → HashMap
@@ -240,10 +308,35 @@ public class AdminController {
         // Seçilen takım çağıranın YAZMA kapsamında olmalı: global admin her takım; yönetici/PO yönettiği
         // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
         requireInventoryWriter(session, item.getTeamId());
+        // Devralma YOK (2026-09-26, org geneli görünürlük): alan adı envanterde zaten varsa — başka takımın
+        // kaydı ya da çöp kutusundaki bir kayıt dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün
+        // olmamalı. DB UNIQUE kısıtı bunu zaten reddederdi ama harf farkında (Example.com) kısıt kör kalıyor,
+        // ileti de kaydın var olduğunu söylemiyordu. Açık 409; mevcut kayda dokunulmaz.
+        if (inventoryRepo.existsByDomainIgnoreCase(item.getDomain())) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Bu alan adı envanterde zaten kayıtlı. Başka bir takımın kaydı devralınamaz; kayıt silinmişse çöp kutusundan geri yükleyin.",
+                    "This domain is already in the inventory. Another team's record cannot be taken over; if it was deleted, restore it from the bin."));
+        }
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
         item.setUpdatedAt(now);
+        // Sunucunun yönettiği alanlar istek gövdesinden ALINMAZ (prod kapısı 2026-09-25, O-5 — mass assignment):
+        // varlık doğrudan gövdeye bağlandığı için ekleme yetkili USER yenileme planını, "güncelleyen" damgasını,
+        // alan adı süre bilgisini ya da silinme tarihini sahteleyebiliyordu. Oluşturan damgası stampCreated'tan gelir.
+        item.setDeletedAt(null);
+        item.setDomainExpiry(null);
+        item.setDomainRegistrar(null);
+        item.setDomainExpiryCheckedAt(null);
+        item.setUpdatedBy(null);
+        item.setUpdatedByName(null);
+        item.setRenewalPlannedAt(null);
+        item.setRenewalPlannedBy(null);
+        item.setRenewalPlannedByName(null);
+        item.setRenewalPlannedNote(null);
+        // UG takımı (BO9): yeni kayıtta yalnız boş ya da kaydın KENDİ takımı — başka takıma açmak admin kapılı
+        // transfer-ug işidir (gövdeden gelen değer kaydı başka takımın görünürlüğüne + alarmlarına açıyordu).
+        item.setUgTeamId(requireUgUnchangedOrCleared(session, item.getTeamId(), item.getUgTeamId(), item.getDomain()));
         if (item.getPort() == null) item.setPort(443);
         if (item.getPort() < 1 || item.getPort() > 65535)
             throw new IllegalArgumentException("Port must be between 1 and 65535");
@@ -255,6 +348,8 @@ public class AdminController {
         // kapi daha var (NotificationGroupService yabanci grubu yok sayar) ama gecersiz deger yine
         // de KAYDEDILIR ve arayuzde "alarmlar su gruba gidiyor" diye YANLIS gorunurdu.
         item.setNotificationGroupId(validInventoryGroup(item.getNotificationGroupId(), item.getTeamId()));
+        // 7/24 (NOC, 2026-09-27): var olmayan grup kimliği sessizce düşer (izleme formlarıyla aynı kural).
+        if (nocMonitors != null) item.setNocGroupIds(nocMonitors.sanitizeGroupIds(item.getNocGroupIds()));
         item.setGroupName(monitoringGroupService.getOrCreate(item.getTeamId(), "cert", item.getGroupName(), actor(session)));
         monitorHistory.stampCreated(item, session);
         CertificateInventory saved = inventoryRepo.save(item);
@@ -303,6 +398,13 @@ public class AdminController {
                     actor(session), existing.getTeamId(), item.getTeamId());
             throw new SecurityException("Access denied: the target team is outside your management scope");
         }
+        // UG takımı (BO9, bug regresyon 2026-09-27 — mass assignment): gövdeden yalnız TEMİZLEME (null;
+        // tek takıma yakınsama ürün kararı, ön uç her düzenlemede null gönderir) ya da AYNI değer kabul edilir.
+        // Başka bir takım kimliği kaydı o takıma açar (okuma görünürlüğü + alarm e-postası) — bu yalnız admin
+        // kapılı /inventory/{id}/transfer-ug ucundan yapılır; takım üyesi USER bu uçla o kapıyı atlıyordu.
+        // Yan etkiden (yeniden adlandırma) ÖNCE denetlenir.
+        final Long newUgTeamId = requireUgUnchangedOrCleared(session, existing.getUgTeamId(), item.getUgTeamId(),
+                existing.getDomain());
         item.setTlsMode(normalizeTlsMode(item.getTlsMode()));
 
         // Build diff BEFORE applying changes
@@ -349,11 +451,16 @@ public class AdminController {
             existing.setTeamId(item.getTeamId());
             if (teamChanged) derivedMonitorTeamSync.syncTeam(existing.getDomain(), item.getTeamId());
         }
-        existing.setUgTeamId(item.getUgTeamId());
+        existing.setUgTeamId(newUgTeamId);
         // Bildirim grubu: SAHIPLIK dogrulanir -- baska takimin grubu envantere yazilamaz
         // (monitor tarafindaki applyNotificationGroup ile ayni kural).
         existing.setNotificationGroupId(
                 validInventoryGroup(item.getNotificationGroupId(), existing.getTeamId()));
+        // 7/24 (NOC, 2026-09-27): YALNIZ gövdede gelen alan yazılır — alanı bilmeyen bir istemcinin (eski form)
+        // her düzenlemesi 7/24 bildirimini sessizce kapatırdı. Var olmayan grup kimliği düşer.
+        if (item.isNocNotifySupplied()) existing.setNocNotify(Boolean.TRUE.equals(item.getNocNotify()));
+        if (item.isNocGroupIdsSupplied()) existing.setNocGroupIds(nocMonitors != null
+                ? nocMonitors.sanitizeGroupIds(item.getNocGroupIds()) : item.getNocGroupIds());
         // Sorumlu Ekipler — DORT setter da sart. Biri atlanirsa o alan formda kaydedilmis
         // GORUNUR ama sayfa yenilenince kaybolur (CLAUDE.md'deki 1 numarali envanter bug'i).
         existing.setSvcMgmtContact(item.getSvcMgmtContact());
@@ -448,6 +555,8 @@ public class AdminController {
         fieldDiff(sb, "expectedFingerprint",o.getExpectedFingerprint(),  n.getExpectedFingerprint());
         fieldDiff(sb, "expectedSubject",    o.getExpectedSubject(),      n.getExpectedSubject());
         fieldDiff(sb, "notificationGroupId", o.getNotificationGroupId(), n.getNotificationGroupId());
+        if (n.isNocNotifySupplied())   fieldDiff(sb, "nocNotify",   Boolean.TRUE.equals(o.getNocNotify()), Boolean.TRUE.equals(n.getNocNotify()));
+        if (n.isNocGroupIdsSupplied()) fieldDiff(sb, "nocGroupIds", o.getNocGroupIds(), n.getNocGroupIds());
         fieldDiff(sb, "svcMgmtContact",  o.getSvcMgmtContact(),  n.getSvcMgmtContact());
         fieldDiff(sb, "appDevContact",   o.getAppDevContact(),   n.getAppDevContact());
         fieldDiff(sb, "iisAdminContact", o.getIisAdminContact(), n.getIisAdminContact());
@@ -1636,7 +1745,8 @@ public class AdminController {
                 : Sort.by(Sort.Direction.DESC, "createdAt");
         // Takım kapsamı (IDOR engeli): global viewer (admin/AUDIT) tümünü; aksi halde alarmın takımı
         // (keyword/ping: e.teamId; cert: domain→envanter SY/UG) çağıranın görüntüleme kapsamında olmalı.
-        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        // 7/24 operatörü (noc_calls.write) de TÜMÜNÜ görür — yalnız bu listede ve alarm okuma uçlarında (2026-09-27).
+        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIds(session);
         boolean scoped = scope != null;
         if (scoped && scope.isEmpty()) {   // kapsamsız kullanıcı → hiçbir alarm
             return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "size", sz,
@@ -1649,6 +1759,7 @@ public class AdminController {
                 qEffective, levelEffective, acknowledged, teamId,
                 scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
         enrichAlerts(result.getContent());
+        if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
@@ -1710,6 +1821,9 @@ public class AdminController {
         // "24 saattir açık" değil. Arayüz kartı yalnız açık sekmede gösterir.
         body.put("stale_total", staleTotal);
         body.put("stale_hours", ALERT_STALE_HOURS);
+        // Arayüzün "Arama kaydı ekle" kapısı SUNUCUDAN (2026-09-27): matris anlık görüntüsü kapsamlı müdürde ADMIN
+        // satırını gösterir; asıl kural (global yönetici evet, kapsamlı müdür hayır) NocCallLogService.canWrite'ta.
+        body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
         return ok(body);
     }
 
@@ -2131,12 +2245,35 @@ public class AdminController {
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
     }
 
+    /**
+     * Tekil uyarı (2026-09-27) — listeyle AYNI zenginleştirme + 7/24 arama özeti. 7/24 e-postasındaki "Arama kaydı ekle"
+     * derin bağlantısı uyarı açık listenin ilk sayfasında değilse (fırtına, kapalı uyarı) detayı buradan açar.
+     * Kapı listeyle aynı: {@code alerts.read} + takım kapsamı (7/24 operatörü ve global görücü tümü).
+     */
+    @GetMapping("/alerts/{id}")
+    public ResponseEntity<Map<String, Object>> getAlert(@PathVariable Long id, HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
+        requireAlertReadScope(session, id);
+        AlertEvent ev = alertEventRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
+        List<AlertEvent> one = new ArrayList<>(List.of(ev));
+        enrichAlerts(one);
+        if (nocCallLog != null) nocCallLog.decorate(one);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data", ev);
+        body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
+        return ok(body);
+    }
+
     @GetMapping("/alerts/{id}/notifications")
     public ResponseEntity<Map<String, Object>> getAlertNotifications(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.read", "view");
-        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
-        return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id)));
+        requireAlertReadScope(session, id);   // takım kapsamı (IDOR engeli); 7/24 operatörü tümü (okuma)
+        // 7/24 (NOC) satırları alarmı gören HERKESE açık — gövde/alıcı daima MASKELİ biçimde döner (arama listesi
+        // telefonları ve 7/24 grup adresleri takım üyesine, kapsamlı yöneticiye, denetçiye sızmasın; 2026-09-27).
+        return ok(Map.of("data", notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(id).stream()
+                .map(com.sitemonitor.service.noc.NocLogRedaction::forViewer).toList()));
     }
 
     /**
@@ -2147,7 +2284,7 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> getAlertPushDeliveries(
             @PathVariable Long id, HttpSession session) {
         requirePerm(session, "alerts.read", "view");
-        requireAlertScope(session, id);   // takım kapsamı (IDOR engeli)
+        requireAlertReadScope(session, id);   // takım kapsamı (IDOR engeli); 7/24 operatörü tümü (okuma)
         return ok(Map.of("data", userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(id)));
     }
 
@@ -2175,6 +2312,21 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
         if (v != null) for (Long t : alertTeamIds(ev)) if (v.contains(t)) return;
         throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
+    }
+
+    /**
+     * 7/24 arama kaydı (2026-09-27): uyarı listesini/detayını TÜM takımlar için görebilen — global görücü (admin/AUDIT)
+     * ya da 7/24 operatörü ({@code noc_calls.write}; kapsamlı müdür değil). Yalnız OKUMA uçları kullanır.
+     */
+    private boolean seesAllAlerts(HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        return nocCallLog != null && nocCallLog.seesAllAlerts(session);
+    }
+
+    /** {@link #requireAlertScope}'un OKUMA hâli — 7/24 operatörü tümünü görür. Yazma eylemleri requireAlertScope'ta kalır. */
+    private void requireAlertReadScope(HttpSession session, Long id) {
+        if (seesAllAlerts(session)) return;
+        requireAlertScope(session, id);
     }
 
     /** requireAlertScope'un fırlatmayan sürümü — toplu işlemde kapsam-dışı/eksik id'yi atlamak için. */
@@ -2863,6 +3015,11 @@ public class AdminController {
     private static final int NOTE_MAX_LENGTH = 5000;
     private static final long NOTE_EDIT_WINDOW_HOURS = 24L;
 
+    /**
+     * Notlar. 2026-09-26 (org geneli görünürlük): alan adı envanterde SİLİNMEMİŞ bir kayıtsa ve ayar açıksa,
+     * alan adının TÜM silinmemiş notları okunur (yazan takım fark etmeksizin) — kendi takımının silinmiş notları
+     * bugünkü gibi görünmeye devam eder. Ayar kapalıyken ya da alan adı envanterde yokken davranış aynıdır.
+     */
     @GetMapping("/notes/{domain}")
     public ResponseEntity<Map<String, Object>> getNotes(
             @PathVariable String domain, HttpSession session) {
@@ -2872,11 +3029,36 @@ public class AdminController {
             notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain);
         } else {
             List<Long> scope = viewScope(session);
-            notes = (scope == null || scope.isEmpty())
-                    ? List.of()
-                    : noteRepo.findByDomainAndTeamIdInOrderByCreatedAtDesc(domain, scope);
+            CertificateInventory inv = inventoryVisibility == null ? null : inventoryRepo.findByDomain(domain).orElse(null);
+            if (inv != null && readableOrgWide(session, inv)) {
+                notes = noteRepo.findByDomainOrderByCreatedAtDesc(domain).stream()
+                        .filter(n -> n.getDeletedAt() == null
+                                || (scope != null && n.getTeamId() != null && scope.contains(n.getTeamId())))
+                        .toList();
+            } else {
+                notes = (scope == null || scope.isEmpty())
+                        ? List.of()
+                        : noteRepo.findByDomainAndTeamIdInOrderByCreatedAtDesc(domain, scope);
+            }
         }
         return ok(Map.of("data", notes));
+    }
+
+    /**
+     * Not YAZMA kapısı (2026-09-26): alan adı envanterdeyse kaydın SY takımı çağıranın yönetim kapsamında
+     * olmalı. Eskiden yalnız rol soruluyordu (admin / takım yöneticisi): bir takımın yöneticisi BAŞKA takımın
+     * alan adına not ekleyebiliyor, düzenleyip silebiliyordu — notlar yalnız kendi takımına göründüğü için bu
+     * fark edilmiyordu. Org geneli görünürlükle notlar herkese açıldığından bu artık başka takımın kaydına
+     * müdahaledir. Envanterde olmayan alan adı: bugünkü davranış (sahibi olmayan kayıt). Global admin muaf.
+     */
+    private void requireNoteDomainWritable(HttpSession session, String domain) {
+        if (isAdmin(session) || domain == null) return;
+        CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv != null && !canManageTeamResource(session, inv.getTeamId())) {
+            log.warn("Cross-team note write attempt by user={} domain={} resourceTeam={}",
+                    actor(session), domain, inv.getTeamId());
+            throw new SecurityException("Access denied: this domain belongs to another team");
+        }
     }
 
     @PostMapping("/notes/{domain}")
@@ -2886,6 +3068,7 @@ public class AdminController {
             HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
         requirePerm(session, "notes.crud", "edit");
+        requireNoteDomainWritable(session, domain);
         String text = body.get("note");
         if (text == null || text.isBlank())
             throw new IllegalArgumentException("Note text cannot be blank");
@@ -2932,6 +3115,7 @@ public class AdminController {
             throw new NoSuchElementException("Note has been deleted");
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        requireNoteDomainWritable(session, domain);   // başka takımın alan adındaki not düzenlenmez (2026-09-26)
         if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
@@ -2981,6 +3165,7 @@ public class AdminController {
             return ok(Map.of("message", "Note already deleted"));
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
+        requireNoteDomainWritable(session, domain);   // başka takımın alan adındaki not silinmez (2026-09-26)
         if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
 
         String currentUser = (String) session.getAttribute("username");
@@ -3012,7 +3197,11 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Note not found: " + noteId));
         if (!domain.equals(note.getDomain()))
             throw new IllegalArgumentException("Note does not belong to domain: " + domain);
-        if (!isAdmin(session)) checkOwnership(note.getTeamId(), session);
+        // Org geneli görünürlük (2026-09-26): notu listede görebilen, revizyonlarını da görür — silinmemiş not +
+        // envanterde silinmemiş alan adı. Aksi hâlde bugünkü sahiplik kuralı.
+        boolean orgWide = !isAdmin(session) && note.getDeletedAt() == null && inventoryVisibility != null
+                && inventoryRepo.findByDomain(domain).map(inv -> readableOrgWide(session, inv)).orElse(false);
+        if (!isAdmin(session) && !orgWide) checkOwnership(note.getTeamId(), session);
         return ok(Map.of("data", noteRevisionRepo.findByNoteIdOrderBySequenceNoAsc(noteId)));
     }
 
@@ -3139,8 +3328,8 @@ public class AdminController {
      * geçer (üye kendi takımının kaydını düzenler, takım alanı sabitlenir).
      */
     private void requireInventoryWriter(HttpSession session, Long teamId) {
-        if (canManageTeamResource(session, teamId)) return;
-        if (SessionScope.isMemberOf(session, teamId)) return;
+        // Kural TEK kaynakta (SessionScope.canWriteInventory) — liste satırlarının can_manage bayrağı da onu okur.
+        if (SessionScope.canWriteInventory(session, teamId)) return;
         log.warn("Inventory add outside membership by user={} team={}", actor(session), teamId);
         throw new SecurityException("Access denied: you can only add certificates to your own team");
     }
@@ -3192,6 +3381,23 @@ public class AdminController {
             log.warn("Unauthorized admin access attempt by user={}", actor(session));
             throw new SecurityException("Admin access required");
         }
+    }
+
+    /**
+     * BO9 (bug regresyon 2026-09-27) — envanter ekle/düzenle gövdesindeki {@code ug_team_id} kapısı.
+     * Kabul: {@code null} (temizle — tek takıma yakınsama) ya da {@code allowed} ile aynı değer (düzenlemede
+     * mevcut UG, eklemede kaydın kendi takımı). Başka bir takım 403: UG değişikliği YALNIZ
+     * {@code POST /inventory/{id}/transfer-ug} (global admin + {@code inventory.transfer/execute}) ile yapılır;
+     * aksi hâlde kaydın kendi takımına yazabilen herhangi bir üye kaydı başka takımın görünürlüğüne ve alarm
+     * e-postalarına açabiliyordu.
+     */
+    private Long requireUgUnchangedOrCleared(HttpSession session, Long allowed, Long requested, String domain) {
+        if (requested == null || java.util.Objects.equals(requested, allowed)) return requested;
+        log.warn("Inventory UG team change via add/edit body refused: user={} domain={} requested={}",
+                actor(session), domain, requested);
+        throw new SecurityException(com.sitemonitor.util.Msg.t(
+                "UG takımı bu uçtan değiştirilemez; yönetici UG aktarımını kullanın.",
+                "The UG team cannot be changed here; use the administrator UG transfer."));
     }
 
     /** Tanılama (diagnostics) admin'e her domain için, diğer rollere YALNIZ envanterde

@@ -140,7 +140,7 @@ public class MonitoringController {
         "expectedStatus", "method", "matchOperator", "matchCount", "active", "teamId", "groupName", "tags", "alertLevel",
         "intervalSeconds", "timeoutMs", "warningDays", "criticalDays", "protocol", "verifySsl", "followRedirects", "useProxy",
         "mode", "crawlDepth", "crawlMaxPages", "excludePatterns", "slowResourceMs", "alertThirdParty", "alertMixedContent", "alertTimeout", "resourceConcurrency",
-        "notificationGroupId",
+        "notificationGroupId", "nocNotify", "nocGroupIds",
         "transferLockAlert", "blacklistEnabled", "changeAlert", "notifyEmail", "notifyWebhook", "renewalPlannedAt", "renewalPlannedNote",
         // Teyit/kurtarma ayarlari: 6 noktanin 5'inde vardi (patch, create, update, gosterim, form)
         // ama DIFF'te yoktu. Yalniz bu alanlari degistiren bir duzenleme AuditDiff'te bos donuyor,
@@ -212,6 +212,20 @@ public class MonitoringController {
         log.info("Bildirim grubu {} artik gecerli degil (takim {}) - izleme takim varsayilanina dusuruldu",
                 requested, teamId);
         return null;
+    }
+
+    /** 7/24 İzleme Ekibi (NOC) alanları (2026-09-27) — isteğe bağlı: @WebMvcTest bağlamında yokken yalnız biçim doğrulanır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocMonitorService nocMonitors;
+
+    /**
+     * 7/24 alanlarını (camelCase {@code nocNotify}, {@code nocGroupIds}) izlemeye uygular — on türün TEK yolu
+     * ({@code NocMonitorService.applyFromBody}). Gövdede OLMAYAN anahtar yazılmaz: alanı bilmeyen bir istemcinin
+     * düzenlemesi 7/24 bildirimini sessizce kapatmasın. Var olmayan grup kimliği sessizce düşer (form açıkken
+     * silinmiş grup — normal yarış; bildirim grubundaki silinmiş-grup kuralıyla aynı gerekçe).
+     */
+    private void applyNoc(Map<String, Object> body, com.sitemonitor.model.NocTarget m) {
+        com.sitemonitor.service.noc.NocMonitorService.applyFromBody(m, body, nocMonitors);
     }
 
     private final TeamRepository teamRepo;
@@ -446,8 +460,8 @@ public class MonitoringController {
     /** Geri döndürülebilir türler → (kayıt bul, kaydet, snapshot alanları). Diğerleri 400 alır. */
     private java.util.Optional<?> findRestorable(String kind, Long id) {
         return switch (kind) {
-            case MonitorHistoryService.PORT -> portMonitorRepo.findById(id);
-            case MonitorHistoryService.DNS -> dnsMonitorRepo.findById(id);
+            case MonitorHistoryService.PORT -> findLivePort(id);
+            case MonitorHistoryService.DNS -> findLiveDns(id);
             case MonitorHistoryService.KEYWORD -> keywordMonitorRepo.findById(id);
             case MonitorHistoryService.HTTP -> httpMonitorRepo.findById(id);
             case MonitorHistoryService.PAGE -> pageMonitorRepo.findById(id);
@@ -708,13 +722,10 @@ public class MonitoringController {
     /** Serbest-form izleme (keyword/ping) üzerinde yazma/çalıştırma kapsamı:
      *  global admin → her takım; TEAM_ADMIN → yönetim kapsamındaki takımlar; USER → kendi takımı. */
     private boolean canOperateTeam(HttpSession session, Long teamId) {
-        if (SessionScope.isGlobalAdmin(session)) return true;
-        if (teamId == null) return false;
-        if (SessionScope.canManage(session, teamId)) return true;   // TEAM_ADMIN yönetim kapsamı
+        // Kural TEK kaynakta (2026-09-27): 7/24 aç/kapa ucu (NocController) da aynı kapıyı kullanıyor.
         // USER: ÜYESİ olduğu HER takım (2026-09-18) — eskiden yalnız birincil takımdı; çok takımlı
         // kullanıcı ikincil takımına izleme ekleyemiyor, seçtiği takım sessizce birincile düşüyordu.
-        // memberTeamIds eski oturumda birincile geri düşer (rolling deploy), yani daralma yok.
-        return SessionScope.isMemberOf(session, teamId) || teamId.equals(sessionTeamId(session));
+        return SessionScope.canOperateTeam(session, teamId);
     }
 
     /**
@@ -908,8 +919,26 @@ public class MonitoringController {
 
     // ── Uptime Overview ───────────────────────────────────────────────────────
 
+    /**
+     * Org geneli envanter görünürlüğü (2026-09-26) — Durum İzleme de aynı ayara bağlı. İsteğe bağlı enjeksiyon:
+     * @WebMvcTest dilimlerinde bean yoksa {@code scope=all} {@code mine}'a düşer ve geçmiş uçları bugünkü
+     * takım kapsamında kalır. Port/DNS listeleri ve diğer izleme sayfaları bunu OKUMAZ (takım kapsamlı kalır).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.InventoryVisibility inventoryVisibility;
+
+    /**
+     * Durum İzleme özeti.
+     *
+     * <p>{@code scope}: {@code mine} (varsayılan — bugünkü kapsam: SY ya da UG takımı görüş alanında) |
+     * {@code all} (2026-09-26: ayar açık ve {@code inventory.list/view} izni varsa TÜM aktif envanter; salt
+     * okunur). Kart başına {@code team_id} + {@code can_manage} ({@link SessionScope#canWriteInventory},
+     * küme istek başına bir kez). Toplu sorgular (latest/uptime/agregasyon) kapsamdan bağımsız zaten tek
+     * seferde çekiliyor — {@code all} ek sorgu eklemez.
+     */
     @GetMapping("/uptime/overview")
-    public ResponseEntity<Map<String, Object>> uptimeOverview(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> uptimeOverview(
+            @RequestParam(defaultValue = "mine") String scope, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         List<LatestCheck> latestChecks = latestCheckRepo.findAllByOrderByDomainAsc();
         Map<String, LatestCheck> checkMap = latestChecks.stream()
@@ -918,8 +947,11 @@ public class MonitoringController {
         // IDOR: envanter satirlari takim kapsamina TABI (listPort/listDns ile ayni kapi).
         // Bu ucun dondurdugu satir da host/port + takim adi + SSL bitisi + kesinti sayaclari
         // tasiyor; kardesleri suzulurken burasi atlanmisti (bkz. inventoryViewable).
+        // Org geneli okuma (scope=all) bu süzgeci BİLİNÇLİ atlar — kararı InventoryVisibility verir.
+        boolean all = inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
         List<CertificateInventory> inventory = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
-                .filter(inv -> inventoryViewable(session, inv)).toList();
+                .filter(inv -> all || inventoryViewable(session, inv)).toList();
+        java.util.function.Predicate<Long> writable = SessionScope.inventoryWriteTest(session);
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
 
         String cutoff30d = ISO.format(Instant.now().minus(30, ChronoUnit.DAYS));
@@ -955,7 +987,11 @@ public class MonitoringController {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("domain", domain);
             item.put("port",   inv.getPort());
+            item.put("team_id", inv.getTeamId());
             item.put("team_name", teamMap.get(domain));
+            // Salt okunur kart mı? (2026-09-26) — arayüz başka takımın kartında eylemleri gizler; sunucu yine
+            // de her eylem ucunda kendi kapısını uygular (tanılama: özgün görüş kapsamı).
+            item.put("can_manage", writable.test(inv.getTeamId()));
             // Grup / etiket / kademe (2026-09-18): Durum İzleme grup-etiket filtresi + kart çipleri.
             item.put("group_name", inv.getGroupName());
             item.put("tags", inv.getTags());
@@ -1008,7 +1044,15 @@ public class MonitoringController {
             result.add(item);
         }
 
-        return ok(result);
+        // Zarf: ok(...) ile aynı alanlar + etkin kapsam ve ayar durumu (arayüz "Tüm takımlar" anahtarını
+        // yalnız ayar açıkken çizer; yanıttaki scope GERÇEKTE uygulananı söyler).
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", result);
+        body.put("scope", all ? com.sitemonitor.service.InventoryVisibility.SCOPE_ALL : com.sitemonitor.service.InventoryVisibility.SCOPE_MINE);
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
+        body.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.ok(body);
     }
 
     /** aggregateStatusCountsSince satırlarını domain → [toplam, hata] map'ine indeksle. */
@@ -1035,10 +1079,7 @@ public class MonitoringController {
      */
     private static double uptimePct(long total, long errors) {
         if (total == 0) return 100.0;
-        long up = total - errors;
-        double pct = Math.round(up * 10000.0 / total) / 100.0;
-        if (pct >= 100.0 && up < total) pct = 99.99;
-        return pct;
+        return com.sitemonitor.util.AvailabilityMath.pct(total, total - errors, 2);   // tek kural (O-5)
     }
 
     /** Normalize date/datetime strings to full ISO-8601 (19 chars) for "from" range end. */
@@ -1068,7 +1109,7 @@ public class MonitoringController {
             @PathVariable String domain, HttpSession session,
             @RequestParam(defaultValue = "24") int hours) {
 
-        var deny = denyIfDomainNotViewable(session, domain);
+        var deny = denyIfDomainNotReadable(session, domain);   // salt okuma — org geneli görünürlük (2026-09-26)
         if (deny != null) return deny;
         hours = Math.max(1, Math.min(hours, UPTIME_HISTORY_MAX_HOURS));
 
@@ -1141,8 +1182,9 @@ public class MonitoringController {
             @RequestParam(required = false) String format,
             jakarta.servlet.http.HttpServletResponse response) {
         // Eskiden session bile almıyordu (BOLA) — artık envanter takımı üzerinden görüntüleme denetimi var.
-        var deny = denyIfDomainNotViewable(session, domain);
-        if (deny != null) return deny;
+        // 2026-09-26: salt okuma, org geneli görünürlükte başka takımın kaydı da okunur (alarm katmanı hariç).
+        var access = readDomain(session, domain);
+        if (access.deny() != null) return access.deny();
         var src = new CheckHistoryService.Source<UptimeCheck>() {
             public org.springframework.data.domain.Page<UptimeCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
                 return fail ? uptimeCheckRepo.findByDomainAndPortAndStatusNotAndCheckedAtBetween(domain, port, "up", f, t, p)
@@ -1165,7 +1207,8 @@ public class MonitoringController {
                 return null;
             } catch (java.io.IOException e) { throw new RuntimeException("CSV yazımı başarısız", e); }
         }
-        return ok(checkHistoryService.execute(src, r, domain, Set.of(EscalationService.TYPE_ACCESSIBILITY)));
+        // Alarm katmanı yalnız KENDİ kapsamındaki kayıtta: alarmlar takım kapsamlı kalır (kullanıcı kararı).
+        return ok(checkHistoryService.execute(src, r, access.own() ? domain : null, Set.of(EscalationService.TYPE_ACCESSIBILITY)));
     }
 
     // ── SSL Certificate History ───────────────────────────────────────────────
@@ -1180,8 +1223,8 @@ public class MonitoringController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
             jakarta.servlet.http.HttpServletResponse response) {
-        var deny = denyIfDomainNotViewable(session, domain);
-        if (deny != null) return deny;
+        var access = readDomain(session, domain);   // salt okuma — org geneli görünürlük (2026-09-26)
+        if (access.deny() != null) return access.deny();
         var src = new CheckHistoryService.Source<CertificateCheck>() {
             public org.springframework.data.domain.Page<CertificateCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
                 return fail ? certCheckRepo.findByDomainAndStatusAndCheckedAtBetween(domain, "error", f, t, p)
@@ -1204,14 +1247,15 @@ public class MonitoringController {
                 return null;
             } catch (java.io.IOException e) { throw new RuntimeException("CSV yazımı başarısız", e); }
         }
-        return ok(checkHistoryService.execute(src, r, domain, EscalationService.CERT_ALERT_TYPES));
+        // Alarm katmanı yalnız KENDİ kapsamındaki kayıtta (alarmlar takım kapsamlı kalır).
+        return ok(checkHistoryService.execute(src, r, access.own() ? domain : null, EscalationService.CERT_ALERT_TYPES));
     }
 
     /**
      * Sertifika yanıt süresi grafiği — diğer yedi türle AYNI huni (resolveRange → responseSeriesRaw →
      * buildResponseSeries). İki seri taşır: ana seri kontrol süresi (ms, response_ms kolonu yeni olduğu
      * için ileriye dönük dolar) + yardımcı seri "days" (kalan gün, 180 günlük geçmişten dolu gelir).
-     * Yetki BİLE BİLE ssl-history ile aynı: yalnız denyIfDomainNotViewable. permissionService.require(
+     * Yetki BİLE BİLE ssl-history ile aynı: yalnız readDomain (salt okuma kapısı). permissionService.require(
      * "monitoring.read") EKLENMEZ — sertifikayı görüp geçmişini açabilen kullanıcı grafikte 403 almamalı.
      * Yol adı "/ssl/response-series": sözleşme testi "/response-series" ile biten uçları sayar.
      */
@@ -1221,7 +1265,7 @@ public class MonitoringController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days) {
-        var deny = denyIfDomainNotViewable(session, domain);
+        var deny = denyIfDomainNotReadable(session, domain);   // salt okuma — org geneli görünürlük (2026-09-26)
         if (deny != null) return deny;
         String[] range = resolveRange(from, to, days);
         // Geçmiş sekmesiyle tutarlılık: seri de retention penceresine kırpılır, aksi halde 180 gün
@@ -1232,19 +1276,31 @@ public class MonitoringController {
                 clampedFrom, range[1], "days"));
     }
 
+    /**
+     * Domain-anahtarlı uptime/ssl geçmişi OKUMA kapısının sonucu. {@code deny} null değilse o yanıt döner;
+     * {@code own} false ise çağıran kaydı yalnız org geneli görünürlükle okuyor (alarm katmanı verilmez).
+     */
+    private record DomainRead(ResponseEntity<Map<String, Object>> deny, boolean own) {}
+
     /** Domain-anahtarlı uptime/ssl geçmişi için takım denetimi: envanter kaydının teamId VEYA ugTeamId'si
-     *  görüntülenebilir olmalı (izleme monitörlerindeki denyIfNotViewable'ın domain karşılığı). */
-    private ResponseEntity<Map<String, Object>> denyIfDomainNotViewable(HttpSession session, String domain) {
+     *  görüntülenebilir olmalı (izleme monitörlerindeki denyIfNotViewable'ın domain karşılığı) — ya da
+     *  (2026-09-26) org geneli görünürlük açık ve kayıt silinmemiş. Bu uçların HEPSİ salt okumadır. */
+    private DomainRead readDomain(HttpSession session, String domain) {
         var inv = inventoryRepo.findByDomain(domain).orElse(null);
-        if (inv == null) return notFound("Domain envanterde bulunamadı");
-        if (inventoryViewable(session, inv)) return null;
-        return forbidden("Bu domain'in geçmişini görüntüleme yetkiniz yok");
+        if (inv == null) return new DomainRead(notFound("Domain envanterde bulunamadı"), false);
+        if (inventoryViewable(session, inv)) return new DomainRead(null, true);
+        if (inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) return new DomainRead(null, false);
+        return new DomainRead(forbidden("Bu domain'in geçmişini görüntüleme yetkiniz yok"), false);
+    }
+
+    private ResponseEntity<Map<String, Object>> denyIfDomainNotReadable(HttpSession session, String domain) {
+        return readDomain(session, domain).deny();
     }
 
     /**
      * Envanter satırı bu oturumun görüş kapsamında mı — sorumlu (SY) VEYA uç gözetim (UG) takımı.
      *
-     * <p>{@link #denyIfDomainNotViewable}'ın LISTE karşılığı. {@code listPort}/{@code listDns}
+     * <p>{@link #readDomain}'in (kendi kapsamı dalı) LISTE karşılığı. {@code listPort}/{@code listDns}
      * envanter döngüsü bu kapıyı atladığı için {@code monitoring.read} yetkisi olan HERKES tüm
      * envanter alan adlarını (host:port, takım adı, son kontrol, açık alarm) görüyordu — oysa aynı
      * metodun standalone döngüsü ve diğer yedi liste ucu süzüyordu. Kapı artık TEK yerde.
@@ -1268,6 +1324,20 @@ public class MonitoringController {
             if (Boolean.TRUE.equals(m.getStandalone())) continue;
             monitorByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
         }
+    }
+
+    /**
+     * Id ile CANLI Port izlemesi (2026-09-27): SİLİNMİŞ standalone satır ({@code deleted_at}) bulunamaz sayılır —
+     * güncelleme/sürdürme, silme, "şimdi kontrol et", geçmiş, yanıt serisi ve geri alma 404 döner. Duraklatılmış
+     * satır CANLIDIR (sürdürme bu uçtan yapılır). Envanter-türevi satırda deleted_at hiç yazılmaz.
+     */
+    private java.util.Optional<PortMonitor> findLivePort(Long id) {
+        return portMonitorRepo.findById(id).filter(m -> m.getDeletedAt() == null);
+    }
+
+    /** {@link #findLivePort} DNS ikizi. */
+    private java.util.Optional<DnsMonitor> findLiveDns(Long id) {
+        return dnsMonitorRepo.findById(id).filter(m -> m.getDeletedAt() == null);
     }
 
     /** {@link #reloadPortMonitors} ile aynı gerekçe — DNS tarafı. */
@@ -1334,7 +1404,7 @@ public class MonitoringController {
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
         Map<Long, String> teamById = teamNameMap();
-        List<PortMonitor> standaloneMonitors = portMonitorRepo.findByStandaloneTrueAndActiveTrue();
+        List<PortMonitor> standaloneMonitors = portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull();   // duraklatılmış DÂHİL, silinmiş HARİÇ (2026-09-27)
         // Açık PORT_DOWN alarmları host→AlertEvent (envanter + standalone host'ları) — liste rozeti, tek sorgu.
         // IDOR: yalnız görüş kapsamındaki envanter satırları listelenir (bkz. inventoryViewable).
         List<CertificateInventory> visibleInventory = inventory.stream()
@@ -1378,6 +1448,11 @@ public class MonitoringController {
         // akışı). "Herhangi bir aktif var mı?" sorusu doğrudan DB'de.
         if (portMonitorRepo.existsByHostAndPortAndActiveTrue(host, port))
             return badRequest("Bu host:port zaten izleniyor");
+        // DURAKLATILMIŞ standalone kopya da engeldir (2026-09-27): artık listede görünüyor; ikinci satır açmak yerine
+        // kullanıcı onu sürdürmeli. SİLİNMİŞ satır engel DEĞİLDİR → yeni satır açılır (silinen izleme kendi
+        // geçmişiyle silinmiş kalır; standalone'da uq_pm_host_port yok, ikinci satır DB'ce serbest).
+        if (portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(host, port))
+            return badRequest("Bu host:port için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün");
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
             return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -1395,8 +1470,9 @@ public class MonitoringController {
         m.setTeamId(teamId);
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
         if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -1422,8 +1498,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> updatePort(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
-        java.util.Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
-        return portMonitorRepo.findById(id).map(m -> {
+        java.util.Map<String, Object> _before = findLivePort(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        return findLivePort(id).map(m -> {
             if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             final String  _prevHost = m.getHost();
@@ -1439,7 +1515,9 @@ public class MonitoringController {
             // kullanıcı mevcut bir monitörün host/port'unu başkasınınkiyle aynı yapabiliyordu.
             // DB kısıtı da yakalamaz (uq_pm_host_port … WHERE standalone IS NOT TRUE).
             if (!eqHost(_prevHost, m.getHost()) || !Objects.equals(_prevPort, m.getPort())) {
-                boolean dup = portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot(m.getHost(), m.getPort(), id);
+                boolean dup = portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot(m.getHost(), m.getPort(), id)
+                        || portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNullAndIdNot(
+                                m.getHost(), m.getPort(), id);   // duraklatılmış standalone kopya da (2026-09-27)
                 if (dup) return badRequest("Bu host:port zaten izleniyor");
             }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
@@ -1453,8 +1531,9 @@ public class MonitoringController {
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
             if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -1482,14 +1561,17 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> deletePort(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
-        Map<String, Object> _before = portMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
-        return portMonitorRepo.findById(id).map(m -> {
+        Map<String, Object> _before = findLivePort(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        return findLivePort(id).map(m -> {
             // Silme kapısı kardeşlerin yedisiyle aynı: canManage (TEAM_ADMIN+). Port, DNS ile
             // birlikte canOperateTeam kullanan iki aykırıydı; arayüz zaten USER'a silme
             // göstermiyordu, dolayısıyla bu yalnız API-only boşluğu kapatır.
             Long team = effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId());
             if (!SessionScope.canManage(session, team)) return forbidden("Bu izleme üzerinde yetkiniz yok");
             m.setActive(false);
+            // 2026-09-27: standalone satırda silme ARTIK duraklatmadan ayrı — deleted_at yazılır (listeden kalkar,
+            // hiçbir yerde görünmez/çalışmaz). Envanter-türevi satırın "silmesi" duraklatmadır (envanterle yaşar).
+            if (Boolean.TRUE.equals(m.getStandalone())) m.setDeletedAt(ISO.format(Instant.now()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             portMonitorRepo.save(m);
@@ -1510,7 +1592,7 @@ public class MonitoringController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
             jakarta.servlet.http.HttpServletResponse response) {
-        PortMonitor mon = portMonitorRepo.findById(id).orElse(null);
+        PortMonitor mon = findLivePort(id).orElse(null);
         if (mon == null) return notFound("Port monitor not found");
         var src = new CheckHistoryService.Source<PortCheck>() {
             public org.springframework.data.domain.Page<PortCheck> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
@@ -1534,7 +1616,7 @@ public class MonitoringController {
     @PostMapping("/port/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerPort(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
-        return portMonitorRepo.findById(id).map(m -> {
+        return findLivePort(id).map(m -> {
             if (!canOperateTeam(session, effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId())))
                 return forbidden("Bu izleme üzerinde yetkiniz yok");
             Map<String, Object> r = portChecker.check(m);
@@ -1567,7 +1649,7 @@ public class MonitoringController {
         String host = body.get("host").toString().trim();
         int port = ((Number) body.get("port")).intValue();
         if (port < 1 || port > 65535) return badRequest("port 1-65535 araliginda olmali");
-        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 5000;
+        int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 5000);   // N3: test ucu da tavanlı
         String type = normalizePortType(body.get("protocol"));
         String send = blank(body.get("sendData")) ? null : body.get("sendData").toString();
         if (send != null) requireAdmin(session);   // ham payload (BANNER/UDP arbitrary bayt) → yalnız admin (iç-servis SSRF payload'u)
@@ -1607,6 +1689,8 @@ public class MonitoringController {
         // team_id ile team_name AYNI kaynaktan (effectiveTeam) — bkz. enrichDns.
         item.put("team_id",         effectiveTeam(m.getHost(), m.getStandalone(), m.getTeamId()));
         item.put("notification_group_id",         m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",       m.getTeamId() != null ? teamById.get(m.getTeamId()) : teamMap.get(m.getHost()));
         item.put("group_name",      m.getGroupName());
         item.put("port",            m.getPort());
@@ -1782,7 +1866,7 @@ public class MonitoringController {
 
         Map<String, String> teamMap = certificateService.domainTeamNameMap();
         Map<Long, String> teamById = teamNameMap();
-        List<DnsMonitor> standaloneMonitors = dnsMonitorRepo.findByStandaloneTrueAndActiveTrue();
+        List<DnsMonitor> standaloneMonitors = dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull();   // duraklatılmış DÂHİL, silinmiş HARİÇ (2026-09-27)
         // Açık DNS alarmlarını tek sorguda çek → satırlarda aktif-alarm rozeti (envanter + standalone domainleri).
         // IDOR: yalnız görüş kapsamındaki envanter satırları listelenir (bkz. inventoryViewable).
         List<CertificateInventory> visibleInventory = inventory.stream()
@@ -1828,12 +1912,29 @@ public class MonitoringController {
         // "WHERE standalone IS NOT TRUE"), yani ikinci bir satır DB'ce engellenmez ve o andan sonra
         // findFirst... hangi satırı döndüreceği belirsiz hâle gelir — düzenleme guard'ı yanlış
         // satırı yakalayabilirdi. Canlandırma tek satırı korur, geçmişi ve id'yi de saklar.
-        DnsMonitor revived = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(domain, recordType)
+        //
+        // 2026-09-27 (silinmiş ≠ duraklatılmış): CANLI satır (aktif YA DA duraklatılmış) ENGELDİR — duraklatılan artık
+        // listede görünüyor; eskisi gibi onu "canlandırmak" kullanıcının görünür bir izlemesinin ayarlarını sessizce
+        // ezerdi. Yalnız SİLİNMİŞ satır canlandırılır ve TEMİZ başlar: silinmiş izlemenin ayarları (alarm seviyesi,
+        // aralık, teyit/kurtarma, kanal, beklenen değer…) yeni izlemeye sızmaz; korunan yalnız kimliktir (id + ilk
+        // oluşturma künyesi) — geçmiş aynı id'de kesintisiz kalır.
+        DnsMonitor live = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(domain, recordType)
                 .orElse(null);
-        if (revived != null && Boolean.TRUE.equals(revived.getActive()))
-            return badRequest("Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz.");
+        if (live != null) return badRequest(Boolean.TRUE.equals(live.getActive())
+                ? "Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz."
+                : "Bu (domain, kayıt tipi) için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün.");
+        DnsMonitor deleted = dnsMonitorRepo
+                .findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc(domain, recordType)
+                .orElse(null);
         String now = ISO.format(Instant.now());
-        DnsMonitor m = revived != null ? revived : new DnsMonitor();
+        DnsMonitor m = new DnsMonitor();   // varsayılan ayarlarla; deletedAt = null
+        if (deleted != null) {
+            m.setId(deleted.getId());
+            m.setCreatedAt(deleted.getCreatedAt());
+            m.setCreatedBy(deleted.getCreatedBy());
+            m.setCreatedByName(deleted.getCreatedByName());
+            m.setCreatedIp(deleted.getCreatedIp());
+        }
         m.setName(blank(body.get("name")) ? domain : body.get("name").toString().trim());
         m.setDomain(domain);
         m.setRecordType(recordType);
@@ -1854,6 +1955,7 @@ public class MonitoringController {
         if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         // Kanal bayraklari burada HIC okunmuyordu: "Kopyala" akisinda e-posta/webhook KAPALI bir
         // izlemenin kopyasi ACIK doguyordu — kullanicinin bilincli tercihi sessizce kayboluyordu.
@@ -1885,8 +1987,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> updateDns(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
-        java.util.Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
-        return dnsMonitorRepo.findById(id).map(m -> {
+        java.util.Map<String, Object> _before = findLiveDns(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        return findLiveDns(id).map(m -> {
             // Kapı, sekiz kardeş türle AYNI: izlemenin takımı üzerinde yetki (bkz. updatePort).
             //
             // Eskiden envanter-türevi satır requireAdmin istiyordu ve DNS bunu yapan TEK türdü.
@@ -1906,7 +2008,7 @@ public class MonitoringController {
                             ? ((String) body.get("recordType")).trim().toUpperCase() : m.getRecordType();
                     // (domain, kayıt tipi) mükerrer guard — yalnız standalone (envanter-türevinde domain envanterle bağlı)
                     if (Boolean.TRUE.equals(m.getStandalone())
-                            && dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrue(newDomain, finalType)
+                            && dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(newDomain, finalType)
                                  .filter(x -> !x.getId().equals(id)).isPresent())
                         return badRequest("Bu (domain, kayıt tipi) için zaten bir monitör var");
                     // Domain DEĞİŞTİ → eski domain'in açık DNS alarmlarını sessizce kapat: aksi halde recovery yeni
@@ -1942,6 +2044,7 @@ public class MonitoringController {
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             boolean detached = detachIfIdentityChanged(m, _prevDomain);
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
@@ -1963,8 +2066,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> deleteDns(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
-        Map<String, Object> _before = dnsMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
-        return dnsMonitorRepo.findById(id).map(m -> {
+        Map<String, Object> _before = findLiveDns(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        return findLiveDns(id).map(m -> {
             // KAPI: silme, kardeşlerin YEDİSİNDE olduğu gibi canManage — yani TEAM_ADMIN ve üstü.
             // dba22f1a bunu canOperateTeam'e çekmişti; o, sıradan USER'ı da kendi takımı için
             // geçirir ve silme sütununu 9 türün 7'sinden ayırırdı. USER kaybetmiyor: kendi satırını
@@ -1978,7 +2081,13 @@ public class MonitoringController {
             // geri alınabilir bir duraklatmayı kalıcı silmeye yükseltiyordu — üstelik kart düğmesi
             // türev satırda "İzlemeyi durdur (envanter-türevi kayıt silinmez)" vaadini veriyordu.
             // Kalıcılığı artık kullanıcının çevirebildiği bir alan belirlemiyor.
+            //
+            // 2026-09-27 (kullanıcı kararı): standalone satırda silme duraklatmadan AYRI — deleted_at yazılır. Bu da
+            // YUMUŞAK silmedir (satır ve geçmişi DB'de kalır; aynı domain+tip yeniden eklenince canlandırılır), yani
+            // yukarıdaki "geri alınamaz kalıcı silmeye yükseltme" riskini geri getirmez. Envanter-türevi satırda
+            // silme = duraklatma olarak kalır.
             m.setActive(false);
+            if (Boolean.TRUE.equals(m.getStandalone())) m.setDeletedAt(ISO.format(Instant.now()));
             m.setUpdatedAt(ISO.format(Instant.now()));
             dnsMonitorRepo.save(m);
             activityLog.recordLifecycle(ActivityLogService.DNS, m.getId(), m.getName(),
@@ -1999,7 +2108,7 @@ public class MonitoringController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size,
             @RequestParam(required = false) String format,
             jakarta.servlet.http.HttpServletResponse response) {
-        DnsMonitor mon = dnsMonitorRepo.findById(id).orElse(null);
+        DnsMonitor mon = findLiveDns(id).orElse(null);
         if (mon == null) return notFound("DNS monitor not found");
         String effStatus = changedOnly ? "changed" : status;   // eski changedOnly paramı geriye-uyum sugar'ı
         var src = new CheckHistoryService.Source<DnsRecord>() {
@@ -2029,7 +2138,7 @@ public class MonitoringController {
     @PostMapping("/dns/{id}/check")
     public ResponseEntity<Map<String, Object>> triggerDns(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.trigger", "execute");
-        return dnsMonitorRepo.findById(id).map(m -> {
+        return findLiveDns(id).map(m -> {
             // Kapı, sekiz kardeş türle AYNI: izlemenin takımı üzerinde yetki. Burada eskiden
             // requireAdmin vardı ve DNS bu konuda dokuz türün TEK istisnasıydı; hiçbir yerde
             // gerekçesi yazılı değildi. "Şimdi kontrol et" salt-okunur bir işlemdir (DNS sorgusu
@@ -2092,7 +2201,7 @@ public class MonitoringController {
         // takimin DNS yapilandirmasi + her cagride CANLI DNS sorgusu + resolver yapilandirmasi
         // okunabiliyordu. Kardes uclar (/history, /response-series, /check) hep korumaliydi.
         permissionService.require(session, "monitoring.read", "view");
-        return dnsMonitorRepo.findById(id).map(m -> {
+        return findLiveDns(id).map(m -> {
             var deny = denyIfNotViewable(session, effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));   // IDOR (H3)
             if (deny != null) return deny;
             Map<String, Object> data = new LinkedHashMap<>(dnsChecker.enrichedQuery(m.getDomain()));
@@ -2126,6 +2235,8 @@ public class MonitoringController {
         // karşılaştırması bu yüzden transferden sonra yanlış sonuç veriyordu.
         item.put("team_id",         effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()));
         item.put("notification_group_id",         m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("expected_value",  m.getExpectedValue());
         item.put("propagation_check", Boolean.TRUE.equals(m.getPropagationCheck()));
         item.put("dns_change_alert_enabled", !Boolean.FALSE.equals(m.getDnsChangeAlertEnabled()));   // etkin değer (null=açık)
@@ -2152,6 +2263,8 @@ public class MonitoringController {
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
             item.put("value",        latest.getValue());
+            // Değişim kartta "önceki → şimdiki" gösterilsin (2026-09-27): kayıtta vardı ama listeye hiç konmuyordu.
+            item.put("previous_value", latest.getPreviousValue());
             item.put("changed",      latest.getChanged());
             item.put("rotated",      Boolean.TRUE.equals(latest.getRotated()));
             item.put("checked_at",   latest.getCheckedAt());
@@ -2159,6 +2272,7 @@ public class MonitoringController {
             item.put("response_ms",  latest.getResponseMs());
         } else {
             item.put("value",        null);
+            item.put("previous_value", null);
             item.put("changed",      false);
             item.put("rotated",      false);
             item.put("checked_at",   null);
@@ -2221,10 +2335,11 @@ public class MonitoringController {
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -2269,10 +2384,11 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW, EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -2393,15 +2509,24 @@ public class MonitoringController {
         String op = body.get("operator") != null ? body.get("operator").toString() : "GTE";
         if (!KW_OPERATORS.contains(op)) op = "GTE";
         int threshold = body.get("matchCount") instanceof Number mn ? mn.intValue() : 1;
-        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 10000);   // N3: test ucu da tavanlı
         String customHeaders = body.get("customHeaders") != null ? body.get("customHeaders").toString() : null;
         boolean caseSensitive = Boolean.TRUE.equals(body.get("caseSensitive"));
-        // Başlıkların İÇERİĞİ yazılmaz: Authorization taşıyabiliyor. Hedef URL'in query'si de düşer.
-        auditService.recordAction("MONITOR_TEST", session, "KEYWORD_MONITOR", "test",
-                AuditDetail.of("url", AuditDetail.safeTarget(url), "operator", op,
-                        "match_count", threshold, "custom_headers", customHeaders != null), null);
-        com.sitemonitor.service.ProxyPolicyService.Decision kpd = proxyDecision(url, body.get("useProxy"));
-        Map<String, Object> r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive, kpd.viaProxy());
+        // N1: oturum başına tek eşzamanlı test — istek iş parçacığı havuzu tek oturumca tüketilemesin.
+        String slot = testSlot(session, "keyword");
+        if (!TEST_IN_FLIGHT.add(slot)) return testBusy();
+        Map<String, Object> r;
+        com.sitemonitor.service.ProxyPolicyService.Decision kpd;
+        try {
+            // Başlıkların İÇERİĞİ yazılmaz: Authorization taşıyabiliyor. Hedef URL'in query'si de düşer.
+            auditService.recordAction("MONITOR_TEST", session, "KEYWORD_MONITOR", "test",
+                    AuditDetail.of("url", AuditDetail.safeTarget(url), "operator", op,
+                            "match_count", threshold, "custom_headers", customHeaders != null), null);
+            kpd = proxyDecision(url, body.get("useProxy"));
+            r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive, kpd.viaProxy());
+        } finally {
+            TEST_IN_FLIGHT.remove(slot);
+        }
         int count = r.get("count") instanceof Number cn ? cn.intValue() : 0;
         boolean met = r.get("error") == null && KeywordCheckerService.evaluate(count, op, threshold);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -2428,7 +2553,7 @@ public class MonitoringController {
         if (host.isEmpty()) return badRequest("host zorunlu");
         String ipVersion = body.get("ipVersion") != null ? body.get("ipVersion").toString() : "auto";
         int count     = body.get("packetCount") instanceof Number cn ? cn.intValue() : 4;
-        int timeoutMs = body.get("timeoutMs")   instanceof Number tn ? tn.intValue() : 5000;
+        int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 5000);   // N3: test ucu da tavanlı
         auditService.recordAction("MONITOR_TEST", session, "PING_MONITOR", "test",
                 AuditDetail.of("host", host, "ip_version", ipVersion, "packet_count", count), null);
         Map<String, Object> r = pingChecker.check(host, ipVersion, Math.max(1, Math.min(count, 10)), timeoutMs);
@@ -2518,7 +2643,7 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        PortMonitor pomon = portMonitorRepo.findById(id).orElse(null);
+        PortMonitor pomon = findLivePort(id).orElse(null);
         if (pomon == null) return notFound("Port monitor not found");
         // Yazma kardeşleri (PUT/check/DELETE) effectiveTeam kullanır: envanter-türevi satırın team_id'si
         // transferde tazelenmez → eski takım geçmişi okumaya devam ediyor, yeni takım 403 alıyordu.
@@ -2534,7 +2659,7 @@ public class MonitoringController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @RequestParam(defaultValue = "30") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        DnsMonitor dmon = dnsMonitorRepo.findById(id).orElse(null);
+        DnsMonitor dmon = findLiveDns(id).orElse(null);
         if (dmon == null) return notFound("DNS monitor not found");
         var deny = denyIfNotViewable(session, effectiveTeam(dmon.getDomain(), dmon.getStandalone(), dmon.getTeamId()));   // IDOR (H3)
         if (deny != null) return deny;
@@ -2661,6 +2786,8 @@ public class MonitoringController {
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -2765,10 +2892,11 @@ public class MonitoringController {
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         m.setActive(true);                                                // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean ab) m.setActive(ab);    // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
         if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -2808,10 +2936,11 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -2921,17 +3050,25 @@ public class MonitoringController {
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
         String method = normalizeHttpMethod(body.get("method"));
         String expected = !blank(body.get("expectedStatus")) ? body.get("expectedStatus").toString().trim() : "200-399";
-        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 10000;
+        int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 10000);   // N3: test ucu da tavanlı
         boolean verifySsl = Boolean.TRUE.equals(body.get("verifySsl"));
         boolean followRedirects = !Boolean.FALSE.equals(body.get("followRedirects"));
         com.sitemonitor.service.ProxyPolicyService.Decision pd = proxyDecision(url, body.get("useProxy"));
-        // `verify_ssl=false` denetimde AÇIKÇA görünür: doğrulamayı kapatarak yapılan bir prob,
-        // güvenlik incelemesinde diğerlerinden farklı bir sorudur.
-        auditService.recordAction("MONITOR_TEST", session, "HTTP_MONITOR", "test",
-                AuditDetail.of("url", AuditDetail.safeTarget(url), "method", method,
-                        "expected", expected, "verify_ssl", verifySsl,
-                        "follow_redirects", followRedirects, "via", pd.via()), null);
-        Map<String, Object> r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, pd.viaProxy());
+        // N1: oturum başına tek eşzamanlı test — istek iş parçacığı havuzu tek oturumca tüketilemesin.
+        String slot = testSlot(session, "http");
+        if (!TEST_IN_FLIGHT.add(slot)) return testBusy();
+        Map<String, Object> r;
+        try {
+            // `verify_ssl=false` denetimde AÇIKÇA görünür: doğrulamayı kapatarak yapılan bir prob,
+            // güvenlik incelemesinde diğerlerinden farklı bir sorudur.
+            auditService.recordAction("MONITOR_TEST", session, "HTTP_MONITOR", "test",
+                    AuditDetail.of("url", AuditDetail.safeTarget(url), "method", method,
+                            "expected", expected, "verify_ssl", verifySsl,
+                            "follow_redirects", followRedirects, "via", pd.via()), null);
+            r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, pd.viaProxy());
+        } finally {
+            TEST_IN_FLIGHT.remove(slot);
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("via",             r.getOrDefault("via", pd.via()));
         out.put("proxy_source",    pd.source());
@@ -3014,6 +3151,8 @@ public class MonitoringController {
         item.put("group_name",       m.getGroupName());
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -3099,8 +3238,9 @@ public class MonitoringController {
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
         if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
         if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -3135,10 +3275,11 @@ public class MonitoringController {
             if (body.containsKey("groupName"))       m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
             if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
             if (body.get("recoveryChecks") != null)          m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
@@ -3262,7 +3403,7 @@ public class MonitoringController {
         String url = body.get("url") != null ? MonitorUrls.normalize(body.get("url").toString()) : "";
         if (url.isEmpty()) return badRequest("url zorunlu");
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
-        int timeoutMs = body.get("timeoutMs") instanceof Number tn ? tn.intValue() : 4000;
+        int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 4000);   // N3: test ucu da tavanlı
         com.sitemonitor.service.ProxyPolicyService.Decision ppd = proxyDecision(url, body.get("useProxy"));
         auditService.recordAction("MONITOR_TEST", session, "PAGE_MONITOR", "test",
                 AuditDetail.of("url", AuditDetail.safeTarget(url), "via", ppd.via()), null);
@@ -3319,7 +3460,7 @@ public class MonitoringController {
             "userAgent", "sendDnt", "useProxy", "excludeTrackers", "trackerPatterns",
             "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc", "resourceConcurrency",
             "confirmAttempts", "confirmIntervalSeconds", "recoveryChecks", "recoveryIntervalSeconds",
-            "tags", "notifyEmail", "notifyWebhook" };
+            "tags", "notifyEmail", "notifyWebhook", "nocNotify", "nocGroupIds" };
 
     @GetMapping("/pagespeed")
     public ResponseEntity<Map<String, Object>> listPageSpeed(HttpSession session) {
@@ -3361,6 +3502,7 @@ public class MonitoringController {
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         applyPageSpeedFields(m, body, session);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
@@ -3389,6 +3531,7 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
@@ -3636,12 +3779,42 @@ public class MonitoringController {
         return ok(out);
     }
 
+    /**
+     * İzleme zaman aşımı tavanı: [1 sn, 120 sn] (prod kapısı 2026-09-25, Y-3). Keyword/HTTP/Port/Sayfa yazma
+     * yollarında üst sınır yoktu: `timeoutMs=2147483647` + bağlantıyı kabul edip yanıt vermeyen hedef, sweep
+     * iş parçacığını takıp TÜM takımların alarm hattını durduruyordu. Kardeş kural PageSpeed'deydi.
+     * Kaydetmeden çalışan beş {@code /…/test} ucu da aynı tavanı kullanır (N3): istek iş parçacığında
+     * senkron koştukları için sınırsız değer bir Tomcat iş parçacığını süresiz tutuyordu.
+     */
+    static int clampTimeoutMs(int v) { return Math.max(1000, Math.min(120_000, v)); }
+
+    /** Gövdedeki {@code timeoutMs} → tavanlı değer; yoksa/sayı değilse {@code dflt}. */
+    static int clampTimeoutMs(Object raw, int dflt) {
+        return raw instanceof Number n ? clampTimeoutMs(n.intValue()) : dflt;
+    }
+
+    /**
+     * Kaydetmeden çalışan HTTP / Keyword test uçları için OTURUM başına tek eşzamanlı istek
+     * (prod kapısı 2026-09-25, N1). İki uç da istek iş parçacığında senkron koşar; aynı oturumdan
+     * art arda gönderilen istekler (yavaş ya da akış yapan bir hedefe) Tomcat havuzunu (100) tüketip
+     * tek pod'u herkese kapatabiliyordu. Anahtar istek bitince {@code finally} ile silinir — sızıntı yok.
+     * Paket görünür: testler yuvayı dolu gösterebilsin.
+     */
+    static final java.util.Set<String> TEST_IN_FLIGHT = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    static String testSlot(HttpSession session, String kind) { return session.getId() + "|" + kind; }
+
+    private static ResponseEntity<Map<String, Object>> testBusy() {
+        return ResponseEntity.status(429).body(Map.<String, Object>of("success", false,
+                "error", "Bu oturumda bir test zaten sürüyor — bitmesini bekleyin."));
+    }
+
     /** Ortak: sayfa hızına özgü alanları clamp'li uygular. Şifreli alanlar write-only desende yazılır. */
     private void applyPageSpeedFields(com.sitemonitor.model.PageSpeedMonitor m, Map<String, Object> body, HttpSession session) {
         // Aralık tabanı SUNUCUDA da uygulanır: form atlanabilir, uç atlanamaz.
         if (body.get("intervalSeconds") instanceof Number n)
             m.setIntervalSeconds(com.sitemonitor.service.page.PageSpeedRules.clampInterval(n.intValue()));
-        if (body.get("timeoutMs") instanceof Number n) m.setTimeoutMs(Math.max(1000, Math.min(120000, n.intValue())));
+        if (body.get("timeoutMs") instanceof Number n) m.setTimeoutMs(clampTimeoutMs(n.intValue()));
 
         // Eşikler: 4'ü de opsiyonel. Açıkça null gönderilirse eşik KALDIRILIR (kullanıcı vazgeçebilmeli).
         applyThreshold(body, "maxLoadMs",   m::setMaxLoadMs);
@@ -3734,6 +3907,8 @@ public class MonitoringController {
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());
         item.put("notification_group_id",              m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",               m.getActive());
         item.put("interval_seconds",     m.getIntervalSeconds());
@@ -3839,6 +4014,8 @@ public class MonitoringController {
         item.put("group_name",           m.getGroupName());
         item.put("team_id",              m.getTeamId());
         item.put("notification_group_id",              m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",            m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",               m.getActive());
         item.put("interval_seconds",     m.getIntervalSeconds());
@@ -3944,6 +4121,7 @@ public class MonitoringController {
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, teamId, body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
         if (body.get("confirmAttempts") != null)         m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
         if (body.get("confirmIntervalSeconds") != null)  m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
@@ -4005,6 +4183,7 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             if (body.get("active") instanceof Boolean b) {
                 // Kullanıcı izlemeyi YENİDEN AÇIYORSA anomali kapatmasının sebebi düşer: uyarı,
                 // düzeltilmiş bir izlemenin üstünde sonsuza kadar asılı kalmamalı. Kapatma kararı
@@ -4477,7 +4656,7 @@ public class MonitoringController {
     private static final String[] SCRIPTED_FIELDS = {
             "name", "description", "script", "timeoutSeconds", "intervalSeconds",
             "confirmAttempts", "recoveryChecks", "active", "groupName", "notifyEmail", "notifyWebhook",
-            "slowResponseEnabled", "slowThresholdMs" };
+            "slowResponseEnabled", "slowThresholdMs", "nocNotify", "nocGroupIds" };
 
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {
@@ -4752,6 +4931,8 @@ public class MonitoringController {
         item.put("group_name", m.getGroupName());
         item.put("team_id", m.getTeamId());
         item.put("notification_group_id", m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name", m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active", m.getActive());
         item.put("interval_seconds", m.getIntervalSeconds());
@@ -4844,6 +5025,7 @@ public class MonitoringController {
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         applyDomainFields(m, body);
@@ -4877,6 +5059,7 @@ public class MonitoringController {
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
@@ -5161,6 +5344,8 @@ public class MonitoringController {
         item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("notify_email",   m.getNotifyEmail());
@@ -5276,10 +5461,11 @@ public class MonitoringController {
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
         m.setTeamId(teamId);
         m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+        applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
         m.setActive(true);                                            // varsayılan: yeni izleme aktif
         if (body.get("active") instanceof Boolean b) m.setActive(b);  // Kopyala: pasif kaynağın kopyası da pasif doğsun
         if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-        if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+        if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
         if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
         if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
         if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
@@ -5331,12 +5517,13 @@ public class MonitoringController {
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
-            if (body.get("timeoutMs")       != null) m.setTimeoutMs(((Number) body.get("timeoutMs")).intValue());
+            if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
             if (body.get("packetCount")     != null) m.setPacketCount(((Number) body.get("packetCount")).intValue());
             if (body.get("confirmAttempts") != null)        m.setConfirmAttempts(clampAttempts(((Number) body.get("confirmAttempts")).intValue()));
             if (body.get("confirmIntervalSeconds") != null) m.setConfirmIntervalSeconds(clampInterval(((Number) body.get("confirmIntervalSeconds")).intValue()));
@@ -5463,6 +5650,8 @@ public class MonitoringController {
         item.put("alert_level",     com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(m.getAlertLevel()));
         item.put("team_id",          m.getTeamId());
         item.put("notification_group_id",          m.getNotificationGroupId());
+        item.put("noc_notify",            Boolean.TRUE.equals(m.getNocNotify()));   // 7/24 (null = kapalı)
+        item.put("noc_group_ids",         com.sitemonitor.service.noc.NocGroupIds.parse(m.getNocGroupIds()));
         item.put("team_name",        m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
         item.put("active",           m.getActive());
         item.put("notify_email",   m.getNotifyEmail());

@@ -46,9 +46,12 @@ public class AdminHistoryService {
             "ALERT_THRESHOLD", List.of("THRESHOLD_CREATE", "THRESHOLD_UPDATE", "THRESHOLD_DELETE"),
             "ESCALATION_CONTACT", List.of("CONTACT_CREATE", "CONTACT_UPDATE", "CONTACT_DELETE", "CONTACT_WEBHOOK_TEST"),
             "TEAM", List.of("TEAM_CREATE", "TEAM_UPDATE", "TEAM_BULK_UPDATE", "TEAM_DELETE", "TEAM_WEEKLY_NOTIFICATIONS", "TEAM_MOVE_ASSETS",
-                    "TEAM_MEMBER_ADD", "TEAM_MEMBER_REMOVE", "WEEKLY_REPORT_ACCESS"),
+                    "TEAM_MEMBER_ADD", "TEAM_MEMBER_REMOVE", "TEAM_LDAP_RESYNC", "WEEKLY_REPORT_ACCESS"),
+            // USER_LDAP_SYNC / USER_LDAP_RESYNC (2026-09-26): AD kaynaklı üyelik/müdür değişikliği kullanıcı
+            // geçmişinde görünsün — "bu kişi bu takıma ne zaman, hangi yoldan girdi?" ekrandan cevaplansın.
             "USER", List.of("USER_CREATE", "USER_UPDATE", "USER_DELETE", "USER_BULK_UPDATE", "USER_PASSWORD_AUTO_RESET",
                     "USER_UNLOCK", "USER_ROLE_UNLOCK", "USER_TEAM_UNLOCK", "USER_ORG_ROLE_UNLOCK", "USER_TOUR_RESET",
+                    "USER_LDAP_SYNC", "USER_LDAP_RESYNC",
                     "ACCOUNT_LOCKED", "SELF_PASSWORD_CHANGE", "SESSION_TERMINATE"));
 
     static final int WINDOW_MAX = 2_000;

@@ -644,14 +644,32 @@ outage alert is raised.
 - The **Chart** tab switches between load time, TTFB, size and request count.
 `
 
+// 7/24 izleme ekibi alanı (2026-09-27) — dokuz formda AYNI ortak alan (noc/forms/NocNotifyField), bu yüzden tek metin her
+// türün rehberinin sonuna eklenir. Alan değişirse burayı da güncelle.
+const NOC_TR = `
+### 7/24 izleme ekibine bildir
+- **7/24 izleme ekibine bildir** — Varsayılan **kapalı**. Açıkken bu izlemenin kritik uyarıları takımın e-postasına ek olarak kurumun 7/24 izleme ekibine (NOC) de gider; ekip gece ya da hafta sonu takımınızı telefonla arar. Hangi seviyeden itibaren gideceğini yönetici belirler (varsayılan **Kritik**). Takımın sessiz saatleri ve kişisel susturmalar bu e-postayı etkilemez; bakım pencereleri etkiler.
+- **Gönderilecek 7/24 grupları** — Birden çok aktif 7/24 grubu varsa anahtarın altında görünür; varsayılan gruplar önseçilidir. Seçimi değiştirirseniz e-posta yalnız işaretli gruplara gider (**Varsayılan gruplara dön** ile geri alınır). En az bir grup seçili kalır.
+- Yönetici bu türün 7/24 bildirimlerini **Ayarlar → 7/24 İzleme Ekibi**'nden kapattıysa formda uyarı çıkar: anahtar açık olsa da e-posta gitmez. Hiç aktif grup yoksa da gönderim olmaz — grup tanımı için yöneticinize başvurun.
+- Açık izlemelerin kartında (Zengin görünüm) ve detay penceresinde **7/24** rozeti görünür. Birden çok izlemeyi toplu işlem çubuğundaki **7/24'e bildir: Aç / Kapat** ile tek seferde değiştirebilirsiniz.
+`
+
+const NOC_EN = `
+### Notify the 24/7 monitoring team
+- **Notify the 24/7 monitoring team** — **Off** by default. When on, critical alerts for this monitor go to your organisation's 24/7 monitoring team (NOC) as well as to your team's email address; they will ring your team at night or at the weekend. An administrator decides the lowest level that is sent (**Critical** by default). Your team's quiet hours and personal mutes don't affect this email; maintenance windows do.
+- **24/7 groups to email** — Appears under the switch when there is more than one active 24/7 group; the default groups are preselected. If you change the selection, emails go only to the ticked groups (**Use the default groups** undoes it). At least one group stays ticked.
+- If an administrator has switched off 24/7 alerts for this type under **Settings → 24/7 Monitoring Team**, the form warns you: nothing is sent even with the switch on. Nothing is sent either while there is no active group — ask your administrator to set one up.
+- Monitors with it switched on show a **24/7** badge on their card (Rich view) and in the detail window. To change several monitors at once, use **Notify 24/7 team: On / Off** in the bulk action bar.
+`
+
 export const MONITOR_GUIDES = {
-  http:     { tr: HTTP_TR,     en: HTTP_EN },
-  port:     { tr: PORT_TR,     en: PORT_EN },
-  dns:      { tr: DNS_TR,      en: DNS_EN },
-  keyword:  { tr: KEYWORD_TR,  en: KEYWORD_EN },
-  ping:     { tr: PING_TR,     en: PING_EN },
-  page:     { tr: PAGE_TR,     en: PAGE_EN },
-  domain:   { tr: DOMAIN_TR,   en: DOMAIN_EN },
-  pagespeed: { tr: PAGESPEED_TR, en: PAGESPEED_EN },
-  scripted: { tr: SCRIPTED_TR, en: SCRIPTED_EN },
+  http:     { tr: HTTP_TR + NOC_TR,     en: HTTP_EN + NOC_EN },
+  port:     { tr: PORT_TR + NOC_TR,     en: PORT_EN + NOC_EN },
+  dns:      { tr: DNS_TR + NOC_TR,      en: DNS_EN + NOC_EN },
+  keyword:  { tr: KEYWORD_TR + NOC_TR,  en: KEYWORD_EN + NOC_EN },
+  ping:     { tr: PING_TR + NOC_TR,     en: PING_EN + NOC_EN },
+  page:     { tr: PAGE_TR + NOC_TR,     en: PAGE_EN + NOC_EN },
+  domain:   { tr: DOMAIN_TR + NOC_TR,   en: DOMAIN_EN + NOC_EN },
+  pagespeed: { tr: PAGESPEED_TR + NOC_TR, en: PAGESPEED_EN + NOC_EN },
+  scripted: { tr: SCRIPTED_TR + NOC_TR, en: SCRIPTED_EN + NOC_EN },
 }

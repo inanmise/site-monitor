@@ -61,7 +61,11 @@ public class TodayPanelController {
             out.put("total", h.total()); out.put("page", h.page()); out.put("size", h.size()); out.put("total_pages", h.totalPages());
             return ResponseEntity.ok(out);
         }
-        List<Map<String, Object>> items = inboxService.build(teamId -> SessionScope.canView(session, teamId), own).stream()
+        // Sorun bildirimi haberleri (2026-09-26): kullanıcı adı OTURUMDAN; yeniden-açma haberi yalnız GLOBAL yöneticiye
+        // (kapsamlı müdür "ADMIN" rolüyle gelir ama global değildir — SessionScope.isGlobalAdmin).
+        Object u = session.getAttribute("username");
+        List<Map<String, Object>> items = inboxService.build(teamId -> SessionScope.canView(session, teamId), own,
+                        u != null ? u.toString() : null, SessionScope.isGlobalAdmin(session)).stream()
                 .map(TodayPanelController::inboxItem).toList();
         return ResponseEntity.ok(Map.of("success", true, "data", items));
     }

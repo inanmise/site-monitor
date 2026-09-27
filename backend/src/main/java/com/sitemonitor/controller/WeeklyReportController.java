@@ -683,6 +683,8 @@ public class WeeklyReportController {
         m.put("score", r.getScore());                     // gönderim anı skoru (2026-09-13)
         m.put("submitted_by", r.getSubmittedBy());
         m.put("reject_note", r.getRejectNote() != null && !r.getRejectNote().isBlank());   // iade notu var mı (rozet)
+        // Madde 1 durum dağılımı (2026-09-27) — liste CSV'si ve özetler için; içerik taşınmaz, yalnız dört sayı
+        m.put("status_counts", service.statusCountsOf(r.getContentJson()));
         return m;
     }
 

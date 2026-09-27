@@ -1,165 +1,145 @@
-import { useState, useEffect } from 'react'
-import { Users, Mail, Webhook, BellRing, ChevronDown, ChevronUp } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { RotateCw, Users } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import SearchableSelect from '../ui/SearchableSelect.jsx'
-import SegmentedControl from '../ui/SegmentedControl.jsx'
+import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import TeamBadge from '../ui/TeamBadge.jsx'
-import { LoadingBlock } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import CopyLinkButton from '../ui/CopyLinkButton.jsx'
+import { SettingsHeader } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import ScenarioForm from './whonotified/ScenarioForm.jsx'
+import SimResult, { HowDecided, ResultSkeleton } from './whonotified/SimResult.jsx'
+import { DEFAULT_KIND, DEFAULT_LEVEL, normId, normKind, normLevel } from './whonotified/whoNotifiedModel.js'
 
-const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
+/** Seçim değişikliklerinin tek istekte toplanması (ör. seviye çubuğunda hızlı gezinme). */
+const DEBOUNCE_MS = 200
 
 /**
- * "Kim bilgilendirilir?" simülatörü (2026-09-20) — takım + seviye (+ izleme grubu) seçilir, alarm gitmeden
- * alıcı zinciri görünür: e-posta (izleme grubu → takım varsayılan grubu → takım adresi), eskalasyon
- * kişileri (seviye + takım/global düşüşü), kişi webhook'ları ve push alıcıları (yalnız global admin).
- * Sunucu gerçek gönderimle AYNI kararları kullanır ({@code EscalationService.simulateRecipients}).
+ * "Kim bilgilendirilir?" — Yönetim Paneli › Bildirim & Alarmlar altında AYRI sekme (2026-09-27; önceden Eskalasyon
+ * Kişileri sayfasının içinde katlanır bir karttı). Takım + alarm seviyesi + alarm türü (+ bildirim grubu) seçilir,
+ * alarm gitmeden alıcı zinciri görünür: e-posta (bildirim grubu → takım varsayılan grubu → takım adresi), eskalasyon
+ * kişileri (seviye eşiği + takımsız/global düşüşü), kişi webhook'ları ve push alıcıları (yalnız global yönetici).
+ * Kararları sunucu verir — gerçek gönderimle AYNI kod yolu ({@code EscalationService.simulateRecipients}).
+ *
+ * <p>Senaryo URL'de (`g_team`, `g_level`, `g_kind`, `g_group`; varsayılan değer yazılmaz): simülasyon bağlantıyla
+ * paylaşılır, yenileme korunur. Sekme değişince AdminPanel `g_*` anahtarlarını temizler.
+ *
+ * @param teams          görünür takımlar (AdminPanel yükler)
+ * @param isAdmin        sistem rolü ADMIN — push kartı yalnız o zaman çizilir (veriyi yine sunucu kapsar)
+ * @param defaultTeamId  tek takımlı ADMIN olmayan kullanıcıda o takım (takımlar geç yüklenir → efektle uygulanır)
+ * @param onNavigate     (sekmeId, g_* paramları) → AdminPanel.jump; "kimse bilgilendirilmez" durumundan kuruluma geçiş
  */
-export default function RecipientSimulator({ teams = [], isAdmin, defaultTeamId = '' }) {
+export default function RecipientSimulator({ teams = [], isAdmin = false, defaultTeamId = '', onNavigate }) {
   const t = useT()
-  const [open, setOpen] = useState(false)
-  const [teamId, setTeamId] = useState(defaultTeamId ? String(defaultTeamId) : '')
-  const [level, setLevel] = useState('HIGH')
-  const [kind, setKind] = useState('CERT')
-  const [groups, setGroups] = useState([])
-  const [groupId, setGroupId] = useState('')
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [teamId, setTeamId] = useState(() => normId(readUrlParam('g_team', '')) || normId(defaultTeamId))
+  const [level, setLevel] = useState(() => normLevel(readUrlParam('g_level', DEFAULT_LEVEL)))
+  const [kind, setKind] = useState(() => normKind(readUrlParam('g_kind', DEFAULT_KIND)))
+  const [groupId, setGroupId] = useState(() => normId(readUrlParam('g_group', '')))
+  useUrlQuerySync({
+    g_team: teamId || null,
+    g_level: level === DEFAULT_LEVEL ? null : level,
+    g_kind: kind === DEFAULT_KIND ? null : kind,
+    g_group: groupId || null,
+  })
 
-  // Takım değişince o takımın bildirim grupları (izleme grubu simülasyonu için).
+  // Takımlar AdminPanel'de geç gelir: tek takımlı kullanıcının takımı yüklendiğinde seçilir (kullanıcı seçimini ezmez).
   useEffect(() => {
-    setGroupId(''); setGroups([])
-    if (!teamId || !open) return
+    const id = normId(defaultTeamId)
+    if (id) setTeamId((cur) => cur || id)
+  }, [defaultTeamId])
+
+  // Elle yazılmış/eskimiş bağlantı: görünür takım listesinde olmayan takım seçili kalmasın.
+  useEffect(() => {
+    if (teamId && teams.length > 0 && !teams.some((tm) => String(tm.id) === teamId)) {
+      setTeamId('')
+      setGroupId('')
+    }
+  }, [teams, teamId])
+
+  // Takımın bildirim grupları (isteğe bağlı "izlemenin grubu" seçimi).
+  const [groupsState, setGroupsState] = useState({ teamId: '', list: [] })
+  useEffect(() => {
+    if (!teamId) return undefined
     let alive = true
     Promise.resolve(api.notificationGroups?.list?.(Number(teamId)))
-      .then(res => { if (alive && res?.success) setGroups(Array.isArray(res.data) ? res.data : (res.data?.items || [])) })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [teamId, open])
-
-  useEffect(() => {
-    if (!open || !teamId) { setData(null); return }
-    let alive = true
-    setLoading(true); setError(null)
-    api.admin.simulateRecipients({ teamId: Number(teamId), level, kind, groupId: groupId ? Number(groupId) : null })
-      .then(res => {
-        if (!alive) return
-        if (res?.success) setData(res.data)
-        else setError(res?.error || t('sim.error'))
+      .then((res) => {
+        if (!alive || !res?.success) return
+        const raw = Array.isArray(res.data) ? res.data : (res.data?.items || [])
+        const list = raw.filter((g) => g && g.active !== false && (g.team_id == null || String(g.team_id) === teamId))
+        setGroupsState({ teamId, list })
+        // Bağlantıdaki grup bu takımın değilse varsayılana dön (sunucu zaten yok sayar; ekran da yanıltmasın).
+        setGroupId((cur) => (cur && !list.some((g) => String(g.id) === cur) ? '' : cur))
       })
-      .catch(e => { if (alive) setError(e?.message || t('sim.error')) })
-      .finally(() => { if (alive) setLoading(false) })
+      .catch(() => { /* grup seçici boş kalır; simülasyon takım varsayılanıyla çalışır */ })
     return () => { alive = false }
-  }, [open, teamId, level, kind, groupId])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [teamId])
+  const groupsLoaded = groupsState.teamId === teamId
+  const groups = groupsLoaded ? groupsState.list : []
 
-  const teamOptions = [{ value: '', label: t('sim.pickTeam') }, ...teams.map(tm => ({ value: String(tm.id), label: tm.name }))]
+  // Simülasyon — her senaryo değişikliğinde (kısa gecikmeli) + "Simüle et" ile yeniden.
+  const [runKey, setRunKey] = useState(0)
+  const [result, setResult] = useState({ data: null, error: null, loading: false })
+  useEffect(() => {
+    if (!teamId) { setResult({ data: null, error: null, loading: false }); return undefined }
+    let alive = true
+    setResult((r) => ({ ...r, error: null, loading: true }))
+    const timer = setTimeout(() => {
+      Promise.resolve(api.admin.simulateRecipients({ teamId: Number(teamId), level, kind, groupId: groupId ? Number(groupId) : null }))
+        .then((res) => {
+          if (!alive) return
+          if (res?.success) setResult({ data: res.data, error: null, loading: false })
+          else setResult({ data: null, error: res?.error || t('sim.error'), loading: false })
+        })
+        .catch((e) => { if (alive) setResult({ data: null, error: e?.message || t('sim.error'), loading: false }) })
+    }, DEBOUNCE_MS)
+    return () => { alive = false; clearTimeout(timer) }
+  }, [teamId, level, kind, groupId, runKey])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  function changeTeam(v) {
+    const id = normId(v)
+    if (id === teamId) return
+    setTeamId(id)
+    setGroupId('')   // grup takıma aittir
+  }
+  const rerun = () => setRunKey((k) => k + 1)
+  // Kuruluma geçişte takım süzgeci yalnız yöneticide taşınır (diğer rolde o süzgecin denetimi görünmüyor).
+  const navParams = isAdmin && teamId ? { g_team: teamId } : undefined
+
+  let body
+  if (!teamId) {
+    body = (
+      <StatusBlock icon={Users} title={t('wn.pickTeamTitle')} description={t('wn.pickTeamDesc')}
+        className="rounded-xl border border-dashed py-8 md:py-8" />
+    )
+  } else if (result.error) {
+    body = (
+      <AlertBanner tone="danger" role="alert" title={t('wn.errorTitle')} className="mb-0"
+        actions={<Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={rerun}>
+          <RotateCw aria-hidden="true" /> {t('wn.retry')}
+        </Button>}>
+        {String(result.error)}
+      </AlertBanner>
+    )
+  } else if (!result.data) {
+    body = <ResultSkeleton />
+  } else {
+    body = (
+      <SimResult data={result.data} level={level} kind={kind} isAdmin={isAdmin} refreshing={result.loading}
+        onNavigate={onNavigate} navParams={navParams} />
+    )
+  }
 
   return (
-    <div className="admin-section sim-section" data-testid="recipient-sim">
-      <div className="admin-section-header">
-        <div>
-          <h3><Users size={16} /> {t('sim.title')}</h3>
-          <p className="section-desc">{t('sim.desc')}</p>
-        </div>
-        <Button variant="secondary" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {open ? t('sim.hide') : t('sim.show')}
-        </Button>
-      </div>
-
-      {open && (
-        <>
-          <div className="audit-filters sim-controls">
-            <SearchableSelect value={teamId} onChange={setTeamId} placeholder={t('sim.pickTeam')} ariaLabel={t('sim.team')}
-              searchThreshold={4} options={teamOptions} />
-            <SegmentedControl value={level} onChange={setLevel} ariaLabel={t('sim.level')}
-              options={LEVELS.map(l => ({ value: l, label: t(`sim.level.${l}`) }))} />
-            <SegmentedControl value={kind} onChange={setKind} ariaLabel={t('sim.kind')}
-              options={[{ value: 'CERT', label: t('sim.kindCert') }, { value: 'MONITOR', label: t('sim.kindMonitor') }]} />
-            {groups.length > 0 && (
-              <SearchableSelect value={groupId} onChange={setGroupId} placeholder={t('sim.groupDefault')} ariaLabel={t('sim.group')}
-                options={[{ value: '', label: t('sim.groupDefault') }, ...groups.map(g => ({ value: String(g.id), label: g.name }))]} />
-            )}
-          </div>
-
-          {!teamId && <p className="field-hint">{t('sim.pickTeamHint')}</p>}
-          {loading && <LoadingBlock label={t('sim.loading')} size={16} />}
-          {error && <AlertBanner tone="danger" role="alert">{error}</AlertBanner>}
-          {data && !loading && <SimResult data={data} t={t} isAdmin={isAdmin} />}
-        </>
-      )}
-    </div>
-  )
-}
-
-function SimResult({ data, t, isAdmin }) {
-  const emails = data.team_emails || []
-  const contacts = data.contacts || []
-  const webhooks = data.webhooks || []
-  const push = Array.isArray(data.push) ? data.push : null
-  const pushRecipients = push ? push.filter(p => p.decision === 'RECIPIENT') : []
-  const nothing = emails.length === 0 && contacts.length === 0 && webhooks.length === 0 && pushRecipients.length === 0
-  return (
-    <div className="sim-result">
-      <div className="sim-summary">
-        <span className="sim-chip"><Mail size={13} /> {t('sim.sumEmail', data.email_total ?? 0)}</span>
-        <span className="sim-chip"><Webhook size={13} /> {t('sim.sumWebhook', webhooks.length)}</span>
-        {push && <span className="sim-chip"><BellRing size={13} /> {t('sim.sumPush', pushRecipients.length, push.length)}</span>}
-        {data.team_name && <TeamBadge teamId={data.team_id} teamName={data.team_name} size={12} />}
-      </div>
-      {nothing && <AlertBanner tone="warning">{t('sim.nobody')}</AlertBanner>}
-      {!data.managers_included && <p className="field-hint">{t('sim.warningOnlyTeam')}</p>}
-      {data.contacts_fallback_global && <AlertBanner tone="warning">{t('sim.fallbackGlobal')}</AlertBanner>}
-
-      <div className="sim-grid">
-        <div className="sim-block">
-          <h4><Mail size={14} /> {t('sim.emailTitle')}</h4>
-          {emails.length === 0 && contacts.length === 0 ? <p className="field-hint">{t('sim.none')}</p> : (
-            <ul className="sim-list">
-              {emails.map(e => (
-                <li key={`t-${e.email}`}><span className="audit-mono">{e.email}</span> <span className="sim-src">{e.source}</span></li>
-              ))}
-              {contacts.map(c => (
-                <li key={`c-${c.id}`} className={c.email_duplicate ? 'is-dup' : ''}>
-                  <span className="audit-mono">{c.email || '—'}</span>
-                  <span className="sim-src">{c.name} · {t(`ec.role.${String(c.role || '').toLowerCase()}`)} · ≥ {t(`sim.level.${c.min_level}`)}</span>
-                  {c.email_duplicate && <span className="sim-dup">{t('sim.dup')}</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="sim-block">
-          <h4><Webhook size={14} /> {t('sim.webhookTitle')}</h4>
-          {webhooks.length === 0 ? <p className="field-hint">{t('sim.none')}</p> : (
-            <ul className="sim-list">
-              {webhooks.map(w => <li key={w.id}><span className="badge badge-ok">{w.type}</span> <span className="audit-mono">{w.target}</span> <span className="sim-src">{w.name}</span></li>)}
-            </ul>
-          )}
-        </div>
-        {isAdmin && (
-          <div className="sim-block sim-block--wide">
-            <h4><BellRing size={14} /> {t('sim.pushTitle')}</h4>
-            {!push ? <p className="field-hint">{data.push_error || t('sim.none')}</p> : push.length === 0 ? <p className="field-hint">{t('sim.none')}</p> : (
-              /* 2026-09-21 (kullanıcı bildirimi): satır satır serbest metin yerine sütunlu tablo — kişi / grup / karar hizalı */
-              <table className="sim-table">
-                <thead><tr><th>{t('sim.pushColPerson')}</th><th>{t('sim.pushColGroup')}</th><th>{t('sim.pushColDecision')}</th></tr></thead>
-                <tbody>
-                  {push.map((m, i) => (
-                    <tr key={(m.username || '') + i} className={m.decision === 'RECIPIENT' ? '' : 'is-skipped'}>
-                      <td><strong>{m.display_name || m.displayName || m.username}</strong>{m.username && (m.display_name || m.displayName) && <span className="sim-src sim-sub audit-mono">{m.username}</span>}</td>
-                      <td className="sim-src">{m.group || '—'}{m.min_level ? ` · ≥ ${m.min_level}` : ''}</td>
-                      <td><span className={`up-decision up-decision--${m.decision}`}>{t('userpush.decision.' + m.decision)}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <section data-slot="who-notified" data-testid="recipient-sim" className="mb-8 flex min-w-0 w-full flex-col gap-5">
+      <SettingsHeader icon={Users} title={t('sim.title')} description={t('wn.subtitle')}
+        actions={teamId ? <CopyLinkButton variant="outline" className="h-10 w-full sm:w-auto md:h-8" /> : null} />
+      <ScenarioForm teams={teams} teamId={teamId} onTeamChange={changeTeam}
+        level={level} onLevelChange={setLevel} kind={kind} onKindChange={setKind}
+        groups={groups} groupsLoaded={groupsLoaded} groupId={groupId} onGroupChange={(v) => setGroupId(normId(v))}
+        onRun={rerun} running={result.loading} />
+      {body}
+      <HowDecided />
+    </section>
   )
 }

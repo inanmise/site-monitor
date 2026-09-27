@@ -149,9 +149,9 @@ describe('envanter formu eylem çubuğu', () => {
   // Alan başına kontrol sıklığı (2026-09-12): düzenle modalında saatlik/12 sa/günlük/haftalık seçilir.
   it('2026-09-12: kontrol sıklığı "Günlük" seçilip kaydedilince check_interval_hours=24 gider; boş = null', async () => {
     renderEdit()
-    const label = screen.getByText(/Kontrol sıklığı|Check frequency/)
     // SearchableSelect yerli <select> değil: tetiği mouseDown ile aç, seçeneği mouseDown ile seç.
-    const trigger = label.closest('label').querySelector('button[role="combobox"]')
+    // Etiket shadcn Field (htmlFor ↔ id) — tetik adını etiketten alır.
+    const trigger = screen.getByRole('combobox', { name: /Kontrol sıklığı|Check frequency/ })
     fireEvent.mouseDown(trigger)
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find(el => /Günlük|Daily/.test(el.textContent)))
     fireEvent.click(btn(/^(Kaydet|Save)$/))
@@ -161,8 +161,7 @@ describe('envanter formu eylem çubuğu', () => {
 
   it('2026-09-12: kayıtta check_interval_hours=168 varsa form "Haftalık" ile açılır', () => {
     render(<InventoryFormModal mode="edit" record={{ ...RECORD, check_interval_hours: 168 }} teams={TEAMS} onClose={() => {}} onSaved={() => {}} />)
-    const label = screen.getByText(/Kontrol sıklığı|Check frequency/)
-    expect(label.closest('label').textContent).toMatch(/Haftalık|Weekly/)
+    expect(screen.getByRole('combobox', { name: /Kontrol sıklığı|Check frequency/ }).textContent).toMatch(/Haftalık|Weekly/)
   })
 
   it('Sil iptal edilince hiçbir çağrı yapılmaz', async () => {

@@ -47,6 +47,54 @@ class PageFetchCoreTest {
         return server;
     }
 
+    /** 200 + chunked başlık, sonra gövdeye her 100 ms'de bir bayt — istemci kesene dek (MJPEG/SSE taklidi). */
+    private static HttpServer streamingServer() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "test-stream");
+            t.setDaemon(true);
+            return t;
+        }));
+        server.createContext("/", ex -> {
+            ex.sendResponseHeaders(200, 0);
+            try (var os = ex.getResponseBody()) {
+                for (int i = 0; i < 600; i++) { os.write('x'); os.flush(); Thread.sleep(100); }
+            } catch (Exception ignore) { /* istemci kesti */ }
+        });
+        server.start();
+        return server;
+    }
+
+    @Test
+    @DisplayName("N1: gövdesini bitirmeyen kaynak — ayrıştırma çekimi HATA ile, ağırlık ölçümü 'truncated' ile, "
+            + "yoklama durum koduyla bütçede döner (iş parçacığı/soket sızmaz)")
+    void stalledBody_boundedInEveryMode() throws IOException {
+        HttpServer server = streamingServer();
+        try {
+            PageFetchCore core = newCore();
+            PageFetchCore.Fetch body = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(10),
+                    () -> core.fetch(url(server), "GET", PageFetchCore.FetchOptions.body(1500, "t")));
+            assertThat(body.error()).contains("tamamlanmadı");
+
+            PageFetchCore.Fetch weigh = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(10),
+                    () -> core.fetch(url(server), "GET", PageFetchCore.FetchOptions.weigh(1500, "t")));
+            assertThat(weigh.error()).isNull();
+            assertThat(weigh.status()).isEqualTo(200);
+            assertThat(weigh.truncated()).as("süre dolunca sayım 'en az bu kadar' olarak işaretlenir").isTrue();
+            assertThat(weigh.bytes()).isPositive();
+
+            PageFetchCore.Fetch probe = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(10),
+                    () -> core.fetch(url(server), "GET", PageFetchCore.FetchOptions.probe(1500, "t")));
+            assertThat(probe.error()).isNull();
+            assertThat(probe.status()).isEqualTo(200);
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static String url(HttpServer s) {
         return "http://127.0.0.1:" + s.getAddress().getPort() + "/";
     }

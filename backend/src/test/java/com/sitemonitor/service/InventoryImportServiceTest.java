@@ -111,6 +111,83 @@ class InventoryImportServiceTest {
     }
 
     @Test
+    @DisplayName("org geneli görünürlük (2026-09-26): BAŞKA takımın MEVCUT alan adı CSV ile ezilemez / kendi takımına çekilemez — skip:scope, tek alan bile yazılmaz")
+    void existingForeignDomain_cannotBeOverwrittenOrHijacked() {
+        CertificateInventory foreign = new CertificateInventory();
+        foreign.setId(8L); foreign.setDomain("foreign.example.com"); foreign.setTeamId(9L); foreign.setTier(3); foreign.setPort(443);
+        foreign.setSvcMgmtContact("Takım B - destek@example.com");
+        when(inventoryRepo.findByDomain("foreign.example.com")).thenReturn(Optional.of(foreign));
+        java.util.function.Predicate<Long> manager5 = t -> t != null && t == 5L;
+
+        var r = service.commit(List.of(
+                row("domain", "foreign.example.com", "team", "5", "tier", "1"),                        // kendi takımına çekme
+                row("domain", "https://FOREIGN.example.com/login", "svc_mgmt_contact", "saldirgan@example.com")),   // yalnız alan ezme
+                manager5, "po", null);
+
+        assertThat(r.updated()).isZero();
+        assertThat(r.rows()).extracting("reason").containsExactly("scope", "duplicate_row");
+        var alone = service.commit(List.of(row("domain", "foreign.example.com", "svc_mgmt_contact", "saldirgan@example.com")),
+                manager5, "po", null);
+        assertThat(alone.rows()).extracting("action", "reason").containsExactly(org.assertj.core.groups.Tuple.tuple("skip", "scope"));
+        verify(inventoryRepo, never()).save(any());
+        verify(monitorHistory, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        assertThat(foreign.getTeamId()).isEqualTo(9L);
+        assertThat(foreign.getTier()).isEqualTo(3);
+        assertThat(foreign.getSvcMgmtContact()).isEqualTo("Takım B - destek@example.com");
+    }
+
+    /** Kapsamlı müdür oturumu: rol ADMIN ama takım 5 ile sınırlı → global DEĞİL. */
+    private static org.springframework.mock.web.MockHttpSession scopedManager() {
+        var s = new org.springframework.mock.web.MockHttpSession();
+        s.setAttribute("username", "po");
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", new ArrayList<>(List.of(5L)));
+        s.setAttribute("manageTeamIds", new ArrayList<>(List.of(5L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("BO9 kardeşi: içe aktarımda UG takımını BAŞKA takıma çevirmek yalnız global admin — kapsamlı müdür skip:scope, hiçbir alan yazılmaz")
+    void ugTeamChange_requiresGlobalAdmin() {
+        CertificateInventory mine = new CertificateInventory();
+        mine.setId(7L); mine.setDomain("mine.example.com"); mine.setTeamId(5L); mine.setUgTeamId(null); mine.setTier(2); mine.setPort(443);
+        when(inventoryRepo.findByDomain("mine.example.com")).thenReturn(Optional.of(mine));
+        java.util.function.Predicate<Long> manager5 = t -> t != null && t == 5L;
+
+        var r = service.commit(List.of(
+                row("domain", "mine.example.com", "ug_team", "Takım B", "tier", "1"),     // mevcut kayıt: UG → takım 9
+                row("domain", "new.example.com", "team", "5", "ug_team", "9")),          // yeni kayıt: UG → takım 9
+                manager5, "po", scopedManager());
+        assertThat(r.rows()).extracting("action", "reason").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("skip", "scope"), org.assertj.core.groups.Tuple.tuple("skip", "scope"));
+        assertThat(mine.getUgTeamId()).isNull();
+        assertThat(mine.getTier()).as("satır bütün olarak atlanır").isEqualTo(2);
+        verify(inventoryRepo, never()).save(any());
+
+        // Aynı değer (dışa aktar → içe aktar gidiş-dönüşü) ve kaydın kendi takımı engellenmez.
+        mine.setUgTeamId(9L);
+        var same = service.commit(List.of(row("domain", "mine.example.com", "ug_team", "9", "tier", "1"),
+                row("domain", "own.example.com", "team", "5", "ug_team", "5")), manager5, "po", scopedManager());
+        assertThat(same.updated()).isEqualTo(1);
+        assertThat(same.created()).isEqualTo(1);
+        assertThat(mine.getTier()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("BO9 kardeşi: global admin içe aktarımda UG takımını değiştirebilir (transfer-ug ile aynı yetki)")
+    void ugTeamChange_globalAdminAllowed() {
+        CertificateInventory rec = new CertificateInventory();
+        rec.setId(7L); rec.setDomain("a.example.com"); rec.setTeamId(5L); rec.setPort(443);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(rec));
+        var admin = new org.springframework.mock.web.MockHttpSession();
+        admin.setAttribute("systemRole", "ADMIN");   // viewTeamIds yok → global
+
+        var r = service.commit(List.of(row("domain", "a.example.com", "ug_team", "Takım B")), t -> true, "admin", admin);
+        assertThat(r.updated()).isEqualTo(1);
+        assertThat(rec.getUgTeamId()).isEqualTo(9L);
+    }
+
+    @Test
     @DisplayName("evet/hayır/1/0/x/✓ → bayrak; bilinmeyen metin → dokunma")
     void booleans() {
         assertThat(InventoryImportService.boolOrNull("Evet")).isTrue();

@@ -60,6 +60,30 @@ public class CertificateController {
         return ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 
+    /**
+     * Org geneli görünürlük (2026-09-26). İsteğe bağlı: @WebMvcTest dilimlerinde bean yoksa {@code scope=all}
+     * {@code mine}'a düşer, detay okumaları bugünkü takım kapsamında kalır. Yazma kapıları bunu okumaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.InventoryVisibility inventoryVisibility;
+
+    /** Liste kapsamı: {@code all} + kapı açık → null (tüm aktif envanter); aksi hâlde oturumun görüş kapsamı. */
+    private List<Long> listScope(HttpSession session, String scope) {
+        if (inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope)) return null;
+        return SessionScope.viewTeamIds(session);
+    }
+
+    /**
+     * Tüm Sertifikalar tablosu.
+     *
+     * <p>{@code scope}: {@code mine} (varsayılan, bugünkü davranış) | {@code all} (2026-09-26: ayar açık ve
+     * {@code inventory.list/view} izni varsa TÜM aktif envanter). Facet sayaçları ve paylaşılan parmak izi
+     * sayımı AYNI görünür küme üzerinden hesaplanır (servis kapsamı alıp tek listeden türetir). Pano
+     * ({@code /certificates}) ve sayaçlar ({@code /stats}) takım kapsamlı kalır.
+     *
+     * <p>Sayfadaki her satır {@code can_manage} taşır — önbellekteki paylaşılan DTO'ya değil, sayfa dilimi
+     * kadar sığ KOPYAYA yazılır; yazma kümesi istek başına bir kez kurulur.
+     */
     @GetMapping("/certificates/list")
     public ResponseEntity<Map<String, Object>> getCertificatesPaginated(
             @RequestParam(defaultValue = "1") int page,
@@ -75,18 +99,28 @@ public class CertificateController {
             @RequestParam(required = false) Integer filter_tier,
             @RequestParam(defaultValue = "") String filter_port,
             @RequestParam(defaultValue = "") String filter_fp,
+            @RequestParam(defaultValue = "mine") String scope,
             HttpSession session) {
 
         var q = new com.sitemonitor.dto.CertListQuery(page, per_page, sort_by, sort_dir,
                 filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
                 filter_tier, filter_port, filter_fp);
-        Map<String, Object> result = certService.getPaginated(q, SessionScope.viewTeamIds(session));
+        boolean all = inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
+        Map<String, Object> result = certService.getPaginated(q, listScope(session, scope));
+        java.util.function.Predicate<Long> writable = SessionScope.inventoryWriteTest(session);
+        Object rawRows = result.get("data");
+        List<Object> rows = new java.util.ArrayList<>();
+        if (rawRows instanceof List<?> l) {
+            for (Object o : l) rows.add(o instanceof CertificateDto c ? c.withCanManage(writable.test(c.getTeamId())) : o);
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
-        body.put("data", result.get("data"));
+        body.put("data", rows);
         body.put("pagination", result.get("pagination"));
         body.put("facets", result.get("facets"));
         body.put("shared", result.get("shared"));
+        body.put("scope", all ? com.sitemonitor.service.InventoryVisibility.SCOPE_ALL : com.sitemonitor.service.InventoryVisibility.SCOPE_MINE);
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
         body.put("timestamp", now());
         return ok(body);
     }
@@ -110,17 +144,21 @@ public class CertificateController {
             @RequestParam(defaultValue = "") String filter_port,
             @RequestParam(defaultValue = "") String filter_fp,
             @RequestParam(defaultValue = "") String cols,
+            @RequestParam(defaultValue = "mine") String scope,
             HttpSession session, jakarta.servlet.http.HttpServletRequest request) {
         var q = new com.sitemonitor.dto.CertListQuery(1, 5000, sort_by, sort_dir,
                 filter_domain, filter_issuer, filter_status, filter_team, filter_window, filter_insecure,
                 filter_tier, filter_port, filter_fp);
         List<String> colList = java.util.Arrays.stream(cols.split(","))
                 .map(String::trim).filter(s -> !s.isEmpty()).toList();
-        String csv = certService.exportCsv(q, SessionScope.viewTeamIds(session), colList);
+        // Kapsam listeyle AYNI (2026-09-26): ekranda "Tüm takımlar" seçiliyken indirilen dosya da o kümedir.
+        boolean all = inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope);
+        String csv = certService.exportCsv(q, listScope(session, scope), colList);
         int rows = Math.max(0, (int) csv.chars().filter(ch -> ch == '\n').count() - 1);   // başlık hariç satır sayısı (CRLF sonlu)
         auditService.recordAction("CERT_LIST_EXPORT", session, request, "CERTIFICATE", "export",
                 "{\"rows\":" + rows + ",\"status\":\"" + filter_status.replace("\"", "") + "\",\"window\":\""
-                + filter_window.replace("\"", "") + "\",\"team\":\"" + filter_team.replace("\"", "") + "\"}");
+                + filter_window.replace("\"", "") + "\",\"team\":\"" + filter_team.replace("\"", "")
+                + "\",\"scope\":\"" + (all ? "all" : "mine") + "\"}");
         String fname = "sertifikalar-" + now().substring(0, 10) + ".csv";
         return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=\"" + fname + "\"")
@@ -138,7 +176,7 @@ public class CertificateController {
      * Domain-anahtarlı uçlar için takım denetimi: kayıt ENVANTERDE olmalı ve kullanıcının görüş
      * kapsamında bulunmalı. Eskiden bu uçların hiçbirinde denetim yoktu — herhangi bir takımın
      * kullanıcısı başka takımın sertifika geçmişini/alarmlarını okuyabiliyordu.
-     * (MonitoringController.denyIfDomainNotViewable ile aynı kural.)
+     * (MonitoringController.readDomain kendi-kapsam dalıyla aynı kural.)
      */
     private CertificateInventory requireViewableDomain(HttpSession session, String domain) {
         var inv = inventoryRepo.findByDomain(domain)
@@ -148,9 +186,23 @@ public class CertificateController {
         throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
     }
 
+    /**
+     * {@link #requireViewableDomain}'in SALT OKUMA kardeşi (2026-09-26, org geneli görünürlük): ayar açıksa
+     * başka takımın silinmemiş kaydı da okunur. YALNIZ hiçbir şey yazmayan uçlarda kullanılır (kart geçmişi,
+     * SSL sekmesinin canlı önizlemesi). Anlık kontrol ({@code /check}) ve alarm listesi özgün kapıda kalır.
+     */
+    private CertificateInventory requireReadableDomain(HttpSession session, String domain) {
+        var inv = inventoryRepo.findByDomain(domain)
+                .orElseThrow(() -> new java.util.NoSuchElementException("Domain envanterde bulunamadı: " + domain));
+        if (SessionScope.canView(session, inv.getTeamId())) return inv;
+        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return inv;
+        if (inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) return inv;
+        throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
+    }
+
     @GetMapping("/history/{domain}")
     public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain, HttpSession session) {
-        requireViewableDomain(session, domain);
+        requireReadableDomain(session, domain);
         List<CertificateDto> history = certService.getHistory(domain, 30);
         return ok(Map.of("success", true, "domain", domain, "data", history, "timestamp", now()));
     }
@@ -266,7 +318,10 @@ public class CertificateController {
         // (dashboard) için yalnız rol kapısı — SsrfGuard check() içinde zaten uygulanıyor.
         permissionService.require(session, "inventory.list", "view");
         var inv = inventoryRepo.findByDomain(domain);
-        if (inv.isPresent()) requireViewableDomain(session, domain);
+        // 2026-09-26: salt okuma kapısı — detay penceresinin SSL sekmesi (çözülen IP'ler dâhil) başka takımın
+        // kaydında da açılır. Önizleme HİÇBİR ŞEY yazmaz (kayıt/önbellek/denetim yok); aynı el sıkışma envanterde
+        // OLMAYAN her host için zaten herkese açık. Kalıcı "şimdi kontrol et" (/check) özgün kapıda kalır.
+        if (inv.isPresent()) requireReadableDomain(session, domain);
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
         int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);
@@ -468,7 +523,8 @@ public class CertificateController {
     @GetMapping("/certificates/{domain}/health")
     public ResponseEntity<Map<String, Object>> certificateHealth(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
-        CertificateInventory inv = requireViewableForHealth(session, domain, request);
+        // Salt okuma (2026-09-26): org geneli görünürlük açıksa başka takımın kaydının sağlık listesi de okunur.
+        CertificateInventory inv = requireReadableForHealth(session, domain, request);
         if (inv == null) return notFoundBody();
 
         LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
@@ -582,11 +638,27 @@ public class CertificateController {
         return certificateHealth(domain, session, request);
     }
 
-    /** Envanter kaydını takım kapsamıyla döndürür; yetkisizse güvenlik olayı yazıp null döner. */
+    /**
+     * Envanter kaydını takım kapsamıyla döndürür; yetkisizse güvenlik olayı yazıp null döner (404).
+     *
+     * <p>YAZAN uçların kapısı ({@code /health/refresh}, {@code /health/confirm-renewal}) — org geneli
+     * görünürlükle GENİŞLEMEZ. 2026-09-26: kayıt org geneli OKUNABİLİYORSA (yani çağıran onu zaten
+     * görüyor) gizlenecek bir varlık kalmadığından 404 yerine açık 403 döner: {@code SecurityException}
+     * → {@code GlobalExceptionHandler} {@code ACCESS_DENIED} güvenlik olayı + standart hata zarfı.
+     */
     private CertificateInventory requireViewableForHealth(HttpSession session, String domain,
                                                           HttpServletRequest request) {
-        var inv = inventoryRepo.findByDomain(domain).orElse(null);
+        return viewableForHealth(session, domain, inventoryRepo.findByDomain(domain).orElse(null), request);
+    }
+
+    private CertificateInventory viewableForHealth(HttpSession session, String domain, CertificateInventory inv,
+                                                   HttpServletRequest request) {
         if (inv == null || !SessionScope.canView(session, inv.getTeamId())) {
+            if (inv != null && inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) {
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Bu alan adı başka bir takıma kayıtlı; yalnız görüntüleyebilirsiniz",
+                        "This domain belongs to another team; you can only view it"));
+            }
             if (inv != null) {
                 auditService.recordSecurityEvent("CERT_HEALTH_DENIED", request, session,
                         "CERTIFICATE", domain, "Yetkisiz sertifika sağlığı erişimi");
@@ -594,6 +666,17 @@ public class CertificateController {
             return null;
         }
         return inv;
+    }
+
+    /** Sağlık listesinin OKUMA kapısı: kendi kapsamı ya da org geneli okuma; ikisi de değilse özgün 404 yolu. */
+    private CertificateInventory requireReadableForHealth(HttpSession session, String domain,
+                                                          HttpServletRequest request) {
+        var inv = inventoryRepo.findByDomain(domain).orElse(null);
+        if (inv != null && !SessionScope.canView(session, inv.getTeamId())
+                && inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) {
+            return inv;
+        }
+        return viewableForHealth(session, domain, inv, request);
     }
 
     private ResponseEntity<Map<String, Object>> notFoundBody() {

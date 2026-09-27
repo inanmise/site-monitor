@@ -1,1085 +1,335 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { api, formatDate } from '../../api/client'
+import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
+import {
+  History, RefreshCcw, Download, Siren, OctagonAlert, TriangleAlert, CircleAlert, BellRing, UserCheck, Clock,
+  CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall,
+} from 'lucide-react'
+import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
+import { useIsMobile } from '../../hooks/use-mobile.js'
+import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { useServerPagination } from '../../hooks/useServerPagination.js'
+import { copyText } from '../../utils/copyText.js'
+import PageHeader from '../ui/PageHeader.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
-import TeamBadge from '../ui/TeamBadge.jsx'
-import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import AlertNoisePanel from './AlertNoisePanel.jsx'   // alarm bakım penceresine denk geliyorsa rozet (2026-09-12, #19)
+import AlertBanner from '../ui/AlertBanner.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import MonitorStatsBar from '../MonitorStatsBar.jsx'
+import AlertNoisePanel from './AlertNoisePanel.jsx'              // gürültü analizi (2026-09-12, #18)
 import AlertTeamStatsPanel from './alerts/AlertTeamStatsPanel.jsx'   // takım kırılımı (2026-09-16)
-import AlertSignatureStrip from './alerts/AlertSignatureStrip.jsx'   // imza geçmişi şeridi (2026-09-16)
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../../hooks/useUrlQuerySync.js'
-import { readPageSize, writePageSize } from '../../hooks/usePagination.js'
-import UserBadge from '../ui/UserBadge.jsx'
-import { systemResolverKey } from '../../utils/resolvedBy.js'
-import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
-import { LoadingBlock } from '../ui/Progress.jsx'
-import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../utils/alertTypeMeta.js'
-import { formatDuration, durationMs } from '../../utils/incidentMeta.js'
-import MonitorStatsSection from '../MonitorStatsSection.jsx'
-import SearchableSelect from '../ui/SearchableSelect.jsx'
+import AlertToolbar from './alerts/AlertToolbar.jsx'
+import ReNotifyConfirmModal from './alerts/ReNotifyConfirmModal.jsx'
+import { OpenAlertCard, OpenAlertList, AlertRowsList, ListSkeleton } from './alerts/AlertLists.jsx'
+import { AlertDetailSheet, AlertDetailModal } from './alerts/AlertDetail.jsx'
+import { NocCallQuickSheet } from './alerts/NocCallLog.jsx'   // 7/24 arama kaydı — telefonda alttan hızlı giriş (2026-09-27)
 import {
-  Check, ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, AlertCircle, ChevronUp,
-  ChevronDown, ChevronRight, Mail, MailX, Clock, Users, Calendar
-} from 'lucide-react'
+  FILTER_DEFAULTS, TABS, tabFromUrl, filtersFromUrl, filtersToUrl, activeAlertFilters, listParams, csvParams,
+  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, outsideActScope,
+} from './alerts/alertHistoryModel.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Label } from '@/components/shadcn/label'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { cn } from '@/lib/utils'
 
-/** Seviye → CSS sınıfı eki. Renkler App.css'te (iki tema); burada yalnız eşleme. */
-const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
-// Süre biçimlendirme BİLİNÇLİ olarak ortak yardımcıdan geliyor (utils/incidentMeta.js).
-//
-// 2026-08-20'ye kadar burada yerel bir kopya vardı ve birimleri TERSTİ: dakikayı `d`, saati `s`
-// ile yazıyordu. 10 dakikalık bir alarm "9d" (gün sanıldı), 3sa5dk ise "3s 5d" (saniye sanıldı)
-// görünüyordu — yani ekrandaki en kritik sayı, kesintinin süresi, sistematik olarak yanlış
-// okunuyordu. Aynı işin üç ayrı kopyası olması (App.jsx, incidentMeta.js, burası) bu sapmanın
-// fark edilmeden yaşamasının sebebiydi; diğer ikisi zaten dk/sa/g kullanıyor.
-// incidentMeta.formatDuration birimleri i18n'den alır (incov.unit.*), yani TR/EN tutarlıdır.
+// Testler ve diğer ekranlar bu adlarla içe aktarıyor — kaynak artık alarm modelinde.
+export { groupPushRows, statusLabel } from './alerts/alertHistoryModel.js'
 
-// Kapalı alarm kartındaki "Son Geçerlilik": SUNUCUNUN damgaladığı gerçek not_after (alarm anı).
-// Eskiden created_at + days_remaining ile YENİDEN HESAPLANIYORDU: days_remaining eskalasyon/
-// re-alert'te güncellenip created_at sabit kaldığından tarih açık kaldığı gün kadar erken, zone'suz
-// created_at yerel parse edildiğinden saat hep ":00" çıkıyordu (23 Eylül 02:59 → "05/09 00:00").
-// Yaklaşık hesap yalnız son çare (not_after da LatestCheck yedeği de yoksa — pratikte eski satır yok).
-function alertExpiryIso(a) {
-  if (a?.not_after) return a.not_after
-  if (!a?.created_at || a.days_remaining == null) return null
-  const created = new Date(a.created_at.endsWith('Z') ? a.created_at : a.created_at + 'Z')
-  if (isNaN(created)) return null
-  return new Date(created.getTime() + a.days_remaining * 86_400_000).toISOString()
-}
-
-function AuditRow({ label, by, at, variant, note }) {
-  // Palet ARTIK burada değil: satır içi sabit hex CSS'i baypas ettiği için koyu temada
-  // açık zeminler okunmuyordu. Renkler .alh-audit--* sınıflarında, iki tema için de tanımlı.
-  const kind = ['ack', 'resolve', 'system'].includes(variant) ? variant : 'system'
-  return (
-    <div className={`alh-audit alh-audit--${kind}`}>
-      <span className="alh-audit-icon"><Check size={14} /></span>
-      <div className="alh-audit-text">
-        <span className="alh-audit-label">{label}</span>
-        <span className="alh-audit-meta">
-          <UserBadge username={by} inline size="sm" />
-          {at && <> &nbsp;·&nbsp; {formatDate(at)}</>}
-        </span>
-        {/* Gerekçe — zorunluluk ÖNCESİ onaylanmış alarmlarda yok; boş blok çizmemek için
-            koşullu. Notsuz eski kayıtlar sayıca çok ve hepsinde boş alıntı görünürdü. */}
-        {note && <span className="alh-audit-note">{note}</span>}
-      </div>
-    </div>
-  )
-}
-
-function EmailStatusBadge({ status }) {
-  const t = useT()
-  if (!status) return null
-  if (status === 'SENT')
-    return <span className="nl-status nl-status-ok">{t('alh.status.sent')}</span>
-  if (status === 'SKIPPED_DISABLED')
-    return <span className="nl-status nl-status-warn">{t('alh.status.skip')}</span>
-  if (status.startsWith('FAILED'))
-    return <span className="nl-status nl-status-err" title={status}>{t('alh.status.failed')}</span>
-  return <span className="nl-status nl-status-muted">{status}</span>
-}
+/** Onay/çözüm yanıtından detaya taşınan alanlar (zenginleştirme alanları sunucu yanıtında yok — ezilmesin). */
+const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
 
 /**
- * Ayni mesaji ayni tetikte alan alicilari TEK satirda toplar.
+ * Alarm Geçmişi (2026-09-27 yeniden tasarım, shadcn) — takım kapsamlı alarm listesi, inceleme odaklı:
+ *   ui/PageHeader (canlı özet çipleri, Yenile, CSV) → İSTATİSTİKLER EN ÜSTTE (MonitorStatsBar; kartlar süzgeç) →
+ *   takım kırılımı + gürültü analizi (katlanır) → Açık | Kapalı | Tümü sekmeleri + süzgeç araç çubuğu (faset menüleri,
+ *   etkin çipler; telefonda alt Sheet) → açık alarmlar EYLEM KARTLARI, kapalılar ÖZET SATIRLARI (gün gruplu) →
+ *   sağdan açılan DETAY (durum, eylemler, temel bilgiler, zaman çizelgesi, e-posta önizlemesi + push partileri).
  *
- * <p>Bir alarm bes kisiye gittiginde bes ayni satir aliniyordu; ekranin tamami tek bir gonderimin
- * tekrarina gidiyor, mesajin kendisi ise hicbir yerde okunamiyordu. Anahtar (tetik + durum +
- * mesaj): metin farkliysa gruplanmazlar, cunku o zaman gercekten farkli gonderimlerdir.
- */
-export function groupPushRows(rows) {
-  const by = new Map()
-  for (const p of rows ?? []) {
-    // dedupe_key = GÖNDERİM PARTİSİ kimliği: RESEND her tıkta rastgele, RE_ALERT gün başına,
-    // OPEN/RESOLVE sabit. Anahtarda yokken aynı alarma iki kez "Tekrar Bildir" (metin birebir aynı)
-    // tek karta birleşiyor ve açılan listede aynı kişi iki kez görünüyordu. Eski/dedupe_key'siz
-    // satırlar eski anahtara düşer (davranış değişmez).
-    const key = `${p.trigger}|${p.status}|${p.dedupe_key ?? ''}|${p.message ?? ''}`
-    if (!by.has(key)) by.set(key, [])
-    by.get(key).push(p)
-  }
-  // EN YENİDEN eskiye. Eskiden ekleme sırası korunuyordu ve liste sunucudan artan geldiği için
-  // en yeni teslimat EN ALTTA kalıyordu: operatör "az önce ne gitti" sorusunu listenin sonuna
-  // inerek cevaplıyordu. E-posta bölümü zaten azalan sıradaydı; iki bölüm ters yöndeydi.
-  const stamp = (g) => g.reduce((mx, r) => {
-    const v = r.sent_at || r.created_at || ''
-    return v > mx ? v : mx
-  }, '')
-  return [...by.values()].sort((a, b) => stamp(b).localeCompare(stamp(a)))
-}
-
-/**
- * Saklanan damga -> yerel okunur tarih. Push teslimat damgalari da artik UTC yaziliyor
- * (UserPushService.ISO), dolayisiyla mail kartiyla AYNI kural gecerli: zone tasimayan damgaya
- * 'Z' eklenir. Ham ISO basmak ayni modalda iki farkli zaman dili uretiyordu.
- */
-function fmtStamp(iso, locale) {
-  if (!iso) return '—'
-  try {
-    const s = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
-    return new Date(s).toLocaleString(locale, {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    })
-  } catch { return iso }
-}
-
-/** Push tetigi -> mevcut nl-card renk varyanti (yeni CSS sinifi uydurulmaz). */
-const PUSH_TRIGGER_CLS = {
-  OPEN: 'initial', ESCALATION: 'escalation', RE_ALERT: 'daily',
-  RESEND: 'manual', RESOLVE: 'resolution',
-}
-
-/**
- * Tek webhook gonderimi (ya da ayni mesaji alan alici grubu) — TIKLANINCA acilir ve
- * kullaniciya GERCEKTEN giden metni gosterir. Duzen ve siniflar NotifLogCard ile ayni;
- * mail ve webhook ayni modalda iki farkli sekilde davranmasin.
- */
-/**
- * Teslimat durum kodunu okunur karşılığına çevirir; BİLİNMEYEN kodu ham hâliyle bırakır.
+ * Sözleşmeler (değişmedi): süzme/sayfalama SUNUCUDA (istemcide süzmek yalnız açık sayfayı süzerdi); sahiplenme ve
+ * çözüm GEREKÇE ister (AlertActionNote — tekli ve toplu yolda); yetki sunucuda (`alerts.actions`, 403 → toast);
+ * URL anahtarları uygulamanın PAGE_STATE_PARAMS'ı (`view` — `tab` DEĞİL, ISSUE-002; `type q level team ack from to
+ * alert page ps`); bildirim kutusu derin bağlantısı `?alert=<id>` (sm:navigate ile açıkken de).
  *
- * <p>Neden eşleme tablosu: {@code t(key, arg)} ikinci argümanı yedek DEĞİL, {0} yerine geçen
- * değerdir; anahtar yoksa {@code useT} ham anahtarı basar. Doğrudan {@code t('...' + status)}
- * yazmak, arka uca yeni bir durum eklendiği gün ekrana {@code alh.push.status.YENI_KOD}
- * yazdırırdı. Burada bilinen kümede karşılığı, dışında ham kod gösterilir.
- *
- * <p>Ham kod {@code title} olarak korunur: destek ve günlükler o kodla arıyor.
+ * @param domain  GÖMÜLÜ kullanım (izleme/sertifika penceresinin "Alarm Geçmişi" sekmesi): yalnız bu hedef.
+ * @param types   GÖMÜLÜ kullanım: yalnız bu alarm tipleri (sunucuda süzülür).
+ * @param urlSync bağımsız sayfa (?tab=alerthistory): başlık, istatistikler, paneller, araç çubuğu ve URL eşlemesi.
  */
-const PUSH_STATUS_KEYS = new Set([
-  'SENT', 'FAILED', 'PENDING', 'CIRCUIT_OPEN',
-  'SKIPPED_DISABLED', 'SKIPPED_MONITOR_OFF', 'SKIPPED_NO_CONTACT', 'SKIPPED_NO_ID',
-  'SKIPPED_NO_PRIOR', 'SKIPPED_NO_RECIPIENT', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_QUIET_HOURS',
-  'SKIPPED_REALERT_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_TYPE_OFF', 'SKIPPED_USER_OPT_OUT',
-])
-
-export function statusLabel(t, status) {
-  return PUSH_STATUS_KEYS.has(status) ? t('alh.push.status.' + status) : (status || '—')
-}
-
-function PushDeliveryGroup({ rows }) {
-  const t = useT()
-  const locale = useDateLocale()
-  const [open, setOpen] = useState(false)
-  const head = rows[0]
-  const many = rows.length > 1
-  const uniqueRecipients = new Set(rows.map(r => r.username)).size
-  // Genişletilmiş liste de BENZERSİZ kişi basar (başlık sayacıyla aynı kural); sistem ('-')
-  // satırları ayrı kararlardır, olduğu gibi kalır.
-  const uniqueRows = rows.filter((r, i) => r.username === '-' || rows.findIndex(x => x.username === r.username) === i)
-  const cls = PUSH_TRIGGER_CLS[head.trigger] ?? 'other'
-  const statusCls = head.status === 'SENT' ? 'ok'
-    : (head.status === 'FAILED' || head.status === 'CIRCUIT_OPEN') ? 'danger' : 'muted'
-
-  // Her alıcı KENDİ kutusunda: eskiden yan yana ayırıcısız basılıyordu ve iki kusur üretiyordu —
-  // (1) kişiler birbirine yapışıp ayırt edilemiyordu, (2) "katman kararı" satırları tekrarlanınca
-  // "scope decisionscope decision…" gibi bozuk bir dize gibi görünüyordu (metin doğruydu, ayırıcı
-  // yoktu). Sicil de yanında: aynı ada sahip iki kişiyi ancak sicil ayırır ve operatör push
-  // ayarlarındaki kaydı sicille arar.
-  const who = (p) => (p.username === '-'
-    ? <span key={p.id} className="nl-who nl-who--system"><em>{t('userpush.systemRow')}</em></span>
-    : (
-      <span key={p.id} className="nl-who">
-        <UserBadge username={p.username} displayName={p.display_name} size="sm" inline nameOnly />
-        <span className="nl-who-id">{p.username}</span>
-      </span>
-    ))
-
-  return (
-    <div className={`nl-card nl-card--${cls}${open ? ' is-open' : ''}`}>
-      <div className="nl-card-header" role="button" tabIndex={0} aria-expanded={open}
-        onClick={() => setOpen(o => !o)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
-        {/* Ham durum kodu tek başına "bu bozuk mu?" sorusunu üretiyordu: SKIPPED_NO_RECIPIENTS
-            gören operatör bunu arıza sanıyor, oysa çoğu kez şiddet kuralının doğru çalışmasıdır
-            (grup asgari seviyesi YÜKSEK+ iken UYARI alarmı aday bulamaz). Kod korunuyor —
-            günlüklerde ve destekte aranan şey o — ama yanına okunur karşılığı yazılıyor. */}
-        <span className={`userpush-badge userpush-badge--${statusCls}`} title={head.status}>
-          {statusLabel(t, head.status)}
-        </span>
-        <div className="nl-recipient">
-          {/* BENZERSIZ alici sayilir: ayni alarma iki kez "Tekrar Bildir" basildiginda
-              iki satir ayni gruba duser ve rows.length "2 alici" derdi — oysa tek kisiye
-              iki kez gidilmistir. */}
-          {many ? <strong>{t('alh.push.recipients', uniqueRecipients)}</strong> : who(head)}
-        </div>
-        <div className="nl-right">
-          <span className="userpush-modal-trigger">{t('userpush.trigger.' + head.trigger)}</span>
-          <span className="nl-time">{fmtStamp(head.sent_at || head.created_at, locale)}</span>
-          <span className="nl-chevron">{open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</span>
-        </div>
-      </div>
-
-      {open && (
-        <div className="nl-card-body">
-          <div className="nl-detail-row nl-detail-row--body">
-            <span className="nl-detail-label">{t('alh.push.message')}</span>
-            <span className="nl-detail-val nl-message">{head.message || '\u2014'}</span>
-          </div>
-          {many && (
-            <div className="nl-detail-row nl-detail-row--body">
-              <span className="nl-detail-label">{t('alh.push.who')}</span>
-              <span className="nl-detail-val nl-who-list">{uniqueRows.map(who)}</span>
-            </div>
-          )}
-          {head.http_status != null && (
-            <div className="nl-detail-row">
-              <span className="nl-detail-label">HTTP</span>
-              <span className="nl-detail-val">{head.http_status}</span>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function NotifLogCard({ log: l, alertLevel }) {
-  const t = useT()
-  const locale = useDateLocale()
-  const [open, setOpen] = useState(false)
-
-  // Tetikleyici görsel kimliği: yalnız ikon + etiket burada; RENKLER .nl-trigger--* ve
-  // .nl-card--* sınıflarında (koyu tema karşılıklarıyla). Eskiden satır içi sabit hex'ti.
-  const triggerMeta = {
-    INITIAL:       { Icon: ShieldAlert, textKey: 'alh.trigger.initial',    cls: 'initial' },
-    ESCALATION:    { Icon: TrendingUp,  textKey: 'alh.trigger.escalation', cls: 'escalation' },
-    DAILY_REALERT: { Icon: RefreshCcw,  textKey: 'alh.trigger.daily',      cls: 'daily' },
-    MANUAL:        { Icon: Bell,        textKey: 'alh.trigger.manual',     cls: 'manual' },
-    RESOLUTION:    { Icon: CheckCircle, textKey: 'alh.trigger.resolution', cls: 'resolution' },
-  }
-
-  const trigBase = triggerMeta[l.trigger]
-  const trig = trigBase
-    ? { ...trigBase, text: t(trigBase.textKey) }
-    : { Icon: Mail, text: l.trigger, cls: 'other' }
-
-  function fmtDateTime(iso) {
-    if (!iso) return '—'
-    try {
-      const s = iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z'
-      return new Date(s).toLocaleString(locale, {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-      })
-    } catch { return iso }
-  }
-
-  const sentDate = fmtDateTime(l.sent_at)
-
-  return (
-    <div className={`nl-card nl-card--${trig.cls}${open ? ' is-open' : ''}`}>
-      <div className="nl-card-header" role="button" tabIndex={0} aria-expanded={open}
-        onClick={() => setOpen(o => !o)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}>
-        <span className={`nl-trigger-badge nl-trigger--${trig.cls}`}>
-          <trig.Icon size={11} /> {trig.text}
-        </span>
-        <div className="nl-recipient">
-          <strong>{l.recipient_name}</strong>
-          {l.recipient_role && l.recipient_role !== 'COMBINED' && (
-            <span className="role-badge" style={{ marginLeft: 6, fontSize: '.75em' }}>{l.recipient_role}</span>
-          )}
-          <span className="nl-email">{l.recipient_email}</span>
-        </div>
-        <div className="nl-right">
-          <EmailStatusBadge status={l.email_status} />
-          <span className="nl-time">{sentDate}</span>
-          <span className="nl-chevron">{open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</span>
-        </div>
-      </div>
-
-      {open && (
-        <div className="nl-card-body">
-          {l.email_from && (
-            <div className="nl-detail-row">
-              <span className="nl-detail-label">{t('alh.notif.from')}</span>
-              <span className="nl-detail-val">{l.email_from}</span>
-            </div>
-          )}
-          {l.recipient_email && (
-            <div className="nl-detail-row">
-              <span className="nl-detail-label">{t('alh.notif.to')}</span>
-              <span className="nl-detail-val">{l.recipient_email}</span>
-            </div>
-          )}
-          {l.cc && (
-            <div className="nl-detail-row">
-              <span className="nl-detail-label">{t('alh.notif.cc')}</span>
-              <span className="nl-detail-val">{l.cc}</span>
-            </div>
-          )}
-          <div className="nl-detail-row">
-            <span className="nl-detail-label">{t('alh.notif.subject')}</span>
-            <span className="nl-detail-val nl-subject">{l.subject || '—'}</span>
-          </div>
-          <div className="nl-detail-row nl-detail-row--body">
-            <span className="nl-detail-label">{t('alh.notif.content')}</span>
-            {l.message && l.message.trimStart().startsWith('<') ? (
-              <iframe
-                className="nl-message-iframe"
-                srcDoc={mailPreviewSrcDoc(l.message, {
-                  // Gönderimde hangi logo varyantı iliştirildiyse önizlemede de o gösterilir
-                  // (çözülme mailleri daima "ok"). Bkz. mailLogoVariant.
-                  logoVariant: mailLogoVariant({ trigger: l.trigger, level: alertLevel }),
-                })}
-                sandbox={MAIL_PREVIEW_SANDBOX}
-                title={l.subject}
-              />
-            ) : (
-              <span className="nl-detail-val nl-message">{l.message || '—'}</span>
-            )}
-          </div>
-          <div className="nl-detail-row">
-            <span className="nl-detail-label">{t('alh.notif.emailStatus')}</span>
-            <span className="nl-detail-val">
-              <EmailStatusBadge status={l.email_status} />
-              {l.email_status?.startsWith('FAILED') && (
-                <span className="nl-error-detail">{l.email_status.replace('FAILED: ', '')}</span>
-              )}
-            </span>
-          </div>
-          {l.webhook_status && l.webhook_status !== 'SKIPPED' && (
-            <div className="nl-detail-row">
-              <span className="nl-detail-label">{t('alh.notif.webhook')}</span>
-              <span className="nl-detail-val">{l.webhook_status}</span>
-            </div>
-          )}
-          <div className="nl-detail-row">
-            <span className="nl-detail-label">{t('alh.notif.sentAt')}</span>
-            <span className="nl-detail-val">{sentDate}</span>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function NotifyResultModal({ alertId, alertInfo, currentResult, onClose }) {
-  const t = useT()
-  // Akordiyon: iki bölüm de KAPALI açılır, tıklanan açılır ve diğeri kapanır.
-  // Gerekçe: modal açılır açılmaz onlarca satır dökülüyordu; operatör önce hangi kanala
-  // bakacağını seçemiyor, aradığı kaydı bulmak için kaydırmak zorunda kalıyordu.
-  const [openSection, setOpenSection] = useState(null)   // null | 'email' | 'push'
-  const toggleSection = (k) => setOpenSection(cur => (cur === k ? null : k))
-  const [history, setHistory]       = useState([])
-  const [loadingHistory, setLoading] = useState(true)
-  const [loadFailed, setLoadFailed] = useState(false)
-  const [pushRows, setPushRows] = useState([])
-  const pushGroups = useMemo(() => groupPushRows(pushRows), [pushRows])
-  const sentGroups = useMemo(() => pushGroups.filter(g => g[0]?.status === 'SENT').length, [pushGroups])
-  const skippedGroups = pushGroups.length - sentGroups
-
-  useEffect(() => {
-    // Ağ hatasında (pod restart / proxy) request() reject eder; eskiden .catch/.finally yoktu →
-    // spinner sonsuza kadar dönüyor, hata görünmüyordu (HeartbeatHistoryModal/DnsDetailModal'da
-    // kapatılan sınıfın atlanmış kardeşi).
-    setLoading(true); setLoadFailed(false)
-    api.admin.getAlertNotifications(alertId)
-      .then(res => {
-        if (res?.success) setHistory(Array.isArray(res.data) ? res.data : [])
-        else setLoadFailed(true)
-      })
-      .catch(() => setLoadFailed(true))
-      .finally(() => setLoading(false))
-    // Kanal-ayrımlı webhook (push) teslimatları — uç patlarsa bölüm boş kalır, modal çalışır.
-    api.admin.getAlertPushDeliveries(alertId)
-      .then(res => { if (res?.success) setPushRows(Array.isArray(res.data) ? res.data : []) })
-      .catch(() => {})
-  }, [alertId])
-
-  const { notifications = [], contacts_attempted } = currentResult?.data ?? {}
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box nl-modal" onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <h3 style={{ margin: 0 }}>{t('alh.notifModal.title')}</h3>
-          {alertInfo && (
-            <span className={`alh-modal-state alh-modal-state--${alertInfo.resolved ? 'closed' : 'open'}`}>
-              {alertInfo.resolved ? t('alh.notifModal.closed') : t('alh.notifModal.open')} · {alertInfo.domain}
-            </span>
-          )}
-        </div>
-
-        {notifications.length > 0 && (
-          <div className="nl-section">
-            <div className="nl-section-title">
-              {t('alh.notifModal.lastSent')}
-              <span className="nl-count">{t('alh.notifModal.recipients', contacts_attempted)}</span>
-            </div>
-            {notifications.some(n => n.email_status === 'SKIPPED_DISABLED') && (
-              <div className="nl-banner-warn">{t('alh.notifModal.emailOff')}</div>
-            )}
-            {notifications.map((n, i) => (
-              <div key={n.email ?? `nq-${i}`} className="nl-quick-row">
-                <strong>{n.name}</strong>
-                <span className="role-badge">{n.role}</span>
-                <span className="nl-email">{n.email}</span>
-                <EmailStatusBadge status={n.email_status} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="nl-section" style={{ marginTop: notifications.length > 0 ? 20 : 0 }}>
-          <div className="nl-section-title nl-section-title--toggle" role="button" tabIndex={0}
-            aria-expanded={openSection === 'email'}
-            onClick={() => toggleSection('email')}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('email') } }}>
-            <span className="nl-section-caret">
-              {openSection === 'email' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </span>
-            {t('alh.notifModal.allHistory')}
-            {!loadingHistory && <span className="nl-count">{t('alh.notifModal.records', history.length)}</span>}
-          </div>
-
-          {openSection === 'email' && (<>
-            {loadingHistory && <div className="nl-empty">{t('alh.loading')}</div>}
-
-            {!loadingHistory && loadFailed && (
-              <div className="nl-empty" role="alert">{t('alh.loadError')}</div>
-            )}
-
-            {!loadingHistory && !loadFailed && history.length === 0 && (
-              <div className="nl-empty">{t('alh.notifModal.noNotifs')}</div>
-            )}
-
-            {!loadingHistory && history.map((l, i) => (
-              <NotifLogCard key={l.id ?? i} log={l} alertLevel={alertInfo?.alert_level} />
-            ))}
-          </>)}
-        </div>
-
-        {/* Webhook (push) teslimatları — kanal AYRIMLI: kime, ne zaman, mesaj, sonuç. Çözüm
-            teslimatları da burada (tetik etiketi ayırır). Kayıt yoksa kısa notla yine çizilir:
-            "hiç gitmedi" bilgisi de bilgidir. */}
-        <div className="nl-section" style={{ marginTop: 20 }}>
-          <div className="nl-section-title nl-section-title--toggle" role="button" tabIndex={0}
-            aria-expanded={openSection === 'push'}
-            onClick={() => toggleSection('push')}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSection('push') } }}>
-            <span className="nl-section-caret">
-              {openSection === 'push' ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </span>
-            {t('alh.webhookSection')}
-            {/* Sayaç GÖNDERİM sayar, alıcı satırı değil: eskiden "37 kayıt" = 5 kişi × 7 gönderim
-                + sistem satırları; gövdede ise 3-4 kart vardı. Kişi sayısı her kartta zaten yazar. */}
-            <span className="nl-count">{t('alh.push.sendCount', sentGroups)}</span>
-            {skippedGroups > 0 && (
-              <span className="nl-count nl-count--muted">{t('alh.push.skipCount', skippedGroups)}</span>
-            )}
-          </div>
-          {openSection === 'push' && (<>
-            {pushRows.length === 0 && <div className="nl-empty">{t('alh.webhookNone')}</div>}
-            {pushGroups.map((g, i) => (
-              <PushDeliveryGroup key={g[0].id ?? i} rows={g} />
-            ))}
-          </>)}
-        </div>
-
-        <div className="modal-actions">
-          <Button variant="secondary" onClick={onClose}>{t('alh.notifModal.close')}</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/**
- * "Tekrar Bildir" onay pop-up'i: gonderim ONCESI alici listesi, KANAL KANAL.
- *
- * <p>Kullanici e-posta ve webhook alicilarini AYRI AYRI cikarabilir — "bu kisiye mail gitmesin
- * ama push gitsin" mesru bir istek. Gonderilemeyecek webhook alicilari da GORUNUR (sebebiyle,
- * pasif satir olarak): sessiz bir "gitmedi" yerine operatorun neden gitmedigini gordugu bir liste.
- */
-function ReNotifyConfirmModal({ domain, recipients, webhook, sending, onSend, onClose }) {
-  const t = useT()
-  const [uncheckedEmails, setUncheckedEmails] = useState(() => new Set())
-  const [uncheckedUsers, setUncheckedUsers] = useState(() => new Set())
-
-  const pushRows = webhook?.recipients || []
-  const sendableUsers = pushRows.filter(r => r.status === 'PENDING')
-  const blockReason = webhook?.channel_enabled === false
-    ? 'CHANNEL_DISABLED' : (webhook?.block_reason || null)
-
-  const toggleIn = (setter) => (key) => setter(s => {
-    const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n
-  })
-  const toggleEmail = toggleIn(setUncheckedEmails)
-  const toggleUser = toggleIn(setUncheckedUsers)
-
-  const selectedEmails = recipients.length - uncheckedEmails.size
-  const selectedUsers = sendableUsers.length - uncheckedUsers.size
-  const selectedCount = selectedEmails + selectedUsers
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box nl-modal" onClick={e => e.stopPropagation()}>
-        <h3 style={{ marginTop: 0 }}>{t('alh.renotifyModal.title')}</h3>
-        <p style={{ fontSize: '.88em', color: 'var(--text-light)' }}>{t('alh.renotifyModal.desc', domain)}</p>
-
-        <div className="nl-section">
-          <strong>{t('alh.renotifyModal.emailSection')}</strong>
-          {recipients.length === 0 ? (
-            <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
-          ) : recipients.map(r => (
-            <label key={r.email} className="checkbox-label nl-quick-row" style={{ width: '100%' }}>
-              <input type="checkbox" checked={!uncheckedEmails.has(r.email)} onChange={() => toggleEmail(r.email)} />
-              <strong>{r.name || r.email}</strong>
-              {/* K9: takim satirinda kaynak etiketi ("Grup: X" / "Takim maili") -- backend role
-                  alaninda gonderir. Gelmezse eski sabit "Takim" etiketine duser. */}
-              <span className="role-badge">{r.kind === 'TEAM' ? (r.role || t('alh.renotifyModal.kindTeam')) : (r.role || '')}</span>
-              <span className="nl-email">{r.email}</span>
-            </label>
-          ))}
-        </div>
-
-        <div className="nl-section">
-          <strong>{t('alh.renotifyModal.webhookSection')}</strong>
-          {blockReason ? (
-            <div className="nl-empty">{t('alh.renotifyModal.webhookOff', blockReason)}</div>
-          ) : pushRows.length === 0 ? (
-            <div className="nl-empty">{t('alh.renotifyModal.noRecipients')}</div>
-          ) : pushRows.map(r => {
-            const willSend = r.status === 'PENDING'
-            return (
-              <label key={r.username} className="checkbox-label nl-quick-row" style={{ width: '100%' }}
-                title={willSend ? undefined : r.status}>
-                <input type="checkbox" disabled={!willSend}
-                  checked={willSend && !uncheckedUsers.has(r.username)}
-                  onChange={() => toggleUser(r.username)} />
-                <strong>{r.display_name || r.username}</strong>
-                <span className="role-badge">
-                  {willSend ? t('alh.renotifyModal.willSend') : t('alh.renotifyModal.wontSend')}
-                </span>
-                <span className="nl-email">{willSend ? r.username : r.status}</span>
-              </label>
-            )
-          })}
-        </div>
-
-        <div style={{ fontSize: '.82em', color: 'var(--text-light)', marginTop: 10 }}>
-          {t('alh.renotifyModal.selectedTotal', selectedCount, selectedEmails, selectedUsers)}
-        </div>
-
-        <div className="modal-actions">
-          <Button variant="secondary" onClick={onClose} disabled={sending}>
-            {t('alh.renotifyModal.cancel')}
-          </Button>
-          <Button
-            variant="warning"
-            disabled={sending || selectedCount === 0}
-            onClick={() => onSend([...uncheckedEmails], [...uncheckedUsers])}
-          >
-            {t('alh.renotifyModal.send')}
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
-
-/**
- * "Ne kadardır AÇIK" rozeti — açık bir alarmın en kritik sayısı ve buraya kadar HİÇ
- * gösterilmiyordu ({@code formatDuration} yalnız kapalı alarmlarda kullanılıyordu).
- *
- * <p>Eşiği aşan alarmlar vurgulanır: uzun süredir açık kalan bir alarm ya çözülmemiş ya
- * unutulmuştur; ikisi de görünmesi gereken durumlar.
- */
-/**
- * "Neden hâlâ açık?" çipleri (2026-09-12, #16): onaylanmadı / onaylandı (kim), e-posta alıcı sayısı, push
- * gönderildi-başarısız-atlandı, hiç bildirim yoksa "kimseye ulaşmadı" uyarısı. Alarm Geçmişi ile Push
- * günlüğüne dağılmış bilgi tek satırda.
- */
-function WhyOpenChips({ a, notified, push, t }) {
-  const sent = push?.sent ?? 0, failed = push?.failed ?? 0, skipped = push?.skipped ?? 0
-  // E-posta çipi GERÇEK gönderim sayısını gösterir (notification_logs). Eskiden alarm satırındaki
-  // `notified_contacts` (KADEME kontakları) sayılıyordu; izleme alarmlarında bu liste boş olduğu
-  // için mail takım adresine gitse bile "0 alıcı" yazıyordu — kullanıcı "kimseye gitmedi" okuyordu
-  // (2026-09-17 bildirimi). Kime gittiği zaten altındaki "Bildirilenler" şeridinde.
-  const mailSent = Number(a?.email_sent_count ?? 0), mailFailed = Number(a?.email_failed_count ?? 0)
-  const nobody = mailSent === 0 && sent === 0
-  return (
-    <div className="alert-why" aria-label={t('alh.whyOpen')}>
-      <span className="alert-why-label">{t('alh.whyOpen')}</span>
-      <span className={`alert-why-chip${a.acknowledged ? ' is-ok' : ' is-warn'}`}>
-        {a.acknowledged ? t('alh.whyAcked', a.acknowledged_by || '—') : t('alh.whyUnacked')}
-      </span>
-      <span className={`alert-why-chip${mailFailed > 0 ? ' is-bad' : mailSent > 0 ? '' : ' is-muted'}`}
-        title={notified > 0 ? t('alh.whyEmailTip', notified) : ''}>
-        {mailSent > 0
-          ? (mailFailed > 0 ? t('alh.whyEmailMixed', mailSent, mailFailed) : t('alh.whyEmail', mailSent))
-          : (mailFailed > 0 ? t('alh.whyEmailFailed', mailFailed) : t('alh.whyEmailNone'))}
-      </span>
-      <span className={`alert-why-chip${failed > 0 ? ' is-bad' : sent > 0 ? '' : ' is-muted'}`} title={push ? t('alh.whyPushTip', sent, failed, skipped) : ''}>
-        {push ? t('alh.whyPush', sent, failed) : t('alh.whyPushNone')}
-      </span>
-      {nobody && <span className="alert-why-chip is-bad">{t('alh.whyNobody')}</span>}
-    </div>
-  )
-}
-
-function OpenDurationBadge({ createdAt, staleHours }) {
-  const t = useT()
-  if (!createdAt) return null
-  // UTC olarak ayrıştır. Backend zaman damgalarını saat dilimi EKİ OLMADAN yazıyor
-  // ("2026-08-16T09:00:00") ve JS böyle bir dizeyi YEREL saat sanır. Kapalı karttaki
-  // "açık kalma süresi" iki naive damganın FARKI olduğu için kayma sönümleniyordu; burada
-  // ise şimdiki zamanla (mutlak) karşılaştırıyoruz — sönümlenmez. Europe/Istanbul'da 3 saatlik
-  // sapma üretiyordu (testte yakalandı: 3 saatlik alarm "6s" görünüyordu).
-  const utc = createdAt.endsWith('Z') || createdAt.includes('+') ? createdAt : createdAt + 'Z'
-  const startedMs = new Date(utc).getTime()
-  const ms = Date.now() - startedMs
-  if (!Number.isFinite(ms) || ms < 0) return null
-  const stale = ms >= staleHours * 3_600_000
-  return (
-    <span className={`alh-open-for${stale ? ' is-stale' : ''}`}
-      title={stale ? t('alh.openForStaleTip', staleHours) : t('alh.openForTip')}>
-      <Clock size={11} /> {t('alh.openFor', formatDuration(ms, t))}
-    </span>
-  )
-}
-
-/**
- * "Bu ay N. kez" rozeti — aynı domain + tip için son 30 gündeki alarm sayısı.
- *
- * <p>Tekrar eden sorunu tekil olandan ayırır. 1 ise rozet ÇIZILMEZ: her karta "1. kez" yazmak
- * gürültüdür ve asıl sinyali (tekrar edenler) boğar.
- */
-function RepeatBadge({ count }) {
-  const t = useT()
-  if (!count || count < 2) return null
-  return (
-    <span className="alh-repeat" title={t('alh.repeatTip', count)}>
-      <RefreshCcw size={11} /> {t('alh.repeat', count)}
-    </span>
-  )
-}
-
-/**
- * AÇIK bırakılan grupların oturum anahtarı.
- *
- * <p>Semantik BİLEREK "açılmışlar" — "katlanmışlar" değil. Gruplar varsayılan olarak KAPALI
- * geliyor: hepsi açıkken sayfa uzuyor ve "hangi konudan kaç alarm var" özeti kayboluyordu
- * (kullanıcı geri bildirimi). Kapalıyken ekranda yalnız konu başlıkları ve sayıları kalıyor;
- * ilgilenilen konu tek tıkla açılıyor.
- *
- * <p>Anahtar da değişti: eskiden burada KATLANMIŞ tipler saklanıyordu. Aynı anahtar
- * kullanılsaydı eski oturumdaki liste "açılmışlar" diye okunur ve tam ters davranış çıkardı.
- */
-const GROUP_EXPAND_KEY = 'alh-expanded-groups'
-
-/**
- * Alarmları KONUSUNA (alert_type) göre katlanabilir gruplara ayırır.
- *
- * <p>"Hangi konudan hangi alarmlar var" sorusunun ekrandaki karşılığı: düz bir listede 20 satır
- * arasında 5 DNS + 3 sertifika + 12 erişim alarmı olduğunu görmek için tek tek okumak gerekiyordu.
- *
- * <p><b>Gruplama GÖRÜNEN SAYFA içindedir</b> — sunucu sayfalaması korunur. Bu yüzden başlıktaki
- * sayı "bu sayfada N" demektir, tipin TOPLAMI değil; toplam yukarıdaki tip rozetinde duruyor.
- * İki sayı farklı anlamda olduğu için çubuğun altında bir satırla açıkça söyleniyor (aksi halde
- * kullanıcı çelişki sanar).
- *
- * <p>Tek tip varsa gruplama YAPILMAZ: tek başlık altında tek grup, bilgi taşımayan bir çerçeveden
- * ibaret olurdu. Bu kural gömülü modda da (tek domainin 2-3 alarmı) doğru davranışı veriyor.
- */
-function AlertTypeGroups({ alerts, listClassName, expanded, onToggle, renderCard }) {
-  const t = useT()
-  const order = []
-  const byType = new Map()
-  for (const a of alerts) {
-    const key = a.alert_type ?? '?'
-    if (!byType.has(key)) { byType.set(key, []); order.push(key) }
-    byType.get(key).push(a)
-  }
-
-  if (order.length < 2) {
-    return <div className={listClassName}>{alerts.map(renderCard)}</div>
-  }
-
-  return order.map(type => {
-    const items = byType.get(type)
-    const isOpenGroup = expanded.has(type)
-    const { icon: Icon, color } = alertTypeMeta(type)
-    return (
-      <div className="alh-group" key={type}>
-        <button type="button" className="alh-group-head" onClick={() => onToggle(type)}
-          aria-expanded={isOpenGroup}>
-          <span className="alh-group-chevron">
-            {isOpenGroup ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </span>
-          <Icon size={14} style={{ color, flexShrink: 0 }} />
-          <span className="alh-group-title" style={{ color }}>{alertTypeLabel(t, type)}</span>
-          <span className="alh-group-count">{items.length}</span>
-        </button>
-        {isOpenGroup && <div className={listClassName}>{items.map(renderCard)}</div>}
-      </div>
-    )
-  })
-}
-
-/**
- * @param types İzleme modallarında GÖMÜLÜ kullanım için: yalnız bu alarm tipleri listelenir.
- *              Verilmezse (bağımsız Alarm Geçmişi ekranı) hiçbir tip süzgeci uygulanmaz.
- *              Süzme SUNUCUDA yapılır — istemcide süzmek yalnız açık sayfayı süzer, sayfalama
- *              ve tip/seviye sayaçları yanlış kalırdı (arama/seviye filtreleriyle aynı gerekçe).
- */
-export default function AlertHistory({ domain = null, urlSync = false, types = null }) {
-  // Dizi kimliği her render'da değişir; load() bağımlılığına DİZİ koymak sonsuz döngü demek.
-  // Tek bir dizeye indirgeniyor.
+export default function AlertHistory({ domain = null, urlSync = false, types = null, globalViewer = false, myTeamIds = null }) {
+  // Dizi kimliği her render'da değişir; yükleme bağımlılığına DİZİ koymak sonsuz döngü demek → tek dize.
   const typesParam = Array.isArray(types) && types.length > 0 ? types.join(',') : null
+  const embedded = !urlSync
   const t = useT()
+  const locale = useDateLocale()
   const { showConfirm, showNoteConfirm } = useDialog()
   const toast = useToast()
-  const [alerts,       setAlerts]       = useState([])
-  // Alt sekme (açık/kapalı) URL anahtarı `view`: eskiden `tab` idi ve uygulamanın SEKME anahtarıyla
-  // çakışıyordu — açık görünüm `?tab=alerthistory`'yi siliyor, kapalı görünüm `tab=closed`'a çeviriyordu
-  // (App.VALID_TABS dışı). Sonuç: derin link/yenileme/kopyalanan bağlantı dashboard'a düşüyordu.
-  const [tab,          setTab]          = useState(() => (urlSync && readUrlParam('view', null) === 'closed' ? 'closed' : 'open'))
-  const [page,         setPage]         = useState(() => (urlSync ? readUrlInt('page', 1) - 1 : 0))
-  const [pageSize,     setPageSize]     = useState(() => (urlSync && readUrlInt('ps', null)) || readPageSize('alert-history'))
-  const [total,        setTotal]        = useState(0)
-  const [closedFrom,   setClosedFrom]   = useState(() => (urlSync ? readUrlParam('from', null) : null))
-  const [closedTo,     setClosedTo]     = useState(() => (urlSync ? readUrlParam('to', null) : null))
-  const [loading,      setLoading]      = useState(false)
-  const [notifyModal,  setNotifyModal]  = useState(null)
-  const [notifying,    setNotifying]    = useState(null)
-  const [renotifyModal,   setRenotifyModal]   = useState(null)   // Tekrar Bildir onay pop-up'ı
+  const phone = useIsMobile()
+  const bulkAllId = useId()
+
+  const [tab, setTab] = useState(() => (urlSync ? tabFromUrl(readUrlParam('view', null)) : 'open'))
+  const [filters, setFilters] = useState(() => (urlSync ? filtersFromUrl(readUrlParam) : { ...FILTER_DEFAULTS }))
+  const patch = useCallback((p) => setFilters((f) => ({ ...f, ...p })), [])
+  const resetFilters = useCallback(() => setFilters({ ...FILTER_DEFAULTS }), [])
+
+  const [alerts, setAlerts] = useState([])
+  const [facets, setFacets] = useState({ typeCounts: {}, staleHours: 24, push: {} })
+  const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState(null)
+  const [summary, setSummary] = useState(null)        // null = bilinmiyor → kartlar çizilmez (uydurma sayı yok)
+  const [summaryLoading, setSummaryLoading] = useState(urlSync)
+  const [updatedAt, setUpdatedAt] = useState(null)
+  const [teams, setTeams] = useState([])
+  const [selected, setSelected] = useState(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [detail, setDetail] = useState(null)
+  const [notifying, setNotifying] = useState(null)
+  const [renotifyModal, setRenotifyModal] = useState(null)
   const [renotifySending, setRenotifySending] = useState(false)
-  const [typeFilter,   setTypeFilter]   = useState(() => (urlSync ? readUrlParam('type', '') : ''))   // '' = tüm tipler
-  const [typeCounts,   setTypeCounts]   = useState({})
-  const [selected,     setSelected]     = useState(() => new Set())   // toplu seçim (yalnız açık sekme)
-  const [bulkBusy,     setBulkBusy]     = useState(false)
-  // ── Arama ve filtreler (yalnız bağımsız sayfada; gömülü modda domain zaten sabit) ──
-  // Hepsi SUNUCUYA gider: istemci tarafında süzmek yalnız açık sayfayı süzer ve sayfalamayla
-  // "3 sonuç" derken aslında 90 sonuç olur.
-  const [search,       setSearch]       = useState(() => (urlSync ? readUrlParam('q', '') : ''))
-  const [searchTerm,   setSearchTerm]   = useState(search)   // debounce'lanmış hâli (isteğe giden)
-  const [levelFilter,  setLevelFilter]  = useState(() => (urlSync ? readUrlParam('level', '') : ''))
-  const [teamFilter,   setTeamFilter]   = useState(() => (urlSync ? readUrlParam('team', '') : ''))
-  const [ackFilter,    setAckFilter]    = useState(() => (urlSync ? readUrlParam('ack', '') : ''))
-  const [levelCounts,  setLevelCounts]  = useState({})
-  const [unackedTotal, setUnackedTotal] = useState(0)
-  const [staleTotal,   setStaleTotal]   = useState(0)
-  const [staleHours,   setStaleHours]   = useState(24)
-  const [pushSummary,  setPushSummary]  = useState({})   // alarm id → {sent, failed, skipped} (2026-09-12, #16)
-  const [teams,        setTeams]        = useState([])
-  // Şerit KAPALI başlar — sekiz izleme sayfasının hepsinde böyle; burada `true` bırakmak
-  // tutarsızlıktı. Ayrıca sayfa açılışında ekranı doldurmuyor: önce alarmlar görünüyor,
-  // sayaçlara ihtiyaç duyan tek tıkla açıyor.
-  //
-  // Kapanınca seviye filtresi TEMİZLENMEZ (izleme sayfalarından farkı): burada aynı filtre
-  // araç çubuğundaki açılırda da duruyor, yani gizli bir filtre kalmıyor. İzleme sayfalarında
-  // tek erişim noktası kartlar olduğu için orada temizlemek doğru.
-  const [statsVisible, setStatsVisible] = useState(false)
-  // Katlanan grup tipleri — oturum boyunca korunur (sayfa değişince kapattığın grup açılmasın).
-  const [expanded, setExpanded] = useState(() => {
-    try { return new Set(JSON.parse(sessionStorage.getItem(GROUP_EXPAND_KEY) || '[]')) }
-    catch { return new Set() }
-  })
-  // Bildirim kutusundan derin bağlantı (2026-09-16): ?alert=<id> — tipin grubu AÇILIR, kart vurgulanır
-  // ve görünüme kaydırılır. Param tüketilince URL'den silinir (sekme dönüşünde tekrar vurgulamasın).
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  // Bildirim kutusundan derin bağlantı (2026-09-16): ?alert=<id> — kart vurgulanır, detay açılır, param tüketilir.
   const [linkedAlertId, setLinkedAlertId] = useState(() => (urlSync ? readUrlParam('alert', null) : null))
-  const toggleGroup = useCallback((type) => {
-    setExpanded(prev => {
-      const next = new Set(prev)
-      if (next.has(type)) next.delete(type); else next.add(type)
-      try { sessionStorage.setItem(GROUP_EXPAND_KEY, JSON.stringify([...next])) } catch { /* depolama kapalı */ }
-      return next
-    })
-  }, [])
+  const linkOpenedRef = useRef(null)
+  // 7/24 arama kaydı (2026-09-27): yazma kapısı SUNUCUDAN (`noc_can_write` — kapsamlı müdür matriste ADMIN görünür ama
+  // yazamaz); derin bağlantı `&n_call=1` (7/24 e-postasındaki "Arama kaydı ekle") uyarıyı form odakta açar ve tüketilir.
+  const [nocCanWrite, setNocCanWrite] = useState(false)
+  const [nocFocus, setNocFocus] = useState(null)      // { id, n } — masaüstü detayında formu odakla
+  const [quickCall, setQuickCall] = useState(null)    // telefon: alttan hızlı giriş açık olan uyarı
+  const [linkedNocCall, setLinkedNocCall] = useState(() => (urlSync ? readUrlParam('n_call', null) === '1' : false))
+  const linkFetchSeq = useRef(0)
 
-  // İKİNCİ (ve sonraki) derin bağlantı — bileşen zaten AÇIKKEN gelen bildirim tıklaması
-  // (2026-09-16 kullanıcı bildirimi): sekme değişmediği için bileşen mount'ta kalıyor, URL
-  // güncelleniyordu ama süzgeçler ilk tıklamanınki kalıyor ve ekranda ESKİ alarm duruyordu.
-  // Çözüm: `sm:navigate` olayının PARAMLARINI (URL'i okumaktan daha güvenilir: App henüz yazmamış
-  // olabilir) doğrudan uygula; geri/ileri düğmesinde de URL'den yeniden oku.
-  useEffect(() => {
-    if (!urlSync) return undefined
-    const apply = (p) => {
-      setTab(p.view === 'closed' ? 'closed' : 'open')
-      setTypeFilter(p.type ? String(p.type) : '')
-      const q = p.q ? String(p.q) : ''
-      setSearch(q); setSearchTerm(q)
-      // Yeni bir bildirim niyeti: kalan süzgeçler sıfırlanır, yoksa aranan alarm eleniyor olabilir.
-      setLevelFilter(''); setAckFilter(''); setClosedFrom(null); setClosedTo(null)
-      setPage(0)
-      setLinkedAlertId(p.alert != null ? String(p.alert) : null)
-    }
-    const onNav = (e) => {
-      if (e?.detail?.tab !== 'alerthistory') return
-      apply(e.detail.params || {})
-    }
-    const onPop = () => {
-      apply({
-        view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''),
-        alert: readUrlParam('alert', null),
-      })
-    }
-    window.addEventListener('sm:navigate', onNav)
-    window.addEventListener('popstate', onPop)
-    return () => {
-      window.removeEventListener('sm:navigate', onNav)
-      window.removeEventListener('popstate', onPop)
-    }
-  }, [urlSync])
+  // Sayfalama standardı: süzgeç/sekme DEĞERİ değişince sayfa 1 (aynı render'da), mount'ta ASLA; page/ps yalnız sekmede.
+  const sp = useServerPagination({ listKey: 'alert-history', preset: 'page',
+    resetDeps: [tab, filters, domain, typesParam],
+    url: urlSync ? { pageKey: 'page', sizeKey: 'ps' } : null, apiBase: 0 })
+  const { apiPage: page, pageSize, setTotal, reset: resetPage } = sp
 
-  // Derin bağlantı: liste gelince kartı bul, grubunu aç, kaydır. Kart DOM'a girdikten sonra
-  // (bir sonraki boyama) kaydırılır; bulunamazsa (başka sayfada/süzgeçte) yalnız vurgu kalır.
-  useEffect(() => {
-    if (!linkedAlertId || !alerts.length) return
-    const hit = alerts.find((a) => String(a.id) === String(linkedAlertId))
-    if (hit?.alert_type) {
-      setExpanded((prev) => (prev.has(hit.alert_type) ? prev : new Set(prev).add(hit.alert_type)))
-    }
-    const id = setTimeout(() => {
-      try { document.querySelector('.alert-card.alh-card-linked')?.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch { /* jsdom */ }
-    }, 80)
-    try {
-      const url = new URL(window.location.href)
-      url.searchParams.delete('alert')
-      window.history.replaceState({}, '', url)
-    } catch { /* yoksay */ }
-    return () => clearTimeout(id)
-  }, [linkedAlertId, alerts])
+  useUrlQuerySync(filtersToUrl(filters, tab), { enabled: urlSync })
 
-  // Yazarken her tuşta istek atma — 300 ms sessizlikten sonra tek istek.
-  useEffect(() => {
-    const id = setTimeout(() => setSearchTerm(search), 300)
-    return () => clearTimeout(id)
-  }, [search])
-
-  // Takım listesi yalnız bağımsız sayfada ve bir kez.
-  useEffect(() => {
-    if (!urlSync) return
-    api.admin.getTeams().then(res => { if (res?.success) setTeams(res.data ?? []) }).catch(() => {})
-  }, [urlSync])
-
-  const levelLabel = {
-    WARNING: t('alh.level.warning'), HIGH: t('alh.level.high'), CRITICAL: t('alh.level.critical'),
-  }
-  // Tip etiketi/ikonu/rengi ARTIK YEREL DEĞİL: utils/alertTypeMeta.js tek kaynak.
-  // Buradaki yerel harita yalnız 11 tip tanıyordu (backend'de 28) — keyword/ping/HTTP/sayfa/
-  // sentetik/alan-adı alarmları ham enum adıyla görünüyor ve FİLTRELENEMİYORDU.
-  function TypeChip({ type, size = 13 }) {
-    const { icon: Icon, color } = alertTypeMeta(type)
-    return (
-      <span className="alert-type alh-type-chip" style={{ color }}>
-        <Icon size={size} />
-        {alertTypeLabel(t, type)}
-      </span>
-    )
-  }
-
-  // ── İstatistik kartları ────────────────────────────────────────────────────
-  // Sayılar SUNUCUDAN gelir (level_counts / unacked_total). Sayfa içinden hesaplanamaz:
-  // 81 alarmın 20'si ekranda dururken "Kritik: 12" yazmak yanıltıcı olurdu.
-  const levelTotal = Object.values(levelCounts).reduce((a, b) => a + b, 0)
-  const statItems = [
-    { key: '',         Icon: Bell,        label: t('alh.statTotal'),    value: levelTotal,                  cls: 'total'    },
-    { key: 'CRITICAL', Icon: AlertCircle, label: t('alh.statCritical'), value: levelCounts.CRITICAL ?? 0,   cls: 'critical' },
-    { key: 'HIGH',     Icon: TrendingUp,  label: t('alh.statHigh'),     value: levelCounts.HIGH ?? 0,       cls: 'high'     },
-    { key: 'WARNING',  Icon: ShieldAlert, label: t('alh.statWarning'),  value: levelCounts.WARNING ?? 0,    cls: 'warning'  },
-    { key: 'unacked',  Icon: Bell,        label: t('alh.statUnacked'),  value: unackedTotal,                cls: 'warning',
-      hint: t('mondash.unackedHint') },
-    // YALNIZ açık sekmede: kapalı sekmede bu sayı "24 saatten eski" demek olurdu,
-    // "24 saattir AÇIK" değil — iki farklı şey ve ikincisi kullanıcının sorduğu.
-    ...(tab === 'open' ? [{ key: 'stale', Icon: Clock, label: t('alh.statStale', staleHours),
-                    value: staleTotal, cls: 'high', hint: t('alh.statStaleHint', staleHours) }] : []),
-  ]
-
-  // "Sahiplenilmemiş" kartı seviye DEĞİL, sahiplenme boyutunu filtreler — tek kart şeridinde
-  // iki farklı boyut olduğu için tıklama burada ayrıştırılır.
-  function onLevelCardClick(key) {
-    // "Uzun süredir açık" kartı SAYAÇ — tıklanınca filtre uygulamaz. Sunucuda karşılığı olan bir
-    // parametre yok; sahte bir istemci-tarafı süzme eklemek sayfalamayla yanıltıcı olurdu
-    // (ekrandaki 20 satırdan 3'ünü gösterip "3 tane" demek). Bilinçli olarak gösterge bırakıldı.
-    if (key === 'stale') return
-    if (key === 'unacked') { setAckFilter(a => (a === 'unack' ? '' : 'unack')); setLevelFilter(''); return }
-    setAckFilter('')
-    setLevelFilter(l => (l === key ? '' : key))
-  }
-
-  const levelOptions = [
-    { value: '',         label: t('alh.allLevels') },
-    { value: 'CRITICAL', label: levelLabel.CRITICAL },
-    { value: 'HIGH',     label: levelLabel.HIGH },
-    { value: 'WARNING',  label: levelLabel.WARNING },
-  ]
-  const ackOptions = [
-    { value: '',      label: t('alh.allAckStates') },
-    { value: 'unack', label: t('alh.unackedOnly') },
-    { value: 'ack',   label: t('alh.ackOnly') },
-  ]
-  /** Takım adı (izleme alarmlarında satırda yalnız team_id var; ad süzgeç listesinden gelir). */
-  const teamNameOf = useCallback((id) => {
-    if (id == null) return null
-    const hit = teams.find((tm) => String(tm.id) === String(id))
-    return hit ? hit.name : null
-  }, [teams])
-
-  /** Aynı imzanın (alan adı + tip) GEÇMİŞİ: kapalı sekmeye geçer ve listeyi o imzaya süzer (2026-09-16). */
-  const showSignatureHistory = useCallback((a) => {
-    if (!a) return
-    setTab('closed')
-    setTypeFilter(a.alert_type || '')
-    const q = a.domain || ''
-    setSearch(q); setSearchTerm(q)
-    setLevelFilter(''); setAckFilter(''); setClosedFrom(null); setClosedTo(null)
-    setPage(0)
-    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* jsdom */ }
-  }, [])
-
-  const teamOptions = [
-    { value: '', label: t('alh.allTeams') },
-    ...teams.map(tm => ({ value: String(tm.id), label: tm.name })),
-  ]
-
-  // CSV, listeyle AYNI parametreleri kullanır (sayfalama hariç — dosya tüm sonucu içerir).
-  const csvParams = {
-    resolved: tab === 'closed' ? 'true' : 'false',
-    ...(domain ? { domain } : {}),
-    ...(typesParam ? { alertTypes: typesParam } : {}),
-    ...(typeFilter ? { alertType: typeFilter } : {}),
-    ...(searchTerm.trim() ? { q: searchTerm.trim() } : {}),
-    ...(levelFilter ? { level: levelFilter } : {}),
-    ...(teamFilter ? { teamId: teamFilter } : {}),
-    ...(ackFilter ? { acknowledged: ackFilter === 'ack' ? 'true' : 'false' } : {}),
-    ...(tab === 'closed' && closedFrom ? { resolvedSince: closedFrom } : {}),
-    ...(tab === 'closed' && closedTo ? { resolvedUntil: closedTo } : {}),
-  }
-
-  const hasActiveFilters = !!(search || levelFilter || teamFilter || ackFilter || typeFilter
-                              || closedFrom || closedTo)
-  function clearFilters() {
-    setSearch(''); setLevelFilter(''); setTeamFilter(''); setAckFilter('')
-    setTypeFilter(''); setClosedFrom(null); setClosedTo(null)
-  }
-
-  // Fetch yarışı: sekme/filtre değişince eski (sayfa N) istek yeni (sayfa 0) isteğin ARDINDAN
-  // dönebilir ve listeyi bayat sonuçla ezer. Yalnız en son başlatılan isteğin yanıtı uygulanır.
+  // Fetch yarışı: yalnız EN SON başlatılan isteğin yanıtı uygulanır (bayat sayfa listeyi ezmesin).
   const loadSeq = useRef(0)
   const load = useCallback(async () => {
     const seq = ++loadSeq.current
     setLoading(true)
     try {
-      const params = {
-        resolved: tab === 'closed' ? 'true' : 'false',
-        page,
-        size: pageSize,
-      }
-      if (tab === 'closed') {
-        if (closedFrom) params.resolvedSince = closedFrom
-        if (closedTo)   params.resolvedUntil = closedTo
-      }
-      if (domain) params.domain = domain
-      if (typesParam) params.alertTypes = typesParam
-      if (typeFilter) params.alertType = typeFilter
-      if (searchTerm.trim()) params.q = searchTerm.trim()
-      if (levelFilter) params.level = levelFilter
-      if (teamFilter)  params.teamId = teamFilter
-      if (ackFilter)   params.acknowledged = ackFilter === 'ack' ? 'true' : 'false'
-      const res = await api.admin.getAlerts(params)
-      if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
+      const res = await api.admin.getAlerts(listParams({ tab, filters, page, pageSize, domain, typesParam }))
+      if (seq !== loadSeq.current) return
       if (res?.success) {
         setAlerts(res.data ?? [])
         setTotal(res.total ?? 0)
-        setTypeCounts(res.type_counts ?? {})
-        setLevelCounts(res.level_counts ?? {})
-        setUnackedTotal(res.unacked_total ?? 0)
-        setStaleTotal(res.stale_total ?? 0)
-        setPushSummary(res.push_summary && typeof res.push_summary === 'object' ? res.push_summary : {})
-        setStaleHours(res.stale_hours ?? 24)
+        setFacets({
+          typeCounts: res.type_counts ?? {},
+          staleHours: res.stale_hours ?? 24,
+          push: res.push_summary && typeof res.push_summary === 'object' ? res.push_summary : {},
+        })
+        setNocCanWrite(res.noc_can_write === true)
+        setError(null)
+        setLoaded(true)
+        setUpdatedAt(new Date())
       } else if (res != null) {
-        toast.error(res?.error || t('alh.loadError'))
+        setError(res?.error || t('alh.loadError'))
       }
+    } catch (e) {
+      if (seq === loadSeq.current) setError(e?.message || t('alh.loadError'))
     } finally {
       if (seq === loadSeq.current) setLoading(false)
     }
-  }, [tab, page, pageSize, closedFrom, closedTo, domain, typesParam, typeFilter,
-      searchTerm, levelFilter, teamFilter, ackFilter, t, toast])
+  }, [tab, filters, page, pageSize, domain, typesParam, t, setTotal])
 
+  /**
+   * Üst istatistikler — süzgeçten BAĞIMSIZ, kapsamdaki AÇIK küme (seviye kırılımı, sahiplenilmemiş, uzun süredir açık)
+   * + son 24 saatte çözülen toplamı. İki küçük istek (size=1); yalnız bağımsız sayfada, açılışta / Yenile'de / eylemden sonra.
+   */
+  const loadSummary = useCallback(async () => {
+    if (!urlSync) return
+    setSummaryLoading(true)
+    try {
+      const [open, res24] = await Promise.all([
+        api.admin.getAlerts({ resolved: 'false', page: 0, size: 1 }),
+        api.admin.getAlerts({ resolved: 'true', resolvedSince: iso24hAgo(Date.now()), page: 0, size: 1 }),
+      ])
+      if (!open?.success) { setSummary(null); return }
+      setSummary({
+        open: Number(open.total ?? 0),
+        levels: open.level_counts ?? {},
+        unacked: Number(open.unacked_total ?? 0),
+        stale: Number(open.stale_total ?? 0),
+        staleHours: open.stale_hours ?? 24,
+        resolved24: res24?.success ? Number(res24.total ?? 0) : null,
+      })
+    } catch {
+      setSummary(null)
+    } finally {
+      setSummaryLoading(false)
+    }
+  }, [urlSync])
+
+  // Sıra bilinçli: liste isteği özet isteklerinden ÖNCE başlar.
   useEffect(() => { load() }, [load])
-  // Filtre değişince 1. sayfaya dön — aksi halde 5. sayfada daralan sonuçta BOŞ ekran kalır.
-  useEffect(() => { setPage(0) }, [tab, pageSize, closedFrom, closedTo, typeFilter,
-                                   searchTerm, levelFilter, teamFilter, ackFilter])
-  // Liste bağlamı değişince seçim sıfırlansın (sekme/sayfa/filtre) — bayat id'ler seçili kalmasın
-  useEffect(() => { setSelected(new Set()) }, [tab, page, pageSize, closedFrom, closedTo, typeFilter, domain])
+  useEffect(() => { loadSummary() }, [loadSummary])
+  const refreshAll = useCallback(() => { load(); loadSummary() }, [load, loadSummary])
 
-  function applyQuickRange(days) {
-    const now = new Date()
-    const from = new Date(now.getTime() - days * 86400000)
-    setClosedFrom(from.toISOString().slice(0, 19))
-    setClosedTo(now.toISOString().slice(0, 19))
-  }
+  // Takım listesi yalnız bağımsız sayfada ve bir kez.
+  useEffect(() => {
+    if (!urlSync) return
+    Promise.resolve().then(() => api.admin.getTeams())
+      .then((res) => { if (res?.success) setTeams(res.data ?? []) }).catch(() => {})
+  }, [urlSync])
 
-  /** Zorunlu gerekçe modalinin ortak seçenekleri — dört çağrı noktasında (tekli/toplu × onay/çöz)
-   *  aynı kural ve aynı ipucu metni kullanılsın diye tek yerde. */
+  // Liste bağlamı değişince seçim sıfırlansın — bayat id'ler seçili kalmasın.
+  useEffect(() => { setSelected(new Set()) }, [tab, page, pageSize, filters, domain])
+
+  // Açık alarm varken "açık kalma" süreleri canlı (10 sn).
+  useEffect(() => {
+    const live = alerts.some((a) => !a.resolved) || (detail && !detail.resolved)
+    if (!live) return undefined
+    const id = setInterval(() => setNowMs(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [alerts, detail])
+
+  // Liste tazelenince açık detay da güncellensin (aynı alarm sayfadaysa).
+  useEffect(() => {
+    setDetail((d) => {
+      if (!d) return d
+      const hit = alerts.find((x) => String(x.id) === String(d.id))
+      return hit ? { ...d, ...hit } : d
+    })
+  }, [alerts])
+
+  // İKİNCİ (ve sonraki) derin bağlantı — sayfa AÇIKKEN gelen bildirim tıklaması: sm:navigate paramları doğrudan
+  // uygulanır (App URL'i henüz yazmamış olabilir); geri/ileri düğmesinde URL'den yeniden okunur (2026-09-16).
+  useEffect(() => {
+    if (!urlSync) return undefined
+    const apply = (p) => {
+      setTab(tabFromUrl(p.view))
+      // Yeni bir bildirim niyeti: kalan süzgeçler sıfırlanır, yoksa aranan alarm eleniyor olabilir.
+      setFilters({ ...FILTER_DEFAULTS, type: p.type ? String(p.type) : '', q: p.q ? String(p.q) : '' })
+      resetPage()
+      linkOpenedRef.current = null
+      // Önceki bağlantının tekil-uç isteği hâlâ sürüyor olabilir: sıra ilerler → geç gelen yanıtı YENİ bağlantının
+      // detayını ezmez (onPop da buradan geçer — geri/ileri de aynı koruma).
+      linkFetchSeq.current++
+      setLinkedAlertId(p.alert != null ? String(p.alert) : null)
+      setLinkedNocCall(p.n_call != null && String(p.n_call) === '1')
+    }
+    const onNav = (e) => { if (e?.detail?.tab === 'alerthistory') apply(e.detail.params || {}) }
+    const onPop = () => apply({ view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''), alert: readUrlParam('alert', null), n_call: readUrlParam('n_call', null) })
+    window.addEventListener('sm:navigate', onNav)
+    window.addEventListener('popstate', onPop)
+    return () => { window.removeEventListener('sm:navigate', onNav); window.removeEventListener('popstate', onPop) }
+  }, [urlSync, resetPage])
+
+  const openDetail = useCallback((a) => { setNocFocus(null); setDetail(a) }, [])
+  const closeDetail = useCallback(() => setDetail(null), [])
+  /** "Arama kaydet": telefonda alttan hızlı giriş, masaüstünde detay + form odakta. Gömülü kullanımda (izleme penceresi,
+   *  ModalShell 2000+) alttan Sheet pencerenin ALTINDA kalırdı → orada her zaman detay penceresi + form odakta. */
+  const logCall = useCallback((a) => {
+    if (!a) return
+    if (phone && !embedded) { setQuickCall(a); return }
+    setDetail(a)
+    setNocFocus((f) => ({ id: a.id, n: (f?.n ?? 0) + 1 }))
+  }, [phone, embedded])
+  /** Kayıt eklenip/silinince liste göstergesi yeniden yüklemeden güncellenir (işlevsel güncellemeler). */
+  const onNocChanged = useCallback((alertId, summary) => {
+    if (alertId == null || !summary) return
+    const same = (x) => x && String(x.id) === String(alertId)
+    setAlerts((prev) => prev.map((x) => (same(x) ? { ...x, ...summary } : x)))
+    setDetail((d) => (same(d) ? { ...d, ...summary } : d))
+    setQuickCall((q) => (same(q) ? { ...q, ...summary } : q))
+  }, [])
+
+  // Derin bağlantı: liste gelince kartı bul → detayı aç + görünüme kaydır; param URL'den silinir (sekme dönüşünde
+  // tekrar vurgulamasın). Bulunamazsa (başka sayfa/süzgeç) yalnız param tüketilir.
+  useEffect(() => {
+    if (!linkedAlertId || !loaded) return undefined
+    const hit = alerts.find((a) => String(a.id) === String(linkedAlertId))
+    if (hit && linkOpenedRef.current !== linkedAlertId) {
+      linkOpenedRef.current = linkedAlertId
+      if (linkedNocCall && nocCanWrite) logCall(hit)
+      else setDetail(hit)
+      setLinkedNocCall(false)
+    } else if (!hit && linkedNocCall && linkOpenedRef.current !== linkedAlertId) {
+      // 7/24 derin bağlantısı: uyarı bu sayfada/süzgeçte değilse (fırtına, kapalı uyarı) tekil uçtan açılır. Sıra
+      // numaralı: arada başka bir bağlantı gelirse bayat yanıt uygulanmaz.
+      linkOpenedRef.current = linkedAlertId
+      setLinkedNocCall(false)
+      const my = ++linkFetchSeq.current
+      const wanted = linkedAlertId
+      Promise.resolve().then(() => api.admin.getAlert(wanted)).catch(() => null).then((res) => {
+        if (my !== linkFetchSeq.current || !res?.success || !res.data) return
+        if (res.noc_can_write === true) { setNocCanWrite(true); logCall(res.data) } else setDetail(res.data)
+      })
+    }
+    const id = setTimeout(() => {
+      try { document.querySelector('[data-alert-id][data-linked="true"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch { /* jsdom */ }
+    }, 80)
+    try {
+      // `n_call` de tüketilir: geri gelindiğinde form yeniden açılmasın.
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('alert') || url.searchParams.has('n_call')) {
+        url.searchParams.delete('alert'); url.searchParams.delete('n_call'); window.history.replaceState({}, '', url)
+      }
+    } catch { /* yoksay */ }
+    return () => clearTimeout(id)
+  }, [linkedAlertId, alerts, loaded, linkedNocCall, nocCanWrite, logCall])
+
+  const teamNameOf = useCallback((id) => {
+    if (id == null) return null
+    return teams.find((tm) => String(tm.id) === String(id))?.name ?? null
+  }, [teams])
+
+  // ── Eylemler (gerekçe zorunlu — sunucu AlertActionNote ile aynı kural) ──
   function noteOpts(extra) {
     return {
-      noteHint: t('alh.note.hint'),
-      noteOkText: t('alh.note.ok'),
-      noteLabel: t('alh.note.label'),
-      placeholder: t('alh.note.placeholder'),
-      chips: [t('alh.note.chip1'), t('alh.note.chip2'), t('alh.note.chip3'),
-              t('alh.note.chip4'), t('alh.note.chip5')],
-      cancelText: t('alh.ackDialog.cancel'),
-      ...extra,
+      noteHint: t('alh.note.hint'), noteOkText: t('alh.note.ok'), noteLabel: t('alh.note.label'), placeholder: t('alh.note.placeholder'),
+      chips: [t('alh.note.chip1'), t('alh.note.chip2'), t('alh.note.chip3'), t('alh.note.chip4'), t('alh.note.chip5')],
+      cancelText: t('alh.ackDialog.cancel'), ...extra,
     }
   }
+  const mergeDetail = (id, data, fallback) => setDetail((d) => {
+    if (!d || String(d.id) !== String(id)) return d
+    const next = { ...d, ...fallback }
+    if (data && typeof data === 'object') for (const k of ACTION_FIELDS) if (data[k] != null) next[k] = data[k]
+    return next
+  })
+  const nowIso = () => new Date().toISOString().slice(0, 19)
 
-  async function ack(id) {
-    const alert = alerts.find(a => a.id === id)
+  async function ack(a) {
     const res = await showNoteConfirm(noteOpts({
-      title: t('alh.ackDialog.title'),
-      message: t('alh.ackDialog.msg', alert?.domain ?? ''),
-      variant: 'warning',
-      confirmText: t('alh.ackDialog.confirm'),
+      title: t('alh.ackDialog.title'), message: t('alh.ackDialog.msg', a?.domain ?? ''), variant: 'warning', confirmText: t('alh.ackDialog.confirm'),
     }))
     if (!res?.confirmed) return
-    const r = await api.admin.acknowledgeAlert(id, res.note)
-    if (r?.success === false) { toast.error(r?.error || t('alh.note.error')); return }
-    load()
+    let r
+    try { r = await api.admin.acknowledgeAlert(a.id, res.note) } catch { r = null }
+    if (r == null || r.success === false) { toast.error(r?.error || t('alh.note.error')); return }
+    toast.success(t('alh.ackSuccess'))
+    mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: res.note, acknowledged_at: nowIso() })
+    refreshAll()
   }
 
-  async function resolve(id) {
-    const alert = alerts.find(a => a.id === id)
-    const ok = await showNoteConfirm(noteOpts({
-      title: t('alh.resolveDialog.title'),
-      message: t('alh.resolveDialog.msg', alert?.domain ?? ''),
-      variant: 'success',
-      confirmText: t('alh.resolveDialog.confirm'),
-      cancelText: t('alh.resolveDialog.cancel'),
-      placeholder: t('alh.note.placeholderResolve'),
+  async function resolve(a) {
+    const res = await showNoteConfirm(noteOpts({
+      title: t('alh.resolveDialog.title'), message: t('alh.resolveDialog.msg', a?.domain ?? ''), variant: 'success',
+      confirmText: t('alh.resolveDialog.confirm'), cancelText: t('alh.resolveDialog.cancel'), placeholder: t('alh.note.placeholderResolve'),
     }))
-    if (!ok?.confirmed) return
-    try {
-      const res = await api.admin.resolveAlert(id, ok.note)
-      if (res?.success === false) {
-        toast.error(res?.error || t('alh.resolveError'))
-      } else {
-        toast.success(t('alh.resolveSuccess'))
-      }
-    } catch {
-      toast.error(t('alh.resolveError'))
-    } finally {
-      load()
-    }
+    if (!res?.confirmed) return
+    let r
+    try { r = await api.admin.resolveAlert(a.id, res.note) } catch { r = null }
+    if (r == null || r.success === false) { toast.error(r?.error || t('alh.resolveError')); refreshAll(); return }
+    toast.success(t('alh.resolveSuccess'))
+    mergeDetail(a.id, r.data, { resolved: true, resolved_note: res.note, resolved_at: nowIso() })
+    refreshAll()
   }
 
-  // Tekrar Bildir: önce alıcı önizlemesi → onay pop-up'ı; gönderim sendReNotify ile yapılır.
-  async function reNotify(id) {
-    setNotifying(id)
-    const res = await api.admin.previewReNotify(id)
-    setNotifying(null)
+  // Tekrar Bildir: önce alıcı önizlemesi → onay penceresi; gönderim sendReNotify ile.
+  async function reNotify(a) {
+    setNotifying(a.id)
+    let res
+    try { res = await api.admin.previewReNotify(a.id) } catch { res = null } finally { setNotifying(null) }
     if (res?.success) {
-      const alert = alerts.find(a => a.id === id)
-      setRenotifyModal({ alertId: id, domain: alert?.domain || '',
-        recipients: res.data?.recipients || [], webhook: res.data?.webhook || null })
+      setRenotifyModal({ alertId: a.id, domain: a.domain || '', recipients: res.data?.recipients || [], webhook: res.data?.webhook || null })
     } else {
       toast.error(res?.error || t('alh.renotifyModal.previewError'))
     }
@@ -1092,42 +342,38 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       const body = {}
       if (excludeEmails.length) body.excludeEmails = excludeEmails
       if (excludeUsernames.length) body.excludeUsernames = excludeUsernames
-      const res = await api.admin.reNotifyAlert(renotifyModal.alertId,
-        Object.keys(body).length ? body : undefined)
+      const res = await api.admin.reNotifyAlert(renotifyModal.alertId, Object.keys(body).length ? body : undefined)
       if (res?.success) {
-        const count = res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0
-        toast.success(t('alh.notifyQueued', count))
+        toast.success(t('alh.notifyQueued', res.data?.recipients_queued ?? res.data?.contacts_queued ?? 0))
         setRenotifyModal(null)
         load()
       } else {
-        toast.error(res?.error || 'Error')
+        toast.error(res?.error || t('alh.loadError'))
       }
     } finally {
       setRenotifySending(false)
     }
   }
 
-  // ── Toplu seçim + toplu işlem (yalnız açık sekme) ──
-  const toggleSelect = (id) => setSelected(s => {
-    const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n
-  })
-  const allSelected = alerts.length > 0 && alerts.every(a => selected.has(a.id))
-  const toggleSelectAll = () => setSelected(() => allSelected ? new Set() : new Set(alerts.map(a => a.id)))
+  // ── Toplu seçim + toplu işlem (yalnız açık görünüm; sunucu /admin/alerts/bulk) ──
+  // 7/24 operatörü başka takımın uyarısını GÖRÜR ama sahiplenemez/çözemez (sunucu 403) — bkz. outsideActScope
+  const actBlocked = (a) => outsideActScope(a, { nocCanWrite, globalViewer, myTeamIds })
+  const toggleSelect = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  const selectable = alerts.filter((a) => !actBlocked(a))
+  const allSelected = selectable.length > 0 && selectable.every((a) => selected.has(a.id))
+  const toggleSelectAll = () => setSelected(() => (allSelected ? new Set() : new Set(selectable.map((a) => a.id))))
 
   async function bulkAction(action) {
     const ids = [...selected]
     if (ids.length === 0) return
     const meta = {
-      acknowledge: { title: t('alh.bulk.ackTitle'),      msg: t('alh.bulk.ackMsg', ids.length),      variant: 'warning', confirm: t('alh.ack') },
-      resolve:     { title: t('alh.bulk.resolveTitle'),  msg: t('alh.bulk.resolveMsg', ids.length),  variant: 'success', confirm: t('alh.resolve') },
+      acknowledge: { title: t('alh.bulk.ackTitle'), msg: t('alh.bulk.ackMsg', ids.length), variant: 'warning', confirm: t('alh.ack') },
+      resolve: { title: t('alh.bulk.resolveTitle'), msg: t('alh.bulk.resolveMsg', ids.length), variant: 'success', confirm: t('alh.resolveAction') },
       're-notify': { title: t('alh.bulk.renotifyTitle'), msg: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning', confirm: t('alh.renotify') },
     }[action]
-    // Onayla/çöz TOPLU yolda da gerekçe ister — yalnız teklide istenseydi zorunluluk delinirdi
-    // (tek alarmı seçip "toplu onayla" demek notsuz bir kaçış olurdu). Tekrar bildirimde not
-    // aranmaz: orada bir alarm kapatılmıyor, yalnız bildirim yeniden gönderiliyor.
-    const needsNote = action === 'acknowledge' || action === 'resolve'
+    // Sahiplen/çöz TOPLU yolda da gerekçe ister — yalnız teklide istenseydi zorunluluk delinirdi.
     let note = null
-    if (needsNote) {
+    if (action === 'acknowledge' || action === 'resolve') {
       const res0 = await showNoteConfirm(noteOpts({
         title: meta.title, message: meta.msg, variant: meta.variant, confirmText: meta.confirm,
         placeholder: action === 'resolve' ? t('alh.note.placeholderResolve') : t('alh.note.placeholder'),
@@ -1136,507 +382,254 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (!res0?.confirmed) return
       note = res0.note
     } else {
-      const confirmed = await showConfirm({
-        title: meta.title, message: meta.msg, variant: meta.variant,
-        confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel'),
-      })
-      if (!confirmed) return
+      const ok = await showConfirm({ title: meta.title, message: meta.msg, variant: meta.variant, confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel') })
+      if (!ok) return
     }
     setBulkBusy(true)
     let res
-    try { res = await api.admin.bulkAlertAction(action, ids, note) }
-    finally { setBulkBusy(false) }
+    try { res = await api.admin.bulkAlertAction(action, ids, note) } catch { res = null } finally { setBulkBusy(false) }
     if (res?.success) {
       const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
       let msg = t('alh.bulk.done', processed)
       if (skipped) msg += ' · ' + t('alh.bulk.skipped', skipped)
-      if (failed)  msg += ' · ' + t('alh.bulk.failed', failed)
+      if (failed) msg += ' · ' + t('alh.bulk.failed', failed)
       if (failed) toast.error(msg); else toast.success(msg)
       setSelected(new Set())
-      load()
+      refreshAll()
     } else {
       toast.error(res?.error || t('alh.resolveError'))
     }
   }
 
-  function openNotifyHistory(id) {
-    const alert = alerts.find(a => a.id === id)
-    setNotifyModal({ alertId: id, alertInfo: alert, result: null })
+
+  async function copyLink(a) {
+    const link = alertLink(a)
+    if (await copyText(link)) toast.success(t('share.copied'))
+    else toast.error(link)
   }
 
-  function parseContacts(json) {
-    if (!json) return []
-    try {
-      const v = JSON.parse(json)
-      return Array.isArray(v) ? v : []
-    } catch { return [] }
+  /** Aynı imzanın (alan adı + tip) GEÇMİŞİ: kapalı görünüme geçer ve listeyi o imzaya süzer (2026-09-16). */
+  const showSignatureHistory = useCallback((a) => {
+    if (!a) return
+    setDetail(null)
+    setTab('closed')
+    setFilters({ ...FILTER_DEFAULTS, type: a.alert_type || '', q: a.domain || '' })
+    resetPage()
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* jsdom */ }
+  }, [resetPage])
+
+  /** Satır/kart menüsü — adı satırı ayırır (KebabMenu rowLabel). Kartta görünür olan eylemler menüde tekrarlanmaz. */
+  const menuItems = (a, { card = false } = {}) => [
+    { label: t('alh.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => openDetail(a) },
+    { label: alertSourceTab(a.alert_type) ? t('alh.openMonitor') : t('alh.openCerts'), icon: <ExternalLink aria-hidden="true" />,
+      onClick: () => window.location.assign(alertHref(a)), hidden: card },
+    { label: t('alh.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => ack(a), hidden: card || a.resolved || a.acknowledged || actBlocked(a) },
+    { label: t('alh.resolveAction'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => resolve(a), hidden: card || a.resolved || actBlocked(a) },
+    { label: t('share.copyLink'), icon: <Link2 aria-hidden="true" />, onClick: () => copyLink(a) },
+    { label: t('alh.sig.showHistory'), icon: <History aria-hidden="true" />, onClick: () => showSignatureHistory(a), hidden: !(Number(a.history_count) > 1) },
+    { label: t('nocCall.logCall'), icon: <PhoneCall aria-hidden="true" />, onClick: () => logCall(a), hidden: card || !nocCanWrite },
+  ]
+
+  // ── Üst istatistikler (süzgeç kartları) ──
+  const onStatClick = (key) => {
+    if (key === 'stale') return   // SAYAÇ: sunucuda karşılığı yok; sahte istemci süzmesi sayfalamayla yanıltırdı
+    setTab('open')
+    if (key === 'open') { patch({ level: '', ack: '' }); return }
+    if (key === 'unacked' || key === 'acked') {
+      const v = key === 'unacked' ? 'unack' : 'ack'
+      patch({ ack: tab === 'open' && filters.ack === v ? '' : v, level: '' })
+      return
+    }
+    patch({ level: tab === 'open' && filters.level === key ? '' : key, ack: '' })
+  }
+  const showResolved24 = () => { setTab('closed'); patch({ from: iso24hAgo(Date.now()), to: '', level: '', ack: '' }) }
+  const activeTile = tab !== 'open' ? null
+    : (filters.level || (filters.ack === 'unack' ? 'unacked' : filters.ack === 'ack' ? 'acked' : null))
+  const tiles = useMemo(() => {
+    if (!summary) return []
+    const lv = summary.levels || {}
+    const h = summary.staleHours
+    return [
+      { key: 'open', Icon: Siren, cls: 'error', label: t('alh.tile.open'), value: summary.open, hint: t('alh.tile.openHint') },
+      { key: 'CRITICAL', Icon: OctagonAlert, cls: 'critical', label: t('alh.statCritical'), value: lv.CRITICAL ?? 0, hint: t('alh.tile.levelHint', t('alh.statCritical')) },
+      { key: 'HIGH', Icon: TriangleAlert, cls: 'high', label: t('alh.statHigh'), value: lv.HIGH ?? 0, hint: t('alh.tile.levelHint', t('alh.statHigh')) },
+      { key: 'WARNING', Icon: CircleAlert, cls: 'warning', label: t('alh.statWarning'), value: lv.WARNING ?? 0, hint: t('alh.tile.levelHint', t('alh.statWarning')) },
+      { key: 'unacked', Icon: BellRing, cls: 'alert', label: t('alh.statUnacked'), value: summary.unacked, hint: t('mondash.unackedHint') },
+      { key: 'acked', Icon: UserCheck, cls: 'total', label: t('alh.ackOnly'), value: Math.max(0, summary.open - summary.unacked), hint: t('alh.tile.ackedHint') },
+      { key: 'stale', Icon: Clock, cls: 'high', label: t('alh.statStale', h), value: summary.stale, hint: t('alh.statStaleHint', h) },
+      ...(summary.resolved24 != null ? [{ key: 'resolved24', Icon: CheckCircle2, cls: 'valid', label: t('alh.tile.resolved24'),
+        value: summary.resolved24, hint: t('alh.tile.resolved24Hint'), tip: t('alh.tile.resolved24'), onClick: showResolved24 }] : []),
+    ]
+  }, [summary, t]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const active = activeAlertFilters(filters, tab)
+  const filtered = !embedded && active.length > 0
+  const groups = useMemo(() => groupByDay(alerts, tab, new Date(nowMs)), [alerts, tab, nowMs])
+  const initial = loading && !loaded && !error
+  const updatedText = updatedAt ? updatedAt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : null
+
+  /** ↑/↓ listedeki alarmlar arasında gezer (kart başlık düğmesi / tablo satırı = `data-alert-open`). */
+  const onListKey = (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    if (!e.target?.matches?.('[data-alert-open]')) return
+    const all = [...e.currentTarget.querySelectorAll('[data-alert-open]')]
+    const next = all[all.indexOf(e.target) + (e.key === 'ArrowDown' ? 1 : -1)]
+    if (next) { e.preventDefault(); next.focus() }
   }
 
-  const isOpen   = tab === 'open'
-  const isClosed = tab === 'closed'
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const emptyState = filtered ? (
+    <StatusBlock tone="neutral" icon={FilterX} title={t('alh.emptyFiltered')} description={t('alh.emptyFilteredText')} className="py-12"
+      actions={<Button type="button" variant="outline" onClick={resetFilters}><FilterX aria-hidden="true" />{t('alh.clearFilters')}</Button>} />
+  ) : tab === 'open' ? (
+    <StatusBlock tone="success" icon={CheckCircle2} title={t('alh.noOpen')} description={t('alh.noOpenText')} className="py-12" />
+  ) : (
+    <StatusBlock tone="neutral" icon={Inbox} title={tab === 'closed' ? t('alh.noClosed') : t('alh.noAlerts')} className="py-12" />
+  )
 
-  // Paylaşılabilir URL (yalnız Alarm Geçmişi SEKMESİ — gömülü modallarda kapalı: enabled guard).
-  // Paylaşılabilir bağlantı: görünümü ÜRETEN her şey adres çubuğunda yaşar; varsayılan değer
-  // param üretmez (temiz URL). Bağlantıyı alan kişi AYNI listeyi açar — eskiden yalnız sayfa
-  // numarası taşınıyordu, filtreler kayboluyordu.
-  useUrlQuerySync({
-    view: tab !== 'open' ? tab : null,   // `tab` DEĞİL — o anahtar uygulamanın sekmesi (bkz. state başlatıcısı)
-    type: typeFilter || null,
-    q: searchTerm.trim() || null,
-    level: levelFilter || null,
-    team: teamFilter || null,
-    ack: ackFilter || null,
-    from: closedFrom || null,
-    to: closedTo || null,
-    page: page > 0 ? page + 1 : null,
-    ps: (pageSize !== 50 || page > 0) ? pageSize : null,
-  }, { enabled: urlSync })
+  const selectionBar = tab === 'open' && selectable.length > 0 && (
+    <div data-slot="alert-selection" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Checkbox id={bulkAllId} checked={allSelected ? true : selected.size > 0 ? 'indeterminate' : false} onCheckedChange={toggleSelectAll} />
+        <Label htmlFor={bulkAllId} className="cursor-pointer py-2">
+          {selected.size > 0 ? t('alh.bulk.selected', selected.size) : t('alh.bulk.selectAll')}
+        </Label>
+      </div>
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="alh-bulk-actions">
+          <Button type="button" variant="outline" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>
+            <UserCheck aria-hidden="true" />{t('alh.ack')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>
+            <BellRing aria-hidden="true" />{t('alh.renotify')}
+          </Button>
+          <Button type="button" variant="success" size="sm" className="h-9" disabled={bulkBusy} onClick={() => bulkAction('resolve')}>
+            <CheckCircle2 aria-hidden="true" />{t('alh.resolveAction')}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="h-9" disabled={bulkBusy} onClick={() => setSelected(new Set())}>
+            {t('alh.bulk.clear')}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+
+  const listBody = (
+    <div className="flex min-w-0 flex-col gap-3">
+      {error && (
+        <AlertBanner tone="danger" role="alert" title={t('alh.loadError')} className="mb-0"
+          actions={<Button type="button" variant="outline" size="sm" onClick={load}><RotateCcw aria-hidden="true" />{t('alh.retry')}</Button>}>
+          {error}
+        </AlertBanner>
+      )}
+      {selectionBar}
+      {initial ? <ListSkeleton variant={tab === 'open' ? 'cards' : 'rows'} /> : alerts.length === 0 ? (!error && emptyState) : (
+        <div data-slot="alert-results" aria-busy={loading || undefined} onKeyDown={onListKey}
+          className={cn('min-w-0 transition-opacity', loading && 'opacity-60')}>
+          {tab === 'open' ? (
+            <OpenAlertList groups={groups} renderCard={(a) => (
+              <OpenAlertCard alert={a} nowMs={nowMs} staleHours={facets.staleHours} teamName={teamNameOf(a.team_id)}
+                push={facets.push[String(a.id)]} selected={selected.has(a.id)} onToggleSelect={toggleSelect}
+                highlighted={detail != null && String(detail.id) === String(a.id)} linked={String(a.id) === String(linkedAlertId)}
+                onOpen={openDetail} onAck={ack} onResolve={resolve} onReNotify={reNotify} notifying={notifying === a.id}
+                onLogCall={nocCanWrite ? logCall : undefined} actBlocked={actBlocked(a)}
+                menuItems={(x) => menuItems(x, { card: true })} />
+            )} />
+          ) : (
+            <AlertRowsList groups={groups} tab={tab} nowMs={nowMs} onOpen={openDetail} activeId={detail?.id} linkedId={linkedAlertId}
+              menuItems={(x) => menuItems(x)} phone={phone} />
+          )}
+        </div>
+      )}
+      {/* Standart çubuk; yüklenirken de yerinde kalır (sayfa değişiminde zıplamasın) */}
+      <PaginationBar {...sp.bar} />
+    </div>
+  )
+
+  const detailProps = detail ? {
+    nowMs, teamName: teamNameOf(detail.team_id), push: facets.push[String(detail.id)],
+    ...(actBlocked(detail) ? { actBlocked: true } : { onAck: ack, onResolve: resolve, onReNotify: reNotify }),
+    notifying: notifying === detail.id, onShowHistory: showSignatureHistory,
+    nocCanWrite, nocFocusKey: nocFocus && String(nocFocus.id) === String(detail.id) ? nocFocus.n : 0, onNocChanged,
+  } : null
 
   return (
-    <div className="admin-section">
-      <div className="alh-header">
-        <div className="alh-tabs">
-          <button
-            type="button"
-            className={`alh-tab alh-tab-open${isOpen ? ' is-active' : ''}`}
-            onClick={() => setTab('open')}
-          >
-            <AlertCircle size={13} />
-            {t('alh.tabOpen')}
-          </button>
-          <button
-            type="button"
-            className={`alh-tab alh-tab-closed${isClosed ? ' is-active' : ''}`}
-            onClick={() => setTab('closed')}
-          >
-            <CheckCircle size={13} />
-            {t('alh.tabClosed')}
-          </button>
-        </div>
-        <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-          <RefreshCcw size={13} /> {t('alh.refresh')}
-        </Button>
-      </div>
-
-      {/* ── İstatistik şeridi + filtre çubuğu — YALNIZ bağımsız sayfada ──
-             Gömülü modda (monitör/sertifika modalının "Alarm Geçmişi" sekmesi) domain zaten
-             sabit; orada takım/arama filtresi anlamsız olur ve modalı gereksiz uzatır. ── */}
+    <div data-slot="alert-history" className={cn('flex min-w-0 flex-col', embedded ? 'gap-3' : 'gap-4')}>
       {urlSync && (
-        <>
-          {/* Gürültü analizi (2026-09-12, #18): en çok alarm üreten hedefler, gün×saat ısı haritası, flap adayları */}
-          <AlertTeamStatsPanel activeTeamId={teamFilter}
-            onPickTeam={(id) => { setTeamFilter(String(id)); setPage(0) }}
-            onOpenAlert={(a) => { setSearch(a.domain || ''); setSearchTerm(a.domain || ''); setTeamFilter('all'); setPage(0) }} />
-          <AlertNoisePanel onPickDomain={(d) => { setSearch(d); setSearchTerm(d); setPage(0) }} />
-          <MonitorStatsSection
-            loading={loading} total={statItems[0].value}
-            statsVisible={statsVisible} onToggle={() => setStatsVisible(v => !v)}
-            items={statItems} activeFilter={levelFilter || null}
-            onStatClick={onLevelCardClick}
-            onClearFilter={() => setLevelFilter('')}
-            shownCount={alerts.length} />
-
-          <div className="upt-toolbar alh-toolbar">
-            <SearchableSelect value={levelFilter} onChange={setLevelFilter} options={levelOptions} ariaLabel={t('flt.level')} />
-            {teamOptions.length > 1 && (
-              <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} searchThreshold={2} ariaLabel={t('flt.team')} />
-            )}
-            <SearchableSelect value={ackFilter} onChange={setAckFilter} options={ackOptions} ariaLabel={t('flt.ack')} />
-            <input className="upt-search" type="text" placeholder={t('alh.searchPlaceholder')}
-              value={search} onChange={e => setSearch(e.target.value)} />
-            {hasActiveFilters && (
-              <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>
-                {t('alh.clearFilters')}
-              </Button>
-            )}
-            {/* CSV: EKRANDAKİ filtrelerin aynısıyla. Ayrı bir filtre yüzeyi olsaydı
-                "ekranda 12 satır vardı, dosyada 800 çıktı" sürprizi kaçınılmazdı. */}
-            <a className="hist-csv-btn" href={api.admin.getAlertsCsvUrl(csvParams)}
-              title={t('alh.csvTip')}>{t('alh.csv')}</a>
-          </div>
-        </>
-      )}
-
-      {/* ── Tip filtre pill'leri — canlı sayılarla ── */}
-      <div className="inv-stats-pills" style={{ marginBottom: 14 }}>
-        <button
-          type="button"
-          className={`inv-stat-pill${typeFilter === '' ? ' is-selected' : ''}`}
-          style={typeFilter === '' ? { borderColor: 'var(--text-muted)', background: 'rgba(100,116,139,.12)' } : undefined}
-          onClick={() => setTypeFilter('')}
-        >
-          {t('alh.typeAll')}: <strong>{Object.values(typeCounts).reduce((s, n) => s + n, 0)}</strong>
-        </button>
-        {ALERT_TYPES
-          .filter(type => (typeCounts[type] ?? 0) > 0 || typeFilter === type)
-          .map(type => {
-            const meta = alertTypeMeta(type)
-            const Icon = meta.icon
-            const selected = typeFilter === type
-            return (
-              <button
-                key={type}
-                type="button"
-                className={`inv-stat-pill${selected ? ' is-selected' : ''}`}
-                style={selected ? { borderColor: meta.color, background: meta.color + '1a' } : undefined}
-                onClick={() => setTypeFilter(selected ? '' : type)}
-              >
-                <Icon size={12} style={{ color: meta.color, flexShrink: 0 }} />
-                {alertTypeLabel(t, type)}: <strong>{typeCounts[type] ?? 0}</strong>
-              </button>
-            )
-          })}
-      </div>
-
-      {/* Grup sayıları SAYFA İÇİdir, tip rozetleri TOPLAMI gösterir — iki farklı sayı.
-             Ayrılmazsa kullanıcı çelişki sanar. Yalnız gruplama gerçekten yapılıyorsa çıkar. */}
-      {new Set(alerts.map(a => a.alert_type)).size > 1 && (
-        <div className="alh-group-note">{t('alh.groupNote')}</div>
-      )}
-
-      {isClosed && (
-        <div className="alh-filter-bar">
-          <div className="alh-quick-pills">
-            {[
-              { key: '24h', days: 1 },
-              { key: '7d',  days: 7 },
-              { key: '30d', days: 30 },
-              { key: '90d', days: 90 },
-            ].map(({ key, days }) => (
-              <button
-                key={key}
-                type="button"
-                className="alh-quick-pill"
-                onClick={() => applyQuickRange(days)}
-              >
-                {t(`alh.quick.${key}`)}
-              </button>
-            ))}
-            {(closedFrom || closedTo) && (
-              <button
-                type="button"
-                className="alh-quick-pill alh-quick-clear"
-                onClick={() => { setClosedFrom(null); setClosedTo(null) }}
-              >
-                {t('alh.quick.clear')}
-              </button>
-            )}
-          </div>
-          {(closedFrom || closedTo) && (
-            <span className="alh-filter-summary">
-              {closedFrom && <>{formatDate(closedFrom)}</>}
-              {closedFrom && closedTo && ' → '}
-              {closedTo && <>{formatDate(closedTo)}</>}
+        <PageHeader icon={History} title={t('alh.title')} description={t('alh.pageDesc')} className="mb-0"
+          meta={summary ? (
+            <span data-slot="alert-history-live" className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="gap-1.5 border-destructive/30 bg-destructive/10 font-semibold text-destructive tabular-nums">
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" />{t('alh.metaOpen', summary.open)}
+              </Badge>
+              <Badge variant="outline" className="font-medium tabular-nums">{t('alh.metaUnacked', summary.unacked)}</Badge>
+              {summary.resolved24 != null && (
+                <Badge variant="outline" className="border-success/30 bg-success/10 font-medium text-success tabular-nums">{t('alh.metaResolved24', summary.resolved24)}</Badge>
+              )}
+              {updatedText && <span aria-live="polite" className="ml-1">{t('alh.metaUpdated', updatedText)}</span>}
             </span>
-          )}
+          ) : summaryLoading ? <Skeleton className="h-5 w-64" aria-hidden="true" /> : null}
+          actions={(
+            <>
+              <Button type="button" variant="outline" onClick={refreshAll} aria-busy={loading || undefined}>
+                <RefreshCcw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('alh.refresh')}
+              </Button>
+              {/* CSV: EKRANDAKİ süzgeçlerin aynısıyla — ayrı yüzey "ekranda 12, dosyada 800" sürprizi üretirdi */}
+              <Button asChild variant="outline" className="text-foreground no-underline">
+                <a href={api.admin.getAlertsCsvUrl(csvParams({ tab, filters, domain, typesParam }))} title={t('alh.csvTip')} download>
+                  <Download aria-hidden="true" />{t('alh.exportCsv')}
+                </a>
+              </Button>
+            </>
+          )} />
+      )}
+
+      {/* İstatistikler EN ÜSTTE (2026-09-27 kullanıcı isteği) — kapsamdaki açık küme; kartlar süzgeç */}
+      {urlSync && (tiles.length > 0
+        ? <MonitorStatsBar items={tiles} activeFilter={activeTile} onStatClick={onStatClick} />
+        : summaryLoading && <Skeleton className="h-28 w-full rounded-[10px]" aria-hidden="true" />)}
+
+      {urlSync && (
+        <div className="flex min-w-0 flex-col gap-2">
+          <AlertTeamStatsPanel activeTeamId={filters.team}
+            onPickTeam={(id) => patch({ team: String(id) })}
+            onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
+          <AlertNoisePanel onPickDomain={(d) => patch({ q: d })} />
         </div>
       )}
 
-      {loading && <LoadingBlock label={t('alh.loading')} fullWidth />}
+      <Tabs value={tab} onValueChange={(v) => { if (TABS.includes(v)) setTab(v) }} className="min-w-0 gap-3">
+        <TabsList aria-label={t('alh.tabs')} className="w-full group-data-[orientation=horizontal]/tabs:h-10 sm:w-fit">
+          <TabsTrigger value="open" className="gap-1.5 px-3">
+            <Siren aria-hidden="true" />{t('alh.tab.open')}
+            {summary && <Badge variant="secondary" data-slot="tab-count" className="h-5 rounded-full px-1.5 tabular-nums">{summary.open}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="closed" className="gap-1.5 px-3"><CheckCircle2 aria-hidden="true" />{t('alh.tab.closed')}</TabsTrigger>
+          <TabsTrigger value="all" className="gap-1.5 px-3"><History aria-hidden="true" />{t('alh.tab.all')}</TabsTrigger>
+        </TabsList>
 
-      {!loading && alerts.length === 0 && isOpen && (
-        <div className="empty-state">{t('alh.noOpen')}</div>
+        {urlSync && (
+          <AlertToolbar tab={tab} filters={filters} patch={patch} reset={resetFilters} typeCounts={facets.typeCounts} teams={teams} phone={phone} />
+        )}
+
+        {TABS.map((v) => (
+          <TabsContent key={v} value={v} className="min-w-0">{v === tab && listBody}</TabsContent>
+        ))}
+      </Tabs>
+
+      {detail && (embedded
+        ? <AlertDetailModal key={detail.id} alert={detail} onClose={closeDetail} {...detailProps} />
+        : <AlertDetailSheet key={detail.id} alert={detail} onClose={closeDetail} {...detailProps} />)}
+
+      {quickCall && (
+        <NocCallQuickSheet key={quickCall.id} alert={quickCall} onClose={() => setQuickCall(null)} onChanged={onNocChanged}
+          onOpenDetail={(a) => { setQuickCall(null); openDetail(a) }} />
       )}
 
-      {!loading && alerts.length === 0 && isClosed && (
-        <div className="empty-state">{t('alh.noClosed')}</div>
-      )}
-
-      {isOpen && alerts.length > 0 && (
-        <div className="alh-bulk-bar">
-          <label className="alh-bulk-all">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              ref={el => { if (el) el.indeterminate = selected.size > 0 && !allSelected }}
-              onChange={toggleSelectAll}
-            />
-            <span>{selected.size > 0 ? t('alh.bulk.selected', selected.size) : t('alh.bulk.selectAll')}</span>
-          </label>
-          {selected.size > 0 && (
-            <div className="alh-bulk-actions">
-              <Button variant="secondary" size="sm" disabled={bulkBusy} onClick={() => bulkAction('acknowledge')}>{t('alh.ack')}</Button>
-              <Button variant="warning" size="sm"   disabled={bulkBusy} onClick={() => bulkAction('re-notify')}>{t('alh.renotify')}</Button>
-              <Button size="sm"   disabled={bulkBusy} onClick={() => bulkAction('resolve')}>{t('alh.resolve')}</Button>
-              <Button variant="secondary" size="sm" disabled={bulkBusy} onClick={() => setSelected(new Set())}>{t('alh.bulk.clear')}</Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {isOpen && alerts.length > 0 && (
-        <AlertTypeGroups alerts={alerts} listClassName="alert-list"
-          expanded={expanded} onToggle={toggleGroup} renderCard={(a) => {
-            const notifiedList = parseContacts(a.notified_contacts)
-            return (
-              <div key={a.id} className={`alert-card alert-${a.alert_level?.toLowerCase()}`
-                + (String(a.id) === String(linkedAlertId) ? ' alh-card-linked' : '')}>
-
-                <div className="alert-card-header">
-                  <input
-                    type="checkbox"
-                    className="alh-card-check"
-                    checked={selected.has(a.id)}
-                    onChange={() => toggleSelect(a.id)}
-                    // Ad alarmı ayırır (alan adı + tür): toplu onayla/çöz/yeniden bildir onayı yalnız
-                    // ADET söylüyor — "Bu alarmı seç" her kartta aynıydı (2026-09-25, R5).
-                    aria-label={t('alh.bulk.selectOneFor', a.domain, alertTypeLabel(t, a.alert_type))}
-                  />
-                  <span className={`alert-level-badge alh-lvl-bg--${levelClass(a.alert_level)}`}>
-                    {levelLabel[a.alert_level] || a.alert_level}
-                  </span>
-                  <TypeChip type={a.alert_type} />
-                  <strong className="alert-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
-                  <OpenDurationBadge createdAt={a.created_at} staleHours={staleHours} />
-                  <RepeatBadge count={a.repeat_count} />
-                  {(a.email_failed_count ?? 0) > 0 && (
-                    <span className="alert-send-failed" title={t('alh.sendFailedTip')}>
-                      <MailX size={12} /> {t('alh.sendFailed')}
-                    </span>
-                  )}
-                  {a.days_remaining != null && (
-                    <span className="alert-days">{t('alh.days', a.days_remaining)}</span>
-                  )}
-                </div>
-
-                <p className="alert-message">{a.message}</p>
-
-                <div className="alert-meta">
-                  <span>{t('alh.created')} {formatDate(a.created_at)}</span>
-                  {a.last_re_alert_at && (
-                    <span>{t('alh.lastNotif')} {formatDate(a.last_re_alert_at)}</span>
-                  )}
-                </div>
-
-                {/* İmza geçmişi (2026-09-16): takım · kaçıncı kez · önceki oluşum · geçmişe geçiş */}
-                <AlertSignatureStrip alert={a} teamName={teamNameOf(a.team_id)} onShowHistory={showSignatureHistory} />
-
-                {/* "Neden hâlâ açık?" (2026-09-12, #16): onay, e-posta alıcı sayısı, push kanal durumu — açık sekmede */}
-                {isOpen && <WhyOpenChips a={a} notified={notifiedList.length} push={pushSummary[String(a.id)]} t={t} />}
-
-                {notifiedList.length > 0 && (
-                  <div className="alert-notified">
-                    <span className="notified-label">{t('alh.notified')}</span>
-                    {notifiedList.map((c, i) => (
-                      <span key={c.email ?? `nc-${i}`} className="notified-chip" title={c.email}>
-                        <UserBadge displayName={c.name} email={c.email} inline size="sm" /> <em>({c.role})</em>
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {a.acknowledged && (
-                  <div style={{ margin: '10px 0' }}>
-                    <AuditRow
-                      label={t('alh.acknowledged')}
-                      by={a.acknowledged_by}
-                      at={a.acknowledged_at}
-                      variant="ack"
-                      note={a.acknowledged_note}
-                    />
-                  </div>
-                )}
-
-                <div className="alert-actions">
-                  {!a.acknowledged && (
-                    <Button variant="secondary" size="sm" onClick={() => ack(a.id)}>
-                      {t('alh.ack')}
-                    </Button>
-                  )}
-                  <Button
-                    variant="warning" size="sm"
-                    onClick={() => reNotify(a.id)}
-                    disabled={notifying === a.id}
-                  >
-                    {notifying === a.id ? t('alh.sending') : t('alh.renotify')}
-                  </Button>
-                  <Button
-                    variant="secondary" size="sm"
-                    onClick={() => openNotifyHistory(a.id)}
-                    title={t('alh.notifHistory')}
-                  >
-                    {t('alh.history')}
-                  </Button>
-                  <Button size="sm" onClick={() => resolve(a.id)}>
-                    {t('alh.resolve')}
-                  </Button>
-                </div>
-
-              </div>
-            )
-          }} />
-      )}
-
-      {isClosed && alerts.length > 0 && (
-        <div className="alert-history-wrap">
-          <AlertTypeGroups alerts={alerts} listClassName="alert-history-cards"
-            expanded={expanded} onToggle={toggleGroup} renderCard={(a) => (
-              <div key={a.id} className="alert-history-card">
-                <div className={`ahc-stripe alh-lvl-bg--${levelClass(a.alert_level)}`} />
-
-                <div className="ahc-body">
-                  <div className="ahc-top">
-                    <strong className="ahc-domain">{a.domain}</strong><MaintenanceBadge target={a.domain} />
-                    <TypeChip type={a.alert_type} size={12} />
-                    <RepeatBadge count={a.repeat_count} />
-                    <span className={`ahc-level alh-lvl--${levelClass(a.alert_level)}`}>
-                      {levelLabel[a.alert_level] || a.alert_level}
-                    </span>
-                    {a.days_remaining != null && (
-                      <span className="ahc-days">{t('alh.days', a.days_remaining)}</span>
-                    )}
-                  </div>
-
-                  {(() => {
-                    const expIso = a.alert_type === 'EXPIRY' ? alertExpiryIso(a) : null
-                    // Yenilenmişse güncel bitiş de yan yana: kapalı alarm "neden kapandı" sorusunu kendi anlatır.
-                    const renewedIso = expIso && a.current_not_after && a.current_not_after !== expIso ? a.current_not_after : null
-                    const hasMeta = a.sy_team_name || a.ug_team_name || a.cert_tier != null || expIso
-                    if (!hasMeta) return null
-                    return (
-                      <div className="ahc-meta">
-                        {expIso && (
-                          <span className="ahc-chip ahc-chip-expiry">
-                            <Calendar size={11}/> {t('alh.expiryWas')}: <strong>{formatDate(expIso)}</strong>
-                          </span>
-                        )}
-                        {renewedIso && (
-                          <span className="ahc-chip ahc-chip-expiry ahc-chip-renewed" title={t('alh.expiryNowHint')}>
-                            <Calendar size={11}/> {t('alh.expiryNow')}: <strong>{formatDate(renewedIso)}</strong>
-                          </span>
-                        )}
-                        {a.sy_team_name && (
-                          <span className="ahc-chip ahc-chip-team">
-                            {t('alh.syTeam')}: <strong><TeamBadge teamId={a.sy_team_id} teamName={a.sy_team_name} size={11} /></strong>
-                          </span>
-                        )}
-                        {a.ug_team_name && (
-                          <span className="ahc-chip ahc-chip-team">
-                            {t('alh.ugTeam')}: <strong><TeamBadge teamId={a.ug_team_id} teamName={a.ug_team_name} size={11} /></strong>
-                          </span>
-                        )}
-                        {a.cert_tier != null && (
-                          <span className={`ahc-chip ahc-chip-tier tier-badge-${a.cert_tier}`}>
-                            T{a.cert_tier}
-                          </span>
-                        )}
-                      </div>
-                    )
-                  })()}
-
-                  <AlertSignatureStrip alert={a} teamName={teamNameOf(a.team_id)} onShowHistory={showSignatureHistory} />
-
-                  <div className="ahc-timeline">
-                    <div className="ahc-tl-item">
-                      <span className="ahc-tl-icon"><ShieldAlert size={13} /></span>
-                      <div>
-                        <div className="ahc-tl-label">{t('alh.tlCreated')}</div>
-                        <div className="ahc-tl-val">{formatDate(a.created_at)}</div>
-                      </div>
-                    </div>
-
-                    {a.acknowledged ? (
-                      <div className="ahc-tl-item ahc-tl-ack">
-                        <span className="ahc-tl-icon"><Check size={13} /></span>
-                        <div>
-                          <div className="ahc-tl-label">{t('alh.tlAck')}</div>
-                          <div className="ahc-tl-val">
-                            <UserBadge username={a.acknowledged_by} inline size="sm" />
-                            {a.acknowledged_at && <> &nbsp;·&nbsp; {formatDate(a.acknowledged_at)}</>}
-                          </div>
-                          {a.acknowledged_note && (
-                            <div className="ahc-tl-note">{a.acknowledged_note}</div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="ahc-tl-item ahc-tl-noack">
-                        <span className="ahc-tl-icon alh-tl-empty">—</span>
-                        <div>
-                          <div className="ahc-tl-label">{t('alh.tlAckLabel')}</div>
-                          <div className="ahc-tl-val alh-tl-empty">{t('alh.tlNotAcked')}</div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="ahc-tl-item ahc-tl-resolve">
-                      <span className="ahc-tl-icon"><CheckCircle size={13} /></span>
-                      <div>
-                        <div className="ahc-tl-label">{t('alh.tlResolved')}</div>
-                        <div className="ahc-tl-val">
-                          {/* Deger bir SICIL ya da SISTEM JETONU olabilir. Eskiden yalniz 'system'
-                              ozel-durumlaniyordu; 'inventory_delete' gibi jetonlar KISI ROZETI olarak
-                              ciziliyor ve kullanici alarmin neden kapandigini anlayamiyordu. */}
-                          {systemResolverKey(a.resolved_by)
-                            ? <strong>{t(systemResolverKey(a.resolved_by))}</strong>
-                            : <UserBadge username={a.resolved_by} inline size="sm" />}
-                          {a.resolved_at && <> &nbsp;·&nbsp; {formatDate(a.resolved_at)}</>}
-                        </div>
-                        {a.resolved_note && (
-                          <div className="ahc-tl-note">{a.resolved_note}</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="ahc-stats">
-                    <span className="ahc-stat">
-                      <Mail size={12}/> {t('alh.mailsSent', a.email_sent_count ?? 0)}
-                    </span>
-                    <span className={`ahc-stat${(a.email_failed_count ?? 0) > 0 ? ' ahc-stat-failed' : ''}`}>
-                      <MailX size={12}/> {t('alh.mailsFailed', a.email_failed_count ?? 0)}
-                    </span>
-                    {a.resolved_at && a.created_at && (
-                      <span className="ahc-stat ahc-stat-duration">
-                        <Clock size={12}/> {t('alh.openDuration')}: <strong>{formatDuration(durationMs(a.created_at, a.resolved_at), t)}</strong>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="ahc-footer">
-                    <Button
-                      variant="secondary" size="sm"
-                      onClick={() => openNotifyHistory(a.id)}
-                    >
-                      {t('alh.notifHistory')}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )} />
-        </div>
-      )}
-
-      {!loading && (
-        <PaginationBar
-          page={page + 1} totalPages={totalPages} totalItems={total}
-          rangeStart={total === 0 ? 0 : page * pageSize + 1}
-          rangeEnd={Math.min((page + 1) * pageSize, total)}
-          pageSize={pageSize}
-          onPageChange={p => setPage(p - 1)}
-          onPageSizeChange={n => { setPageSize(n); writePageSize('alert-history', n) }}
-        />
-      )}
-
-      {notifyModal && (
-        <NotifyResultModal
-          alertId={notifyModal.alertId}
-          alertInfo={notifyModal.alertInfo}
-          currentResult={notifyModal.result}
-          onClose={() => setNotifyModal(null)}
-        />
-      )}
       {renotifyModal && (
-        <ReNotifyConfirmModal
-          domain={renotifyModal.domain}
-          recipients={renotifyModal.recipients}
-          webhook={renotifyModal.webhook}
-          sending={renotifySending}
-          onSend={sendReNotify}
-          onClose={() => { if (!renotifySending) setRenotifyModal(null) }}
-        />
+        <ReNotifyConfirmModal domain={renotifyModal.domain} recipients={renotifyModal.recipients} webhook={renotifyModal.webhook}
+          sending={renotifySending} onSend={sendReNotify} onClose={() => { if (!renotifySending) setRenotifyModal(null) }} />
       )}
     </div>
   )
 }
+

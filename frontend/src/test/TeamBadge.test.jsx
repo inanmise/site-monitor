@@ -59,15 +59,16 @@ describe('TeamBadge — tıklanabilir takım adı', () => {
   it('modal: lider rozeti, takım e-postası (mailto), üye sayısı; kartlar müdür→PO→üye sırasında; eskalasyon sekmesi', async () => {
     render(<TeamBadge teamId={5} teamName="Payments" />)
     fireEvent.click(screen.getByRole('button', { name: /Payments/ }))
-    await waitFor(() => expect(document.querySelector('.tm-member-cards')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-cards"]')).not.toBeNull())
     expect(document.querySelector('a[href="mailto:payments@example.com"]')).not.toBeNull()
     expect(screen.getByText(/3 üye|3 members/)).toBeDefined()
-    expect(document.querySelector('.tmm-leader')).not.toBeNull()
-    const names = [...document.querySelectorAll('.tm-mc-name')].map(e => e.textContent)
+    expect(document.querySelector('[data-slot="team-leader"]')).not.toBeNull()
+    const names = [...document.querySelectorAll('[data-slot="team-member-name"]')].map(e => e.textContent)
     expect(names[0]).toContain('Müdür Kişi')
     expect(names[1]).toContain('Lider Kişi')
     expect(names[2]).toContain('Ahmet Dev')
-    fireEvent.click(screen.getByRole('tab', { name: /eskalasyon|escalation/i }))
+    // shadcn Tabs (Radix): tetik fare BASIŞINDA etkinleşir (jsdom'da click sekme değiştirmez, SHADCN.md §8.3).
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /eskalasyon|escalation/i }))
     await waitFor(() => expect(screen.getByText('oncall@example.com')).toBeDefined())
   })
 
@@ -77,5 +78,27 @@ describe('TeamBadge — tıklanabilir takım adı', () => {
     fireEvent.click(screen.getByRole('button', { name: /Payments/ }))
     expect(onOpen).toHaveBeenCalledWith(5, 'Payments')
     expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('2026-09-27: dokunmatikte ~40 px dokunma hedefi — görünür boyut aynı, ::after yalnız dikeyde taşar (düğme + span kipi)', () => {
+    const HIT = ['relative', 'pointer-coarse:overflow-visible', 'pointer-coarse:after:absolute',
+      'pointer-coarse:after:inset-x-0', 'pointer-coarse:after:-inset-y-2.5']
+    const { unmount } = render(<TeamBadge teamId={5} teamName="Payments" />)
+    const btn = screen.getByRole('button', { name: /Payments/ })
+    for (const c of HIT) expect(btn).toHaveClass(c)
+    // Yatayda taşma YOK (meta satırındaki komşu düğmelerle çakışmasın); görünür yükseklik sınıfı değişmedi
+    expect(btn.className).not.toMatch(/after:-inset-x-|after:-inset-\d/)
+    expect(btn).toHaveClass('h-auto')
+    unmount()
+
+    render(<TeamBadge teamId={5} teamName="Payments" as="span" />)
+    const span = screen.getByRole('button', { name: /Payments/ })
+    expect(span.tagName).toBe('SPAN')
+    for (const c of HIT) expect(span).toHaveClass(c)
+  })
+
+  it('tıklanamaz (statik) rozet dokunma katmanı TAŞIMAZ', () => {
+    render(<TeamBadge teamName="Ghost Team" />)
+    expect(document.querySelector('[data-slot="team-badge"]')).not.toHaveClass('pointer-coarse:after:absolute')
   })
 })

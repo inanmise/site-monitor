@@ -99,6 +99,82 @@ class HttpBodiesTest {
         assertThat(HttpBodies.readCapped(stream(0), 1024, "TEST")).isEmpty();
     }
 
+    // ── Gövde SÜRE sınırı (prod kapısı 2026-09-25, N1) ─────────────────────────────────────────
+
+    /**
+     * HttpResponseInputStream taklidi: {@code prefix} baytı verir, sonra VERİ GELMEDEN bloklar (başlığı
+     * gönderip gövdeyi bitirmeyen sunucu). {@code close()} bloklu okumayı "closed" IOException ile uyandırır —
+     * JDK akışının davranışı (close aboneliği iptal edip kuyruğa son-işaretçi koyar).
+     */
+    private static final class StallingStream extends InputStream {
+        private final java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
+        private int prefix;
+        StallingStream(int prefix) { this.prefix = prefix; }
+        @Override public int read() throws IOException {
+            byte[] b = new byte[1];
+            return read(b, 0, 1) < 0 ? -1 : b[0];
+        }
+        @Override public int read(byte[] b, int off, int len) throws IOException {
+            if (len == 0) return 0;
+            if (prefix > 0) { int n = Math.min(len, prefix); prefix -= n; return n; }
+            try { closed.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            throw new IOException("closed");
+        }
+        @Override public void close() { closed.countDown(); }
+    }
+
+    @Test
+    @DisplayName("N1 KAPI: veri gelmeden bloklayan gövde, süre dolunca BodyDeadlineException ile kesilir (süresiz bekleme yok)")
+    void withDeadline_stalledRead_isCutAtDeadline() {
+        long t0 = System.nanoTime();
+        assertThatThrownBy(() -> org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(5),
+                () -> HttpBodies.withDeadline(new StallingStream(10), 300, "Keyword").readNBytes(1_000_000)))
+                .isInstanceOf(HttpBodies.BodyDeadlineException.class)
+                .isInstanceOf(java.net.http.HttpTimeoutException.class)   // çağıranların mevcut hata yolu işler
+                .hasMessageContaining("Keyword")
+                .hasMessageContaining("300 ms");
+        assertThat((System.nanoTime() - t0) / 1_000_000L).isLessThan(3_000L);
+    }
+
+    @Test
+    @DisplayName("N1: hızlı SONSUZ akış da (MJPEG) süre dolunca kesilir — tavansız okuma döngüsü bitmez değil")
+    void withDeadline_fastInfiniteStream_isCut() {
+        InputStream endless = new InputStream() {
+            private volatile boolean closed;
+            @Override public int read() { return closed ? -1 : 'x'; }
+            @Override public int read(byte[] b, int off, int len) throws IOException {
+                if (closed) throw new IOException("closed");
+                java.util.Arrays.fill(b, off, off + len, (byte) 'x');
+                return len;
+            }
+            @Override public void close() { closed = true; }
+        };
+        assertThatThrownBy(() -> org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(5),
+                () -> HttpBodies.withDeadline(endless, 200, "HTTP").transferTo(java.io.OutputStream.nullOutputStream())))
+                .isInstanceOf(HttpBodies.BodyDeadlineException.class);
+    }
+
+    @Test
+    @DisplayName("N1: süre içinde biten gövde AYNEN okunur; kapatınca bekçi iptal edilir (geç tetiklenip akışı bozmaz)")
+    void withDeadline_normalBody_unchanged() throws IOException {
+        byte[] data = "tam gövde".getBytes(StandardCharsets.UTF_8);
+        try (InputStream is = HttpBodies.withDeadline(new ByteArrayInputStream(data), 5_000, "TEST")) {
+            assertThat(is.readAllBytes()).isEqualTo(data);
+        }
+        assertThat(HttpBodies.drain(new ByteArrayInputStream(data), 5_000, "TEST")).isTrue();
+    }
+
+    @Test
+    @DisplayName("N1: drain süre dolunca false döner (durum kodu kontrolü sürer); readPreview o ana kadar okunanı verir")
+    void drainAndPreview_returnPartialOnDeadline() throws IOException {
+        assertThat(HttpBodies.drain(new StallingStream(100), 200, "HTTP")).isFalse();
+        byte[] preview = HttpBodies.readPreview(new StallingStream(5), 1024, 200, "Webhook");
+        assertThat(preview).hasSize(5);   // istisna YOK — webhook/push başarısı durum koduyla belli
+        assertThat(HttpBodies.readPreview(new ByteArrayInputStream(new byte[5000]), 1024, 5_000, "Push")).hasSize(1024);
+    }
+
     @Test
     @DisplayName("Metin surumu ayni tavani uygular ve UTF-8 cozer")
     void stringVariant_decodesUtf8() throws IOException {

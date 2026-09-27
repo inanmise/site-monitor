@@ -123,6 +123,16 @@ public final class RetentionCatalog {
                 + "Bildirim geçmişiyle AYNI pencere (aynı ayar anahtarı): tekrar-gönderim kilidi bitiş tarihi + eşik "
                 + "çiftine bağlı; 30 gün alt sınırı en gevşek eşiğin (60 gün) yarısıdır, purge sonrası daha sıkı eşik "
                 + "zaten gönderilmiş/kapsanmış olur — ikinci e-posta gitmez."),
+        guarded("noc-deliveries", "noc_deliveries", "created_at", "site.monitor.notification.retention-days",
+                365, 30,
+                "{t} AND (alert_event_id IS NULL OR alert_event_id NOT IN (SELECT id FROM alert_events WHERE resolved = false)) "
+                + "AND (storm_id IS NULL OR storm_id NOT IN (SELECT id FROM alert_storms WHERE resolved = false))",
+                DataClass.OPERATIONAL,
+                "7/24 İzleme Ekibi (NOC) teslim izi (2026-09-27): alarm/fırtına başına açılış ve çözüm e-postasının "
+                + "gidip gitmediği, grup kimlikleri ve alıcı SAYISI (adres yok — gövde ve alıcı notification_logs'ta, "
+                + "maskeli). Bildirim geçmişiyle AYNI pencere (aynı ayar anahtarı). HÂLÂ AÇIK alarmın ya da sürmekte olan "
+                + "fırtınanın satırı SİLİNMEZ: açılış izi giderse aynı alarm için NOC'a ikinci açılış gider, kapanışta da "
+                + "'açılış gitmedi' sanılıp ÇÖZÜLDÜ hiç gitmez."),
         age("sql-query-history", "sql_query_history", "executed_at", "site.monitor.sql-history.retention-days",
                 365, 7, false, DataClass.SECURITY_AUDIT,
                 "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle "
@@ -234,6 +244,9 @@ public final class RetentionCatalog {
         orphan("login-issue-mail-logs", "login_issue_mail_logs",
                 "report_id NOT IN (SELECT id FROM login_issue_reports)", DataClass.PERSONAL,
                 "Bildirim mail geçmişi — raporu silinince öksüz kalır; mail kaydı raporuyla birlikte ölür."),
+        orphan("issue-report-comments-orphan", "issue_report_comments",
+                "report_id NOT IN (SELECT id FROM login_issue_reports)", DataClass.PERSONAL,
+                "Sorun bildirimi konuşma dizisi (yazar adı + serbest metin + durum geçişleri). Raporuyla birlikte silinir; öksüz kalan temizlenir."),
 
         // ── İçerik ve olay kayıtları ──────────────────────────────────────────────────────────
         age("weekly-report-images", "weekly_report_images", "created_at", "site.monitor.weekly-report.image-retention-days",
@@ -267,6 +280,10 @@ public final class RetentionCatalog {
         orphan("alert-comments-orphan", "alert_comments",
                 "alert_event_id NOT IN (SELECT id FROM alert_events)", DataClass.PERSONAL,
                 "Alarm yorumları. alert_events 1 yılda siliniyor ama yorumlar kalıyordu → kalıcı öksüz."),
+        orphan("noc-call-log-orphan", "noc_call_log",
+                "alert_id IS NULL OR alert_id NOT IN (SELECT id FROM alert_events)", DataClass.PERSONAL,
+                "7/24 arama kayıtları (2026-09-27): aranan kişinin adı + serbest not (telefon YOK). Uyarısıyla yaşar — "
+                + "alert_events kendi politikasıyla silinince kayıt öksüz kalır ve burada temizlenir (alarm yorumları deseni)."),
         orphan("weekly-report-comments-orphan", "weekly_report_comments",
                 "report_id NOT IN (SELECT id FROM weekly_reports)", DataClass.PERSONAL,
                 "Haftalık rapor yorum dizisi (yazar adı + serbest metin). Raporuyla birlikte silinir; öksüz kalan temizlenir."),

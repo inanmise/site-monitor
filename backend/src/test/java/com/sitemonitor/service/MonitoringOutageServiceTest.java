@@ -300,6 +300,27 @@ class MonitoringOutageServiceTest {
     }
 
     @Test
+    @DisplayName("N6: bir domain'in eskalasyonu fırlatırsa KALAN domain'ler yine işlenir (zehirli kayıt yalıtımı)")
+    void oneDomainThrows_othersStillProcessed() {
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(
+                openAlert("a.example.com", EscalationService.TYPE_PORT_DOWN),
+                openAlert("b.example.com", EscalationService.TYPE_PORT_DOWN)));
+        doThrow(new IllegalStateException("zehirli kayıt"))
+                .when(escalationService).processConfirmedOutage(eq("a.example.com"), anyString(), anyString(), any());
+
+        assertThatCode(() -> service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                item(EscalationService.TYPE_PORT_DOWN, "a.example.com", "443/TCP", false,
+                        Map.of("port", 443, "protocol", "TCP"), MonitoringOutageServiceTest::up),
+                item(EscalationService.TYPE_PORT_DOWN, "b.example.com", "443/TCP", false,
+                        Map.of("port", 443, "protocol", "TCP"), MonitoringOutageServiceTest::up))))
+                .doesNotThrowAnyException();
+
+        // a (sırada ilk) fırlattı; b'nin re-alert yolu yine koştu.
+        verify(escalationService).processConfirmedOutage(
+                eq("b.example.com"), eq(EscalationService.TYPE_PORT_DOWN), anyString(), any());
+    }
+
+    @Test
     @DisplayName("Agregasyon all-up: tüm monitörler up + açık alarm → tek resolve")
     void aggregation_allUp_resolvesOnce() {
         when(alertEventRepo.findOpenByDomainIn(anyCollection()))
@@ -996,9 +1017,12 @@ class MonitoringOutageServiceTest {
         ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
         String key = EscalationService.TYPE_ACCESSIBILITY + ":x.example.com";
 
-        // 1. zincir başlar (kuşak 1), sonra sweep DOWN görüp iptal eder (kuşak 2'ye çıkar).
-        long stale = (Long) ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
-        ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
+        // 1. zincir başlar, sweep DOWN görüp iptal eder, sonraki sweep UP görüp YENİ zincir başlatır
+        // (BO0 sonrası: iptal = kaydı sil; kuşak numaraları global ve tekrarsız).
+        long stale = (Long) ReflectionTestUtils.invokeMethod(service, "beginRecoveryGeneration", key);
+        ReflectionTestUtils.invokeMethod(service, "endRecovery", key);
+        long fresh = (Long) ReflectionTestUtils.invokeMethod(service, "beginRecoveryGeneration", key);
+        assertThat(fresh).as("yeni zincir eski numarayı yeniden kullanamaz").isNotEqualTo(stale);
 
         // 1. zincirin kuyrukta bekleyen görevi ŞİMDİ ateşlenir. Eskiden guard yalnız
         // recoveryInFlight.contains(key) idi: sonraki sweep UP görüp anahtarı YENİDEN eklediğinde
@@ -1016,12 +1040,103 @@ class MonitoringOutageServiceTest {
     void currentGenerationStillResolves() {
         ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
         String key = EscalationService.TYPE_ACCESSIBILITY + ":y.example.com";
-        long gen = (Long) ReflectionTestUtils.invokeMethod(service, "bumpRecoveryGeneration", key);
+        long gen = (Long) ReflectionTestUtils.invokeMethod(service, "beginRecoveryGeneration", key);
 
         ReflectionTestUtils.invokeMethod(service, "runRecoveryAttempt",
                 key, gen, EscalationService.TYPE_ACCESSIBILITY, "y.example.com",
                 java.util.List.of(upItem("y.example.com")), 2, 1L, 1);
 
         verify(escalationService).resolveMonitoringAlertsForDomain("y.example.com", EscalationService.TYPE_ACCESSIBILITY);
+    }
+
+    // ── BO0/O12 (bug regresyon 2026-09-27): kurtarma CANLILIĞI — sıra testleri ────────────
+    //
+    // O12 düzeltmesi "kesinti sürüyor" dalında kuşağı merge ile ARTIRIP anahtarı haritada bırakıyordu;
+    // startRecovery ise "anahtar var = zincir sürüyor" sayıyordu. Sonuç: alarm açıkken tek bir DOWN turu
+    // geçtiyse hedef düzeldiğinde aktif kurtarma HİÇ başlamıyor, alarm süresiz açık kalıyordu (varsayılan
+    // ACCESSIBILITY kurulumu: recovery-checks=3, recovery-interval-ms=30000). Mevcut O12 testleri
+    // runRecoveryAttempt'i doğrudan çağırdığı için bu sırayı hiç koşmuyordu.
+
+    /** Zamanlanan görevleri kuyrukta tutan, testin elle ilerlettiği zamanlayıcı (gerçek bekleme yok). */
+    private static final class ManualScheduler extends ScheduledThreadPoolExecutor {
+        final java.util.ArrayDeque<Runnable> queue = new java.util.ArrayDeque<>();
+        ManualScheduler() { super(1); }
+        @Override
+        public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
+            queue.add(command);
+            return null;
+        }
+        void runAll() {
+            for (int guard = 0; !queue.isEmpty() && guard < 100; guard++) queue.poll().run();
+        }
+    }
+
+    /** Varsayılan ACCESSIBILITY kurtarması: 3 ardışık başarılı kontrol, aktif döngü (30 sn). */
+    private ManualScheduler defaultAccessibilityRecovery(String domain) {
+        when(appSettings.getInt(anyString(), anyInt())).thenAnswer(i -> i.getArgument(1));
+        when(appSettings.getInt(eq("site.monitor.uptime.recovery-checks"), anyInt())).thenReturn(3);
+        ManualScheduler rec = new ManualScheduler();
+        ReflectionTestUtils.setField(service, "recoveryExecutor", rec);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(openAlert(domain, EscalationService.TYPE_ACCESSIBILITY)));
+        return rec;
+    }
+
+    private void sweep(String domain, boolean isUp) {
+        String t = EscalationService.TYPE_ACCESSIBILITY;
+        service.handleSweepResults(t, List.of(item(t, domain, "443", isUp, Map.of("port", 443),
+                isUp ? MonitoringOutageServiceTest::up : () -> down("timeout"))));
+    }
+
+    @Test
+    @DisplayName("BO0/O12: alarm açık → DOWN turu → düzelme → aktif kurtarma YİNE başlar ve alarm kapanır")
+    void downRoundWhileAlarmOpen_thenRecovery_resolves() {
+        String d = "acc.example.com";
+        ManualScheduler rec = defaultAccessibilityRecovery(d);
+
+        sweep(d, false);   // kesinti sürüyor (günlük re-alert yolu)
+        verify(escalationService).processConfirmedOutage(eq(d), eq(EscalationService.TYPE_ACCESSIBILITY), anyString(), any());
+        assertThat(rec.queue).as("kurtarma penceresi dışında DOWN zincir başlatmaz").isEmpty();
+
+        sweep(d, true);    // hedef düzeldi
+        assertThat(rec.queue).as("aktif kurtarma zinciri BAŞLAMALI (eskiden 'zaten sürüyor' deyip atlıyordu)").hasSize(1);
+
+        rec.runAll();      // tetikleyici tur + 2 aktif doğrulama = 3/3
+        verify(escalationService, times(1)).resolveMonitoringAlertsForDomain(d, EscalationService.TYPE_ACCESSIBILITY);
+    }
+
+    @Test
+    @DisplayName("BO0/O12: birden çok DOWN turu ve her turda düzelme denemesi — alarm yine de kapanır (kalıcı kilit yok)")
+    void manyDownRounds_thenRecovery_resolves() {
+        String d = "flap.example.com";
+        ManualScheduler rec = defaultAccessibilityRecovery(d);
+
+        for (int i = 0; i < 3; i++) sweep(d, false);
+        sweep(d, true);
+        sweep(d, true);    // ikinci UP turu zincir sürerken ikinci zincir AÇMAZ
+        assertThat(rec.queue).hasSize(1);
+        rec.runAll();
+        verify(escalationService, times(1)).resolveMonitoringAlertsForDomain(d, EscalationService.TYPE_ACCESSIBILITY);
+    }
+
+    @Test
+    @DisplayName("BO0/O12: kurtarma SÜRERKEN DOWN → eski zincir iptal (alarmı kapatamaz); sonraki düzelme YENİ zincirle kapatır")
+    void downDuringRecovery_cancelsOldChain_nextUpRestarts() {
+        String d = "mid.example.com";
+        ManualScheduler rec = defaultAccessibilityRecovery(d);
+
+        sweep(d, true);                          // zincir 1 başladı
+        assertThat(rec.queue).hasSize(1);
+        Runnable staleTask = rec.queue.poll();   // zincir 1'in kuyruktaki görevi (henüz ateşlenmedi)
+
+        sweep(d, false);                         // kurtarma penceresinde DOWN → zincir 1 iptal
+        staleTask.run();                         // eski görev geç ateşlenir
+        verify(escalationService, never()).resolveMonitoringAlertsForDomain(anyString(), anyString());
+        assertThat(rec.queue).as("iptal edilmiş zincir yeni görev planlamaz").isEmpty();
+
+        sweep(d, true);                          // yeniden düzeldi → zincir 2
+        assertThat(rec.queue).as("iptalden sonra YENİ zincir başlamalı").hasSize(1);
+        rec.runAll();
+        verify(escalationService, times(1)).resolveMonitoringAlertsForDomain(d, EscalationService.TYPE_ACCESSIBILITY);
     }
 }

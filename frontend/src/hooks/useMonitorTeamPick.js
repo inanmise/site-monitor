@@ -22,8 +22,18 @@ import { useCallback, useMemo } from 'react'
  * @param {Array<{id:number,name:string}>} p.adminTeams  sunucudan gelen tam liste (yalnız admin dolu)
  * @param {Array<{id:number,name:string}>} p.myTeams     kullanıcının üyesi olduğu takımlar (/me team_ids × team_names)
  * @param {number|null} p.teamId         birincil takım (varsayılan seçim)
+ * @param {string|null} [p.teamName]     birincil takımın adı (oturumdan)
+ *
+ * <p><b>Varsayılan takım (2026-09-26, "USER rolü izleme ekleyebilmeli").</b> Sayfalar yeni izleme formunu yalnız
+ * oturumun `team_id`'siyle açıyordu; tek takımlı ama oturum takımı boş (null) gelen üye kilitli "Takımsız" alan ve
+ * gri Kaydet görüyordu — sunucu isteği kabul ettiği hâlde. Artık:
+ * <ul>
+ *   <li>{@code defaultTeamId}: `teamId ?? (tek takımı varsa o takım)`; iki+ takımlıda null (kullanıcı seçer),</li>
+ *   <li>{@code defaultTeamName}: aynı takımın adı (kilitli alanda gösterilir),</li>
+ *   <li>{@code teamless}: admin olmayan ve HİÇBİR takımı olmayan kullanıcı — form açık bir uyarı gösterir.</li>
+ * </ul>
  */
-export function useMonitorTeamPick({ isAdmin, adminTeams = [], myTeams = [], teamId }) {
+export function useMonitorTeamPick({ isAdmin, adminTeams = [], myTeams = [], teamId, teamName = null }) {
   const myTeamIdSet = useMemo(() => {
     const s = new Set(myTeams.map((tm) => String(tm.id)))
     if (teamId != null) s.add(String(teamId))
@@ -35,7 +45,14 @@ export function useMonitorTeamPick({ isAdmin, adminTeams = [], myTeams = [], tea
 
   const isOwnTeam = useCallback((m) => m?.team_id != null && myTeamIdSet.has(String(m.team_id)), [myTeamIdSet])
 
-  return { canPickTeam, pickTeams, isOwnTeam, myTeamIdSet }
+  const only = myTeams.length === 1 ? myTeams[0] : null
+  const defaultTeamId = teamId ?? only?.id ?? null
+  const defaultTeamName = teamId != null
+    ? (teamName ?? myTeams.find((tm) => String(tm.id) === String(teamId))?.name ?? null)
+    : (only?.name ?? null)
+  const teamless = !isAdmin && teamId == null && myTeams.length === 0
+
+  return { canPickTeam, pickTeams, isOwnTeam, myTeamIdSet, defaultTeamId, defaultTeamName, teamless }
 }
 
 /** /me yanıtındaki paralel dizileri ({team_ids, team_names}) takım nesnelerine çevirir. */

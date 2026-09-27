@@ -1,14 +1,17 @@
-
+import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Switch as SwitchPrimitive } from "radix-ui"
 
-function Switch({
+// React 18: Tooltip/Popover tetiği (asChild) olarak kullanılınca Radix Slot ref bağlar — forwardRef şart
+// (2026-09-26, B2 bulgusu: sarmalayıcı span gerekiyordu). forwardRef React 19'da da geçerli.
+const Switch = React.forwardRef(function Switch({
   className,
   size = "default",
   ...props
-}) {
+}, ref) {
   return (
     <SwitchPrimitive.Root
+      ref={ref}
       data-slot="switch"
       data-size={size}
       className={cn(
@@ -25,6 +28,6 @@ function Switch({
       />
     </SwitchPrimitive.Root>
   )
-}
+})
 
 export { Switch }

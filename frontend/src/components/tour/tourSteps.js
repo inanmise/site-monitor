@@ -5,7 +5,8 @@
  * Adım alanları: id · target (data-tour) · tab (o sekmeye geç) · placement · when(ctx) (rol süzgeci) ·
  * since (TOUR_VERSION; yenilikler turu) · help (whitepaper §14.x) · advanceOn (etkileşimli adım:
  * { selector } DOM'da belirince ya da { event } yayınlanınca ilerler) · doIt (Benim yerime yap) ·
- * before (adıma girerken çalışır) · mobile:false (dar ekranda atla) · center (hedefsiz, ortada).
+ * before (adıma girerken çalışır: { reveal: sekme | '*' } menüyü/bölümü aç, { conceal: true } telefonda çekmeceyi
+ * kapat) · mobile:false (dar ekranda atla) · center (hedefsiz, ortada).
  * Metinler i18n: tour.s.<id>.title / tour.s.<id>.body
  */
 export const isAdminCtx = (c) => c?.role === 'ADMIN' || c?.role === 'TEAM_ADMIN'
@@ -17,9 +18,12 @@ export const MAIN_STEPS = [
   { id: 'filters',   target: 'dash-filters', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
   { id: 'check-now', target: 'check-now', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.4' },
   { id: 'add-domain', target: 'add-domain', tab: 'dashboard', placement: 'bottom', since: 1, help: '14.12', when: isAdminCtx },
+  // Sertifika penceresi shadcn Dialog (ModalShell): eski `.modal.show` sınıfı YOK → açık pencere, içindeki sekme
+  // şeridinin `data-tour` hedefiyle tanınır. Kart kökü tıklamayla açılmaz; gerçek düğme alan adı `[data-cert-open]`
+  // (2026-09-27). Kapı: tourEngine.test.js "seçiciler sınıf adına değil özniteliğe bağlı".
   { id: 'card',      target: 'first-card', tab: 'dashboard', placement: 'right', since: 1, help: '14.5',
-    advanceOn: { selector: '.modal.show' }, doIt: { click: 'first-card' } },
-  { id: 'modal',     target: 'cert-modal-tabs', placement: 'bottom', since: 1, help: '14.5', requires: '.modal.show',
+    advanceOn: { selector: '[data-tour="cert-modal-tabs"]' }, doIt: { click: 'first-card', inner: '[data-cert-open]' } },
+  { id: 'modal',     target: 'cert-modal-tabs', placement: 'bottom', since: 1, help: '14.5', requires: '[data-tour="cert-modal-tabs"]',
     after: { closeModal: true } },
   { id: 'all',       target: 'nav-tab-all', placement: 'right', since: 1, help: '14.8', before: { reveal: 'all' } },
   { id: 'monitoring', target: 'nav-tab-http', placement: 'right', since: 1, help: '14.14', before: { reveal: 'http' } },
@@ -29,10 +33,13 @@ export const MAIN_STEPS = [
   { id: 'health',    target: 'nav-tab-health', placement: 'right', since: 1, help: '14.27', when: isAdminCtx, before: { reveal: 'health' } },
   { id: 'audit',     target: 'nav-tab-activity', placement: 'right', since: 1, help: '14.20', when: (c) => c?.role === 'AUDIT', before: { reveal: 'activity' } },
   { id: 'palette',   target: 'nav-search', placement: 'right', since: 1, mobile: false,
-    advanceOn: { selector: '.palette-overlay' }, doIt: { click: 'nav-search' }, after: { closePalette: true } },
-  { id: 'inbox',     target: 'nav-inbox', placement: 'right', since: 1, help: '14.2' },
-  { id: 'user',      target: 'nav-user', placement: 'right', since: 1, help: '14.21' },
-  { id: 'help',      target: 'help-fab', placement: 'left', since: 1, help: '14.29' },
+    // Palet shadcn Dialog (2026-09-26): açık palet `[data-command-palette]` taşır (CommandPalette.jsx), sınıf adı yok.
+    advanceOn: { selector: '[data-command-palette]' }, doIt: { click: 'nav-search' }, after: { closePalette: true } },
+  // Telefonda zil üst çubukta, yardım düğmesi sayfada → açık çekmece kapatılır (conceal); kullanıcı kartı
+  // çekmecede → yalnız menü açılır (reveal '*'). Masaüstünde ikisi de zararsız. (2026-09-26, yeni kenar çubuğu)
+  { id: 'inbox',     target: 'nav-inbox', placement: 'right', since: 1, help: '14.2', before: { conceal: true } },
+  { id: 'user',      target: 'nav-user', placement: 'right', since: 1, help: '14.21', before: { reveal: '*' } },
+  { id: 'help',      target: 'help-fab', placement: 'left', since: 1, help: '14.29', before: { conceal: true } },
   { id: 'done',      center: true, since: 1, help: '14.30' },
 ]
 

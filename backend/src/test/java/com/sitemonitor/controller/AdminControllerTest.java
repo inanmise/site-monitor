@@ -288,6 +288,34 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.domain").value("newdomain.com"));
     }
 
+    @Test
+    @DisplayName("O-5: POST /inventory sunucunun yönettiği alanları gövdeden ALMAZ (mass assignment)")
+    void addInventory_ignoresServerManagedFields() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(1L); return i; });
+
+        mvc.perform(post("/api/admin/inventory")
+                        .session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"sahte.example.com\",\"port\":443,\"team_id\":1,"
+                                + "\"deleted_at\":\"2026-01-01T00:00:00\",\"domain_expiry\":\"2099-01-01\","
+                                + "\"domain_registrar\":\"Sahte Kayitci\",\"domain_expiry_checked_at\":\"2026-01-01T00:00:00\","
+                                + "\"updated_by\":\"N99999\",\"updated_by_name\":\"Baska Biri\","
+                                + "\"renewal_planned_at\":\"2026-12-01\",\"renewal_planned_by\":\"N99999\","
+                                + "\"renewal_planned_by_name\":\"Baska Biri\",\"renewal_planned_note\":\"sahte plan\"}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<CertificateInventory> cap = org.mockito.ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo).save(cap.capture());
+        CertificateInventory saved = cap.getValue();
+        org.assertj.core.api.Assertions.assertThat(saved.getDomain()).isEqualTo("sahte.example.com");   // gövde yine işlendi
+        org.assertj.core.api.Assertions.assertThat(java.util.Arrays.asList(
+                saved.getDeletedAt(), saved.getDomainExpiry(), saved.getDomainRegistrar(), saved.getDomainExpiryCheckedAt(),
+                saved.getUpdatedBy(), saved.getUpdatedByName(), saved.getRenewalPlannedAt(), saved.getRenewalPlannedBy(),
+                saved.getRenewalPlannedByName(), saved.getRenewalPlannedNote()))
+                .as("istemcinin gönderdiği sunucu alanları kayda geçmemeli")
+                .containsOnlyNulls();
+    }
+
     // ── Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme ──
     @Test
     @DisplayName("POST /inventory: grup yoksa 400 — kayıt açılmaz")
@@ -362,6 +390,73 @@ class AdminControllerTest {
         mvc.perform(put("/api/admin/inventory/1").session(scopedAdminSession())
                         .contentType(MediaType.APPLICATION_JSON).content(String.format(body, 2)))
                 .andExpect(status().isOk());
+    }
+
+    // ── BO9 (bug regresyon 2026-09-27): ug_team_id mass assignment ─────────────
+    // requireInventoryWriter yalnız kaydın KENDİ takımına bakıyor; gövdedeki ug_team_id olduğu gibi yazılınca
+    // takım üyesi USER kaydı başka takımın görünürlüğüne + alarm e-postalarına açıp admin kapılı transfer-ug'yi
+    // atlıyordu.
+
+    private static final String INV_BODY =
+            "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"ug.example.com\",\"port\":443,\"active\":true,"
+                    + "\"team_id\":2,\"ug_team_id\":%s}";
+
+    @Test
+    @DisplayName("BO9: PUT inventory gövdesiyle UG takımı BAŞKA takıma çevrilemez (USER de global admin de 403; yazılmaz)")
+    void updateInventory_foreignUgTeam_forbidden() throws Exception {
+        for (MockHttpSession s : new MockHttpSession[]{userSession(), teamAdminSession(), scopedAdminSession(), authSession()}) {
+            CertificateInventory existing = inventory("ug.example.com");
+            existing.setId(1L);
+            existing.setTeamId(2L);
+            existing.setUgTeamId(null);
+            when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+            mvc.perform(put("/api/admin/inventory/1").session(s)
+                            .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "9")))
+                    .andExpect(status().isForbidden());
+            assertThat(existing.getUgTeamId()).as((String) s.getAttribute("username")).isNull();
+        }
+        verify(inventoryRepo, never()).save(any());
+        verify(latestCheckRepo, never()).renameDomain(any(), any());
+    }
+
+    @Test
+    @DisplayName("BO9: PUT inventory — UG temizleme (null, tek takıma yakınsama) ve AYNI değer serbest")
+    void updateInventory_ugClearOrSame_allowed() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        CertificateInventory existing = inventory("ug.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        existing.setUgTeamId(5L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/inventory/1").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "5")))
+                .andExpect(status().isOk());
+        assertThat(existing.getUgTeamId()).isEqualTo(5L);
+
+        mvc.perform(put("/api/admin/inventory/1").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "null")))
+                .andExpect(status().isOk());
+        assertThat(existing.getUgTeamId()).as("ön uç her düzenlemede null gönderir — temizleme korunur").isNull();
+    }
+
+    @Test
+    @DisplayName("BO9: POST inventory gövdesiyle UG başka takım olamaz (403, kayıt açılmaz); boş ya da kendi takımı serbest")
+    void addInventory_foreignUgTeam_forbidden() throws Exception {
+        String body = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yeni-ug.example.com\",\"port\":443,"
+                + "\"team_id\":2,\"ug_team_id\":%s}";
+        mvc.perform(post("/api/admin/inventory").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(body, "9")))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, never()).save(any());
+
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(1L); return i; });
+        for (String ok : new String[]{"null", "2"}) {
+            mvc.perform(post("/api/admin/inventory").session(userSession())
+                            .contentType(MediaType.APPLICATION_JSON).content(String.format(body, ok)))
+                    .andExpect(status().isOk());
+        }
     }
 
     @Test
@@ -2032,6 +2127,39 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").isArray());
+    }
+
+    /**
+     * 7/24 (NOC) satırı alarmı gören HERKESE açık: gövdede arama listesinin telefonları, alıcıda 7/24 grubunun adresleri
+     * sızmamalı (yayın öncesi inceleme 2026-09-27). Eski/elle yazılmış MASKESİZ bir satır bile okuma yüzeyinde maskelenir.
+     */
+    @Test
+    @DisplayName("GET /alerts/{id}/notifications: 7/24 satırında telefon ve adres YOK — takım üyesi, kapsamlı müdür, denetçi")
+    void getAlertNotifications_nocRowIsRedactedForEveryViewer() throws Exception {
+        AlertEvent ev = new AlertEvent();
+        ev.setId(1L); ev.setTeamId(2L); ev.setDomain("www.example.com");
+        when(alertEventRepo.findById(1L)).thenReturn(Optional.of(ev));
+        com.sitemonitor.model.NotificationLog noc = new com.sitemonitor.model.NotificationLog();
+        noc.setId(10L); noc.setAlertEventId(1L); noc.setRecipientRole("NOC"); noc.setTrigger("NOC_OPEN");
+        noc.setRecipientEmail("noc@example.com, yedek@example.com");   // eski biçim: adresler
+        noc.setMessage("<p>Kişi A <a href=\"tel:+905550000012\" target=\"_blank\">+90 555 000 00 12</a></p>");
+        com.sitemonitor.model.NotificationLog team = new com.sitemonitor.model.NotificationLog();
+        team.setId(11L); team.setAlertEventId(1L); team.setRecipientRole("COMBINED");
+        team.setRecipientEmail("takim@example.com"); team.setMessage("<p>takım</p>");
+        when(notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(1L)).thenReturn(List.of(noc, team));
+
+        MockHttpSession audit = new MockHttpSession();
+        audit.setAttribute("authenticated", Boolean.TRUE);
+        audit.setAttribute("username", "denetci");
+        audit.setAttribute("systemRole", "AUDIT");
+        for (MockHttpSession s : List.of(userSession(), scopedAdminSession(), audit)) {
+            String body = mvc.perform(get("/api/admin/alerts/1/notifications").session(s))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(body).doesNotContain("noc@example.com").doesNotContain("yedek@example.com")
+                    .doesNotContain("tel:+905550000012").doesNotContain("555 000 00 12").doesNotContain("5550000012")
+                    .contains("2 adres").contains("takim@example.com");   // takım satırı olduğu gibi
+        }
     }
 
     @Test

@@ -100,6 +100,23 @@ public class WebConfig implements WebMvcConfigurer {
         return new CorsFilter(source);
     }
 
+    @Value("${site.monitor.security.origin-check.enabled:true}")
+    private boolean originCheckEnabled;
+
+    @Value("${site.monitor.app.base-url:}")
+    private String appBaseUrl;
+
+    /**
+     * CSRF ikinci katmanı — durum değiştiren {@code /api/**} isteğinde Origin/Referer doğrulaması
+     * (prod kapısı 2026-09-25, O-4). Filtre olarak kurulur (AuthInterceptor'a yeni bağımlılık eklemek dilimli
+     * controller testlerinin bağlamını düşürüyordu — oradaki not); taban adres ve CORS kökenleri
+     * AppSettingsService'ten CANLI okunur, bean yoksa (dilim) {@code @Value} değerlerine düşer.
+     */
+    @Bean
+    public OriginCheckFilter originCheckFilter() {
+        return new OriginCheckFilter(appSettingsProvider, originCheckEnabled, appBaseUrl, allowedOrigins);
+    }
+
     /** CSV → trimlenmiş, boşsuz liste (AppSettingsService yokken @Value fallback'i için). */
     private static List<String> csv(String raw) {
         List<String> out = new ArrayList<>();

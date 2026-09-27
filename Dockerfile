@@ -1,10 +1,22 @@
+# Base image pinning (prod gate 2026-09-26, P9-1): every FROM carries an EXACT tag (patch + OS
+# release) AND the multi-arch index digest. The tag is for humans; Docker pulls by digest, so a
+# re-pushed tag can no longer change what a rebuild of the same commit ships (rollback images
+# stay reproducible). Digests were read from registry-1.docker.io on 2026-09-26.
+# To update an image: choose the new exact tag, read its index digest with
+#   docker buildx imagetools inspect <image>:<tag> --format '{{json .Manifest.Digest}}'
+# (or `crane digest <image>:<tag>`), and replace tag AND digest together on the same line.
+# Keep the Node major in step with CI (.github/workflows/ci.yml, node-version "24").
+
 # k6 binary (Senaryo İzleme / 10. tür) — sürüm-sabitli. `--from`'da değişken genişletme buildx'te desteklenmez;
 # bu yüzden global-scope ARG + named stage kullanılır (yalnız binary'yi kopyalamak için ara imaj).
+# K6_VERSION and K6_DIGEST belong together: overriding only K6_VERSION still pulls the pinned digest.
 ARG K6_VERSION=0.49.0
-FROM grafana/k6:${K6_VERSION} AS k6-bin
+ARG K6_DIGEST=sha256:8cd78f9d0de5f50bc8821cceecf356d5d9e839e6611c226a3fcf13c591080fbd
+FROM grafana/k6:${K6_VERSION}@${K6_DIGEST} AS k6-bin
 
 # ── Stage 1: React build ─────────────────────────────
-FROM node:20-alpine AS frontend-build
+# Node 24 LTS = the CI version (Node 20 reached end-of-life on 2026-04-30).
+FROM node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
@@ -13,7 +25,7 @@ COPY frontend/ .
 RUN npm run build
 
 # ── Stage 2: Spring Boot build ───────────────────────
-FROM maven:3.9-eclipse-temurin-25 AS backend-build
+FROM maven:3.9.16-eclipse-temurin-25-noble@sha256:dd8e01b3be719853578c07b57ff8d9bbbbfe746f802226f05b19689420815221 AS backend-build
 WORKDIR /app
 COPY backend/pom.xml .
 RUN mvn dependency:go-offline -q
@@ -24,7 +36,7 @@ COPY VERSION /app/VERSION
 RUN mvn package -DskipTests -q -Drevision="$(tr -d '[:space:]' < /app/VERSION)"
 
 # ── Stage 3: Runtime ─────────────────────────────────
-FROM eclipse-temurin:25-jre-alpine
+FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24@sha256:2ca9adf44f5c29d28ecd26cf92d75cc0c66b7f32bfd839a4439e363a8b428af8
 WORKDIR /app
 
 # Debug/troubleshoot tools — pod içinden: curl (HTTP), bash (shell),

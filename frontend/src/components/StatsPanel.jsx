@@ -3,117 +3,56 @@ import {
   LayoutDashboard, ShieldCheck, TriangleAlert, OctagonAlert, Siren,
   ServerCrash, AlarmClock, CalendarClock, CalendarX, ShieldAlert, ShieldX, Building2
 } from 'lucide-react'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
 
+/**
+ * Genel Bakış (Pano) sertifika sayım kartları. 2026-09-26: eski elle kurulmuş `div.stat-item[role=button]` ailesi
+ * (App.css `.stats-panel`: üstte renkli şerit, telefonda 4 sıkışık sütun) yerine izleme sayfalarıyla AYNI shadcn
+ * kart ızgarası `MonitorStatsBar` (Button + aria-pressed, telefonda 2 / tablette 3 sütun). Pano'ya özgü:
+ * "{0} sertifikaları filtrele" ipucu (`tip`), CA çeşitliliği kartı süzgeç değil PENCERE açar (`onClick`),
+ * zayıf algoritma / sertifika sorunu kartlarının alt satırı (`sub`).
+ */
 export default function StatsPanel({ stats, visible, onStatClick, activeFilter, weakStats, issuerStats, certIssueStats, onCaClick }) {
   const t = useT()
   if (!visible || !stats) return null
 
+  const filterItem = (key, Icon, labelKey, value, cls, sub) => {
+    const label = t(labelKey)
+    return { key, Icon, label, value, cls, sub, tip: activeFilter === key ? t('stat.clearTip') : t('stat.filterTip', label) }
+  }
+
   const items = [
-    { key: 'total',      Icon: LayoutDashboard, labelKey: 'stat.total',      value: stats.total_certificates,  cls: 'total'    },
-    { key: 'valid',      Icon: ShieldCheck,     labelKey: 'stat.valid',      value: stats.valid_count,         cls: 'valid'    },
-    { key: 'warning',    Icon: TriangleAlert,   labelKey: 'stat.warning',    value: stats.warning_count,       cls: 'warning'  },
-    { key: 'high',       Icon: OctagonAlert,    labelKey: 'stat.high',       value: stats.high_count,          cls: 'high'     },
-    { key: 'critical',   Icon: Siren,           labelKey: 'stat.critical',   value: stats.critical_count,      cls: 'critical' },
-    { key: 'error',      Icon: ServerCrash,     labelKey: 'stat.error',      value: stats.error_count,         cls: 'error'    },
-    { key: 'expiring7',  Icon: AlarmClock,      labelKey: 'stat.expiring7',  value: stats.expiring_in_7_days,  cls: 'critical' },
-    { key: 'expiring30', Icon: CalendarClock,   labelKey: 'stat.expiring30', value: stats.expiring_in_30_days, cls: 'alert'    },
-    { key: 'expired',    Icon: CalendarX,       labelKey: 'stat.expired',    value: stats.expired,             cls: 'expired'  },
+    filterItem('total',      LayoutDashboard, 'stat.total',      stats.total_certificates,  'total'),
+    filterItem('valid',      ShieldCheck,     'stat.valid',      stats.valid_count,         'valid'),
+    filterItem('warning',    TriangleAlert,   'stat.warning',    stats.warning_count,       'warning'),
+    filterItem('high',       OctagonAlert,    'stat.high',       stats.high_count,          'high'),
+    filterItem('critical',   Siren,           'stat.critical',   stats.critical_count,      'critical'),
+    filterItem('error',      ServerCrash,     'stat.error',      stats.error_count,         'error'),
+    filterItem('expiring7',  AlarmClock,      'stat.expiring7',  stats.expiring_in_7_days,  'critical'),
+    filterItem('expiring30', CalendarClock,   'stat.expiring30', stats.expiring_in_30_days, 'alert'),
+    filterItem('expired',    CalendarX,       'stat.expired',    stats.expired,             'expired'),
   ]
 
-  return (
-    <div className="stats-panel">
-      {items.map((item) => {
-        const isActive = activeFilter === item.key
-        const label = t(item.labelKey)
-        return (
-          <div
-            key={item.key}
-            className={`stat-item stat-item-${item.cls} stat-clickable${isActive ? ' stat-active' : ''}`}
-            role="button" tabIndex={0}
-            aria-pressed={isActive}
-            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick(item.key) } }}
-            onClick={() => onStatClick(item.key)}
-            title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-          >
-            <span className="stat-icon"><item.Icon size={32} /></span>
-            <span className={`stat-value stat-value-${item.cls}`}>{item.value ?? 0}</span>
-            <span className="stat-label">{label}</span>
-            {isActive && <span className="stat-active-dot" />}
-          </div>
-        )
-      })}
-      {issuerStats != null && (() => {
-        const clsMap = { 1: 'critical', 2: 'warning' }
-        const cls = clsMap[issuerStats.uniqueCount] ?? 'valid'
-        const sub = `${issuerStats.dominantIssuer} (${issuerStats.dominantCount}, %${issuerStats.dominantPct})`
-        return (
-          <div className={`stat-item stat-item-${cls} stat-clickable`} title={sub}
-            role="button" tabIndex={0} aria-label={`${t('stat.caDiv')} — ${sub}`}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCaClick() } }}
-            onClick={onCaClick}>
-            <span className="stat-icon"><Building2 size={32} /></span>
-            <span className={`stat-value stat-value-${cls}`}>{issuerStats.uniqueCount}</span>
-            <span className="stat-label">{t('stat.caDiv')}</span>
-            <span className="stat-issuer-sub">{sub}</span>
-          </div>
-        )
-      })()}
-      {weakStats != null && (() => {
-        const isActive = activeFilter === 'weak'
-        const label = t('stat.weak')
-        return (
-          <div
-            className={`stat-item stat-item-weak stat-clickable${isActive ? ' stat-active' : ''}`}
-            role="button" tabIndex={0}
-            aria-pressed={isActive}
-            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick('weak') } }}
-            onClick={() => onStatClick('weak')}
-            title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-          >
-            <span className="stat-icon"><ShieldAlert size={32} /></span>
-            <span className="stat-value stat-value-weak">{weakStats.total ?? 0}</span>
-            <span className="stat-label">{label}</span>
-            {(weakStats.critical > 0 || weakStats.high > 0) && (
-              <span className="stat-weak-sub">
-                {weakStats.critical > 0 ? `${weakStats.critical} CRITICAL` : ''}
-                {weakStats.critical > 0 && weakStats.high > 0 ? ' · ' : ''}
-                {weakStats.high > 0 ? `${weakStats.high} HIGH` : ''}
-              </span>
-            )}
-            {isActive && <span className="stat-active-dot" />}
-          </div>
-        )
-      })()}
-      {certIssueStats != null && (() => {
-        const isActive = activeFilter === 'certissue'
-        const label = t('stat.certIssue')
-        const parts = []
-        if (certIssueStats.revoked > 0)    parts.push(`${certIssueStats.revoked} ${t('stat.ciRevoked')}`)
-        if (certIssueStats.chain > 0)      parts.push(`${certIssueStats.chain} ${t('stat.ciChain')}`)
-        if (certIssueStats.trust > 0)      parts.push(`${certIssueStats.trust} ${t('stat.ciTrust')}`)
-        if (certIssueStats.deployment > 0) parts.push(`${certIssueStats.deployment} ${t('stat.ciDeploy')}`)
-        return (
-          <div
-            className={`stat-item stat-item-certissue stat-clickable${isActive ? ' stat-active' : ''}`}
-            role="button" tabIndex={0}
-            aria-pressed={isActive}
-            aria-label={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onStatClick('certissue') } }}
-            onClick={() => onStatClick('certissue')}
-            title={isActive ? t('stat.clearTip') : t('stat.filterTip', label)}
-          >
-            <span className="stat-icon"><ShieldX size={32} /></span>
-            <span className="stat-value stat-value-certissue">{certIssueStats.total ?? 0}</span>
-            <span className="stat-label">{label}</span>
-            {parts.length > 0 && (
-              <span className="stat-certissue-sub">{parts.join(' · ')}</span>
-            )}
-            {isActive && <span className="stat-active-dot" />}
-          </div>
-        )
-      })()}
-    </div>
-  )
+  if (issuerStats != null) {
+    const cls = { 1: 'critical', 2: 'warning' }[issuerStats.uniqueCount] ?? 'valid'
+    const sub = `${issuerStats.dominantIssuer} (${issuerStats.dominantCount}, %${issuerStats.dominantPct})`
+    items.push({ key: 'ca', Icon: Building2, label: t('stat.caDiv'), value: issuerStats.uniqueCount, cls, sub,
+      tip: `${t('stat.caDiv')} — ${sub}`, onClick: onCaClick })
+  }
+  if (weakStats != null) {
+    const parts = []
+    if (weakStats.critical > 0) parts.push(`${weakStats.critical} CRITICAL`)
+    if (weakStats.high > 0) parts.push(`${weakStats.high} HIGH`)
+    items.push(filterItem('weak', ShieldAlert, 'stat.weak', weakStats.total ?? 0, 'weak', parts.join(' · ') || undefined))
+  }
+  if (certIssueStats != null) {
+    const parts = []
+    if (certIssueStats.revoked > 0)    parts.push(`${certIssueStats.revoked} ${t('stat.ciRevoked')}`)
+    if (certIssueStats.chain > 0)      parts.push(`${certIssueStats.chain} ${t('stat.ciChain')}`)
+    if (certIssueStats.trust > 0)      parts.push(`${certIssueStats.trust} ${t('stat.ciTrust')}`)
+    if (certIssueStats.deployment > 0) parts.push(`${certIssueStats.deployment} ${t('stat.ciDeploy')}`)
+    items.push(filterItem('certissue', ShieldX, 'stat.certIssue', certIssueStats.total ?? 0, 'certissue', parts.join(' · ') || undefined))
+  }
+
+  return <MonitorStatsBar items={items} activeFilter={activeFilter} onStatClick={onStatClick} />
 }

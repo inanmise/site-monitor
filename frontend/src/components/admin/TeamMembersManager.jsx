@@ -9,6 +9,8 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { SystemRoleBadge } from './ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -71,26 +73,29 @@ export default function TeamMembersManager({ team, users = [], canManage, onClos
       {members && (
         <>
           {canManage && (
-            <div className="tmm-add">
-              <SearchableSelect value={pick} onChange={setPick} placeholder={t('team.memberPick')} ariaLabel={t('team.memberPick')}
-                searchThreshold={2}
-                options={[{ value: '', label: t('team.memberPick') }, ...candidates.map(u => ({ value: String(u.id), label: `${u.display_name || u.username} (${u.username})` }))]} />
+            <div className="mb-3 flex items-center gap-2">
+              <span className="min-w-0 flex-auto">
+                <SearchableSelect value={pick} onChange={setPick} placeholder={t('team.memberPick')} ariaLabel={t('team.memberPick')}
+                  searchThreshold={2}
+                  options={[{ value: '', label: t('team.memberPick') }, ...candidates.map(u => ({ value: String(u.id), label: `${u.display_name || u.username} (${u.username})` }))]} />
+              </span>
               <Button onClick={add} disabled={!pick || busy}><UserPlus size={14} /> {t('team.memberAdd')}</Button>
             </div>
           )}
-          {members.length === 0 ? <p className="field-hint">{t('team.membersEmpty')}</p> : (
-            <ul className="tmm-list" data-testid="team-members">
+          {members.length === 0 ? <p className="text-xs text-muted-foreground">{t('team.membersEmpty')}</p> : (
+            <ul className="flex list-none flex-col gap-1.5" data-testid="team-members">
               {members.map(u => (
-                <li key={u.id} className="tmm-row">
+                <li key={u.id} className="flex items-center gap-2.5 rounded-lg border px-2 py-1.5 border-border">
                   <UserBadge displayName={u.display_name} username={u.username} email={u.email} inline size="sm" />
-                  <span className="tmm-meta">
-                    {u.system_role && <span className="role-badge">{u.system_role}</span>}
-                    {u.team_id === team.id && <span className="field-hint">{t('team.memberPrimary')}</span>}
+                  <span className="ml-auto inline-flex items-center gap-1.5">
+                    {u.system_role && <SystemRoleBadge role={u.system_role} />}
+                    {u.team_id === team.id && <span className="text-xs text-muted-foreground">{t('team.memberPrimary')}</span>}
                   </span>
                   {canManage && (
-                    <Button variant="secondary" size="sm" className="tmm-remove" onClick={() => remove(u)} disabled={busy}
-                      title={t('team.memberRemove')}
-                      aria-label={`${u.display_name || u.username} — ${t('team.memberRemove')}`}><UserMinus size={13} /></Button>
+                    <SimpleTooltip content={t('team.memberRemove')}>
+                      <Button variant="secondary" size="icon-sm" className="shrink-0" onClick={() => remove(u)} disabled={busy}
+                        aria-label={t('a11y.rowAction', u.display_name || u.username, t('team.memberRemove'))}><UserMinus size={13} /></Button>
+                    </SimpleTooltip>
                   )}
                 </li>
               ))}

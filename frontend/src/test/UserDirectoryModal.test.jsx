@@ -87,8 +87,8 @@ describe('UserDirectoryModal', () => {
     expect(within(dlg).getByText(/Kullanıcı Dizini · 4|User Directory · 4/)).toBeInTheDocument()
     const rows = rowsOf(dlg)
     expect(rows).toHaveLength(4)
-    expect(rows[0].className).toContain('is-online'); expect(rows[0].textContent).toContain('admin@example.com')
-    expect(rows[2].className).not.toContain('is-online')
+    expect(rows[0]).toHaveAttribute('data-online', 'true'); expect(rows[0].textContent).toContain('admin@example.com')
+    expect(rows[2]).not.toHaveAttribute('data-online')
     expect(rows[2].textContent).toContain('carol@example.com')
     expect(rows[2].textContent).toContain('LDAP'); expect(rows[2].textContent).toContain('Takim A'); expect(rows[2].textContent).toContain('2026-01-05')
     expect(rows[2].textContent).toMatch(/tamamladı|completed/)
@@ -150,18 +150,18 @@ describe('UserDirectoryModal', () => {
   it('uzun ad: parantezli departman eki addan ayrılır, ayrı satırda ve e-posta tek satır sınıfıyla (2026-09-20 taşma bildirimi)', () => {
     const rows = [{ ...STATUS[0], display_name: 'Carol Ornek (Teknoloji Servis Yonetimi Bolumu)' }]
     render(<UserDirectoryModal data={{ ...DATA, login_status: rows, active_users: [] }} initial={{}} isAdmin username="admin" onClose={() => {}} />)
-    const cell = document.querySelector('.udir-table tbody tr td')
-    expect(cell.querySelector('.udir-name').textContent).toContain('Carol Ornek')
-    expect(cell.querySelector('.udir-name').textContent).not.toContain('Bolumu')
-    expect(cell.querySelector('.udir-meta').textContent).toContain('Teknoloji Servis Yonetimi Bolumu')
-    expect(cell.querySelector('.udir-email').textContent).toBe('carol@example.com')
+    const cell = screen.getByTestId('udir-table').querySelector('tbody tr td')
+    expect(cell.querySelector('[data-part="name"]').textContent).toContain('Carol Ornek')
+    expect(cell.querySelector('[data-part="name"]').textContent).not.toContain('Bolumu')
+    expect(cell.querySelector('[data-part="meta"]').textContent).toContain('Teknoloji Servis Yonetimi Bolumu')
+    expect(cell.querySelector('[data-part="email"]').textContent).toBe('carol@example.com')
   })
 
   it('hesap süzgeci panelde değil, Durum sütun başlığında; satırdaki hesap rozetine tıklamak o duruma süzer (toggle)', () => {
     const { dlg } = open()
-    const panel = dlg.querySelector('.udir-filters')
+    const panel = within(dlg).getByTestId('udir-filters')
     expect(within(panel).queryByLabelText(/^Hesap$|^Account$/)).toBeNull()
-    const th = dlg.querySelector('.udir-th-filter')
+    const th = within(dlg).getByTestId('udir-th-filter')
     expect(within(th).getByLabelText(/^Hesap$|^Account$/)).toBeInTheDocument()
     fireEvent.click(within(rowsOf(dlg)[3]).getByRole('button', { name: /Kalıcı kilitli|Permanently locked/ }))
     expect(rowsOf(dlg)).toHaveLength(1)
@@ -175,12 +175,13 @@ describe('UserDirectoryModal', () => {
     expect(rowsOf(dlg)).toHaveLength(1)
   })
 
-  it('sayfalama: 30 kullanıcıda 25 satır + sayfa çubuğu', () => {
+  it('sayfalama (modal ön ayarı 10): 30 kullanıcıda 10 satır + compact sayfa çubuğu', () => {
     const many = Array.from({ length: 30 }, (_, i) => ({ username: `u${i}`, user_id: 100 + i, system_role: 'USER', auth_source: 'LDAP', active: true, last_login_at: ago(i * 3600), tour_status: 'none' }))
     render(<UserDirectoryModal data={{ ...DATA, login_status: many, active_users: [] }} initial={{}} isAdmin username="admin" onClose={() => {}} />)
     const dlg = screen.getByRole('dialog')
-    expect(rowsOf(dlg)).toHaveLength(25)
+    expect(rowsOf(dlg)).toHaveLength(10)
     expect(within(dlg).getByRole('navigation')).toBeInTheDocument()
+    expect(within(dlg).getByText('1 / 3')).toBeInTheDocument()   // compact konum göstergesi
   })
 })
 
@@ -194,27 +195,27 @@ describe('UserActivityPanel — dizin bağlantıları ve takım sütunları', ()
 
   it('"Aktif oturum" kartı ve hero bağlantısı dizini (tüm kullanıcılar) açar; "Turu tamamlayan" kartı tour=completed ile', async () => {
     renderPanel()
-    fireEvent.click(document.querySelector('.uact-hero-live'))
+    fireEvent.click(document.querySelector('[data-hero-live]'))
     let dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText(/Kullanıcı Dizini · 4|User Directory · 4/)).toBeInTheDocument()
     // Altlıktaki kapat düğmesi: başlıktaki X de artık adlı (i18n "Kapat/Close") — altlığa daraltılır.
     fireEvent.click(within(dlg.querySelector('[data-slot="dialog-footer"]')).getByRole('button', { name: /^Kapat$|^Dismiss$|^Close$/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    fireEvent.click(document.querySelectorAll('.uact-kpi--btn')[0])   // Turu tamamlayan karti
+    fireEvent.click(document.querySelector('[data-kpi="tour"]'))   // Turu tamamlayan karti
     dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText(/Turu tamamlayan · 2|Completed the tour · 2/)).toBeInTheDocument()
   })
   it('giriş KPI modalında takım + tarayıcı sütunu; anomali bölümünde takım sütunu; sayfa kullanımı pay hücresi ayrı etiket', async () => {
     renderPanel()
-    fireEvent.click(document.querySelectorAll('.uact-kpi--btn')[2])   // Login karti
+    fireEvent.click(document.querySelector('[data-kpi="logins"]'))   // Login karti
     const dlg = await screen.findByRole('dialog')
     const row = within(dlg).getAllByRole('row')[1]
     expect(row.textContent).toContain('Takim A'); expect(row.textContent).toContain('Chrome'); expect(row.textContent).not.toContain('USER')   // yalnız ad soyad (2026-09-21)
     fireEvent.keyDown(document, { key: 'Escape' })
-    const anomRow = document.querySelector('.uact-flag').closest('tr')
+    const anomRow = document.querySelector('[data-flag]').closest('tr')
     expect(anomRow.textContent).toContain('Takim B')
-    expect(document.querySelector('.uact-share-lbl').textContent).toBe('90%')
-    expect(document.querySelector('.uact-bar-lbl')).toBeNull()
+    expect(document.querySelector('[data-share-lbl]').textContent).toBe('90%')
+    expect(document.querySelectorAll('[data-share-lbl]')).toHaveLength(1)   // pay etiketi tek (çubuk içine ikinci etiket basılmaz)
   })
   it('oturum detayı: hesap bölümü (oluşturulma, tur), ek takımlar, "Tam kullanıcı kartı" ve "Turu sıfırla" düğmeleri', async () => {
     renderPanel()

@@ -9,6 +9,8 @@ import TeamBadge from './ui/TeamBadge.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, monitorRowKey } from './todayMonitorRows.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import StatusBlock from './ui/StatusBlock.jsx'
 
 /**
  * "Sizin için — bugün" → "Tümünü gör" pop-up'ı (2026-09-18, kullanıcı isteği): kart yalnız ilk 5 satırı
@@ -41,14 +43,15 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
     if (!s) return all
     return all.filter((x) => [x.domain, x.type, x.team_name, x.level, x.name, x.target, x.registrar, x.channel, x.error, x.monitor_name, x.reason].some((v) => (v || '').toLowerCase().includes(s)))
   }, [all, q])
-  const pager = usePagination(rows, { listKey: 'today-' + section, defaultSize: 10, sizeOptions: [10, 25, 50], resetDeps: [q, all] })
+  // Pencere içi liste → modal ön ayarı (10 / [10,25,50] + compact çubuk; paginationPresets.js)
+  const pager = usePagination(rows, { listKey: 'today-' + section, preset: 'modal', resetDeps: [q, all] })
   const count = data?.[section]?.count ?? data?.[section]?.missing ?? all.length
 
   const row = (x) => {
     if (section === 'alerts') return (
       <li key={x.id} className="today-modal-row">
         <span className={`today-level today-level--${(x.level || '').toLowerCase()}`}>{x.level}</span>
-        <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain || x.type}</button>
+        <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => onOpen?.(x)}><span className="truncate">{x.domain || x.type}</span></Button>
         <span className="today-muted">{x.type}{x.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
       </li>)
     if (section === 'notifications') return (
@@ -66,7 +69,7 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
       </li>)
     return (
       <li key={x.domain} className="today-modal-row">
-        <button type="button" className="today-link" onClick={() => onOpen?.(x)}>{x.domain}</button>
+        <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => onOpen?.(x)}><span className="truncate">{x.domain}</span></Button>
         <span className={`today-days${x.days < 0 ? ' is-bad' : x.days <= 7 ? ' is-warn' : ''}`}>{x.days < 0 ? t('today.daysPast', -x.days) : t('today.daysLeft', x.days)}</span>
         {x.team_name && <TeamBadge teamId={x.team_id} teamName={x.team_name} />}
       </li>)
@@ -79,12 +82,12 @@ export default function TodayListModal({ section, title, icon, onClose, onOpen, 
         <Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>
       </>}>
       {!data && !error && <LoadingBlock label={t('tbl.loading')} fullWidth />}
-      {error && <div className="alh-ts-empty">{error}</div>}
+      {error && <StatusBlock tone="danger" title={error} role="alert" className="py-6 md:py-6" />}
       {data && all.length > 5 && (
-        <input className="input fc-day-search" type="text" placeholder={t('today.search')} value={q} onChange={(e) => setQ(e.target.value)} />
+        <Input type="text" className="mb-2.5" placeholder={t('today.search')} aria-label={t('today.search')} value={q} onChange={(e) => setQ(e.target.value)} />
       )}
       {data && <ul className="today-list today-modal-list">{pager.pageItems.map(row)}</ul>}
-      {data && rows.length === 0 && <div className="alh-ts-empty">{t('empty.hintFilter')}</div>}
+      {data && rows.length === 0 && <StatusBlock tone="neutral" title={t('empty.hintFilter')} className="py-6 md:py-6" />}
       {data && rows.length > 0 && <PaginationBar {...pager} />}
     </ModalShell>
   )

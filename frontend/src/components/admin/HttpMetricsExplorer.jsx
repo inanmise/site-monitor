@@ -1,7 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import {
-  ResponsiveContainer, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-} from 'recharts'
+import { useState, useEffect, useCallback, useMemo, useId } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -9,7 +6,15 @@ import { useToast } from '../ui/Toast.jsx'
 import TimeRangePicker, { resolveRange } from '../ui/TimeRangePicker.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import {
+  ChartContainer, ChartTooltip, ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
+} from '@/components/shadcn/chart'
+import { cn } from '@/lib/utils'
 
 const RETENTION_KEY = 'site.monitor.metrics.http.retention-days'
 const pad = (n) => String(n).padStart(2, '0')
@@ -22,18 +27,17 @@ function tickLabel(ts, gran) {
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function ChartTooltip({ active, payload, t }) {
+function HmeTooltip({ active, payload, t }) {
   if (!active || !payload || !payload.length) return null
   const d = payload[0].payload
   const row = (label, val, suffix = '') => val == null ? null : (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-      <span style={{ color: 'var(--text-muted)' }}>{label}</span><strong>{val}{suffix}</strong>
+    <div className="flex justify-between gap-4">
+      <span className="text-muted-foreground">{label}</span><strong className="tabular-nums">{val}{suffix}</strong>
     </div>
   )
   return (
-    <div style={{ background: 'var(--bg-card,#fff)', border: '1px solid var(--border)', borderRadius: 8,
-      padding: '8px 11px', fontSize: '.82em', lineHeight: 1.7, boxShadow: '0 4px 16px rgba(0,0,0,.12)' }}>
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>{String(d.ts).replace('T', ' ')}</div>
+    <div className="rounded-lg border bg-card px-[11px] py-2 text-[.82em] leading-[1.7] shadow-lg border-border">
+      <div className="mb-1 font-bold">{String(d.ts).replace('T', ' ')}</div>
       {row(t('http.exp.count'), d.count)}
       {row(t('http.exp.errors'), d.errors)}
       {row(t('http.exp.avg'), d.avg, ' ms')}
@@ -43,7 +47,8 @@ function ChartTooltip({ active, payload, t }) {
   )
 }
 
-/** Kalıcı, Grafana benzeri HTTP istek metrik gezgini — endpoint seçimi + zaman aralığı + p95/p99. */
+/** Kalıcı, Grafana benzeri HTTP istek metrik gezgini — endpoint seçimi + zaman aralığı + p95/p99.
+ *  Çizim shadcn: Button / Badge / Input / Label, grafik ChartContainer (recharts içeride). */
 export default function HttpMetricsExplorer() {
   const t = useT()
   const toast = useToast()
@@ -55,6 +60,7 @@ export default function HttpMetricsExplorer() {
   const [retention, setRetention] = useState(null)      // null = okunamadı/yetkisiz → kutu gizli
   const [savingRet, setSavingRet] = useState(false)
   const [hidden, setHidden] = useState(() => new Set())  // gizli seri anahtarları (tıklanabilir legend)
+  const retentionId = useId()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -115,6 +121,7 @@ export default function HttpMetricsExplorer() {
     { key: 'p95',    name: t('http.exp.p95'),    color: '#9333ea' },
     { key: 'p99',    name: t('http.exp.p99'),    color: '#be123c' },
   ]
+  const chartConfig = Object.fromEntries(SERIES.map((x) => [x.key, { label: x.name, color: x.color }]))
   // Tıklanabilir legend: düz tık → yalnız bunu göster (izole); sonraki tıklar → aç/kapat; hepsi gizlenince → hepsi.
   const toggleSeries = (key) => setHidden(prev => {
     const allKeys = SERIES.map(s => s.key)
@@ -132,22 +139,24 @@ export default function HttpMetricsExplorer() {
     [endpoints])
 
   return (
-    <div className="hme-panel">
-      <div className="hme-bar">
-        <div className="hme-bar-left">
-          <div className="hme-ep"><SearchableSelect value={endpoint} onChange={setEndpoint}
-            options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} ariaLabel={t('flt.endpoint')} /></div>
+    <div data-testid="hme-panel" className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="w-full sm:w-auto sm:min-w-[220px] sm:max-w-[360px]">
+            <SearchableSelect value={endpoint} onChange={setEndpoint}
+              options={epOptions} searchThreshold={2} placeholder={t('http.exp.allEndpoints')} ariaLabel={t('flt.endpoint')} />
+          </div>
           <TimeRangePicker value={range} onChange={setRange} />
           <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw size={14} />{t('http.exp.refresh')}
+            <RefreshCw size={14} aria-hidden="true" className={cn(loading && 'animate-spin motion-reduce:animate-none')} />{t('http.exp.refresh')}
           </Button>
         </div>
         {retention != null && (
-          <div className="hme-retention">
-            <span>{t('http.exp.retention')}</span>
-            <input type="number" min="1" max="365" value={retention}
+          <div data-testid="hme-retention" className="flex flex-wrap items-center gap-2 text-sm">
+            <Label htmlFor={retentionId} className="font-normal text-muted-foreground">{t('http.exp.retention')}</Label>
+            <Input id={retentionId} type="number" min="1" max="365" value={retention} className="h-8 w-20"
               onChange={e => setRetention(e.target.value)} />
-            <span>{t('http.exp.days')}</span>
+            <span className="text-muted-foreground">{t('http.exp.days')}</span>
             <Button type="button" size="sm" onClick={saveRetention} disabled={savingRet}>
               {t('http.exp.save')}
             </Button>
@@ -155,44 +164,54 @@ export default function HttpMetricsExplorer() {
         )}
       </div>
 
-      <div className="hme-pills">
-        <span className="hme-pill"><b>{sum.total ?? 0}</b> {t('http.exp.total')}</span>
-        <span className="hme-pill"><b>{sum.errors ?? 0}</b> {t('http.exp.errors')}</span>
-        <span className="hme-pill"><b>{sum.error_rate_pct ?? 0}%</b> {t('http.exp.errRate')}</span>
-        <span className="hme-pill"><b>{sum.avg_ms ?? 0} ms</b> {t('http.exp.avg')}</span>
-        <span className="hme-pill"><b>{sum.p95_ms ?? 0} ms</b> {t('http.exp.p95')}</span>
-        <span className="hme-pill"><b>{sum.p99_ms ?? 0} ms</b> {t('http.exp.p99')}</span>
+      <div data-testid="hme-pills" className="flex flex-wrap gap-1.5">
+        {[
+          [sum.total ?? 0, t('http.exp.total')],
+          [sum.errors ?? 0, t('http.exp.errors')],
+          [`${sum.error_rate_pct ?? 0}%`, t('http.exp.errRate')],
+          [`${sum.avg_ms ?? 0} ms`, t('http.exp.avg')],
+          [`${sum.p95_ms ?? 0} ms`, t('http.exp.p95')],
+          [`${sum.p99_ms ?? 0} ms`, t('http.exp.p99')],
+        ].map(([v, l]) => (
+          <Badge key={l} variant="outline" className="h-7 gap-1 rounded-full px-2.5 text-xs font-normal text-muted-foreground">
+            <b className="font-bold text-foreground tabular-nums">{v}</b> {l}
+          </Badge>
+        ))}
       </div>
 
       {errorEndpoints.length > 0 && (
-        <div className="hme-errlist">
-          <span className="hme-errlist-lbl">⚠ {t('http.exp.errEndpoints')}</span>
-          {errorEndpoints.slice(0, 8).map(e => (
-            <button key={e.endpoint} type="button"
-                    className={`hme-errchip${endpoint === e.endpoint ? ' is-active' : ''}`}
-                    onClick={() => setEndpoint(endpoint === e.endpoint ? '' : e.endpoint)}
-                    title={t('http.exp.errChipTip')}>
-              <span className="hme-errchip-ep">{e.endpoint}</span>
-              <span className="hme-errchip-n">{e.errors} {t('http.exp.errors')} · %{e.error_rate_pct}</span>
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('http.exp.errEndpoints')}>
+          <span className="text-xs font-semibold text-destructive">⚠ {t('http.exp.errEndpoints')}</span>
+          {errorEndpoints.slice(0, 8).map(e => {
+            const on = endpoint === e.endpoint
+            return (
+              <Button key={e.endpoint} type="button" variant="outline" size="sm" aria-pressed={on}
+                className={cn('h-auto max-w-full flex-col items-start gap-0 px-2.5 py-1 text-left font-normal whitespace-normal',
+                  on ? 'border-destructive bg-destructive/10 hover:bg-destructive/15' : 'hover:border-destructive/60')}
+                onClick={() => setEndpoint(on ? '' : e.endpoint)}
+                title={t('http.exp.errChipTip')}>
+                <span className="max-w-[260px] truncate font-mono text-xs">{e.endpoint}</span>
+                <span className="text-[11px] text-destructive">{e.errors} {t('http.exp.errors')} · %{e.error_rate_pct}</span>
+              </Button>
+            )
+          })}
         </div>
       )}
 
       {loading ? (
-        <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
+        <LoadingBlock label={t('modal.loading')} />
       ) : chartData.length === 0 ? (
-        <LoadingBlock label={t('http.exp.noData')} className="upt-modal-loading" />
+        <StatusBlock tone="neutral" title={t('http.exp.noData')} />
       ) : (
-        <ResponsiveContainer width="100%" height={320}>
+        <ChartContainer config={chartConfig} className="aspect-auto h-[280px] w-full sm:h-[320px]">
           <ComposedChart data={chartData} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)"
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
               interval={tickEvery} minTickGap={16} />
-            <YAxis yAxisId="cnt" tick={{ fontSize: 10, fill: 'var(--text-light)' }} stroke="var(--border)" width={42} />
-            <YAxis yAxisId="ms" orientation="right" tick={{ fontSize: 10, fill: 'var(--text-light)' }}
-              stroke="var(--border)" width={46} tickFormatter={(v) => `${v}ms`} />
-            <Tooltip content={<ChartTooltip t={t} />} />
+            <YAxis yAxisId="cnt" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={42} />
+            <YAxis yAxisId="ms" orientation="right" tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
+              width={46} tickFormatter={(v) => `${v}ms`} />
+            <ChartTooltip content={<HmeTooltip t={t} />} />
             <Area yAxisId="cnt" type="linear" dataKey="count" name={t('http.exp.count')} hide={hidden.has('count')}
               fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={1.5} dot={dots} isAnimationActive={false} />
             <Line yAxisId="cnt" type="linear" dataKey="errors" name={t('http.exp.errors')} hide={hidden.has('errors')}
@@ -204,18 +223,20 @@ export default function HttpMetricsExplorer() {
             <Line yAxisId="ms" type="linear" dataKey="p99" name={t('http.exp.p99')} hide={hidden.has('p99')}
               stroke="#be123c" strokeWidth={1.5} strokeDasharray="2 2" dot={dots} connectNulls={false} isAnimationActive={false} />
           </ComposedChart>
-        </ResponsiveContainer>
+        </ChartContainer>
       )}
 
       {/* Tıklanabilir legend — düz tık izole eder, sonraki tıklar ekler/çıkarır, hepsi gizlenince hepsi döner */}
       {chartData.length > 0 && (
-        <div className="hme-legend">
+        <div className="flex flex-wrap justify-center gap-1" role="group" aria-label={t('http.exp.legendTip')}>
           {SERIES.map(s => (
-            <button key={s.key} type="button" title={t('http.exp.legendTip')}
-                    className={`hme-legend-item${hidden.has(s.key) ? ' hme-legend-off' : ''}`}
-                    onClick={() => toggleSeries(s.key)}>
-              <span className="hme-legend-dot" style={{ background: s.color }} />{s.name}
-            </button>
+            <Button key={s.key} type="button" variant="ghost" size="sm" title={t('http.exp.legendTip')}
+              aria-pressed={!hidden.has(s.key)} data-series={s.key}
+              className={cn('gap-1.5 font-normal', hidden.has(s.key) && 'text-muted-foreground line-through opacity-60')}
+              onClick={() => toggleSeries(s.key)}>
+              {/* renk CSS özel değişkeniyle (--dot): seri rengi SERIES'ten */}
+              <span aria-hidden="true" className="size-2.5 rounded-full bg-(--dot)" style={{ '--dot': s.color }} />{s.name}
+            </Button>
           ))}
         </div>
       )}

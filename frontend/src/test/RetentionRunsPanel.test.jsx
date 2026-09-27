@@ -97,6 +97,22 @@ describe('RetentionRunsPanel — sunucu-taraflı liste', () => {
     await waitFor(() => expect(api.admin.getRetentionRuns).toHaveBeenCalledWith(expect.objectContaining({ page: 1 })))
   })
 
+  // Derin bağlantı regresyonu (2026-09-26): `useEffect(() => setPage(0), [süzgeçler…, size])` mount'ta da koşup
+  // r_page'i 1'e düşürüyordu; varsayılan boyut 20 seçeneklerde yoktu. Standart: panel ön ayarı (25), r_page/r_ps.
+  it("r_page derin bağlantısı mount'ta korunur (istek page=1, 0-tabanlı); boyut 25; adres korunur", async () => {
+    localStorage.clear()
+    window.history.replaceState({}, '', '/?tab=admin&r_page=2')
+    api.admin.getRetentionRuns.mockResolvedValue({ ...reply([run({ id: 1 })], 80), page: 1, size: 25 })
+    render(<RetentionRunsPanel policies={[]} />)
+    await waitFor(() => expect(api.admin.getRetentionRuns).toHaveBeenCalled())
+    expect(api.admin.getRetentionRuns.mock.calls[0][0]).toMatchObject({ page: 1, size: 25 })
+    await screen.findByRole('navigation', { name: /Sayfalama|Pagination/ })
+    await new Promise(r => setTimeout(r, 400))
+    for (const [args] of api.admin.getRetentionRuns.mock.calls) expect(args).toMatchObject({ page: 1 })
+    expect(screen.getByRole('button', { name: /^(Sayfa|Page) 2$/ })).toHaveAttribute('aria-current', 'page')
+    expect(new URLSearchParams(window.location.search).get('r_page')).toBe('2')
+  })
+
   it('CSV bağlantısı ekrandaki süzgeci taşır', async () => {
     render(<RetentionRunsPanel policies={[]} />)
     await waitFor(() => expect(api.admin.getRetentionRuns).toHaveBeenCalled())
@@ -124,7 +140,7 @@ describe('RetentionRunsPanel — "neden 0" tanısı ve kalem rozetleri', () => {
     render(<RetentionRunsPanel policies={[]} />)
     const badge = await screen.findByText(/activity_log · (hata|error)/i)
     expect(badge.getAttribute('title')).toContain('relation does not exist')
-    expect(document.querySelector('.ret-why-zero')).toBeNull()
+    expect(document.querySelector('[data-why-zero]')).toBeNull()
   })
 
   it('hiç uygun kayıt yoksa en erken kesim tarihiyle açıklama; atlananlar sarı rozet', async () => {

@@ -242,6 +242,18 @@ public class SqlPlaygroundService {
      * <p><b>Kalan is (ops).</b> Kesin guvence yine de ayri bir salt-okunur Postgres ROLUDUR;
      * guvenlik denetiminin "SQL RO rol" maddesi bu isi izlemeye devam ediyor.
      */
+    /**
+     * Kullanıcıya gösterilecek hata metni: EN ÖZGÜL neden (PostgreSQL'in kendi mesajı — "ERROR: column … does not
+     * exist  Position: 8"). Spring 6'dan beri {@code DataAccessException#getMessage()} nedeni EKLEMİYOR; yalnız
+     * "StatementCallback; bad SQL grammar [...]" dönüyordu ve arayüz ne hangi sütunun ne hangi konumun hatalı
+     * olduğunu gösterebiliyordu (2026-09-27). Neden yoksa istisnanın kendi mesajı.
+     */
+    static String errorMessage(Exception e) {
+        Throwable specific = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e);
+        String msg = specific != null ? specific.getMessage() : null;
+        return (msg == null || msg.isBlank()) ? e.getMessage() : msg;
+    }
+
     public Map<String, Object> execute(String rawSql, String executedBy) {
         String sanitized = sanitize(rawSql);
         validateReadOnly(sanitized);
@@ -255,9 +267,9 @@ public class SqlPlaygroundService {
             rows = playgroundTemplate().queryForList(capped);
         } catch (Exception e) {
             rows = List.of();
-            error = e.getMessage();
+            error = errorMessage(e);
             ok = false;
-            log.warn("SQL Playground query failed: user={} err={}", executedBy, e.getMessage());
+            log.warn("SQL Playground query failed: user={} err={}", executedBy, error);
         }
         long dur = System.currentTimeMillis() - t0;
 

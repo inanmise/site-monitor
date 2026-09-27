@@ -1,19 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { PAGINATION_PRESETS, resolvePreset } from './paginationPresets.js'
+import { readUrlInt, useUrlQuerySync } from './useUrlQuerySync.js'
 
 /**
  * Client-side sayfalama hook'u — tüm liste görünümlerinde tek standart (PaginationBar ile birlikte).
+ * Sunucu sayfalı listeler için kardeşi `useServerPagination` (aynı ön ayarlar, aynı çubuk).
+ *
+ *   const pager = usePagination(items, { listKey: 'maintenance-windows', preset: 'page', resetDeps: [q] })
+ *   pager.pageItems.map(…)   ·   <PaginationBar {...pager} />
  *
  * Davranış kuralları:
+ * - Ön ayar (`preset`: page | panel | modal, bkz. paginationPresets.js) boyut listesini ve varsayılan
+ *   boyutu verir; `modal` çubuğu `compact` çizer. `defaultSize` / `sizeOptions` açıkça verilirse ön
+ *   ayarı ezer (geriye uyum).
  * - Clamp: veri küçülünce (polling sonrası silme, filtre daralması) page > totalPages olursa
  *   otomatik son geçerli sayfaya çekilir.
  * - Reset: resetDeps içindeki herhangi bir değer değişince sayfa 1'e döner. resetDeps'e ASLA
  *   items dizisi bağlanmaz — polling her turda yeni dizi referansı set eder, sayfa korunmalı.
  * - Kalıcılık: pageSize localStorage'a görünüm bazında yazılır (sm.pageSize.<listKey>).
+ * - URL (isteğe bağlı): `url: { pageKey, sizeKey }` → ilk açılışta adresten okunur (ps ön ayarın
+ *   listesine karşı doğrulanır), sonra geri yazılır: sayfa > 1 ise sayfa, boyut ön ayar varsayılanı
+ *   değilse YA DA sayfa > 1 ise boyut (paylaşılan link aynı dilimi açsın).
  * - 1-tabanlı sayfa numarası tek standarttır.
  */
 
-export const PAGE_SIZE_OPTIONS = [25, 50, 100, 200]
-export const DEFAULT_PAGE_SIZE = 50
+export const PAGE_SIZE_OPTIONS = [...PAGINATION_PRESETS.page.sizeOptions]
+export const DEFAULT_PAGE_SIZE = PAGINATION_PRESETS.page.defaultSize
 
 const LS_PREFIX = 'sm.pageSize.'
 
@@ -46,14 +58,52 @@ export function writePageSize(listKey, size) {
   try { localStorage.setItem(LS_PREFIX + listKey, String(size)) } catch { /* private mode */ }
 }
 
-export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE, resetDeps = [], initialPage = 1, initialSize = null, sizeOptions = PAGE_SIZE_OPTIONS } = {}) {
-  // sizeOptions: çubukta sunulan boyutlar — doğrulama da AYNI listeyle yapılır (normalizeSizeOptions).
-  const allowedSizes = normalizeSizeOptions(sizeOptions)
-  // initialPage/initialSize: paylaşılan URL'den (?page=3&ps=100) gelen başlangıç — ps geçerli bir
-  // boyutsa localStorage tercihine BASKINDIR (link alan kişide 3. sayfa başka dilime kaymasın).
-  const [page, setPageRaw] = useState(() => (Number.isInteger(initialPage) && initialPage > 0 ? initialPage : 1))
-  const [pageSize, setPageSizeRaw] = useState(() =>
-    allowedSizes.includes(initialSize) ? initialSize : readPageSize(listKey, defaultSize, allowedSizes))
+/**
+ * Ön ayarı hook içinde KARARLI referansla çözer (her render'da yeni dizi → `{...pager}` çubuğa
+ * gereksiz yeni prop taşımasın). İki hook da (usePagination / useServerPagination) bunu kullanır.
+ */
+export function usePresetConfig(preset, defaultSize, sizeOptions) {
+  const optsKey = Array.isArray(sizeOptions) ? sizeOptions.join(',') : ''
+  return useMemo(() => resolvePreset(preset, { defaultSize, sizeOptions }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [preset, defaultSize, optsKey])
+}
+
+/** URL eşlemesi: sayfa > 1 ise sayfa; boyut varsayılandan farklıysa YA DA sayfa > 1 ise boyut. */
+export function pageUrlMapping(url, page, pageSize, defaultSize) {
+  if (!url?.pageKey && !url?.sizeKey) return {}
+  const out = {}
+  if (url.pageKey) out[url.pageKey] = page > 1 ? page : null
+  if (url.sizeKey) out[url.sizeKey] = (pageSize !== defaultSize || page > 1) ? pageSize : null
+  return out
+}
+
+/** İlk sayfa: URL (varsa) → initialPage → 1. */
+export function initialPageFrom(url, initialPage) {
+  const fromUrl = url?.pageKey ? readUrlInt(url.pageKey, null) : null
+  const p = fromUrl ?? initialPage
+  return Number.isInteger(p) && p > 0 ? p : 1
+}
+
+/** İlk boyut: URL ps (listede ise) → initialSize (listede ise) → localStorage → varsayılan. */
+export function initialSizeFrom(url, initialSize, listKey, cfg) {
+  const fromUrl = url?.sizeKey ? readUrlInt(url.sizeKey, null) : null
+  if (cfg.sizeOptions.includes(fromUrl)) return fromUrl
+  if (cfg.sizeOptions.includes(initialSize)) return initialSize
+  return readPageSize(listKey, cfg.defaultSize, cfg.sizeOptions)
+}
+
+export function usePagination(items, {
+  listKey, preset, defaultSize, sizeOptions, resetDeps = [],
+  initialPage = 1, initialSize = null, url = null,
+} = {}) {
+  // sizeOptions: çubukta sunulan boyutlar — doğrulama da AYNI listeyle yapılır.
+  const cfg = usePresetConfig(preset, defaultSize, sizeOptions)
+  const allowedSizes = cfg.sizeOptions
+  // initialPage/initialSize ya da url: paylaşılan URL'den (?page=3&ps=100) gelen başlangıç — ps geçerli
+  // bir boyutsa localStorage tercihine BASKINDIR (link alan kişide 3. sayfa başka dilime kaymasın).
+  const [page, setPageRaw] = useState(() => initialPageFrom(url, initialPage))
+  const [pageSize, setPageSizeRaw] = useState(() => initialSizeFrom(url, initialSize, listKey, cfg))
 
   const totalItems = items?.length ?? 0
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
@@ -87,6 +137,9 @@ export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, resetDeps)
 
+  // Paylaşılabilir adres (isteğe bağlı). url yoksa eşleme boş + kapalı: hook sırası sabit kalır.
+  useUrlQuerySync(pageUrlMapping(url, safePage, pageSize, cfg.defaultSize), { enabled: !!url })
+
   const setPage = (p) => {
     const n = Number(p)
     if (!Number.isFinite(n)) return
@@ -117,6 +170,9 @@ export function usePagination(items, { listKey, defaultSize = DEFAULT_PAGE_SIZE,
     pageItems,
     rangeStart: totalItems === 0 ? 0 : (safePage - 1) * pageSize + 1,
     rangeEnd: Math.min(safePage * pageSize, totalItems),
+    // modal ön ayarı küçük çubuk çizer. Anahtar YALNIZ true iken eklenir: `<PaginationBar compact {...pager} />`
+    // yazan çağıranın açık değerini `compact: false` ile ezmeyelim.
+    ...(cfg.compact ? { compact: true } : {}),
   }
 }
 

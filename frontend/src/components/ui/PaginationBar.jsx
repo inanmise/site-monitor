@@ -1,23 +1,38 @@
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { PAGE_SIZE_OPTIONS } from '../../hooks/usePagination.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem } from '@/components/shadcn/pagination'
-import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/shadcn/select'
 import { cn } from '@/lib/utils'
 
 /**
- * Tüm liste görünümlerinin TEK sayfalama barı — hem client-side (usePagination ile) hem
- * server-side (sayfanın kendi state'iyle, 1-tabanlı değerler geçirilerek) kullanılır.
- * İç uygulama shadcn: Pagination (gezinme) + ToggleGroup (sayfa boyutu) + Input ("Sayfaya git").
+ * Tüm liste görünümlerinin TEK sayfalama çubuğu (2026-09-26 standardı). Beslenişi:
+ *   istemci listesi → `<PaginationBar {...usePagination(items, …)} />`
+ *   sunucu listesi  → `<PaginationBar {...useServerPagination(…).bar} />`
+ * Elle `page=`/`totalPages=` bağlamak kapıda yasak (`paginationBase.test.js`).
  *
+ * Görünüm shadcn Data Table sayfalamasıdır (ui.shadcn.com/docs/components/radix/data-table →
+ * Pagination): bilgi solda, "Sayfa başına" Select, sonra « ‹ [numaralar …] › ».
+ * - sm ve üstü: [Sayfa x / y · a–b / N kayıt] … [Sayfa başına ▾] [« ‹ 1 … 4 5 6 … 42 › »] [Git]
+ * - sm altı (telefon): 1. satır ortalı `‹ 3 / 12 ›` (+ Git); «», numaralar gizli; dokunma hedefleri
+ *   40 px (`max-sm:size-10`, compact dâhil). 2. satır: kayıt aralığı + boyut Select.
+ * - compact (modal ön ayarı): numara yok, her genişlikte `‹ x / y ›`.
+ *
+ * Kurallar:
  * - totalItems === 0 → hiç render edilmez.
- * - totalPages === 1 → gezinme gizli, boyut seçici + kayıt bilgisi görünür.
+ * - totalPages === 1 → gezinme gizli; bilgi (+ gerekiyorsa boyut) görünür.
+ * - Boyut Select'i liste en küçük boyuta sığıyorsa (totalItems ≤ min(sizeOptions)) gizlenir —
+ *   hiçbir seçimin etkisi olmayan kontrol çizilmez. Her genişlikte TEK kontrol: jsdom Tailwind
+ *   medya sorgularını uygulamaz, `max-sm:hidden` ile iki alternatif kontrol çizmek testlerde ikisini
+ *   birden gösterirdi.
  * - totalPages > 10 → "Sayfaya git" girişi (Enter ile, clamp'li).
- * - compact: modal içi küçük varyant (boyut seçici + ‹ x/y › + Git).
- * - scrollTargetRef verilirse sayfa değişiminde kapsayıcının başına yumuşak scroll.
+ * - Kayıt aralığı `aria-live="polite"`: sayfa değişimi ekran okuyucuya duyurulur.
+ * - Sayfa değişince listenin başı görünüm alanının ÜSTÜNDE kaldıysa oraya kaydırılır (hedef:
+ *   `scrollTargetRef`, verilmezse çubuktan önceki kardeş öğe = liste). Baş zaten görünüyorsa
+ *   kaydırma yok.
  *
  * Sayfa öğeleri <a href> DEĞİL düğmedir (shadcn PaginationLink yerine aynı görünümü veren
  * Button): SPA'da sayfa değişimi state'tir, gezinme/yeniden yükleme OLMAMALI.
@@ -35,6 +50,20 @@ export function pageNumbers(total, current) {
     }, [])
 }
 
+/** Listenin başı görünür alanın üstünde kaldıysa başa kaydır (en yakın kaydırılabilir ata = modal gövdesi). */
+function revealListTop(el) {
+  if (!el || typeof el.getBoundingClientRect !== 'function') return
+  let viewTop = 0
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const oy = window.getComputedStyle(p).overflowY
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) { viewTop = p.getBoundingClientRect().top; break }
+  }
+  if (el.getBoundingClientRect().top >= viewTop) return
+  const reduced = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView?.({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+}
+
 export default function PaginationBar({
   page, totalPages, totalItems, rangeStart, rangeEnd,
   pageSize, sizeOptions = PAGE_SIZE_OPTIONS,
@@ -48,6 +77,7 @@ export default function PaginationBar({
   const locale = useDateLocale()
   const [gotoVal, setGotoVal] = useState('')
   const sizerLabelId = useId()
+  const rootRef = useRef(null)
 
   if (!totalItems) return null
 
@@ -57,12 +87,8 @@ export default function PaginationBar({
     const clamped = Math.min(Math.max(1, p), totalPages)
     if (clamped === page) return
     onPageChange?.(clamped)
-    const el = scrollTargetRef?.current
-    if (el) {
-      const reduced = typeof window.matchMedia === 'function'
-        && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
-    }
+    const root = rootRef.current
+    revealListTop(scrollTargetRef?.current ?? root?.previousElementSibling ?? root?.parentElement)
   }
 
   function submitGoto(e) {
@@ -73,39 +99,44 @@ export default function PaginationBar({
     setGotoVal('')
   }
 
-  const iconSize = compact ? 'icon-xs' : 'icon-sm'
-  const edgeBtn = (label, disabled, target, Icon) => (
-    <PaginationItem>
-      <Button type="button" variant="ghost" size={iconSize} disabled={disabled} aria-label={label}
-        onClick={() => go(target)}>
+  // Telefonda (sm altı) her gezinme düğmesi 40 px dokunma hedefi — compact dâhil.
+  const touch = 'max-sm:size-10'
+  const edgeBtn = (label, disabled, target, Icon, edge) => (
+    <PaginationItem className={edge ? 'max-sm:hidden' : undefined}>
+      <Button type="button" variant="ghost" size={compact ? 'icon-xs' : 'icon-sm'} disabled={disabled} aria-label={label}
+        className={touch} onClick={() => go(target)}>
         <Icon aria-hidden="true" />
       </Button>
     </PaginationItem>
   )
 
-  // Numaralar ve '…' dar ekranda gizlenir; «‹›» + bilgi kalır (eski .pg-btn--num kuralı).
+  // Konum göstergesi "3 / 12": compact'ta her genişlikte, normalde yalnız telefonda (numaraların yerine).
+  const position = (
+    <PaginationItem className={cn('px-2 whitespace-nowrap tabular-nums text-muted-foreground', !compact && 'sm:hidden')}>
+      {fmt(page)} / {fmt(totalPages)}
+    </PaginationItem>
+  )
+
   const nav = totalPages > 1 && (
     <Pagination aria-label={t('pg.nav')} className="mx-0 w-auto">
-      <PaginationContent className="gap-0.5">
-        {edgeBtn(t('pg.first'), page <= 1, 1, ChevronsLeft)}
-        {edgeBtn(t('pg.prev'), page <= 1, page - 1, ChevronLeft)}
+      {/* Projede Tailwind preflight YOK: <ul> tarayıcı varsayılanıyla madde imi + 40 px sol dolgu çiziyordu
+          (her düğmenin yanında "•", telefonda ortalanmamış satır) → list-none m-0 p-0 */}
+      <PaginationContent className="m-0 list-none gap-0.5 p-0">
+        {edgeBtn(t('pg.first'), page <= 1, 1, ChevronsLeft, true)}
+        {edgeBtn(t('pg.prev'), page <= 1, page - 1, ChevronLeft, false)}
         {!compact && pageNumbers(totalPages, page).map((p, i) => p === '…'
           ? <PaginationItem key={`e${i}`} className="max-sm:hidden"><PaginationEllipsis className="size-8" /></PaginationItem>
           : (
             <PaginationItem key={p} className="max-sm:hidden">
               <Button type="button" variant={p === page ? 'outline' : 'ghost'} size="sm"
-                className="h-8 min-w-8 px-2 tabular-nums"
+                className="h-8 min-w-8 px-2 tabular-nums pointer-coarse:h-10 pointer-coarse:min-w-10"
                 aria-label={t('pg.pageBtn', p)} aria-current={p === page ? 'page' : undefined}
                 onClick={() => go(p)}>{fmt(p)}</Button>
             </PaginationItem>
           ))}
-        {compact && (
-          <PaginationItem className="whitespace-nowrap px-1.5 tabular-nums text-muted-foreground">
-            {fmt(page)} / {fmt(totalPages)}
-          </PaginationItem>
-        )}
-        {edgeBtn(t('pg.next'), page >= totalPages, page + 1, ChevronRight)}
-        {edgeBtn(t('pg.last'), page >= totalPages, totalPages, ChevronsRight)}
+        {position}
+        {edgeBtn(t('pg.next'), page >= totalPages, page + 1, ChevronRight, false)}
+        {edgeBtn(t('pg.last'), page >= totalPages, totalPages, ChevronsRight, true)}
       </PaginationContent>
     </Pagination>
   )
@@ -114,45 +145,54 @@ export default function PaginationBar({
     <form onSubmit={submitGoto}>
       <Input type="number" min="1" max={totalPages} value={gotoVal} placeholder={t('pg.gotoLabel')}
         aria-label={t('pg.goto')} onChange={e => setGotoVal(e.target.value)}
-        className={cn('w-16 px-2', compact ? 'h-7' : 'h-8')} />
+        className={cn('w-16 px-2 max-sm:h-10', compact ? 'h-7' : 'h-8')} />
     </form>
   )
 
-  // Boyut seçici: tek aktif seçim → ToggleGroup. Radix değerleri dize ister; boyutlar sayı olduğu
-  // için öğeler sıra numarasıyla anahtarlanır, çağırana orijinal sayı döner. Etkin boyuta yeniden
-  // basmak seçimi boşaltmaz ('' yok sayılır). Roller SegmentedControl'deki gibi düğme + aria-pressed.
-  const sizeIdx = sizeOptions.indexOf(pageSize)
-  const sizer = (
-    <div className="inline-flex items-center gap-1">
-      <span id={sizerLabelId} className="mr-0.5 whitespace-nowrap text-muted-foreground">{t('pg.perPage')}</span>
-      <ToggleGroup type="single" role="group" aria-labelledby={sizerLabelId} spacing={1}
-        value={sizeIdx >= 0 ? String(sizeIdx) : ''}
-        onValueChange={(v) => {
-          if (v === '') return
-          const n = sizeOptions[Number(v)]
-          if (n !== undefined && n !== pageSize) onPageSizeChange?.(n)
-        }}>
-        {sizeOptions.map((n, i) => (
-          <ToggleGroupItem key={n} value={String(i)} role="button" aria-pressed={pageSize === n}
-            aria-checked={undefined} size="sm"
-            className={cn('border border-transparent px-2 font-normal tabular-nums text-muted-foreground data-[state=on]:border-border data-[state=on]:bg-background data-[state=on]:font-semibold data-[state=on]:text-foreground data-[state=on]:shadow-xs',
-              compact && 'h-6 min-w-6 px-1.5')}>
-            {n}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+  // Boyut seçici: shadcn Select (Data Table deseni). Radix değerleri dize ister; çağırana sayı döner.
+  // Etkin boyut listede yoksa (eski çağıran) listeye eklenir — tetik boş görünmesin.
+  const minSize = sizeOptions.length ? Math.min(...sizeOptions) : 0
+  const showSizer = typeof onPageSizeChange === 'function' && sizeOptions.length > 1 && totalItems > minSize
+  const sizes = sizeOptions.includes(pageSize) || !Number.isFinite(pageSize)
+    ? sizeOptions : [...sizeOptions, pageSize].sort((a, b) => a - b)
+  const sizer = showSizer && (
+    <div role="group" aria-labelledby={sizerLabelId} className="inline-flex items-center gap-2">
+      <span id={sizerLabelId} className="whitespace-nowrap text-muted-foreground">{t('pg.perPage')}</span>
+      <Select value={String(pageSize)}
+        onValueChange={(v) => { const n = Number(v); if (Number.isFinite(n) && n !== pageSize) onPageSizeChange(n) }}>
+        {/* Yükseklik tetiğin kendi `data-[size=sm]:h-8` kuralını ezmeli → aynı öznitelik varyantıyla */}
+        <SelectTrigger size="sm" aria-labelledby={sizerLabelId}
+          className={cn('w-[4.75rem] tabular-nums max-sm:data-[size=sm]:h-10 pointer-coarse:data-[size=sm]:h-10', compact && 'data-[size=sm]:h-7 pointer-coarse:data-[size=sm]:h-10')}>
+          <SelectValue />
+        </SelectTrigger>
+        {/* Modal / yan panel içinde de üstte kalsın: z-(--z-menu) (SHADCN.md §2.5) */}
+        <SelectContent side="top" className="z-(--z-menu) min-w-[4.75rem]">
+          {sizes.map((n) => (
+            <SelectItem key={n} value={String(n)} className="tabular-nums">{fmt(n)}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 
   return (
-    <div className={cn('flex flex-wrap items-center', compact ? 'mt-2.5 gap-2.5 text-[.85em]' : 'mt-3.5 gap-3.5 text-[.9em]')}>
-      {sizer}
-      {nav}
-      {goto}
-      <span className="ml-auto inline-flex items-center gap-2.5 whitespace-nowrap tabular-nums text-muted-foreground max-sm:ml-0">
-        {totalPages > 1 && <span>{t('pg.pageOf', fmt(page), fmt(totalPages))}</span>}
-        <span>{t('pg.range', fmt(rangeStart), fmt(rangeEnd), fmt(totalItems))}</span>
-      </span>
+    <div ref={rootRef} data-slot="pagination-bar"
+      className={cn('flex flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-2',
+        compact ? 'mt-2.5 text-[.85em]' : 'mt-3.5 text-[.9em]')}>
+      {/* Bilgi + boyut: telefonda 2. satır (iki yana yaslı); sm+'da sarmalayıcı `contents` → bilgi solda, boyut sağa */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:contents">
+        <p className="m-0 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 tabular-nums text-muted-foreground sm:mr-auto">
+          {totalPages > 1 && <span className="max-sm:hidden">{t('pg.pageOf', fmt(page), fmt(totalPages))}</span>}
+          <span aria-live="polite">{t('pg.range', fmt(rangeStart), fmt(rangeEnd), fmt(totalItems))}</span>
+        </p>
+        {sizer}
+      </div>
+      {(nav || goto) && (
+        <div className="flex items-center justify-center gap-2 sm:justify-end">
+          {nav}
+          {goto}
+        </div>
+      )}
     </div>
   )
 }

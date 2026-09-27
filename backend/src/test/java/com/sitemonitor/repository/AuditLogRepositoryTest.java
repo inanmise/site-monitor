@@ -193,6 +193,40 @@ class AuditLogRepositoryTest {
     }
 
     @Test
+    @DisplayName("O-2: kaba kuvvet sayacı kilitliyken gelen BLOCKED denemeleri SAYMAZ (kalıcı kilit hızlandırılamaz)")
+    void countRecentFailedLogins_excludesBlockedAttempts() {
+        repo.save(fl(20, "2026-07-28T09:00:00", "N00001", "1.1.1.1", "BAD_PASSWORD: attempt #1/5"));
+        repo.save(fl(21, "2026-07-28T09:01:00", "N00001", "1.1.1.1", "BAD_PASSWORD: attempt #2/5"));
+        for (int i = 0; i < 3; i++) {   // kilit süresince gelen denemeler — recordRateLimited deseni
+            AuditLog b = fl(22 + i, "2026-07-28T09:0" + (2 + i) + ":00", "N00001", "1.1.1.1", "Rate limited");
+            b.setOutcome("BLOCKED");
+            repo.save(b);
+        }
+        AuditLog legacy = fl(25, "2026-07-28T09:06:00", "N00001", "1.1.1.1", "eski satır");
+        legacy.setOutcome(null);   // outcome'suz eski satırlar sayılmaya devam eder
+        repo.save(legacy);
+
+        assertThat(repo.countRecentFailedLogins("N00001", "2026-07-28T00:00:00")).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("D-2: findMemberIdentities projeksiyonu [id, küçük harf ad, sistem rolü] döner (ekip kapsamı rol süzgeci)")
+    void findMemberIdentities_carriesSystemRole(@Autowired AppUserRepository users) {
+        com.sitemonitor.model.AppUser admin = new com.sitemonitor.model.AppUser();
+        admin.setUsername("N90001"); admin.setSystemRole("ADMIN"); admin.setTeamId(5L);
+        admin.getTeamIds().add(5L);
+        users.save(admin);
+        com.sitemonitor.model.AppUser member = new com.sitemonitor.model.AppUser();
+        member.setUsername("N90002"); member.setSystemRole("USER"); member.setTeamId(5L);
+        member.getTeamIds().add(5L);
+        users.save(member);
+
+        List<Object[]> rows = users.findMemberIdentities(List.of(5L));
+        assertThat(rows).extracting(r -> r[1] + "/" + r[2])
+                .containsExactlyInAnyOrder("n90001/ADMIN", "n90002/USER");
+    }
+
+    @Test
     @DisplayName("günlük yoğunluk: countByDaySince → gün başına gruplar, tarihe göre artan")
     void countByDay() {
         repo.save(a(5, "2026-07-27T09:00:00", "LOGIN",  "carol", 3L, null, null, "SUCCESS"));

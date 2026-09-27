@@ -27,6 +27,7 @@ class IncidentServiceTest {
 
     @Autowired IncidentService service;
     @Autowired IncidentRecordRepository repo;
+    @Autowired com.sitemonitor.repository.IncidentImageRepository imageRepo;
 
     private Map<String, Object> body(String title, String occurredAt, String sev, String cat) {
         Map<String, Object> m = new HashMap<>();
@@ -297,6 +298,58 @@ class IncidentServiceTest {
         var summary = (Map<String, Object>) tr.get("summary");
         // 2 RESOLVED'dan yalnız 1'i SLA içinde (diğeri ihlal)
         assertThat(((Number) summary.get("resolved_within_sla")).longValue()).isEqualTo(1L);
+    }
+
+    // ── Görsel sahipliği (prod kapısı 2026-09-25, Y-1) ─────────────────────────────────────────
+    // linkImages eskiden markdown'da geçen HER görsel id'sini kaydedilen olaya taşıyordu: başka
+    // takımın olayındaki görselin id'si açıklamaya yazılınca görsel yeni olaya "sahipleniliyordu".
+
+    private com.sitemonitor.model.IncidentImage image(Long incidentId, String createdBy) {
+        com.sitemonitor.model.IncidentImage img = new com.sitemonitor.model.IncidentImage();
+        img.setIncidentId(incidentId);
+        img.setContentType("image/png");
+        img.setSizeBytes(3L);
+        img.setData(new byte[]{1, 2, 3});
+        img.setCreatedBy(createdBy);
+        img.setCreatedAt("2026-09-25T10:00:00");
+        return imageRepo.save(img);
+    }
+
+    private static String ref(com.sitemonitor.model.IncidentImage img) {
+        return "![g](/api/incidents/images/" + img.getId() + ")";
+    }
+
+    @Test
+    @DisplayName("Y-1: create yalnız AKTÖRÜN taslağını bağlar — başka olayın görseli ve başkasının taslağı yerinde kalır")
+    void create_linksOnlyOwnDraftImages() {
+        IncidentRecord foreign = service.create(body("B takımı olayı", "2026-09-20T10:00:00", "HIGH", "OTHER"), "u2", 20L, 2L);
+        var foreignImg = image(foreign.getId(), "u2");   // B takımının olayına bağlı görsel
+        var ownDraft = image(null, "u1");                // aktörün taslağı
+        var otherDraft = image(null, "u2");              // başka kullanıcının taslağı
+
+        Map<String, Object> b = body("A takımı olayı", "2026-09-21T10:00:00", "HIGH", "OTHER");
+        b.put("description", ref(ownDraft) + "\n" + ref(foreignImg) + "\n" + ref(otherDraft));
+        IncidentRecord mine = service.create(b, "u1", 10L, 1L);
+
+        assertThat(imageRepo.findById(ownDraft.getId()).orElseThrow().getIncidentId()).isEqualTo(mine.getId());
+        assertThat(imageRepo.findById(foreignImg.getId()).orElseThrow().getIncidentId())
+                .as("başka olayın görseli taşınmamalı").isEqualTo(foreign.getId());
+        assertThat(imageRepo.findById(otherDraft.getId()).orElseThrow().getIncidentId())
+                .as("başka kullanıcının taslağı sahiplenilmemeli").isNull();
+    }
+
+    @Test
+    @DisplayName("Y-1: update yolu da başka olayın görselini taşımaz")
+    void update_doesNotMoveForeignIncidentImage() {
+        IncidentRecord foreign = service.create(body("B takımı olayı", "2026-09-20T10:00:00", "HIGH", "OTHER"), "u2", 20L, 2L);
+        var foreignImg = image(foreign.getId(), "u2");
+        IncidentRecord mine = service.create(body("A takımı olayı", "2026-09-21T10:00:00", "HIGH", "OTHER"), "u1", 10L, 1L);
+
+        Map<String, Object> upd = new HashMap<>();
+        upd.put("rca_summary", "bkz. " + ref(foreignImg));
+        service.update(mine.getId(), upd, "u1");
+
+        assertThat(imageRepo.findById(foreignImg.getId()).orElseThrow().getIncidentId()).isEqualTo(foreign.getId());
     }
 
     @Test

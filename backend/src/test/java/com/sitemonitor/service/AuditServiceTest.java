@@ -271,6 +271,71 @@ class AuditServiceTest {
     }
 
     @Test
+    @DisplayName("P3-4: birincil fallback yazılamazsa (salt-okunur kök FS) kayıt GEÇİCİ dizine düşer ve bekleyen sayılır")
+    void persist_primaryFallbackUnwritable_usesTempDir(@TempDir Path tmp) throws IOException {
+        Path blocker = Files.writeString(tmp.resolve("app"), "salt-okunur kökü taklit eden DOSYA");
+        ReflectionTestUtils.setField(service, "fallbackFile", blocker.resolve("logs/audit-fallback.jsonl").toString());
+        Path tempDir = Files.createDirectories(tmp.resolve("tmp"));
+        ReflectionTestUtils.setField(service, "fallbackSecondaryDir", tempDir.toString());
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
+
+        service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot");
+
+        Path second = tempDir.resolve("site-monitor").resolve("audit-fallback.jsonl");
+        assertThat(Files.readString(second)).contains("SYSTEM_STARTUP");
+        assertThat(service.pendingFallbackAuditCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("P3-4: iki yere de yazılamayan kayıt KAYIP sayılır — bekleyen sayısı 0 (\"temiz\") görünmez")
+    void persist_allFallbacksUnwritable_countedAsDropped(@TempDir Path tmp) throws IOException {
+        Path blocker = Files.writeString(tmp.resolve("app"), "dosya");
+        ReflectionTestUtils.setField(service, "fallbackFile", blocker.resolve("logs/audit-fallback.jsonl").toString());
+        ReflectionTestUtils.setField(service, "fallbackSecondaryDir", blocker.toString());   // o da bir DOSYA
+        when(auditLogRepo.findTopByOrderBySeqDesc()).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("db down")).when(auditLogRepo).save(any());
+
+        assertThatCode(() -> service.recordSystemEvent("SYSTEM_STARTUP", "SYSTEM", "app", "boot"))
+                .doesNotThrowAnyException();
+
+        assertThat(service.pendingFallbackAuditCount()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("P3-4: fallback dosyasının varsayılanı LOG dizinini izler (prod: /var/log/site-monitor, yazılabilir)")
+    void fallbackDefault_followsLogDirectory() throws IOException {
+        String props = Files.readString(Path.of("src/main/resources/application.properties"));
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("(?m)^site[.]monitor[.]audit[.]fallback-file=(.*)$").matcher(props);
+        assertThat(m.find()).isTrue();
+        assertThat(m.group(1).trim())
+                .as("göreli 'logs/' varsayılanı prod'da salt-okunur /app altına çözülüyordu")
+                .startsWith("${AUDIT_FALLBACK_FILE:${logging.file.path");
+        String prod = Files.readString(Path.of("src/main/resources/application-prod.properties"));
+        assertThat(prod).contains("logging.file.path=${LOG_DIR:/var/log/site-monitor}");
+    }
+
+    @Test
+    @DisplayName("Y-2/O-3: 10 KB'lık User-Agent en fazla 512 karakter saklanır; kısa/null değer aynen kalır")
+    void recordLogin_capsHugeUserAgent() {
+        String huge = "A".repeat(10_000);
+        ArgumentCaptor<AuditLog> cap = ArgumentCaptor.forClass(AuditLog.class);
+
+        service.recordLogin("alice", 1L, 2L, "USER", "1.2.3.4", huge, "sess1", false, "BAD_PASSWORD", null, 5);
+
+        verify(auditLogRepo, atLeastOnce()).save(cap.capture());
+        AuditLog saved = cap.getAllValues().get(0);
+        assertThat(saved.getUserAgent()).hasSize(AuditLog.USER_AGENT_MAX).isEqualTo(huge.substring(0, 512));
+        // Kısa ve null değer olduğu gibi kalır.
+        AuditLog copy = new AuditLog();
+        copy.setUserAgent("Mozilla/5.0");
+        assertThat(copy.getUserAgent()).isEqualTo("Mozilla/5.0");
+        copy.setUserAgent(null);
+        assertThat(copy.getUserAgent()).isNull();
+    }
+
+    @Test
     @DisplayName("recordSecurityEvent → outcome=BLOCKED, oturumsuzsa actor=anonymous")
     void recordSecurityEvent_blockedAnonymous() {
         HttpServletRequest req = mock(HttpServletRequest.class);

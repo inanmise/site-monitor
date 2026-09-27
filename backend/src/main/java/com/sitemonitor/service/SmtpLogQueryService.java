@@ -132,8 +132,13 @@ public class SmtpLogQueryService {
             Long teamId = e == null ? null : e.getTeamId();
             if (teamId == null && domain != null) teamId = domainTeam.get(domain.toLowerCase(Locale.ROOT));   // envanter-türevi alarm
             String status = (String) r[7];
-            out.add(new Row(((Number) r[0]).longValue(), eid, (String) r[2], (String) r[3], (String) r[4], (String) r[5], (String) r[6],
-                    status, (String) r[8], (String) r[9], (String) r[10], (String) r[11],
+            // 7/24 (NOC) satırı: alıcı alanında ADRES asla dönmez (grup adları + sayı; eski satırda yalnız sayı) —
+            // liste, özet, CSV ve zincir hep bu satırdan beslenir (2026-09-27).
+            boolean noc = com.sitemonitor.service.noc.NocLogRedaction.ROLE.equals(r[5]);
+            String recipient = noc ? com.sitemonitor.service.noc.NocLogRedaction.recipients((String) r[4]) : (String) r[4];
+            String cc = noc ? com.sitemonitor.service.noc.NocLogRedaction.recipients((String) r[11]) : (String) r[11];
+            out.add(new Row(((Number) r[0]).longValue(), eid, (String) r[2], (String) r[3], recipient, (String) r[5], (String) r[6],
+                    status, (String) r[8], (String) r[9], (String) r[10], cc,
                     kindOf(status), errorOf(status), classifyError(status), domain, teamId,
                     teamId == null ? null : teamNames.get(teamId),
                     e == null ? null : e.getAlertType(), e == null ? null : e.getAlertLevel()));
@@ -380,7 +385,10 @@ public class SmtpLogQueryService {
         Row row = enrich(java.util.Collections.singletonList(rawOf(n))).get(0);
         if (!scope.allows(row.teamId(), row.domain())) return null;
         Map<String, Object> out = row.toMap();
-        out.put("message", n.getMessage());
+        // 7/24 satırının gövdesi MASKELİ döner (arama listesi telefonları yok) — yazarken maskeli yazılır, burada
+        // ikinci kez uygulanır ki eski/elle yazılmış satır da sızdırmasın.
+        out.put("message", com.sitemonitor.service.noc.NocLogRedaction.isNoc(n)
+                ? com.sitemonitor.service.noc.NocLogRedaction.scrubHtml(n.getMessage()) : n.getMessage());
         if (n.getAlertEventId() != null) {
             AlertEvent e = alertEventRepo.findById(n.getAlertEventId()).orElse(null);
             if (e != null) {
@@ -413,6 +421,9 @@ public class SmtpLogQueryService {
         Row row = enrich(java.util.Collections.singletonList(rawOf(n))).get(0);
         if (!scope.allows(row.teamId(), row.domain())) return new ResendResult(false, null, null, "NOT_FOUND");
         if (!"FAILED".equals(row.kind())) return new ResendResult(false, null, null, "NOT_FAILED");
+        // 7/24 satırı yeniden gönderilemez: günlükte adres değil grup adı, gövde de MASKELİ (telefonsuz) duruyor —
+        // yeniden gönderim 7/24 ekibine eksik bir arama listesi yollardı. Sonraki tetik zaten yeniden dener.
+        if (com.sitemonitor.service.noc.NocLogRedaction.isNoc(n)) return new ResendResult(false, null, null, "NOC_NOT_RESENDABLE");
         if (n.getRecipientEmail() == null || n.getRecipientEmail().isBlank()) return new ResendResult(false, null, null, "NO_RECIPIENT");
         if (n.getMessage() == null || n.getMessage().isBlank()) return new ResendResult(false, null, null, "NO_BODY");
         if (n.getAlertEventId() != null) {
@@ -428,7 +439,7 @@ public class SmtpLogQueryService {
         copy.setTrigger("MANUAL"); copy.setEmailFrom(emailService.getEmailFrom()); copy.setCc(n.getCc());
         Long newId = null;
         try { newId = notificationLogRepo.save(copy).getId(); } catch (Exception ex) { log.warn("smtp-log: yeniden gönderim logu yazılamadı: {}", ex.toString()); }
-        log.info("SMTP yeniden gönderim: log #{} → #{} TO={} durum={} aktör={}", id, newId, n.getRecipientEmail(), status, actor);
+        log.info("SMTP yeniden gönderim: log #{} → #{} TO={} durum={} aktör={}", id, newId, SecretMask.maskEmails(n.getRecipientEmail()), status, actor);
         return new ResendResult("SENT".equals(status), status, newId, null);
     }
 

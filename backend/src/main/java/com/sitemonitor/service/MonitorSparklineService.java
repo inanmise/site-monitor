@@ -64,11 +64,55 @@ public class MonitorSparklineService {
         return out;
     }
 
+    // ── Maliyet sınırları (prod kapısı 2026-09-25, O-7) ──────────────────────────────────────────
+    // Her istek türün TÜM monitörlerinin ham kontrol satırlarını tarıyordu (görünürlük süzgeci bellekte);
+    // beş izlemesi olan kullanıcı da 10k monitörlük taramayı ödüyordu, 100 açık sayfa dakikada bir. Artık:
+    // kapsamlı çağıranın sorgusu görünür kümeyle daraltılır (monitor_id IN, idx_*_monitor_id), penceresi
+    // arayüzün kullandığı kadarla sınırlanır; global görücünün tüm-filo sonucu kısa TTL'le önbelleğe alınır
+    // (veri herkes için aynı — N global istek TTL başına 1 taramaya iner).
+
+    /** Global OLMAYAN çağıranın saat tavanı — arayüz 24 saat istiyor. */
+    public static final int SCOPED_MAX_HOURS = 24;
+    /** Global OLMAYAN çağıranın gün tavanı — arayüz en çok 30 gün istiyor (Sayfa Hızı 7/14/30). */
+    public static final int SCOPED_MAX_DAYS = 30;
+    /** Görünür küme en çok bu kadarsa sorgu IN listesiyle daraltılır (bind sınırı + plan güvenliği). */
+    static final int IN_LIMIT = 1000;
+
+    /** Sorgu daraltması: WHERE'e eklenecek parça + bağlanacak id'ler (küme büyükse ya da süzgeç istenmezse boş). */
+    private record IdFilter(String sql, List<Object> args) {
+        static IdFilter of(Set<Long> ids, boolean restrict) {
+            if (!restrict || ids.isEmpty() || ids.size() > IN_LIMIT) return new IdFilter("", List.of());
+            return new IdFilter(" AND monitor_id IN (" + String.join(",", Collections.nCopies(ids.size(), "?")) + ")",
+                    new ArrayList<>(ids));
+        }
+        Object[] with(Object... head) {
+            List<Object> all = new ArrayList<>(Arrays.asList(head));
+            all.addAll(args);
+            return all.toArray();
+        }
+    }
+
+    /** Global görücü (tüm filo) sonucu — kısa TTL'li ortak önbellek (CacheConfig "monitor-sparklines"). */
+    @org.springframework.cache.annotation.Cacheable(value = "monitor-sparklines", key = "#type + ':' + #hours", sync = true)
+    public Map<Long, Map<String, Object>> sparklinesAll(String type, int hours) {
+        return sparklines(type, hours, monitorTeams(type).keySet(), false);
+    }
+
+    /** Global görücü SLA sonucu — ortak önbellek (CacheConfig "monitor-sla", 300 sn; arayüz 5 dk'da bir tazeler). */
+    @org.springframework.cache.annotation.Cacheable(value = "monitor-sla", key = "#type + ':' + #days", sync = true)
+    public Map<Long, Map<String, Object>> availabilityAll(String type, int days) {
+        return availability(type, days, monitorTeams(type).keySet(), Instant.now(), false);
+    }
+
     /**
-     * @param ids görünür monitör id'leri (boş → boş harita)
+     * @param ids görünür monitör id'leri (boş → boş harita); sorgu bu kümeyle daraltılır (O-7)
      * @return id → { n, fail, up_pct, buckets:[{t,n,fail,ms}], last:[{at,ok,ms}] }
      */
     public Map<Long, Map<String, Object>> sparklines(String type, int hours, Set<Long> ids) {
+        return sparklines(type, hours, ids, true);
+    }
+
+    private Map<Long, Map<String, Object>> sparklines(String type, int hours, Set<Long> ids, boolean restrict) {
         Kind k = KINDS.get(type);
         int h = Math.max(1, Math.min(MAX_HOURS, hours));
         String from = ISO.format(Instant.now().minus(h, ChronoUnit.HOURS));
@@ -82,10 +126,11 @@ public class MonitorSparklineService {
             out.put(id, m);
         }
 
-        // Saatlik kovalar — tek sorgu, tüm monitörler; id süzgeci bellekte (IN listesi 1000+ olabilir).
+        // Saatlik kovalar — tek sorgu; görünür küme küçükse IN ile daraltılır (O-7), büyükse id süzgeci bellekte.
+        IdFilter f = IdFilter.of(ids, restrict);
         String bucketSql = "SELECT t.monitor_id, t.bucket, COUNT(*) AS n, SUM(t.fail) AS fail, AVG(t.ms) AS ms FROM ("
                 + "  SELECT monitor_id, substr(checked_at,1,13) AS bucket, " + k.msCol() + " AS ms, " + k.failExpr() + " AS fail"
-                + "    FROM " + k.table() + " WHERE checked_at >= ?"
+                + "    FROM " + k.table() + " WHERE checked_at >= ?" + f.sql()
                 + ") t GROUP BY t.monitor_id, t.bucket ORDER BY t.monitor_id, t.bucket";
         jdbc.query(bucketSql, rs -> {
             long id = rs.getLong(1);
@@ -101,13 +146,13 @@ public class MonitorSparklineService {
             buckets.add(b);
             m.put("n", (Integer) m.get("n") + n);
             m.put("fail", (Integer) m.get("fail") + fail);
-        }, from);
+        }, f.with(from));
 
         // Son 5 kontrol — pencere fonksiyonu; hata verirse (eski motor) yalnız kovalarla dönülür.
         String lastSql = "SELECT monitor_id, checked_at, ms, fail FROM ("
                 + "  SELECT monitor_id, checked_at, " + k.msCol() + " AS ms, " + k.failExpr() + " AS fail,"
                 + "         ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY checked_at DESC) AS rn"
-                + "    FROM " + k.table() + " WHERE checked_at >= ?"
+                + "    FROM " + k.table() + " WHERE checked_at >= ?" + f.sql()
                 + ") t WHERE t.rn <= " + LAST_N + " ORDER BY monitor_id, checked_at ASC";
         try {
             jdbc.query(lastSql, rs -> {
@@ -121,14 +166,14 @@ public class MonitorSparklineService {
                 c.put("ok", rs.getInt(4) == 0);
                 @SuppressWarnings("unchecked") List<Map<String, Object>> last = (List<Map<String, Object>>) m.get("last");
                 last.add(c);
-            }, from);
+            }, f.with(from));
         } catch (Exception e) {
             log.debug("Sparkline son-5 sorgusu desteklenmedi ({}): {}", type, e.toString());
         }
 
         for (Map<String, Object> m : out.values()) {
             int n = (Integer) m.get("n"), fail = (Integer) m.get("fail");
-            m.put("up_pct", n == 0 ? null : Math.round(1000.0 * (n - fail) / n) / 10.0);
+            m.put("up_pct", com.sitemonitor.util.AvailabilityMath.pct(n, n - fail, 1));   // O-5: R6 kuralının aynı dosyadaki kardeşi
         }
         return out;
     }
@@ -161,6 +206,10 @@ public class MonitorSparklineService {
 
     /** Test edilebilir çekirdek — {@code now} enjekte edilir. */
     Map<Long, Map<String, Object>> availability(String type, int days, Set<Long> ids, Instant now) {
+        return availability(type, days, ids, now, true);
+    }
+
+    private Map<Long, Map<String, Object>> availability(String type, int days, Set<Long> ids, Instant now, boolean restrict) {
         Kind k = KINDS.get(type);
         int d = Math.max(1, Math.min(MAX_DAYS, days));
         String from = ISO.format(now.minus(d, ChronoUnit.DAYS));
@@ -193,9 +242,11 @@ public class MonitorSparklineService {
             sql.append(", SUM(CASE WHEN checked_at >= ? THEN 1 ELSE 0 END), SUM(CASE WHEN checked_at >= ? THEN fail ELSE 0 END)");
             args.add(wf); args.add(wf);
         }
+        IdFilter f = IdFilter.of(ids, restrict);   // O-7: görünür kümeyle daralt
         sql.append(" FROM (SELECT monitor_id, checked_at, ").append(k.failExpr()).append(" AS fail FROM ").append(k.table())
-           .append(" WHERE checked_at >= ?) t GROUP BY monitor_id");
+           .append(" WHERE checked_at >= ?").append(f.sql()).append(") t GROUP BY monitor_id");
         args.add(from);
+        args.addAll(f.args());
         jdbc.query(sql.toString(), rs -> {
             Map<String, Object> m = out.get(rs.getLong(1));
             if (m == null) return;
@@ -214,9 +265,10 @@ public class MonitorSparklineService {
         List<Object> badArgs = new ArrayList<>();
         for (String wf : winFrom) { badSql.append(", SUM(CASE WHEN t.checked_at >= ? THEN 1 ELSE 0 END)"); badArgs.add(wf); }
         badSql.append(" FROM (SELECT monitor_id, checked_at, substr(checked_at,1,13) AS bucket, ").append(k.failExpr())
-              .append(" AS fail FROM ").append(k.table()).append(" WHERE checked_at >= ?) t WHERE t.fail = 1")
+              .append(" AS fail FROM ").append(k.table()).append(" WHERE checked_at >= ?").append(f.sql()).append(") t WHERE t.fail = 1")
               .append(" GROUP BY t.monitor_id, t.bucket ORDER BY t.monitor_id, t.bucket DESC");
         badArgs.add(from);
+        badArgs.addAll(f.args());
         jdbc.query(badSql.toString(), rs -> {
             Map<String, Object> m = out.get(rs.getLong(1));
             if (m == null) return;
@@ -250,9 +302,7 @@ public class MonitorSparklineService {
      * {@code MonitoringController.uptimePct}.
      */
     static Double pct(int n, int fail) {
-        if (n == 0) return null;
-        double p = Math.round(10000.0 * (n - fail) / n) / 100.0;
-        return (p >= 100.0 && fail > 0) ? 99.99 : p;
+        return com.sitemonitor.util.AvailabilityMath.pct(n, n - fail, 2);
     }
 
     @SuppressWarnings("unchecked")

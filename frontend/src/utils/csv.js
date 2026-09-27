@@ -18,16 +18,26 @@
  * yerde durmazsa bir sonraki dışa aktarım yine korumasız yazılır.
  */
 
+/**
+ * Yalnız FORMÜL nötrleme (tırnaklama yok): `=`, `+`, `-`, `@`, sekme ya da CR ile başlayan metnin başına tek tırnak.
+ * CSV dışındaki tablo çıktıları (panoya TSV kopyası — admin/sql/sqlUtils `rowsToTsv`) da AYNI kuralı buradan alır.
+ * null/undefined → boş dize.
+ */
+export function neutraliseFormula(value) {
+  if (value == null) return ''
+  const s = String(value)
+  const c0 = s[0]
+  if (c0 === '=' || c0 === '+' || c0 === '-' || c0 === '@' || c0 === '\t' || c0 === '\r') {
+    return "'" + s
+  }
+  return s
+}
+
 /** Formül nötrleme + tırnaklama uygulanmış hücre. null/undefined → boş dize. */
 export function csvCell(value) {
   if (value == null) return ''
-  let s = String(value)
+  const s = neutraliseFormula(value)
   if (s === '') return ''
-
-  const c0 = s[0]
-  if (c0 === '=' || c0 === '+' || c0 === '-' || c0 === '@' || c0 === '\t' || c0 === '\r') {
-    s = "'" + s
-  }
   return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 

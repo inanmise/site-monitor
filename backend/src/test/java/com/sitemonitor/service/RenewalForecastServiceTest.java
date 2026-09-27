@@ -80,6 +80,15 @@ class RenewalForecastServiceTest {
     }
 
     @Test
+    @DisplayName("N4: takvim günü KURUM gününe göre — JVM varsayılan dilimi (prod'da UTC) sonucu değiştirmez")
+    void renewBy_usesOrgDay_notJvmDefault() {
+        // Test JVM'i UTC koşar (pom: -Duser.timezone=UTC) — prod konteyneriyle aynı. 2026-10-10T22:30Z =
+        // 11 Ekim 01:30 İstanbul; lead 30 gün → kurum günü 2026-09-11 (UTC günüyle 2026-09-10 çıkardı).
+        assertThat(RenewalForecastService.ZONE).isEqualTo(ZoneId.of("Europe/Istanbul"));
+        assertThat(RenewalForecastService.renewBy("2026-10-10T22:30:00", 30)).isEqualTo("2026-09-11");
+    }
+
+    @Test
     @DisplayName("build: kapsam dışı takım satırı düşer; süresi dolmuş satır KALIR (sayfa artık overdue gösterir); plan durumu none/planned/done")
     void buildScopeAndPlan() {
         CertificateInventory planned = new CertificateInventory(); planned.setDomain("p.example.com"); planned.setTeamId(5L); planned.setRenewalPlannedAt("2026-09-20");
@@ -97,8 +106,9 @@ class RenewalForecastServiceTest {
         assertThat(certs).extracting(c -> c.get("domain")).containsExactly("a.example.com", "expired.example.com", "p.example.com", "d.example.com");
         Map<String, Object> a = certs.get(0);
         assertThat(a.get("lead_days")).isEqualTo(30);
-        // Dilimden bağımsız beklenti: sunucu dilimindeki takvim günü (CI UTC → 23.09, yerel Istanbul → 24.09)
-        String expectedRenewBy = Instant.parse("2026-10-23T23:59:59Z").minus(30, ChronoUnit.DAYS).atZone(ZoneId.systemDefault()).toLocalDate().toString();
+        // Kurum günü (prod kapısı 2026-09-25, N4): JVM dilimi ne olursa olsun Europe/Istanbul → 24.09. Eski beklenti
+        // JVM varsayılanını kopyalıyordu (CI UTC → 23.09) ve prod'daki UTC-gün kusurunu tam olarak pinliyordu.
+        String expectedRenewBy = Instant.parse("2026-10-23T23:59:59Z").minus(30, ChronoUnit.DAYS).atZone(ZoneId.of("Europe/Istanbul")).toLocalDate().toString();
         assertThat(a.get("renew_by")).isEqualTo(expectedRenewBy);
         assertThat(a.get("renewal_plan_state")).isEqualTo("none");
         assertThat(certs.get(2).get("renewal_plan_state")).isEqualTo("planned");

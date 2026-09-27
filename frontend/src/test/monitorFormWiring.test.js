@@ -89,3 +89,65 @@ describe('İzleme formu bağlantı kapısı (Bildirim Grubu)', () => {
     expect(missing).toEqual([])
   })
 })
+
+/**
+ * 7/24 İZLEME EKİBİ (NOC) ALANI — aynı dört halka (2026-09-27; sözleşme `.migration/noc/CONTRACT.md`).
+ *
+ * Alan dokuz izleme formuna + sertifika envanter formuna TOPLU eklendi — tam da yukarıdaki "beş formda kaydetme yükü
+ * yok" vakasının yeniden doğabileceği iş. Halkalar: varsayılan KAPALI (yeni izleme), düzenlemede kayıtlı değer
+ * (yanıt snake_case `noc_notify` / `noc_group_ids`), kaydetme yükü (izleme uçları camelCase `nocNotify` / `nocGroupIds`;
+ * envanter ucu varlığa bağlandığı için snake_case) ve ortak alan bileşeni (import dâhil). Kopyala (duplicate) düzenleme
+ * eşlemesini (formFrom) kullandığı için ayrıca halka gerekmez — davranış testi form başına ayrı.
+ */
+const NOC_MONITOR_LINKS = [
+  { name: 'EMPTY varsayılanı (kapalı)', re: /nocNotify:\s*false,\s*nocGroupIds:\s*\[\]/ },
+  { name: 'düzenlemede yükleme', re: /nocNotify:\s*!!m\.noc_notify,\s*nocGroupIds:\s*nocIdsFrom\(m\.noc_group_ids\)/ },
+  { name: 'kaydetme yükü', re: /nocNotify:\s*!!form\.nocNotify,\s*nocGroupIds:\s*nocGroupIdsBody\(form\.nocGroupIds\)/ },
+  { name: 'JSX alan', re: /<NocNotifyField\b[^>]*\btype="[A-Z]+"[^>]*checked=\{form\.nocNotify\}[^>]*groupIds=\{form\.nocGroupIds\}/ },
+  { name: 'alan import', re: /import\s+NocNotifyField\s+from\s+'\.\/noc\/forms\/NocNotifyField\.jsx'/ },
+  { name: 'toplu işlem 7/24', re: /<BulkActionBar\b[^>]*\bnocType="[A-Z]+"/ },
+]
+/** Tür anahtarı (sözleşme) — form ve toplu işlem AYNI anahtarı taşımalı (yanlış tür = başka tablonun kaydı). */
+const NOC_TYPE_OF = {
+  PingMonitorPage: 'PING', DnsMonitorPage: 'DNS', DomainMonitorPage: 'DOMAIN', HttpMonitorPage: 'HTTP',
+  KeywordMonitorPage: 'KEYWORD', PageMonitorPage: 'PAGE', PageSpeedMonitorPage: 'PAGESPEED', PortMonitorPage: 'PORT',
+  ScriptedMonitorPage: 'SCRIPTED',
+}
+
+describe('İzleme formu bağlantı kapısı (7/24 izleme ekibi)', () => {
+  it('dokuz formun HEPSİ altı halkayı da taşır', () => {
+    const missing = []
+    for (const form of MONITOR_FORMS) {
+      const src = fs.readFileSync(formFile(form), 'utf8')
+      for (const link of NOC_MONITOR_LINKS) {
+        if (!link.re.test(src)) missing.push(`${form} → ${link.name}`)
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('form alanı ve toplu işlem DOĞRU tür anahtarını taşır', () => {
+    const wrong = []
+    for (const form of MONITOR_FORMS) {
+      const src = fs.readFileSync(formFile(form), 'utf8')
+      const want = NOC_TYPE_OF[form]
+      // Şablon dizgede ters bölü YOK (kaçış tuzağı): sözcük sınırı yerine açık boşluk sınıfı.
+      if (!new RegExp(`<NocNotifyField[^>]*[ ]type="${want}"`).test(src)) wrong.push(`${form} → alan type≠${want}`)
+      if (!new RegExp(`<BulkActionBar[^>]*[ ]nocType="${want}"`).test(src)) wrong.push(`${form} → nocType≠${want}`)
+    }
+    expect(wrong).toEqual([])
+  })
+
+  it('envanter formu: snake_case dört halka + tür SSL', () => {
+    const src = fs.readFileSync(path.join(COMPONENTS, 'inventory', 'InventoryFormModal.jsx'), 'utf8')
+    const links = [
+      ['EMPTY varsayılanı (kapalı)', /noc_notify:\s*false,\s*noc_group_ids:\s*\[\]/],
+      ['düzenlemede yükleme', /noc_notify:\s*!!item\.noc_notify,[\s\S]{0,80}noc_group_ids:\s*nocIdsFrom\(item\.noc_group_ids\)/],
+      ['kaydetme yükü (snake_case)', /noc_notify:\s*!!form\.noc_notify,[\s\S]{0,80}noc_group_ids:\s*nocGroupIdsBody\(form\.noc_group_ids\)/],
+      ['JSX alan (SSL)', /<NocNotifyField\b[^>]*\btype="SSL"[^>]*checked=\{form\.noc_notify\}[^>]*groupIds=\{form\.noc_group_ids\}/],
+    ]
+    expect(links.filter(([, re]) => !re.test(src)).map(([name]) => name)).toEqual([])
+    // camelCase anahtar envanter gövdesinde SESSİZCE yok sayılır (varlığa bağlanan uç) — yükte olmamalı.
+    expect(src).not.toMatch(/\bnocNotify:\s*!!form/)
+  })
+})

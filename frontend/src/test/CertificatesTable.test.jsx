@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
 import CertificatesTable from '../components/CertificatesTable.jsx'
+import { readView } from '../components/certtable/certTableModel.js'
 
 // api istemcisini mock'la — component mount'ta getCertificatesPaginated çağırır.
-// Durum sınıfları (status-valid/critical/error) dilden BAĞIMSIZ CSS sınıfı → i18n metnine bağlanmadan doğrulanır.
+// Durum rozeti `data-status` (valid/critical/error) dilden BAĞIMSIZ → i18n metnine bağlanmadan doğrulanır.
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
 vi.mock('../api/client', () => ({
@@ -42,9 +43,60 @@ describe('CertificatesTable', () => {
     expect(screen.getByText('err.com')).toBeInTheDocument()
 
     // alert_level=critical → KRİTİK sınıfı (valid/warning değil)
-    expect(container.querySelector('tr[data-domain="crit.com"] .status-critical')).not.toBeNull()
-    expect(container.querySelector('tr[data-domain="valid.com"] .status-valid')).not.toBeNull()
-    expect(container.querySelector('tr[data-domain="err.com"] .status-error')).not.toBeNull()
+    expect(container.querySelector('tr[data-domain="crit.com"] [data-slot="cert-level"][data-status="critical"]')).not.toBeNull()
+    expect(container.querySelector('tr[data-domain="valid.com"] [data-slot="cert-level"][data-status="valid"]')).not.toBeNull()
+    expect(container.querySelector('tr[data-domain="err.com"] [data-slot="cert-level"][data-status="error"]')).not.toBeNull()
+  })
+
+  // ── Org geneli görünürlük (2026-09-26): "Takımlarım | Tüm takımlar" + salt okunur yabancı satır ──
+  describe('org geneli görünürlük', () => {
+    const scopeGroup = () => screen.queryByRole('group', { name: /görünürlük kapsamı|visible teams/i })
+    const withScope = (rows) => ({ ...paged(rows), scope: 'mine', visible_to_all: true })
+    const foreignRow = cert({ domain: 'foreign.example.com', team_id: 9, team_name: 'Takım B', can_manage: false })
+    const ownRow = cert({ domain: 'own.example.com', team_id: 5, team_name: 'Takım A', can_manage: true })
+    beforeEach(() => { localStorage.clear(); window.history.replaceState(null, '', '/') })
+
+    it('anahtar yalnız visible_to_all ile çizilir; "Tüm takımlar" isteğe scope=all, adrese c_scope=all yazar ve hatırlanır', async () => {
+      api.getCertificatesPaginated.mockImplementation((q) => Promise.resolve({ ...paged(q.scope === 'all' ? [ownRow, foreignRow] : [ownRow]), scope: q.scope || 'mine', visible_to_all: true }))
+      const { unmount } = render(<CertificatesTable onRowClick={() => {}} />)
+      await screen.findByText('own.example.com')
+      expect(api.getCertificatesPaginated.mock.calls.at(-1)[0].scope).toBeUndefined()
+      fireEvent.click(screen.getByRole('button', { name: /tüm takımlar|all teams/i }))
+      await screen.findByText('foreign.example.com')
+      expect(api.getCertificatesPaginated.mock.calls.at(-1)[0].scope).toBe('all')
+      await waitFor(() => expect(new URLSearchParams(window.location.search).get('c_scope')).toBe('all'))
+      expect(readView()?.scope).toBe('all')   // kayıtlı görünüm (certTableModel VIEW_KEY) kapsamı hatırlar
+      unmount()
+      window.history.replaceState(null, '', '/')
+      render(<CertificatesTable onRowClick={() => {}} />)
+      await screen.findByText('foreign.example.com')
+      expect(api.getCertificatesPaginated.mock.calls.at(-1)[0].scope).toBe('all')
+    })
+
+    it('ayar kapalı → anahtar yok', async () => {
+      api.getCertificatesPaginated.mockResolvedValue({ ...paged([ownRow]), scope: 'mine', visible_to_all: false })
+      render(<CertificatesTable onRowClick={() => {}} />)
+      await screen.findByText('own.example.com')
+      expect(scopeGroup()).toBeNull()
+    })
+
+    it('yabancı satır salt okunur: rozet var, seçim kutusu yok, tıklayınca onOpenReadOnly SATIRLA çağrılır (onRowClick değil); tümünü seç onu atlar', async () => {
+      api.getCertificatesPaginated.mockResolvedValue({ ...withScope([ownRow, foreignRow]), scope: 'all' })
+      const onRowClick = vi.fn(); const onOpenReadOnly = vi.fn()
+      const { container } = render(<CertificatesTable onRowClick={onRowClick} onOpenReadOnly={onOpenReadOnly} canManage />)
+      await screen.findByText('foreign.example.com')
+      const foreign = container.querySelector('tr[data-domain="foreign.example.com"]')
+      expect(foreign).toHaveAttribute('data-readonly', 'true')
+      expect(foreign.querySelector('[data-slot="read-only-badge"]')).not.toBeNull()
+      expect(foreign.querySelector('[role="checkbox"]')).toBeNull()
+      const own = container.querySelector('tr[data-domain="own.example.com"]')
+      expect(own.querySelector('[role="checkbox"]')).not.toBeNull()
+      fireEvent.click(foreign)
+      expect(onOpenReadOnly).toHaveBeenCalledWith(expect.objectContaining({ domain: 'foreign.example.com', team_name: 'Takım B' }), undefined)
+      expect(onRowClick).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('checkbox', { name: /tümünü seç|select all/i }))
+      expect(await screen.findByText(/^1 .*(seçili|selected)/i)).toBeInTheDocument()
+    })
   })
 
   it('satıra tıklayınca onRowClick alan adıyla çağrılır', async () => {
@@ -68,9 +120,9 @@ describe('CertificatesTable', () => {
 
       const { container } = render(<CertificatesTable onRowClick={() => {}} />)
 
-      await waitFor(() => expect(container.querySelector('table.certificates-table')).not.toBeNull())
+      await waitFor(() => expect(container.querySelector('table[data-slot="table"]')).not.toBeNull())
       expect(container.querySelector('[data-testid="ct-filter-row"]')).not.toBeNull()
-      expect(container.querySelector('.inv-row-empty')).not.toBeNull()
+      expect(container.querySelector('[data-slot="table-empty-row"]')).not.toBeNull()
     } finally {
       localStorage.removeItem('certtable-view')
     }
@@ -96,7 +148,7 @@ describe('CertificatesTable', () => {
     const { container } = render(<CertificatesTable onRowClick={() => {}} />)
     await screen.findByText('expired.com')
 
-    expect(container.querySelector('tr[data-domain="expired.com"] .status-critical')).not.toBeNull()
+    expect(container.querySelector('tr[data-domain="expired.com"] [data-slot="cert-level"][data-status="critical"]')).not.toBeNull()
     // Satirin KENDI hucresinde yazmali (sutun basligi/filtre metniyle karistirma).
     const row = container.querySelector('tr[data-domain="expired.com"]')
     expect(row.textContent).toMatch(/Süresi doldu|Expired/i)
@@ -108,7 +160,7 @@ describe('CertificatesTable', () => {
     ]))
     const { container } = render(<CertificatesTable onRowClick={() => {}} />)
     await screen.findByText('eski.com')
-    expect(container.querySelector('tr[data-domain="eski.com"] .status-critical')).not.toBeNull()
+    expect(container.querySelector('tr[data-domain="eski.com"] [data-slot="cert-level"][data-status="critical"]')).not.toBeNull()
   })
 
   it('alan adı süzgeci tuş başına değil, 300 ms sessizlikten sonra TEK istek atar (fetch yarışı yok)', async () => {

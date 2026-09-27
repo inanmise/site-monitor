@@ -1,19 +1,17 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, formatDate } from '../api/client'
+import { useState, useEffect, useCallback, useMemo, useId, Fragment } from 'react'
+import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import SimpleTooltip from './ui/SimpleTooltip.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
-import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -21,20 +19,23 @@ import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { Plus, ChevronDown, Globe, Info, Network, AlertTriangle, FlaskConical, Check, RefreshCw, Pause, BellDot, ArrowLeftRight } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { ChevronDown, Info, Network, AlertTriangle, FlaskConical, Check, Pause, BellDot, ArrowLeftRight, Copy, Inbox, X } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
+import DnsMonitorCard from './dns/DnsMonitorCard.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 
 import MonitorStatsSection from './MonitorStatsSection.jsx'
@@ -42,6 +43,19 @@ import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGr
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card } from '@/components/shadcn/card'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Field as ShadcnField, FieldDescription, FieldLabel } from '@/components/shadcn/field'
+import { Input } from '@/components/shadcn/input'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { Textarea } from '@/components/shadcn/textarea'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
+} from './monitoring/MonitorForm.jsx'
+import { cn } from '@/lib/utils'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 // Kaydirma cubugu icin sirali aralik seti. DNS'in tabani 30 sn olabilir (tek sorgu ucuz);
@@ -70,24 +84,18 @@ const INFO_ITEMS = [
   { type: 'TTL',   descKey: 'dns.ttlExplain' },
 ]
 
-const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, alertLevel: 'WARNING', confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
+const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300, teamId: '', groupName: '', tags: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], expectedValue: '', slowThresholdMs: '', propagationCheck: false, dnsChangeAlertEnabled: true, notifyEmail: true, alertLevel: 'WARNING', confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyWebhook: true, active: true }
 
-function truncateValue(val, max = 50) {
-  if (!val) return '—'
-  return val.length > max ? val.substring(0, max) + '…' : val
-}
-
-export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'   // USER ve üstü: kendi takımı için standalone DNS ekler
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   // Kapılar PortMonitorPage ile AYNI — uçlar da hizalandı (MonitoringController.updateDns/
   // deleteDns/triggerDns artık canOperateTeam kullanıyor, sekiz kardeş türle aynı kural).
   //
@@ -108,6 +116,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
   const sparks = useSparklines('dns')   // kart mini trendi (2026-09-12)
   const sla = useSla('dns')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
+  const [density, setDensity] = useCardDensity('dns')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -116,8 +126,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
   const [histReload, setHistReload] = useState(0)
   const [modal, setModal] = useState(null)
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
+  const expectedId = useId()   // "beklenen değer" alanı: etiket ↔ metin kutusu ↔ ipucu bağı
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -163,6 +172,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updateDnsMonitor, (r) => {
+    load(); setDetailMonitor((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -205,13 +219,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Ortak bildirim blogunun "kime gidecek" satiri icin hedef takim adi (HttpMonitorPage deseni).
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
-    : (teamName || t('app.noTeam'))
+    : (defaultTeamName || t('app.noTeam'))
   const teamSelectOptions = [...(isAdmin ? [{ value: '', label: t('app.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
     ...pickTeams.map(tm => ({ value: String(tm.id), label: tm.name }))]
 
   function openNew() {
     setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds })
     setTestResult(null)
     setModal('new')
@@ -227,7 +241,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       teamId: m.team_id != null ? String(m.team_id) : '',
-      groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+      groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       expectedValue: m.expected_value || '',
       slowThresholdMs: m.slow_threshold_ms ?? '',
       propagationCheck: m.propagation_check === true,
@@ -276,6 +290,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         propagationCheck: !!form.propagationCheck,
         dnsChangeAlertEnabled: !!form.dnsChangeAlertEnabled,
         notifyWebhook: !!form.notifyWebhook,
@@ -365,15 +380,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     }
   }
 
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
   /**
-   * Kart durum sınıfı. HTTP/Port'tan farklı olarak DNS'te {@code status} alanı YOK:
-   * "çözümlüyor mu" sorusunun cevabı alarmın varlığından okunur.
+   * Kart / detay kenarı durum anahtarı (up | down | unknown). HTTP/Port'tan farklı olarak DNS'te
+   * {@code status} alanı YOK: "çözümlüyor mu" sorusunun cevabı alarmın varlığından okunur.
    */
-  function cardClass(m) {
-    if (m.active === false) return 'upt-card--unknown'
-    return m.active_alarm ? 'upt-card--down' : 'upt-card--up'
-  }
+  const statusKey = (m) => (m.active === false ? 'unknown' : m.active_alarm ? 'down' : 'up')
 
   /**
    * Kart durum rozeti — diğer sekiz türde olan, DNS'te EKSİK olan bilgi.
@@ -391,21 +402,19 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
    * (DNS_FAILURE / DNS_CHANGED / DNS_SLOW / DNS_UNEXPECTED / DNS_INCONSISTENT) ve kart
    * yanıtında tip yok — "çözümlenmiyor" bir DNS_CHANGED alarmında düpedüz yanlış olurdu.
    */
-  function statusBadge(m) {
-    const [cls, label] =
-      m.active === false ? ['upt-badge--unknown', t('dns.statPaused')]
-      : m.active_alarm   ? ['upt-badge--down',    t('dns.statAlarm')]
-      : !m.checked_at    ? ['upt-badge--unknown', t('dns.statNeverChecked')]
-      :                    ['upt-badge--up',      t('dns.statOk')]
-    return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
+  function statusBadge(m, { lastKnown = false } = {}) {
+    // Kartta (`lastKnown`) duraklatılmış izleme SON BİLİNEN durumunu gösterir — paylaşılan kural
+    // (monitoring/MonitorCard: MonitorStatusBadge duraklatılmış kartta gri çerçeveye döner, "Duraklatıldı"
+    // alt çubuktaki MonitorPausedBadge'de). Eskiden rozet de "Duraklatıldı" yazıyordu → kartta iki kez
+    // (2026-09-26). Detay penceresinde (kart dışı) duraklatma bilgisi rozette kalır.
+    const [key, label] =
+      m.active === false && !lastKnown ? ['unknown', t('dns.statPaused')]
+      : m.active_alarm   ? ['down',    t('dns.statAlarm')]
+      : !m.checked_at    ? ['unknown', t('dns.statNeverChecked')]
+      :                    ['up',      t('dns.statOk')]
+    return <MonitorStatusBadge status={key}>{label}</MonitorStatusBadge>
   }
-
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('dns.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
-  }
+  const alarmLabel = (m) => `${t('dns.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
 
   // Takım filtresi seçenekleri — listeden türetilir (dashboard deseni).
   const teamOptions = (() => {
@@ -495,7 +504,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(filtered, {
-    listKey: 'dns-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
+    listKey: 'dns-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -508,30 +517,175 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     ...(detailMonitor ? {} : { mtab: null, range: null }),
   })
 
+  // Canlı test sonucu uyarı tonunda mı (beklenmeyen değer / yavaş yanıt) — ton ve ikon aynı kararı paylaşır.
+  const testWarn = !!(testResult && !testResult.error && (testResult.unexpected?.length || testResult.slow))
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // İÇ KAYDIRMA ortak pencerenin sözleşmesi (MonitorFormModal → ui/ModalShell scrollBody): eskiden DNS bunu
+  // taşımıyordu ve kaydırma çubuğu ekranın en sağında çıkıyordu — kapı: modalScroll.test.jsx.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEditModal} icon={Network} width={640}
+      title={modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('dns.testing') : null}
+      footer={<>
+        <Button variant="secondary" className="mr-auto" onClick={runTest}
+          aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
+          <FlaskConical size={14} />{t('dns.test')}
+        </Button>
+        <Button variant="secondary" onClick={closeEditModal}>{t('dns.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined}
+          disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}>
+          {t('dns.save')}
+        </Button>
+      </>}>
+      {dupSource && <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>}
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField label={t('dns.domain')} required>
+          {({ id }) => (
+            <Input id={id} value={form.domain} onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
+              placeholder={t('dns.domainPlaceholder')} autoFocus={modal === 'new' || !!dupSource} />
+          )}
+        </FormField>
+        {(modal === 'new' || modal.standalone) && (
+          <FormField label={t('dns.team')} required>
+            {({ id }) => canPickTeam
+              ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))}
+                  options={teamSelectOptions} searchThreshold={2} />
+              : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
+          </FormField>
+        )}
+        <FormField label={t('dns.name')}>
+          {({ id }) => (
+            <Input id={id} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder={form.domain || (modal !== 'new' ? modal.domain : '')} />
+          )}
+        </FormField>
+        <FormField label={t('dns.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('dns.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dns.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="DNS" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <FormField label={t('dns.recordType')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.recordType} onChange={v => setForm(f => ({ ...f, recordType: v }))}
+              options={RECORD_TYPES.map(rt => ({ value: rt, label: rt }))} />
+          )}
+        </FormField>
+        <FormField label={t('verify.attempts')}>
+          {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts}
+            onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.attemptEvery')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds}
+            onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.recoveryChecks')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks}
+            onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.recoveryEvery')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds}
+            onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormHint>ⓘ {t('verify.hint')}</FormHint>
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+        <FormField label={t('dns.slowThresholdField')} hint={t('dns.slowThresholdHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} type="number" min="100" max="60000"
+              value={form.slowThresholdMs}
+              onChange={e => setForm(f => ({ ...f, slowThresholdMs: e.target.value }))}
+              placeholder={t('dns.slowThresholdPlaceholder')} />
+          )}
+        </FormField>
+        {/* Beklenen değer(ler) — etiket satırının sağında "şu anki değer" kısayolları (yalnız düzenlemede,
+            çözümlenmiş bir değer varken). Düğmeler etiketin DIŞINDA: eskiden <label>'ın içindeydi. */}
+        <ShadcnField role={undefined} className="min-w-0 gap-1.5 sm:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <FieldLabel htmlFor={expectedId} className="font-semibold">{t('dns.expectedValue')}</FieldLabel>
+            {modal !== 'new' && modal.value && (
+              <span className="inline-flex flex-wrap gap-1.5">
+                <Button type="button" variant="outline" size="sm"
+                  onClick={() => setForm(f => ({ ...f, expectedValue: modal.value }))}>
+                  {t('dns.pinCurrent')}
+                </Button>
+                <SimpleTooltip content={t('dns.addCurrentHint')}>
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => setForm(f => {
+                      // Mevcut değer(ler)i listeye EKLE (replace değil) — dedupe'lu; iki bilinen IP birden sabitlenebilir.
+                      const existing = (f.expectedValue || '').split('\n').map(s => s.trim()).filter(Boolean)
+                      const incoming = (modal.value || '').split('\n').map(s => s.trim()).filter(Boolean)
+                      const merged = [...existing, ...incoming.filter(v => !existing.includes(v))]
+                      return { ...f, expectedValue: merged.join('\n') }
+                    })}>
+                    {t('dns.addCurrent')}
+                  </Button>
+                </SimpleTooltip>
+              </span>
+            )}
+          </div>
+          <Textarea id={expectedId} rows={3} aria-describedby={`${expectedId}-h`}
+            value={form.expectedValue}
+            onChange={e => setForm(f => ({ ...f, expectedValue: e.target.value }))}
+            placeholder={t('dns.expectedPlaceholder')} />
+          <FieldDescription id={`${expectedId}-h`} className="text-xs">{t('dns.expectedHint')}</FieldDescription>
+        </ShadcnField>
+        <CheckField full checked={form.dnsChangeAlertEnabled}
+          onCheckedChange={v => setForm(f => ({ ...f, dnsChangeAlertEnabled: v }))}
+          label={t('dns.changeAlertEnabled')} hint={t('dns.changeAlertHint')} />
+        <CheckField full checked={form.propagationCheck}
+          onCheckedChange={v => setForm(f => ({ ...f, propagationCheck: v }))}
+          label={t('dns.propagationCheck')} hint={t('dns.propagationHint')} />
+        <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('dns.formActive')} />
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.error ? 'danger' : testWarn ? 'warning' : 'success'}
+          icon={testResult.error || testWarn ? AlertTriangle : undefined}
+          title={testResult.error ? t('dns.testError')
+            : testResult.unexpected?.length ? t('dns.testUnexpected')
+            : testResult.slow ? t('dns.testSlow') : t('dns.testSuccess')}>
+          {testResult.error
+            ? testResult.error
+            : [testResult.host,
+                testResult.values?.length > 0 && testResult.values.join(', '),
+                testResult.ttl != null && `TTL ${testResult.ttl}s`,
+                testResult.response_ms != null && `${testResult.response_ms}ms`].filter(Boolean).join(' · ')}
+        </AlertBanner>
+      )}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="dns-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
+
   return (
     <div className="dns-page">
-      <div className="dns-header">
-        <div className="dns-title-row">
-          <Globe size={22} />
-          <div>
-            <h2 className="dns-title">{t('dns.title')}</h2>
-          </div>
-        </div>
-        <div className="upt-header-right">   {/* diğer 8 sayfayla aynı eylem kümesi stili (2026-09-19) */}
-          <span className="upt-last-check">{t('dns.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
-          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('dns.refreshBtn')}</Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="dns" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('dns.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="dns" title={t('dns.title')} subtitle={t('dns.subtitle')}
+        count={loading ? null : monitors.length}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('dns.addMonitor')} />
 
       <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4'), t('dns.how5')]} />
 
@@ -542,28 +696,35 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         onStatClick={onStatClick} onClearFilter={() => setStatFilter(null)}
         shownCount={filtered.length} />
 
-      <div className={`dns-info-card${infoOpen ? ' dns-info-open' : ''}`}>
-        <button className="dns-info-toggle" onClick={() => setInfoOpen(v => !v)} type="button">
-          <Info size={16} />
-          <span className="dns-info-title">{t('dns.infoTitle')}</span>
-          <ChevronDown size={14} className={`dns-info-chevron${infoOpen ? ' open' : ''}`} />
-        </button>
-        {infoOpen && (
-          <div className="dns-info-body">
-            <p className="dns-info-intro">{t('dns.infoIntro')}</p>
-            <div className="dns-info-grid">
+      {/* DNS temel bilgiler — açılır bilgi kartı (shadcn Collapsible + Card; kapalıyken içerik DOM'da yok) */}
+      <Collapsible open={infoOpen} onOpenChange={setInfoOpen}>
+        <Card className="mb-3.5 gap-0 overflow-hidden py-0 shadow-none">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost"
+              className="h-auto w-full justify-start gap-2.5 rounded-none px-4 py-3 text-left font-normal whitespace-normal">
+              <Info size={16} aria-hidden="true" className="shrink-0 text-primary" />
+              <span className="flex-1 font-semibold">{t('dns.infoTitle')}</span>
+              <ChevronDown size={14} aria-hidden="true"
+                className={cn('shrink-0 transition-transform motion-reduce:transition-none', infoOpen && 'rotate-180')} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t bg-muted/30 px-4 pt-3 pb-3.5">
+            <p className="mb-3.5 text-sm leading-relaxed">{t('dns.infoIntro')}</p>
+            <dl className="m-0 grid grid-cols-[70px_1fr] items-start gap-x-4 gap-y-2 text-[13px]">
               {INFO_ITEMS.map(item => (
-                <div key={item.type} className="dns-info-row">
-                  <span className="dns-info-key">{item.type}</span>
-                  <span className="dns-info-desc">{t(item.descKey)}</span>
-                </div>
+                <Fragment key={item.type}>
+                  <dt><Badge variant="outline" className="w-full rounded-sm bg-card font-mono font-bold text-primary">{item.type}</Badge></dt>
+                  <dd className="m-0 leading-normal">{t(item.descKey)}</dd>
+                </Fragment>
               ))}
-            </div>
-          </div>
-        )}
-      </div>
+            </dl>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
-      <div className="dns-toolbar">
+      <div className="dns-toolbar flex-wrap">
+        {/* Kart görünümü seçicisi satırın İLK öğesi (mr-auto): süzgeçler + arama sağda kalır; telefonda satır sarar */}
+        <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
         {hasTeamOptions && (
           <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />
         )}
@@ -571,17 +732,24 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />
         )}
         {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
-        <input
-          className="dns-search-input"
-          type="text"
-          placeholder={t('dns.searchPlaceholder')}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        {search && (
-          <button className="dns-search-clear" onClick={() => setSearch('')}>✕</button>
-        )}
-        <div className="dns-counter">{t('dns.monitorCount', filtered.length)}</div>
+        {/* Arama — shadcn InputGroup: doluysa sağda "temizle" düğmesi */}
+        <InputGroup className="w-full sm:w-auto sm:max-w-[360px] sm:min-w-[200px] sm:flex-1">
+          <InputGroupInput
+            type="text"
+            placeholder={t('dns.searchPlaceholder')}
+            aria-label={t('dns.searchPlaceholder')}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {search && (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-sm" onClick={() => setSearch('')} aria-label={t('app.clear')}>
+                <X aria-hidden="true" />
+              </InputGroupButton>
+            </InputGroupAddon>
+          )}
+        </InputGroup>
+        <span className="text-sm text-muted-foreground">{t('dns.monitorCount', filtered.length)}</span>
       </div>
 
       {loading ? (
@@ -592,98 +760,47 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           {String(loadError)}
         </AlertBanner>
       ) : monitors.length === 0 ? (
-        <div className="mon-empty">{t('dns.noMonitors')}</div>
+        <StatusBlock tone="neutral" icon={Inbox} title={t('dns.noMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DNS"
           api={{ update: api.monitoring.updateDnsMonitor, remove: api.monitoring.deleteDnsMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id}
-              className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.domain)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailMonitor(m) }
-              }}
-              onClick={() => setDetailMonitor(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.domain)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
-                {m.standalone && (
-                  <span className="dns-standalone-badge" title={t('dns.standaloneHint')}>{t('dns.standalone')}</span>
-                )}
-                <span className="upt-card-top-right">
-                  <span className="upt-port-tag">{m.record_type}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('dns', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              {/* DEĞİŞTİ/ROTASYON rozetleri kartın içinde kalır: DNS'te asıl sinyal "değer
-                  değişti mi" sorusudur, tabloda da en görünür yerdeydi. */}
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val dns-cell-mono" title={m.value || ''}>{truncateValue(m.value, 22)}</span>
-                  <span className="upt-metric-lbl">
-                    {m.changed
-                      ? <span className="dns-changed-badge">{t('dns.changed')}</span>
-                      : m.rotated
-                        ? <span className="dns-rotated-badge" title={t('dns.rotationTitle')}>{t('dns.rotated')}</span>
-                        : t('dns.currentValue')}
-                  </span>
-                </div>
-                {m.ttl != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.ttl}s</span>
-                    <span className="upt-metric-lbl">{t('dns.ttl')}</span>
-                  </div>
-                )}
-                {m.response_ms != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{m.response_ms}ms</span>
-                    <span className="upt-metric-lbl">{t('dns.responseMs')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDate(m.checked_at) : ''}</span>
-                {/* Sinifsiz sarmalayici: MonitorCardActions kendi kokunu zaten
-                    "mon-actions" yapiyor; ayni sinifi ic ice uygulamak gap/margin'i iki
-                    kez sayip ScriptedMonitorPage'den farkli bir bosluk uretiyordu. */}
-                <span onClick={e => e.stopPropagation()}>
-                  {/* Silme kartta KALIR: tabloda vardı ve kaldırılması yetenek kaybı olurdu.
-                      Artık ortak bileşenin içinde — dokuz türde tek düğme, tek stopPropagation. */}
-                  {canManageRow(m) && (
-                    <MonitorCardActions rowLabel={m.domain}
-                      running={isRunning(m.id)}
-                      onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                      checkTitle={t('dns.check')} editTitle={t('dns.edit')}
-                      onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                      deleting={deleting === m.id}
-                      deleteTitle={m.standalone ? t('dns.delete') : t('dns.deleteDerivedTitle')} />
-                  )}
-                </span>
-              </div>
-            </div>
+            /* DNS kartı (dns/DnsMonitorCard, 2026-09-27): değer paneli kartın kalbi (çoklu değer, değişti/rotasyon/
+               beklenmeyen değer), kaynak rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı ortak
+               parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, mini trend, kart eylemleri
+               (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü detay penceresiyle ortak (statusKey/statusBadge). */
+            <DnsMonitorCard key={m.id} monitor={m} status={statusKey(m)} density={density}
+              statusBadge={statusBadge(m, { lastKnown: true })} alarmLabel={alarmLabel(m)}
+              onOpen={() => setDetailMonitor(m)}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
+              )}
+              meta={<MonitorCardMeta monitor={m} />}
+              spark={<MonitorSpark rowLabel={m.domain} spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('dns.check')} editTitle={t('dns.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id}
+                  deleteTitle={m.standalone ? t('dns.delete') : t('dns.deleteDerivedTitle')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
+      {/* Detay penceresi (DnsDetailModal → MonitorDetailModal / ui/ModalShell). Açıkken düzenleme formu
+          ONUN İÇİNDE çizilir → form detay penceresinin üstünde katmanlanır. */}
       {detailMonitor && (
         <DnsDetailModal monitor={detailMonitor} onClose={() => setDetailMonitor(null)} teamNames={teamNameById}
+          status={statusKey(detailMonitor)} badge={statusBadge(detailMonitor)}
           canManage={canManageRow(detailMonitor)}
           running={isRunning(detailMonitor.id)}
           onCheck={canManageRow(detailMonitor) ? () => checkNow(detailMonitor) : undefined}
@@ -691,224 +808,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           onDuplicate={canManageRow(detailMonitor) ? () => openDuplicate(detailMonitor) : undefined}
           onDelete={canDeleteRow(detailMonitor) ? () => deleteMonitor(detailMonitor) : undefined}
           deleting={deleting === detailMonitor.id}
-          histReload={histReload} />
+          onResume={canManageRow(detailMonitor) && !detailMonitor.active ? () => resume(detailMonitor) : undefined}
+          resuming={isResuming(detailMonitor.id)}
+          histReload={histReload}>
+          {formModal}
+        </DnsDetailModal>
       )}
-
-      {modal && (
-        // Dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet (keyword/ping ile aynı).
-        <div className="modal-overlay">
-          {/* İÇ KAYDIRMA ŞART (maxHeight + overflowY). Yoksa taşan içerik `.modal-overlay`in
-              `overflow-y: auto`una düşüyor: kaydırma çubuğu modalın kenarında değil EKRANIN en
-              sağında çıkıyor ve kaydırınca başlık da yukarı kayıyor. Diğer sekiz düzenleme
-              modalı bunu taşıyordu, DNS taşımıyordu — kapı: modalScroll.test.jsx. */}
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 640, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--dns">
-              <div className="modal-icon-hdr-badge">
-                <Network size={20} />
-              </div>
-              <h3>{modal === 'new' ? t('dns.modalNew') : t('dns.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('dns.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-            {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
-            <div className="form-grid form-grid--top">
-              <label>
-                <span>{t('dns.domain')} <span className="req-star">*</span></span>
-                <input
-                  value={form.domain}
-                  onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
-                  placeholder={t('dns.domainPlaceholder')}
-                  autoFocus={modal === 'new' || !!dupSource}
-                />
-              </label>
-              {(modal === 'new' || modal.standalone) && (
-                <label>
-                  <span>{t('dns.team')} <span className="req-star">*</span></span>
-                  {canPickTeam
-                    ? <SearchableSelect
-                        value={form.teamId}
-                        onChange={v => setForm(f => ({ ...f, teamId: v }))}
-                        options={teamSelectOptions}
-                        searchThreshold={2}
-                      />
-                    : <input value={teamName || t('app.noTeam')} disabled />}
-                </label>
-              )}
-              <label>
-                <span>{t('dns.name')}</span>
-                <input
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder={form.domain || (modal !== 'new' ? modal.domain : '')}
-                />
-              </label>
-              <label>
-                <span>{t('dns.group')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.groupName}
-                  onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('dns.noGroup') }, ...groupSelectOptions]}
-                  creatable
-                  onCreate={() => {}}
-                  searchThreshold={2}
-                  placeholder={t('dns.noGroup')}
-                />
-              </label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <label>
-                <span>{t('dns.recordType')} <span className="req-star">*</span></span>
-                <SearchableSelect
-                  value={form.recordType}
-                  onChange={v => setForm(f => ({ ...f, recordType: v }))}
-                  options={RECORD_TYPES.map(rt => ({ value: rt, label: rt }))}
-                />
-              </label>
-              <label><span>{t('verify.attempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts}
-                  onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.attemptEvery')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds}
-                  onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks}
-                  onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.recoveryEvery')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds}
-                  onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-              <div className="full-width http-tags-block">
-                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-              <label>
-                <span>{t('dns.slowThresholdField')}</span>
-                <input
-                  type="number" min="100" max="60000"
-                  value={form.slowThresholdMs}
-                  onChange={e => setForm(f => ({ ...f, slowThresholdMs: e.target.value }))}
-                  placeholder={t('dns.slowThresholdPlaceholder')}
-                />
-                <span className="field-hint">{t('dns.slowThresholdHint')}</span>
-              </label>
-              <label className="full-width">
-                <span className="dns-expected-label">
-                  {t('dns.expectedValue')}
-                  {modal !== 'new' && modal.value && (
-                    <span className="dns-pin-btns">
-                      <button type="button" className="dns-pin-btn"
-                        onClick={() => setForm(f => ({ ...f, expectedValue: modal.value }))}>
-                        {t('dns.pinCurrent')}
-                      </button>
-                      <button type="button" className="dns-pin-btn"
-                        title={t('dns.addCurrentHint')}
-                        onClick={() => setForm(f => {
-                          // Mevcut değer(ler)i listeye EKLE (replace değil) — dedupe'lu; iki bilinen IP birden sabitlenebilir.
-                          const existing = (f.expectedValue || '').split('\n').map(s => s.trim()).filter(Boolean)
-                          const incoming = (modal.value || '').split('\n').map(s => s.trim()).filter(Boolean)
-                          const merged = [...existing, ...incoming.filter(v => !existing.includes(v))]
-                          return { ...f, expectedValue: merged.join('\n') }
-                        })}>
-                        {t('dns.addCurrent')}
-                      </button>
-                    </span>
-                  )}
-                </span>
-                <textarea
-                  rows={3}
-                  value={form.expectedValue}
-                  onChange={e => setForm(f => ({ ...f, expectedValue: e.target.value }))}
-                  placeholder={t('dns.expectedPlaceholder')}
-                />
-                <span className="field-hint">{t('dns.expectedHint')}</span>
-              </label>
-              <label className="checkbox-label full-width">
-                <input
-                  type="checkbox"
-                  checked={form.dnsChangeAlertEnabled}
-                  onChange={e => setForm(f => ({ ...f, dnsChangeAlertEnabled: e.target.checked }))}
-                />
-                {t('dns.changeAlertEnabled')}
-              </label>
-              <span className="field-hint full-width">{t('dns.changeAlertHint')}</span>
-              <label className="checkbox-label full-width">
-                <input
-                  type="checkbox"
-                  checked={form.propagationCheck}
-                  onChange={e => setForm(f => ({ ...f, propagationCheck: e.target.checked }))}
-                />
-                {t('dns.propagationCheck')}
-              </label>
-              <span className="field-hint full-width dns-prop-hint">{t('dns.propagationHint')}</span>
-
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={form.active}
-                  onChange={e => setForm(f => ({ ...f, active: e.target.checked }))}
-                />
-                {t('dns.formActive')}
-              </label>
-            </div>
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error
-                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
-                  : (testResult.unexpected?.length || testResult.slow)
-                    ? { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }
-                    : { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }) }}>
-                {(testResult.error || testResult.unexpected?.length || testResult.slow)
-                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.error
-                    ? <><strong>{t('dns.testError')}:</strong> {testResult.error}</>
-                    : <>
-                        <strong>{testResult.unexpected?.length ? t('dns.testUnexpected')
-                          : testResult.slow ? t('dns.testSlow') : t('dns.testSuccess')}</strong>
-                        {testResult.host && <> · {testResult.host}</>}
-                        {testResult.values?.length > 0 && <> · {testResult.values.join(', ')}</>}
-                        {testResult.ttl != null && <> · TTL {testResult.ttl}s</>}
-                        {testResult.response_ms != null && <> · {testResult.response_ms}ms</>}
-                      </>}
-                </span>
-              </div>
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="dns-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
-                <FlaskConical size={14} />{t('dns.test')}
-              </Button>
-              <Button variant="secondary" onClick={closeEditModal}>{t('dns.cancel')}</Button>
-              <Button
-
-                onClick={save} aria-busy={saving || undefined} disabled={saving || !form.recordType || !form.domain.trim() || ((modal === 'new' || modal?.standalone) && !form.teamId)}
-              >
-                {t('dns.save')}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {!detailMonitor && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

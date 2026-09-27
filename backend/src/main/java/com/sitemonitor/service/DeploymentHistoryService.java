@@ -47,7 +47,9 @@ public class DeploymentHistoryService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").withZone(ZoneOffset.UTC);
     private static final Pattern ENV_RE = Pattern.compile("^[a-z0-9-]{1,40}$");
-    public static final int MAX_PAGE = 100;
+    // 200 = ön yüz sayfalama ön ayarlarının en büyük seçeneği (Dağıtım kayıtları + Sürüm notları); 100 iken "200/sayfa"
+    // seçimi sessizce 100 satır getiriyor, sayfa etiketleri kayıyor ve kayıtların bir kısmı erişilemez oluyordu (2026-09-27).
+    public static final int MAX_PAGE = 200;
     public static final int CSV_MAX_ROWS = 5000;
 
     private final DeploymentHistoryRepository repo;

@@ -47,6 +47,17 @@ public final class AppSettingsCatalog {
         // Login provizyonunda müdürü otomatik MANAGER eskalasyon kontağı yapma — varsayılan KAPALI
         // (kullanıcı kararı 2026-08-03); açılırsa D7+ müdürler otomatik eklenir. Mevcut kayıtlar silinmez.
         new Setting("site.monitor.escalation.auto-add-managers", "general",    Type.BOOL),
+        // LDAP takım/müdür eşlemesi (2026-09-26, prod hatası: üye olmayan kullanıcı takımda görünüyordu).
+        // Müdür sicilinin okunacağı AD nitelikleri, öncelik sırasıyla (ea4 bayatsa sıra çevrilir).
+        new Setting("site.monitor.ldap.manager-attributes",      "general",    Type.CSV),
+        // AD artık desteklemediğinde AD'den TÜRETİLMİŞ üyeliği girişte buda (elle eklenen korunur).
+        new Setting("site.monitor.ldap.prune-unsupported-teams", "general",    Type.BOOL),
+        // Astın girişinde, bu kadar saatten eski müdür kaydını AD'den tazele (0 = kapalı).
+        new Setting("site.monitor.ldap.manager-refresh-hours",   "general",    Type.INT),
+        // Org geneli envanter görünürlüğü (2026-09-26, kullanıcı kararı) — Domain Envanteri, Tüm Sertifikalar ve
+        // Durum İzleme "Tüm takımlar" ile başka takımların kayıtlarını SALT OKUNUR gösterir; yazma kendi takımında
+        // kalır. Varsayılan AÇIK; InventoryVisibility canlı okur. GLOBAL_ONLY (aşağıda).
+        new Setting("site.monitor.inventory.visible-to-all",     "general",    Type.BOOL),
         // Hareketsizlik oturum kapatma. Eskiden YALNIZ derleme zamani (VITE_INACTIVITY_MS)
         // ayarlanabiliyordu: degistirmek icin yeniden derleyip dagitmak gerekiyordu.
         // k6 REST API adresi. Varsayilan 127.0.0.1:0 = efemer port (cakisma imkansiz).
@@ -400,6 +411,14 @@ public final class AppSettingsCatalog {
      *       sahte alana çevirme (oltalama) / kimlikli isteklere yabancı origin açma / yönetici
      *       bildirimlerini yönlendirme.</li>
      *   <li>Log seviyeleri: TRACE mail logu içerik/başlık sızdırır.</li>
+     *   <li>Org geneli envanter görünürlüğü: TÜM takımların alan adı, sorumlu kişi ve sertifika verisinin
+     *       kime açık olduğunu belirleyen kurum politikası — takım kapsamlı bir müdür diğer takımlar adına
+     *       karar veremez (2026-09-26).</li>
+     *   <li>LDAP müdür/üyelik eşlemesi ({@code ldap.manager-attributes}, {@code ldap.prune-unsupported-teams},
+     *       {@code ldap.manager-refresh-hours}): müdür bağı bir YETKİLENDİRME girdisidir (managerId → görüş/yönetim
+     *       kapsamı) ve budama kimin hangi takımda kalacağını belirler. Müdür sicilinin okunduğu AD niteliğini
+     *       değiştiren takım kapsamlı bir müdür kapsamı dolaylı genişletebilirdi (BO6, bug regresyon 2026-09-27;
+     *       kardeşi {@code inventory.visible-to-all} ile aynı sınıf).</li>
      * </ul>
      * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
      * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
@@ -421,7 +440,11 @@ public final class AppSettingsCatalog {
         "site.monitor.cors.allowed-origins",
         "site.monitor.system-admin.email",
         "logging.level.com.sitemonitor",
-        "logging.level.com.sitemonitor.mail"
+        "logging.level.com.sitemonitor.mail",
+        "site.monitor.inventory.visible-to-all",
+        "site.monitor.ldap.manager-attributes",
+        "site.monitor.ldap.prune-unsupported-teams",
+        "site.monitor.ldap.manager-refresh-hours"
     );
 
     public static boolean isGlobalOnly(String key) {

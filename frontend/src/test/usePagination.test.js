@@ -130,11 +130,14 @@ describe('usePagination', () => {
       return createElement(PaginationBar, pager)   // = <PaginationBar {...pager} /> (.js dosyası: JSX yok)
     }
     render(createElement(Harness))
-    expect(screen.queryByRole('button', { name: '200' })).toBeNull()   // çubuk hook'un listesini gösterir
-    fireEvent.click(screen.getByRole('button', { name: '25' }))
-    expect(screen.getByRole('button', { name: '25' })).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '10' }))
-    expect(screen.getByRole('button', { name: '10' })).toHaveAttribute('aria-pressed', 'true')
+    const sizer = () => screen.getByRole('combobox', { name: 'Per page' })   // boyut seçici shadcn Select (2026-09-26)
+    fireEvent.click(sizer())
+    expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['10', '25', '50'])   // çubuk hook'un listesini gösterir
+    fireEvent.click(screen.getByRole('option', { name: '25' }))
+    expect(sizer()).toHaveTextContent('25')
+    fireEvent.click(sizer())
+    fireEvent.click(screen.getByRole('option', { name: '10' }))
+    expect(sizer()).toHaveTextContent('10')
   })
 
   // Sınıf kapısı: hook'lu bir pager'ı yayan çubuğa AYRICA sizeOptions verilirse iki liste yine
@@ -177,6 +180,55 @@ describe('usePagination', () => {
     )
     expect(result.current.page).toBe(3)
     expect(result.current.rangeStart).toBe(101)
+  })
+
+  // ── Ön ayarlar + URL (2026-09-26 standardı) ─────────────────────────────────
+  it('preset: page 50/[25..200], panel 25/[25..200], modal 10/[10,25,50] + compact; açık defaultSize ön ayarı ezer', () => {
+    const { result: page } = renderHook(() => usePagination(items(120), { preset: 'page' }))
+    expect(page.current.pageSize).toBe(50)
+    expect(page.current.sizeOptions).toEqual([25, 50, 100, 200])
+    expect(page.current.compact).toBeUndefined()
+    const { result: panel } = renderHook(() => usePagination(items(120), { preset: 'panel' }))
+    expect(panel.current.pageSize).toBe(25)
+    const { result: modal } = renderHook(() => usePagination(items(120), { preset: 'modal' }))
+    expect(modal.current.pageSize).toBe(10)
+    expect(modal.current.sizeOptions).toEqual([10, 25, 50])
+    expect(modal.current.compact).toBe(true)
+    const { result: legacy } = renderHook(() => usePagination(items(120), { defaultSize: 25 }))
+    expect(legacy.current.pageSize).toBe(25)
+    // listede olmayan varsayılan (eski "20") → listenin ilk öğesi; çubukta her zaman etkin bir seçenek olur
+    const { result: stray } = renderHook(() => usePagination(items(120), { preset: 'panel', defaultSize: 20 }))
+    expect(stray.current.pageSize).toBe(25)
+  })
+
+  it('url: adresten sayfa + boyut okunur (ps listeye karşı doğrulanır) ve geri yazılır', async () => {
+    window.history.replaceState({}, '', '/?tab=weeklyreports&w_page=3&w_ps=25')
+    const { result } = renderHook(() => usePagination(items(120), { preset: 'page', url: { pageKey: 'w_page', sizeKey: 'w_ps' } }))
+    expect(result.current.page).toBe(3)
+    expect(result.current.pageSize).toBe(25)
+    act(() => result.current.setPage(1))
+    act(() => result.current.setPageSize(50))   // varsayılan + 1. sayfa → iki param da silinir
+    await new Promise(r => setTimeout(r, 350))
+    const q = new URLSearchParams(window.location.search)
+    expect(q.get('w_page')).toBeNull()
+    expect(q.get('w_ps')).toBeNull()
+    expect(q.get('tab')).toBe('weeklyreports')
+    // Geçersiz ps (listede yok) → yok sayılır, localStorage/varsayılan kullanılır
+    window.history.replaceState({}, '', '/?w_ps=33')
+    const { result: bad } = renderHook(() => usePagination(items(120), { preset: 'page', url: { pageKey: 'w_page', sizeKey: 'w_ps' } }))
+    expect(bad.current.pageSize).toBe(50)
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('url: StrictMode altında derin bağlantı sayfası ilk render\'da korunur (async veri henüz boş)', () => {
+    window.history.replaceState({}, '', '/?w_page=2')
+    const { result, rerender } = renderHook(({ data }) => usePagination(data, { preset: 'page', resetDeps: ['x'], url: { pageKey: 'w_page', sizeKey: 'w_ps' } }),
+      { wrapper: StrictMode, initialProps: { data: [] } })
+    expect(result.current.page).toBe(2)
+    rerender({ data: items(120) })
+    expect(result.current.page).toBe(2)
+    expect(result.current.rangeStart).toBe(51)
+    window.history.replaceState({}, '', '/')
   })
 
   it('E12: StrictMode altinda GERCEK filtre degisimi sayfayi YINE 1e dondurur', () => {

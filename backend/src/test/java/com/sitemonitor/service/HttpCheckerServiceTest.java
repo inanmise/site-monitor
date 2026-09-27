@@ -135,6 +135,56 @@ class HttpCheckerServiceTest {
         return new Fixture(svc, repo, audit, store);
     }
 
+    // ── Gövde süre sınırı (prod kapısı 2026-09-25, N1) ────────────────────────────────────────
+    // send(discarding()) gövde bitene kadar dönmüyordu ve java.net.http zaman aşımı yalnız başlıklara
+    // kadar işliyor: 200 başlığı gönderip gövdeyi saniyede bir baytla akıtan bir uç (SSE, MJPEG kamera)
+    // HTTP sweep'ini KALICI olarak donduruyordu.
+
+    /** 200 + chunked başlık gönderir, sonra gövdeye her 100 ms'de bir bayt yazar (istemci kesene dek). */
+    static com.sun.net.httpserver.HttpServer streamingServer() throws java.io.IOException {
+        com.sun.net.httpserver.HttpServer s = com.sun.net.httpserver.HttpServer.create(
+                new InetSocketAddress("127.0.0.1", 0), 0);
+        s.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "test-stream");
+            t.setDaemon(true);
+            return t;
+        }));
+        s.createContext("/", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "text/event-stream");
+            ex.sendResponseHeaders(200, 0);
+            try (var os = ex.getResponseBody()) {
+                for (int i = 0; i < 600; i++) {   // en çok ~60 sn; istemci kesince yazma patlar
+                    os.write(':');
+                    os.flush();
+                    Thread.sleep(100);
+                }
+            } catch (Exception ignore) { /* istemci akışı kesti */ }
+        });
+        s.start();
+        return s;
+    }
+
+    @Test
+    @DisplayName("N1: akış yapan gövde sweep'i DONDURMAZ — kontrol bütçe içinde döner, sonuç durum koduna göre (up)")
+    void streamingBody_completesWithinBudget() throws Exception {
+        com.sun.net.httpserver.HttpServer s = streamingServer();
+        try {
+            Fixture f = fixture("", false);
+            String streamUrl = "http://127.0.0.1:" + s.getAddress().getPort() + "/events";
+            long t0 = System.nanoTime();
+            Map<String, Object> r = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                    java.time.Duration.ofSeconds(10),
+                    () -> f.service().check(streamUrl, "GET", "200-399", 2000, false, true));
+            long ms = (System.nanoTime() - t0) / 1_000_000L;
+
+            assertThat(r.get("http_status")).isEqualTo(200);
+            assertThat(r.get("ok")).as("durum-kodu sözleşmesi: akış yapan uç AYAKTA").isEqualTo(true);
+            assertThat(ms).as("gövde bütçesi (~timeout) içinde dönmeli").isLessThan(8_000L);
+        } finally {
+            s.stop(0);
+        }
+    }
+
     private static Map<String, Object> check(Fixture f, boolean verifySsl) {
         return f.service().check(url, "GET", "200-399", 5000, verifySsl, false);
     }

@@ -44,7 +44,9 @@ class MonitorResponseFieldsTest {
      * <p>{@code team_id} zaten vardı ve kontrol grubu görevi görüyor: tarama bozulursa (metot
      * bulunamaz, gövde yanlış kesilir) bu da düşer ve testin vakum olmadığı anlaşılır.
      */
-    private static final List<String> REQUIRED_KEYS = List.of("team_id", "notification_group_id");
+    private static final List<String> REQUIRED_KEYS = List.of("team_id", "notification_group_id",
+            // 7/24 İzleme Ekibi (2026-09-27): form anahtarı ve grup seçimi yanıtta yoksa kopyala/düzenle onları kaybeder.
+            "noc_notify", "noc_group_ids");
 
     private static String source() {
         Path p = Path.of("src", "main", "java", "com", "sitemonitor", "controller", "MonitoringController.java");
@@ -89,5 +91,15 @@ class MonitorResponseFieldsTest {
                 .as("Bu alanlar yanıtta DÖNMEZSE form onları hiç gösteremez: kullanıcı değeri "
                   + "kaydeder, formu açar ve kaybolmuş sanır (veri aslında yerindedir).")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("DNS listesi önceki değeri de döner (kart 'önceki → şimdiki' gösterir, 2026-09-27)")
+    void dnsBuilderReturnsPreviousValue() {
+        String body = bodyOf(source(), "enrichDns");
+        assertThat(body).as("enrichDns bulunamadı").isNotNull();
+        // Hem son kayıt varken (getPreviousValue) hem yokken (null) anahtar yanıtta olmalı — kart alanı hep okur.
+        assertThat(body.split("\"previous_value\"", -1).length - 1).isEqualTo(2);
+        assertThat(body).contains("latest.getPreviousValue()");
     }
 }

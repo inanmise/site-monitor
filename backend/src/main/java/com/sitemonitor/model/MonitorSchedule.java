@@ -34,4 +34,9 @@ public interface MonitorSchedule {
      * Diğer yedi tür envanterden bağımsız → her zaman true.
      */
     default boolean scheduleStandalone() { return true; }
+    /**
+     * Yumuşak SİLİNMİŞ mi? (2026-09-27) Yalnız DNS/Port standalone satırlarında {@code deleted_at} vardır;
+     * diğer yedi tür kalıcı silinir → hep false. Silinmiş satır hiçbir kartta görünmez (duraklatılmış DEĞİLDİR).
+     */
+    default boolean scheduleDeleted() { return false; }
 }

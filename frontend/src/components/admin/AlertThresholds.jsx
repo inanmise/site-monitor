@@ -1,274 +1,239 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { Plus, Trash2, Layers } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Gauge, Info, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import SearchableSelect from '../ui/SearchableSelect.jsx'
-import { Spinner } from '../ui/Progress.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import HintPopover from '../ui/HintPopover.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import { useIsMobile } from '../../hooks/use-mobile.js'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
+import { SettingsSection } from './SettingsControls.jsx'
+import ThresholdCard from './thresholds/ThresholdCard.jsx'
+import ThresholdEditor from './thresholds/ThresholdEditor.jsx'
+import TierCoverage from './thresholds/TierCoverage.jsx'
+import { BUILTIN, TIERS, daysOf, tierOf } from './thresholds/thresholdModel.js'
 import { Button } from '@/components/shadcn/button'
+import { Skeleton } from '@/components/shadcn/skeleton'
 
-const TIERS = [1, 2, 3, 4]
-const PREVIEW_DEBOUNCE_MS = 400
-
-/** Sunucu tier'ı sayı ya da null döner; bozuk/eski değer (ör. metin) varsayılan sayılır. */
-function tierOf(row) {
-  const n = Number(row?.tier)
-  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null
+/** Önizleme yanıtı kullanılabilir mi (sahte/boş yanıt "undefined alan" yazdırmasın). */
+function usableImpact(d) {
+  return d && typeof d === 'object' && !Array.isArray(d) && Number.isFinite(Number(d.scope_total))
 }
 
 /**
- * Uyarı Eşik Değerleri — VARSAYILAN satır + tier satırları (2026-09-20).
+ * Uyarı Eşik Değerleri — VARSAYILAN satır + tier satırları (2026-09-20; shadcn yeniden tasarım 2026-09-26).
  *
- * <p>Tier satırı o tier'daki alanlar için varsayılanın YERİNE geçer (Tier 1 müşteri yüzü → daha erken
- * uyarı). Düzenlerken canlı etki önizlemesi: "bu değerlerle BUGÜN kaç alan hangi seviyede olur" —
- * körlemesine eşik değişimi bir gecede onlarca KRİTİK alarm üretebilir. Önizleme kalıcı yazmaz.
+ * <p>Tier satırı o tier'daki alanlar için varsayılanın YERİNE geçer (Tier 1 müşteri yüzü → daha erken uyarı).
+ * Her kart sayıların ANLAMINI gösterir: kalan gün ekseninde renkli ölçek (Kritik · Yüksek · Uyarı · Alarm yok),
+ * seviye başına "şu an N alan" (önizleme ucu, satırın kendi değerleriyle) ve yeniden uyarı aralığı. Düzenleme
+ * penceresi canlı etki önizlemesi verir: körlemesine eşik değişimi bir gecede onlarca KRİTİK alarm üretebilir.
+ *
+ * <p>Yetki: ekran yalnız ADMIN'e açılır (AdminPanel); düzenleme/silme/ekleme ayrıca `thresholds.edit`
+ * izni ister — sunucu kapısıyla aynı (AdminController.requirePerm). İzin anlık görüntüsü henüz gelmemişse
+ * düzenleme denetimleri gizli kalır ama "salt okunur" bandı çizilmez (ilk açılışta yanıp sönmesin).
  */
 export default function AlertThresholds() {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
-  const [thresholds, setThresholds] = useState([])
-  const [editing, setEditing] = useState(null)      // {..row} | {tier, warning_days, …, _new: true}
-  const [saving, setSaving] = useState(false)
-  const [addTier, setAddTier] = useState('')
-  // Yukleme hatasi GORUNUR olmali: eskiden ne else ne catch vardi; API 403/500 donunce de
-  // ag koparken de liste bos kaliyor ve ekran "esik yok" diyordu. Esikler alarm siddetini
-  // belirledigi icin yonetici bunu "esikler silinmis" diye okuyup elle yeniden giriyordu.
+  const { perms, canEdit } = usePermissions()
+  const editable = canEdit('thresholds.edit')
+  const permsKnown = Boolean(perms) && Object.keys(perms).length > 0
+  const phone = useIsMobile()
+
+  const [thresholds, setThresholds] = useState(null)   // null = ilk yükleme sürüyor
+  // Yükleme hatası GÖRÜNÜR olmalı: eskiden liste boş kalıyor, yönetici "eşikler silinmiş" sanıp elle
+  // yeniden giriyordu (adminPanelLoadError.test.jsx).
   const [loadError, setLoadError] = useState(null)
-  const [preview, setPreview] = useState(null)      // { loading, data, error }
-  const previewTimer = useRef(null)
+  const [impact, setImpact] = useState({})             // { default | 1..4: önizleme yanıtı }
+  const [editor, setEditor] = useState(null)           // { mode, row, title }
+  const seq = useRef(0)
 
-  useEffect(() => { load() }, [])
+  /** Kapsam başına "bugün kaç alan hangi seviyede" — satırın KENDİ değerleriyle önizleme (5 istek, paralel). */
+  const loadImpact = useCallback(async (rows, my) => {
+    if (typeof api.admin.previewThreshold !== 'function') return
+    const def = rows.find(r => tierOf(r) == null) || BUILTIN
+    const byTier = new Map(rows.filter(r => tierOf(r) != null && r.active !== false).map(r => [tierOf(r), r]))
+    const scopes = [null, ...TIERS]
+    const results = await Promise.allSettled(scopes.map(tier => {
+      const d = daysOf(tier == null ? def : (byTier.get(tier) || def))
+      return api.admin.previewThreshold({ tier, warning: d.warning, high: d.high, critical: d.critical })
+    }))
+    if (my !== seq.current) return
+    const next = {}
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value?.success && usableImpact(r.value.data)) next[scopes[i] ?? 'default'] = r.value.data
+    })
+    setImpact(next)
+  }, [])
 
-  async function load() {
+  const load = useCallback(async () => {
+    const my = ++seq.current
     try {
       const res = await api.admin.getThresholds()
-      if (res?.success) { setThresholds(res.data || []); setLoadError(null) }
-      else setLoadError(res?.error || t('settings.loadError'))
+      if (my !== seq.current) return
+      if (res?.success) {
+        const rows = Array.isArray(res.data) ? res.data : []
+        setThresholds(rows)
+        setLoadError(null)
+        if (rows.length > 0) loadImpact(rows, my)
+        else setImpact({})
+      } else {
+        setLoadError(res?.error || t('settings.loadError'))
+      }
     } catch (e) {
-      setLoadError(e?.message || t('settings.loadError'))
+      if (my === seq.current) setLoadError(e?.message || t('settings.loadError'))
     }
-  }
+  }, [t, loadImpact])
+
+  useEffect(() => { load() }, [load])
 
   // Varsayılan önce, sonra tier 1..4.
-  const rows = useMemo(() => [...thresholds].sort((a, b) => (tierOf(a) ?? 0) - (tierOf(b) ?? 0)), [thresholds])
-  const usedTiers = useMemo(() => new Set(rows.map(tierOf).filter(Boolean)), [rows])
-  const freeTiers = TIERS.filter(x => !usedTiers.has(x))
+  const rows = useMemo(() => [...(thresholds || [])].sort((a, b) => (tierOf(a) ?? 0) - (tierOf(b) ?? 0)), [thresholds])
+  const savedDefault = rows.find(r => tierOf(r) == null) || null
+  // Tier satırları var ama varsayılan yoksa sunucu yerleşik değerleri kullanır → kartta açıkça göster.
+  const defaultRow = savedDefault || { ...BUILTIN, tier: null, _builtin: true }
+  const tierRows = rows.filter(r => tierOf(r) != null)
+  const overrides = new Set(tierRows.map(tierOf))
+  const defaultReAlert = Number(defaultRow.re_alert_interval_hours ?? BUILTIN.re_alert_interval_hours)
 
-  function rowTitle(row) {
-    const tier = tierOf(row)
-    return tier ? t(`inv.tier${tier}`) : t('thr.defaultRow')
+  const tierCounts = {}
+  for (const n of TIERS) if (impact[n]) tierCounts[n] = Number(impact[n].scope_total)
+  // Sınıflandırılmamış alan = varsayılan kapsamı − kendi satırı olmayan tier'lar (hepsi biliniyorsa).
+  const freeTiers = TIERS.filter(n => !overrides.has(n))
+  const unclassified = impact.default && freeTiers.every(n => tierCounts[n] != null)
+    ? Math.max(0, Number(impact.default.scope_total) - freeTiers.reduce((a, n) => a + tierCounts[n], 0))
+    : null
+
+  const titleOf = (row) => (tierOf(row) ? t(`inv.tier${tierOf(row)}`) : t('thr.defaultTitle'))
+
+  function openEdit(row) {
+    setEditor({ mode: row._builtin ? 'create' : 'edit', row, title: titleOf(row) })
   }
 
-  function startEdit(thr) { setEditing({ ...thr }); setPreview(null) }
-
-  function startAdd() {
-    const tier = Number(addTier)
-    if (!tier) return
-    const base = rows.find(r => tierOf(r) == null) || {}
-    setEditing({
-      _new: true, tier,
-      warning_days: base.warning_days ?? 30, high_days: base.high_days ?? 15,
-      critical_days: base.critical_days ?? 7, re_alert_interval_hours: base.re_alert_interval_hours ?? 24,
+  function openAdd(tier) {
+    const d = daysOf(defaultRow)
+    setEditor({
+      mode: 'create',
+      row: {
+        tier, warning_days: d.warning, high_days: d.high, critical_days: d.critical,
+        re_alert_interval_hours: defaultReAlert,
+      },
+      title: t(`inv.tier${tier}`),
     })
-    setPreview(null)
   }
 
-  // Sıra: kritik ≤ yüksek ≤ uyarı — sunucu da reddeder; burada anında söylenir.
-  const orderError = editing && !(Number(editing.critical_days) <= Number(editing.high_days)
-    && Number(editing.high_days) <= Number(editing.warning_days))
-
-  // Canlı etki önizlemesi: değerler değiştikçe (debounce) sunucudan sayım.
-  useEffect(() => {
-    if (!editing || orderError || typeof api.admin.previewThreshold !== 'function') { setPreview(null); return }
-    const w = Number(editing.warning_days), h = Number(editing.high_days), c = Number(editing.critical_days)
-    if (![w, h, c].every(n => Number.isInteger(n) && n >= 0)) { setPreview(null); return }
-    if (previewTimer.current) clearTimeout(previewTimer.current)
-    setPreview(p => ({ ...(p || {}), loading: true }))
-    previewTimer.current = setTimeout(async () => {
-      try {
-        const res = await api.admin.previewThreshold({ tier: tierOf(editing), warning: w, high: h, critical: c })
-        if (res?.success) setPreview({ loading: false, data: res.data })
-        else setPreview({ loading: false, error: res?.error || t('thr.previewError') })
-      } catch (e) {
-        setPreview({ loading: false, error: e?.message || t('thr.previewError') })
-      }
-    }, PREVIEW_DEBOUNCE_MS)
-    return () => { if (previewTimer.current) clearTimeout(previewTimer.current) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing?.warning_days, editing?.high_days, editing?.critical_days, editing?.tier, editing?._new, orderError])
-
-  async function save() {
-    if (orderError) { toast.error(t('thr.orderError')); return }
-    setSaving(true)
-    try {
-      const body = {
-        tier: tierOf(editing),
-        warning_days: Number(editing.warning_days), high_days: Number(editing.high_days),
-        critical_days: Number(editing.critical_days), re_alert_interval_hours: Number(editing.re_alert_interval_hours),
-      }
-      const res = editing._new
-        ? await api.admin.createThreshold(body)
-        : await api.admin.updateThreshold(editing.id, { ...editing, ...body })
-      if (res?.success) { setEditing(null); setAddTier(''); toast.success(editing._new ? t('thr.created') : t('thr.saved')); load() }
-      else toast.error(res?.error || 'Error')
-    } finally {
-      setSaving(false)
-    }
+  function onSaved(mode) {
+    setEditor(null)
+    toast.success(mode === 'create' ? t('thr.created') : t('thr.saved'))
+    load()
   }
 
   async function remove(row) {
+    const d = daysOf(defaultRow)
+    const affected = impact[tierOf(row)]?.scope_total
     const ok = await showConfirm({
       title: t('thr.deleteTitle'),
-      message: t('thr.deleteMsg', rowTitle(row)),
+      message: [
+        t('thr.deleteFallback', titleOf(row), d.warning, d.high, d.critical),
+        affected != null ? t('thr.deleteAffected', affected) : null,
+      ].filter(Boolean).join('\n'),
       confirmText: t('thr.delete'),
       variant: 'danger',
     })
     if (!ok) return
-    const res = await api.admin.deleteThreshold(row.id)
-    if (res?.success) { toast.success(t('thr.deleted')); if (editing?.id === row.id) setEditing(null); load() }
-    else toast.error(res?.error || 'Error')
+    try {
+      const res = await api.admin.deleteThreshold(row.id)
+      if (res?.success) { toast.success(t('thr.deleted')); load() }
+      else toast.error(res?.error || t('thr.deleteError'))
+    } catch (e) {
+      toast.error(e?.message || t('thr.deleteError'))
+    }
   }
 
-  function field(key, labelKey, hintKey) {
-    return (
-      <div className="threshold-field">
-        <label>{t(labelKey)}</label>
-        <input type="number" min={0} value={editing[key]} onChange={(e) => setEditing({ ...editing, [key]: e.target.value === '' ? '' : +e.target.value })} />
-        <span className="hint">{t(hintKey)}</span>
+  const description = (
+    <span className="block max-w-prose">
+      {t('thr.lead')}{' '}
+      <HintPopover
+        triggerClassName="inline-flex items-center gap-1 align-baseline text-primary underline-offset-4 hover:underline pointer-coarse:min-h-10"
+        className="max-w-[min(24rem,calc(100vw-1rem))] whitespace-normal"
+        content={(
+          <ul className="flex list-disc flex-col gap-1.5 pl-4">
+            {['thr.how1', 'thr.how2', 'thr.how3', 'thr.how4'].map(k => <li key={k}>{t(k)}</li>)}
+          </ul>
+        )}>
+        <Info size={14} aria-hidden="true" /> {t('thr.howTitle')}
+      </HintPopover>
+    </span>
+  )
+
+  const retry = (
+    <Button type="button" variant="outline" size="sm" onClick={load}>
+      <RefreshCw aria-hidden="true" /> {t('thr.retry')}
+    </Button>
+  )
+
+  let body
+  if (thresholds == null && loadError) {
+    body = <AlertBanner tone="danger" role="alert" title={t('settings.loadError')} actions={retry} className="mb-0">{String(loadError)}</AlertBanner>
+  } else if (thresholds == null) {
+    body = (
+      <div role="status" aria-label={t('app.loading')} data-slot="threshold-loading" className="flex flex-col gap-3">
+        <Skeleton className="h-14 w-full rounded-lg" />
+        <Skeleton className="h-44 w-full rounded-xl" />
+        <Skeleton className="h-44 w-full rounded-xl" />
       </div>
+    )
+  } else if (rows.length === 0) {
+    body = (
+      <StatusBlock tone="info" icon={Gauge} className="rounded-xl border border-dashed"
+        title={t('thr.emptyTitle')}
+        description={t('thr.emptyDesc', BUILTIN.warning_days, BUILTIN.high_days, BUILTIN.critical_days, BUILTIN.re_alert_interval_hours)}
+        actions={editable ? (
+          <Button type="button" onClick={() => openEdit(defaultRow)}>{t('thr.setUpDefault')}</Button>
+        ) : null} />
+    )
+  } else {
+    body = (
+      <>
+        <TierCoverage overrides={overrides} counts={tierCounts} unclassified={unclassified}
+          canEdit={editable} phone={phone} onAdd={openAdd} />
+        <div data-slot="threshold-list" className="grid grid-cols-[repeat(auto-fit,minmax(min(420px,100%),1fr))] gap-3">
+          {[defaultRow, ...tierRows].map(row => {
+            const tier = tierOf(row)
+            return (
+              <ThresholdCard key={row.id ?? 'builtin'} row={row} title={titleOf(row)}
+                impact={impact[tier ?? 'default']} defaultReAlert={defaultReAlert}
+                canEdit={editable} phone={phone}
+                onEdit={() => openEdit(row)} onDelete={() => remove(row)} />
+            )
+          })}
+        </div>
+      </>
     )
   }
 
-  function renderForm() {
-    return (
-      <div className="threshold-form">
-        <div className="threshold-grid">
-          {field('warning_days', 'thr.warnLabel', 'thr.warnHint')}
-          {field('high_days', 'thr.highLabel', 'thr.highHint')}
-          {field('critical_days', 'thr.critLabel', 'thr.critHint')}
-          {field('re_alert_interval_hours', 'thr.intervalLabel', 'thr.intervalHint')}
-        </div>
-        {orderError && <AlertBanner tone="danger">{t('thr.orderError')}</AlertBanner>}
-        {!orderError && <ThresholdPreview preview={preview} t={t} />}
-        <div className="modal-actions">
-          <Button variant="secondary" onClick={() => { setEditing(null); setPreview(null) }}>{t('thr.cancel')}</Button>
-          <Button onClick={save} disabled={saving || orderError} aria-busy={saving || undefined}>{t('thr.save')}</Button>
-        </div>
-      </div>
-    )
-  }
-
+  // Kök kart tam içerik genişliğinde (kullanıcı geri bildirimi 2026-09-26: "Yönetim Paneli dar görünüyor"):
+  // kökte max-w YOK; kartlar geniş ekranda yan yana (auto-fit ızgara), yalnız açıklama metni max-w-prose.
   return (
-    <div className="admin-section">
-      <h3>{t('thr.title')}</h3>
-      <p className="section-desc">{t('thr.desc')} {t('thr.tierDesc')}</p>
-      {loadError && thresholds.length === 0 && (
-        <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
+    <SettingsSection level={3} title={t('thr.title')} description={description}
+      contentClassName="flex flex-col gap-4">
+      {permsKnown && !editable && <AlertBanner tone="info" className="mb-0">{t('thr.readOnly')}</AlertBanner>}
+      {thresholds != null && loadError && (
+        <AlertBanner tone="warning" title={t('thr.staleTitle')} actions={retry} className="mb-0">{String(loadError)}</AlertBanner>
       )}
-      {rows.map((thr) => {
-        const tier = tierOf(thr)
-        return (
-          <div key={thr.id} className={`threshold-card${tier ? ' threshold-card--tier' : ''}`}>
-            <div className="threshold-card-head">
-              <span className="threshold-card-title"><Layers size={14} /> {rowTitle(thr)}</span>
-              {tier
-                ? <span className="threshold-card-scope">{t('thr.scopeTier', tier)}</span>
-                : <span className="threshold-card-scope">{t('thr.scopeDefault')}</span>}
-            </div>
-            {editing?.id === thr.id && !editing._new ? renderForm() : (
-              <div className="threshold-display">
-                <div className="threshold-levels">
-                  <div className="level-badge warning">{t('thr.displayWarn', thr.warning_days)}</div>
-                  <div className="level-badge high">{t('thr.displayHigh', thr.high_days)}</div>
-                  <div className="level-badge critical">{t('thr.displayCrit', thr.critical_days)}</div>
-                  <div className="level-badge info">{t('thr.displayInterval', thr.re_alert_interval_hours)}</div>
-                </div>
-                <div className="threshold-actions">
-                  <Button variant="secondary" onClick={() => startEdit(thr)}>{t('thr.edit')}</Button>
-                  {tier && (
-                    <Button variant="destructive" size="sm" onClick={() => remove(thr)} title={t('thr.delete')}
-                      aria-label={`${t('thr.scopeTier', tier)} — ${t('thr.delete')}`}>
-                      <Trash2 size={14} />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )
-      })}
-
-      {/* Tier eşiği ekle — yalnız satırı olmayan tier'lar seçilebilir. */}
-      {editing?._new ? (
-        <div className="threshold-card threshold-card--tier">
-          <div className="threshold-card-head">
-            <span className="threshold-card-title"><Layers size={14} /> {t(`inv.tier${editing.tier}`)}</span>
-            <span className="threshold-card-scope">{t('thr.scopeTier', editing.tier)}</span>
-          </div>
-          {renderForm()}
-        </div>
-      ) : freeTiers.length > 0 && (
-        <div className="threshold-add">
-          <SearchableSelect
-            value={addTier}
-            onChange={setAddTier}
-            placeholder={t('thr.addTierPick')}
-            ariaLabel={t('thr.addTierPick')}
-            options={[{ value: '', label: t('thr.addTierPick') }, ...freeTiers.map(x => ({ value: String(x), label: t(`inv.tier${x}`) }))]}
-          />
-          <Button variant="secondary" onClick={startAdd} disabled={!addTier}>
-            <Plus size={14} /> {t('thr.addTier')}
-          </Button>
-        </div>
-      )}
+      {body}
 
       <AdminChangeHistory resource="ALERT_THRESHOLD" />
-    </div>
-  )
-}
 
-/** Etki önizleme paneli: mevcut → önerilen sayımlar + örnek alanlar. */
-function ThresholdPreview({ preview, t }) {
-  if (!preview) return null
-  if (preview.loading && !preview.data) {
-    return <div className="threshold-preview threshold-preview--loading"><Spinner size={12} inline decorative /> {t('thr.previewLoading')}</div>
-  }
-  if (preview.error) return <div className="threshold-preview threshold-preview--error">{preview.error}</div>
-  const d = preview.data
-  if (!d) return null
-  const cur = d.current || {}, next = d.proposed || {}
-  const cell = (key, cls) => {
-    const a = Number(cur[key] ?? 0), b = Number(next[key] ?? 0)
-    const delta = b - a
-    return (
-      <span className={`threshold-preview-cell level-badge ${cls}`}>
-        {t(`thr.prev.${key}`)}: <b>{b}</b>
-        {delta !== 0 && <span className="threshold-preview-delta">({delta > 0 ? '+' : ''}{delta})</span>}
-      </span>
-    )
-  }
-  const samples = d.samples || {}
-  return (
-    <div className="threshold-preview" data-testid="threshold-preview">
-      <div className="threshold-preview-head">
-        {t('thr.previewTitle', d.scope_total ?? 0)}
-        {d.unchecked > 0 && <span className="hint"> · {t('thr.previewUnchecked', d.unchecked)}</span>}
-        {preview.loading && <Spinner size={11} inline decorative />}
-      </div>
-      <div className="threshold-preview-row">
-        {cell('critical', 'critical')}{cell('high', 'high')}{cell('warning', 'warning')}{cell('ok', 'info')}
-      </div>
-      {['CRITICAL', 'HIGH', 'WARNING'].map(lv => (samples[lv] || []).length > 0 && (
-        <div key={lv} className="threshold-preview-samples">
-          <span className="threshold-preview-lv">{t(`thr.prev.${lv.toLowerCase()}`)}:</span>
-          {samples[lv].map(s => <span key={s} className="threshold-preview-chip">{s}</span>)}
-        </div>
-      ))}
-      <div className="hint">{t('thr.previewHint')}</div>
-    </div>
+      {editor && (
+        <ThresholdEditor target={editor} defaultRow={savedDefault}
+          scopeTotal={impact[tierOf(editor.row) ?? 'default']?.scope_total ?? null}
+          onClose={() => setEditor(null)} onSaved={onSaved} />
+      )}
+    </SettingsSection>
   )
 }

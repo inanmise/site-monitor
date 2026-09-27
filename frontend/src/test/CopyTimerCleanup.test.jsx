@@ -34,17 +34,22 @@ describe('kopyalama zamanlayıcısı — unmount temizliği', () => {
       <SqlRowDetailModal row={{ ad: 'deger' }} cols={['ad']} index={0} onClose={() => {}} />,
     )
 
-    // Değerin yanındaki (metinsiz, salt-ikon) kopyalama butonu.
+    // Değerin yanındaki salt-ikon kopyalama butonu — adı satırı (sütunu) içerir. (Kabuk artık ModalShell:
+    // ilk metinsiz düğme pencerenin X'i olurdu, bu yüzden ada göre bulunur.)
     // fireEvent kullanılır: userEvent sahte zamanlayıcılarla jsdom'da asılı kalıyor.
-    const copyBtn = screen.getAllByRole('button').find(b => !b.textContent?.trim())
-    expect(copyBtn).toBeTruthy()
+    const copyBtn = screen.getByRole('button', { name: /(Copy value|Değeri kopyala).* — ad$/i })
+    // Kabuğun (Radix Dialog) kendi 0 ms zamanlayıcıları sayımı kirletmesin: önce onları boşalt.
+    await act(async () => { vi.advanceTimersByTime(1) })
+    const baseline = vi.getTimerCount()
     fireEvent.click(copyBtn)
 
     // clipboard.writeText().then(...) mikro-görevini boşalt → rozet zamanlayıcısı kurulur.
     await act(async () => { await Promise.resolve() })
-    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
 
     unmount()
+    // Radix FocusScope unmount'ta 0 ms'lik odak-iade zamanlayıcısı kurar — onu çalıştır (1 ms < rozetin 1200 ms'i).
+    vi.advanceTimersByTime(1)
 
     expect(vi.getTimerCount()).toBe(0)
   })

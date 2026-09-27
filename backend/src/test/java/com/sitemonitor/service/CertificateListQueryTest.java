@@ -241,4 +241,35 @@ class CertificateListQueryTest {
         // Sütun verilmezse tüm sütunlar
         assertThat(service.exportCsv(q("", "", "", false, null, "", ""), null, List.of()).split("\r\n")[0]).startsWith("domain,issuer,subject,team,");
     }
+
+    @Test
+    @DisplayName("org geneli görünürlük (2026-09-26): facet'ler GÖRÜNÜR küme üzerinden — 'Tüm takımlar' (null kapsam) diğer takımı sayar, 'kendi takımım' saymaz")
+    void facetsFollowVisibleSet() {
+        // Takım 1'in aktif envanteri (getTeamDomains) — 'mine' kapsamı bunu kullanır.
+        when(inventoryRepo.findByTeamIdInAndActiveTrueOrderByDomainAsc(anyCollection())).thenAnswer(i -> {
+            java.util.Collection<Long> teams = i.getArgument(0);
+            return inventory.stream().filter(inv -> inv.getTeamId() != null && teams.contains(inv.getTeamId())).toList();
+        });
+        Map<String, Object> all = service.getPaginated(q("", "", "", false, null, "", ""), null);
+        Map<String, Object> mine = service.getPaginated(q("", "", "", false, null, "", ""), List.of(1L));
+
+        assertThat(facets(all).get("all")).isEqualTo(8);
+        assertThat(facets(mine).get("all")).isEqualTo(4);   // takım 1: expired, crit, shared-a, err
+        @SuppressWarnings("unchecked") List<Map<String, Object>> allTeams = (List<Map<String, Object>>) facets(all).get("teams");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> mineTeams = (List<Map<String, Object>>) facets(mine).get("teams");
+        assertThat(allTeams).extracting(m -> m.get("id")).containsExactlyInAnyOrder(1L, 2L);
+        assertThat(mineTeams).extracting(m -> m.get("id")).containsExactly(1L);
+        assertThat(facets(all).get("no_team")).isEqualTo(1);
+        assertThat(facets(mine).get("no_team")).isEqualTo(0);
+        // Seviye sayaçları da aynı kümeden: 'hata' satırı takım 1'de, ikisinde de 1; 'geçerli' yalnız tüm kümede 3.
+        @SuppressWarnings("unchecked") Map<String, Integer> allLevels = (Map<String, Integer>) facets(all).get("levels");
+        @SuppressWarnings("unchecked") Map<String, Integer> mineLevels = (Map<String, Integer>) facets(mine).get("levels");
+        assertThat(allLevels.get("valid")).isEqualTo(3);
+        assertThat(mineLevels.get("valid")).isEqualTo(1);
+        // Paylaşılan parmak izi sayımı da görünür küme: FP-SHARED iki takıma bölünmüş → 'mine'da tek.
+        @SuppressWarnings("unchecked") Map<String, Integer> sharedAll = (Map<String, Integer>) all.get("shared");
+        @SuppressWarnings("unchecked") Map<String, Integer> sharedMine = (Map<String, Integer>) mine.get("shared");
+        assertThat(sharedAll).containsEntry("shared-a.example.com", 2);
+        assertThat(sharedMine).doesNotContainKey("shared-a.example.com");
+    }
 }

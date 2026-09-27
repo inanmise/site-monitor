@@ -1,14 +1,18 @@
 import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { COLUMN_BY_KEY, STATUS_OPTIONS, TIER_OPTIONS } from './certTableModel.js'
+import { Input } from '@/components/shadcn/input'
+import { TableCell, TableRow } from '@/components/shadcn/table'
 
 /**
  * Tüm Sertifikalar tablosu — başlığın altındaki KOLON SÜZGEÇ SATIRI (2026-09-22, kullanıcı isteği: envanterdekiyle aynı).
  * Bu tablo SUNUCU sayfalı: süzgeçler mevcut sunucu parametrelerine eşlenir (filter_domain/issuer/status/team/window/tier/
  * port/insecure/fp) — yeni sunucu süzgeci uydurulmaz; sunucunun süzemediği kolonlar (SAN, imza, anahtar, TLS, seri…)
  * boş hücre olarak kalır. Metin alanları tablonun 300 ms debounce'undan geçer (filters → queryFilters).
- * Hücre sırası thead ile birebir: [seçim] + cols + işlem.
+ * Hücre sırası thead ile birebir: [seçim] + cols + işlem. Çizim shadcn: TableRow/TableCell + Input + ui/SearchableSelect.
  */
+const CELL = 'bg-muted/40 px-1.5 py-1 align-middle border-b-2 border-border'
+
 export default function CertFilterRow({ filters, onFilter, cols, facets, teamNames = {}, showSelect, pageRows = [] }) {
   const t = useT()
   const set = (k, v) => onFilter({ ...filters, [k]: v })
@@ -18,9 +22,8 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
   const colAria = (col) => t('flt.column', t(COLUMN_BY_KEY[col]?.labelKey ?? col))
   const sel = (key, options, col) => <SearchableSelect value={filters[key] || ''} onChange={(v) => set(key, v)} options={[any, ...options]} searchThreshold={6} ariaLabel={colAria(col)} />
   const text = (key, ph, aria) => (
-    <span className="inv-fr-text">
-      <input type="search" className="input input-sm" value={filters[key] || ''} onChange={(e) => set(key, e.target.value)} placeholder={ph} aria-label={aria} />
-    </span>
+    <Input type="search" className="h-8 min-w-[120px] md:text-[.82em]" value={filters[key] || ''}
+      onChange={(e) => set(key, e.target.value)} placeholder={ph} aria-label={aria} />
   )
   const teamOpts = [
     ...(facets?.teams || []).map((tm) => ({ value: String(tm.id), label: `${tm.name}${tm.count != null ? ` (${tm.count})` : ''}` })),
@@ -54,10 +57,10 @@ export default function CertFilterRow({ filters, onFilter, cols, facets, teamNam
   }
 
   return (
-    <tr className="inv-filter-row ct-filter-row" data-testid="ct-filter-row">
-      {showSelect && <td className="inv-fr-cell" />}
-      {cols.map((key) => <td key={key} className="inv-fr-cell" data-col={key}>{cellFor(key)}</td>)}
-      <td className="inv-fr-cell" />
-    </tr>
+    <TableRow data-testid="ct-filter-row" className="hover:bg-transparent">
+      {showSelect && <TableCell className={CELL} />}
+      {cols.map((key) => <TableCell key={key} className={CELL} data-col={key}>{cellFor(key)}</TableCell>)}
+      <TableCell className={CELL} />
+    </TableRow>
   )
 }

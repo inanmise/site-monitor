@@ -99,4 +99,24 @@ public class LoginIssueReport {
     /** ErrorBoundary otomatik kaydının referansı (LIR-...) — kullanıcı aynı çökmeye bağlam eklediğinde bağ kurar. */
     @Column(length = 30)
     private String linkedReference;
+
+    // ── Konuşma dizisi (2026-09-26) — IssueReportComment ile birlikte ─────────────────────────
+
+    /** Son hareket (yorum ya da durum geçişi, kim yazmış olsun) — liste "son etkinlik" kolonu. */
+    @Column(length = 30)
+    private String lastActivityAt;
+
+    /** Bildirenin GÖREBİLECEĞİ son yönetici hareketi (herkese açık yanıt ya da durum geçişi); iç not saymaz. */
+    @Column(length = 30)
+    private String lastAdminActivityAt;
+
+    /** Bildirenin raporu son açtığı an — okunmamış-yanıt göstergesi: lastAdminActivityAt > reporterSeenAt. */
+    @Column(length = 30)
+    private String reporterSeenAt;
+
+    /** Bildirenin görebileceği yönetici hareketi var ve henüz açılmadı mı? */
+    public boolean hasUnreadForReporter() {
+        if (lastAdminActivityAt == null) return false;
+        return reporterSeenAt == null || lastAdminActivityAt.compareTo(reporterSeenAt) > 0;
+    }
 }

@@ -255,6 +255,11 @@ public class IncidentController {
         requireView(session);
         IncidentImage img = service.getImage(imageId);
         if (img.getIncidentId() != null) requireIncidentRead(session, service.get(img.getIncidentId())); // takım kapsamı
+        // Taslak (henüz olaya bağlanmamış) görsel YALNIZ yükleyene / global görücüye açık (prod kapısı 2026-09-25, Y-1):
+        // takım kapısı taslakta hiç işlemiyordu, id taramasıyla başkasının taslağı okunabiliyordu.
+        else if (!SessionScope.isGlobalViewer(session)
+                && !String.valueOf(session.getAttribute("username")).equalsIgnoreCase(img.getCreatedBy()))
+            throw new java.util.NoSuchElementException("Görsel bulunamadı");
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(img.getContentType()))
                 .header("Cache-Control", "private, max-age=3600")

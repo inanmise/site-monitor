@@ -726,6 +726,136 @@ class EscalationServiceTest {
                 .allSatisfy(st -> assertThat(st).startsWith("FAILED"));
     }
 
+    // ── Alıcı politikası (prod kapısı 2026-09-25, O-1) ─────────────────────────────────────────
+    // "WARNING yalnız takım" kuralı yalnız tip listesine bakıyordu: PING_SLOW ve bağımsız Port/DNS
+    // izlemelerinin WARNING alarmı, takımda kontak yoksa GLOBAL eskalasyon kontaklarına gidiyordu.
+
+    private void assertNoContactLookup() {
+        verify(contactRepo, never()).findByMinAlertLevelAndActiveTrue(anyString());
+        verify(contactRepo, never()).findByTeamIdAndMinAlertLevelAndActiveTrue(any(), anyString());
+        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+    }
+
+    @Test
+    @DisplayName("O-1: PING_SLOW WARNING (tip listesi) → yalnız takım, kontak/global kontak ARANMAZ")
+    void pingSlowWarning_teamOnly() {
+        String host = "ping.example.com";
+        when(alertEventRepo.findOpenAlert(host, EscalationService.TYPE_PING_SLOW)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 5L);
+
+        service.processConfirmedOutage(host, EscalationService.TYPE_PING_SLOW, "WARNING", ctx);
+
+        assertNoContactLookup();
+        assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_PING_SLOW, "WARNING")).isTrue();
+    }
+
+    @Test
+    @DisplayName("O-1: bağımsız PORT/DNS izlemesi (bağlamda team_id) WARNING → yalnız takım; envanter türevlisi (damgasız) eski kural")
+    void standalonePortAndDnsWarning_teamOnly() {
+        for (String type : List.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_DNS_FAILURE)) {
+            String host = type.toLowerCase(java.util.Locale.ROOT) + ".example.com";
+            when(alertEventRepo.findOpenAlert(host, type)).thenReturn(Optional.empty());
+            when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            Map<String, Object> ctx = new LinkedHashMap<>();
+            ctx.put("team_id", 5L);
+            service.processConfirmedOutage(host, type, "WARNING", ctx);
+        }
+        assertNoContactLookup();
+
+        // Olay farkındalıklı karar (çözüm/tekrar bildir/fırtına) aynı sonucu verir: damga → bağımsız.
+        AlertEvent stamped = new AlertEvent();
+        stamped.setAlertType(EscalationService.TYPE_PORT_DOWN); stamped.setAlertLevel("WARNING");
+        stamped.setContextJson("{\"team_id\":5}");
+        assertThat(EscalationService.teamOnlyRecipients(stamped)).isTrue();
+        AlertEvent inventoryDerived = new AlertEvent();
+        inventoryDerived.setAlertType(EscalationService.TYPE_PORT_DOWN); inventoryDerived.setAlertLevel("WARNING");
+        assertThat(EscalationService.teamOnlyRecipients(inventoryDerived)).isFalse();   // envanter türevi: değişmedi
+        // HIGH/CRITICAL'de bağımsız izlemeye de eskalasyon kontakları eklenir (2026-09-19 kararı değişmedi).
+        stamped.setAlertLevel("HIGH");
+        assertThat(EscalationService.teamOnlyRecipients(stamped)).isFalse();
+    }
+
+    @Test
+    @DisplayName("O-1: çözüm bildirimi AÇILIŞLA aynı kararı verir — bağımsız Port WARNING çözümünde global kontak aranmaz")
+    void standalonePortWarningResolution_teamOnly() {
+        String host = "port-res.example.com";
+        AlertEvent open = existingOpenAlert(host, EscalationService.TYPE_PORT_DOWN, "WARNING", false);
+        open.setId(77L); open.setTeamId(5L);
+        open.setContextJson("{\"team_id\":5}");
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(host), anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.findById(77L)).thenReturn(Optional.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.resolveMonitoringAlertsForDomain(host, EscalationService.TYPE_PORT_DOWN);
+
+        assertNoContactLookup();
+    }
+
+    @Test
+    @DisplayName("O-1: simülatör, bağımsız OLMAYAN (sertifika) WARNING alarmında da kontakları gösterir — gerçek gönderimle aynı")
+    @SuppressWarnings("unchecked")
+    void simulator_certWarning_showsContactsLikeRealSend() {
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(7L); team.setName("Takim A"); team.setEmail("takim-a@example.com");
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
+        EscalationContact po = contact("po@example.com", "PO", "WARNING"); po.setId(1L); po.setTeamId(7L);
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(7L, "WARNING")).thenReturn(List.of(po));
+
+        Map<String, Object> cert = service.simulateRecipients(7L, "WARNING", false, null);
+        assertThat(cert.get("managers_included")).isEqualTo(true);
+        assertThat((List<Map<String, Object>>) cert.get("contacts")).extracting(m -> m.get("email"))
+                .containsExactly("po@example.com");
+
+        Map<String, Object> standalone = service.simulateRecipients(7L, "WARNING", true, null);
+        assertThat(standalone.get("managers_included")).isEqualTo(false);
+        assertThat((List<?>) standalone.get("contacts")).isEmpty();
+    }
+
+    // ── Çözümde kontak webhook'u (prod kapısı 2026-09-25, O-2) ─────────────────────────────────
+
+    @Test
+    @DisplayName("O-2: çözümde kontak webhook'u (Teams) 'INFO' ile gider ve günlüğe yazılır — açılışın aynası")
+    void resolution_sendsContactWebhook() {
+        String domain = "res-webhook.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        existing.setId(91L);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        EscalationContact c = contact("dev@example.com", "TECH", "WARNING");
+        c.setWebhookUrl("https://teams.example.com/webhook"); c.setWebhookType("TEAMS");
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
+
+        service.processResults(List.of(okResult(domain)));
+
+        verify(webhookService).send(eq("TEAMS"), eq("https://teams.example.com/webhook"),
+                contains("ÇÖZÜLDÜ"), contains(domain), eq("INFO"));
+        ArgumentCaptor<NotificationLog> logs = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo, atLeastOnce()).save(logs.capture());
+        assertThat(logs.getAllValues()).extracting(NotificationLog::getWebhookStatus).contains("SENT");
+    }
+
+    @Test
+    @DisplayName("O-2: e-posta alıcısı YOKKEN (mail atlanan dal) da çözüm webhook'u gider")
+    void resolution_mailSkipped_stillSendsWebhook() {
+        String domain = "res-webhook-only.example.com";
+        AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        existing.setId(92L);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        EscalationContact c = contact(null, "TECH", "WARNING");   // yalnız webhook'u olan kontak (Teams kanalı)
+        c.setWebhookUrl("https://teams.example.com/only"); c.setWebhookType("TEAMS");
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+
+        service.processResults(List.of(okResult(domain)));
+
+        verify(emailService, never()).sendResolutionAlert(any(String[].class), anyString(), anyString(), anyString(),
+                anyString(), any(), any(), any(), any(), any(), any(), any());
+        verify(webhookService).send(eq("TEAMS"), eq("https://teams.example.com/only"), anyString(), anyString(), eq("INFO"));
+    }
+
     // ── reNotify (async) ─────────────────────────────────────────────────────
 
     @Test
@@ -2621,5 +2751,37 @@ class EscalationServiceTest {
             assertThat(EscalationService.teamOnlyRecipients(type, "HIGH")).as(type + " HIGH").isFalse();
             assertThat(EscalationService.teamOnlyRecipients(type, "CRITICAL")).as(type + " CRITICAL").isFalse();
         }
+    }
+
+    /**
+     * Bakım penceresinde kurtarma: "açılış bildirimi GİTTİYSE çözüm de gider" kuralı TAKIMIN bildirimine bakar. Yalnız
+     * 7/24 (NOC) satırı olan alarm takıma hiç gitmemiştir → takıma ÇÖZÜLDÜ gönderilmez, sessiz kapanır (2026-09-27).
+     */
+    @Test
+    @DisplayName("bakımda kurtarma: yalnız 7/24 satırı olan alarm sessiz kapanır; takım satırı olan normal yoldan")
+    void maintenanceResolve_nocOnlyRowDoesNotCountAsTeamNotified() {
+        String domain = "maint.example.com";
+        when(maintenanceService.isUnderMaintenance(domain)).thenReturn(true);
+        AlertEvent nocOnly = existingOpenAlert(domain, "PING_DOWN", "CRITICAL", false);
+        nocOnly.setId(501L);
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), any())).thenReturn(List.of(nocOnly));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        com.sitemonitor.model.NotificationLog nocRow = new com.sitemonitor.model.NotificationLog();
+        nocRow.setAlertEventId(501L);
+        nocRow.setRecipientRole("NOC");
+        when(notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(501L)).thenReturn(List.of(nocRow));
+
+        service.resolveMonitoringAlertsForDomain(domain, "PING_DOWN");
+
+        verify(alertEventRepo, never()).markResolvedIfOpen(any(), any(), any());   // normal (e-postalı) yol DEĞİL
+        assertThat(nocOnly.getResolvedBy()).contains("bakım");
+
+        com.sitemonitor.model.NotificationLog teamRow = new com.sitemonitor.model.NotificationLog();
+        teamRow.setAlertEventId(501L);
+        teamRow.setRecipientRole("COMBINED");
+        nocOnly.setResolved(false);
+        when(notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(501L)).thenReturn(List.of(nocRow, teamRow));
+        service.resolveMonitoringAlertsForDomain(domain, "PING_DOWN");
+        verify(alertEventRepo).markResolvedIfOpen(eq(501L), any(), any());          // takıma gitmiş → normal yol
     }
 }

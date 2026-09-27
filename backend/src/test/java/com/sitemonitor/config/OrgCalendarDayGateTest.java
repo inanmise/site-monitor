@@ -106,6 +106,63 @@ class OrgCalendarDayGateTest {
                 .isEmpty();
     }
 
+    // ── İkinci desen: JVM varsayılan dilimi (prod kapısı 2026-09-25, N4) ──────────────────────
+    // RenewalForecastService "servisler Europe/Istanbul'da koşar" varsayımıyla ZONE = sistem varsayılanı
+    // kullanıyordu; konteyner JVM'i UTC koştuğu için prod'da UTC günü üretiyordu. İlk desen bunu
+    // göremiyordu: çağrı now(ZONE) biçimindeydi, UTC'lik sabitin TANIMINDAYDI. Üretimde JVM varsayılan
+    // dilimi okunmaz — kurum dilimi açıkça yazılır.
+
+    /** JVM varsayılan dilimini okuyan çağrılar (kaçışsız sınıflarla, kapının kendi notuna uygun). */
+    private static final Pattern JVM_DEFAULT_ZONE =
+            Pattern.compile("ZoneId[.]systemDefault[(][ ]*[)]|TimeZone[.]getDefault[(][ ]*[)]|Clock[.]systemDefaultZone[(][ ]*[)]");
+
+    /** Gerekçeli muafiyet: dosya → NEDEN varsayılan dilim doğru. Cırcır yalnız küçülür. */
+    private static final Map<String, String> JVM_ZONE_EXEMPT = Map.of(
+            "com/sitemonitor/service/StartupLogger.java",
+            "yalnız çalışma zamanı dilimini açılış tanı tablosuna YAZAR — hesap yapmaz");
+
+    private static List<String> jvmZoneLines(Path f) throws IOException {
+        List<String> hits = new ArrayList<>();
+        int no = 0;
+        for (String line : Files.readAllLines(f, StandardCharsets.UTF_8)) {
+            no++;
+            if (COMMENT_LINE.matcher(line).find()) continue;
+            if (JVM_DEFAULT_ZONE.matcher(line).find()) hits.add(no + ": " + line.trim());
+        }
+        return hits;
+    }
+
+    @Test
+    @DisplayName("KAPI: üretim kodu JVM varsayılan dilimini (systemDefault / TimeZone.getDefault) okumaz")
+    void noJvmDefaultZoneInProduction() throws IOException {
+        Path root = mainRoot();
+        List<String> offenders = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path f : walk.filter(x -> x.toString().endsWith(".java")).toList()) {
+                String r = rel(root, f);
+                if (JVM_ZONE_EXEMPT.containsKey(r)) continue;
+                for (String hit : jvmZoneLines(f)) offenders.add(r + ":" + hit);
+            }
+        }
+        assertThat(offenders)
+                .as("JVM varsayılan dilimi prod konteynerinde UTC'dir (TZ / -Duser.timezone verilmiyor): takvim "
+                  + "günü her gece 00:00–03:00 arası bir gün kayar. Kurum dilimini açıkça yazın: "
+                  + "ZoneId.of(\"Europe/Istanbul\").")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("JVM dilimi muafiyetleri ÖLÜ kayıt taşımaz")
+    void jvmZoneExemptionsAreAlive() throws IOException {
+        Path root = mainRoot();
+        List<String> dead = new ArrayList<>();
+        for (Map.Entry<String, String> e : JVM_ZONE_EXEMPT.entrySet()) {
+            Path f = root.resolve(e.getKey());
+            if (!Files.exists(f) || jvmZoneLines(f).isEmpty()) dead.add(e.getKey());
+        }
+        assertThat(dead).as("Bu dosyalar artık JVM dilimini okumuyor — muafiyet DÜŞMELİ").isEmpty();
+    }
+
     @Test
     @DisplayName("Muafiyet listesi ÖLÜ kayıt taşımaz — cırcırı yalnızca küçülür")
     void exemptionsAreAllAlive() throws IOException {

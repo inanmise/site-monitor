@@ -63,6 +63,34 @@ class UserPushControllerUnitTest {
                 mock(com.sitemonitor.repository.TeamRepository.class));
     }
 
+    // ── Teslimat pencereleri UTC (prod kapısı 2026-09-25, O-6 / eski Y20) ─────────────────────
+    // Satırlar UTC yazılıyor (UserPushService.ISO), pencere sınırı İstanbul yereliyle hesaplanıyordu:
+    // "since" saklanan değerlerin 3 saat İLERİSİNDEydi — dakikada 3 test tavanı hiç tetiklenmiyordu.
+
+    @Test
+    @DisplayName("O-6: test tavanı penceresi UTC 'şimdi − 1 dk' — İstanbul yereliyle 3 saat kayık DEĞİL")
+    void testLimitWindow_isUtc() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.enabled()).thenReturn(true);
+        when(push.sendTest(org.mockito.ArgumentMatchers.anyList(), anyString(), anyString())).thenReturn(Map.of());
+        com.sitemonitor.repository.UserPushDeliveryRepository repo =
+                mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        UserPushController c = new UserPushController(mock(AppSettingsService.class), push, repo,
+                mock(com.sitemonitor.repository.UserPushScopeRepository.class), mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class), mock(com.sitemonitor.repository.TeamRepository.class));
+
+        c.sendTest(Map.of("usernames", List.of("N00001")), session("ADMIN", false));
+
+        org.mockito.ArgumentCaptor<String> since = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(repo).countByTriggerAndCreatedAtGreaterThanEqual(org.mockito.ArgumentMatchers.eq("TEST"), since.capture());
+        java.time.LocalDateTime expected = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1);
+        java.time.LocalDateTime actual = java.time.LocalDateTime.parse(since.getValue());
+        assertThat(java.time.Duration.between(actual, expected).abs().getSeconds())
+                .as("pencere UTC olmalı (satırlar UTC yazılıyor); fark: " + since.getValue() + " ↔ " + expected)
+                .isLessThan(60L);
+    }
+
     private static MockHttpSession session(String role, boolean scoped) {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute("authenticated", Boolean.TRUE);

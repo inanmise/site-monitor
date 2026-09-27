@@ -5,7 +5,9 @@ import { Toaster } from '@/components/shadcn/sonner'
 import { Badge } from '@/components/shadcn/badge'
 import { useT } from '@/i18n/index.jsx'
 
-const ToastCtx = createContext(null)
+// globalThis pin (2026-09-26): Vite HMR bu dosyayı iki modül örneği olarak yükleyince (yığında iki farklı `?t=`) sağlayıcı
+// ile useToast ayrı context'lere düşüyor ve "useToast must be used within ToastProvider" ile çöküyordu — i18n/Sidebar deseni.
+const ToastCtx = (globalThis.__smToastCtx ??= createContext(null))
 
 let _seq = 0
 

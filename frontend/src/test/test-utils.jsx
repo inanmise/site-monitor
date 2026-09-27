@@ -31,11 +31,17 @@ export { renderWithProviders as render }
  * SearchableSelect listesi body'ye PORTAL'lanır: arama kutusu ve seçenekler belge genelinde aranır.
  */
 export async function fillGroupAndTags({ group = 'Grup A', tag = 't1', root } = {}) {
-  const scope = root || document.querySelector('.modal-box') || document
-  const groupLabel = [...scope.querySelectorAll('label > span:first-child')]
-    .find((sp) => /^(Grup|Group)\s*\*?$/.test(sp.textContent.trim()))
-  if (!groupLabel) throw new Error('fillGroupAndTags: grup etiketi bulunamadı')
-  const trigger = groupLabel.parentElement.querySelector('button[role="combobox"]')
+  const scope = root || document.querySelector('.modal-box') || document.querySelector('[role="dialog"]') || document
+  const isGroupText = (s) => /^(Grup|Group)\s*\*?$/.test(s.trim())
+  // İki düzen: eski `<label><span>Grup *</span><SearchableSelect/></label>` ve shadcn Field
+  // (ui/Field / FormField): `<label for="id">Grup *</label>` + tetik `#id` (kardeş, iç içe değil).
+  let trigger = null
+  const legacyLabel = [...scope.querySelectorAll('label > span:first-child')].find((sp) => isGroupText(sp.textContent))
+  if (legacyLabel) trigger = legacyLabel.parentElement.querySelector('button[role="combobox"]')
+  if (!trigger) {
+    const fieldLabel = [...scope.querySelectorAll('label[for]')].find((l) => isGroupText(l.textContent))
+    if (fieldLabel) trigger = document.getElementById(fieldLabel.htmlFor)
+  }
   if (!trigger) throw new Error('fillGroupAndTags: grup SearchableSelect bulunamadı')
   fireEvent.mouseDown(trigger)
   const search = document.querySelector('[cmdk-input]')
@@ -46,8 +52,9 @@ export async function fillGroupAndTags({ group = 'Grup A', tag = 't1', root } = 
   fireEvent.mouseDown(existing || options.find((o) => o.getAttribute('data-value') === 'create:'))
   // handleCreate async: onCreate() await'inden sonra onChange koşar — bir mikro-görev bekle.
   await act(async () => {})
-  // TagInput kutusu shadcn Input (öneri listesi için bir sarmalayıcı span içinde) — doğrudan çocuk değil, torun
-  const tagInput = [...scope.querySelectorAll('label.full-width input[data-slot="input"]')]
+  // TagInput kutusu shadcn Input (öneri listesi için bir sarmalayıcı span içinde) — doğrudan çocuk değil, torun.
+  // Eski düzende `label.full-width` içinde; shadcn formlarda etiketli bölümün (form-section) içinde.
+  const tagInput = [...scope.querySelectorAll('label.full-width input[data-slot="input"], [data-slot="form-section"] input[data-slot="input"]')]
     .find((i) => /etiket|tag|enter/i.test(i.placeholder || ''))
   if (!tagInput) throw new Error('fillGroupAndTags: etiket kutusu bulunamadı')
   fireEvent.change(tagInput, { target: { value: tag } })

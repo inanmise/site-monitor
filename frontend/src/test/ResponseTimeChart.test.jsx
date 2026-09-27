@@ -11,6 +11,7 @@ vi.mock('../api/client', () => ({
     },
   }),
   formatDate: (s) => String(s),
+  formatDateSec: (s) => String(s),
 }))
 
 import { api } from '../api/client'
@@ -99,9 +100,52 @@ describe('ResponseTimeChart', () => {
     render(<ResponseTimeChart monitorId={7} kind="scripted" />)
     await waitFor(() => expect(api.monitoring.getScriptedResponseSeries).toHaveBeenCalled())
 
-    // Seçili preset birincil (data-variant=default), diğerleri ikincil
-    const selected = [...document.querySelectorAll('button[data-variant="default"]')].map(b => b.textContent.trim())
-    expect(selected).toContain('24h')
-    expect(selected).not.toContain('30d')
+    // Aralık seçici ui/SegmentedControl (shadcn ToggleGroup): seçili öğe aria-pressed, diğerleri değil
+    const group = screen.getByRole('group', { name: /time range|zaman aralığı/i })
+    const selected = [...group.querySelectorAll('button[aria-pressed="true"]')].map(b => b.textContent.trim())
+    expect(selected).toEqual(['24h'])
+    expect(group.querySelector('button[aria-pressed="false"]').textContent.trim()).toBe('1 hr')
+  })
+
+  // ── Yeniden tasarım (2026-09-27): özet kutucukları + seri anahtarları ─────────────────────
+
+  it('özet kutucukları pencereden türer (min / ağırlıklı ort / p95 tepe / maks / kesinti / örnek)', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([
+      { ts: '2026-08-06T10:00:00', avg: 120, min: 90, max: 150, p95: 145, count: 3, down: 0 },
+      { ts: '2026-08-06T11:00:00', avg: 130, min: 100, max: 160, p95: 155, count: 1, down: 1 },
+    ]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    const tiles = await waitFor(() => {
+      const els = [...document.querySelectorAll('[data-slot="chart-tile-value"]')]
+      expect(els).toHaveLength(6)
+      return els
+    })
+    // ort = (120·3 + 130·1) / 4 = 122.5 → 123; p95 tepe = 155; kesinti 1; örnek 4
+    expect(tiles.map(x => x.textContent)).toEqual(['90ms', '123ms', '155ms', '160ms', '1', '4'])
+  })
+
+  it('seri anahtarları shadcn ToggleGroup: basılı = görünür; basınca seri gizlenir (aria-pressed=false)', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([
+      { ts: '2026-08-06T10:00:00', avg: 120, min: 90, max: 150, p95: 145, count: 3, down: 0 },
+    ]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    const avg = await waitFor(() => {
+      const el = document.querySelector('[data-slot="chart-series"] [data-series="avg"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(avg.tagName).toBe('BUTTON')
+    expect(avg).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(avg)
+    expect(avg).toHaveAttribute('aria-pressed', 'false')
+    expect(document.querySelector('[data-slot="chart-series"] [data-series="p95"]')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('veri yokken boş durum ipucuyla; dönen spinner YOK', async () => {
+    api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([]))
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />)
+    expect(await screen.findByText('No data in this range')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.querySelector('[data-slot="chart-tile"]')).toBeNull()
   })
 })

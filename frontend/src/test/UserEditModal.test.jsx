@@ -29,7 +29,8 @@ describe('UserEditModal', () => {
 
   it('returns null when no user is supplied', () => {
     const { container } = render(<UserEditModal user={null} teams={teams} onClose={() => {}} />)
-    expect(container.querySelector('.modal-overlay')).toBeNull()
+    expect(container.firstChild).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('renders the username as disabled and pre-fills email and employee id', () => {

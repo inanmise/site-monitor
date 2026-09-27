@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -8,16 +7,24 @@ import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import { UserCog, ChevronRight, Compass } from 'lucide-react'
 import DeviceHistoryPanel from '../DeviceHistoryPanel.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import Field from '../ui/Field.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import { CheckboxRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { cn } from '@/lib/utils'
 
-/** Modal başlık rozetinde kullanıcının LDAP fotoğrafı; yoksa ikona düşer. */
+/** Modal başlık rozetinde kullanıcının LDAP fotoğrafı (shadcn Avatar); yüklenemezse ikona düşer. */
 export function ModalHeaderAvatar({ userId, children }) {
-  const [err, setErr] = useState(false)
-  useEffect(() => { setErr(false) }, [userId])
-  if (!userId || err) return children
+  if (!userId) return children
   return (
-    <img className="modal-icon-hdr-photo" alt=""
-      src={`/api/users/${userId}/photo`} onError={() => setErr(true)} />
+    <Avatar className="size-10 rounded-[10px]">
+      <AvatarImage alt="" src={`/api/users/${userId}/photo`} className="object-cover" />
+      <AvatarFallback className="rounded-[10px] bg-primary/10 text-primary">{children}</AvatarFallback>
+    </Avatar>
   )
 }
 
@@ -89,38 +96,57 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
     }
   }
 
-  // 2026-09-10: body'ye PORTAL + üst katman. Takım üye kartlarından (TeamMembersModal = ModalShell, body'ye
-  // portal, z 2000) açılınca bu modal sayfa ağacında kaldığı için üye modalının ARKASINDA kalıyordu.
-  // Aynı z-index'te sonra çizilen kazanır; ModalShell derinlik başına +10 verir → burada 2100 (toast 9700 üstte).
-  return createPortal(
-    <div className="modal-overlay modal-overlay--top" onClick={onClose}>
-      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-icon-hdr modal-icon-hdr--user">
-          <div className="modal-icon-hdr-badge">
-            <ModalHeaderAvatar userId={user?.id}><UserCog size={20} /></ModalHeaderAvatar>
-          </div>
-          <h3>{readOnly ? t('usr.viewTitle') : t('usr.editTitle')}</h3>
-        </div>
-        {/* form-grid--top: "Takım" uyarı ipucu altta dururken alanlar karşılıklı hizalı kalsın */}
-        <div className="form-grid form-grid--top">
-          <label>{t('usr.formUsername')}
-            <input value={form.username} disabled />
-          </label>
-          <label>{t('usr.formDisplay')}
-            <input value={form.display_name} disabled={readOnly}
-              onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
-          </label>
-          <label>
-            <span>{t('usr.formEmail')} {!readOnly && <span className="req-star">*</span>}</span>
-            <input type="email" value={form.email} disabled={readOnly}
+  // 2026-09-10: takım üye kartlarından (TeamMembersModal = ModalShell) açılınca bu pencere üye
+  // modalının ÜSTÜNDE kalmalı. ModalShell body'ye portal'lar; üstte açılan pencere sonra eklenir
+  // ve aynı katmanda kazanır (iç içe ağaçta ayrıca derinlik başına +10). Escape yalnız en üstteki
+  // katmanı kapatır (Radix katman yığını).
+  const editable = (key, labelKey) => (
+    <Field label={t(labelKey)}>
+      {({ id }) => (
+        <Input id={id} value={form[key]} disabled={readOnly} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
+      )}
+    </Field>
+  )
+  const teamsMissing = !readOnly && form.system_role !== 'ADMIN' && form.team_ids.length === 0
+
+  return (
+    <ModalShell open onClose={onClose} size="md"
+      title={(
+        <span className="flex items-center gap-2.5">
+          <ModalHeaderAvatar userId={user?.id}><UserCog size={20} aria-hidden="true" /></ModalHeaderAvatar>
+          {readOnly ? t('usr.viewTitle') : t('usr.editTitle')}
+        </span>
+      )}
+      footer={readOnly ? (
+        <>
+          <Button variant="secondary" onClick={onClose}>{t('usr.close')}</Button>
+          {onEdit && <Button onClick={onEdit}>{t('usr.edit')}</Button>}
+        </>
+      ) : (
+        <>
+          <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
+          <Button onClick={save} aria-busy={saving || undefined}
+            disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
+            {saving ? t('usr.saving') : t('usr.save')}
+          </Button>
+        </>
+      )}>
+      {/* items-start: "Takım" uyarı ipucu altta dururken alanlar karşılıklı hizalı kalsın */}
+      <div className="grid grid-cols-1 items-start gap-x-3 sm:grid-cols-2">
+        <Field label={t('usr.formUsername')}>
+          {({ id }) => <Input id={id} value={form.username} disabled />}
+        </Field>
+        {editable('display_name', 'usr.formDisplay')}
+        <Field label={t('usr.formEmail')} required={!readOnly}>
+          {({ id }) => (
+            <Input id={id} type="email" value={form.email} disabled={readOnly}
               onChange={(e) => setForm({ ...form, email: e.target.value })} />
-          </label>
-          <label>{t('usr.formEmployeeId')}
-            <input value={form.employee_id} disabled={readOnly}
-              onChange={(e) => setForm({ ...form, employee_id: e.target.value })} />
-          </label>
-          <label>{t('usr.formRole')}
-            <SearchableSelect
+          )}
+        </Field>
+        {editable('employee_id', 'usr.formEmployeeId')}
+        <Field label={t('usr.formRole')}>
+          {({ id }) => (
+            <SearchableSelect id={id}
               value={form.system_role}
               onChange={v => setForm({ ...form, system_role: v })}
               disabled={readOnly}
@@ -131,9 +157,11 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
                 { value: 'ADMIN',      label: 'ADMIN' },
               ]}
             />
-          </label>
-          <label>{t('usr.orgRole')}
-            <SearchableSelect
+          )}
+        </Field>
+        <Field label={t('usr.orgRole')}>
+          {({ id }) => (
+            <SearchableSelect id={id}
               value={form.org_role}
               onChange={v => setForm({ ...form, org_role: v })}
               disabled={readOnly}
@@ -146,10 +174,12 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
                 { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
               ]}
             />
-          </label>
-          <label>
-            <span>{t('usr.teamsLabel')} {!readOnly && form.system_role !== 'ADMIN' && <span className="req-star">*</span>}</span>
-            <MultiTeamSelect
+          )}
+        </Field>
+        <Field label={t('usr.teamsLabel')} required={!readOnly && form.system_role !== 'ADMIN'}
+          hint={teamsMissing ? t('usr.teamsRequired') : undefined} hintTone="warn">
+          {({ id }) => (
+            <MultiTeamSelect id={id}
               value={form.team_ids}
               onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
               placeholder={t('usr.teamsPlaceholder')}
@@ -157,81 +187,47 @@ export default function UserEditModal({ user, teams, onClose, onSaved, readOnly 
               disabled={readOnly}
               options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
             />
-            {!readOnly && form.system_role !== 'ADMIN' && form.team_ids.length === 0 && (
-              <span className="field-hint field-hint--warn">{t('usr.teamsRequired')}</span>
-            )}
-          </label>
-          {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
-          <label>{t('usr.formFirstName')}
-            <input value={form.first_name} disabled={readOnly} onChange={(e) => setForm({ ...form, first_name: e.target.value })} />
-          </label>
-          <label>{t('usr.formLastName')}
-            <input value={form.last_name} disabled={readOnly} onChange={(e) => setForm({ ...form, last_name: e.target.value })} />
-          </label>
-          <label>{t('usr.colTitle')}
-            <input value={form.title} disabled={readOnly} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          </label>
-          <label>{t('usr.colPhone')}
-            <input value={form.phone} disabled={readOnly} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          </label>
-          <label>{t('usr.colDept')}
-            <input value={form.department} disabled={readOnly} onChange={(e) => setForm({ ...form, department: e.target.value })} />
-          </label>
-          <label>{t('usr.formCompanyLevel')}
-            <input value={form.company_level} disabled={readOnly} onChange={(e) => setForm({ ...form, company_level: e.target.value })} />
-          </label>
-          <label>{t('usr.colMudurluk')}
-            <input value={form.mudurluk_name} disabled={readOnly} onChange={(e) => setForm({ ...form, mudurluk_name: e.target.value })} />
-          </label>
-          <label>{t('usr.colManager')}
-            <input value={form.manager_sicil} disabled={readOnly} onChange={(e) => setForm({ ...form, manager_sicil: e.target.value })} />
-          </label>
-          <label className="checkbox-label">
-            <input type="checkbox" checked={form.active} disabled={readOnly}
-              onChange={(e) => setForm({ ...form, active: e.target.checked })} />
-            {t('usr.formActive')}
-          </label>
-        </div>
-        {/* Ürün turu sıfırlama (2026-09-13): kullanıcı bir sonraki girişte karşılama kartını yeniden görür */}
-        {!readOnly && user?.id && (
-          <div className="usr-tour-row">
-            <Compass size={14} />
-            <span>{t('usr.tourLabel')}</span>
-            <Button type="button" variant="secondary" size="sm" disabled={tourBusy} onClick={resetTour}>{tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>
-          </div>
-        )}
-        {/* Cihaz Gecmisi (K8) — SALT-OKUNUR. Yetkisi olmayana HIC cizilmez; aksi halde
-            bolumu acan kisi 403 alir ve bunu bir hata sanardi. */}
-        {canSeeDevices && user?.id && (
-          <div className="usr-devices">
-            <button type="button" className={`dev-collapse${devicesOpen ? ' is-open' : ''}`}
-              aria-expanded={devicesOpen} onClick={() => setDevicesOpen(o => !o)}>
-              <ChevronRight size={15} className="dev-collapse-caret" aria-hidden="true" />
-              {t('dev.adminSectionTitle')}
-            </button>
-            {devicesOpen && <DeviceHistoryPanel userId={user.id} />}
-          </div>
-        )}
-        {msg && <div className="alert-msg alert-msg--err" style={{ marginTop: 8 }}>{msg}</div>}
-        <div className="modal-actions">
-          {readOnly ? (
-            <>
-              <Button variant="secondary" onClick={onClose}>{t('usr.close')}</Button>
-              {onEdit && <Button onClick={onEdit}>{t('usr.edit')}</Button>}
-            </>
-          ) : (
-            <>
-              <Button variant="secondary" onClick={onClose}>{t('usr.cancel')}</Button>
-              <Button onClick={save}
-                disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && form.team_ids.length === 0)}>
-                {saving ? t('usr.saving') : t('usr.save')}
-              </Button>
-            </>
           )}
-        </div>
+        </Field>
+        {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
+        {editable('first_name', 'usr.formFirstName')}
+        {editable('last_name', 'usr.formLastName')}
+        {editable('title', 'usr.colTitle')}
+        {editable('phone', 'usr.colPhone')}
+        {editable('department', 'usr.colDept')}
+        {editable('company_level', 'usr.formCompanyLevel')}
+        {editable('mudurluk_name', 'usr.colMudurluk')}
+        {editable('manager_sicil', 'usr.colManager')}
+        <CheckboxRow className="col-span-full mb-3.5" checked={!!form.active} disabled={readOnly} label={t('usr.formActive')}
+          onChange={(v) => setForm({ ...form, active: v })} />
       </div>
-    </div>,
-    document.body
+      {/* Ürün turu sıfırlama (2026-09-13): kullanıcı bir sonraki girişte karşılama kartını yeniden görür */}
+      {!readOnly && user?.id && (
+        <div className="mt-2.5 flex items-center gap-2 text-[0.9em]">
+          <Compass size={14} aria-hidden="true" />
+          <span>{t('usr.tourLabel')}</span>
+          <Button type="button" variant="secondary" size="sm" className="ml-auto" disabled={tourBusy} onClick={resetTour}>{tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>
+        </div>
+      )}
+      {/* Cihaz Gecmisi (K8) — SALT-OKUNUR. Yetkisi olmayana HIC cizilmez; aksi halde
+          bolumu acan kisi 403 alir ve bunu bir hata sanardi. Kapalıyken panel HİÇ çizilmez
+          (açılınca iki sorgu atıyor) — Collapsible içeriği kapalıyken DOM'da yok. */}
+      {canSeeDevices && user?.id && (
+        <Collapsible open={devicesOpen} onOpenChange={setDevicesOpen} className="mt-3.5 border-t pt-3 border-border">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost" size="sm" className="-ml-2 font-semibold">
+              <ChevronRight size={15} aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', devicesOpen && 'rotate-90')} />
+              {t('dev.adminSectionTitle')}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <DeviceHistoryPanel userId={user.id} />
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+      {msg && <AlertBanner tone="danger" className="mt-2">{msg}</AlertBanner>}
+    </ModalShell>
   )
 }
 

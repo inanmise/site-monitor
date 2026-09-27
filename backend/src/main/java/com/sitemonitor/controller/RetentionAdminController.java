@@ -94,7 +94,9 @@ public class RetentionAdminController {
     private static final Map<String, String> RUN_SORTS = Map.of(
             "started_at", "startedAt", "total_deleted", "totalDeleted",
             "duration_ms", "durationMs", "failed_count", "failedCount");
-    private static final int RUNS_MAX_SIZE = 100;
+    // 200 = ön yüz sayfalama ön ayarlarının ('page'/'panel') en büyük seçeneği. 100 iken "200/sayfa" seçen kullanıcı
+    // sayfa başına 100 satır alıyor, etiketler kayıyor ve kayıtların bir kısmına hiç ulaşılamıyordu (2026-09-27 regresyon).
+    private static final int RUNS_MAX_SIZE = 200;
     private static final int RUNS_CSV_MAX_ROWS = 5000;
 
     /**

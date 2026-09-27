@@ -22,22 +22,29 @@ const day = (iso) => (iso ? String(iso).substring(0, 10) : '')
 function columns(t) {
   return [t('dom.domain'), t('dom.name'), t('dom.team'), t('dom.group'), t('dom.colStatus'), t('dom.daysLeft'), t('dom.expiry'),
     t('dreg.created'), t('dreg.updated'), t('dom.registrar'), t('dreg.ianaId'), t('dom.source'), t('dom.transferLock'), 'DNSSEC',
-    t('dom.blacklist'), t('dreg.eppStatus'), t('dreg.nameservers'), t('dom.nsResolves'), t('dom.activeAlarm'), t('dom.lastCheck')]
+    t('dom.blacklist'), t('dreg.eppStatus'), t('dreg.nameservers'), t('dom.nsResolves'), t('dom.activeAlarm'), t('dom.lastCheck'),
+    t('nocf.csvNotify'), t('nocf.csvGroups')]
 }
 
-function row(m, t) {
+/** 7/24 grupları hücresi: açık seçim → grup ADLARI ("; "); boş = varsayılan gruplar (hücre boş). Bilinmeyen kimlik `#id`. */
+export const nocGroupsCell = (ids, names = {}) => (Array.isArray(ids) ? ids : [])
+  .map((id) => names[Number(id)] ?? `#${id}`).join('; ')
+
+function row(m, t, nocNames) {
   return [m.domain, m.name || '', m.team_name || '', m.group_name || '', statusLabel(m.status, t),
     m.days_remaining ?? '', day(m.expiry_date), day(m.registration_date), day(m.last_changed), m.registrar || '',
     m.registrar_iana_id || '', m.source || '', lockLabel(m.transfer_lock, t), dnssecLabel(m.dnssec, t), blLabel(m.blacklist_status, t),
     list(m.status_codes).map(eppLabel).join(' | '), list(m.nameservers).join(' | '),
     m.ns_resolves == null ? '' : (m.ns_resolves ? t('dom.on') : t('dom.off')),
     m.active_alarm ? (m.alarm_level || t('dom.on')) : t('dom.off'),
-    m.checked_at ? formatDate(m.checked_at) : '']
+    m.checked_at ? formatDate(m.checked_at) : '',
+    m.noc_notify ? t('dom.on') : t('dom.off'), nocGroupsCell(m.noc_group_ids, nocNames)]
 }
 
-export function exportDomainsCsv(items, t) {
+/** @param nocNames 7/24 grup kimliği → ad (isteğe bağlı; yoksa kimlik `#id` yazılır) */
+export function exportDomainsCsv(items, t, nocNames = {}) {
   const bom = '﻿'
-  const csv = bom + [columns(t), ...items.map(m => row(m, t))].map(r => r.map(csvCell).join(',')).join('\r\n')
+  const csv = bom + [columns(t), ...items.map(m => row(m, t, nocNames))].map(r => r.map(csvCell).join(',')).join('\r\n')
   triggerDownload(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `site-monitor-domains-${dateStamp()}.csv`)
   return items.length
 }

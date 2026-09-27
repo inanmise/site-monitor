@@ -51,7 +51,11 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     @Query("SELECT a FROM AuditLog a WHERE a.actor = :actor AND a.eventType = 'LOGIN' AND a.outcome = 'SUCCESS' AND a.eventTime > :since ORDER BY a.eventTime DESC")
     List<AuditLog> findRecentSuccessfulLogins(@Param("actor") String actor, @Param("since") String since);
 
-    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.actor = :actor AND a.eventType = 'LOGIN_FAILED' AND a.eventTime > :since")
+    /** Kaba kuvvet sayacı. Kilitliyken gelen denemeler (outcome BLOCKED — {@code recordRateLimited}) SAYILMAZ
+     *  (prod kapısı 2026-09-25, O-2): sayılınca saldırgan kilit süresince deneyerek bir sonraki kademeyi ve
+     *  sonunda kalıcı kilidi hızla tetikliyordu. */
+    @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.actor = :actor AND a.eventType = 'LOGIN_FAILED' AND a.eventTime > :since"
+            + " AND (a.outcome IS NULL OR a.outcome <> 'BLOCKED')")
     long countRecentFailedLogins(@Param("actor") String actor, @Param("since") String since);
 
     @Query("SELECT COUNT(a) FROM AuditLog a WHERE a.eventTime > :since")

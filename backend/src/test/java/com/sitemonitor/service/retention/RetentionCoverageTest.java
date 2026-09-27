@@ -30,7 +30,8 @@ class RetentionCoverageTest {
      * oluşturulan tablolar. Sınıf taraması bunları göremediği için elle listelenir.
      */
     private static final List<String> RAW_DDL_TABLES = List.of(
-            "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack");
+            "scheduler_lock", "login_anomaly_state", "monitor_check_daily", "app_user_teams", "page_usage_daily", "login_anomaly_ack",
+            "schema_patch_markers");
 
     /** Muafiyetler — HER BİRİ gerekçeli. Gerekçesiz muafiyet eklenemez (değer boş olamaz). */
     private static final Map<String, String> EXEMPT = Map.ofEntries(
@@ -39,11 +40,15 @@ class RetentionCoverageTest {
             Map.entry("app_settings", "Küratörlü ayar kataloğu kadar satır."),
             Map.entry("app_users", "Kullanıcı sayısı kadar; silme kullanıcı yönetiminden yapılır."),
             Map.entry("app_user_teams", "Kullanıcı×takım üyeliği; kullanıcı silinince JPA temizler."),
+            Map.entry("app_user_team_sources", "Üyelik başına en çok bir kaynak izi (kullanıcı×takım); kullanıcı silinince UserService temizler."),
             Map.entry("teams", "Takım sayısı kadar."),
             Map.entry("platforms", "Platform kataloğu (IIS/OpenShift/…) — Ayarlar'dan elle yönetilir, onlarca satır."),
             Map.entry("permission_grants", "Rol×kaynak matrisi — sabit boyut."),
             Map.entry("escalation_contacts", "Eskalasyon kontakları — elle yönetilir."),
             Map.entry("notification_groups", "Bildirim grubu — takım başına birkaç satır, yumuşak silinir (elle yönetilir)."),
+            Map.entry("noc_notification_groups", "7/24 İzleme Ekibi grupları — global, birkaç satır; yalnız global yönetici elle yönetir."),
+            Map.entry("noc_team_call_list", "Takım arama listesi — takım×kişi (onlarca satır), liste her kayıtta baştan yazılır."),
+            Map.entry("noc_settings", "7/24 yapılandırması — tekil satır (id=1)."),
             Map.entry("maintenance_windows", "Bakım pencereleri — elle yönetilir."),
             Map.entry("user_push_scopes", "Kişi-webhook tip/takım aç-kapa matrisi — tip sayısı + takım sayısı kadar satır, elle yönetilir."),
             Map.entry("certificate_inventory", "Envanter: izlenen domain sayısı kadar (soft delete)."),
@@ -52,6 +57,8 @@ class RetentionCoverageTest {
             Map.entry("ldap_settings", "Tekil ayar satırı."),
             Map.entry("scheduler_lock", "Aktif iş sayısı kadar; kilit bırakılınca silinir."),
             Map.entry("login_anomaly_state", "Tarama imleci — tek satır."),
+            Map.entry("schema_patch_markers", "Tek seferlik veri yamalarının nişanı — yama başına TEK satır, SİLİNMEZ "
+                    + "(silinirse yama yeniden koşar; ör. sonradan duraklatılan DNS/Port izlemelerini silinmiş işaretlerdi)."),
             Map.entry("incident_options", "Olay seçenek listeleri — elle yönetilir."),
             Map.entry("monitoring_groups", "İzleme grubu kaydı — takım×tür×ad kadar."),
             Map.entry("monitor_guide", "İzleme başına tek rehber satırı."),

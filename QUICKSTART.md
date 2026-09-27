@@ -6,7 +6,7 @@
 
 - Java 25
 - Maven 3.9+
-- Node.js 20+
+- Node.js 24 (CI ve Docker build ile aynı major)
 
 ---
 
@@ -111,33 +111,37 @@ Giriş yaptıktan sonra **"Şimdi Kontrol Et"** düğmesine basın. Sonuçlar bi
 
 ## API'ye Doğrudan Erişim
 
+API HTTP Basic (`curl -u`) **desteklemez** — oturum çereziyle çalışır (`-u` ile her istek 401 döner).
+Önce giriş yapıp çerezi saklayın, sonraki isteklerde gönderin:
+
 ```bash
+# Giriş — oturum çerezini cookies.txt'ye yazar
+curl -c cookies.txt -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<parola>"}' http://localhost:8080/api/login
+
 # Tüm sertifikaları al
-curl -u admin:parola http://localhost:8080/api/certificates
+curl -b cookies.txt http://localhost:8080/api/certificates
 
 # Uyarılı sertifikaları al
-curl -u admin:parola http://localhost:8080/api/warnings
+curl -b cookies.txt http://localhost:8080/api/warnings
 
 # Belirli domain'i hemen kontrol et
-curl -u admin:parola http://localhost:8080/api/check/google.com
+curl -b cookies.txt http://localhost:8080/api/check/google.com
 
 # Zamanlayıcıyı hemen çalıştır
-curl -u admin:parola -X POST http://localhost:8080/api/scheduler/run
+curl -b cookies.txt -X POST http://localhost:8080/api/scheduler/run
 
 # İstatistikleri al
-curl -u admin:parola http://localhost:8080/api/stats
+curl -b cookies.txt http://localhost:8080/api/stats
 ```
 
 ---
 
-## Günlük Kontrol Saati
+## Kontrol Sıklığı
 
-`application.properties` veya ortam değişkeni:
-
-```properties
-site.monitor.check.hour=2    # 02:00'de çalışır
-site.monitor.check.minute=0
-```
+Sertifika taraması her saat başı tetiklenir (`SCHEDULER_CRON`, varsayılan `0 0 * * * *`); her domain kendi
+**kontrol sıklığına** (Envanter → Düzenle: saatlik / 6 sa / 12 sa / günlük / haftalık) göre sıraya girer.
+Eski `site.monitor.check.hour` / `check.minute` ayarları artık yoktur.
 
 ---
 

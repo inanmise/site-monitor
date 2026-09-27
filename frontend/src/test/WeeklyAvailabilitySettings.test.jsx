@@ -109,3 +109,52 @@ describe('WeeklyAvailabilitySettings — kesinti PDF indirme', () => {
     release({ success: true })
   })
 })
+
+/** shadcn geçişi (2026-09-26): ana anahtar Switch, önizleme ModalShell (Dialog), arşiv satır eylemi satırı adlandırır. */
+describe('WeeklyAvailabilitySettings — shadcn yüzeyleri', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getWeeklyAvailStatus.mockResolvedValue({
+      success: true,
+      data: {
+        enabled: true, cron: '', week_label: 'W1',
+        teams: [{ id: 5, name: 'TakimA', domain_count: 14, to: [], cc: [] }],
+        weeks: [{ offset: 0, label: 'Bu hafta', current: true, emailed: false }],
+      },
+    })
+    api.admin.getWeeklyAvailHistory.mockResolvedValue({ success: true, data: [
+      { id: 11, sent_at: '2026-09-21T10:00:00', team: 'TakimA', to: 'a@example.com', cc: '', status: 'FAILED: smtp', trigger: 'WEEKLY_AVAILABILITY' },
+    ] })
+    api.admin.setWeeklyAvailEnabled.mockResolvedValue({ success: true })
+    api.admin.getWeeklyAvailPreview.mockResolvedValue({ success: true, data: {
+      team_name: 'TakimA', week_label: 'W1', no_recipients: true, to: [], cc: [], html: '<p>hi</p>' } })
+  })
+
+  it('ana anahtar Switch; kapatınca uç çağrılır ve duraklatma uyarısı çıkar', async () => {
+    const { container } = render(<WeeklyAvailabilitySettings />)
+    const sw = await screen.findByRole('switch', { name: /Weekly email enabled|Haftalık/ })
+    expect(sw).toBeChecked()
+    fireEvent.click(sw)
+    await waitFor(() => expect(api.admin.setWeeklyAvailEnabled).toHaveBeenCalledWith(false))
+    expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).not.toBeNull()
+  })
+
+  it('önizleme ModalShell (role=dialog) içinde açılır; alıcı yoksa uyarı; Escape kapatır', async () => {
+    render(<WeeklyAvailabilitySettings />)
+    await screen.findByText(PDF_BTN)
+    fireEvent.click(screen.getByRole('button', { name: /^(Preview|Önizle)$/ }))
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveTextContent(/TakimA/)
+    expect(dlg.querySelector('iframe[title="weekly-availability-viewer"]')).not.toBeNull()
+    fireEvent.keyDown(dlg, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('arşiv: shadcn Table, FAILED durumu danger, "Görüntüle" düğmesi satırı adlandırır', async () => {
+    render(<WeeklyAvailabilitySettings />)
+    const table = await screen.findByTestId('wa-history')
+    expect(table).toHaveAttribute('data-slot', 'table')
+    expect(screen.getByText('FAILED: smtp')).toHaveAttribute('data-tone', 'danger')
+    expect(screen.getByRole('button', { name: /(View|Görüntüle) — TakimA/ })).toBeInTheDocument()
+  })
+})

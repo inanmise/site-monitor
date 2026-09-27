@@ -252,16 +252,54 @@ class UserServiceTest {
         assertThat(u.getFailedBlockCount()).isEqualTo(1);
     }
 
+    // Kullanıcı kararı 2026-09-26 (prod kapısı O-2): otomatik KALICI kilit kaldırıldı. Eski test "5. ihlal →
+    // kalıcı kilit" diyordu; kimliksiz saldırgan bununla her hesabı ~12 istekle kalıcı kilitleyebiliyordu.
+    // Artık son kademe (30 dk) yinelenir.
+
     @Test
-    @DisplayName("fourth offense → permanent lock")
-    void applyProgressiveLockout_fourthOffense_setsPermanentLock() {
+    @DisplayName("O-2: 5. ihlal (son kademenin ötesi) → 30 dk GEÇİCİ kilit, kalıcı DEĞİL")
+    void applyProgressiveLockout_beyondLastLevel_repeatsLastDuration() {
         AppUser u = user("alice", "hash");
         u.setFailedBlockCount(4);
         when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
 
         UserService.LockoutStatus status = service.applyProgressiveLockout("alice");
-        assertThat(status.permanent()).isTrue();
-        assertThat(u.getPermanentLock()).isTrue();
+        assertThat(status.permanent()).isFalse();
+        assertThat(status.secondsRemaining()).isEqualTo(1800L);
+        assertThat(u.getPermanentLock()).isNotEqualTo(Boolean.TRUE);
+        assertThat(u.getLockoutUntil()).isNotNull();
+        assertThat(u.getFailedBlockCount()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("O-2: 6. ve 7. ihlal de 30 dk — hesap hiçbir kademede kalıcı kilitlenmez")
+    void applyProgressiveLockout_sixthAndSeventhOffence_stayThirtyMinutes() {
+        AppUser u = user("alice", "hash");
+        u.setFailedBlockCount(5);
+        when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
+
+        UserService.LockoutStatus sixth = service.applyProgressiveLockout("alice");
+        UserService.LockoutStatus seventh = service.applyProgressiveLockout("alice");
+
+        assertThat(sixth).isEqualTo(new UserService.LockoutStatus(false, 1800L));
+        assertThat(seventh).isEqualTo(new UserService.LockoutStatus(false, 1800L));
+        assertThat(u.getFailedBlockCount()).isEqualTo(7);
+        assertThat(u.getPermanentLock()).isNotEqualTo(Boolean.TRUE);
+        // Kilit süresi dolunca hesap kendiliğinden açılır (checkLockout geçmiş lockoutUntil'i temizler).
+        u.setLockoutUntil(ISO.format(Instant.now().minusSeconds(1)));
+        assertThat(service.checkLockout("alice").isBlocked()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Kademeler: 1→30 sn, 2→2 dk, 3→10 dk, 4→30 dk")
+    void applyProgressiveLockout_levels() {
+        AppUser u = user("alice", "hash");
+        u.setFailedBlockCount(0);
+        when(userRepo.findByUsername("alice")).thenReturn(Optional.of(u));
+        assertThat(service.applyProgressiveLockout("alice").secondsRemaining()).isEqualTo(30L);
+        assertThat(service.applyProgressiveLockout("alice").secondsRemaining()).isEqualTo(120L);
+        assertThat(service.applyProgressiveLockout("alice").secondsRemaining()).isEqualTo(600L);
+        assertThat(service.applyProgressiveLockout("alice").secondsRemaining()).isEqualTo(1800L);
     }
 
     @Test

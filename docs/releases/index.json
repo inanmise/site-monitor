@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-25T13:21:05Z",
+  "generatedAt": "2026-09-27T16:27:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 684,
+  "count": 685,
   "releases": [
+    {
+      "version": "20.87.0",
+      "tag": "v20.87.0",
+      "releasedAt": "2026-09-27T16:27:51Z",
+      "commit": "5f0304da3ab553ad209b42fe90f82b9f9da42afb",
+      "prevVersion": "20.86.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "5f0304da",
+          "subject": "test heap 1536m + SpringTestPropertiesTest (önceki commit'e eklenemeyen iki dosya)"
+        },
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "db230806",
+          "subject": "bağlam önbelleği ayarı sınıf yolu köküne taşındı + test heap 1536m"
+        },
+        {
+          "type": "fix",
+          "scope": "test",
+          "breaking": false,
+          "sha": "d5560ba8",
+          "subject": "Spring test bağlam önbelleği 12 ile sınırlandı — CI'da Java heap tükeniyordu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "5c598c14",
+          "subject": "shadcn yeniden tasarımlar, tüm izleme kartlarında Kompakt/Zengin, 7/24 İzleme Ekibi bildirimleri ve arama kaydı; güvenlik ve regresyon düzeltmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.86.0",
       "tag": "v20.86.0",

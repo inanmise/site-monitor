@@ -5,10 +5,14 @@ import { useT } from '../i18n/index.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
+import { useServerPagination } from '../hooks/useServerPagination.js'
 import StatusBlock from './ui/StatusBlock.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card } from '@/components/shadcn/card'
+import { cn } from '@/lib/utils'
 
 /**
  * Cihaz Geçmişi / Oturum Güvenliği.
@@ -72,8 +76,10 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
   const [loading, setLoading] = useState(true)
 
   const [logins, setLogins] = useState([])
-  const [loginTotal, setLoginTotal] = useState(0)
-  const [loginPage, setLoginPage] = useState(0)
+  // Sayfalama standardı (2026-09-26): eskiden `SIZE = 50` + boyut seçicisi çizilen ama `onPageSizeChange` verilmeyen
+  // (ÖLÜ) çubuk vardı. Panel ön ayarı (25, seçici çalışır), kullanıcı değişince sayfa 1, API 0-tabanlı.
+  const sp = useServerPagination({ listKey: 'device-logins', preset: 'panel', resetDeps: [isAdminView, userId], apiBase: 0 })
+  const { apiPage: loginPage, pageSize: loginSize, setTotal: setLoginTotal } = sp
   const [loginsLoading, setLoginsLoading] = useState(false)
   const [expanded, setExpanded] = useState(null)
 
@@ -81,7 +87,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
   const [failedOpen, setFailedOpen] = useState(false)
   const [retentionDays, setRetentionDays] = useState(null)
 
-  const SIZE = 50
+  const FAILED_PREVIEW = 50   // "Başarısız denemeler" bölümü: son 50 kayıt (sınırlı önizleme, çubuksuz)
 
   const loadDevices = useCallback(async () => {
     const res = isAdminView ? await api.admin.getUserDevices(userId) : await api.me.getMyDevices()
@@ -92,31 +98,31 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
     setLoading(false)
   }, [isAdminView, userId])
 
-  const loadLogins = useCallback(async (p = 0) => {
+  const loadLogins = useCallback(async () => {
     setLoginsLoading(true)
     try {
       const res = isAdminView
-        ? await api.admin.getUserDeviceLogins(userId, { page: p, size: SIZE })
-        : await api.me.getMyDeviceLogins({ page: p, size: SIZE })
+        ? await api.admin.getUserDeviceLogins(userId, { page: loginPage, size: loginSize })
+        : await api.me.getMyDeviceLogins({ page: loginPage, size: loginSize })
       if (res?.success) {
         setLogins(res.data?.rows ?? [])
         setLoginTotal(res.data?.total ?? 0)
-        setLoginPage(res.data?.page ?? p)
         if (res.data?.retention_days) setRetentionDays(res.data.retention_days)
       }
     } finally {
       setLoginsLoading(false)
     }
-  }, [isAdminView, userId])
+  }, [isAdminView, userId, loginPage, loginSize, setLoginTotal])
 
   const loadFailed = useCallback(async () => {
     const res = isAdminView
-      ? await api.admin.getUserDeviceLogins(userId, { page: 0, size: SIZE, failed: true })
-      : await api.me.getMyDeviceLogins({ page: 0, size: SIZE, failed: true })
+      ? await api.admin.getUserDeviceLogins(userId, { page: 0, size: FAILED_PREVIEW, failed: true })
+      : await api.me.getMyDeviceLogins({ page: 0, size: FAILED_PREVIEW, failed: true })
     if (res?.success) setFailed(res.data?.rows ?? [])
   }, [isAdminView, userId])
 
-  useEffect(() => { loadDevices(); loadLogins(0) }, [loadDevices, loadLogins])
+  useEffect(() => { loadDevices() }, [loadDevices])
+  useEffect(() => { loadLogins() }, [loadLogins])
 
   // Başarısız denemeler YALNIZ bölüm açılınca çekilir — kapalıyken sorgu yapmak boşuna yük.
   useEffect(() => { if (failedOpen && failed.length === 0) loadFailed() }, [failedOpen, failed.length, loadFailed])
@@ -189,14 +195,14 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
 
   const current = devices?.current ?? {}
   const remembered = devices?.remembered ?? []
-  const totalPages = Math.max(1, Math.ceil(loginTotal / SIZE))
 
   return (
     <div className="dev-panel">
       {/* ── 1. Bu cihaz ─────────────────────────────────────────────────── */}
       <section className="dev-section">
         <h3 className="dev-section-title">{t('dev.thisDeviceTitle')}</h3>
-        <div className="dev-card">
+        {/* Bu cihaz — shadcn Card (eski .dev-card) */}
+        <Card data-slot="dev-card" className="flex-row items-start gap-3 rounded-[10px] px-4 py-3.5 shadow-none">
           <DeviceIcon device={current.device} size={22} />
           <div className="dev-card-body">
             <div className="dev-card-head">
@@ -204,10 +210,10 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
               {/* Rozet YALNIZ kendi gorunumunde: admin baskasinin kaydina bakiyor, o oturum
                   onun "mevcut oturumu" DEGIL. */}
               {!isAdminView && (
-                <span className="dev-badge dev-badge--current">{t('dev.currentSession')}</span>
+                <Badge data-slot="dev-badge" data-kind="current">{t('dev.currentSession')}</Badge>
               )}
               {current.remembered_on_this_device && (
-                <span className="dev-badge dev-badge--remembered">{t('dev.rememberedHere')}</span>
+                <Badge variant="outline" data-slot="dev-badge" data-kind="remembered" className="bg-muted text-muted-foreground">{t('dev.rememberedHere')}</Badge>
               )}
             </div>
             {current.known ? (
@@ -222,7 +228,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
               <div className="dev-card-sub">{t('dev.lastSeen', formatDateSec(current.last_seen_at))}</div>
             )}
           </div>
-        </div>
+        </Card>
       </section>
 
       {/* ── 2. Hatırlanan cihazlar ──────────────────────────────────────── */}
@@ -240,7 +246,7 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                   <div className="dev-row-head">
                     <span className="dev-row-name">{row.ua_summary || t('dev.genericSession')}</span>
                     {row.is_this_device && (
-                      <span className="dev-badge dev-badge--current">{t('dev.thisDevice')}</span>
+                      <Badge data-slot="dev-badge" data-kind="current">{t('dev.thisDevice')}</Badge>
                     )}
                   </div>
                   <div className="dev-row-meta">
@@ -250,9 +256,11 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                   </div>
                 </div>
                 {!isAdminView && (
-                  <button type="button" className="dev-row-action" onClick={() => revokeRemembered(row)}>
+                  <Button type="button" variant="ghost" size="sm" className="shrink-0 text-muted-foreground hover:text-foreground"
+                    aria-label={t('a11y.rowAction', row.ua_summary || t('dev.genericSession'), t('dev.revokeAction'))}
+                    onClick={() => revokeRemembered(row)}>
                     {t('dev.revokeAction')}
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}
@@ -303,41 +311,35 @@ export default function DeviceHistoryPanel({ userId = null, onChangePassword = n
                           </div>
                         )}
                         {!isAdminView && (
-                          <button type="button" className="dev-report-btn" onClick={() => reportLogin(row)}>
-                            <ShieldAlert size={13} />{t('dev.reportAction')}
-                          </button>
+                          <Button type="button" variant="outline" size="xs" className="hover:border-destructive hover:text-destructive"
+                            aria-label={t('a11y.rowAction', formatDateSec(row.at), t('dev.reportAction'))}
+                            onClick={() => reportLogin(row)}>
+                            <ShieldAlert size={13} aria-hidden="true" />{t('dev.reportAction')}
+                          </Button>
                         )}
                       </div>
                     )}
                   </div>
-                  <button type="button" className="dev-row-toggle"
+                  <Button type="button" variant="ghost" size="icon-sm" className="shrink-0 text-muted-foreground pointer-coarse:size-10"
                     aria-expanded={expanded === row.id}
                     aria-label={t('dev.toggleDetailFor', formatDateSec(row.at))}
                     onClick={() => setExpanded(e => (e === row.id ? null : row.id))}>
-                    <ChevronRight size={15} />
-                  </button>
+                    <ChevronRight size={15} aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', expanded === row.id && 'rotate-90')} />
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
-        {loginTotal > SIZE && (
-          <PaginationBar
-            page={loginPage + 1} totalPages={totalPages} totalItems={loginTotal}
-            rangeStart={loginTotal === 0 ? 0 : loginPage * SIZE + 1}
-            rangeEnd={Math.min((loginPage + 1) * SIZE, loginTotal)}
-            pageSize={SIZE}
-            onPageChange={p => loadLogins(p - 1)}
-          />
-        )}
+        <PaginationBar {...sp.bar} />
       </section>
 
       {/* ── 4. Başarısız denemeler ──────────────────────────────────────── */}
       <section className="dev-section">
-        <button type="button" className={`dev-collapse${failedOpen ? ' is-open' : ''}`}
+        <Button type="button" variant="ghost" className="h-auto justify-start gap-1.5 px-1 py-1 text-[.95em] font-bold has-[>svg]:px-1"
           aria-expanded={failedOpen} onClick={() => setFailedOpen(o => !o)}>
-          <ChevronRight size={15} className="dev-collapse-caret" aria-hidden="true" />
+          <ChevronRight size={15} aria-hidden="true" className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', failedOpen && 'rotate-90')} />
           {t('dev.failedTitle')}
-        </button>
+        </Button>
         {failedOpen && (
           failed.length === 0
             ? <div className="dev-empty-inline">{t('dev.noFailed')}</div>

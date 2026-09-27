@@ -3,6 +3,7 @@
 // farkli tarih bicimi goruluyordu (bkz. i18n/dateLocale.js).
 import { dateLocale, LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { toUtc, localDayKey } from '../utils/localDay.js'
+import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCoverageEvent.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur. */
@@ -79,7 +80,9 @@ async function request(path, options = {}) {
   // timeoutMs opsiyoneldir: varsayılan 0 (timeout yok) → uzun-süren çağrılar
   // (scheduler/diagnostics/checkDomain/upload/sql) ETKİLENMEZ. Açılış çağrıları
   // (getMe) açıkça bir timeout geçirir.
-  const { timeoutMs = 0, ...opts } = options
+  // withStatus (isteğe bağlı): hata gövdesine HTTP durumu eklenir (`status`) — yalnız 403'ü ayırması gereken çağıranlar
+  // için (7/24 arama listesi: 403 → salt okunur). Genel davranış DEĞİŞMEZ.
+  const { timeoutMs = 0, withStatus = false, ...opts } = options
   let res
   try {
     res = await fetchWithTimeout(`${BASE}${path}`, {
@@ -114,12 +117,18 @@ async function request(path, options = {}) {
     }
     return null
   }
+  let json
   try {
-    return await res.json()
+    json = await res.json()
   } catch {
     // Non-JSON response (HTML error page from proxy / empty body) — graceful fallback
     return nonJsonErrorPayload(res.status)
   }
+  const plain = json != null && typeof json === 'object' && !Array.isArray(json)
+  if (withStatus && !res.ok && plain && json.status === undefined) json.status = res.status
+  // 7/24 kapsamını değiştiren başarılı yazma → önbellekli yüzeyler (Pano şeridi, form seçenekleri) tazelensin
+  if (res.ok && !(plain && json.success === false) && isNocCoverageWrite(path, opts)) announceNocCoverageChange()
+  return json
 }
 
 export const api = {
@@ -265,6 +274,21 @@ export const api = {
   // Oturum içi "Sorun Bildir" (USER_REPORT) — kayıt sorun-bildirimleri ekranına düşer + admin maili.
   // Kimlik sunucuda OTURUMDAN okunur; dto yalnız kullanıcının bilebileceklerini + otomatik bağlamı taşır.
   sendIssueReport: (dto) => request('/issue-reports', { method: 'POST', body: JSON.stringify(dto) }),
+
+  // "Bildirimlerim" (2026-09-26): kullanıcının KENDİ sorun bildirimleri — kimlik sunucuda oturumdan;
+  // başkasının kaydı 404. Yorum: çözülmüş rapora yazınca sunucu raporu yeniden açar (yanıt: reopened).
+  issueReports: {
+    mine: (params = {}) => {
+      const qs = new URLSearchParams()
+      if (params.status) qs.set('status', params.status)
+      if (params.page != null) qs.set('page', params.page)
+      if (params.size != null) qs.set('size', params.size)
+      const q = qs.toString()
+      return request(`/issue-reports/mine${q ? '?' + q : ''}`)
+    },
+    mineDetail: (id) => request(`/issue-reports/mine/${id}`),
+    addComment: (id, body) => request(`/issue-reports/mine/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+  },
 
   // Hafif oturum geçerlilik yoklaması — süpersede ise 401 → request() otomatik /?session=expired.
   // Sayfa kullanımı (System Health #1): görünür sekme anahtarı ping'e eklenir — yalnız `tab`, URL parametreleri değil
@@ -495,7 +519,70 @@ export const api = {
     }),
   },
 
+  /**
+   * 7/24 İzleme Ekibi (NOC) — kimliği doğrulanmış HERKES (2026-09-27; `.migration/noc/CONTRACT.md`).
+   * Kapsam görüş kapsamıyla sınırlı (viewTeamIds); yazma uçları izlemeyi düzenleyebilene / takım yöneticisine açık.
+   * Yanıtlar snake_case, istek gövdeleri camelCase.
+   */
+  noc: {
+    /** İzleme formu seçicisi — sunucu `{ groups: [{ id, name, is_default, active }], disabled_types }` döner
+     *  (sözleşmedeki düz dizi DEĞİL; NocController.groupOptions). E-posta YOK. */
+    groupOptions: () => request('/noc/groups/options'),
+    /** { summary: { total, covered, not_covered, paused, by_type, active_groups, disabled_types }, items: [...] } */
+    coverage: ({ teamId, type } = {}) => {
+      const qs = new URLSearchParams()
+      if (teamId != null && teamId !== '') qs.set('team_id', String(teamId))
+      if (type) qs.set('type', String(type))
+      const q = qs.toString()
+      return request(`/noc/coverage${q ? `?${q}` : ''}`)
+    },
+    /** Tek izlemenin 7/24 bildirimi — güncel satırı döner. groupIds verilmezse gövdeye yazılmaz (sunucu korur). */
+    setMonitor: (type, id, { enabled, groupIds } = {}) => request(`/noc/monitors/${encodeURIComponent(type)}/${encodeURIComponent(id)}`, {
+      method: 'PUT', body: JSON.stringify({ enabled: !!enabled, ...(groupIds !== undefined ? { groupIds } : {}) }),
+    }),
+    /** Toplu: items = [{ type, id }] → { updated, skipped: [{ type, id, reason }] } */
+    bulk: (items, enabled) => request('/noc/monitors/bulk', {
+      method: 'POST', body: JSON.stringify({ items: (items || []).map(({ type, id }) => ({ type, id })), enabled: !!enabled }),
+    }),
+    /** Takım arama listesi (sıralı): [{ user_id, display_name, title, has_phone }] — telefon UI'ye DÖNMEZ. */
+    getCallList: (teamId) => request(`/noc/teams/${encodeURIComponent(teamId)}/call-list`, { withStatus: true }),
+    saveCallList: (teamId, userIds) => request(`/noc/teams/${encodeURIComponent(teamId)}/call-list`, {
+      method: 'PUT', body: JSON.stringify({ userIds: userIds || [] }), withStatus: true,
+    }),
+    /** Arama listesi seçicisi: takım üyeleri [{ user_id, display_name, title, has_phone }]. */
+    teamMembers: (teamId) => request(`/noc/teams/${encodeURIComponent(teamId)}/members`),
+  },
+
+  /**
+   * 7/24 ARAMA KAYDI (2026-09-27; CONTRACT.md "Arama kaydı") — uyarının üzerinden "kim, ne zaman arandı, sonuç, not".
+   * Okuma: uyarıyı görebilen herkes. Yazma/seçici: `noc_calls.write` (global yönetici her zaman; kapsamlı müdür hayır).
+   * Silme: kaydı giren 15 dk içinde ya da global yönetici. Yanıtlar snake_case, gövde camelCase; telefon HİÇ dönmez.
+   */
+  nocCalls: {
+    /** [{ id, contacted_user_id, contacted_name, contacted_at, channel, outcome, note, created_by_name, created_at, can_delete, delete_until }] — en yeni önce */
+    list: (alertId) => request(`/alerts/${encodeURIComponent(alertId)}/noc-calls`),
+    /** body: { contactedUserId?, contactedName?, contactedAt?, channel?, outcome, note? } → oluşan satır */
+    create: (alertId, body) => request(`/alerts/${encodeURIComponent(alertId)}/noc-calls`, {
+      method: 'POST', body: JSON.stringify(body || {}),
+    }),
+    remove: (alertId, id) => request(`/alerts/${encodeURIComponent(alertId)}/noc-calls/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    /** Arama seçicisi: [{ user_id, display_name, title, has_phone, source: CALL_LIST|MANAGER|MEMBER, is_manager }] */
+    contacts: (alertId) => request(`/alerts/${encodeURIComponent(alertId)}/noc-contacts`),
+  },
+
   admin: {
+    // 7/24 İzleme Ekibi (NOC) yönetimi — YALNIZ global yönetici yazar; kapsamlı müdür okur (e-postalar 403/maskeli).
+    noc: {
+      getConfig:   () => request('/admin/noc/config'),
+      saveConfig:  (body) => request('/admin/noc/config', { method: 'PUT', body: JSON.stringify(body) }),
+      listGroups:  () => request('/admin/noc/groups'),
+      createGroup: (body) => request('/admin/noc/groups', { method: 'POST', body: JSON.stringify(body) }),
+      updateGroup: (id, body) => request(`/admin/noc/groups/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) }),
+      /** → { affected_monitors }: bu grubu seçen izlemeler varsayılan gruplara düşer. */
+      deleteGroup: (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+      /** → { sent, failed: [...] } */
+      testGroup:   (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    },
     // Kişi-webhook (push) bildirim kanalı — yalnız admin
     userPush: {
       getSettings:  () => request('/admin/user-push/settings'),
@@ -508,7 +595,9 @@ export const api = {
       exportUrl:    (params) => `/api/admin/user-push/deliveries/export?${new URLSearchParams(params)}`,
     },
     // Inventory
-    getInventory: (showDeleted = false) => request(`/admin/inventory?showDeleted=${showDeleted}`),
+    // scope 'mine' (varsayılan, bugünkü URL) | 'all' (org geneli görünürlük, 2026-09-26): yanıt `scope` + `visible_to_all` taşır
+    getInventory: (showDeleted = false, scope = 'mine') =>
+      request(`/admin/inventory?showDeleted=${showDeleted}${scope === 'all' ? '&scope=all' : ''}`),
     // Envanter zenginleştirme (2026-09-12): hijyen bandı + CSV içe aktarma (dry_run varsayılan true)
     getInventoryHygiene: () => request('/admin/inventory/hygiene'),
     importInventory: (rows, dryRun = true) =>
@@ -580,25 +669,7 @@ export const api = {
       const s = qs.toString()
       return `/api/admin/retention/runs/export${s ? `?${s}` : ''}`
     },
-    // ── Sürüm & Dağıtım geçmişi (release_history.read / .edit) ──
-    getDeployments: (params = {}) => {
-      const qs = new URLSearchParams()
-      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
-      const s = qs.toString()
-      return request(`/admin/deployments${s ? `?${s}` : ''}`)
-    },
-    getDeploymentsCsvUrl: (params = {}) => {
-      const qs = new URLSearchParams()
-      for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
-      const s = qs.toString()
-      return `/api/admin/deployments/export${s ? `?${s}` : ''}`
-    },
-    getDeploymentTimeline: (env) => request(`/admin/deployments/timeline${env ? `?env=${encodeURIComponent(env)}` : ''}`),
-    getDeploymentMatrix: (all = false) => request(`/admin/deployments/matrix${all ? '?all=true' : ''}`),
-    createDeployment: (body) => request('/admin/deployments', { method: 'POST', body: JSON.stringify(body) }),
-    backfillDeployments: (environment) => request('/admin/deployments/backfill', { method: 'POST', body: JSON.stringify({ environment }) }),
-    deleteDeployment: (id) => request(`/admin/deployments/${id}`, { method: 'DELETE' }),
-    // ── Sürüm & Dağıtım geçmişi (release_history.read / .edit) ──
+    // ── Sürüm & Dağıtım geçmişi (release_history.read / .edit) ── (aynı nesnede iki kez tanımlıydı; birebir kopya 2026-09-26'da silindi)
     getDeployments: (params = {}) => {
       const qs = new URLSearchParams()
       for (const [k, v] of Object.entries(params)) if (v != null && v !== '' && v !== false) qs.set(k, String(v))
@@ -660,6 +731,10 @@ export const api = {
     // KALICI silme: kayit + gorselleri + giden maillerin saklanan kopyalari. Ayri ve
     // "hassas" bir yetki ister (issues.login-reports.purge).
     purgeLoginIssue: (id) => request(`/admin/login-issues/${id}`, { method: 'DELETE' }),
+    // Konuşma dizisi (2026-09-26): iç notlar dâhil; internal=true → bildiren görmez, bildirim/mail yok.
+    getLoginIssueComments: (id) => request(`/admin/login-issues/${id}/comments`),
+    addLoginIssueComment: (id, dto) =>
+      request(`/admin/login-issues/${id}/comments`, { method: 'POST', body: JSON.stringify(dto) }),
 
 
     // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz
@@ -849,6 +924,8 @@ export const api = {
     getAlertNoise: (days = 7) => request(`/admin/alerts/noise?days=${days}`),   // gürültü analizi (2026-09-12, #18)
     getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
+    /** Tekil uyarı (listeyle aynı zenginleştirme + 7/24 arama özeti + noc_can_write) — derin bağlantı yedeği (2026-09-27). */
+    getAlert: (id) => request(`/admin/alerts/${encodeURIComponent(id)}`),
 
     // Teams
     getTeams: () => request('/admin/teams'),
@@ -872,6 +949,12 @@ export const api = {
     teamMove: (id, targetTeamId) => request(`/admin/teams/${id}/move`, { method: 'POST', body: JSON.stringify({ target_team_id: targetTeamId }) }),
     addTeamMember: (id, userId) => request(`/admin/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ user_id: userId }) }),
     removeTeamMember: (id, userId) => request(`/admin/teams/${id}/members/${userId}`, { method: 'DELETE' }),
+    // Üyelik kaynağı + AD ile karşılaştır / yeniden eşitle (2026-09-26, prod hatası: üye olmayan kullanıcı takımda)
+    userTeamMembership: (id) => request(`/admin/users/${id}/team-membership`),
+    userLdapCheck: (id) => request(`/admin/users/${id}/ldap-check`),
+    userLdapResync: (id) => request(`/admin/users/${id}/ldap-resync`, { method: 'POST' }),
+    teamLdapCheck: (id) => request(`/admin/teams/${id}/ldap-check`),
+    teamLdapResync: (id) => request(`/admin/teams/${id}/ldap-resync`, { method: 'POST' }),
 
     // Users
     getUsers: () => request('/admin/users'),
@@ -1093,7 +1176,8 @@ export const api = {
     },
 
     // Uptime
-    getUptimeOverview:    () => request('/monitoring/uptime/overview'),
+    // scope 'mine' (varsayılan) | 'all' (org geneli görünürlük, 2026-09-26): kartlar `can_manage` + `team_id` taşır
+    getUptimeOverview:    (scope = 'mine') => request(`/monitoring/uptime/overview${scope === 'all' ? '?scope=all' : ''}`),
     getUptimeHistory:     (domain, hours = 24) => request(`/monitoring/uptime/${encodeURIComponent(domain)}/history?hours=${hours}`),
 
     // ── Kontrol Geçmişi v2 — TÜM türlerin tek history istemcisi (CheckHistoryTab kullanır) ──

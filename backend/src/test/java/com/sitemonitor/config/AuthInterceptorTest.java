@@ -208,6 +208,43 @@ class AuthInterceptorTest {
         assertThat(res.getStatus()).isEqualTo(403);
     }
 
+    // ── BK1 (2026-09-27): kapı HAM yola değil NORMALİZE yola bakar ─────────────
+
+    @Test
+    @DisplayName("BK1: matris parametreli / yüzde kodlu / çift eğik çizgili yol kimlik kapısını ATLAYAMAZ (oturumsuz → 401)")
+    void pathVariants_cannotBypassAuth() throws Exception {
+        // Ham hâlleri "/api/" ile başlamıyor; yönlendirici ise hepsini korumalı API ucuna götürüyor.
+        for (String p : new String[]{"/api;x/certificates", "/api;/me/inbox", "/%61pi/certificates",
+                "/%61%70%69/teams/directory", "//api/certificates"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", p);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            assertThat(interceptor.preHandle(req, res, new Object())).as(p).isFalse();
+            assertThat(res.getStatus()).as(p).isEqualTo(401);
+        }
+    }
+
+    @Test
+    @DisplayName("BK1: normalize yol PUBLIC listesini ve API dışı yolları bozmaz")
+    void normalisedPath_keepsPublicAndNonApi() throws Exception {
+        for (String p : new String[]{"/api/login", "/api/branding", "/api/login;jsessionid=abc", "/assets/index-abc.js", "/"}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", p);
+            assertThat(interceptor.preHandle(req, new MockHttpServletResponse(), new Object())).as(p).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("BK1: mustChangePassword beyaz listesi de normalize yolla eşlenir (matris ekli korumalı yol 403)")
+    void mustChangePassword_usesNormalisedPath() throws Exception {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", true);
+        s.setAttribute("mustChangePassword", true);
+        MockHttpServletRequest blocked = new MockHttpServletRequest("GET", "/api;x/certificates");
+        blocked.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        assertThat(interceptor.preHandle(blocked, res, new Object())).isFalse();
+        assertThat(res.getStatus()).isEqualTo(403);
+    }
+
     // ── Tek aktif oturum / süpersede → otomatik logout (500 değil temiz 401) ─────
 
     @Test
@@ -239,6 +276,7 @@ class AuthInterceptorTest {
         HttpServletRequest req = mock(HttpServletRequest.class);
         HttpSession s = mock(HttpSession.class);
         when(req.getRequestURI()).thenReturn("/api/me");
+        when(req.getContextPath()).thenReturn("");   // BK1: kapı normalize yolu (bağlam yolu + URI) okur
         when(req.getSession(false)).thenReturn(s);
         when(s.getAttribute("authenticated"))
                 .thenThrow(new IllegalStateException("getAttribute: Session already invalidated"));

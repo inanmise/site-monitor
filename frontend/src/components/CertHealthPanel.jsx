@@ -6,6 +6,8 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import CopyButton from './ui/CopyButton.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { cn } from '@/lib/utils'
 
 /**
  * Sertifika Sağlık Kontrol Listesi.
@@ -216,7 +218,7 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
                 <HealthRow key={row.key} row={row} t={t}
                   tlsModeUsed={data.tls_mode_used}
                   expanded={open === row.key}
-                  confirming={confirming} onConfirmRenewal={confirmRenewal}
+                  confirming={confirming} onConfirmRenewal={canRefresh ? confirmRenewal : undefined}
                   onToggle={() => setOpen(open === row.key ? null : row.key)} />
               ))}
             </div>
@@ -225,6 +227,15 @@ export default function CertHealthPanel({ domain, canRefresh = true }) {
       })}
     </div>
   )
+}
+
+/** Değer rozeti tonu (eski .hlth-value-badge--*) — shadcn Badge. */
+const VALUE_TONE = {
+  ok: 'bg-success/15 text-success dark:bg-success/20',
+  warn: 'bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  fail: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  unknown: 'bg-muted text-muted-foreground',
+  na: 'bg-muted text-muted-foreground',
 }
 
 function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false, onConfirmRenewal }) {
@@ -241,9 +252,12 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
 
   return (
     <div className={`hlth-row hlth-row--${style.cls}${expanded ? ' is-open' : ''}`}>
-      <button type="button" className="hlth-row-head" aria-expanded={expanded}
+      {/* Satır başlığı — shadcn Button (ızgara yerleşimi Tailwind; eski .hlth-row-head). Telefonda 3 sütun: işaret ·
+          başlık/eylem/değer alt alta · ok; geniş ekranda 5 sütun. Kanıtı olmayan satır açılmaz (disabled, soluk değil). */}
+      <Button type="button" variant="ghost" data-slot="hlth-row-head" aria-expanded={expanded}
         onClick={hasEvidence ? onToggle : undefined}
-        disabled={!hasEvidence}>
+        disabled={!hasEvidence}
+        className="grid h-auto w-full grid-cols-[30px_minmax(0,1fr)_16px] items-center gap-2.5 rounded-none px-3 py-[11px] text-left font-normal whitespace-normal text-foreground hover:bg-primary/5 hover:text-foreground disabled:opacity-100 has-[>svg]:px-3 lg:grid-cols-[32px_minmax(0,1fr)_minmax(0,220px)_minmax(0,200px)_16px] dark:hover:bg-primary/10">
         <span className={`hlth-mark hlth-mark--${style.cls}`} aria-hidden="true"><Icon size={16} /></span>
 
         <span className="hlth-row-main">
@@ -252,19 +266,20 @@ function HealthRow({ row, t, tlsModeUsed, expanded, onToggle, confirming = false
           {showTlsModeNote && <span className="hlth-row-note">{t('hlth.note.browserMode')}</span>}
         </span>
 
-        <span className={`hlth-row-action${noAction ? ' is-none' : ''}`}>
+        <span className={`hlth-row-action${noAction ? ' is-none' : ''} col-start-2 lg:col-start-auto`}>
           {t(`hlth.act.${row.action_key}`, ...(row.action_args || []))}
         </span>
 
-        <span className="hlth-row-value">
-          <span className={`hlth-value-badge hlth-value-badge--${style.cls}`}>
+        <span className="hlth-row-value col-start-2 lg:col-start-auto">
+          <Badge variant="secondary" data-slot="hlth-value" data-tone={style.cls} className={cn('font-semibold', VALUE_TONE[style.cls] ?? VALUE_TONE.unknown)}>
             {t(`hlth.val.${row.value_key}`, ...(row.value_args || []))}
-          </span>
-          {cipher && <span className="hlth-cipher sys-mono">{cipher}<CopyButton value={cipher} as="span" /></span>}
+          </Badge>
+          {cipher && <span className="hlth-cipher sys-mono">{cipher}<CopyButton value={cipher} as="span"
+            label={t('a11y.rowAction', cipher, t('hlth.copyCipher'))} copiedLabel={t('hlth.cipherCopied')} /></span>}
         </span>
 
         {hasEvidence && <ChevronRight size={15} className="hlth-row-caret" aria-hidden="true" />}
-      </button>
+      </Button>
 
       {/* Onay düğmesi başlık <button>unun DIŞINDA: iç içe button geçersiz DOM'dur (TeamBadge dersi).
           Yalnız "değişti — planlı mıydı doğrula" durumunda çizilir; onaylanınca satır OK gelir. */}

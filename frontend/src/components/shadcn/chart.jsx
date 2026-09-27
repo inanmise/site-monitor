@@ -2,6 +2,12 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import * as RechartsPrimitive from "recharts"
 
+// Proje eki (yalnız ekleyici, 2026-09-25): recharts parçaları (AreaChart, Bar, XAxis, CartesianGrid…)
+// ekranlara BU dosyadan verilir — ekranlar `recharts`'ı doğrudan içe aktarmaz ("yalnız shadcn" kapısı,
+// scripts/shadcn-only-rules.mjs `recharts` kuralı). shadcn Chart deseni aynen geçerli: ChartContainer
+// kabı + ChartTooltip/ChartTooltipContent; grafik parçaları recharts'ın kendisidir, sarılmaz.
+export * from "recharts"
+
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = {
   light: "",
@@ -38,11 +44,15 @@ function ChartContainer({
 
   return (
     <ChartContext.Provider value={{ config }}>
+      {/* recharts-zIndex-layer katmanlarında odak çerçevesi gizlenir — aşağıdaki sınıf listesinin son öğesi (2026-09-27, kullanıcı: "bir sütuna tıklayınca diğer sütunlar da
+          seçiliyor"): recharts 3 çubuğa tıklanınca odağı `g.recharts-zIndex-layer_*` katmanına veriyor; tarayıcının odak
+          çerçevesi TÜM çubukların çevresine siyah bir dikdörtgen çiziyordu. shadcn aslı yalnız surface/layer/sector'ı
+          gizliyordu (recharts 2 sınıfları). Klavye erişilebilirliği aynı: ok tuşları ipucunu çubuktan çubuğa taşır. */}
       <div
         data-slot="chart"
         data-chart={chartId}
         className={cn(
-          "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden",
+          "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden [&_[class*='recharts-zIndex-layer']]:outline-hidden",
           className
         )}
         {...props}

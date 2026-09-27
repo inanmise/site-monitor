@@ -48,14 +48,17 @@ public class InventoryImportService {
             "purchased_by", "svc_mgmt_contact", "app_dev_contact", "iis_admin_contact", "waf_admin_contact",
             "netscaler", "waf_enabled", "openshift", "ssl_pinning", "internal_cert", "jks_keystore",
             "ev_certificate", "external_vendor", "in_use", "use_proxy", "action_required", "server_update",
-            "transferred_to_sy", "change_description", "platform", "platform_detail");
+            "transferred_to_sy", "change_description", "platform", "platform_detail",
+            // 7/24 İzleme Ekibi (2026-09-27): aç/kapa + grup ADLARI (";" ya da "|" ile ayrılmış; boş hücre = dokunma,
+            // "-" = varsayılan gruplara dön). Ad harf duyarsız eşlenir; bilinmeyen ad satırı "unknown_noc_group" ile düşürür.
+            "noc_notify", "noc_groups");
 
     private static final String[] HISTORY_FIELDS = {
         "domain", "port", "active", "tier", "description", "owner", "tags", "externalVendor",
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "purchasedBy", "platform", "platformDetail", "changeDescription", "teamId", "ugTeamId", "groupName",
-        "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact"
+        "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact", "nocNotify", "nocGroupIds"
     };
 
     private final CertificateInventoryRepository inventoryRepo;
@@ -65,6 +68,9 @@ public class InventoryImportService {
     /** Platform kataloğu (2026-09-22) — testte mock verilmezse null; o zaman değer olduğu gibi (üst-harf) alınır. */
     private final PlatformService platformService;
     private final SchedulerService schedulerService;   // döngü yok: SchedulerService bu servisi bilmez
+    /** 7/24 grup adı → kimlik (2026-09-27). Alan enjeksiyonu: kurucu (ve @InjectMocks testleri) değişmesin; yokken sütun yok sayılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.NocNotificationGroupRepository nocGroupRepo;
 
     /** Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu. */
     public record RowResult(int line, String domain, String action, String reason, List<String> changes) {}
@@ -107,6 +113,11 @@ public class InventoryImportService {
         List<String> createdDomains = new ArrayList<>(), updatedDomains = new ArrayList<>();
         int created = 0, updated = 0, skipped = 0, errors = 0;
         String now = ISO.format(Instant.now());
+        // UG takımı değişikliği (BO9 kardeşi, bug regresyon 2026-09-27): kaydı BAŞKA bir takımın görünürlüğüne ve
+        // alarm e-postalarına açar — ekle/düzenle ucunda olduğu gibi yalnız global admin (transfer-ug kapısı).
+        // Kapsamlı müdür içe aktarımda mevcut UG'yi aynen taşıyabilir; farklı değerli satır "scope" ile atlanır.
+        // Oturumsuz çağrı (sistem/test) kapıya takılmaz.
+        final boolean ugChangeAllowed = session == null || com.sitemonitor.controller.SessionScope.isGlobalAdmin(session);
 
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> r = rows.get(i) == null ? Map.of() : rows.get(i);
@@ -137,11 +148,16 @@ public class InventoryImportService {
                 if (platform == null) { out.add(new RowResult(line, domain, "error", "unknown_platform", List.of())); errors++; continue; }
             }
 
+            String nocGroups;
+            try { nocGroups = resolveNocGroups(r.get("noc_groups")); }
+            catch (IllegalArgumentException e) { out.add(new RowResult(line, domain, "error", "unknown_noc_group", List.of())); errors++; continue; }
+            if (nocGroups != null) r = withNocGroups(r, nocGroups);
             Optional<CertificateInventory> existingOpt = inventoryRepo.findByDomain(domain);
             if (existingOpt.isPresent()) {
                 CertificateInventory ex = existingOpt.get();
                 if (ex.getDeletedAt() != null) { out.add(new RowResult(line, domain, "skip", "deleted", List.of())); skipped++; continue; }
-                if (!canManage.test(ex.getTeamId()) || (teamId != null && !canManage.test(teamId))) {
+                if (!canManage.test(ex.getTeamId()) || (teamId != null && !canManage.test(teamId))
+                        || (!ugChangeAllowed && ugTeamId != null && !Objects.equals(ugTeamId, ex.getUgTeamId()))) {
                     out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue;
                 }
                 Map<String, Object> before = AuditDiff.snapshot(ex, HISTORY_FIELDS);
@@ -157,7 +173,10 @@ public class InventoryImportService {
                 out.add(new RowResult(line, domain, "update", null, changes)); updated++;
             } else {
                 if (teamId == null) { out.add(new RowResult(line, domain, "error", "team_required", List.of())); errors++; continue; }
-                if (!canManage.test(teamId)) { out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue; }
+                if (!canManage.test(teamId)
+                        || (!ugChangeAllowed && ugTeamId != null && !Objects.equals(ugTeamId, teamId))) {
+                    out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue;
+                }
                 CertificateInventory it = new CertificateInventory();
                 it.setDomain(domain);
                 it.setPort(port != null ? port : 443);
@@ -220,9 +239,46 @@ public class InventoryImportService {
         flag(r, "action_required", it.getActionRequired(), v -> it.setActionRequired(v), ch);
         flag(r, "server_update", it.getServerUpdate(), v -> it.setServerUpdate(v), ch);
         flag(r, "transferred_to_sy", it.getTransferredToSy(), v -> it.setTransferredToSy(v), ch);
+        flag(r, "noc_notify", it.getNocNotify(), v -> it.setNocNotify(v), ch);
+        if (r.get(NOC_GROUPS_RESOLVED) instanceof String ids) {
+            String v = ids.isEmpty() ? null : ids;   // "" = varsayılan gruplara dön
+            if (!Objects.equals(it.getNocGroupIds(), v)) { it.setNocGroupIds(v); ch.add("noc_groups"); }
+        }
         // Yeni satır: takım (zorunlu) ve varsayılan-dışı port da yazılır — önizleme yazılacak her alanı saysın (ISSUE-004)
         if (isNew) { if (port != null && port != 443) ch.add(0, "port"); ch.add(0, "team"); ch.add(0, "domain"); }
         return ch;
+    }
+
+    /** Çözülmüş grup kimliklerinin satır haritasındaki iç anahtarı (istemci sütunu değil). */
+    private static final String NOC_GROUPS_RESOLVED = "__noc_group_ids";
+
+    /**
+     * "Grup A; Grup B" → "3,7" (kimlik). Boş hücre → null (dokunma); "-" → "" (varsayılana dön). Bilinmeyen ad →
+     * IllegalArgumentException (satır hata). Depo yoksa (dilimli test bağlamı) sütun yok sayılır.
+     */
+    String resolveNocGroups(Object raw) {
+        String v = str(raw).trim();
+        if (v.isEmpty() || nocGroupRepo == null) return null;
+        if (v.equals("-")) return "";
+        Map<String, Long> byName = new HashMap<>();
+        for (com.sitemonitor.model.NocNotificationGroup g : nocGroupRepo.findAll())
+            if (g.getName() != null) byName.put(g.getName().trim().toLowerCase(Locale.ROOT), g.getId());
+        List<Long> ids = new ArrayList<>();
+        for (String part : v.split("[;|]")) {
+            String name = part.trim();
+            if (name.isEmpty()) continue;
+            Long id = byName.get(name.toLowerCase(Locale.ROOT));
+            if (id == null) throw new IllegalArgumentException("unknown_noc_group");
+            ids.add(id);
+        }
+        String csv = com.sitemonitor.service.noc.NocGroupIds.format(ids);
+        return csv == null ? "" : csv;
+    }
+
+    private static Map<String, Object> withNocGroups(Map<String, Object> r, String ids) {
+        Map<String, Object> copy = new HashMap<>(r);
+        copy.put(NOC_GROUPS_RESOLVED, ids);
+        return copy;
     }
 
     private static void text(Map<String, Object> r, String key, String cur, java.util.function.Consumer<String> set, List<String> ch) {

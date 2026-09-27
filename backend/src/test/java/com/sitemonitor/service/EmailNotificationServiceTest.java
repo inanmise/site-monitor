@@ -242,7 +242,7 @@ class EmailNotificationServiceTest {
         assertThat(html).contains(">25<");                       // 56px hero metrik
         assertThat(html).contains("Veren Kurum (CA)").contains("Test CA");
         assertThat(html).contains("Sertifika İzleme");           // footer alt-sistem
-        assertThat(html).contains("#0F1B2D");                    // koyu-lacivert üst bant (turuncu banner YOK)
+        assertThat(html).contains(BrandMailAssets.headerLockup(com.sitemonitor.service.mail.MailTokens.FG)); // nötr beyaz başlık (renkli bant YOK)
         assertThat(html).doesNotContain("SÜRE BITIŞI TESPİT");   // eski turuncu hero yok
     }
 
@@ -252,7 +252,7 @@ class EmailNotificationServiceTest {
         String html = service.buildAlertEmailHtml(
                 "[SiteMonitor] KRİTİK · x.com · sertifika iptal", "Sertifika iptal edildi",
                 "x.com", "CRITICAL", "REVOKED", null, certCtx());
-        assertThat(html).contains("x.com").contains("KRİTİK").contains("#C0392B");
+        assertThat(html).contains("x.com").contains("KRİTİK").contains("#dc2626");   // destructive ton
     }
 
     @Test
@@ -261,7 +261,7 @@ class EmailNotificationServiceTest {
         String html = service.buildAlertEmailHtml(
                 "[SiteMonitor] YÜKSEK · x.com · dağıtım", "Dağıtım eksik",
                 "x.com", "HIGH", "MISMATCH", null, certCtx());
-        assertThat(html).contains("x.com").contains("YÜKSEK").contains("#D68910");
+        assertThat(html).contains("x.com").contains("YÜKSEK").contains("#d97706");   // warning ton
     }
 
     @Test
@@ -318,11 +318,15 @@ class EmailNotificationServiceTest {
                 "down.example.com", "CRITICAL", "ACCESSIBILITY", null, ctx);
 
         assertThat(html).contains("down.example.com:443");
-        assertThat(html).contains("SİTE ERİŞİLEMEZ");
+        assertThat(html).contains("Site Erişilemez");
         assertThat(html).contains("#dc2626");
-        assertThat(html).contains("ERİŞİLEBİLİRLİK İZLEME");
+        assertThat(html).contains("Erişilebilirlik İzleme");
         assertThat(html).contains("3/3 deneme başarısız");
         assertThat(html).contains("Deneme 1");
+        // Düz metin parçası artık aynı belgeden: kesinti ayrıntıları metinde de var (jenerik özet değil).
+        String text = service.buildAlertEmailText("s", "KRİTİK: down.example.com adresine erişilemiyor.",
+                "down.example.com", "CRITICAL", "ACCESSIBILITY", null, ctx);
+        assertThat(text).contains("down.example.com:443").contains("3/3 deneme başarısız").contains("Deneme 1").doesNotContain("<");
     }
 
     @Test
@@ -332,7 +336,7 @@ class EmailNotificationServiceTest {
                 "subj", "mesaj", "down.example.com", "CRITICAL", "ACCESSIBILITY", null, null);
 
         assertThat(html).contains("down.example.com");
-        assertThat(html).contains("SİTE ERİŞİLEMEZ");
+        assertThat(html).contains("Site Erişilemez");
     }
 
     @Test
@@ -377,8 +381,8 @@ class EmailNotificationServiceTest {
                 "KRİTİK: port kapalı", "down.example.com", "CRITICAL", "PORT_DOWN", null, ctx);
 
         assertThat(html).contains("down.example.com:8443");
-        assertThat(html).contains("PORT ERİŞİLEMEZ");
-        assertThat(html).contains("PORT İZLEME");
+        assertThat(html).contains("Port Erişilemez");
+        assertThat(html).contains("Port İzleme");
         assertThat(html).contains("TCP");
         assertThat(html).contains("#dc2626");
     }
@@ -394,8 +398,8 @@ class EmailNotificationServiceTest {
                 "subj", "mesaj", "down.example.com", "CRITICAL", "DNS_FAILURE", null, ctx);
 
         assertThat(html).contains("MX kaydı");
-        assertThat(html).contains("DNS ÇÖZÜLEMİYOR");
-        assertThat(html).contains("DNS İZLEME");
+        assertThat(html).contains("DNS Çözülemiyor");
+        assertThat(html).contains("DNS İzleme");
     }
 
     @Test
@@ -412,8 +416,8 @@ class EmailNotificationServiceTest {
 
         assertThat(html).contains("ESKİ DEĞERLER").contains("YENİ DEĞERLER");
         assertThat(html).contains("1.2.3.4").contains("5.6.7.8").contains("9.9.9.9");
-        assertThat(html).contains("#9333ea");
-        assertThat(html).contains("DNS KAYDI DEĞİŞTİ");
+        assertThat(html).contains("#d97706");                  // YÜKSEK → warning tonu (mor yerine belirteç)
+        assertThat(html).contains("DNS Kaydı Değişti");
         assertThat(html).doesNotContain("otomatik kapatılır");
         assertThat(html).doesNotContain("Deneme 1");
         // Satır-kilitli fark tablosu: max(2 eski, 1 yeni) = 2 satır → 2 yön oku; silinen değer üstü çizik.
@@ -491,7 +495,7 @@ class EmailNotificationServiceTest {
                 "subj", "mesaj", "changed.example.com", "HIGH", "DNS_CHANGED", null, null);
 
         assertThat(html).contains("changed.example.com");
-        assertThat(html).contains("DNS KAYDI DEĞİŞTİ");
+        assertThat(html).contains("DNS Kaydı Değişti");
     }
 
     @Test
@@ -519,7 +523,7 @@ class EmailNotificationServiceTest {
                 "SY-Takım A", uptime);
         assertThat(html)
                 .contains("Neden bu e-postayı aldınız?").contains("SY-Takım A")
-                .contains("ERİŞİLEBİLİRLİK ÖZETİ").contains("99.95% uptime").contains("99.80% uptime")
+                .contains("Erişilebilirlik Özeti").contains("99.95% uptime").contains("99.80% uptime")
                 .contains("1 kesinti");
     }
 
@@ -530,7 +534,7 @@ class EmailNotificationServiceTest {
                 "down.example.com", "ACCESSIBILITY", "CRITICAL", null,
                 "Sistem (otomatik)", "2026-06-11T12:14:00", "2026-06-11T10:00:00", null,
                 null, null);
-        assertThat(html).doesNotContain("ERİŞİLEBİLİRLİK ÖZETİ")
+        assertThat(html).doesNotContain("Erişilebilirlik Özeti")
                 .contains("Neden bu e-postayı aldınız?").contains("ilgili izleme grubuna");
     }
 
@@ -556,16 +560,19 @@ class EmailNotificationServiceTest {
         assertThat(html).contains("2. Aşım Yaşanan Olay / Problem ve Açık Postmortem Kayıtları");
         assertThat(html).contains("3. Haftalık Katılım Sağlanan Çalışmalar");
         assertThat(html).contains("4. Domain Bazlı Kritik İşlerin Durumu");
-        assertThat(html).contains("Toplam: 12").contains("Acil: 2");
-        assertThat(html).contains("<table>");           // markdown tablo render edildi
+        // Sayılar istatistik kutusu (etiket + değer); düz metin parçasında "Toplam: 12" biçiminde
+        assertThat(html).contains(">Toplam</p>").contains(">12</p>").contains(">Acil</p>");
+        assertThat(com.sitemonitor.service.mail.MailKit.plainTextFor(html)).contains("Toplam: 12").contains("Acil: 2");
+        assertThat(html).contains("<th").contains(">SSL<");   // markdown tablo render edildi (satır içi stilli)
         assertThat(html).contains("İnternet");
 
-        // Lacivert executive palet + Outlook bgcolor attribute güvencesi; mor kalmadı
-        assertThat(html).contains("#1f3864").contains("bgcolor=").doesNotContain("#4f46e5");
+        // shadcn belirteç paleti + Outlook bgcolor attribute güvencesi; eski lacivert/mor kalmadı
+        assertThat(html).contains(com.sitemonitor.service.mail.MailTokens.PRIMARY).contains("bgcolor=")
+                .doesNotContain("#4f46e5").doesNotContain("#1f3864");
 
         // URL'ler açık yazılmaz — etiket hyperlink'tir (href'te var, görünür metinde yok)
-        assertThat(html).contains("href='https://jira/x'").doesNotContain(">https://jira/x<");
-        assertThat(html).contains("href='https://jira/inc'").doesNotContain(">https://jira/inc<");
+        assertThat(html).contains("href=\"https://jira/x\"").doesNotContain(">https://jira/x<");
+        assertThat(html).contains("href=\"https://jira/inc\"").doesNotContain(">https://jira/inc<");
         // Açıklayıcı tıklama metni hyperlink'tir; jenerik "Takip Linki" yazısı kalmadı
         assertThat(html).contains(">Açık olay kayıtları için tıklayınız</a>")
                 .contains(">Problem kayıtları için tıklayınız</a>")
@@ -573,10 +580,10 @@ class EmailNotificationServiceTest {
                 .contains(">Proaktif İyileştirme kayıtlarına erişmek için tıklayınız</a>")
                 .doesNotContain("Takip Linki");
 
-        // Sayı rozeti satırı INLINE width:100% + collapse (Outlook = önizleme) +
-        // eşit kolon (Madde 1: 5 kutu → 20%, Madde 2: 3 kutu → 33%); 8-haneli hex ve pill YOK
-        assertThat(html).contains("width:100%;border-collapse:collapse;margin:0 0 10px")
-                .contains("width='20%'").contains("width='33%'")
+        // Sayı kutuları akışkan inline-block (medya sorgusu olmadan telefonda sarar) + Outlook hayalet
+        // hücreleri; 8-haneli hex ve hap (999px) YOK
+        assertThat(html).contains("display:inline-block;vertical-align:top;width:100%;min-width:96px;max-width:33.33%")
+                .contains("<!--[if mso]><td width=\"")
                 .doesNotContain("#33415514").doesNotContain("#dc262614")
                 .doesNotContain("border-radius:999px");
     }
@@ -647,6 +654,50 @@ class EmailNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("BD1: haftalık rapor takip bağlantısı javascript:/data:/vbscript: ise TIKLANAMAZ düz metin; https bağlantı kalır")
+    void buildWeeklyReportHtml_unsafeTrackingSchemes_notLinked() {
+        // Takip bağlantıları kullanıcı girdisi; WeeklyReportService doğrulamıyor → API'ye doğrudan yazılabiliyordu.
+        String content = "{\"version\":1,"
+                + "\"item1\":{\"tracking_url\":\"javascript:alert(1)\"},"
+                + "\"item2\":{\"incidents_url\":\"JaVaScRiPt:alert(2)\",\"problems_url\":\"java\\tscript:alert(3)\","
+                + "\"postmortems_url\":\"data:text/html;base64,PHNjcmlwdD5hbGVydCg0KTwvc2NyaXB0Pg==\","
+                + "\"tracking_url\":\"https://www.example.com/kayitlar\"}}";
+        String html = service.buildWeeklyReportHtml("T", "W", "M", content, false);
+
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("href=\"([^\"]*)\"").matcher(html);
+        java.util.List<String> hrefs = new java.util.ArrayList<>();
+        while (m.find()) hrefs.add(m.group(1));
+        assertThat(hrefs).as("hiçbir href tehlikeli şema taşımamalı")
+                .noneMatch(h -> h.toLowerCase().replaceAll("[\\s\\x00-\\x1f]", "").matches("^(javascript|data|vbscript):.*"));
+        assertThat(hrefs).contains("https://www.example.com/kayitlar");
+        // Değer kaybolmaz: düz (tıklanamaz) metin olarak görünür.
+        assertThat(html).contains("javascript:alert(1)").contains("JaVaScRiPt:alert(2)");
+    }
+
+    @Test
+    @DisplayName("Weekly report HTML: Madde 1 durum dağılımı dört kutu; dağılım boşsa eski tekil Durum satırı; ikisi de yoksa hiçbiri")
+    void buildWeeklyReportHtml_item1StatusBreakdown() {
+        String counts = "{\"version\":1,\"item1\":{\"total\":11,\"urgent\":1,\"status_counts\":{\"working\":5,\"planned\":3,\"on_hold\":1,\"done\":2},"
+                + "\"status_text\":\"Çalışılıyor\"}}";
+        String html = service.buildWeeklyReportHtml("T", "W", "M", counts, false);
+        assertThat(html).contains(">Durum dağılımı</p>")
+                .contains(">Çalışılıyor</p>").contains(">Planlandı</p>").contains(">Beklemede</p>").contains(">Tamamlandı</p>")
+                .doesNotContain("<strong>Durum:</strong>");   // dağılım varken eski tekil satır basılmaz
+        assertThat(com.sitemonitor.service.mail.MailKit.plainTextFor(html))
+                .contains("Çalışılıyor: 5").contains("Planlandı: 3").contains("Beklemede: 1").contains("Tamamlandı: 2");
+
+        // Eski rapor: dağılım yok (ya da hepsi 0) → tekil status_text geri döner
+        String legacy = "{\"version\":1,\"item1\":{\"total\":3,\"status_text\":\"Planlandı\",\"status_counts\":{\"working\":0}}}";
+        String old = service.buildWeeklyReportHtml("T", "W", "M", legacy, false);
+        assertThat(old).contains("<strong>Durum:</strong> Planlandı").doesNotContain("Durum dağılımı");
+
+        // Bozuk alanlar çökertmez; ikisi de yoksa satır yok
+        String broken = "{\"version\":1,\"item1\":{\"status_counts\":\"x\"}}";
+        assertThat(service.buildWeeklyReportHtml("T", "W", "M", broken, false))
+                .doesNotContain("Durum dağılımı").doesNotContain("<strong>Durum:</strong>");
+    }
+
+    @Test
     @DisplayName("Weekly report HTML: forEmail=true cid dönüşümü, false /api URL korunur")
     void buildWeeklyReportHtml_cidRewrite() {
         String forMail = service.buildWeeklyReportHtml("T", "W", "M", WR_CONTENT, true);
@@ -659,9 +710,9 @@ class EmailNotificationServiceTest {
     }
 
     @Test
-    @DisplayName("Weekly report HTML: görsel genişliği konuma göre dinamik (madde1→720, kanal→660); Outlook width attr")
+    @DisplayName("Weekly report HTML: görsel genişliği konuma göre dinamik (madde1→556, kanal→520); Outlook width attr")
     void buildWeeklyReportHtml_imageWidths() {
-        // id 7 → madde 1 (tavan 720); id 5 → madde 4 kanal alt-kartı (tavan 660)
+        // id 7 → madde 1 (tavan 556); id 5 → madde 4 kanal alt-kartı (tavan 520) — 640px akışkan rapor kartı
         String content = "{\"version\":1,"
                 + "\"item1\":{\"notes_md\":\"![A](/api/weekly-reports/images/7)\"},"
                 + "\"item4\":{\"channels\":[{\"id\":\"c-1\",\"name\":\"İnternet\","
@@ -670,8 +721,8 @@ class EmailNotificationServiceTest {
         // Geniş görseller → bulundukları bölümün tavanına kırpılır (dinamik)
         String wide = service.buildWeeklyReportHtml("T", "W", "M", content, true,
                 java.util.Map.of(7L, 1600, 5L, 1600));
-        assertThat(wide).contains("width=\"720\"").contains("max-width:720px")   // madde 1
-                .contains("width=\"660\"").contains("max-width:660px")           // madde 4 kanal
+        assertThat(wide).contains("width=\"556\"").contains("max-width:556px")   // madde 1
+                .contains("width=\"520\"").contains("max-width:520px")           // madde 4 kanal
                 .contains("display:block").contains("cid:img7").contains("cid:img5");
 
         // Dar görsel → doğal genişliğinde kalır (upscale yok)
@@ -679,14 +730,14 @@ class EmailNotificationServiceTest {
                 java.util.Map.of(7L, 300, 5L, 300));
         assertThat(narrow).contains("width=\"300\"").contains("max-width:300px");
 
-        // Genişlik bilinmiyorsa bölüm tavanı fallback (madde1→720, kanal→660)
+        // Genişlik bilinmiyorsa bölüm tavanı fallback (madde1→556, kanal→520)
         String fallback = service.buildWeeklyReportHtml("T", "W", "M", content, true, null);
-        assertThat(fallback).contains("width=\"720\"").contains("width=\"660\"");
+        assertThat(fallback).contains("width=\"556\"").contains("width=\"520\"");
 
         // Önizleme: /api URL korunur + inline max-width:100%, sabit width attr yok
         String preview = service.buildWeeklyReportHtml("T", "W", "M", content, false);
         assertThat(preview).contains("/api/weekly-reports/images/7")
-                .contains("max-width:100%").doesNotContain("width=\"720\"");
+                .contains("max-width:100%").doesNotContain("width=\"556\"");
     }
 
     @Test
@@ -695,6 +746,27 @@ class EmailNotificationServiceTest {
         String content = "{\"version\":1,\"item3\":{\"notes_md\":\"<script>alert(1)</script>\"}}";
         String html = service.buildWeeklyReportHtml("T", "W", "M", content, false);
         assertThat(html).doesNotContain("<script>alert(1)</script>");
+    }
+
+    @Test
+    @DisplayName("D-3: markdown'daki javascript:/vbscript:/data: bağlantısı href ÜRETMEZ; http, göreli ve mail CID görseli korunur")
+    void buildWeeklyReportHtml_neutralisesDangerousLinkSchemes() {
+        String content = "{\"version\":1,\"item3\":{\"notes_md\":\""
+                + "[tikla](javascript:alert(1)) [vb](VBScript:msgbox) [veri](data:text/html;base64,PHNjcmlwdD4=) "
+                + "[kayit](https://jira.example.com/x) [goreli](/api/weekly-reports/images/5)\"},"
+                + "\"item4\":{\"channels\":[{\"id\":\"c-1\",\"name\":\"Kanal\",\"notes_md\":\"![g](/api/weekly-reports/images/5)\"}]}}";
+
+        String preview = service.buildWeeklyReportHtml("T", "W", "M", content, false);
+        assertThat(preview.toLowerCase(java.util.Locale.ROOT))
+                .doesNotContain("href=\"javascript:")
+                .doesNotContain("href=\"vbscript:")
+                .doesNotContain("href=\"data:");
+        assertThat(preview).contains("href=\"https://jira.example.com/x\"")
+                .contains("href=\"/api/weekly-reports/images/5\"");
+
+        // Mail yolu: görsel CID'e çevrilir ve sanitizer onu BOŞALTMAZ (commonmark varsayılanı cid: tanımıyor).
+        String mail = service.buildWeeklyReportHtml("T", "W", "M", content, true);
+        assertThat(mail).contains("cid:img5");
     }
 
     @Test
@@ -937,7 +1009,7 @@ class EmailNotificationServiceTest {
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
         String html = service.buildAlertEmailHtml("[SiteMonitor KRİTİK] keyword",
                 "KRİTİK: kelime bulunamıyor", "https://www.example.com/", "CRITICAL", "KEYWORD", null, ctx);
-        assertThat(html).contains("İÇERİK (KEYWORD) İZLEME");
+        assertThat(html).contains("İçerik (Keyword) İzleme");
         assertThat(html).contains("Aranan kelime");
         assertThat(html).contains("Can Demir");
         assertThat(html).contains("en az 3 kez");                 // opPhrase
@@ -959,8 +1031,8 @@ class EmailNotificationServiceTest {
         ctx.put("first_failure_at", "2026-06-23T12:00:00");
         String html = service.buildAlertEmailHtml("[SiteMonitor KRİTİK] ping",
                 "KRİTİK: host yanıt vermiyor", "10.0.0.1", "CRITICAL", "PING_DOWN", null, ctx);
-        assertThat(html).contains("PİNG (ICMP) İZLEME");
-        assertThat(html).contains("HOST YANIT VERMİYOR");
+        assertThat(html).contains("Ping (ICMP) İzleme");
+        assertThat(html).contains("Host Yanıt Vermiyor");
         assertThat(html).contains("10.0.0.1");
         assertThat(html).doesNotContain("Son Kullanma");
         assertThat(html).doesNotContain("Veren Kurum");
@@ -1191,7 +1263,7 @@ class EmailNotificationServiceTest {
 
         assertThat(res.status()).isEqualTo("SENT");
         String html = res.bodyHtml();
-        assertThat(html).contains("✅ Sorun çözümlendi");                  // yeşil başlık korundu
+        assertThat(html).contains("Sorun çözümlendi").contains("ÇÖZÜMLENDİ");  // başlık + yeşil (success) rozet
         assertThat(html).contains("Bildirim Zamanı");                      // reportedAt satırı eklendi
         assertThat(html).contains("HTTP 423 &lt;b&gt;x&lt;/b&gt;").doesNotContain("HTTP 423 <b>x</b>");  // hata escape'li
         assertThat(html).contains("giriş yapamıyorum");                    // iletilen açıklama

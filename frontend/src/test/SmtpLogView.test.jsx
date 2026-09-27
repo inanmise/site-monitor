@@ -12,7 +12,10 @@ vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }) => <div data-testid="chart">{children}</div>,
   BarChart: ({ children, data, onClick }) => <div data-testid="barchart" onClick={() => onClick?.({ activePayload: [{ payload: data?.[0] }] })}>{data?.length ?? 0} kova{children}</div>,
   Bar: () => null, XAxis: () => null, YAxis: () => null, CartesianGrid: () => null, Tooltip: () => null,
+  Legend: () => null,   // shadcn Chart (ChartLegend) modül düzeyinde okur
 }))
+/** Ana tablonun veri satırları (shadcn Table, `data-testid="sml-table"`). */
+const tableRows = () => screen.getByTestId('sml-table').querySelectorAll('tbody tr')
 
 const { smtpLog } = vi.hoisted(() => ({
   smtpLog: { search: vi.fn(), summary: vi.fn(), export: vi.fn(), detail: vi.fn(), resend: vi.fn() },
@@ -62,11 +65,11 @@ describe('SmtpLogView', () => {
     expect(sp.from).toBe(rp.from); expect(sp.to).toBeNull(); expect(rp.page).toBe(0); expect(rp.size).toBe(25)
     expect(sp.from).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)
     expect(screen.getByText('%40')).toBeInTheDocument()                    // başarı oranı
-    expect(document.querySelector('.rn-count').textContent).toMatch(/6 kayıt|6 records/)
+    expect(screen.getByText(/^(6 kayıt|6 records)$/)).toBeInTheDocument()
     expect(screen.getAllByText(/Kimlik doğrulama|Authentication/).length).toBeGreaterThan(0)   // hata sınıfı çubuğu + satır rozeti
     expect(screen.getByText('2 kova')).toBeInTheDocument()                     // grafik verisi
     expect(screen.getAllByText('Takım A').length).toBeGreaterThan(0)
-    expect(document.querySelectorAll('.sml-table tbody tr')).toHaveLength(3)
+    expect(tableRows()).toHaveLength(3)
   })
 
   it('KPI "Başarısız" tıklanınca status=FAILED ile yeniden sorgular (2 satır), tekrar tıklayınca süzgeç kalkar; hata sınıfı çubuğu errorClass geçirir', async () => {
@@ -74,7 +77,7 @@ describe('SmtpLogView', () => {
     await screen.findByText('550 5.1.1 mailbox unavailable')
     fireEvent.click(screen.getByRole('button', { name: /3\s*Başarısız|3\s*Failed/ }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'FAILED', page: 0 })))
-    await waitFor(() => expect(document.querySelectorAll('.sml-table tbody tr')).toHaveLength(2))
+    await waitFor(() => expect(tableRows()).toHaveLength(2))
     await waitFor(() => expect(window.location.search).toContain('m_status=FAILED'))   // useUrlQuerySync 300 ms debounce
     fireEvent.click(screen.getByRole('button', { name: /3\s*Başarısız|3\s*Failed/ }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: '' })))
@@ -88,9 +91,9 @@ describe('SmtpLogView', () => {
   it('takım kırılımı satırı teamId süzer; alan satırı domain çipi ekler ve çip kaldırılınca süzgeç düşer', async () => {
     render(<SmtpLogView onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
-    fireEvent.click(within(document.querySelector('.sml-grid')).getByRole('button', { name: 'Takım B' }))
+    fireEvent.click(within(screen.getByTestId('sml-breakdowns')).getByRole('button', { name: 'Takım B' }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: '2' })))
-    fireEvent.click(within(document.querySelector('.sml-grid')).getByRole('button', { name: 'a.example.com' }))
+    fireEvent.click(within(screen.getByTestId('sml-breakdowns')).getByRole('button', { name: 'a.example.com' }))
     await waitFor(() => expect(smtpLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ domain: 'a.example.com' })))
     const chip = await screen.findByRole('button', { name: /Sertifika: a.example.com|Certificate: a.example.com/ })
     fireEvent.click(chip)
@@ -124,10 +127,10 @@ describe('SmtpLogView', () => {
     await within(dlg).findByText('FAILED: 550 5.1.1 mailbox unavailable')
     expect(within(dlg).getByText(/Aynı alarmın gönderimleri \(2\)|Deliveries for the same alert \(2\)/)).toBeInTheDocument()
     expect(within(dlg).getByText(/^açık$|^open$/)).toBeInTheDocument()
-    expect(dlg.querySelector('iframe.smtp-detail-iframe')).not.toBeNull()
+    expect(dlg.querySelector('iframe')).not.toBeNull()
     await waitFor(() => expect(window.location.search).toContain('m_id=2'))
     // zincirde ilk gönderime geç
-    fireEvent.click(within(dlg).getAllByRole('button').find((b) => b.className.includes('sml-chain-btn') && !b.disabled))
+    fireEvent.click(within(dlg).getAllByRole('button').find((b) => b.hasAttribute('data-chain-id') && !b.disabled))
     await waitFor(() => expect(smtpLog.detail).toHaveBeenLastCalledWith(1))
     fireEvent.click(within(dlg).getByRole('button', { name: /Alarmı aç|Open alert/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 10 } })
@@ -137,7 +140,7 @@ describe('SmtpLogView', () => {
   it('yeniden gönder: yalnız FAILED satırda düğme; onay diyaloğu → api.resend → başarı toast + liste tazelenir; sunucu reddi (ALERT_RESOLVED) hata toast', async () => {
     render(<SmtpLogView onBack={() => {}} />)
     await screen.findByText('550 5.1.1 mailbox unavailable')
-    const resendBtns = document.querySelectorAll('.sml-resend')
+    const resendBtns = document.querySelectorAll('[data-action="resend"]')
     expect(resendBtns).toHaveLength(2)                                   // 3 satırın 2'si FAILED
     fireEvent.click(resendBtns[1])                                        // satır #2 (ops@example.com)
     const dlg = await screen.findByRole('dialog')
@@ -147,7 +150,7 @@ describe('SmtpLogView', () => {
     await screen.findByText(/Yeniden gönderildi \(log #99\)|Resent \(log #99\)/)
     await waitFor(() => expect(smtpLog.search.mock.calls.length).toBeGreaterThanOrEqual(2))
     smtpLog.resend.mockResolvedValueOnce({ success: false, error: 'ALERT_RESOLVED' })
-    fireEvent.click(document.querySelectorAll('.sml-resend')[0])
+    fireEvent.click(document.querySelectorAll('[data-action="resend"]')[0])
     const dlg2 = await screen.findByRole('dialog')
     fireEvent.click(within(dlg2).getByRole('button', { name: /Yeniden gönder|Resend/ }))
     await screen.findByText(/Alarm çözülmüş|The alert is resolved/)

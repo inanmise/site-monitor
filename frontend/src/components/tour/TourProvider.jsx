@@ -13,7 +13,8 @@ import WelcomeCard from './WelcomeCard.jsx'
  *
  * ctx: { role, globalAdmin, canWrite, mustChangePwd, tab }
  */
-const TourCtx = createContext({ active: null, start: () => {}, stop: () => {}, offerPage: () => false, tourState: null })
+// globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
+const TourCtx = (globalThis.__smTourCtx ??= createContext({ active: null, start: () => {}, stop: () => {}, offerPage: () => false, tourState: null }))
 
 export function useTour() { return useContext(TourCtx) }
 

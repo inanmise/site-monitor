@@ -176,7 +176,7 @@ public class ScriptedAnomalyGuard {
                 List<String> to = escalationService.teamEmailsForMonitor(m.getTeamId(), m.getNotificationGroupId());
                 if (to.isEmpty()) log.warn("Anomali e-postası gönderilemedi — {} için alıcı yok", m.getName());
                 else emailService.sendAlert(to.toArray(new String[0]),
-                        "Sentetik izleme devre dışı bırakıldı: " + m.getName(), body,
+                        "[Site Monitor] Sentetik izleme devre dışı bırakıldı: " + m.getName(), body,
                         m.getName(), "CRITICAL", EscalationService.TYPE_SCRIPTED_FAIL, null, Map.of());
             } catch (Exception e) {
                 log.warn("Anomali e-postası gönderilemedi ({}): {}", m.getName(), e.toString());

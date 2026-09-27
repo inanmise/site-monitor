@@ -148,6 +148,12 @@ public class SchedulerService {
     /** Durum (uptime) yoklaması için kurumsal vekil (2026-09-21) — isteğe bağlı: bean yoksa doğrudan. */
     @Autowired(required = false)
     private ProxySettings proxySettings;
+    /** DNS/Port standalone silinmiş-işareti tek seferlik yaması (2026-09-27) — isteğe bağlı: bean yoksa (test) atlanır. */
+    @Autowired(required = false)
+    private StandaloneMonitorDeletionBackfill standaloneDeletionBackfill;
+    /** 7/24 İzleme Ekibi (NOC) şema yamaları (2026-09-27) — isteğe bağlı: bean yoksa (test) atlanır. */
+    @Autowired(required = false)
+    private com.sitemonitor.service.noc.NocSchemaPatches nocSchemaPatches;
 
     private final DomainMonitorRepository domainMonitorRepo;
     private final DomainCheckRepository domainCheckRepo;
@@ -543,6 +549,21 @@ public class SchedulerService {
     }
 
     private void applySchemaPatches() {
+        // DNS/Port standalone "silinmiş" ≠ "duraklatılmış" (2026-09-27, kullanıcı kararı). Nullable kolon — ddl-auto da
+        // ekler ama ona güvenilmez (açık, idempotent yama). Eski pasif standalone satırların silinmiş işaretlenmesi
+        // TEK SEFERLİKTİR ve kendi nişan tablosuyla korunur (her açılışta koşsaydı yükseltmeden sonra duraklatılanlar
+        // silinirdi) — bkz. StandaloneMonitorDeletionBackfill. Hata açılışı durdurmaz; nişan yazılmadığı için sonraki
+        // açılış yeniden dener.
+        patch("ALTER TABLE port_monitors ADD COLUMN deleted_at VARCHAR(30)");
+        patch("ALTER TABLE dns_monitors ADD COLUMN deleted_at VARCHAR(30)");
+        if (standaloneDeletionBackfill != null) {
+            try {
+                standaloneDeletionBackfill.applyOnce();
+            } catch (Exception e) {
+                log.warn("Standalone DNS/Port silinmiş-işareti yaması uygulanamadı (sonraki açılışta yeniden denenecek): {}",
+                        e.getMessage());
+            }
+        }
         // Sürüm & dağıtım geçmişi (2026-09-10): BACKFILL idempotency — audit_ref tekil (NULL'lar hariç, kısmi indeks).
         // ddl-auto=update dolu tabloya UNIQUE eklemez ([[ddl-auto sessiz kısıt tuzağı]]) → açık patch.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_deploy_audit_ref ON deployment_history(audit_ref) WHERE audit_ref IS NOT NULL");
@@ -845,6 +866,16 @@ public class SchedulerService {
         }
         patch("CREATE INDEX IF NOT EXISTS idx_ng_team ON notification_groups(team_id)");
         patch("CREATE INDEX IF NOT EXISTS idx_ng_team_default ON notification_groups(team_id, is_default)");
+        // ── 7/24 İzleme Ekibi (NOC, 2026-09-27) ──────────────────────────────────
+        // On izleme tablosuna NULLABLE noc_notify / noc_group_ids (null = kapalı / varsayılan gruplar) + teslim izi
+        // ve arama listesinin TEKİL indeksleri. Her ifade idempotent ve kendi try/catch'inde — bkz. NocSchemaPatches.
+        if (nocSchemaPatches != null) {
+            try {
+                nocSchemaPatches.apply();
+            } catch (Exception e) {
+                log.warn("7/24 şema yamaları uygulanamadı (sonraki açılışta yeniden denenecek): {}", e.getMessage());
+            }
+        }
 
         // Sorumlu Ekipler — sertifikayı kimin yenileyeceğini gösteren dört serbest metin alanı.
         // Yönlendirmeye GİRMEZ, yalnız uyarı e-postasında ve envanter detayında gösterilir.
@@ -910,6 +941,26 @@ public class SchedulerService {
         patch("ALTER TABLE login_issue_reports ADD COLUMN auto_context_json TEXT");
         patch("ALTER TABLE login_issue_reports ADD COLUMN linked_reference TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_lir_source ON login_issue_reports(source)");
+        // Sorun bildirimi konuşma dizisi (2026-09-26): bildiren ↔ yönetici yorumları + durum geçişleri.
+        // Rapora üç damga: son hareket / bildirenin görebileceği son yönetici hareketi / bildirenin son açışı.
+        // ddl-auto dolu tabloya NOT NULL kolon eklemez ([[ddl-auto sessiz kısıt tuzağı]]) → tablo AÇIK DDL ile,
+        // kolonlar nullable. Idempotent: patch() tablo/kolon varsa atlar.
+        patch("""
+              CREATE TABLE IF NOT EXISTS issue_report_comments(
+                id BIGSERIAL PRIMARY KEY,
+                report_id BIGINT NOT NULL,
+                kind VARCHAR(16) NOT NULL DEFAULT 'COMMENT',
+                author_username VARCHAR(100) NOT NULL,
+                author_role VARCHAR(20),
+                internal BOOLEAN NOT NULL DEFAULT FALSE,
+                by_reporter BOOLEAN NOT NULL DEFAULT FALSE,
+                body TEXT NOT NULL,
+                created_at VARCHAR(30) NOT NULL)""");
+        patch("CREATE INDEX IF NOT EXISTS idx_irc_report ON issue_report_comments(report_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_irc_created ON issue_report_comments(created_at)");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN last_activity_at VARCHAR(30)");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN last_admin_activity_at VARCHAR(30)");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN reporter_seen_at VARCHAR(30)");
         // MonitoringGroupService.typeOf'ta Page/Scripted eksikti → grupları type='' ile kaydolmuştu;
         // takım+ad eşleşmesiyle doğru türe backfill (idempotent; boş-tür satır kalmayana dek zararsız).
         patch("UPDATE monitoring_groups g SET type='scripted' WHERE (g.type='' OR g.type IS NULL) AND EXISTS "
@@ -1024,6 +1075,12 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_ae_resolved_at ON alert_events(resolved_at)");
         // Denetim konsolu: event_type filtresi + event_time sıralı/range (findAdvanced) — tek-kolon yerine bileşik.
         patch("CREATE INDEX IF NOT EXISTS idx_audit_type_time ON audit_log(event_type, event_time)");
+        // İzleme zaman aşımı tavanı (prod kapısı Y-3): tavan eklenmeden önce yazılmış aşırı değerler sıkıştırılır.
+        for (String tbl : List.of("http_monitors", "keyword_monitors", "page_monitors", "pagespeed_monitors",
+                "ping_monitors", "port_monitors")) {
+            patch("UPDATE " + tbl + " SET timeout_ms = 120000 WHERE timeout_ms > 120000");
+            patch("UPDATE " + tbl + " SET timeout_ms = 1000 WHERE timeout_ms < 1000");
+        }
         // Ekip kapsamlı Denetim Logu (2026-09-25, regresyon R9): actor_team_id eşleşmesi + event_time sırası.
         patch("CREATE INDEX IF NOT EXISTS idx_audit_actor_team_time ON audit_log(actor_team_id, event_time)");
         // Sayfa-bütünlüğü (9. tür) — LATERAL en-güncel + sorun listesi + purge güvenlik-ağı index'leri (ddl-auto ile de gelir).
@@ -1115,6 +1172,22 @@ public class SchedulerService {
                 + "AND NOT EXISTS (SELECT 1 FROM app_user_teams t "
                 + "                WHERE t.user_id = a.id AND t.team_id = a.team_id)");
         patch("CREATE INDEX IF NOT EXISTS idx_aut_team ON app_user_teams(team_id)");
+        // Takım üyeliği KAYNAK izi (2026-09-26, prod hatası: üye olmayan kullanıcı takımda görünüyordu).
+        // ddl-auto yeni (boş) tabloyu PK'siyle oluşturur; bu güvenlik ağı + mevcut DB'de tablo/PK garantisi.
+        // Idempotent: IF NOT EXISTS. Mevcut üyelikler için satır YAZILMAZ — kaynağı bilinmeyen = "LEGACY";
+        // yanlış bir "LDAP" etiketi basmak güvenli budamanın dayanağını bozardı.
+        patch("""
+            CREATE TABLE IF NOT EXISTS app_user_team_sources(
+                user_id BIGINT NOT NULL,
+                team_id BIGINT NOT NULL,
+                source VARCHAR(20) NOT NULL,
+                detail VARCHAR(300),
+                updated_at VARCHAR(30),
+                updated_by VARCHAR(120),
+                PRIMARY KEY (user_id, team_id)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_auts_team ON app_user_team_sources(team_id)");
         // Haftalık erişilebilirlik e-postası idempotency (team+yıl+hafta) — ddl-auto entity'yi de
         // oluşturur; bu güvenlik ağı + mevcut DB'lerde tablo/uniq garanti.
         patch("""
@@ -2505,6 +2578,9 @@ public class SchedulerService {
         return live;
     }
 
+    /** Tek bir ağ kontrolünün sweep'te beklenebileceği en uzun süre (izleme zaman aşımı tavanı + pay). */
+    static final long NETWORK_CHECK_MAX_WAIT_MS = 180_000L;
+
     /** Ağ kontrolünü certCheckExecutor'a (20/50, kuyruk 1000) gönderir; dönen Supplier.get() join eder
      *  ve CompletionException'ı soyar → mevcut per-monitör catch blokları orijinal hatayı aynen görür.
      *  4-thread'lik scheduling pool'u monitör sayısıyla büyüyen bloklu ağ I/O'suyla doymasın (F1, CPU
@@ -2512,8 +2588,12 @@ public class SchedulerService {
      *  sıralı davranışa kendiliğinden geri düşer (backpressure); RejectedExecutionException imkânsız. */
     private <R> java.util.function.Supplier<R> startNetworkCheck(java.util.function.Supplier<R> task) {
         if (certCheckExecutor == null) return task;   // savunma (test/bootstrap)
+        // Süre tavanı (prod kapısı 2026-09-25, Y-3 / eski Y21): join süresiz bekliyordu — askıda kalan tek bir
+        // kontrol sweep iş parçacığını ve sonraki turları kilitlerdi. İzleme zaman aşımı en çok 120 sn
+        // (MonitoringController.clampTimeoutMs); tavan bunun üstünde, yalnız gerçekten takılanı keser.
         java.util.concurrent.CompletableFuture<R> f =
-                java.util.concurrent.CompletableFuture.supplyAsync(task, certCheckExecutor);
+                java.util.concurrent.CompletableFuture.supplyAsync(task, certCheckExecutor)
+                        .orTimeout(NETWORK_CHECK_MAX_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
         return () -> {
             try {
                 return f.join();
@@ -2718,7 +2798,10 @@ public class SchedulerService {
         boolean cleanupDue = orphanCleanupDue("port");
         // Öksüz port alarmı temizliği: host rename/silme sonrası recovery'nin kapatamadığı açık PORT_DOWN alarmı (ping ile paritede).
         if (cleanupDue) try {
+            // SİLİNMİŞ standalone satır (deleted_at, 2026-09-27) host'u "hâlâ izleniyor" saymaz — silinen
+            // izlemenin açık alarmı öksüz sayılıp kapanabilsin (kalıcı silinen kardeş türlerle aynı sonuç).
             java.util.Set<String> existingHosts = portMonitorRepo.findAll().stream()
+                    .filter(m -> m.getDeletedAt() == null)
                     .map(PortMonitor::getHost).filter(java.util.Objects::nonNull)
                     .collect(java.util.stream.Collectors.toSet());
             escalationService.resolveOrphanedPortAlerts(existingHosts);
@@ -3976,22 +4059,22 @@ public class SchedulerService {
      * sayısıyla orantılı kalır, kontrol sayısıyla DEĞİL). İhlalin BAŞLADIĞI ölçümde aynı satırlar
      * BREACH işaretiyle ikinci kez KALICI yazılır — "geçen salı neden yavaşladı" sorusu sonradan da
      * cevaplanabilsin diye. İhlal SÜRERKEN tekrar dondurulmaz (bkz. gövdedeki gerekçe).
+     *
+     * <p>BİLİNÇLİ OLARAK {@code @Transactional} DEĞİL (BO4/O1, bug regresyon 2026-09-27): bu metot aynı
+     * sınıftan ({@code recheckPageSpeed}) çağrılıyor; buradaki anotasyon Spring proxy'sinden geçmediği için
+     * hiç devreye girmiyordu ve "tek tx" sanılan sil + yaz iki ayrı commit'ti. Atomiklik artık
+     * {@link com.sitemonitor.repository.PageSpeedResourceRepository#replaceLatest} (repository proxy'si) içinde.
      */
-    @org.springframework.transaction.annotation.Transactional
     void writeResourceBreakdown(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,
                                 PageSpeedCheckerService.Result res, String ts, boolean wasBreached) {
-        // SİL + YAZ TEK TX: deleteByMonitorIdAndKeepReason kendi @Transactional'ı ile ayrı commit
-        // ediyordu; saveAll düşerse (yüzlerce satır, bağlantı/timeout) LATEST kırılımı ZATEN
-        // silinmiş oluyor ve çağıran istisnayı log.warn ile yutuyordu → "Kaynak Kırılımı" ekranı
-        // bir sonraki BAŞARILI kontrole kadar boş, kullanıcıya hiçbir hata gösterilmiyordu.
-        // Metodun kendi yorumu boş-kaynak yolunu kapatmış, yazma hatası yolunu açık bırakmıştı.
+        // SİL + YAZ TEK TX: saveAll düşerse (yüzlerce satır, bağlantı/timeout) LATEST kırılımı silinmiş
+        // KALMAMALI — replaceLatest ikisini tek transaction'da yapar, hata olursa eski kırılım yerinde durur.
         // Kırılım YOKSA (sayfa alınamadı / yapılandırma hatası) mevcut LATEST satırlarına DOKUNULMAZ.
         // Önce silip sonra dönmek, tek bir başarısız kontrolde son iyi kırılımı KALICI olarak
         // siliyordu — yani kullanıcı "bozulmadan önce sayfa neye benziyordu" diye baktığı ANDA
         // tablo boşalıyordu. Satırlar kendi `checked_at`'ini taşıyor, arayüz de onu gösteriyor;
         // eski kırılımı tutmak yanıltıcı değil, tek bilgi kaynağı.
         if (res.resources().isEmpty()) return;
-        pageSpeedResourceRepo.deleteByMonitorIdAndKeepReason(m.getId(), PageSpeedResource.KEEP_LATEST);
         // KENAR-TETIKLI: delil yalnizca ihlal BASLADIGI anda dondurulur, ihlal SURDUGU her kontrolde
         // degil. Aksi halde kalici yavas bir sayfa 30 dk'da bir 500 kalici satir yazar — gunde
         // ~24.000 satir, 90 gunluk saklamayla tek izleme icin milyonlarca satir. Sorulan soru
@@ -4003,7 +4086,7 @@ public class SchedulerService {
             rows.add(resourceRow(m, pc, x, ts, PageSpeedResource.KEEP_LATEST));
             if (breached) rows.add(resourceRow(m, pc, x, ts, PageSpeedResource.KEEP_BREACH));
         }
-        pageSpeedResourceRepo.saveAll(rows);
+        pageSpeedResourceRepo.replaceLatest(m.getId(), rows);
     }
 
     private static PageSpeedResource resourceRow(com.sitemonitor.model.PageSpeedMonitor m, PageSpeedCheck pc,

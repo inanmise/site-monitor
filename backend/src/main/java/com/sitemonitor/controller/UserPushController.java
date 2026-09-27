@@ -29,7 +29,6 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -55,8 +54,10 @@ import java.util.regex.Pattern;
 public class UserPushController {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final ZoneId ZONE = ZoneId.of("Europe/Istanbul");
-    private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    /** Teslimat satırları UTC yazılır ({@code UserPushService.ISO}); pencere sınırı da UTC olmalı (prod kapısı 2026-09-25,
+     *  O-6 / eski Y20): İstanbul yereliyle hesaplanan "since" saklanan değerlerin 3 saat İLERİSİNDE kalıyordu — dakikada
+     *  3 test tavanı hiç tetiklenmiyor, "son 24 saat" fiilen 21 saati sayıyordu. */
+    private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([a-zA-Z_]+)}");
     /** Maskeli sır değeri — UI bu sabiti "değişmedi" olarak geri yollar. */
     private static final String MASKED = "*****";
@@ -181,7 +182,7 @@ public class UserPushController {
         if (!userPushService.enabled())
             return badRequest(Msg.t("Kanal kapalı — önce global anahtarı açın", "Channel is off — enable the global switch first"));
         // Dakikada 3 tavan: test ucu gerçek gönderim yapar, kazara döngüye alınmasın.
-        String since = ISO.format(Instant.now().minus(Duration.ofMinutes(1)).atZone(ZONE).toLocalDateTime());
+        String since = ISO.format(Instant.now().minus(Duration.ofMinutes(1)));
         if (deliveryRepo.countByTriggerAndCreatedAtGreaterThanEqual("TEST", since) >= 3)
             return badRequest(Msg.t("Test tavanı: dakikada en çok 3 deneme", "Test limit: at most 3 attempts per minute"));
         List<String> usernames = new ArrayList<>();
@@ -302,7 +303,7 @@ public class UserPushController {
         Map<Long, String> teamNames = new LinkedHashMap<>();
         teamRepo.findAll().forEach(tm -> teamNames.put(tm.getId(), tm.getName()));
         for (Map.Entry<String, Duration> w : STAT_WINDOWS.entrySet()) {
-            String since = ISO.format(Instant.now().minus(w.getValue()).atZone(ZONE).toLocalDateTime());
+            String since = ISO.format(Instant.now().minus(w.getValue()));
             Map<String, Object> win = new LinkedHashMap<>();
             win.put("counts", statusCounts(w.getValue()));
             win.put("teams", teamBreakdown(since, teamNames));
@@ -314,7 +315,7 @@ public class UserPushController {
     }
 
     private Map<String, Long> statusCounts(Duration window) {
-        String since = ISO.format(Instant.now().minus(window).atZone(ZONE).toLocalDateTime());
+        String since = ISO.format(Instant.now().minus(window));
         Map<String, Long> counts = new LinkedHashMap<>();
         for (Object[] row : deliveryRepo.countByStatusSince(since))
             counts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());

@@ -1,14 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Send, Eye, RefreshCw, FileDown } from 'lucide-react'
+import { Send, Eye, RefreshCw, FileDown, CalendarClock } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
-import { Spinner } from '../ui/Progress.jsx'
+import { LoadingBlock, Spinner } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import { CheckboxRow, MasterToggleCard, SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 export default function WeeklyAvailabilitySettings() {
   const t = useT()
@@ -39,14 +45,7 @@ export default function WeeklyAvailabilitySettings() {
 
   useEffect(() => { load() }, [])
   useEffect(() => { loadHistory() }, [includeTest])
-
-  // Görüntüleyici açıkken Escape ile kapat
-  useEffect(() => {
-    if (!viewer) return
-    const onKey = (e) => { if (e.key === 'Escape') setViewer(null) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [viewer])
+  // Görüntüleyici Escape/scrim/✕ ile kapanır — ui/ModalShell (Radix katman yığını) üstlenir.
 
   async function load() {
     // AG HATASI DA GORUNUR OLMALI: api/client.js request() ag hatasinda {success:false}
@@ -176,13 +175,9 @@ export default function WeeklyAvailabilitySettings() {
     // icin ag hatasinda promise reject oluyor, hicbir durum guncellenmiyordu. Artik ayni
     // yerde hatanin KENDISI gosteriliyor (SystemHealth.jsx:163 loadErrors deseninin esdegeri).
     if (loadError) {
-      return (
-        <div className="admin-section">
-          <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
-        </div>
-      )
+      return <AlertBanner tone="danger" title={t('settings.loadError')} role="alert">{String(loadError)}</AlertBanner>
     }
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
   const teams = status.teams || []
@@ -193,202 +188,193 @@ export default function WeeklyAvailabilitySettings() {
   }))
 
   function statusCell(s) {
-    if (!s) return <span className="hint">—</span>
+    if (!s) return <span className="text-muted-foreground">—</span>
     return s.startsWith('FAILED')
-      ? <span className="ldap-lookup-error">{s}</span>
+      ? <span className="font-semibold break-words text-destructive" data-tone="danger">{s}</span>
       : <span>{s}</span>
   }
 
+  const TH = 'bg-muted/50'
+
   return (
-    <div className="ldap-settings">
-      {/* Header */}
-      <div className="admin-section">
-        <h3>{t('weeklyavail.title')}</h3>
-        <p className="section-desc">{t('weeklyavail.desc')}</p>
-        <p className="ldap-meta">{t('weeklyavail.schedule')} · {t('weeklyavail.reportingWeek')}: <strong>{status.week_label}</strong></p>
-      </div>
+    <div className={SETTINGS_STACK} data-testid="weeklyavail-settings">
+      <SettingsHeader icon={CalendarClock} title={t('weeklyavail.title')} description={t('weeklyavail.desc')}
+        hint={<>{t('weeklyavail.schedule')} · {t('weeklyavail.reportingWeek')}: <strong className="text-foreground">{status.week_label}</strong></>} />
 
       {/* Master enable / pause */}
-      <div className="admin-section">
-        <label className="ldap-toggle ldap-toggle-major">
-          <input type="checkbox" checked={enabled} disabled={savingEnabled}
-            onChange={(e) => toggleEnabled(e.target.checked)} />
-          <span>{t('weeklyavail.enabled')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.weekly-availability.enabled"
-          label={t('weeklyavail.enabled')} />
-        <p className="hint">{t('weeklyavail.enabledHint')}</p>
-        {!enabled && (
-          <div className="alert-msg ldap-lookup-error" style={{ marginTop: 10 }}>
-            {t('weeklyavail.pausedWarn')}
-          </div>
-        )}
-      </div>
+      <MasterToggleCard checked={enabled} disabled={savingEnabled} onChange={(v) => toggleEnabled(v)}
+        label={t('weeklyavail.enabled')} helpKey="help.set.site.monitor.weekly-availability.enabled" hint={t('weeklyavail.enabledHint')}>
+        {!enabled && <AlertBanner tone="warning" className="mt-1 mb-0">{t('weeklyavail.pausedWarn')}</AlertBanner>}
+      </MasterToggleCard>
 
       {/* Status table — mail audience */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('weeklyavail.statusTitle')}</h4>
+      <SettingsSection title={t('weeklyavail.statusTitle')}>
         {teams.length === 0 ? (
-          <p className="hint">{t('weeklyavail.noTeams')}</p>
+          <p className="text-xs text-muted-foreground">{t('weeklyavail.noTeams')}</p>
         ) : (
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>{t('weeklyavail.colTeam')}</th>
-                  <th>{t('weeklyavail.colDomains')}</th>
-                  <th>{t('weeklyavail.colRecipients')}</th>
-                  <th>{t('weeklyavail.colLastSent')}</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-hidden rounded-lg border">
+            <Table data-testid="wa-status">
+              <TableHeader className={TH}>
+                <TableRow>
+                  <TableHead>{t('weeklyavail.colTeam')}</TableHead>
+                  <TableHead className="text-right">{t('weeklyavail.colDomains')}</TableHead>
+                  <TableHead>{t('weeklyavail.colRecipients')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('weeklyavail.colLastSent')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {teams.map((tm) => {
                   const to = tm.to || []
                   const cc = tm.cc || []
                   return (
-                    <tr key={tm.id}>
-                      <td>{tm.name}</td>
-                      <td>{tm.domain_count}</td>
-                      <td>
+                    <TableRow key={tm.id}>
+                      <TableCell className="font-medium">{tm.name}</TableCell>
+                      <TableCell className="text-right tabular-nums">{tm.domain_count}</TableCell>
+                      <TableCell className="min-w-[200px] break-all whitespace-normal">
                         {to.length === 0
-                          ? <span className="ldap-lookup-error">{t('weeklyavail.noRecipients')}</span>
+                          ? <span className="font-semibold text-destructive">{t('weeklyavail.noRecipients')}</span>
                           : <span>{to.join(', ')}{cc.length > 0 ? ` · CC: ${cc.join(', ')}` : ''}</span>}
-                      </td>
-                      <td>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {tm.last_status
                           ? <span>{tm.last_status} · {formatDate(tm.last_sent_at)}</span>
-                          : <span className="hint">{t('weeklyavail.never')}</span>}
-                      </td>
-                    </tr>
+                          : <span className="text-muted-foreground">{t('weeklyavail.never')}</span>}
+                      </TableCell>
+                    </TableRow>
                   )
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
-      </div>
+      </SettingsSection>
 
       {/* Preview */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('weeklyavail.previewTitle')}</h4>
-        <p className="section-desc">{t('weeklyavail.previewDesc')}</p>
-        <div className="ldap-lookup-row">
-          <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId}
-            placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
-          <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
-            placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} ariaLabel={t('weeklyavail.previewWeek')} />
-          <Button onClick={doPreview} disabled={previewing || !previewTeamId}>
+      <SettingsSection title={t('weeklyavail.previewTitle')} description={t('weeklyavail.previewDesc')}>
+        <div className="flex flex-wrap items-center gap-2 [&>*]:min-w-0">
+          <div className="w-full sm:w-auto sm:min-w-[200px]">
+            <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId}
+              placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
+          </div>
+          <div className="w-full sm:w-auto sm:min-w-[220px]">
+            <SearchableSelect value={String(previewWeekOffset)} onChange={(v) => setPreviewWeekOffset(Number(v))}
+              placeholder={t('weeklyavail.previewWeek')} options={weekSelectOptions} ariaLabel={t('weeklyavail.previewWeek')} />
+          </div>
+          <Button onClick={doPreview} disabled={previewing || !previewTeamId} aria-busy={previewing || undefined}>
             {previewing ? <Spinner size={15} inline decorative /> : <Eye size={15} />} {t('weeklyavail.previewBtn')}
           </Button>
           {/* Ek, gövdeyle AYNI takım/hafta seçiminden üretilir — iki ayrı seçici olsaydı
               "önizlediğim hafta ile indirdiğim PDF farklı" tuzağı doğardı. */}
-          <Button variant="secondary" onClick={downloadPdf}
-            disabled={downloadingPdf || !previewTeamId} title={t('weeklyavail.pdfTip')}>
-            {downloadingPdf ? <Spinner size={15} inline decorative /> : <FileDown size={15} />} {t('weeklyavail.pdfBtn')}
-          </Button>
+          <SimpleTooltip content={t('weeklyavail.pdfTip')}>
+            <Button variant="secondary" onClick={downloadPdf} aria-busy={downloadingPdf || undefined}
+              disabled={downloadingPdf || !previewTeamId}>
+              {downloadingPdf ? <Spinner size={15} inline decorative /> : <FileDown size={15} />} {t('weeklyavail.pdfBtn')}
+            </Button>
+          </SimpleTooltip>
         </div>
-      </div>
+      </SettingsSection>
 
       {/* Send test email */}
-      <div className="admin-section ldap-lookup">
-        <h4 className="ldap-subhdr">{t('weeklyavail.testTitle')}</h4>
-        <p className="section-desc">{t('weeklyavail.testDesc')}</p>
-        <div style={{ maxWidth: 520, marginTop: 8 }}>
+      <SettingsSection title={t('weeklyavail.testTitle')} description={t('weeklyavail.testDesc')} contentClassName="flex flex-col gap-2.5">
+        <div className="w-full sm:max-w-xl">
           <SearchableSelect value={testTeamId} onChange={setTestTeamId}
             placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
         </div>
-        <div className="ldap-lookup-row">
-          <input type="email" value={testEmail} placeholder="recipient@example.com"
+        <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
+          <Input type="email" value={testEmail} placeholder="recipient@example.com" aria-label={t('weeklyavail.testTitle')} className="min-w-0 flex-1"
             onChange={(e) => setTestEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
-          <Button onClick={sendTest}
+          <Button onClick={sendTest} className="shrink-0" aria-busy={sending || undefined}
             disabled={sending || !testTeamId || !testEmail.trim()}>
             {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('weeklyavail.sendBtn')}
           </Button>
         </div>
         {sendResult && (
-          <div className={`alert-msg ${sendResult.success ? '' : 'ldap-lookup-error'}`} style={{ marginTop: 12 }}>
+          <AlertBanner tone={sendResult.success ? 'success' : 'danger'} className="mb-0">
             {sendResult.success
               ? (sendResult.message || t('weeklyavail.sendOk'))
               : (sendResult.error || sendResult.message || t('weeklyavail.sendFail'))}
-          </div>
+          </AlertBanner>
         )}
-      </div>
+      </SettingsSection>
 
       {/* Sent history (archive) */}
-      <div className="admin-section">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-          <h4 className="ldap-subhdr" style={{ margin: 0 }}>{t('weeklyavail.historyTitle')}</h4>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <label className="ldap-toggle">
-              <input type="checkbox" checked={includeTest} onChange={(e) => setIncludeTest(e.target.checked)} />
-              <span>{t('weeklyavail.includeTest')}</span>
-            </label>
-            <Button variant="secondary" onClick={loadHistory} disabled={historyLoading}>
-              {historyLoading ? <Spinner size={15} inline decorative /> : <RefreshCw size={15} />} {t('weeklyavail.refresh')}
-            </Button>
+      <Card className="gap-4">
+        <CardHeader className="border-b [.border-b]:pb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <CardTitle role="heading" aria-level={4}>{t('weeklyavail.historyTitle')}</CardTitle>
+              <CardDescription>{t('weeklyavail.historyDesc')}</CardDescription>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-3">
+              <CheckboxRow checked={includeTest} onChange={setIncludeTest} label={t('weeklyavail.includeTest')} />
+              <Button variant="secondary" onClick={loadHistory} disabled={historyLoading} aria-busy={historyLoading || undefined}>
+                {historyLoading ? <Spinner size={15} inline decorative /> : <RefreshCw size={15} />} {t('weeklyavail.refresh')}
+              </Button>
+            </div>
           </div>
-        </div>
-        <p className="section-desc">{t('weeklyavail.historyDesc')}</p>
-        {history.length === 0 ? (
-          <p className="hint">{historyLoading ? t('settings.loading') : t('weeklyavail.historyEmpty')}</p>
-        ) : (
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>{t('weeklyavail.colDate')}</th>
-                  <th>{t('weeklyavail.colTeam')}</th>
-                  <th>{t('weeklyavail.colRecipients')}</th>
-                  <th>{t('weeklyavail.colStatus')}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((m) => (
-                  <tr key={m.id}>
-                    <td>
-                      {formatDate(m.sent_at)}
-                      {m.trigger === 'WEEKLY_AVAILABILITY_TEST' && (
-                        <span className="hint"> · {t('weeklyavail.testTag')}</span>
-                      )}
-                    </td>
-                    <td>{m.team}</td>
-                    <td>{m.to}{m.cc ? ` · CC: ${m.cc}` : ''}</td>
-                    <td>{statusCell(m.status)}</td>
-                    <td>
-                      <Button variant="secondary" onClick={() => openArchived(m)} disabled={openingId === m.id}>
-                        {openingId === m.id ? <Spinner size={14} inline decorative /> : <Eye size={14} />} {t('weeklyavail.view')}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        </CardHeader>
+        <CardContent>
+          {history.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{historyLoading ? t('settings.loading') : t('weeklyavail.historyEmpty')}</p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border">
+              <Table data-testid="wa-history">
+                <TableHeader className={TH}>
+                  <TableRow>
+                    <TableHead>{t('weeklyavail.colDate')}</TableHead>
+                    <TableHead>{t('weeklyavail.colTeam')}</TableHead>
+                    <TableHead className="hidden md:table-cell">{t('weeklyavail.colRecipients')}</TableHead>
+                    <TableHead>{t('weeklyavail.colStatus')}</TableHead>
+                    <TableHead><span className="sr-only">{t('weeklyavail.view')}</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell className="tabular-nums">
+                        {formatDate(m.sent_at)}
+                        {m.trigger === 'WEEKLY_AVAILABILITY_TEST' && (
+                          <ToneBadge tone="muted" className="ml-1.5">{t('weeklyavail.testTag')}</ToneBadge>
+                        )}
+                      </TableCell>
+                      <TableCell>{m.team}</TableCell>
+                      <TableCell className="hidden min-w-[200px] break-all whitespace-normal md:table-cell">{m.to}{m.cc ? ` · CC: ${m.cc}` : ''}</TableCell>
+                      <TableCell className="max-w-[260px] whitespace-normal">{statusCell(m.status)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="secondary" size="sm" onClick={() => openArchived(m)} disabled={openingId === m.id}
+                          aria-busy={openingId === m.id || undefined}
+                          aria-label={t('a11y.rowAction', t('weeklyavail.view'), `${m.team} · ${formatDate(m.sent_at)}`)}>
+                          {openingId === m.id ? <Spinner size={14} inline decorative /> : <Eye size={14} />} {t('weeklyavail.view')}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Önizleme / arşiv görüntüleyici — ui/ModalShell (shadcn Dialog): scrim/✕/Escape ile kapanır */}
+      <ModalShell open={!!viewer} onClose={() => setViewer(null)} title={viewer?.title} icon={Eye} size="lg" scrollBody
+        closeLabel={t('app.dismiss')}>
+        {viewer && (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs break-all text-muted-foreground">
+              <strong className="text-foreground">{t('weeklyavail.recipientsTo')}:</strong>{' '}
+              {viewer.noRecipients
+                ? <span className="font-semibold text-destructive">{t('weeklyavail.noRecipients')}</span>
+                : viewer.to}
+              {viewer.cc && <> · <strong className="text-foreground">CC:</strong> {viewer.cc}</>}
+            </p>
+            {/* Mail önizlemesi her zaman açık zeminde çizilir (e-posta istemcisinin görünümü) */}
+            <iframe title="weekly-availability-viewer" srcDoc={mailPreviewSrcDoc(viewer.html)} sandbox={MAIL_PREVIEW_SANDBOX}
+              className="h-[60dvh] min-h-[360px] w-full rounded-md border bg-white" />
           </div>
         )}
-      </div>
-
-      {/* Önizleme / arşiv görüntüleyici pop-up — overlay/✕/Escape ile kapanır */}
-      {viewer && (
-        <div className="modal-overlay" onClick={() => setViewer(null)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: 920, width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>{viewer.title}</h3>
-              <Button variant="secondary" onClick={() => setViewer(null)} aria-label={t('app.dismiss')}>✕</Button>
-            </div>
-            <p className="ldap-meta" style={{ marginTop: 0 }}>
-              <strong>{t('weeklyavail.recipientsTo')}:</strong>{' '}
-              {viewer.noRecipients
-                ? <span className="ldap-lookup-error">{t('weeklyavail.noRecipients')}</span>
-                : viewer.to}
-              {viewer.cc && <> · <strong>CC:</strong> {viewer.cc}</>}
-            </p>
-            <iframe className="nl-message-iframe" title="weekly-availability-viewer"
-              srcDoc={mailPreviewSrcDoc(viewer.html)} sandbox={MAIL_PREVIEW_SANDBOX} style={{ minHeight: 460 }} />
-          </div>
-        </div>
-      )}
+      </ModalShell>
     </div>
   )
 }

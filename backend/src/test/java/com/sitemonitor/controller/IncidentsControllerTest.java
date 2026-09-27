@@ -104,6 +104,27 @@ class IncidentsControllerTest {
     }
 
     @Test
+    @DisplayName("2026-09-27: GET /incidents — SİLİNMİŞ standalone Port satırı aynı host'u izleyen CANLI izlemeyi gölgelemez")
+    void list_deletedPortRowDoesNotShadowLiveMonitor() throws Exception {
+        AlertEvent portDown = new AlertEvent();
+        portDown.setId(4L); portDown.setDomain("svc.example.com"); portDown.setAlertType("PORT_DOWN");
+        portDown.setAlertLevel("CRITICAL"); portDown.setResolved(false); portDown.setCreatedAt("2026-07-10T10:00:00");
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(portDown)));
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
+        com.sitemonitor.model.PortMonitor deleted = new com.sitemonitor.model.PortMonitor();
+        deleted.setId(40L); deleted.setName("eski"); deleted.setHost("svc.example.com"); deleted.setDeletedAt("2026-09-01T00:00:00");
+        com.sitemonitor.model.PortMonitor live = new com.sitemonitor.model.PortMonitor();
+        live.setId(41L); live.setName("canlı"); live.setHost("svc.example.com");
+        when(portMonitorRepo.findAll()).thenReturn(List.of(deleted, live));
+
+        mvc.perform(get("/api/monitoring/incidents").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor.monitor_id").value(41));
+    }
+
+    @Test
     @DisplayName("GET /incidents: HTTP_DOWN + http_status=500 → root_cause 500/server_error, status ongoing, monitor=domain")
     void list_returnsIncidentDto() throws Exception {
         when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))

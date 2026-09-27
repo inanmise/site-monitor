@@ -35,13 +35,17 @@ class LdapProvisioningServiceTest {
     @Mock LdapDirectoryService directory;
     @Mock EscalationContactRepository contactRepo;
     @Mock AppSettingsService appSettings;
+    @Mock AuditService auditService;
     private LdapProvisioningService service;
 
     @BeforeEach
     void setUp() {
-        service = new LdapProvisioningService(userRepo, teamRepo, directory, contactRepo, appSettings);
+        service = new LdapProvisioningService(userRepo, teamRepo, directory, contactRepo, appSettings,
+                new TeamSourceFakes.Store().service, auditService);
         // Varsayılan davranış: otomatik müdür-kontağı ekleme KAPALI (üretim varsayılanıyla aynı).
         when(appSettings.getBoolean(anyString(), any(Boolean.class))).thenAnswer(inv -> inv.getArgument(1));
+        when(appSettings.getInt(anyString(), org.mockito.ArgumentMatchers.anyInt())).thenAnswer(inv -> inv.getArgument(1));
+        when(appSettings.getCsv(anyString(), anyString())).thenAnswer(inv -> List.of(((String) inv.getArgument(1)).split(",")));
         AtomicLong userSeq = new AtomicLong(0);
         AtomicLong teamSeq = new AtomicLong(0);
         when(userRepo.save(any(AppUser.class))).thenAnswer(inv -> {
@@ -237,7 +241,7 @@ class LdapProvisioningServiceTest {
     void teamFromScrumGroups_skipsApproverGroup() {
         // Onayci grubunun maili yanlışlıkla seçilmesin diye yalnız düz grubun DN'ine mail ver.
         String teamDn = "CN=Takim B,OU=ScrumGroups,OU=Staff,OU=Corp,DC=example,DC=com";
-        when(directory.groupMail(teamDn)).thenReturn(Optional.of("sy-dijitalbankacilik@example.com"));
+        when(directory.groupMail(teamDn)).thenReturn(Optional.of("takim-b@example.com"));
         org.mockito.ArgumentCaptor<Team> teamCap = org.mockito.ArgumentCaptor.forClass(Team.class);
         Map<String, Object> attrs = Map.of(
                 "cn", "64954", "company", "PRODUCT OWNER",
@@ -252,7 +256,7 @@ class LdapProvisioningServiceTest {
                 .filter(t -> t.getName() != null && !t.getName().toLowerCase().contains("onayci"))
                 .findFirst().orElseThrow();
         assertThat(created.getName()).isEqualTo("Takim B");
-        assertThat(created.getEmail()).isEqualTo("sy-dijitalbankacilik@example.com");
+        assertThat(created.getEmail()).isEqualTo("takim-b@example.com");
         // "...Onayci" adıyla hiçbir takım oluşturulmamalı.
         assertThat(teamCap.getAllValues()).noneMatch(t ->
                 t.getName() != null && t.getName().toLowerCase().contains("onayci"));
@@ -444,7 +448,7 @@ class LdapProvisioningServiceTest {
         AppUser mgr = new AppUser();
         mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
         mgr.setActive(true); mgr.setEmail("mudur@example.com"); mgr.setDisplayName("Ali Müdür");
-        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
+        when(userRepo.findAllByEmployeeIdNormalized("99999")).thenReturn(List.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
         when(contactRepo.findByTeamIdOrderByRoleAsc(anyLong())).thenReturn(List.of());
 
@@ -473,7 +477,7 @@ class LdapProvisioningServiceTest {
         AppUser mgr = new AppUser();
         mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
         mgr.setActive(true); mgr.setEmail("mudur@example.com");
-        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
+        when(userRepo.findAllByEmployeeIdNormalized("99999")).thenReturn(List.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
 
         Map<String, Object> attrs = Map.of(
@@ -495,7 +499,7 @@ class LdapProvisioningServiceTest {
         AppUser mgr = new AppUser();
         mgr.setId(700L); mgr.setUsername("mgr1"); mgr.setEmployeeId("99999");
         mgr.setActive(true); mgr.setEmail("mudur@example.com");
-        when(userRepo.findByEmployeeId("99999")).thenReturn(Optional.of(mgr));
+        when(userRepo.findAllByEmployeeIdNormalized("99999")).thenReturn(List.of(mgr));
         when(userRepo.findById(700L)).thenReturn(Optional.of(mgr));
         EscalationContact existing = new EscalationContact();
         existing.setTeamId(1L); existing.setRole("MANAGER"); existing.setEmail("mudur@example.com");

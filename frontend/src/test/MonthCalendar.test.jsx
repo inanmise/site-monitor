@@ -21,10 +21,40 @@ describe('MonthCalendar', () => {
     expect(screen.getByText('a.example.com')).toBeInTheDocument()
     expect(screen.queryByText('d.example.com')).toBeNull()
     expect(screen.getByText('+1')).toBeInTheDocument()
-    expect(document.querySelector('.mcal-cell.has-bad')).not.toBeNull()
+    expect(document.querySelector('[data-slot="month-calendar-day"][data-tone="bad"]')).not.toBeNull()
+    expect(document.querySelectorAll('[data-slot="month-calendar-event"]')).toHaveLength(3)   // 4. olay "+1" altında
     fireEvent.click(screen.getByText('a.example.com'))
     expect(onClick).toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /Sonraki ay|Next month/ }))
+    expect(screen.getByText('next.example.com')).toBeInTheDocument()
+    expect(screen.queryByText('a.example.com')).toBeNull()
+  })
+
+  /** 2026-09-27 (Sertifika Takvimi): ekleyici seçenekler — varsayılanlar eski davranışı korur (üstteki test). */
+  it('onDayClick + dense: olaylı günün tarihi düğme olur ve günü olaylarıyla çağırır; olaysız gün düğme değil; hafta sonu işaretli; aya atlama', () => {
+    const onDay = vi.fn()
+    const events = [
+      { date: '2026-09-15', label: 'a.example.com', tone: 'bad' }, { date: '2026-09-15', label: 'b.example.com', tone: 'warn' },
+      { date: '2026-09-15', label: 'c.example.com', tone: 'info' }, { date: '2026-09-15', label: 'd.example.com', tone: 'ok' },
+      { date: '2026-10-02', label: 'next.example.com', tone: 'ok' },
+    ]
+    render(<MonthCalendar events={events} initialMonth="2026-09-01" dense onDayClick={onDay} />)
+    const open = document.querySelector('[data-slot="month-calendar-day"][data-day="2026-09-15"] [data-slot="month-calendar-day-open"]')
+    expect(open).not.toBeNull()
+    expect(open.tagName).toBe('BUTTON')
+    expect(open.getAttribute('aria-label')).toMatch(/4/)
+    expect(open.querySelector('[data-slot="month-calendar-date"]').textContent).toBe('15')
+    fireEvent.click(open)
+    expect(onDay).toHaveBeenCalledTimes(1)
+    expect(onDay.mock.calls[0][0]).toBe('2026-09-15')
+    expect(onDay.mock.calls[0][1]).toHaveLength(4)
+    expect(document.querySelector('[data-day="2026-09-16"] [data-slot="month-calendar-day-open"]')).toBeNull()
+    expect(document.querySelector('[data-day="2026-09-19"]').getAttribute('data-weekend')).toBe('true')   // Cumartesi
+    expect(document.querySelector('[data-day="2026-09-16"]').hasAttribute('data-weekend')).toBe(false)
+    // Çipler dense'te de DOM'da (sm+ görünür), olay tıklaması korunur
+    expect(document.querySelectorAll('[data-slot="month-calendar-event"]')).toHaveLength(3)
+    // Aya atlama (NativeSelect): ekim → ekimdeki olay görünür
+    fireEvent.change(screen.getByRole('combobox', { name: /Aya git|Go to month/ }), { target: { value: '2026-10' } })
     expect(screen.getByText('next.example.com')).toBeInTheDocument()
     expect(screen.queryByText('a.example.com')).toBeNull()
   })

@@ -33,9 +33,9 @@ describe('CheckHistoryTab gün ayraçları yerel günü izler', () => {
     render(<CheckHistoryTab kind="ping" monitorId={1} listKey="reg-007" columns={['Zaman']} urlSync={false}
       renderRow={(c) => <span>{c.checked_at}</span>} />)
     await screen.findByText('2026-08-07T00:30:00')
-    await waitFor(() => expect(document.querySelectorAll('.hist-day-sep').length).toBe(expectedDays))
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="hist-day-sep"]').length).toBe(expectedDays))
     // Başlık metni ayracın yerel gününü taşır (öğlen sabitlemesi: hangi dilimde olursa olsun aynı gün)
-    const first = document.querySelector('.hist-day-sep')
+    const first = document.querySelector('[data-slot="hist-day-sep"]')
     expect(first.textContent).toBe(localDayKey(stamps[0]) + 'T12:00:00')
   })
 })

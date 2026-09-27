@@ -197,4 +197,149 @@ class IssueReportControllerTest {
                         .content("{\"message\":\"m11\"}"))
                 .andExpect(status().isTooManyRequests());
     }
+
+    // ── "Bildirimlerim" (2026-09-26): kimlik oturumdan, sahiplik 404, iç not sızmaz, yeniden açma ──
+
+    private LoginIssueReport mine(long id, String status) {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(id); r.setStatus(status); r.setUsername(username); r.setReportedAt("2026-09-20T10:00:00");
+        r.setMessage("mesaj"); r.setReporterEmail(username + "@example.com");
+        return r;
+    }
+
+    private static com.sitemonitor.model.IssueReportComment comment(long id, String kind, String author, boolean internal,
+                                                                     boolean byReporter, String body) {
+        com.sitemonitor.model.IssueReportComment c = new com.sitemonitor.model.IssueReportComment();
+        c.setId(id); c.setReportId(7L); c.setKind(kind); c.setAuthorUsername(author); c.setInternal(internal);
+        c.setByReporter(byReporter); c.setBody(body); c.setCreatedAt("2026-09-21T10:00:00");
+        return c;
+    }
+
+    @Test
+    @DisplayName("GET mine: kullanıcı adı OTURUMDAN (istek parametresi yok sayılır); standart sayfa zarfı + sayaçlar + yorum sayısı")
+    void mine_listUsesSessionUserOnly() throws Exception {
+        when(loginIssueService.listMine(eq(username), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(mine(1L, "OPEN"))));
+        when(loginIssueService.countsMine(username)).thenReturn(java.util.Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
+        when(loginIssueService.publicCommentCounts(any())).thenReturn(java.util.Map.of(1L, 2L));
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/issue-reports/mine?username=baskasi&status=OPEN&page=0&size=20").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[0].refCode").value("LIR-2026-000001"))
+                .andExpect(jsonPath("$.data[0].commentCount").value(2))
+                .andExpect(jsonPath("$.data[0].unread").value(false))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.counts.OPEN").value(1));
+
+        verify(loginIssueService).listMine(eq(username), eq("OPEN"), eq(0), eq(20));
+        verify(loginIssueService, never()).listMine(eq("baskasi"), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("GET mine/{id}: BAŞKASININ raporu 404 (403 değil — varlık sızmaz); görüldü damgası vurulmaz")
+    void mineDetail_otherUsersReportIs404() throws Exception {
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.empty());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/issue-reports/mine/7").session(session))
+                .andExpect(status().isNotFound());
+        verify(loginIssueService, never()).markSeenByReporter(any());
+    }
+
+    @Test
+    @DisplayName("GET mine/{id}: yalnız HERKESE AÇIK satırlar (publicComments); 'internal' alanı yanıtta hiç yok; zaman çizelgesi; görüldü damgası")
+    void mineDetail_publicOnlyWithTimelineAndSeen() throws Exception {
+        LoginIssueReport r = mine(7L, "IN_PROGRESS");
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.of(r));
+        when(loginIssueService.images(7L)).thenReturn(java.util.List.of());
+        when(loginIssueService.publicComments(7L)).thenReturn(java.util.List.of(
+                comment(1L, "COMMENT", "someadmin", false, false, "herkese açık yanıt"),
+                comment(2L, "STATUS", "someadmin", false, false, "IN_PROGRESS")));
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/issue-reports/mine/7").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.refCode").value("LIR-2026-000007"))
+                .andExpect(jsonPath("$.data.comments.length()").value(1))
+                .andExpect(jsonPath("$.data.comments[0].body").value("herkese açık yanıt"))
+                .andExpect(jsonPath("$.data.comments[0].byReporter").value(false))
+                .andExpect(jsonPath("$.data.comments[0].internal").doesNotExist())
+                .andExpect(jsonPath("$.data.timeline.length()").value(2))
+                .andExpect(jsonPath("$.data.timeline[0].status").value("OPEN"))
+                .andExpect(jsonPath("$.data.timeline[0].byReporter").value(true))
+                .andExpect(jsonPath("$.data.timeline[1].status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.data.timeline[1].by").value("someadmin"))
+                .andExpect(jsonPath("$.data.ipAddress").doesNotExist())
+                .andExpect(jsonPath("$.data.autoContextJson").doesNotExist());
+
+        verify(loginIssueService).markSeenByReporter(7L);
+        verify(loginIssueService, never()).comments(any());   // iç notları da döndüren YÖNETİCİ metodu asla çağrılmaz
+    }
+
+    @Test
+    @DisplayName("POST mine/{id}/comments: başkasının raporuna yorum 404 — hiçbir şey yazılmaz, audit yok")
+    void mineComment_otherUsersReportIs404() throws Exception {
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.empty());
+        mvc.perform(post("/api/issue-reports/mine/7/comments").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"x\"}"))
+                .andExpect(status().isNotFound());
+        verify(loginIssueService, never()).addComment(any(), any(), any(), anyBoolean(), anyBoolean(), any());
+        verify(auditService, never()).recordAction(anyString(), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("POST mine/{id}/comments: boş → 400, 4001 karakter → 400; servis çağrılmaz")
+    void mineComment_lengthLimits() throws Exception {
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.of(mine(7L, "OPEN")));
+        mvc.perform(post("/api/issue-reports/mine/7/comments").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/issue-reports/mine/7/comments").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"" + "x".repeat(4001) + "\"}"))
+                .andExpect(status().isBadRequest());
+        verify(loginIssueService, never()).addComment(any(), any(), any(), anyBoolean(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("POST mine/{id}/comments (RESOLVED → yeniden açılır): reopened=true, COMMENT + REOPEN audit'i, internal isteği yok sayılır, kendine mail YOK")
+    void mineComment_reopensAndAudits() throws Exception {
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.of(mine(7L, "RESOLVED")));
+        when(loginIssueService.addComment(eq(7L), eq(username), anyString(), eq(false), eq(true), eq("devam ediyor")))
+                .thenReturn(new LoginIssueService.CommentResult(comment(5L, "COMMENT", username, false, true, "devam ediyor"), true));
+
+        mvc.perform(post("/api/issue-reports/mine/7/comments").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"devam ediyor\",\"internal\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reopened").value(true))
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.data.comment.byReporter").value(true))
+                .andExpect(jsonPath("$.data.comment.body").value("devam ediyor"));
+
+        verify(auditService).recordAction(eq("ISSUE_REPORT_COMMENT"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("LOGIN_ISSUE"), eq("7"), anyString());
+        verify(auditService).recordAction(eq("ISSUE_REPORT_REOPEN"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("LOGIN_ISSUE"), eq("7"), anyString());
+        org.mockito.Mockito.verifyNoInteractions(loginIssueMailService);   // bildirenin kendi yorumu ona mail üretmez
+    }
+
+    @Test
+    @DisplayName("POST mine/{id}/comments (OPEN): reopened=false, yalnız COMMENT audit'i; mail yok")
+    void mineComment_openNoReopen() throws Exception {
+        when(loginIssueService.getMine(7L, username)).thenReturn(Optional.of(mine(7L, "OPEN")));
+        when(loginIssueService.addComment(eq(7L), eq(username), anyString(), eq(false), eq(true), eq("ek bilgi")))
+                .thenReturn(new LoginIssueService.CommentResult(comment(6L, "COMMENT", username, false, true, "ek bilgi"), false));
+
+        mvc.perform(post("/api/issue-reports/mine/7/comments").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"ek bilgi\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reopened").value(false))
+                .andExpect(jsonPath("$.data.status").value("OPEN"));
+
+        verify(auditService).recordAction(eq("ISSUE_REPORT_COMMENT"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("LOGIN_ISSUE"), eq("7"), anyString());
+        verify(auditService, never()).recordAction(eq("ISSUE_REPORT_REOPEN"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+        org.mockito.Mockito.verifyNoInteractions(loginIssueMailService);
+    }
 }

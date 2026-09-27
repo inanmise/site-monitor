@@ -7,6 +7,20 @@ import { navigateTo } from '../utils/navigate.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONITOR_SECTION_TAB, MONITOR_TAB, monitorRowKey, openMonitor, openNotification, openQuiet } from './todayMonitorRows.jsx'
+import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Card as UiCard } from '@/components/shadcn/card'
+import { cn } from '@/lib/utils'
+
+// Kart tonu (ok|warn|bad|info) — başlık simgesi ve sayı rozetinin rengi. Kartta SOL RENK ŞERİDİ YOK (kullanıcı kuralı
+// 2026-09-26; eski .today-card--* border-left'i). Test kancası: `data-slot="today-card"` + `data-tone`.
+const TONE_INK = { ok: 'text-success', warn: 'text-amber-600 dark:text-amber-400', bad: 'text-destructive', info: 'text-primary' }
+const TONE_BADGE = {
+  ok: 'bg-success/15 text-success dark:bg-success/20',
+  warn: 'bg-amber-500/15 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  bad: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  info: 'bg-primary/10 text-primary dark:bg-primary/20',
+}
 
 /**
  * "Sizin için — bugün" (2026-09-12, zenginleştirme #3): dashboard'un üstünde kartlar —
@@ -56,21 +70,22 @@ export default function TodayPanel({ onOpenDomain }) {
   const Card = ({ icon: Icon, tone, title, count, prev, sub, onGo, section, onOpenItem, children }) => {
     if (!count) return null
     return (
-    <div className={`today-card today-card--${tone}`}>
-      <div className="today-card-head">
-        <Icon size={16} aria-hidden="true" />
-        <span className="today-card-title">{title}</span>
+    // shadcn Card — eşit yükseklikli ızgarada "Tümünü gör" kartın dibinde (mt-auto)
+    <UiCard data-slot="today-card" data-tone={tone} className="min-w-0 gap-1.5 rounded-[10px] px-3 py-2.5 shadow-none">
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon size={16} aria-hidden="true" className={cn('shrink-0', TONE_INK[tone])} />
+        <span className="min-w-0 flex-1 text-[.88em] font-bold [overflow-wrap:anywhere]">{title}</span>
         {delta(count, prev)}
-        <b className="today-card-count">{count}</b>
+        <Badge variant="secondary" data-slot="today-count" className={cn('font-extrabold tabular-nums', TONE_BADGE[tone])}>{count}</Badge>
       </div>
-      {sub && <div className="today-card-sub">{sub}</div>}
+      {sub && <div className="text-[.78em] text-muted-foreground">{sub}</div>}
       {children}
       {/* "Tümünü gör" → sayfaya gitmek yerine POP-UP: listenin tamamı sayfalı (2026-09-18); "Sayfaya git" pop-up'ın altında */}
       {onGo && (
-        <button type="button" className="today-card-go"
-          onClick={() => setListModal({ section, title, icon: Icon, onOpen: onOpenItem, onGo })}>{t('today.go')} <ArrowRight size={12} aria-hidden="true" /></button>
+        <Button type="button" variant="link" size="sm" className="mt-auto h-auto self-start p-0 text-[.8em]"
+          onClick={() => setListModal({ section, title, icon: Icon, onOpen: onOpenItem, onGo })}>{t('today.go')} <ArrowRight size={12} aria-hidden="true" /></Button>
       )}
-    </div>
+    </UiCard>
     )
   }
 
@@ -105,12 +120,16 @@ export default function TodayPanel({ onOpenDomain }) {
 
   return (
     <section className={`today${open ? ' is-open' : ''}${total === 0 ? ' today--clear' : ''}`} aria-label={t('today.title')}>
-      <button type="button" className="today-head" aria-expanded={open} onClick={toggle}>
-        <Sparkles size={16} aria-hidden="true" />
-        <span className="today-title">{t('today.title')}</span>
-        <span className="today-summary">{total === 0 ? t('today.clear') : t('today.summary', total)}</span>
-        <ChevronDown size={16} className={`today-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
-      </button>
+      {/* Aç/kapa başlığı — shadcn Button (tam genişlik); telefonda özet alt satıra sarar */}
+      <Button type="button" variant="ghost" data-slot="today-head" aria-expanded={open} onClick={toggle}
+        className="h-auto w-full flex-wrap justify-start gap-x-2.5 gap-y-1 rounded-[10px] px-3.5 py-2.5 text-left font-semibold whitespace-normal hover:bg-muted/50 has-[>svg]:px-3.5 sm:flex-nowrap">
+        <Sparkles size={16} aria-hidden="true" className={total === 0 ? 'text-success' : 'text-primary'} />
+        <span className="flex-1 sm:flex-none">{t('today.title')}</span>
+        <span className="order-3 w-full min-w-0 text-[.88em] font-medium text-muted-foreground sm:order-none sm:w-auto sm:flex-1">
+          {total === 0 ? t('today.clear') : t('today.summary', total)}
+        </span>
+        <ChevronDown size={16} aria-hidden="true" className={cn('transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
+      </Button>
       {/* Son 24 saat şeridi (2026-09-23): panel temizken de görünür — çözülen alarm / yenilenen sertifika iyi haberdir. */}
       {open && recent && (
         <div className="today-recent">
@@ -120,14 +139,14 @@ export default function TodayPanel({ onOpenDomain }) {
         </div>
       )}
       {open && total > 0 && (
-        <div className="today-grid">
+        <div data-slot="today-grid" className="today-grid">
           <Card icon={CalendarClock} tone={certs.expired > 0 ? 'bad' : certs.count > 0 ? 'warn' : 'ok'} title={t('today.certs')} count={certs.count || 0} prev={certs.prev}
             sub={certs.expired > 0 ? t('today.certsExpired', certs.expired) : t('today.certsSub')}
             onGo={certs.count ? () => navigateTo('renewal') : null} section="certs" onOpenItem={(c) => onOpenDomain?.(c.domain)}>
             <ul className="today-list">
               {(certs.items || []).map((c) => (
                 <li key={c.domain}>
-                  <button type="button" className="today-link" onClick={() => onOpenDomain?.(c.domain)}>{c.domain}</button>
+                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => onOpenDomain?.(c.domain)}><span className="truncate">{c.domain}</span></Button>
                   <span className={`today-days${c.days < 0 ? ' is-bad' : c.days <= 7 ? ' is-warn' : ''}`}>{c.days < 0 ? t('today.daysPast', -c.days) : t('today.daysLeft', c.days)}</span>
                   {c.team_name && <TeamBadge teamId={c.team_id} teamName={c.team_name} />}
                 </li>
@@ -142,7 +161,7 @@ export default function TodayPanel({ onOpenDomain }) {
               {(alerts.items || []).map((a) => (
                 <li key={a.id}>
                   <span className={`today-level today-level--${(a.level || '').toLowerCase()}`}>{a.level}</span>
-                  <button type="button" className="today-link" onClick={() => navigateTo('alerthistory', { incident: a.id })}>{a.domain || a.type}</button>
+                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', { incident: a.id })}><span className="truncate">{a.domain || a.type}</span></Button>
                   <span className="today-muted">{a.type}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
                 </li>
               ))}
@@ -227,7 +246,7 @@ export default function TodayPanel({ onOpenDomain }) {
         </div>
       )}
       {open && total > 0 && clearCards.length > 0 && (
-        <div className="today-ok">
+        <div data-slot="today-ok" className="today-ok">
           <CheckCircle2 size={14} aria-hidden="true" />
           <span className="today-ok-lbl">{t('today.okLabel')}</span>
           <ul className="today-ok-list">

@@ -257,6 +257,59 @@ export function verbFor(et, t) {
   return t('audit.verb.did')
 }
 
+/** Kaynak etiketi: `USER:5`, yalnız tür ya da yalnız kimlik; hiçbiri yoksa boş dize. */
+export function resourceLabel(row) {
+  if (!row) return ''
+  if (row.resource_type) return `${row.resource_type}${row.resource_id ? ':' + row.resource_id : ''}`
+  return row.resource_id ? String(row.resource_id) : ''
+}
+
+/**
+ * Liste satırının KISA özeti (aktörsüz, fiilsiz — o bilgiler satırın kendi sütunlarında):
+ * "USER:5 — systemRole: USER → ADMIN (+1)". Öncelik: diff → hata nedeni → JSON ayrıntının ilk
+ * iki alanı → düz metin ayrıntı. Hiçbiri yoksa yalnız kaynak (o da yoksa boş dize).
+ */
+export function summaryLine(row) {
+  if (!row) return ''
+  const { changes, detailObj, detailText } = parseDetail(row)
+  let tail = ''
+  if (changes) {
+    tail = changes.slice(0, 2).map(([f, c]) => `${f}: ${fmtValue(c?.from)} → ${fmtValue(c?.to)}`).join(', ')
+      + (changes.length > 2 ? ` (+${changes.length - 2})` : '')
+  } else if (row.failure_reason) {
+    tail = row.failure_reason
+  } else if (detailObj) {
+    tail = Object.entries(detailObj).slice(0, 2).map(([k, v]) => `${k}: ${fmtValue(v)}`).join(', ')
+  } else if (detailText) {
+    tail = detailText
+  }
+  return [resourceLabel(row), tail].filter(Boolean).join(' — ')
+}
+
+/** Sunucu damgası (UTC, eksiz) → Date; bozuksa null. `utils/localDay.toUtc` ile aynı kabul. */
+export function eventDate(iso) {
+  if (!iso) return null
+  const s = String(iso).trim()
+  const d = new Date(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z')
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * "3 dk önce" — `act.rel.*` anahtarları (Aktivite Logu ve Son Giriş ile aynı dil). Gelecekteki
+ * damga (saat kayması) "az önce" okunur; bozuk damga null.
+ */
+export function relativeTime(iso, t, now = Date.now()) {
+  const d = eventDate(iso)
+  if (!d) return null
+  const sec = Math.floor(Math.max(0, now - d.getTime()) / 1000)
+  if (sec < 60) return t('act.rel.now')
+  const min = Math.floor(sec / 60)
+  if (min < 60) return t('act.rel.min', min)
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return t('act.rel.hour', hr)
+  return t('act.rel.day', Math.floor(hr / 24))
+}
+
 /** "alice · güncelledi · PORT_MONITOR:7 — warningDays: 30 → 15" tarzı tek satırlık özet. */
 export function actionSentence(row, t, diff) {
   const actor = row?.actor || t('audit.systemActor')

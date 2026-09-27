@@ -64,9 +64,6 @@ const EXEMPT_CLICK = new Map([
     'Sonner bildirim listesinin olay-yetkisi sarmalayıcısı (display: contents, kendisi kutu değil): ' +
     'gövdeye tıklamak yalnız erken kapatma kısayolu, bildirim kendiliğinden kayboluyor. Klavyeyle ' +
     'kapatma her kutudaki Sonner X düğmesinde (adı i18n\'den); liste aria-live ile zaten okunur.'],
-  ['components/admin/AuditLogViewer.jsx:<tr>',
-    'DOLAŞAN TABINDEX ızgarası: tabIndex satırda, ok/Home/End/Escape tuşları tbody üzerinde ' +
-    '(daha gelişmiş kalıp). Kapı ikisini aynı etikette aradığı için burada yanlış ısırıyor.'],
   ['components/ScriptedMonitorPage.jsx:<span>',
     'Satırın açma kontrolü BİLİNÇLİ olarak tek hücrede (zaman): dört hücrenin dördü de ' +
     'odaklanabilir olsaydı satır başına dört durak olurdu. Diğer hücreler yalnız fare kolaylığı.'],
@@ -273,7 +270,8 @@ describe('satır kontrolleri — erişilebilir ad ve klavye erişimi', () => {
         if (/\bariaLabel=/.test(tag.text) || /\bariaLabelledBy=/.test(tag.text)) continue
         const id = /\bid=("[^"]*"|\{[^}]*\})/.exec(tag.text)
         // id tek başına ad değildir: aynı değerle bir htmlFor (ya da Field'ın FieldLabel'ı) şart.
-        if (id && (src.includes(`htmlFor=${id[1]}`) || /<Field[\s>]/.test(src))) continue
+        // `FormField` (monitoring/MonitorForm) ui/Field'ın ızgara sarmalayıcısıdır — aynı render-prop.
+        if (id && (src.includes(`htmlFor=${id[1]}`) || /<(Form)?Field[\s>]/.test(src))) continue
         if (insideLabel(src, tag.start)) continue
         offenders.push(`${rel(f)}:${lineOf(src, tag.start)} — ${tag.text.slice(0, 90).replace(/\s+/g, ' ')}…`)
       }

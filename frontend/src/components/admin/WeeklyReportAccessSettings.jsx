@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CalendarDays, Search } from 'lucide-react'
+import { CalendarDays } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import { LoadingBlock } from '../ui/Progress.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import { ToolbarSearch } from './ListToolbar.jsx'
+import { SETTINGS_STACK, SettingsHeader, SettingsSection } from './SettingsControls.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Switch } from '@/components/shadcn/switch'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * Haftalık Raporlar modülünün TAKIM BAZLI görünürlüğü (2026-09-16, kullanıcı kararı).
@@ -18,15 +26,6 @@ import TeamBadge from '../ui/TeamBadge.jsx'
  * <p>Kapatmak VERİ SİLMEZ — mevcut raporlar durur, yalnız görünmez olur; tekrar açılınca
  * aynen geri gelir. Bu yüzden kapatma onayında rapor sayısı gösterilir.
  */
-function Pill({ on, disabled, onToggle, label }) {
-  return (
-    <button type="button" role="switch" aria-checked={!!on} aria-label={label} title={label}
-      disabled={disabled} className={`perm-pill ${on ? 'perm-pill-on' : 'perm-pill-off'}`} onClick={onToggle}>
-      <span className="perm-pill-knob" />
-    </button>
-  )
-}
-
 export default function WeeklyReportAccessSettings() {
   const t = useT()
   const toast = useToast()
@@ -74,57 +73,62 @@ export default function WeeklyReportAccessSettings() {
   const enabledCount = (rows || []).filter((r) => r.enabled).length
 
   return (
-    <div className="admin-section">
-      <div className="admin-section-header">
-        <h3><CalendarDays size={16} aria-hidden="true" /> {t('wracc.title')}</h3>
-      </div>
-      <p className="section-desc">{t('wracc.desc')}</p>
+    <div className={SETTINGS_STACK} data-testid="wracc-settings">
+    <SettingsHeader icon={CalendarDays} title={t('wracc.title')} description={t('wracc.desc')}
+      meta={<Badge variant="outline" className="text-muted-foreground">{t('wracc.enabledCount', enabledCount)}</Badge>}>
       {rows && enabledCount === 0 && (
-        <AlertBanner tone="info" title={t('wracc.noneTitle')} role="status">{t('wracc.noneBody')}</AlertBanner>
+        <AlertBanner tone="info" title={t('wracc.noneTitle')} role="status" className="mb-0">{t('wracc.noneBody')}</AlertBanner>
       )}
-      <div className="wracc-toolbar">
-        <label className="wracc-search">
-          <Search size={14} aria-hidden="true" />
-          <input className="input" value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder={t('wracc.searchPh')} aria-label={t('wracc.searchPh')} />
-        </label>
-        <span className="wracc-count">{t('wracc.enabledCount', enabledCount)}</span>
+    </SettingsHeader>
+    <SettingsSection contentClassName="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <ToolbarSearch value={q} onChange={setQ} placeholder={t('wracc.searchPh')} ariaLabel={t('wracc.searchPh')}
+          clearLabel={t('app.clear')} className="h-9 w-full sm:w-auto" />
       </div>
       {rows == null ? (
-        <p className="hint">{t('wracc.loading')}</p>
+        <LoadingBlock label={t('wracc.loading')} className="justify-start px-0 py-4" />
       ) : (
-        <table className="admin-table wracc-table">
-          <thead>
-            <tr>
-              <th>{t('wracc.colTeam')}</th>
-              <th>{t('wracc.colReports')}</th>
-              <th>{t('wracc.colState')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((r) => (
-              <tr key={r.team_id} className={r.active ? '' : 'wracc-row--passive'}>
-                <td data-label={t('wracc.colTeam')}>
-                  <TeamBadge teamId={r.team_id} teamName={r.team_name} />
-                  {!r.active && <span className="wracc-passive">{t('wracc.passive')}</span>}
-                </td>
-                <td data-label={t('wracc.colReports')}>{r.report_count || 0}</td>
-                <td data-label={t('wracc.colState')}>
-                  <div className="wracc-state">
-                    <Pill on={r.enabled} disabled={busyId === r.team_id} onToggle={() => toggle(r)}
-                      label={r.enabled ? t('wracc.switchOn', r.team_name) : t('wracc.switchOff', r.team_name)} />
-                    <span className={r.enabled ? 'wracc-on' : 'wracc-off'}>{r.enabled ? t('wracc.on') : t('wracc.off')}</span>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {list.length === 0 && (
-              <tr><td colSpan={3} className="wracc-empty">{t('wracc.noMatch')}</td></tr>
-            )}
-          </tbody>
-        </table>
+        <div className="overflow-hidden rounded-lg border">
+          <Table data-testid="wracc-table">
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead>{t('wracc.colTeam')}</TableHead>
+                <TableHead className="text-right">{t('wracc.colReports')}</TableHead>
+                <TableHead>{t('wracc.colState')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list.map((r) => (
+                <TableRow key={r.team_id} data-passive={r.active ? undefined : 'true'}>
+                  <TableCell className="whitespace-normal">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <TeamBadge teamId={r.team_id} teamName={r.team_name} />
+                      {!r.active && <ToneBadge tone="muted">{t('wracc.passive')}</ToneBadge>}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{r.report_count || 0}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Switch checked={!!r.enabled} disabled={busyId === r.team_id} onCheckedChange={() => toggle(r)}
+                        aria-label={r.enabled ? t('wracc.switchOn', r.team_name) : t('wracc.switchOff', r.team_name)} />
+                      <span className={cn('text-sm font-semibold', r.enabled ? 'text-success' : 'text-muted-foreground')}>
+                        {r.enabled ? t('wracc.on') : t('wracc.off')}
+                      </span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {list.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={3} className="py-6 text-center text-muted-foreground">{t('wracc.noMatch')}</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       )}
-      <p className="hint wracc-hint">{t('wracc.hint')}</p>
+      <p className="text-xs text-muted-foreground">{t('wracc.hint')}</p>
+    </SettingsSection>
     </div>
   )
 }

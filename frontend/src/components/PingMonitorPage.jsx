@@ -1,36 +1,29 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
 import { formatPercent } from '../i18n/dateLocale.js'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
-import { RefreshCw, Plus, Trash2, Radio, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, Inbox } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Trash2, Radio, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, Inbox, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -40,17 +33,28 @@ import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
-import MonitorCardMeta from './MonitorCardMeta.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
 import PingProtocol from './ui/PingProtocol.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
+import { useCardDensity } from '../hooks/useCardDensity.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import PingMonitorCard from './ping/PingMonitorCard.jsx'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
+} from './monitoring/MonitorForm.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -68,13 +72,13 @@ const INTERVALS = [
   { value: 86400, labelKey: 'notify.iv24h' },
 ]
 const REFRESH_INTERVAL = 60
-const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', tags: '', notificationGroupId: '', teamId: '',
+const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', tags: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '',
   intervalSeconds: 60, timeoutMs: 5000, packetCount: 4, confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true, active: true,
   // Yavaşlık alarmı OPT-IN: varsayılan kapalı — mevcut izlemelerin hiçbiri bir gün sabah
   // birden yeni bir alarm türü üretmeye başlamasın.
   slowResponseEnabled: false, slowBaselineWindowMinutes: 10, slowThresholdPercent: 20 }
 
-export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -82,10 +86,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Ortak bildirim blogunun hedef satiri icin takim adi (HttpMonitorPage deseni).
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'      // USER ve üstü: kendi takımı için oluştur/düzenle/kontrol
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -97,15 +100,15 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   const sparks = useSparklines('ping')   // kart mini trendi (2026-09-12)
   const sla = useSla('ping')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — her açılış Zengin başlar; Kompakt seçimi yalnız sayfada kalındıkça
+  // geçerli, KALICI DEĞİL (kullanıcı kararı: sayfa değişip dönünce ya da yenileyince yeniden Zengin)
+  const [density, setDensity] = useCardDensity('ping')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -113,7 +116,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [form, setForm] = useState(emptyForm)
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
-    : (teamName || t('app.noTeam'))
+    : (defaultTeamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)   // per-tip varsayılan aralık/timeout (Kontrol Sıklığı ayarı)
@@ -132,6 +135,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
   const [detailTab, setDetailTab] = useState('control')
+  const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
@@ -169,6 +173,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updatePingMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -199,19 +208,19 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
   useMonitorDeepLink(monitors, openDetail)
 
-  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab('control') }
+  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
 
   function openNew() {
     setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
     setModal('new')
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+    return { name: m.name || '', host: m.host || '', ipVersion: m.ip_version || 'auto', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       teamId: m.team_id != null ? String(m.team_id) : '', intervalSeconds: m.interval_seconds ?? 60,
       notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING',
       timeoutMs: m.timeout_ms ?? 5000, packetCount: m.packet_count ?? 4,
@@ -249,6 +258,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         teamId: form.teamId === '' ? null : Number(form.teamId), intervalSeconds: Number(form.intervalSeconds),
         notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING',
         timeoutMs: Number(form.timeoutMs), packetCount: Number(form.packetCount),
@@ -370,7 +380,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
+        // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
+        // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -445,7 +457,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'ping-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
+    listKey: 'ping-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -470,24 +482,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  function cardClass(m) {
-    if (m.status === 'up') return 'upt-card--up'
-    if (m.status === 'down') return 'upt-card--down'
-    return 'upt-card--unknown'
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı): up | down | unknown ('na' = ICMP kullanılamıyor → unknown).
+  const statusKey = (m) => (m?.status === 'up' ? 'up' : m?.status === 'down' ? 'down' : 'unknown')
   function statusBadge(m) {
     const s = m?.status
-    const cls = s === 'up' ? 'upt-badge--up' : s === 'down' ? 'upt-badge--down' : 'upt-badge--unknown'
     const label = s === 'up' ? t('ping.statusUp') : s === 'down' ? t('ping.statusDown')
       : s === 'na' ? t('ping.statusNa') : t('ping.statusUnknown')
-    return <span className={`upt-badge ${cls}`}><span className="upt-badge-dot" />{label}</span>
-  }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('ping.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
+    return <MonitorStatusBadge status={statusKey(m)}>{label}</MonitorStatusBadge>
   }
 
   // Aynı host + takım için mevcut monitör (kendisi hariç) → mükerrer engelleme uyarısı
@@ -501,32 +502,144 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       && (m.team_id ?? null) === targetTeam)
   })()
 
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={Radio}
+      title={modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('ping.testing') : null}
+      footer={<>
+        <div className="mr-auto flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim()}>
+            <FlaskConical size={14} />{t('ping.test')}
+          </Button>
+          {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('ping.delete')}</Button>}
+        </div>
+        <Button variant="secondary" onClick={closeEdit}>{t('ping.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.teamId || !!dupHost}>{t('ping.save')}</Button>
+      </>}>
+      {dupSource && <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>}
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('ping.host')} required hint={dupHost ? t('ping.dupHostWarn') : undefined} hintTone="warn">
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('ping.ipVersion')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
+              options={[{ value: 'auto', label: t('ping.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} />
+          )}
+        </FormField>
+        <FormField label={t('ping.packetCount')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="10" value={form.packetCount} onChange={e => setForm(f => ({ ...f, packetCount: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('ping.name')}>
+          {({ id }) => <Input id={id} value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+        </FormField>
+        <FormField label={t('ping.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('ping.noTeam')} disabled />}
+        </FormField>
+        <FormField label={t('ping.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="PING" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+        <FormField label={t('ping.timeout')}>
+          {({ id }) => <Input id={id} type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('ping.confirmAttempts')}>
+          {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('ping.confirmInterval')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('ping.recoveryChecks')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('ping.recoveryInterval')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormHint>ⓘ {t('ping.confirmHint')}</FormHint>
+
+        {/* Yavaşlık alarmı — port izlemesindeki blokla aynı yerleşim, farkı eşiğin GÖRECELİ
+            olması: sabit bir ms değeri yerine host'un kendi son N dakikalık ortalaması.
+            Alanlar yalnız kutucuk işaretliyken açılır; kapalıyken ekranda ölü sayı durmaz. */}
+        <CheckField full checked={form.slowResponseEnabled} onCheckedChange={v => setForm(f => ({ ...f, slowResponseEnabled: v }))} label={t('ping.slowEnable')} />
+        {form.slowResponseEnabled && (
+          <>
+            <FormField label={t('ping.slowWindow')}>
+              {({ id }) => <Input id={id} type="number" min="1" max="1440" value={form.slowBaselineWindowMinutes}
+                onChange={e => setForm(f => ({ ...f, slowBaselineWindowMinutes: Number(e.target.value) }))} />}
+            </FormField>
+            <FormField label={t('ping.slowPercent')}>
+              {({ id }) => <Input id={id} type="number" min="1" max="1000" value={form.slowThresholdPercent}
+                onChange={e => setForm(f => ({ ...f, slowThresholdPercent: Number(e.target.value) }))} />}
+            </FormField>
+          </>
+        )}
+        <FormHint>{t('ping.slowHint')}</FormHint>
+
+        <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('ping.active')} />
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.condition_met ? 'success' : testResult.na ? 'warning' : 'danger'}
+          icon={testResult.condition_met ? undefined : AlertTriangle}
+          title={testResult.sent === undefined ? t('ping.testError')
+            : testResult.na ? t('ping.testNa')
+            : testResult.condition_met ? t('ping.testMet') : t('ping.testNotMet')}>
+          {testResult.sent === undefined
+            ? testResult.error
+            : testResult.na
+              ? null
+              : testResult.condition_met
+                ? <>{t('ping.testReachable')}
+                    {testResult.rtt_ms != null && <> · RTT {testResult.rtt_ms}ms</>}
+                    {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>
+                : <>{t('ping.testUnreachable')}
+                    {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>}
+        </AlertBanner>
+      )}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="ping-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
+
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('ping.title')}</h2>
-          <p className="upt-subtitle">{t('ping.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('ping.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('ping.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="ping" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('ping.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="ping" title={t('ping.title')} subtitle={t('ping.subtitle')}
+        count={loading ? null : monitors.length} down={counts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('ping.addMonitor')} />
 
       <MonitorHowBox bullets={[t('ping.how1'), t('ping.how2'), t('ping.how3')]} />
 
@@ -539,10 +652,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {/* Kart görünümü (Kompakt / Zengin) araç çubuğunun İLK öğesi: mr-auto süzgeçleri sağda tutar; telefonda satır sarar */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('ping.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('ping.searchPlaceholder')} aria-label={t('ping.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -556,121 +671,77 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('ping.noMonitorsAdmin') : t('ping.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PING"
           api={{ update: api.monitoring.updatePingMonitor, remove: api.monitoring.deletePingMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.host)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.host)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.host} />
-                <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('ping', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              {/* Protokol / IP sürümü / paket sayısı başlığın hemen altında belirgin (2026-09-24 — eskiden sağ üstte
-                  11px gri yazıydı ve v4/v6 "V4" diye görünüyordu). */}
-              <div className="upt-card-domain upt-card-domain--tight" title={m.host}>{m.host}</div>
-              <div className="port-ep-row"><PingProtocol host={m.host} ipVersion={m.ip_version} packetCount={m.packet_count} /></div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.rtt_ms != null ? `${m.rtt_ms}ms` : '—'}</span>
-                  <span className="upt-metric-lbl">{t('ping.rtt')}</span>
-                </div>
-                {m.packet_loss != null && (
-                  <div className="upt-metric">
-                    <span className="upt-metric-val">{formatPercent(m.packet_loss)}</span>
-                    <span className="upt-metric-lbl">{t('ping.loss')}</span>
-                  </div>
-                )}
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.host}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('ping.check')} editTitle={t('ping.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('ping.delete')} />
-                )}
-              </div>
-            </div>
+            /* Kart sunumu ping/PingMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
+               yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
+            <PingMonitorCard key={m.id} monitor={m} density={density} onOpen={() => openDetail(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.host)} />
+              )}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.host}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('ping.check')} editTitle={t('ping.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('ping.delete')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${selected.status === 'up' ? 'up' : selected.status === 'down' ? 'down' : 'unknown'}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.host}</span>
-                <PingProtocol host={selected.host} ipVersion={selected.ip_version} packetCount={selected.packet_count} size="lg" />
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('ping.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('ping.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('ping.delete')}
-                onClose={closeDetail}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric" title={t('ping.sumUptimeHint')}>
-                <span className="upt-modal-metric-val">{summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('ping.sumUptime')}{summary.total > 0 ? ` · ${summary.total - summary.down}/${summary.total}` : ''}</span>
-              </div>
-              <div className="upt-modal-metric" title={t('ping.sumTotalHint')}><span className="upt-modal-metric-val">{summary.total}</span><span className="upt-modal-metric-lbl">{t('ping.sumTotal')}</span></div>
-              <div className="upt-modal-metric" title={t('ping.sumIncidentsHint')}><span className="upt-modal-metric-val">{summary.down}</span><span className="upt-modal-metric-lbl">{t('ping.sumIncidents')}</span></div>
-              {selected.rtt_ms != null && <div className="upt-modal-metric" title={t('ping.rttHint')}><span className="upt-modal-metric-val">{selected.rtt_ms}ms</span><span className="upt-modal-metric-lbl">{t('ping.rtt')}</span></div>}
-              {selected.packet_loss != null && <div className="upt-modal-metric" title={t('ping.lossHint')}><span className="upt-modal-metric-val">{formatPercent(selected.packet_loss)}</span><span className="upt-modal-metric-lbl">{t('ping.loss')}</span></div>}
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('ping.lastCheck')}</span></div>}
-            </div>
-            {selected.status === 'na' && <div className="alert-msg" style={{ marginTop: 4 }}>{t('ping.naHint')}</div>}
-            <div className="upt-modal-divider" />
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('ping.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('ping.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('ping.tabGuide')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'control' && (
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.host} nocNotify={!!selected.noc_notify}
+          // Protokol satırı kartla AYNI gösterim (büyük boy), başlığın hemen altında — ortak alt başlık yuvası.
+          subtitle={<PingProtocol host={selected.host} ipVersion={selected.ip_version} packetCount={selected.packet_count} size="lg" />}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('ping.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('ping.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('ping.delete')}
+              onClose={closeDetail}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-3" />
+          <DetailSummary items={[
+            { key: 'up', value: summary.total > 0 ? formatPercent(Math.round((summary.total - summary.down) * 1000 / summary.total) / 10) : '—',
+              label: `${t('ping.sumUptime')}${summary.total > 0 ? ` · ${summary.total - summary.down}/${summary.total}` : ''}`, hint: t('ping.sumUptimeHint') },
+            { key: 'total', value: summary.total, label: t('ping.sumTotal'), hint: t('ping.sumTotalHint') },
+            { key: 'inc', value: summary.down, label: t('ping.sumIncidents'), hint: t('ping.sumIncidentsHint') },
+            selected.rtt_ms != null && { key: 'rtt', value: `${selected.rtt_ms}ms`, label: t('ping.rtt'), hint: t('ping.rttHint') },
+            selected.packet_loss != null && { key: 'loss', value: formatPercent(selected.packet_loss), label: t('ping.loss'), hint: t('ping.lossHint') },
+            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('ping.lastCheck'), time: true },
+          ]} />
+          {selected.status === 'na' && <AlertBanner tone="warning" className="mt-3">{t('ping.naHint')}</AlertBanner>}
+          <DetailDivider />
+          <DetailTabs value={detailTab} onValueChange={setDetailTab}
+            countsFor={{ kind: 'ping', monitorId: selected.id, notesType: 'PING', notesTarget: selected.host, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['control', t('hist.tab')], ['alerts', t('ping.tabAlerts')], ['chart', t('ping.tabChart')], ['notes', t('ping.tabGuide')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="control">
               <CheckHistoryTab kind="ping" monitorId={selected.id} listKey="ping-history" reloadSignal={histReload}
                 columns={[t('ping.colTime'), t('ping.colStatus'), t('ping.rtt'), t('ping.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
@@ -681,160 +752,34 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
                   {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
                     : <span className="upt-rt-ms">{formatPercent(c.packet_loss)}</span>}
                 </>)} />
-            )}
+            </TabsContent>
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.host} types={alertTypesFor('ping')} />}
+            <TabsContent value="alerts"><AlertHistory domain={selected.host} types={alertTypesFor('ping')} /></TabsContent>
 
-            {detailTab === 'chart' && (
+            <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="ping" />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'notes' && (
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PING" target={selected.host} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="ping" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── (dış/overlay tıklamada KAPANMAZ — veri kaybı önlenir; yalnız İptal/Kaydet) */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--port">
-              <div className="modal-icon-hdr-badge"><Radio size={20} /></div>
-              <h3>{modal === 'new' ? t('ping.modalNew') : t('ping.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('ping.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-            {dupSource && <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>}
-            <div className="form-grid">
-              <label className="full-width"><span>{t('ping.host')} <span className="req-star">*</span></span>
-                <input value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource} onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
-                {dupHost && <span className="field-hint field-hint--warn">{t('ping.dupHostWarn')}</span>}</label>
-              <label><span>{t('ping.ipVersion')}</span>
-                <SearchableSelect value={form.ipVersion} onChange={v => setForm(f => ({ ...f, ipVersion: v }))}
-                  options={[{ value: 'auto', label: t('ping.ipAuto') }, { value: 'v4', label: 'IPv4' }, { value: 'v6', label: 'IPv6' }]} /></label>
-              <label><span>{t('ping.packetCount')}</span>
-                <input type="number" min="1" max="10" value={form.packetCount} onChange={e => setForm(f => ({ ...f, packetCount: Number(e.target.value) }))} /></label>
-              <label><span>{t('ping.name')}</span>
-                <input value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('ping.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('ping.noTeam')} disabled />}</label>
-              <label><span>{t('ping.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-              <div className="full-width http-tags-block">
-                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-              <label><span>{t('ping.timeout')}</span>
-                <input type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-              <label><span>{t('ping.confirmAttempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('ping.confirmInterval')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('ping.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('ping.recoveryInterval')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <div className="full-width" style={{ fontSize: '.8em', color: 'var(--text-muted)', marginTop: -2, lineHeight: 1.5 }}>
-                ⓘ {t('ping.confirmHint')}
-              </div>
-
-              {/* Yavaşlık alarmı — port izlemesindeki blokla aynı yerleşim, farkı eşiğin GÖRECELİ
-                  olması: sabit bir ms değeri yerine host'un kendi son N dakikalık ortalaması.
-                  Alanlar yalnız kutucuk işaretliyken açılır; kapalıyken ekranda ölü sayı durmaz. */}
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.slowResponseEnabled}
-                  onChange={e => setForm(f => ({ ...f, slowResponseEnabled: e.target.checked }))} />{t('ping.slowEnable')}</label>
-              {form.slowResponseEnabled && (
-                <>
-                  <label><span>{t('ping.slowWindow')}</span>
-                    <input type="number" min="1" max="1440" value={form.slowBaselineWindowMinutes}
-                      onChange={e => setForm(f => ({ ...f, slowBaselineWindowMinutes: Number(e.target.value) }))} /></label>
-                  <label><span>{t('ping.slowPercent')}</span>
-                    <input type="number" min="1" max="1000" value={form.slowThresholdPercent}
-                      onChange={e => setForm(f => ({ ...f, slowThresholdPercent: Number(e.target.value) }))} /></label>
-                </>
-              )}
-              <div className="full-width field-hint" style={{ marginTop: -2 }}>{t('ping.slowHint')}</div>
-
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('ping.active')}</label>
-            </div>
-            {testResult && (
-              <div style={{ margin: '0 0 4px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.condition_met
-                  ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                  : testResult.na
-                    ? { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }
-                    : { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }) }}>
-                {testResult.condition_met
-                  ? <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.sent === undefined
-                    ? <><strong>{t('ping.testError')}:</strong> {testResult.error}</>
-                    : testResult.na
-                      ? <><strong>{t('ping.testNa')}</strong></>
-                      : testResult.condition_met
-                        ? <><strong>{t('ping.testMet')}</strong> — {t('ping.testReachable')}
-                            {testResult.rtt_ms != null && <> · RTT {testResult.rtt_ms}ms</>}
-                            {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>
-                        : <><strong>{t('ping.testNotMet')}</strong> — {t('ping.testUnreachable')}
-                            {testResult.packet_loss != null && <> · {t('ping.loss')} %{testResult.packet_loss}</>}</>}
-                </span>
-              </div>
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="ping-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <div style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.host.trim()}>
-                  <FlaskConical size={14} />{t('ping.test')}
-                </Button>
-                {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('ping.delete')}</Button>}
-              </div>
-              <Button variant="secondary" onClick={closeEdit}>{t('ping.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.host.trim() || !form.teamId || !!dupHost}>{t('ping.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

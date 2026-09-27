@@ -1,25 +1,25 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { ChevronDown, BarChart3, AlertOctagon, X, Wifi, CheckCircle, Clock, Inbox, ShieldCheck, CalendarDays, Plus, LayoutList, LayoutGrid, Loader2, Search, Layers } from 'lucide-react'
-import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { BarChart3, AlertOctagon, X, Inbox, CalendarDays, Plus, Loader2, Search, Layers, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
-import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/shadcn/sidebar'
+import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
 
 import { api, formatDate } from './api/client'
 import { useDialog } from './components/ui/Dialog.jsx'
 import { deleteInventoryByDomain } from './utils/deleteInventory.js'
-import { formatDuration } from './utils/incidentMeta.js'
 import { useToast } from './components/ui/Toast.jsx'
 import { useT } from './i18n/index.jsx'
 import { usePagination } from './hooks/usePagination.js'
 import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
-import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import SearchableSelect from './components/ui/SearchableSelect.jsx'
 import FacetedFilter from './components/ui/FacetedFilter.jsx'
 import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
+import { claimPersonalStorage, clearPersonalStorage } from './utils/personalStorage.js'
 import Nav from './components/Nav'
+import MobileTopBar from './components/nav/MobileTopBar.jsx'
 import BrandLogo from './components/BrandLogo.jsx'
 import { useStatusFavicon } from './hooks/useStatusFavicon.js'
 import { runWithConcurrency } from './utils/concurrentQueue.js'
@@ -31,6 +31,8 @@ const SharedCertificateModal = lazy(() => import('./components/SharedCertificate
 import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
 import RenewalPlanModal from './components/RenewalPlanModal.jsx'   // Genel Bakış kartı 'Planla' (2026-09-19)
+import CardDensityToggle from './components/ui/CardDensityToggle.jsx'
+import { expiryKey } from './pages/forecastModel.js'   // bitiş günü YEREL gün (UTC dilimi geç saatte bir gün erken)
 import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
@@ -42,8 +44,11 @@ import CheckRunModal from './components/check/CheckRunModal.jsx'
 import CheckTeamPicker, { NO_TEAM } from './components/check/CheckTeamPicker.jsx'
 import AnnouncementBanner from './components/AnnouncementBanner.jsx'
 import { LastLoginNotice } from './components/LastLoginInfo.jsx'
-import { LoadingBlock } from './components/ui/Progress.jsx'
+import { LoadingBlock, Spinner } from './components/ui/Progress.jsx'
 import StatusBlock from './components/ui/StatusBlock.jsx'
+import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
+import PageHeader from './components/ui/PageHeader.jsx'
+import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
 
 // Ağır/seyrek admin & rapor sekmeleri — lazy (kod-bölme): ilk yük küçülür, sekme
 // açılınca yüklenir. Hepsi aşağıdaki tek <Suspense> sınırı altında render edilir.
@@ -82,6 +87,10 @@ import OnboardingChecklist from './components/tour/OnboardingChecklist.jsx'
 import TourPageChip from './components/tour/TourPageChip.jsx'
 import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Input } from '@/components/shadcn/input'
+import AlertBanner from './components/ui/AlertBanner.jsx'
+import NocCoverageBanner from './components/noc/NocCoverageBanner.jsx'   // Genel Bakış 7/24 kapsam şeridi (2026-09-27)
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
 const IncidentHistoryPage = lazy(() => import('./components/IncidentHistoryPage'))
 const SystemHealth = lazy(() => import('./components/admin/SystemHealth'))
@@ -90,6 +99,8 @@ const ActivityLog = lazy(() => import('./components/ActivityLog'))
 const MyAuditLog = lazy(() => import('./components/MyAuditLog'))
 const HelpPage = lazy(() => import('./components/HelpPage'))
 const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
+const WarningsPage = lazy(() => import('./pages/WarningsPage'))   // Dikkat Gerektiren Sertifikalar (2026-09-27)
+const NocCoveragePage = lazy(() => import('./pages/NocCoveragePage'))   // 7/24 Kapsamı (2026-09-27)
 // Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
 const InventoryFormModalForDomain = lazy(() =>
   import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
@@ -135,12 +146,12 @@ export const NAVIGATE_EVENT = 'sm:navigate'
 
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'incidents', 'maintenance', 'alerthistory', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
+  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
   'health', 'uptime', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
-/** "Şimdi Kontrol Et" + domain ekleme yalnız bu sekmelerde anlamlı (sertifika sayfaları). */
-const CERT_TABS = new Set(['dashboard', 'all', 'domains'])
+/** Genel Bakış kart listesinin paylaşılabilir sayfa/boyut adresi (usePagination `url`; sabit referans). */
+const DASH_PAGE_URL = Object.freeze({ pageKey: 'page', sizeKey: 'ps' })
 
 function initialTabFromUrl() {
   try {
@@ -149,9 +160,15 @@ function initialTabFromUrl() {
   } catch { return null }
 }
 
+/** /me ve giriş yanıtından kullanıcı menüsünün ihtiyaç duyduğu profil alanları (beyaz liste; telefon/sicil YOK). */
+function profileFrom(r) {
+  if (!r) return null
+  return {
+    user_id: r.user_id ?? null, display_name: r.display_name ?? null, first_name: r.first_name ?? null,
+    last_name: r.last_name ?? null, email: r.email ?? null,
+  }
+}
 
-/** Uyarılar → Ağ kesinti geçmişi: varsayılan görünür kart sayısı (ONGOING'ler her zaman görünür). */
-const OUTAGE_HISTORY_FOLD = 5
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -183,6 +200,9 @@ export default function App() {
   // Kullanıcının kendi giriş güvenliği özeti (backend `login_info`): giriş yanıtından VE /me'den
   // gelir. AuthContext yok — üç tüketiciye (uyarı şeridi, Etkinliklerim, kullanıcı menüsü) prop.
   const [loginInfo, setLoginInfo] = useState(null)
+  // Kullanıcı menüsü başlık kartı (2026-09-27): /me ve giriş yanıtındaki AD profil alanları (ad soyad, e-posta).
+  // Ayrı istek YOK — aynı yük. Telefon/sicil taşınmaz.
+  const [profile, setProfile] = useState(null)
   // E1: kişi webhook push tercihi — /me ve login yanıtından gelir, Etkinliklerim'den yazılır.
   const [pushOptOut, setPushOptOut] = useState(false)
   // Ürün turu durumu (2026-09-13): doğruluk kaynağı sunucu (/me + login yanıtı), localStorage yalnız ayna.
@@ -235,14 +255,9 @@ export default function App() {
     setTab(id)
   }
   const [certs, setCerts] = useState([])
-  const [warnings, setWarnings] = useState([])
   const [stats, setStats] = useState(null)
   const [networkStatus, setNetworkStatus] = useState(null)
   const [networkBannerDismissed, setNetworkBannerDismissed] = useState(false)
-  const [outageHistory, setOutageHistory] = useState([])
-  // Uyarılar sekmesi kesinti geçmişi: varsayılan katlı (QA ISSUE-002, 2026-09-21 — 50 kart alt alta 16k px'ti). Ham kayıt
-  // silinmez/özetlenmez (ürün kuralı); yalnız ilk OUTAGE_HISTORY_FOLD kartı + tüm ONGOING'ler görünür, kalanı bir tıkla açılır.
-  const [outageHistoryExpanded, setOutageHistoryExpanded] = useState(false)
   const [teamStats, setTeamStats] = useState(null)
   const [weakAlgStats, setWeakAlgStats] = useState(null)
   const [statsVisible, setStatsVisible] = useState(false)
@@ -295,9 +310,11 @@ export default function App() {
   const [platformCatalog, setPlatformCatalog] = useState([])   // Ayarlar → Platformlar (aktifler, sunucu sırası)
   const [activityRefreshKey, setActivityRefreshKey] = useState(0)
   const [silentAlertDomains, setSilentAlertDomains] = useState(new Set())
-  // Genel Bakış kartı zengin görünümü (2026-09-19): /card-extras haritası + Kompakt/Zengin anahtarı (localStorage)
+  // Genel Bakış kartı zengin görünümü (2026-09-19): /card-extras haritası + Kompakt/Zengin anahtarı.
+  // Kullanıcı kararı 2026-09-27: İLK AÇILIŞTA (sayfa yüklemesi / yeni giriş) Zengin; oturum içinde son seçim hatırlanır
+  // (durum App'te, sekme değişince kaybolmaz) — tarayıcıya YAZILMAZ; çıkışta Zengin'e döner.
   const [cardExtras, setCardExtras] = useState({})
-  const [cardMode, setCardMode] = useState(() => { try { return localStorage.getItem('dash-card-mode') === 'compact' ? 'compact' : 'rich' } catch { return 'rich' } })
+  const [cardMode, setCardMode] = useState('rich')
   const [planRow, setPlanRow] = useState(null)
   const [confirmingDomain, setConfirmingDomain] = useState(null)
   const [mailFailureDomains, setMailFailureDomains] = useState(new Set())
@@ -313,6 +330,7 @@ export default function App() {
   useEffect(() => {
     api.getMe().then((res) => {
       if (res?.success) {
+        claimPersonalStorage(res.username)   // B9: başka kullanıcının tarayıcıda kalan kişisel kayıtları silinir
         setUser(res.username)
         setSystemRole(res.system_role || 'USER')
         setGlobalAdmin(!!res.global_admin)
@@ -326,6 +344,7 @@ export default function App() {
         // Giriş güvenliği özeti — F5 sonrası login yanıtı yoktur, bu yüzden /me de aynı bloğu
         // döndürür; alınmazsa özet ve kullanıcı menüsü sayfa yenilemede boşalır.
         setLoginInfo(res.login_info ?? null)
+        setProfile(profileFrom(res))
         setPushOptOut(!!res.push_opt_out)
         { const ts = mergeState(res.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
@@ -386,7 +405,9 @@ export default function App() {
     const doAutoLogout = async () => {
       clearInterval(countdownInterval.current)
       await api.logout()
-      localStorage.removeItem(REMEMBER_KEY)
+      try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
+      clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
+      setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
       setUser(null)
       setSystemRole('USER')
       setTeamId(null)
@@ -524,17 +545,7 @@ export default function App() {
     }
   }, [user])
 
-  useEffect(() => {
-    if (!user || tab !== 'warnings') return
-    // alive guard: sekme hızlı değiştirilip geri gelinirse iki uçuşan istek yarışır ve YAVAŞ olan
-    // en son kazanıp bayat uyarı listesini yazabilir (loadData'daki loadAliveRef deseninin eşi).
-    let alive = true
-    api.getWarnings().then((res) => { if (alive && res?.success) setWarnings(res.data ?? []) })
-    api.getNetworkOutageHistory(50).then((res) => {
-      if (alive && res?.success && Array.isArray(res.events)) setOutageHistory(res.events)
-    })
-    return () => { alive = false }
-  }, [user, tab])
+  // Uyarılar sekmesinin verisi (uyarılar + ağ kesinti geçmişi) pages/WarningsPage içinde yüklenir (2026-09-27).
 
 
   async function handleLogout() {
@@ -551,7 +562,9 @@ export default function App() {
     clearInterval(countdownInterval.current)
     clearInterval(refreshPollRef.current)
     await api.logout()
-    localStorage.removeItem(REMEMBER_KEY)
+    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı: çıkış yine tamamlanır */ }
+    clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
+    setCardMode('rich')      // sonraki giriş Genel Bakış'ı Zengin açar (2026-09-27)
     setUser(null)
     setSystemRole('USER')
     setTeamId(null)
@@ -681,10 +694,10 @@ export default function App() {
   }, [toast, t])
   const planCardRenewal = useCallback((cert, renewal) => {
     setPlanRow({ domain: cert.domain, renewal_planned_at: renewal?.planned_at || '', renewal_planned_note: renewal?.note || '',
-      expiry_key: cert.not_after ? String(cert.not_after).slice(0, 10) : null })
+      expiry_key: expiryKey(cert) })
   }, [])
   const toggleCardMode = useCallback(() => {
-    setCardMode((m) => { const next = m === 'rich' ? 'compact' : 'rich'; try { localStorage.setItem('dash-card-mode', next) } catch { /* yoksay */ } return next })
+    setCardMode((m) => (m === 'rich' ? 'compact' : 'rich'))
   }, [])
 
   const openCertModal = useCallback((d) => {
@@ -770,6 +783,8 @@ export default function App() {
     // (sayfa yenilemede tekrar etmesin).
     try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
     try { sessionStorage.removeItem('sm.login.noticeShown') } catch { /* yoksay */ }
+    // B9: oturum düşüp BAŞKA biri girdiyse öncekinin kişisel kayıtları silinir; aynı kişide (kesinti yedeği) korunur.
+    claimPersonalStorage(userData.username)
     setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
@@ -782,6 +797,7 @@ export default function App() {
     setIdleCfg(idleConfigFrom(userData))
     setMustChangePwd(!!userData.must_change_password)
     setLoginInfo(userData.login_info ?? null)
+    setProfile(profileFrom(userData))
     setPushOptOut(!!userData.push_opt_out)
     { const ts = mergeState(userData.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
   }
@@ -884,7 +900,6 @@ export default function App() {
   function handleStatClick(key) {
     const next = statsFilter === key ? null : key
     setStatsFilter(next)
-    dashPager.setPage(1)
     handleTabChange('dashboard')
   }
 
@@ -944,7 +959,6 @@ export default function App() {
   const clearDashFilters = () => {
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
     setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([])
-    dashPager.setPage(1)
   }
 
   // Platform DIŞINDAKİ bütün süzgeçler (2026-09-25): platform seçeneklerinin sayıları buradan sayılır — her
@@ -976,6 +990,38 @@ export default function App() {
   // Katalog boş + hiçbir kartta platform yoksa süzgeç gizli (tek seçenek "Belirtilmemiş" olurdu); URL'den gelen seçim
   // varsa HER ZAMAN görünür — kaldırılabilsin.
   const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
+  // "SSL Checker" alanı (domain kutusu + düğme TEK birim: Enter da düğme de handleAddDomain) — Genel Bakış kart
+  // listesinin başlık satırının EN SONUNDA, EN SAĞA yaslı (2026-09-26, kullanıcı isteği); kalan yeri doldurur (en az
+  // 22rem, en çok 34rem), sığmazsa alt satıra tek parça sarılır. Tüm Sertifikalar'da `sslCheckerHeader` (sayfa başlığı).
+  const sslCheckerField = () => (
+    <div className="flex w-full gap-2 sm:ml-auto sm:w-auto sm:min-w-[22rem] sm:max-w-[34rem] sm:flex-1" data-tour="add-domain">
+      <Input type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
+        className="h-8 min-w-0 flex-1"
+        value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
+      <Button variant="success" size="sm" onClick={handleAddDomain} disabled={checkLoading}>
+        {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
+      </Button>
+    </div>
+  )
+  // Tüm Sertifikalar BAŞLIĞINDAKİ SSL Checker (2026-09-27): eskiden sayfanın üstünde ayrı bir kontrol satırındaydı (iki başlık
+  // üst üste). shadcn InputGroup — alan + düğme tek kutu; telefonda başlığın altında tam genişlik (48 px kutu, 40 px düğme —
+  // dokunma hedefi), geniş ekranda 22rem ve Pano boyu (36 px).
+  const sslCheckerHeader = (
+    <InputGroup data-tour="add-domain" className="h-12 w-full max-sm:min-w-full sm:h-9 sm:w-[22rem]">
+      <InputGroupInput type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
+        value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton variant="success" size="sm" className="h-10 sm:h-7" onClick={handleAddDomain} disabled={checkLoading}
+          aria-busy={checkLoading || undefined}>
+          {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
+  )
+  // "Şimdi Kontrol Et" — Tüm Sertifikalar başlığında ikincil düğme (Pano başlığıyla aynı görünüm); Envanter'e prop olarak geçer.
+  const checkNowLabel = refreshing ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0) : t('app.checkNow')
   // Pano boru hattının son halkası: platform (VEYA içinde) diğer süzgeçlerle VE. Sıralama/sayfalama/sayaçlar bunu izler.
   const filtered = useMemo(
     () => (platformFilter.length > 0 ? preFiltered.filter((c) => matchesPlatform(c, platformFilter)) : preFiltered),
@@ -1005,21 +1051,20 @@ export default function App() {
   }), [filtered, sortOrder])
 
   // Sayfalama standardı: "Tümü" seçeneği kaldırıldı (binlerce kart tek seferde render edilmesin; max 200/sayfa).
+  // Sayfalama standardı (2026-09-26): süzgeç DEĞERİ değişince sayfa 1 (resetDeps; eskiden 12 ayrı elle `setPage(1)`),
+  // `page`/`ps` adresi yalnız Genel Bakış sekmesindeyken okunur/yazılır (ps ön ayar listesine karşı doğrulanır).
   const dashPager = usePagination(sorted, {
-    listKey: 'dashboard-certs',
-    initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
+    listKey: 'dashboard-certs', preset: 'page',
+    resetDeps: [search, sortOrder, statusFilter, expiryFilter, teamFilter, groupFilter, tagFilter, statsFilter, platformFilter],
+    url: tab === 'dashboard' ? DASH_PAGE_URL : null,
   })
-  // Uyarılar sekmesinde sayfalama YOKTU: toplu yenileme dönemlerinde yüzlerce kart tek seferde
-  // render ediliyor ve sekme geçişi kilitleniyordu. Dashboard'daki tavan burada da geçerli olsun.
-  const warnPager = usePagination(warnings, { listKey: 'warnings-certs' })
+  // Uyarılar sekmesinin sayfalaması artık pages/WarningsPage içinde (aynı listKey 'warnings-certs', URL wa_page/wa_ps).
 
   // Paylaşılabilir URL (dashboard): arama + sayfa. enabled guard ŞART — App her sekmede mount olduğundan
   // bu sync başka sekmedeki sayfanın q/page paramlarını ezerdi. Yazma yalnız q'ya (?domain= e-posta
   // linkleri okunmaya devam eder ama yeni linkler q üretir).
   useUrlQuerySync({
     q: search.trim() || null,
-    page: dashPager.page > 1 ? dashPager.page : null,
-    ps: (dashPager.pageSize !== 50 || dashPager.page > 1) ? dashPager.pageSize : null,
     [PLATFORM_URL_KEY]: serializePlatformParam(platformFilter),   // ?platform=IIS,__none__ (PAGE_STATE_PARAMS'ta)
   }, { enabled: tab === 'dashboard' })
 
@@ -1062,14 +1107,18 @@ export default function App() {
     <SidebarProvider open={sidebarOpen} onOpenChange={onSidebarOpenChange} className="app-layout">
 
       {inactivityWarning && (
-        <div className="inactivity-warning">
-          <span dangerouslySetInnerHTML={{ __html: t('app.inactivityWarn', `<strong>${countdown}</strong>`) }} />
-          <button onClick={() => setInactivityWarning(false)}>{t('app.stayLoggedIn')}</button>
+        // Oturum zaman aşımı şeridi (eski .inactivity-warning) — Tailwind + shadcn Button; telefonda sarar.
+        <div data-slot="inactivity-warning"
+          className="fixed inset-x-0 top-0 z-(--z-critical) flex flex-wrap items-center justify-center gap-3 bg-linear-to-r from-[#e65c00] to-[#f9d423] px-4 py-3 text-[#1a1a1a] shadow-lg animate-in slide-in-from-top motion-reduce:animate-none sm:gap-5 sm:px-6 sm:py-3.5">
+          <span className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
+            dangerouslySetInnerHTML={{ __html: t('app.inactivityWarn', `<strong>${countdown}</strong>`) }} />
+          <Button type="button" size="sm" className="bg-[#1a1a1a] px-5 font-bold text-white hover:bg-zinc-800"
+            onClick={() => setInactivityWarning(false)}>{t('app.stayLoggedIn')}</Button>
         </div>
       )}
 
       <Nav activeTab={tab} onTabChange={handleTabChange} username={user} teamName={teamName} myTeams={myTeams} systemRole={systemRole}
-        globalAdmin={globalAdmin} loginInfo={loginInfo} weeklyReportsVisible={weeklyReportsVisible}
+        globalAdmin={globalAdmin} loginInfo={loginInfo} profile={profile} weeklyReportsVisible={weeklyReportsVisible}
         onLogout={handleLogout} onChangePassword={() => setSelfPwdModalOpen(true)} />
 
       {selfPwdModalOpen && user && (
@@ -1082,11 +1131,8 @@ export default function App() {
 
       {/* bg-transparent: sayfa zemini .app-layout'tan (--bg); kartlar beyaz kalsın */}
       <SidebarInset className="app-main bg-transparent">
-        {/* Mobil (<768px): kenar çubuğu çekmece (Sheet) olur — açma düğmesi burada */}
-        <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background px-3 md:hidden print:hidden">
-          <SidebarTrigger />
-          <span className="text-sm font-semibold">SiteMonitor</span>
-        </header>
+        {/* Mobil (<768px): kenar çubuğu çekmece (Sheet) olur — menü düğmesi + marka + bildirimler burada */}
+        <MobileTopBar onTabChange={handleTabChange} username={user} />
         {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
         <HelpDrawer tab={tab} />
         <TourPageChip tab={tab} />
@@ -1095,78 +1141,80 @@ export default function App() {
         <LastLoginNotice info={loginInfo} />
         <div className="app-body">
 
-          {/* Kontroller yalnız SERTİFİKA sayfalarında — izleme/yönetim sekmelerinde işlevsizdi. */}
-          {CERT_TABS.has(tab) && (
-            <div className="controls">
-              <Button data-tour="check-now" onClick={() => setTeamPickerOpen(true)} disabled={refreshing}>
-                {refreshing
-                  ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)
-                  : t('app.checkNow')}
-              </Button>
-              {/* Domain Ekle "Şimdi Kontrol Et"in yanında (2026-09-19, kullanıcı isteği) — eskiden süzgeç satırının sağındaydı */}
-              {tab === 'dashboard' && canAddInventory && (
-                <Button type="button" className="controls-add-domain"
-                        onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
-                  <Plus size={14} /> {t('inv.addBtn')}
-                </Button>
+          {/* Genel Bakış: sayfa başlığı + eylem çubuğu (ui/PageHeader, 2026-09-27 kullanıcı isteği). "Şimdi Kontrol Et"
+              ve "Domain Ekle" başlıksız bir kontrol satırında yüzüyordu; artık başlığın sağında, her sayfadaki
+              yerinde: Yenile · Şimdi Kontrol Et (ikincil, ilerleme düğmenin üstünde) · Domain Ekle (BİRİNCİL, en sağda).
+              Meta çipleri: sertifika sayısı + son güncelleme — kullanıcı "veri ne kadar taze" sorusunu başlıkta görür. */}
+          {tab === 'dashboard' && (
+            <PageHeader icon={LayoutDashboard} title={t('app.dashTitle')} description={t('app.dashDesc')}
+              meta={(
+                <>
+                  <Badge variant="secondary" data-slot="dash-cert-count">{t('app.certCount', certs.length)}</Badge>
+                  <span data-slot="dash-last-update">
+                    {t('app.lastUpdate')} {lastUpdate ? formatDate(lastUpdate) : t('app.neverUpdated')}
+                  </span>
+                </>
               )}
-              <div className="add-domain-section" data-tour="add-domain">
-                <input className="domain-input" type="text" placeholder={t('app.newDomainPlaceholder')}
-                  value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-                <Button variant="success" onClick={handleAddDomain} disabled={checkLoading}>
-                  {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
-                </Button>
-              </div>
-            </div>
+              actions={(
+                <>
+                  <Button type="button" variant="outline" onClick={loadData} disabled={refreshing}
+                    title={t('app.refresh')} aria-label={t('app.refresh')}>
+                    <RefreshCw aria-hidden="true" /><span className="hidden md:inline">{t('app.refresh')}</span>
+                  </Button>
+                  <Button type="button" variant={canAddInventory ? 'secondary' : 'default'} data-tour="check-now"
+                    onClick={() => setTeamPickerOpen(true)} disabled={refreshing}
+                    title={t('app.checkNowTip')} aria-busy={refreshing || undefined}>
+                    {refreshing
+                      ? <><Spinner decorative inline />{t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0)}</>
+                      : <><PlayCircle aria-hidden="true" />{t('app.checkNow')}</>}
+                  </Button>
+                  {canAddInventory && (
+                    <Button type="button" data-slot="dash-add-domain"
+                      onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
+                      <Plus aria-hidden="true" /> {t('inv.addBtn')}
+                    </Button>
+                  )}
+                </>
+              )} />
           )}
+          {/* Tüm Sertifikalar / Domain Envanteri: eski üst kontrol satırı (.controls — Şimdi Kontrol Et + SSL Checker) kalktı
+              (2026-09-27, iki başlık üst üste). Şimdi Kontrol Et her iki sayfanın kendi PageHeader'ında; SSL Checker Tüm
+              Sertifikalar başlığında (sslCheckerHeader), Envanter'de "Domain ekle" ile aynı işi gördüğü için yok. */}
 
           {networkStatus?.alarm && !networkBannerDismissed && (
-            <div className="network-outage-banner" role="alert">
-              <AlertOctagon size={20} />
-              <div className="network-outage-text">
-                <strong>{t('app.networkOutageTitle')}</strong>
-                <span>{t('app.networkOutageDesc',
-                  networkStatus.detected_at ? formatDate(networkStatus.detected_at) : '—')}</span>
-              </div>
-              <button
-                type="button"
-                className="network-outage-close"
-                onClick={() => setNetworkBannerDismissed(true)}
-                title={t('app.dismiss')}
-                aria-label={t('app.dismiss')}
-              >
-                <X size={16} />
-              </button>
-            </div>
+            // Ağ kesintisi uyarısı — ui/AlertBanner (shadcn Alert); eski .network-outage-banner'ın sol şeridi YOK.
+            <AlertBanner tone="danger" role="alert" icon={AlertOctagon} className="mb-4"
+              title={t('app.networkOutageTitle')}
+              onDismiss={() => setNetworkBannerDismissed(true)} dismissLabel={t('app.dismiss')}>
+              {t('app.networkOutageDesc',
+                networkStatus.detected_at ? formatDate(networkStatus.detected_at) : '—')}
+            </AlertBanner>
           )}
+
+          {/* 7/24 kapsam şeridi (2026-09-27): kapsamdaki aktif izlemelerden 7/24 izleme ekibine GİTMEYENLER varsa sakin uyarı +
+              "İncele" → 7/24 Kapsamı. Pano damgasıyla (lastUpdate) tazelenir — kendi yoklaması yok; oturumluk kapatılabilir. */}
+          {tab === 'dashboard' && <NocCoverageBanner globalAdmin={globalAdmin} refreshKey={lastUpdate} />}
 
           {tab === 'dashboard' && (
             <div className="stats-section" data-tour="dash-stats">
-              <div
-                className="stats-collapse-bar"
-                role="button" tabIndex={0} aria-expanded={statsVisible}
-                aria-label={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setStatsVisible((v) => !v) } }}
-                onClick={() => setStatsVisible((v) => !v)}
-                title={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
-              >
-                <span className="stats-collapse-icon"><BarChart3 size={18} /></span>
-                <span className="stats-collapse-label">{t('app.statistics')}</span>
-                {!statsVisible && (
-                  <span className="stats-collapse-hint">{t('app.expandStats')}</span>
-                )}
-                <span className={`stats-collapse-chevron${statsVisible ? ' open' : ''}`}>
-                  <ChevronDown size={18} />
-                </span>
+              {/* shadcn Collapsible (ui/CollapsibleSection) — eski el yapımı div.stats-collapse-bar[role=button] */}
+              <CollapsibleSection open={statsVisible} onOpenChange={setStatsVisible}
+                icon={BarChart3} label={t('app.statistics')} hint={t('app.expandStats')}
+                toggleLabel={statsVisible ? t('app.collapseStats') : t('app.expandStats')}
+                triggerClassName="mb-2" contentClassName="pt-1">
+                <StatsPanel stats={stats} visible={statsVisible}
+                  onStatClick={handleStatClick} activeFilter={statsFilter}
+                  weakStats={weakAlgStats} issuerStats={issuerStats}
+                  certIssueStats={certIssueStats}
+                  onCaClick={() => setCaModal(true)} />
+                {/* "Son 7 günde ne değişti" (2026-09-12, #7): anlık sayaçların altında tek satır hareket özeti */}
+                <RecentChangesLine />
+              </CollapsibleSection>
+              {/* "Sizin için — bugün" (2026-09-12, #3): İstatistikler'in hemen altında ve onunla AYNI hizada — kart
+                  kabının (.content, 24 px iç boşluk) DIŞINDA (2026-09-27, kullanıcı: "istatistiklerle simetrik değil"). */}
+              <div data-slot="today-section">
+                <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
               </div>
-              <StatsPanel stats={stats} visible={statsVisible}
-                onStatClick={handleStatClick} activeFilter={statsFilter}
-                weakStats={weakAlgStats} issuerStats={issuerStats}
-                certIssueStats={certIssueStats}
-                onCaClick={() => setCaModal(true)} />
-              {/* "Son 7 günde ne değişti" (2026-09-12, #7): anlık sayaçların altında tek satır hareket özeti */}
-              {statsVisible && <RecentChangesLine />}
             </div>
           )}
 
@@ -1175,6 +1223,7 @@ export default function App() {
             <Suspense fallback={<LoadingBlock label={t('tbl.loading')} fullWidth />}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
+                {/* "Sizin için — bugün" paneli artık yukarıda, İstatistikler'in altında (stats-section içinde). */}
                 <div className="sort-controls sort-bar" data-tour="dash-filters">
                   {/* Arama kutusu 2026-09-19'da üst kontrol satırına ("Domain Ekle"nin yanına) taşındı; burada yalnız sıralama/süzgeçler. */}
                   {/* htmlFor ↔ id: seçici tetiği role="combobox" ve adını İÇERİKTEN almaz; bağsız
@@ -1183,7 +1232,7 @@ export default function App() {
                   <SearchableSelect
                     id="dash-f-sort"
                     value={sortOrder}
-                    onChange={v => { setSortOrder(v); dashPager.setPage(1) }}
+                    onChange={v => { setSortOrder(v) }}
                     options={[
                       { value: 'default', label: t('app.sortDefault') },
                       { value: 'asc',     label: t('app.sortAsc') },
@@ -1194,7 +1243,7 @@ export default function App() {
                   <SearchableSelect
                     id="dash-f-status"
                     value={statusFilter}
-                    onChange={v => { setStatusFilter(v); dashPager.setPage(1) }}
+                    onChange={v => { setStatusFilter(v) }}
                     options={[
                       { value: 'all',     label: t('app.all') },
                       { value: 'valid',   label: t('app.valid') },
@@ -1206,7 +1255,7 @@ export default function App() {
                   <SearchableSelect
                     id="dash-f-expiry"
                     value={expiryFilter}
-                    onChange={v => { setExpiryFilter(v); dashPager.setPage(1) }}
+                    onChange={v => { setExpiryFilter(v) }}
                     options={[
                       { value: 'all',     label: t('app.all') },
                       { value: 'expired', label: t('app.expired') },
@@ -1221,7 +1270,7 @@ export default function App() {
                       <SearchableSelect
                         id="dash-f-team"
                         value={teamFilter}
-                        onChange={v => { setTeamFilter(v); dashPager.setPage(1) }}
+                        onChange={v => { setTeamFilter(v) }}
                         options={teamOptions}
                       />
                     </span>
@@ -1232,7 +1281,7 @@ export default function App() {
                       <SearchableSelect
                         id="dash-f-group"
                         value={groupFilter}
-                        onChange={v => { setGroupFilter(v); dashPager.setPage(1) }}
+                        onChange={v => { setGroupFilter(v) }}
                         options={groupOptions} searchThreshold={2}
                       />
                     </span>
@@ -1243,7 +1292,7 @@ export default function App() {
                       <SearchableSelect
                         id="dash-f-tag"
                         value={tagFilter}
-                        onChange={v => { setTagFilter(v); dashPager.setPage(1) }}
+                        onChange={v => { setTagFilter(v) }}
                         options={tagOptions} searchThreshold={2}
                       />
                     </span>
@@ -1254,20 +1303,14 @@ export default function App() {
                     </Button>
                   )}
                 </div>
-                {/* "Sizin için — bugün" (2026-09-12, #3): takımın ilgilenmesi gerekenler, sayfanın üstünde */}
                 {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur */}
                 <OnboardingChecklist />
-                <TodayPanel onOpenDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
                 <div className="dashboard-header">
                   <div className="dashboard-title-row">
-                    <h2>{t('app.dashTitle')}</h2>
-                    {/* Kart görünümü — shadcn ToggleGroup (tek seçim; seçili öğe boşaltılamaz) */}
-                    <ToggleGroup type="single" variant="outline" size="sm" value={cardMode}
-                      onValueChange={(v) => { if (v && v !== cardMode) toggleCardMode() }}
-                      aria-label={t('ccx.modeTip')} title={t('ccx.modeTip')}>
-                      <ToggleGroupItem value="compact" className="px-2.5"><LayoutGrid /> {t('ccx.modeCompact')}</ToggleGroupItem>
-                      <ToggleGroupItem value="rich" className="px-2.5"><LayoutList /> {t('ccx.modeRich')}</ToggleGroupItem>
-                    </ToggleGroup>
+                    {/* Sayfa başlığı artık üstteki PageHeader'da; bu satır kart listesinin araç çubuğu (2026-09-27). */}
+                    <h2>{t('app.cardsTitle')}</h2>
+                    {/* Kart görünümü — ortak ui/CardDensityToggle (izleme sayfalarıyla aynı bileşen, 2026-09-27) */}
+                    <CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} />
                     {/* Domain ara — kart görünümü seçicisinin yanında (2026-09-25, kullanıcı isteği; eskiden üst
                         kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. */}
                     <InputGroup className="h-8 w-64 max-w-full">
@@ -1277,11 +1320,11 @@ export default function App() {
                         placeholder={t('app.searchPlaceholder')}
                         aria-label={t('app.searchPlaceholder')}
                         value={search}
-                        onChange={(e) => { setSearch(e.target.value); dashPager.setPage(1) }}
+                        onChange={(e) => { setSearch(e.target.value) }}
                       />
                       {search && (
                         <InputGroupAddon align="inline-end">
-                          <InputGroupButton size="icon-xs" onClick={() => { setSearch(''); dashPager.setPage(1) }}
+                          <InputGroupButton size="icon-xs" onClick={() => { setSearch('') }}
                             title={t('app.clearFilter')} aria-label={t('app.clearFilter')}>
                             <X />
                           </InputGroupButton>
@@ -1298,9 +1341,10 @@ export default function App() {
                         searchPlaceholder={t('app.platformSearch')}
                         options={platformOptions}
                         value={platformFilter}
-                        onChange={(next) => { setPlatformFilter(next); dashPager.setPage(1) }}
+                        onChange={(next) => { setPlatformFilter(next) }}
                       />
                     )}
+                    {sslCheckerField()}
                   </div>
                   {statsFilter && (
                     <div className="stats-filter-bar">
@@ -1308,8 +1352,8 @@ export default function App() {
                         {t('app.filterPrefix')} <strong>{STAT_FILTER_LABEL[statsFilter]}</strong>
                         {t('app.filterCerts', filtered.length)}
                       </span>
-                      <button
-                        className="stats-filter-clear"
+                      <Button type="button" variant="outline" size="xs"
+                        className="border-primary/50 font-semibold text-primary hover:bg-primary hover:text-primary-foreground"
                         onClick={() => {
                           setStatsFilter(null)
                           setStatusFilter('all')
@@ -1319,11 +1363,10 @@ export default function App() {
                           setPlatformFilter([])
                           setSearch('')
                           setSortOrder('default')
-                          dashPager.setPage(1)
                         }}
                       >
                         {t('app.clearFilter')}
-                      </button>
+                      </Button>
                     </div>
                   )}
                 </div>
@@ -1336,11 +1379,12 @@ export default function App() {
                   <StatusBlock tone="neutral" icon={Inbox} title={statsFilter ? t('app.noFilterCerts', STAT_FILTER_LABEL[statsFilter]) : t('app.noCerts')} description={certs.length > 0 ? t('empty.hintFilter') : t('empty.hintCerts')} />
                 ) : (
                   <>
-                    <div className="cards-container">
+                    {/* Sertifika kart ızgarası: en küçük kart 340 px (2026-09-24), dar kapta tek sütun (mobil-önce) */}
+                    <div data-slot="cert-grid" className="grid grid-cols-[repeat(auto-fill,minmax(min(340px,100%),1fr))] gap-3.5 sm:gap-5">
                       {dashPager.pageItems.map((cert, ci) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal} tourId={ci === 0 ? 'first-card' : undefined}
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
-                          live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert } : undefined}
+                          live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert, renewal: cardExtras[cert.domain].renewal } : undefined}
                           onOpenHealth={openCertHealth} onConfirmRenewal={confirmCardRenewal} onPlanRenewal={planCardRenewal} confirming={confirmingDomain === cert.domain}
                           onOpenShared={setSharedCert}
                           hasSilentAlert={silentAlertDomains.has(cert.domain)}
@@ -1362,164 +1406,63 @@ export default function App() {
 
             {tab === 'stats' && (
               <div className="tab-content active">
-                <h2>{t('app.statsTitle')}</h2>
+                <PageHeader icon={TAB_META.stats.Icon} title={t('app.statsTitle')} description={t('app.statsDesc')} />
                 <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
                   canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'}
                   onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
               </div>
             )}
 
+            {/* Dikkat Gerektiren Sertifikalar — pages/WarningsPage (2026-09-27 shadcn + mobil web yeniden tasarımı). Veri
+                (uyarılar + ağ kesinti geçmişi) sayfada yüklenir; App kart eylemlerini, pencereleri ve "Şimdi Kontrol Et"
+                akışını prop'la verir. refreshKey = son güncelleme: 5 dk döngüsü / kontrol bitince liste de tazelenir. */}
             {tab === 'warnings' && (
               <div className="tab-content active">
-                <h2>{t('app.warningsTitle')}</h2>
-                <div style={{ fontSize: '.85em', color: 'var(--text-muted, #64748b)', margin: '0 0 14px', lineHeight: 1.5 }}>
-                  ⓘ {t('app.sslHourlyNote')}
-                </div>
-                {warnings.length === 0 ? (
-                  <StatusBlock tone="success" icon={ShieldCheck} title={t('app.noWarnings')} description={t('empty.hintAllGood')} />
-                ) : (
-                  <>
-                  <div className="cards-container">
-                    {warnPager.pageItems.map((cert) => (
-                      <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal}
-                        hasSilentAlert={silentAlertDomains.has(cert.domain)}
-                        hasMailFailure={mailFailureDomains.has(cert.domain)}
-                        onMailFailureClick={() => {
-                          // 'health' sekmesine gidilmeli: preFilterDomain/openSmtpModalOnLoad
-                          // props'larını SystemHealth tüketiyor (bkz. tab === 'health' bloğu).
-                          // Eskiden 'admin'e gidiliyor ve niyet ölü bir setAdminInitialTab('health')
-                          // çağrısında kalıyordu → yanlış sekme açılıyor, SMTP penceresi hiç
-                          // görünmüyordu. (2026-08-19, lint temizliğinde bulundu.)
-                          handleTabChange('health')
-                          setSmtpPreFilterDomain(cert.domain)
-                          setOpenSmtpModalOnLoad(true)
-                        }}
-                        {...cardActions(cert)} />
-                    ))}
-                  </div>
-                  <PaginationBar {...warnPager} />
-                  </>
-                )}
-
-                <div className="network-outage-history-section">
-                  <h3 className="section-subtitle">
-                    <Wifi size={18} /> {t('app.networkOutageHistoryTitle')}
-                  </h3>
-                  {outageHistory.length === 0 ? (
-                    <div className="loading muted">{t('app.networkOutageHistoryEmpty')}</div>
-                  ) : (
-                    <div className="alert-history-cards">
-                      {(outageHistoryExpanded ? outageHistory
-                        : outageHistory.filter((ev, i) => i < OUTAGE_HISTORY_FOLD || ev.status === 'ONGOING')).map(ev => {
-                        const ratePct = ev.error_rate != null ? Math.round(ev.error_rate * 100) : null
-                        const thresholdPct = ev.threshold != null ? Math.round(ev.threshold * 100) : null
-                        const healthy = (ev.total_checks ?? 0) - (ev.network_errors ?? 0)
-                        return (
-                          <div key={ev.id} className="alert-history-card">
-                            <div className="ahc-stripe" style={{ background: ev.status === 'ONGOING' ? '#dc2626' : '#10b981' }} />
-                            <div className="ahc-body">
-                              <div className="ahc-top">
-                                <strong className="ahc-domain">
-                                  {ev.status === 'ONGOING' ? t('app.outageOngoing') : t('app.outageResolved')}
-                                </strong>
-                                {ratePct != null && (
-                                  <span className="ahc-days" style={{ background:'#fee2e2', color:'#991b1b' }}>
-                                    {ratePct}% {t('app.outageErrorRate')}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="ahc-timeline">
-                                <div className="ahc-tl-item">
-                                  <span className="ahc-tl-icon"><AlertOctagon size={13} /></span>
-                                  <div>
-                                    <div className="ahc-tl-label">{t('app.outageDetected')}</div>
-                                    <div className="ahc-tl-val">{formatDate(ev.detected_at)}</div>
-                                  </div>
-                                </div>
-                                <div className="ahc-tl-item ahc-tl-resolve">
-                                  <span className="ahc-tl-icon"><CheckCircle size={13} /></span>
-                                  <div>
-                                    <div className="ahc-tl-label">{t('app.outageResolvedAt')}</div>
-                                    <div className="ahc-tl-val">
-                                      {ev.resolved_at
-                                        ? formatDate(ev.resolved_at)
-                                        : <em style={{ color: '#dc2626' }}>{t('app.outageStillActive')}</em>}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="ahc-tl-item">
-                                  <span className="ahc-tl-icon"><Clock size={13} /></span>
-                                  <div>
-                                    <div className="ahc-tl-label">{t('app.outageDuration')}</div>
-                                    <div className="ahc-tl-val">
-                                      {/* i18n birimler (QA ISSUE-003): eski yerel biçimleyici EN'de "dk/sn" yazıyordu */}
-                                      {ev.duration_ms ? formatDuration(ev.duration_ms, t) : '—'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="outage-stats-grid">
-                                <div className="outage-stat">
-                                  <div className="outage-stat-label">{t('app.outageStatTotal')}</div>
-                                  <div className="outage-stat-val">{ev.total_checks ?? '—'}</div>
-                                </div>
-                                <div className="outage-stat outage-stat-error">
-                                  <div className="outage-stat-label">{t('app.outageStatErrors')}</div>
-                                  <div className="outage-stat-val">{ev.network_errors ?? '—'}</div>
-                                </div>
-                                <div className="outage-stat outage-stat-ok">
-                                  <div className="outage-stat-label">{t('app.outageStatHealthy')}</div>
-                                  <div className="outage-stat-val">{healthy}</div>
-                                </div>
-                                <div className="outage-stat">
-                                  <div className="outage-stat-label">{t('app.outageStatRate')}</div>
-                                  <div className="outage-stat-val">{ratePct != null ? `${ratePct}%` : '—'}</div>
-                                </div>
-                                <div className="outage-stat">
-                                  <div className="outage-stat-label">{t('app.outageStatThreshold')}</div>
-                                  <div className="outage-stat-val">{thresholdPct != null ? `${thresholdPct}%` : '—'}</div>
-                                </div>
-                              </div>
-
-                              <div className="outage-cause">
-                                {t('app.outageCauseDesc', ev.network_errors ?? 0, ev.total_checks ?? 0,
-                                   ratePct ?? 0, thresholdPct ?? 0)}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {outageHistory.length > OUTAGE_HISTORY_FOLD && (
-                    <button type="button" className="fc-show-more outage-history-toggle" onClick={() => setOutageHistoryExpanded(v => !v)}>
-                      {outageHistoryExpanded
-                        ? t('app.outageHistoryShowLess', OUTAGE_HISTORY_FOLD)
-                        : t('app.outageHistoryShowAll', outageHistory.length)}
-                    </button>
-                  )}
-                </div>
+                <WarningsPage certs={certs} refreshKey={lastUpdate} cardExtras={cardExtras}
+                  silentAlertDomains={silentAlertDomains} mailFailureDomains={mailFailureDomains}
+                  weakDomains={weakAlgStats != null ? weakDomainSet : null}
+                  // Pano listesinde henüz olmayan alan (veri gelmeden) → pencere alan adıyla açılır, sessizce düşmez
+                  onOpenCert={(d) => (certs.some((c) => c.domain === d) ? openCertModal(d) : setModalCert({ domain: d }))}
+                  onOpenHealth={openCertHealth} onPlanRenewal={planCardRenewal} cardActions={cardActions}
+                  // 'health' sekmesi: preFilterDomain/openSmtpModalOnLoad'ı SystemHealth tüketir (2026-08-19 düzeltmesi)
+                  onMailFailure={(d) => { handleTabChange('health'); setSmtpPreFilterDomain(d); setOpenSmtpModalOnLoad(true) }}
+                  onCheckAll={() => setTeamPickerOpen(true)} checkingAll={refreshing}
+                  checkProgress={refreshing ? t('app.checkedOf', checkRun?.rows.length ?? 0, checkRun?.total ?? 0) : null} />
               </div>
             )}
 
             {tab === 'all' && (
               <div className="tab-content active">
-                <h2>{t('app.allTitle')}</h2>
+                {/* Başlık + eylemler (2026-09-27): Şimdi Kontrol Et (ikincil) · SSL Checker (alan + yeşil düğme, en sağda) —
+                    eskiden sayfanın üstündeki ayrı .controls satırındaydı. Telefonda eylemler başlığın altında tam genişlik. */}
+                <PageHeader icon={TAB_META.all.Icon} title={t('app.allTitle')} description={t('app.allDesc')}
+                  actions={(
+                    <>
+                      <Button type="button" variant="secondary" data-tour="check-now" className="h-10 sm:h-9"
+                        onClick={() => setTeamPickerOpen(true)} disabled={refreshing}
+                        title={t('app.checkNowTip')} aria-busy={refreshing || undefined}>
+                        {refreshing ? <Spinner decorative inline /> : <PlayCircle aria-hidden="true" />}
+                        <span className="tabular-nums">{checkNowLabel}</span>
+                      </Button>
+                      {sslCheckerHeader}
+                    </>
+                  )} />
                 {/* refreshKey=lastUpdate: App'in 5 dk yenilemesi ve "Şimdi Kontrol Et" tabloya sessiz tazeleme olarak düşer (2026-09-13) */}
                 <CertificatesTable
                   onRowClick={(d, tab) => { const c = certs.find(x => x.domain === d); setModalCert(c ? (tab ? { ...c, _tab: tab } : c) : null) }}
                   refreshKey={lastUpdate}
                   onCheckNow={runSingleCheck} checkingDomain={refreshing ? '*' : checkingDomain}
                   onEdit={canManageInventory ? (d) => setInvForm({ domain: d, mode: 'edit' }) : undefined}
-                  canManage={canManageInventory} globalAdmin={globalAdmin} onRefresh={loadData} />
+                  canManage={canManageInventory} globalAdmin={globalAdmin} onRefresh={loadData}
+                  // Başka takımın satırı (org geneli görünürlük, 2026-09-26): Pano listesinde yok → pencere satırla, salt okunur açılır
+                  onOpenReadOnly={(row, tab) => setModalCert({ ...row, _readOnly: true, ...(tab ? { _tab: tab } : {}) })} />
               </div>
             )}
 
             {tab === 'renewal' && (
               <div className="tab-content active">
-                <h2>{t('app.renewalTitle')}</h2>
+                {/* Açıklama + Yenile/Dışa aktar RenewalAdvice'ın kendi üst satırında — burada yalnız başlık */}
+                <PageHeader icon={TAB_META.renewal.Icon} title={t('app.renewalTitle')} />
                 <RenewalAdvice onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />
               </div>
             )}
@@ -1532,14 +1475,15 @@ export default function App() {
 
             {tab === 'activity' && (
               <div className="tab-content active">
-                <h2>{t('app.activityTitle')}</h2>
+                <PageHeader icon={TAB_META.activity.Icon} title={t('app.activityTitle')} description={t('app.activityDesc')} />
                 <ActivityLog refreshTrigger={activityRefreshKey} />
               </div>
             )}
 
             {tab === 'myactivity' && (
               <div className="tab-content active">
-                <h2>{t('app.myAuditTitle')}</h2>
+                {/* Amaç cümlesi + Cihazlarım/Parola eylemleri MyAuditLog'un kendi üst satırında — burada yalnız başlık */}
+                <PageHeader icon={TAB_META.myactivity.Icon} title={t('app.myAuditTitle')} />
                 <MyAuditLog loginInfo={loginInfo} onChangePassword={() => setSelfPwdModalOpen(true)}
                   pushOptOut={pushOptOut}
                   onPushOptOutChange={async (v) => {
@@ -1553,14 +1497,24 @@ export default function App() {
 
             {tab === 'alerthistory' && (
               <div className="tab-content active">
-                <h2>{t('app.alertHistoryTitle')}</h2>
-                <AlertHistory urlSync />
+                {/* Başlık AlertHistory'nin kendi ui/PageHeader'ında (2026-09-27) — burada ikinci bir <h2> çift başlık çizerdi */}
+                {/* globalViewer + myTeamIds: 7/24 operatörü başka takımın uyarısını görür ama sahiplenemez/çözemez (sunucu 403) */}
+                <AlertHistory urlSync globalViewer={globalViewer} myTeamIds={myTeamIds} />
               </div>
             )}
 
             {tab === 'incidents' && (
               <div className="tab-content active">
                 <IncidentsPage systemRole={systemRole} teamId={teamId} teamName={teamName} />
+              </div>
+            )}
+
+            {/* 7/24 Kapsamı (2026-09-27): hangi izlemeler gece kesintisinde 7/24 izleme ekibine gitmiyor, neden; tek tık aç,
+                takım arama listesi. Görüş kapsamı sunucuda (viewTeamIds); refreshKey = Pano damgası (5 dk döngüsü). */}
+            {tab === 'noc' && (
+              <div className="tab-content active">
+                <NocCoveragePage systemRole={systemRole} globalAdmin={globalAdmin} myTeamIds={myTeamIds} myTeams={myTeams}
+                  userId={profile?.user_id ?? null} refreshKey={lastUpdate} />
               </div>
             )}
 
@@ -1572,14 +1526,16 @@ export default function App() {
 
             {tab === 'domains' && (
               <div className="tab-content active">
-                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} teams={myTeams}   // USER: form takım kutusu üyesi olduğu takımlar (2026-09-18)
-                  openAddSignal={pendingAddDomain} onAddConsumed={() => setPendingAddDomain(false)} />
+                <InventoryManager onInventoryChange={loadData} systemRole={systemRole} teams={myTeams} globalAdmin={globalAdmin}   // USER: form takım kutusu üyesi olduğu takımlar (2026-09-18)
+                  openAddSignal={pendingAddDomain} onAddConsumed={() => setPendingAddDomain(false)}
+                  // "Şimdi Kontrol Et" Envanter başlığında (eski üst .controls satırının yerine, 2026-09-27)
+                  onCheckNow={() => setTeamPickerOpen(true)} checkRunning={refreshing} checkLabel={checkNowLabel} />
               </div>
             )}
 
             {tab === 'admin' && (
               <div className="tab-content active">
-                <h2>{t('app.adminTitle')}</h2>
+                <PageHeader icon={TAB_META.admin.Icon} title={t('app.adminTitle')} description={t('app.adminDesc')} />
                 <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} />
               </div>
             )}
@@ -1605,7 +1561,8 @@ export default function App() {
             {/* Denetim Logu (2026-09-25): herkese açık; admin/AUDIT sistem geneli, diğerleri ekip arkadaşlarının kayıtları. */}
             {tab === 'system' && (
               <div className="tab-content active">
-                <h2>{t('app.systemTitle')}</h2>
+                {/* Amaç, kapsam rozeti ve eylemler AuditLogViewer'ın kendi üst satırında — burada yalnız başlık */}
+                <PageHeader icon={TAB_META.system.Icon} title={t('app.systemTitle')} />
                 <AuditLogViewer fullScope={globalAdmin || systemRole === 'AUDIT'} />
               </div>
             )}
@@ -1621,17 +1578,15 @@ export default function App() {
                 tanıma bakınız), yani o da takım süzgeciyle çalışır. */}
             {tab === 'monitorchanges' && (
               <div className="tab-content active">
-                <h2>{t('chg.consoleTitle')}</h2>
-                <p className="upt-subtitle">
-                  {globalViewer ? t('chg.consoleSubtitle') : t('chg.consoleSubtitleTeam')}
-                </p>
+                <PageHeader icon={TAB_META.monitorchanges.Icon} title={t('chg.consoleTitle')}
+                  description={globalViewer ? t('chg.consoleSubtitle') : t('chg.consoleSubtitleTeam')} />
                 <MonitorChangesConsole globalViewer={globalViewer} />
               </div>
             )}
 
             {tab === 'weakalgo' && (
               <div className="tab-content active">
-                <h2>{t('app.weakAlgoTitle')}</h2>
+                <PageHeader icon={TAB_META.weakalgo.Icon} title={t('app.weakAlgoTitle')} description={t('app.weakAlgoDesc')} />
                 <WeakAlgorithmReport />
               </div>
             )}
@@ -1662,14 +1617,14 @@ export default function App() {
 
             {tab === 'sqlplayground' && globalAdmin && (
               <div className="tab-content active">
-                <h2>{t('app.sqlPlaygroundTitle')}</h2>
+                {/* Başlık SqlPlayground'ın kendi ui/PageHeader'ında (2026-09-27) — burada ikinci bir <h2> çift başlık çizerdi */}
                 <SqlPlayground />
               </div>
             )}
 
             {tab === 'health' && (
               <div className="tab-content active">
-                <h2>{t('app.healthTitle')}</h2>
+                <PageHeader icon={TAB_META.health.Icon} title={t('app.healthTitle')} description={t('app.healthDesc')} />
                 <SystemHealth
                   systemRole={systemRole}
                   globalAdmin={globalAdmin}
@@ -1686,15 +1641,15 @@ export default function App() {
 
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
-            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
-            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} />}
+            {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'dns'      && <DnsMonitorPage  systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'keyword'  && <KeywordMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'ping'     && <PingMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'page'     && <PageMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'pagespeed' && <PageSpeedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
+            {tab === 'scripted' && <ScriptedMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'forecast' && <ExpiryForecastPage onSelectDomain={(d) => setModalCert(certs.find(c => c.domain === d) ?? { domain: d })} />}
             </Suspense>
            </ErrorBoundary>
@@ -1712,7 +1667,9 @@ export default function App() {
           de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab}
         refreshSignal={certModalRefresh}
-        {...(modalCert && !modalCert._preview ? cardActions(modalCert) : {})} />
+        readOnly={!!modalCert?._readOnly}
+        readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
+        {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
       {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
       {planRow && <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
         onSaved={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }}
@@ -1739,6 +1696,7 @@ export default function App() {
             // (updateInventory) TEAM_ADMIN ve USER için takımı mevcut değere sabitler.
             canManage={canManageInventory}
             canMoveTeam={systemRole === 'ADMIN'}
+            canOpenSettings={globalAdmin}   // 7/24 alanı "aktif grup yok" → Ayarlar bağlantısı yalnız global yöneticiye
             onClose={() => setInvForm(null)}
             onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
           />

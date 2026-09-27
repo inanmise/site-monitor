@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import HeartbeatHistoryModal from '../components/admin/HeartbeatHistoryModal.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -50,15 +50,19 @@ describe('HeartbeatHistoryModal', () => {
     await waitFor(() => expect(api.admin.getHeartbeatTimeline).toHaveBeenCalled())
 
     // statusOf eşikleri: 0 → missing, 12/12 → ok, 7/12 → partial, 2/12 → low
-    await waitFor(() => expect(document.querySelector('.hb-tl-missing')).not.toBeNull())
-    expect(document.querySelector('.hb-tl-ok')).not.toBeNull()
-    expect(document.querySelector('.hb-tl-partial')).not.toBeNull()
-    expect(document.querySelector('.hb-tl-low')).not.toBeNull()
+    const cell = (s) => document.querySelector(`[data-hb-cell][data-status="${s}"]`)
+    await waitFor(() => expect(cell('missing')).not.toBeNull())
+    expect(cell('ok')).not.toBeNull()
+    expect(cell('partial')).not.toBeNull()
+    expect(cell('low')).not.toBeNull()
+    // kovalar shadcn Button: klavyeyle erişilebilir, adı zamanı ve durumu taşır
+    expect(cell('ok')).toHaveAttribute('data-slot', 'button')
+    expect(cell('ok')).toHaveAccessibleName(/2026-09-07T10:05:00/)
   })
 
   it('kayıp kova × işaretiyle gösterilir (renk körü kullanıcı için tek ayırt edici)', async () => {
     render(<HeartbeatHistoryModal onClose={() => {}} />)
-    await waitFor(() => expect(document.querySelector('.hb-tl-x')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-hb-x]')).not.toBeNull())
   })
 
   it('api REJECT ederse hata bandı çizilir ve spinner kalıcı kalmaz', async () => {
@@ -68,7 +72,7 @@ describe('HeartbeatHistoryModal', () => {
     render(<HeartbeatHistoryModal onClose={() => {}} />)
 
     expect(await screen.findByText(/failed to fetch/i)).toBeInTheDocument()
-    await waitFor(() => expect(document.querySelector('.hb-modal-loading')).toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="loading-block"]')).toBeNull())
   })
 
   it('{success:false} dönerse de hata bandı çizilir', async () => {
@@ -83,7 +87,7 @@ describe('HeartbeatHistoryModal', () => {
     render(<HeartbeatHistoryModal onClose={() => {}} />)
     await waitFor(() => expect(api.admin.getHeartbeatTimeline).toHaveBeenCalledWith(1))
 
-    const buttons = document.querySelectorAll('.fc-range-btn')
+    const buttons = within(screen.getByRole('group', { name: /Zaman aralığı|Time range/ })).getAllByRole('button')
     expect(buttons.length).toBeGreaterThan(1)
     fireEvent.click(buttons[1])
 
@@ -96,14 +100,16 @@ describe('HeartbeatHistoryModal', () => {
 
   it('kovaya tıklamak ayrıntıyı açar, tekrar tıklamak kapatır', async () => {
     render(<HeartbeatHistoryModal onClose={() => {}} />)
-    await waitFor(() => expect(document.querySelector('.hb-tl-cell')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-hb-cell]')).not.toBeNull())
 
-    const cell = document.querySelector('.hb-tl-cell')
+    const cell = document.querySelector('[data-hb-cell]')
     fireEvent.click(cell)
-    await waitFor(() => expect(document.querySelector('.hb-tl-selected')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-hb-cell][aria-pressed="true"]')).not.toBeNull())
+    expect(document.querySelector('[data-slot="hb-detail"]')).not.toBeNull()
 
-    fireEvent.click(document.querySelector('.hb-tl-selected'))
-    await waitFor(() => expect(document.querySelector('.hb-tl-selected')).toBeNull())
+    fireEvent.click(document.querySelector('[data-hb-cell][aria-pressed="true"]'))
+    await waitFor(() => expect(document.querySelector('[data-hb-cell][aria-pressed="true"]')).toBeNull())
+    expect(document.querySelector('[data-slot="hb-detail"]')).toBeNull()
   })
 
   it('Escape ve kapat düğmesi onClose çağırır', async () => {
@@ -111,18 +117,19 @@ describe('HeartbeatHistoryModal', () => {
     render(<HeartbeatHistoryModal onClose={onClose} />)
     await waitFor(() => expect(api.admin.getHeartbeatTimeline).toHaveBeenCalled())
 
-    fireEvent.keyDown(window, { key: 'Escape' })
+    // ModalShell (Radix Dialog) Escape'i belge düzeyinde dinler — odaktaki öğeden gönderilir.
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
 
     onClose.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: /close/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^(Kapat|Close)$/i }))
     expect(onClose).toHaveBeenCalled()
   })
 
   it('boş zaman çizelgesinde çökmez', async () => {
     api.admin.getHeartbeatTimeline.mockResolvedValue({ success: true, data: { bucket_minutes: 5, buckets: [] } })
     render(<HeartbeatHistoryModal onClose={() => {}} />)
-    await waitFor(() => expect(document.querySelector('.hb-modal-loading')).toBeNull())
-    expect(document.querySelector('.hb-tl-cell')).toBeNull()
+    await waitFor(() => expect(document.querySelector('[data-slot="loading-block"]')).toBeNull())
+    expect(document.querySelector('[data-hb-cell]')).toBeNull()
   })
 })

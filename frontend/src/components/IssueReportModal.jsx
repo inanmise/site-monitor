@@ -1,52 +1,36 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
-import { Bug, Camera, CheckCircle2, Send, X, ZoomIn } from 'lucide-react'
+import { Bug, Send, Mail, ArrowRight, RotateCcw } from 'lucide-react'
 import { api, getRecentFailures } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
-import { downscaleImage } from '../utils/imageDownscale'
+import { navigateTo } from '../utils/navigate.js'
 import ModalShell from './ui/ModalShell.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import Field from './ui/Field.jsx'
-import SegmentedControl from './ui/SegmentedControl.jsx'
 import { Spinner } from './ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Input } from '@/components/shadcn/input'
+import { Label } from '@/components/shadcn/label'
+import { Textarea } from '@/components/shadcn/textarea'
+import { ReportSection, CategoryCards, TechnicalDetails, PrivacyNote, ReportSuccess, CharCounter, PHONE_FULLSCREEN } from './issues/report/ReportParts.jsx'
+import ScreenshotField from './issues/report/ScreenshotField.jsx'
+import { MAX_MESSAGE, EMAIL_RE, browserLabel, processImageFiles, imagesFromClipboard, reportHref, reportIdOf } from './issues/report/reportModel.js'
 
 /**
- * Oturum içi "Sorun Bildir" modalı — iki giriş noktasından açılır:
- * (a) ErrorBoundary fallback'i (errorText + linkedReference dolu gelir — otomatik kayda bağlam ekler),
- * (b) Nav'daki kalıcı "Sorun Bildir" (çökme olmayan sorunlar: yanlış veri, yavaşlık, görsel bozukluk).
+ * Oturum içi "Sorun Bildir" penceresi (2026-09-27 yeniden tasarım) — dört giriş noktası: kullanıcı menüsü,
+ * komut paleti, Sorun Bildirimleri sayfasının "Sorun bildir" düğmesi ve ErrorBoundary (errorText + linkedReference
+ * dolu gelir — otomatik çökme kaydına bağlam eklenir, mükerrer kayıt açılmaz).
  *
- * Kural 1 — sistem bildiğini SORMAZ: kim/ne zaman/nerede/nasıl otomatik toplanır ve üstte READONLY
- * "otomatik eklenecekler" özeti olarak gösterilir (şeffaflık). Kullanıcıya yalnız bilinemeyecekler
- * sorulur: açıklama (zorunlu), önem (opsiyonel), ekran görüntüsü (opsiyonel) ve profilde yoksa e-posta.
- *
- * Kural 2 — hiçbir şey SESSİZCE düşmez: sınırı aşan, desteklenmeyen ya da okunamayan dosyalar
- * sayılıp kullanıcıya söylenir. Eskiden fazlalıklar sessizce kırpılıyor, bozuk dosyalar boş
- * catch'e düşüyordu; kullanıcı eklediğini sandığı görselin gitmediğini asla öğrenmiyordu.
+ * <p>Sakin, bölümlü akış: 1 Ne oldu? (zorunlu, canlı sayaç) → 2 Etkisi (önem kartları, opsiyonel) → 3 Ekran
+ * görüntüleri (sürükle-bırak / seç / Ctrl+V yapıştır) → 4 Size nasıl ulaşalım (profilde e-posta varsa SORULMAZ).
+ * Kural 1 — sistem bildiğini sormaz: sayfa/zaman/sürüm/tarayıcı/ekran/son başarısız istekler katlanır "eklenecek
+ * teknik ayrıntılar"da salt-okunur; gizlilik notu neyin ASLA eklenmediğini söyler. Kural 2 — hiçbir dosya sessizce
+ * düşmez. Doğrulama satır içi (gönderimde; hatalı alana odak). Hata: yazılanlar korunur, "Tekrar dene".
+ * Başarı: referans (kopyala) + sırada ne var + "Bildirimimi görüntüle" (derin bağlantı `ir_id`).
+ * Telefonda tam ekran, altlık sabit (ModalShell scrollBody). Props sözleşmesi değişmedi.
  */
-const MAX_IMAGES = 5
-const ACCEPTED = ['image/png', 'image/jpeg']
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-function browserLabel(ua) {
-  if (!ua) return '—'
-  if (/edg\//i.test(ua)) return 'Edge'
-  if (/chrome\//i.test(ua)) return 'Chrome'
-  if (/firefox\//i.test(ua)) return 'Firefox'
-  if (/safari\//i.test(ua)) return 'Safari'
-  return ua.slice(0, 40)
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(r.result)
-    r.onerror = reject
-    r.readAsDataURL(file)
-  })
-}
-
-export default function IssueReportModal({ open, onClose, errorText = '', linkedReference = '' }) {
+export default function IssueReportModal({ open, onClose, errorText = '', linkedReference = '', onSubmitted }) {
   const t = useT()
   const { lang } = useLanguage()
   const [me, setMe] = useState(null)
@@ -56,19 +40,22 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const [saveEmail, setSaveEmail] = useState(true)
   const [images, setImages] = useState([])          // data-URL listesi
   const [imageNotice, setImageNotice] = useState('')
-  const [zoom, setZoom] = useState(null)            // büyütülen görselin indeksi
-  const [dragging, setDragging] = useState(false)
   const [sending, setSending] = useState(false)
   const [errors, setErrors] = useState({})          // alan-bazlı: { message, email }
   const [formError, setFormError] = useState('')    // gönderim/sunucu hatası
   const [reference, setReference] = useState('')
-  const fileRef = useRef(null)
+  const saveEmailId = useId()
+  const counterId = useId()
 
-  // Modal açılınca profili taze çek (e-posta kuralı: profilde varsa READONLY gösterilir, sorulmaz).
+  function reset() {
+    setMessage(''); setCategory(''); setEmail(''); setImages([]); setImageNotice('')
+    setErrors({}); setFormError(''); setReference('')
+  }
+
+  // Açılınca form sıfırlanır ve profil taze çekilir (e-posta kuralı: profilde varsa SORULMAZ).
   useEffect(() => {
     if (!open) return
-    setMessage(''); setCategory(''); setEmail(''); setImages([]); setImageNotice('')
-    setZoom(null); setDragging(false); setErrors({}); setFormError(''); setReference('')
+    reset()
     api.getMe().then((res) => { if (res?.success) setMe(res) }).catch(() => {})
   }, [open])
 
@@ -81,45 +68,18 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const theme = document.documentElement.getAttribute('data-theme') || 'light'
   const screenSize = `${window.screen?.width || 0}x${window.screen?.height || 0}`
   const failed = getRecentFailures()
+  const dirty = !!(message.trim() || images.length)
 
   async function addFiles(fileList) {
-    const incoming = Array.from(fileList || [])
-    if (!incoming.length) return
-    const notices = []
-
-    // downscaleImage görsel OLMAYAN dosyayı olduğu gibi geri döndürüyor; giriş filtresi
-    // olmasa sürüklenen bir PDF sessizce data-URL olarak yüklenirdi.
-    const supported = incoming.filter((f) => ACCEPTED.includes(f.type))
-    const unsupported = incoming.length - supported.length
-    if (unsupported > 0) notices.push(t('issue.imgUnsupported', unsupported))
-
-    const room = Math.max(0, MAX_IMAGES - images.length)
-    const take = supported.slice(0, room)
-    if (supported.length > take.length) notices.push(t('issue.imgTooMany', MAX_IMAGES))
-
-    const urls = []
-    let unreadable = 0
-    for (const f of take) {
-      try {
-        const small = await downscaleImage(f)
-        urls.push(await fileToDataUrl(small))
-      } catch { unreadable += 1 }
-    }
-    if (unreadable > 0) notices.push(t('issue.imgFailed', unreadable))
-
-    if (urls.length) setImages((prev) => [...prev, ...urls].slice(0, MAX_IMAGES))
+    const { urls, notices } = await processImageFiles(fileList, images.length, t)
+    if (urls.length) setImages((prev) => [...prev, ...urls].slice(0, 5))
     setImageNotice(notices.join(' '))
   }
-
-  function removeImage(index) {
-    setImages((prev) => prev.filter((_, i) => i !== index))
-    setImageNotice('')
-  }
-
-  function onDrop(e) {
+  function onPaste(e) {
+    const files = imagesFromClipboard(e)
+    if (!files.length) return            // metin yapıştırma olduğu gibi
     e.preventDefault()
-    setDragging(false)
-    addFiles(e.dataTransfer?.files)
+    addFiles(files)
   }
 
   function validate() {
@@ -130,10 +90,14 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
       else if (!EMAIL_RE.test(email.trim())) next.email = t('issue.emailInvalid')
     }
     setErrors(next)
+    // İlk hatalı alana odak (satır içi doğrulama — kullanıcı aramak zorunda kalmasın)
+    const firstId = next.message ? 'irf-message' : next.email ? 'irf-email' : null
+    if (firstId) setTimeout(() => document.querySelector(`[data-irf="${firstId}"]`)?.focus(), 0)
     return Object.keys(next).length === 0
   }
 
   async function submit() {
+    if (sending) return
     setFormError('')
     if (!validate()) return
     setSending(true)
@@ -156,6 +120,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
       })
       if (res?.success) {
         setReference(res.reference || '')
+        onSubmitted?.(res.reference || '')
       } else {
         setFormError(res?.error || t('issue.sendFail'))
       }
@@ -166,194 +131,143 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
     }
   }
 
-  const autoRows = [
-    [t('issue.autoWho'),     me?.username || '—'],
-    [t('issue.autoWhen'),    now.toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB')],
-    [t('issue.autoWhere'),   `${tabKey} · ${url.length > 60 ? url.slice(0, 60) + '…' : url}`],
+  /** "Bildirimimi görüntüle": uygulama içinde sekmeye gider; çökme bağlamında (ErrorBoundary) tam sayfa yüklenir. */
+  const href = reportHref(reference)
+  function viewReport(e) {
+    if (!href || e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return
+    if (errorText || linkedReference) return   // çökmüş ekrandan: temiz bir yükleme daha güvenli
+    e.preventDefault()
+    onClose?.()
+    navigateTo('login-issues', { ir_id: reportIdOf(reference) })
+  }
+
+  const techRows = [
+    [t('issue.autoWho'), me?.username || '—'],
+    [t('issue.autoWhen'), now.toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB')],
+    [t('issue.autoWhere'), `${tabKey} · ${url.length > 70 ? url.slice(0, 70) + '…' : url}`, true],
     [t('issue.autoVersion'), currentVersion() ? `v${currentVersion()}` : '—'],
     [t('issue.autoBrowser'), browserLabel(navigator.userAgent)],
-    [t('issue.autoScreen'),  screenSize],
-    [t('issue.autoTheme'),   `${theme} · ${lang.toUpperCase()}`],
+    [t('issue.autoScreen'), screenSize],
+    [t('issue.autoTheme'), `${theme} · ${lang.toUpperCase()}`],
+    ...(errorText ? [[t('issue.autoError'), errorText.split('\n')[0].slice(0, 160), true]] : []),
+    ...(failed.length ? [[t('issue.autoFailedReqs'), failed.map((f) => `${f.path} → ${f.status || t('issue.netError')}`).join('\n'), true]] : []),
   ]
 
+  const nextSteps = [
+    t('irf.nextNotified'),
+    profileEmail || email.trim() ? t('irf.nextEmail', profileEmail || email.trim()) : null,
+    t('irf.nextFollow'),
+  ].filter(Boolean)
+
   const footer = reference
-    ? <Button type="button" onClick={onClose}>{t('issue.close')}</Button>
+    ? (
+      <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <Button type="button" variant="ghost" onClick={reset}><RotateCcw aria-hidden="true" />{t('irf.another')}</Button>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onClick={onClose}>{t('issue.close')}</Button>
+          {href && (
+            <Button asChild>
+              <a href={href} onClick={viewReport}>{t('irf.viewReport')}<ArrowRight aria-hidden="true" /></a>
+            </Button>
+          )}
+        </div>
+      </div>
+    )
     : (
-      <>
-        <Button type="button" variant="outline" onClick={onClose} disabled={sending}>{t('issue.cancel')}</Button>
-        <Button type="button" onClick={submit} disabled={sending} aria-busy={sending}>
-          {sending ? <Spinner size={15} inline decorative /> : <Send size={15} />}
-          {sending ? t('issue.sending') : t('issue.submit')}
-        </Button>
-      </>
+      <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span className="hidden text-xs text-muted-foreground sm:inline">{t('irf.sendHint')}</span>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onClick={onClose} disabled={sending}>{t('issue.cancel')}</Button>
+          <Button type="button" onClick={submit} disabled={sending} aria-busy={sending || undefined}>
+            {sending ? <Spinner size={15} inline decorative /> : <Send aria-hidden="true" />}
+            {sending ? t('issue.sending') : t('irf.send')}
+          </Button>
+        </div>
+      </div>
     )
 
   return (
-    <ModalShell
-      open={open}
-      onClose={onClose}
-      busy={sending}
-      title={t('issue.title')}
-      icon={Bug}
-      closeLabel={t('issue.close')}
-      size="md"
-      footer={footer}
-    >
-      {/* Dropzone dışına bırakılan dosya tarayıcıyı o dosyaya yönlendirir ve form kaybolur;
-          modal gövdesi genelinde yutuluyor. */}
-      <div
-        className="issue-root"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => e.preventDefault()}
-      >
+    <ModalShell open={open} onClose={onClose} busy={sending} title={t('issue.title')} icon={Bug}
+      closeLabel={t('issue.close')} size="lg" scrollBody footer={footer} className={PHONE_FULLSCREEN}
+      dismissOnBackdrop={!dirty || !!reference}>
+      {/* Dropzone dışına bırakılan dosya tarayıcıyı o dosyaya yönlendirir ve form kaybolur — gövde genelinde yutulur.
+          Yapıştırma (Ctrl+V) pencerenin her yerinde çalışır: panodaki görsel ekran görüntüsü olarak eklenir. */}
+      <div data-slot="issue-report" className="flex min-w-0 flex-col gap-6 pb-1"
+        onDragOver={(e) => e.preventDefault()} onDrop={(e) => e.preventDefault()} onPaste={reference ? undefined : onPaste}
+        onKeyDown={(e) => { if (!reference && (e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submit() } }}>
         {reference ? (
-          <div className="issue-done" role="status">
-            <CheckCircle2 size={36} className="issue-done-icon" aria-hidden="true" />
-            <div className="issue-done-title">{t('issue.thanks')}</div>
-            <div className="issue-done-ref">{t('issue.refLabel')}: <strong>{reference}</strong></div>
-          </div>
+          <ReportSuccess reference={reference} steps={nextSteps} />
         ) : (
           <>
-            {/* Otomatik eklenecekler — READONLY şeffaflık özeti (kural 1: bunlar kullanıcıya SORULMAZ). */}
-            <div className="issue-auto">
-              <div className="issue-auto-hdr">{t('issue.autoTitle')}</div>
-              <table className="issue-auto-table">
-                <tbody>
-                  {autoRows.map(([k, v]) => (
-                    <tr key={k}>
-                      <th scope="row" className="issue-auto-k">{k}</th>
-                      <td className="issue-auto-v">{v}</td>
-                    </tr>
-                  ))}
-                  {errorText && (
-                    <tr>
-                      <th scope="row" className="issue-auto-k">{t('issue.autoError')}</th>
-                      <td className="issue-auto-v issue-auto-mono">{errorText.split('\n')[0].slice(0, 120)}</td>
-                    </tr>
-                  )}
-                  {failed.length > 0 && (
-                    <tr>
-                      <th scope="row" className="issue-auto-k">{t('issue.autoFailedReqs')}</th>
-                      <td className="issue-auto-v issue-auto-mono">
-                        {failed.map((f, i) => <div key={i}>{f.path} → {f.status || t('issue.netError')}</div>)}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <p className="m-0 text-sm text-muted-foreground">{errorText ? t('irf.introCrash') : t('irf.intro')}</p>
 
-            {/* Kullanıcıya sorulanlar — yalnız sistemin bilemeyecekleri. */}
-            <Field label={t('issue.describe')} required error={errors.message}>
-              {({ id, describedBy, invalid }) => (
-                <textarea
-                  id={id} aria-describedby={describedBy} aria-invalid={invalid}
-                  className="input issue-textarea" rows={4}
-                  value={message} placeholder={t('issue.describePh')}
-                  onChange={(e) => setMessage(e.target.value)}
-                />
-              )}
-            </Field>
-
-            <div className="form-field">
-              <span className="form-field-label">{t('issue.category')}</span>
-              {/* SegmentedControl seçimi kaldırmaz; eski "tekrar tıkla → boşalt" davranışının
-                  yerine açık bir "Belirtmedim" seçeneği var. */}
-              <SegmentedControl
-                value={category}
-                onChange={setCategory}
-                ariaLabel={t('issue.category')}
-                options={[
-                  { value: '',           label: t('issue.catNone') },
-                  { value: 'BLOCKER',    label: t('issue.catBlocker') },
-                  { value: 'ANNOYANCE',  label: t('issue.catAnnoyance') },
-                  { value: 'SUGGESTION', label: t('issue.catSuggestion') },
-                ]}
-              />
-            </div>
-
-            {profileEmail ? (
-              <div className="issue-email-known">
-                {t('issue.emailKnown')}: <strong>{profileEmail}</strong>
-              </div>
-            ) : (
-              <>
-                <Field label={t('issue.email')} required error={errors.email}>
-                  {({ id, describedBy, invalid }) => (
-                    <input
-                      id={id} aria-describedby={describedBy} aria-invalid={invalid}
-                      type="email" className="input"
-                      value={email} placeholder={t('issue.emailPh')}
-                      onChange={(e) => setEmail(e.target.value)}
-                    />
-                  )}
-                </Field>
-                <label className="issue-checkbox">
-                  <input type="checkbox" checked={saveEmail} onChange={(e) => setSaveEmail(e.target.checked)} />
-                  {t('issue.emailSave')}
-                </label>
-              </>
-            )}
-
-            {/* Ekran görüntüleri: tıklayarak veya sürükleyip bırakarak. */}
-            <div
-              className={`issue-dropzone${dragging ? ' is-dragging' : ''}`}
-              onDragEnter={(e) => { e.preventDefault(); setDragging(true) }}
-              onDragOver={(e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy' }}
-              onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false) }}
-              onDrop={onDrop}
-            >
-              <div className="issue-dropzone-row">
-                <Button type="button" variant="outline" size="sm" onClick={() => fileRef.current?.click()}
-                        disabled={images.length >= MAX_IMAGES}>
-                  <Camera size={15} style={{ marginRight: 6 }} />
-                  {t('issue.addImage')} ({images.length}/{MAX_IMAGES})
-                </Button>
-                <span className="hint">{t('issue.dropHint')}</span>
-              </div>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg" multiple hidden
-                     onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
-              {images.length > 0 && (
-                <div className="issue-thumbs">
-                  {images.map((img, i) => (
-                    <div className="issue-thumb" key={i}>
-                      <button type="button" className="issue-thumb-open" onClick={() => setZoom(i)}
-                              aria-label={t('issue.imgZoom', i + 1)}>
-                        <img src={img} alt={`${t('issue.screenshot')} ${i + 1}`} />
-                        <ZoomIn size={13} className="issue-thumb-zoom" aria-hidden="true" />
-                      </button>
-                      <button type="button" className="issue-thumb-del" onClick={() => removeImage(i)}
-                              aria-label={t('issue.imgRemove', i + 1)}>
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
+            <ReportSection n={1} title={t('irf.secWhat')}>
+              <Field label={t('issue.describe')} required error={errors.message} className="mb-0">
+                {({ id, describedBy, invalid }) => (
+                  <>
+                    <Textarea id={id} data-irf="irf-message" aria-describedby={[describedBy, counterId].filter(Boolean).join(' ')} aria-invalid={invalid}
+                      className="max-h-72 min-h-28 resize-y" rows={5} maxLength={MAX_MESSAGE}
+                      value={message} placeholder={t('issue.describePh')}
+                      onChange={(e) => setMessage(e.target.value)} />
+                    <div className="mt-1 flex justify-end"><CharCounter id={counterId} value={message} max={MAX_MESSAGE} /></div>
+                  </>
+                )}
+              </Field>
+              {errorText && (
+                <div className="min-w-0 rounded-md border bg-muted/40 px-3 py-2">
+                  <div className="mb-1 text-xs font-semibold text-muted-foreground">{t('irf.crashAttached')}</div>
+                  <pre className="m-0 max-h-24 overflow-auto font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{errorText.split('\n').slice(0, 4).join('\n')}</pre>
                 </div>
               )}
+            </ReportSection>
+
+            <ReportSection n={2} title={t('irf.secImpact')} optional>
+              <CategoryCards value={category} onChange={setCategory} disabled={sending} />
+            </ReportSection>
+
+            <ReportSection n={3} title={t('irf.secShots')} hint={t('irf.shotsHint')} optional>
+              <ScreenshotField images={images} onFiles={addFiles} disabled={sending}
+                onRemove={(i) => { setImages((prev) => prev.filter((_, k) => k !== i)); setImageNotice('') }}
+                notice={imageNotice} onDismissNotice={() => setImageNotice('')} />
+            </ReportSection>
+
+            <ReportSection n={4} title={t('irf.secContact')}>
+              {profileEmail ? (
+                <p className="m-0 flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                  <Mail aria-hidden="true" className="size-4 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{t('issue.emailKnown')}: <strong className="text-foreground">{profileEmail}</strong></span>
+                </p>
+              ) : (
+                <>
+                  <Field label={t('issue.email')} required error={errors.email} className="mb-0">
+                    {({ id, describedBy, invalid }) => (
+                      <Input id={id} data-irf="irf-email" aria-describedby={describedBy} aria-invalid={invalid} type="email" autoComplete="email"
+                        value={email} placeholder={t('issue.emailPh')} onChange={(e) => setEmail(e.target.value)} />
+                    )}
+                  </Field>
+                  <div className="flex items-center gap-2">
+                    <Checkbox id={saveEmailId} checked={saveEmail} onCheckedChange={(v) => setSaveEmail(v === true)} />
+                    <Label htmlFor={saveEmailId} className="text-[13px] font-normal">{t('issue.emailSave')}</Label>
+                  </div>
+                </>
+              )}
+            </ReportSection>
+
+            <div className="flex flex-col gap-3">
+              <TechnicalDetails rows={techRows} />
+              <PrivacyNote>{t('irf.privacy')}</PrivacyNote>
             </div>
 
-            {imageNotice && (
-              <AlertBanner tone="warning" onDismiss={() => setImageNotice('')} dismissLabel={t('issue.close')}>
-                {imageNotice}
+            {formError && (
+              // Düğme metnin ALTINDA: yan `actions` yuvası telefonda metni dar bir sütuna sıkıştırıyordu.
+              <AlertBanner tone="danger" role="alert" title={t('irf.failTitle')} className="mb-0">
+                <div>{formError} {t('irf.failKept')}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={submit} disabled={sending}><RotateCcw aria-hidden="true" />{t('irf.retry')}</Button>
+                </div>
               </AlertBanner>
             )}
-
-            {formError && <AlertBanner tone="danger" role="alert">{formError}</AlertBanner>}
           </>
-        )}
-
-        {/* Görsel büyütme — iç içe kabuk: Escape ve odak iadesi kabuktan gelir. */}
-        {zoom !== null && images[zoom] && (
-          <ModalShell
-            open
-            onClose={() => setZoom(null)}
-            title={`${t('issue.screenshot')} ${zoom + 1}`}
-            closeLabel={t('issue.close')}
-            size="full"
-          >
-            <img className="issue-lightbox-img" src={images[zoom]}
-                 alt={`${t('issue.screenshot')} ${zoom + 1}`} />
-          </ModalShell>
         )}
       </div>
     </ModalShell>

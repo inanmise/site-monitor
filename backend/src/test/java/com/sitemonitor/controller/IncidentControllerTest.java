@@ -199,6 +199,51 @@ class IncidentControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // ── Taslak görsel okuma (prod kapısı 2026-09-25, Y-1) ───────────────────────────────────
+    // Olaya bağlanmamış (taslak) görsel takım kapısından hiç geçmiyordu: incidents.view sahibi
+    // herkes id taramasıyla başkasının taslağını okuyabiliyordu.
+
+    private static com.sitemonitor.model.IncidentImage draftBy(String createdBy) {
+        com.sitemonitor.model.IncidentImage img = new com.sitemonitor.model.IncidentImage();
+        img.setId(9L);
+        img.setIncidentId(null);
+        img.setContentType("image/png");
+        img.setData(new byte[]{7, 8, 9});
+        img.setCreatedBy(createdBy);
+        return img;
+    }
+
+    @Test
+    @DisplayName("Y-1: BAŞKA kullanıcının taslak görseli → 404 (varlığı da sızmaz)")
+    void serveImage_draftOfAnotherUser_404() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.getImage(9L)).thenReturn(draftBy("baska-kullanici"));
+
+        mvc.perform(get("/api/incidents/images/9").session(userSession()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("Y-1: taslağı YÜKLEYEN kullanıcı (harf duyarsız) okur → 200 + baytlar")
+    void serveImage_draftByUploader_200() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.getImage(9L)).thenReturn(draftBy("SRE1"));   // oturum "sre1"
+
+        mvc.perform(get("/api/incidents/images/9").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(new byte[]{7, 8, 9}));
+    }
+
+    @Test
+    @DisplayName("Y-1: global görücü başkasının taslağını okur (davranış korunur)")
+    void serveImage_draft_globalViewer_200() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.getImage(9L)).thenReturn(draftBy("baska-kullanici"));
+
+        mvc.perform(get("/api/incidents/images/9").session(adminSession()))
+                .andExpect(status().isOk());
+    }
+
     private IncidentRecord sample() {
         IncidentRecord e = new IncidentRecord();
         e.setId(1L);

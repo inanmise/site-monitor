@@ -58,15 +58,15 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
   it('durum menüsü facet sayaçlarını gösterir; seçim sunucuya filter_status olarak gider ve çip olur', async () => {
     render(<CertificatesTable onRowClick={() => {}} />)
     await screen.findByText('a.example.com')
-    fireEvent.click(screen.getByTitle(/Duruma göre|Filter by status|süz/i))
-    const menu = document.querySelector('.cf-menu')
-    expect(menu).not.toBeNull()
+    // Durum süzgeci shadcn DropdownMenu (Radix): tetik pointerdown ile açılır, seçenekler menuitemradio
+    pressMenuTrigger(screen.getByTitle(/Duruma göre|Filter by status|süz/i))
+    const menu = await screen.findByRole('menu')
     expect(within(menu).getAllByText('2').length).toBeGreaterThan(0)   // Kritik: 2
-    fireEvent.click(within(menu).getByText(/Kritik|Critical/))
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: /Kritik|Critical/ }))
     await waitFor(() => expect(lastQuery().filter_status).toBe('critical'))
-    expect(document.querySelector('.ct-chip').textContent).toMatch(/Kritik|Critical/)
+    expect(document.querySelector('[data-filter-chip="status"]').textContent).toMatch(/Kritik|Critical/)
     // Çipi kaldır → süzgeç düşer
-    fireEvent.click(document.querySelector('.ct-chip'))
+    fireEvent.click(document.querySelector('[data-filter-chip="status"]'))
     await waitFor(() => expect(lastQuery().filter_status).toBeUndefined())
   })
 
@@ -87,7 +87,7 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     render(<CertificatesTable onRowClick={() => {}} />)
     await waitFor(() => expect(api.getCertificatesPaginated).toHaveBeenCalled())
     expect(lastQuery()).toMatchObject({ filter_status: 'expired', filter_window: '30', filter_team: '5', filter_insecure: 'true', filter_domain: 'q.example.com' })
-    expect(document.querySelectorAll('.ct-chip:not(.ct-chip--clear)')).toHaveLength(5)
+    expect(document.querySelectorAll('[data-filter-chip]:not([data-filter-chip="clear"])')).toHaveLength(5)
   })
 
   it('satır seçimi toplu çubuğu açar; "Şimdi kontrol et" seçili alanları /check ile koşturur ve tazeler', async () => {
@@ -95,14 +95,14 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     const onRefresh = vi.fn()
     render(<CertificatesTable onRowClick={() => {}} onRefresh={onRefresh} />)
     await screen.findByText('a.example.com')
-    expect(document.querySelector('.ct-bulkbar')).toBeNull()
+    expect(document.querySelector('[data-slot="cert-bulk-bar"]')).toBeNull()
     fireEvent.click(within(document.querySelector('tr[data-domain="b.example.com"]')).getByLabelText(/for bulk action|toplu işlem için seç/i))
-    const bar = document.querySelector('.ct-bulkbar')
+    const bar = document.querySelector('[data-slot="cert-bulk-bar"]')
     expect(bar.textContent).toMatch(/1 seçili|1 selected/)
     fireEvent.click(within(bar).getByText(/Şimdi kontrol et|Check now/))
     await waitFor(() => expect(api.checkDomain).toHaveBeenCalledWith('b.example.com'))
     await waitFor(() => expect(onRefresh).toHaveBeenCalled())
-    await waitFor(() => expect(document.querySelector('.ct-bulkbar')).toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-slot="cert-bulk-bar"]')).toBeNull())
   })
 
   it('yönetici: toplu kademe atama alan adı listesiyle /inventory/bulk set-tier çağırır', async () => {
@@ -111,11 +111,11 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     await screen.findByText('a.example.com')
     // Ad artık satırı ayırt ediyor ("Select a.example.com for bulk action").
     fireEvent.click(within(document.querySelector('tr[data-domain="a.example.com"]')).getByLabelText(/for bulk action|toplu işlem için seç/i))
-    const bar = document.querySelector('.ct-bulkbar')
+    const bar = document.querySelector('[data-slot="cert-bulk-bar"]')
     const tierBtn = within(bar).getByText(/Kademe ata|Set tier/)
     expect(tierBtn).toBeDisabled()
     // SearchableSelect: tetiği aç, seçeneğe mousedown
-    const field = tierBtn.closest('.bulkbar-field')
+    const field = tierBtn.closest('[data-bulk-field]')
     fireEvent.mouseDown(field.querySelector('button[role="combobox"]'))   // SearchableSelect mousedown ile açılır
     fireEvent.mouseDown([...document.querySelectorAll('[role="option"]')].find((o) => o.textContent.trim() === 'T2'))
     await waitFor(() => expect(tierBtn).not.toBeDisabled())
@@ -164,11 +164,11 @@ describe('CertificatesTable — zenginleştirme (2026-09-13)', () => {
     fireEvent.change(screen.getByPlaceholderText(/Ön ayar adı|Preset name/), { target: { value: '90 gün' } })
     fireEvent.click(screen.getByText(/^Kaydet$|^Save$/))
     expect(JSON.parse(localStorage.getItem('certtable-presets'))[0]).toMatchObject({ name: '90 gün', filters: { window: '90' } })
-    fireEvent.click(document.querySelector('.ct-chip--clear'))
+    fireEvent.click(document.querySelector('[data-filter-chip="clear"]'))
     await waitFor(() => expect(lastQuery().filter_window).toBeUndefined())
-    // Menü hâlâ açık olabilir (dış tıklama mousedown ister); kapalıysa aç
-    if (!document.querySelector('.ct-preset-apply')) fireEvent.click(screen.getByRole('button', { name: /Ön ayarlar|Presets/ }))
-    fireEvent.click(document.querySelector('.ct-preset-apply'))
+    // Popover hâlâ açık olabilir (dış tıklama pointerdown ister); kapalıysa aç
+    if (!document.querySelector('[data-preset-apply]')) fireEvent.click(screen.getByRole('button', { name: /Ön ayarlar|Presets/ }))
+    fireEvent.click(document.querySelector('[data-preset-apply]'))
     await waitFor(() => expect(lastQuery().filter_window).toBe('90'))
   })
 

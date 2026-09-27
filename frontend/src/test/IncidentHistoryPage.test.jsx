@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 import IncidentHistoryPage from '../components/IncidentHistoryPage.jsx'
 
@@ -76,7 +76,7 @@ describe('IncidentHistoryPage — yetki', () => {
     permMock.allow = false
     render(<IncidentHistoryPage />)
 
-    expect(document.querySelector('.empty-state')).toBeTruthy()
+    expect(document.querySelector('[data-slot="empty"]')).toBeTruthy()
   })
 
   it('yetki false→true dönerse hook sırası bozulmaz (yeniden render çökmez)', async () => {
@@ -84,7 +84,7 @@ describe('IncidentHistoryPage — yetki', () => {
     // hook sayısı değişiyor ve React "Rendered more hooks" ile patlıyordu.
     permMock.allow = false
     const { rerender } = render(<IncidentHistoryPage />)
-    expect(document.querySelector('.empty-state')).toBeTruthy()
+    expect(document.querySelector('[data-slot="empty"]')).toBeTruthy()
 
     permMock.allow = true
     rerender(<IncidentHistoryPage />)
@@ -135,11 +135,12 @@ describe('IncidentHistoryPage — etkileşim', () => {
     render(<IncidentHistoryPage />)
     await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
 
-    const acc = document.querySelector('.inc-summary-acc')
+    // D2 (2026-09-26): projenin tek katlanır şeridi ui/CollapsibleSection (data-slot="stats-toggle")
+    const acc = document.querySelector('[data-slot="stats-toggle"]')
     expect(acc).toBeTruthy()
     const before = acc.getAttribute('aria-expanded')
     await user.click(acc)
-    expect(document.querySelector('.inc-summary-acc').getAttribute('aria-expanded')).not.toBe(before)
+    expect(document.querySelector('[data-slot="stats-toggle"]').getAttribute('aria-expanded')).not.toBe(before)
   })
 
   it('önem filtresi değişince liste yeniden çekilir', async () => {
@@ -148,9 +149,8 @@ describe('IncidentHistoryPage — etkileşim', () => {
     await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
     const firstCalls = api.incidents.list.mock.calls.length
 
-    const selects = [...document.querySelectorAll('select.filter-select')]
-    expect(selects.length).toBeGreaterThan(0)
-    await user.selectOptions(selects[0], 'CRITICAL')
+    const sev = screen.getByRole('combobox', { name: /^(Önem|Severity)$/ })
+    await user.selectOptions(sev, 'CRITICAL')
 
     await waitFor(() => expect(api.incidents.list.mock.calls.length).toBeGreaterThan(firstCalls))
   })
@@ -161,7 +161,7 @@ describe('IncidentHistoryPage — etkileşim', () => {
     await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
     const firstCalls = api.incidents.list.mock.calls.length
 
-    const input = document.querySelector('input.filter-input')
+    const input = screen.getByRole('searchbox')
     expect(input).toBeTruthy()
     await user.type(input, 'ödeme')
 
@@ -173,12 +173,89 @@ describe('IncidentHistoryPage — etkileşim', () => {
     render(<IncidentHistoryPage />)
     await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
 
-    const selects = [...document.querySelectorAll('select.filter-select')]
+    const selects = [...document.querySelectorAll('[data-slot="incident-filters"] select')]
+    expect(selects.length).toBeGreaterThanOrEqual(3)
     for (const sel of selects.slice(0, 3)) {
       const opt = [...sel.options].find(o => o.value)
       if (opt) await user.selectOptions(sel, opt.value)
     }
 
     await waitFor(() => expect(document.body.textContent.length).toBeGreaterThan(0))
+  })
+})
+
+// ── Derin bağlantı regresyonu (2026-09-26, sayfalama standardı) ─────────────
+// `useEffect(() => { setPage(0) }, [effFilters, size])` MOUNT'ta da koşuyordu: `?page=3` ile gelen
+// kullanıcı ilk istekte 3. sayfayı alıyor, hemen ardından 1. sayfaya düşüyor ve useUrlQuerySync
+// param'ı adresten de siliyordu. Artık sıfırlama yalnız süzgeç DEĞERİ değişince.
+describe('IncidentHistoryPage — derin bağlantı sayfası', () => {
+  it('?page=3&ps=25 → ilk ve SONRAKİ istekler page=2 (0-tabanlı), size=25; adres korunur', async () => {
+    window.history.replaceState({}, '', '/?tab=incident-history&page=3&ps=25')
+    api.incidents.list.mockResolvedValue({ success: true, data: INCIDENTS, total: 200, page: 2, size: 25 })
+    render(<IncidentHistoryPage />)
+    await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
+    expect(api.incidents.list.mock.calls[0][0]).toMatchObject({ page: 2, size: 25 })
+    await screen.findByRole('navigation', { name: /Sayfalama|Pagination/ })
+    await new Promise(r => setTimeout(r, 400))   // debounce'lu URL yazımı + olası mount-sıfırlama
+    for (const [args] of api.incidents.list.mock.calls) expect(args).toMatchObject({ page: 2 })
+    expect(screen.getByRole('button', { name: /^(Sayfa|Page) 3$/ })).toHaveAttribute('aria-current', 'page')
+    const q = new URLSearchParams(window.location.search)
+    expect(q.get('page')).toBe('3')
+    expect(q.get('ps')).toBe('25')
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('geçersiz ps (listede yok) yok sayılır; sayfa 99 toplam gelince son sayfaya çekilir', async () => {
+    window.history.replaceState({}, '', '/?page=99&ps=33')
+    api.incidents.list.mockResolvedValue({ success: true, data: INCIDENTS, total: 120, page: 0, size: 50 })
+    render(<IncidentHistoryPage />)
+    await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
+    expect(api.incidents.list.mock.calls[0][0]).toMatchObject({ page: 98, size: 50 })
+    await waitFor(() => expect(api.incidents.list).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, size: 50 })))
+    window.history.replaceState({}, '', '/')
+  })
+})
+
+describe('IncidentHistoryPage — shadcn (D2, 2026-09-26)', () => {
+  it('özet açılınca 14 MonitorStatsBar kartı; "Kritik" kartı severity=CRITICAL süzer ve aria-pressed olur', async () => {
+    api.incidents.trends.mockResolvedValue({ success: true, data: { summary: { total: 5, critical: 2 }, by_severity: { HIGH: 1 }, by_status: {}, daily: [] } })
+    render(<IncidentHistoryPage />)
+    await waitFor(() => expect(api.incidents.list).toHaveBeenCalled())
+    fireEvent.click(document.querySelector('[data-slot="stats-toggle"]'))
+    const cards = await waitFor(() => {
+      const c = document.querySelectorAll('[data-slot="stat-item"]')
+      expect(c).toHaveLength(14)
+      return c
+    })
+    const crit = [...cards].find(c => c.getAttribute('data-tone') === 'critical')
+    expect(crit).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(crit)
+    await waitFor(() => expect(api.incidents.list).toHaveBeenLastCalledWith(expect.objectContaining({ severity: 'CRITICAL' })))
+    expect([...document.querySelectorAll('[data-slot="stat-item"]')].find(c => c.getAttribute('data-tone') === 'critical'))
+      .toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('satır Enter ile ayrıntı penceresini (ModalShell, role=dialog) açar; toplu seçim kutusunun adı satırı ayırır', async () => {
+    render(<IncidentHistoryPage />)
+    await waitFor(() => expect(document.body.textContent).toContain('Ödeme servisi kesintisi'))
+    expect(screen.getByRole('checkbox', { name: /Ödeme servisi kesintisi/ })).toBeInTheDocument()
+    const row = screen.getByRole('row', { name: /Ödeme servisi kesintisi/ })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByRole('textbox', { name: /Başlık|Title/ })).toHaveValue('Ödeme servisi kesintisi')
+    expect(within(dlg).getByRole('textbox', { name: /Başlık|Title/ })).toBeDisabled()
+  })
+
+  it('telefonda (390 px) kart listesi — tablo yok, düzenle düğmesi satırı adıyla ayırır', async () => {
+    const w = window.innerWidth
+    window.innerWidth = 390
+    try {
+      render(<IncidentHistoryPage />)
+      await waitFor(() => expect(document.body.textContent).toContain('Ödeme servisi kesintisi'))
+      expect(document.querySelector('table')).toBeNull()
+      expect(screen.getByRole('button', { name: /^Ödeme servisi kesintisi — (Düzenle|Edit)$/ })).toHaveAttribute('data-size', 'icon')
+    } finally {
+      window.innerWidth = w
+    }
   })
 })

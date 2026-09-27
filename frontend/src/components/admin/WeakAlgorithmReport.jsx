@@ -2,16 +2,26 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, formatDate, formatDateSec, formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import {
-  AlertTriangle, ShieldAlert, ShieldCheck, RefreshCw, Download, ChevronDown, Bell, BellRing,
+  AlertTriangle, ShieldAlert, ShieldCheck, RefreshCw, Download, Bell, BellRing,
   ClipboardCheck, ClipboardX, ScanSearch, Lock, Link2, Users, TrendingUp, CalendarClock, ListChecks, BarChart3,
 } from 'lucide-react'
 import { LoadingBlock, Spinner, ProgressBar } from '../ui/Progress.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
+import Field from '../ui/Field.jsx'
+import CollapsibleSection from '../ui/CollapsibleSection.jsx'
+import { DateTimePopover } from '../ui/DatePickerParts.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
+import ToneBadge from './ToneBadge.jsx'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Textarea } from '@/components/shadcn/textarea'
+import { Table as UiTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /**
  * Zayıf Algoritma Raporu — zengin sürüm (2026-09-12, kullanıcı: "sayfa çok uzun süredir boş; neyi
@@ -29,43 +39,82 @@ const RULE_ORDER = ['sig.md5', 'sig.sha1', 'key.rsa1024', 'key.rsa2048', 'key.ec
   'tls.legacy', 'cipher.weak', 'cipher.cbc', 'pfs.none', 'chain.broken', 'trust.untrusted',
   'revocation.revoked', 'revocation.nourl', 'intermediate.expiring']
 
-const SEV_CLASS = { CRITICAL: 'wa-sev-critical', HIGH: 'wa-sev-high', MEDIUM: 'wa-sev-medium' }
+/** Önem rozeti dolguları — AlertHistory / AlertThresholds ile aynı önem jetonları. */
+const SEV_BG = {
+  CRITICAL: 'bg-(--severity-critical) text-white',
+  HIGH: 'bg-(--severity-high) text-white',
+  MEDIUM: 'bg-(--severity-warn) text-white',
+}
 
 function SeverityBadge({ severity }) {
-  return <span className={`wa-severity ${SEV_CLASS[severity] || 'wa-sev-medium'}`}>{severity}</span>
+  return (
+    <Badge data-severity={severity} className={cn('rounded-sm border-transparent px-1.5 text-[0.72em] font-bold tracking-wide', SEV_BG[severity] || SEV_BG.MEDIUM)}>
+      {severity}
+    </Badge>
+  )
 }
 
 function StatusBadge({ status }) {
   const t = useT()
-  if (!status) return <span className="wa-status-unknown">—</span>
-  const cls = status === 'error' ? 'wa-status-error'
-            : status === 'ok' || status === 'valid' ? 'wa-status-ok'
-            : 'wa-status-warn'
-  return <span className={`wa-status ${cls}`} title={t('wa.statusTip')}>{status.toUpperCase()}</span>
+  if (!status) return <span className="text-muted-foreground">—</span>
+  const tone = status === 'error' ? 'danger' : status === 'ok' || status === 'valid' ? 'success' : 'warning'
+  return <ToneBadge tone={tone} title={t('wa.statusTip')} className="font-bold">{status.toUpperCase()}</ToneBadge>
 }
 
-/** Katlanır bölüm — başlık düğmesi aria-expanded; sayaç rozeti başlıkta. */
-function Section({ id, icon: Icon, title, count, tone, open, onToggle, children, hint }) {
+/** Sayaç rozeti tonları (bölüm başlığı). */
+const COUNT_TONE = { ok: 'success', bad: 'danger', warn: 'warning' }
+
+/**
+ * Katlanır bölüm — ortak ui/CollapsibleSection (shadcn Collapsible; tetik aria-expanded, içerik kapalıyken DOM'da
+ * yok). Sayaç rozeti başlıkta; ipucu kapalıyken yanında, telefonda alt satırda SARAR (eski `.wa-sec-hint` dar
+ * ekranda sağa taşıyordu — responsive kapısında `weakalgo@phone/tablet` bilinen taşmaydı).
+ */
+function Section({ id, icon, title, count, tone, open, onToggle, children, hint }) {
   return (
-    <section className={`wa-sec${open ? ' is-open' : ''}`} data-sec={id}>
-      <button type="button" className="wa-sec-head" aria-expanded={open} aria-controls={`wa-sec-${id}`} onClick={onToggle}>
-        <ChevronDown size={16} className={`wa-sec-chevron${open ? ' is-open' : ''}`} aria-hidden="true" />
-        {Icon && <Icon size={16} aria-hidden="true" />}
-        <span className="wa-sec-title">{title}</span>
-        {count != null && <span className={`wa-sec-count${tone ? ` wa-sec-count--${tone}` : ''}`}>{count}</span>}
-        {hint && <span className="wa-sec-hint">{hint}</span>}
-      </button>
-      {open && <div className="wa-sec-body" id={`wa-sec-${id}`}>{children}</div>}
-    </section>
+    <CollapsibleSection data-sec={id} open={open} onOpenChange={onToggle} icon={icon} hint={hint}
+      label={<>{title}{count != null && (
+        <ToneBadge tone={COUNT_TONE[tone] || 'muted'} className="ml-2 rounded-full align-middle font-bold tabular-nums">{count}</ToneBadge>
+      )}</>}
+      // shadcn Button `whitespace-nowrap` taşır → uzun başlık/ipucu telefonda sarmayıp taşıyordu; başlık span'ı
+      // telefonda kalan genişliği alır (yoksa flex-wrap ikonu ve oku ayrı satırlara iterdi)
+      triggerClassName="whitespace-normal [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-[1_1_0%] sm:[&>span:first-of-type]:flex-initial" contentClassName="pt-2.5">
+      {children}
+    </CollapsibleSection>
   )
 }
 
+/** Bulgu kural çipi (amber). */
+function RuleChip({ children, title }) {
+  return <ToneBadge tone="warning" title={title} className="mb-0.5 block w-fit max-w-full font-semibold whitespace-normal">{children}</ToneBadge>
+}
+function Sub({ className, children }) {
+  return <div className={cn('text-xs text-muted-foreground', className)}>{children}</div>
+}
+function Num({ bad }) {
+  return <b className={bad > 0 ? 'text-destructive' : 'text-success'}>{bad}</b>
+}
+
+/** Bulgu tablosu kabuğu — shadcn Table (kendi içinde yatay kayar), başlık hücreleri tek tip. */
+function Grid({ head, children, testId }) {
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <UiTable data-testid={testId} className="text-[0.86em]">
+        <TableHeader className="bg-muted/50">
+          <TableRow>{head.map((h, i) => <TableHead key={i} className="text-[0.9em] font-bold text-muted-foreground">{h}</TableHead>)}</TableRow>
+        </TableHeader>
+        <TableBody>{children}</TableBody>
+      </UiTable>
+    </div>
+  )
+}
+
+const KPI_VAL = { ok: 'text-success', bad: 'text-destructive', warn: 'text-amber-600 dark:text-amber-400' }
 function Kpi({ label, value, sub, tone }) {
   return (
-    <div className={`wa-kpi${tone ? ` wa-kpi--${tone}` : ''}`}>
-      <span className="wa-kpi-label">{label}</span>
-      <span className="wa-kpi-value">{value}</span>
-      {sub && <span className="wa-kpi-sub">{sub}</span>}
+    <div data-kpi="" data-tone={tone} className="flex min-w-0 flex-col gap-0.5 rounded-[10px] border bg-card px-3 py-2.5">
+      <span data-kpi-label="" className="text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase">{label}</span>
+      <span data-kpi-value="" className={cn('text-[1.5em] leading-tight font-extrabold tabular-nums', KPI_VAL[tone])}>{value}</span>
+      {sub && <span data-kpi-sub="" className="text-[0.74em] text-muted-foreground">{sub}</span>}
     </div>
   )
 }
@@ -75,14 +124,14 @@ function Bars({ items, title }) {
   const t = useT()
   const max = Math.max(1, ...items.map(i => i.count))
   return (
-    <div className="wa-bars">
-      <div className="wa-bars-title">{title}</div>
-      {items.length === 0 && <div className="wa-muted">{t('wa.noData')}</div>}
+    <div className="flex min-w-0 flex-col gap-1.5 rounded-[10px] border bg-card px-3 py-2.5">
+      <div className="text-[0.8em] font-bold tracking-wide text-muted-foreground uppercase">{title}</div>
+      {items.length === 0 && <div className="text-sm text-muted-foreground">{t('wa.noData')}</div>}
       {items.map(i => (
-        <div key={i.label} className="wa-bar-row" title={`${i.label}: ${i.count}`}>
-          <span className="wa-bar-label wa-mono">{i.label}</span>
-          <ProgressBar value={i.count} max={max} size="sm" decorative className="wa-bar-fill" />
-          <b className="wa-bar-count">{i.count}</b>
+        <div key={i.label} className="grid grid-cols-[minmax(0,1fr)_minmax(60px,1fr)_auto] items-center gap-2 text-[0.84em]">
+          <span className="truncate font-mono">{i.label}</span>
+          <ProgressBar value={i.count} max={max} size="sm" decorative />
+          <b className="tabular-nums">{i.count}</b>
         </div>
       ))}
     </div>
@@ -96,21 +145,29 @@ function TrendChart({ series }) {
   const W = 600, H = 90, pad = 4
   const bw = (W - pad * 2) / Math.max(1, series.length)
   return (
-    <svg className="wa-trend" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t('wa.trendAria')} preserveAspectRatio="none">
+    <svg className="block h-[90px] w-full" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t('wa.trendAria')} preserveAspectRatio="none">
       {series.map((s, i) => {
         const h = Math.round((H - pad * 2) * s.weak / max)
         return (
           <g key={s.day}>
             <title>{`${s.day}: ${s.weak}`}</title>
-            <rect x={pad + i * bw + 1} y={H - pad - h} width={Math.max(1, bw - 2)} height={h}
-              className={s.weak > 0 ? 'wa-trend-bar wa-trend-bar--weak' : 'wa-trend-bar'} />
+            <rect x={pad + i * bw + 1} y={H - pad - h} width={Math.max(1, bw - 2)} height={h} data-trend-bar={s.weak > 0 ? 'weak' : 'ok'}
+              className={s.weak > 0 ? 'fill-destructive' : 'fill-muted'} />
           </g>
         )
       })}
-      <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} className="wa-trend-axis" />
+      <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} className="stroke-border" />
     </svg>
   )
 }
+
+/** yyyy-MM-dd ↔ yerel takvim günü (saat dilimi kayması yok — istisna bitişi bir GÜNDÜR). */
+const pad2 = (n) => String(n).padStart(2, '0')
+const parseDay = (v) => {
+  const [y, m, d] = String(v || '').slice(0, 10).split('-').map(Number)
+  return y && m && d ? new Date(y, m - 1, d) : null
+}
+const toDay = (d) => (d ? `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}` : '')
 
 function ExceptionModal({ domain, existing, onClose, onSaved }) {
   const t = useT()
@@ -133,19 +190,22 @@ function ExceptionModal({ domain, existing, onClose, onSaved }) {
     <ModalShell open onClose={onClose} title={t('wa.exceptionTitle', domain)} icon={ClipboardCheck} size="sm" busy={saving}
       footer={<>
         <Button type="button" variant="secondary" onClick={onClose} disabled={saving}>{t('app.cancel')}</Button>
-        <Button type="button" onClick={save} disabled={saving || !until}>
+        <Button type="button" onClick={save} disabled={saving || !until} aria-busy={saving || undefined}>
           {saving ? <Spinner size={14} inline decorative /> : <ClipboardCheck size={14} />} {t('wa.exceptionSave')}
         </Button>
       </>}>
-      <p className="wa-banner-info">{t('wa.exceptionHelp')}</p>
-      <label className="wa-field">
-        {t('wa.exceptionUntil')}
-        <input type="date" className="input" value={until} onChange={e => setUntil(e.target.value)} required />
-      </label>
-      <label className="wa-field">
-        {t('wa.exceptionReason')}
-        <textarea className="input" rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder={t('wa.exceptionReasonPh')} />
-      </label>
+      <p className="mb-3 text-sm text-muted-foreground">{t('wa.exceptionHelp')}</p>
+      {/* Bitiş günü (zorunlu): shadcn Date Picker deseni (Popover + Calendar); alan etiketi tetiğin İÇİNDE,
+          dolayısıyla düğmenin erişilebilir adı "Geçerlilik sonu 31.12.2026" olur. */}
+      <div className="mb-3.5">
+        <DateTimePopover withTime={false} label={t('wa.exceptionUntil')} value={parseDay(until)}
+          onChange={(d) => setUntil(toDay(d))} placeholder="—" />
+      </div>
+      <Field label={t('wa.exceptionReason')} className="mb-0">
+        {({ id }) => (
+          <Textarea id={id} rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder={t('wa.exceptionReasonPh')} />
+        )}
+      </Field>
     </ModalShell>
   )
 }
@@ -237,63 +297,71 @@ export default function WeakAlgorithmReport() {
     return [...list].sort((a, b) => RULE_ORDER.indexOf(a.key) - RULE_ORDER.indexOf(b.key))
   }, [data])
 
-  if (loading && !data) return <LoadingBlock label={t('wa.loading')} className="wa-loading" />
+  if (loading && !data) return <LoadingBlock label={t('wa.loading')} />
   if (error && !data) {
     return (
-      <div className="wa-empty" role="alert">
-        <ShieldAlert size={40} style={{ marginBottom: 12, opacity: .4 }} />
-        <p>{error}</p>
-        <Button type="button" variant="secondary" onClick={load}><RefreshCw size={14} /> {t('wa.retry')}</Button>
+      <StatusBlock tone="danger" icon={ShieldAlert} role="alert" title={error}
+        actions={<Button type="button" variant="secondary" onClick={load}><RefreshCw size={14} /> {t('wa.retry')}</Button>} />
+    )
+  }
+
+  /** Eylem hücresi — kontrol et / bildir / istisna (yalnız manage yetkisinde). Düğme adları SATIRI (alanı) içerir. */
+  // DİKKAT: bunlar bileşen DEĞİL, çağrılan işlevler — render içinde tanımlanan bir bileşen her çizimde yeni
+  // tür olur ve React tüm alt ağacı söküp yeniden kurar (satır referansları, odak kaybolur).
+  const actions = (row) => {
+    const name = (label) => t('a11y.rowAction', label, row.domain)
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        <Button type="button" variant="secondary" size="sm" onClick={() => checkNow(row.domain)}
+          disabled={!!busy[row.domain]} aria-busy={busy[row.domain] === 'check' || undefined} aria-label={name(t('wa.actCheck'))}>
+          {busy[row.domain] === 'check' ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />} {t('wa.actCheck')}
+        </Button>
+        {canManage && (
+          <>
+            <Button type="button" variant="secondary" size="sm" onClick={() => notify(row)}
+              disabled={!!busy[row.domain] || !row.team_id} aria-busy={busy[row.domain] === 'notify' || undefined}
+              aria-label={name(row.team_id ? t('wa.actNotify') : `${t('wa.actNotify')} (${t('wa.noTeam')})`)}>
+              {busy[row.domain] === 'notify' ? <Spinner size={13} inline decorative /> : <BellRing size={13} />} {t('wa.actNotify')}
+            </Button>
+            {row.exception
+              ? <Button type="button" variant="secondary" size="sm" onClick={() => clearException(row.domain)} aria-label={name(t('wa.exceptionClear'))}>
+                  <ClipboardX size={13} /> {t('wa.exceptionClear')}
+                </Button>
+              : <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: row.domain, existing: null })} aria-label={name(t('wa.actException'))}>
+                  <ClipboardCheck size={13} /> {t('wa.actException')}
+                </Button>}
+          </>
+        )}
       </div>
     )
   }
 
-  /** Eylem hücresi — kontrol et / bildir / istisna (yalnız manage yetkisinde). */
-  const Actions = ({ row }) => (
-    <div className="wa-actions">
-      <Button type="button" variant="secondary" size="sm" onClick={() => checkNow(row.domain)}
-        disabled={!!busy[row.domain]} title={t('wa.actCheck')}>
-        {busy[row.domain] === 'check' ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />} {t('wa.actCheck')}
-      </Button>
-      {canManage && (
-        <>
-          <Button type="button" variant="secondary" size="sm" onClick={() => notify(row)}
-            disabled={!!busy[row.domain] || !row.team_id} title={row.team_id ? t('wa.actNotify') : t('wa.noTeam')}>
-            {busy[row.domain] === 'notify' ? <Spinner size={13} inline decorative /> : <BellRing size={13} />} {t('wa.actNotify')}
-          </Button>
-          {row.exception
-            ? <Button type="button" variant="secondary" size="sm" onClick={() => clearException(row.domain)} title={t('wa.exceptionClear')}>
-                <ClipboardX size={13} /> {t('wa.exceptionClear')}
-              </Button>
-            : <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: row.domain, existing: null })} title={t('wa.actException')}>
-                <ClipboardCheck size={13} /> {t('wa.actException')}
-              </Button>}
-        </>
-      )}
-    </div>
-  )
-
-  const ExceptionChip = ({ ex }) => ex ? (
-    <span className={`wa-exception-chip${ex.expired ? ' is-expired' : ''}`} title={ex.reason || ''}>
+  const exceptionChip = (ex) => ex ? (
+    <ToneBadge tone={ex.expired ? 'danger' : 'info'} data-expired={ex.expired ? 'true' : undefined} title={ex.reason || undefined} className="ml-1.5 align-middle">
       {ex.expired ? t('wa.exceptionExpired', formatDateOnly(ex.until)) : t('wa.exceptionUntilChip', formatDateOnly(ex.until))}
-    </span>
+    </ToneBadge>
   ) : null
 
-  const TeamCell = ({ row }) => row.team_name
+  const teamCell = (row) => row.team_name
     ? <TeamBadge teamId={row.team_id} teamName={row.team_name} />
-    : <span className="wa-muted">{t('wa.noTeam')}</span>
+    : <span className="text-muted-foreground">{t('wa.noTeam')}</span>
+
+  const TD = 'align-top whitespace-normal'
+  const DOMAIN = 'min-w-[160px] align-top font-semibold break-all whitespace-normal'
+  const MONO = 'min-w-[90px] align-top font-mono text-[0.92em] whitespace-normal break-words'
+  const empty = (text) => <p className="text-sm text-muted-foreground">{text}</p>
 
   return (
-    <div className="wa-root">
+    <div className="flex min-w-0 flex-col gap-4" data-testid="weak-algo">
       {/* ── Araç çubuğu ── */}
-      <div className="wa-toolbar">
-        <div className="wa-toolbar-meta">
-          <ScanSearch size={16} aria-hidden="true" />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+          <ScanSearch size={16} aria-hidden="true" className="shrink-0 text-muted-foreground" />
           <span>{t('wa.generatedAt', scan.generated_at ? formatDateSec(scan.generated_at) : '—')}</span>
-          <span className="wa-muted">· {t('wa.latestCheck', scan.latest_checked_at ? formatDateSec(scan.latest_checked_at) : '—')}</span>
+          <span className="text-muted-foreground">· {t('wa.latestCheck', scan.latest_checked_at ? formatDateSec(scan.latest_checked_at) : '—')}</span>
         </div>
-        <div className="wa-toolbar-actions">
-          <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading}>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={load} disabled={loading} aria-busy={loading || undefined}>
             {loading ? <Spinner size={13} inline decorative /> : <RefreshCw size={13} />} {t('wa.refresh')}
           </Button>
           <Button type="button" variant="secondary" size="sm" onClick={exportCsv}>
@@ -302,8 +370,8 @@ export default function WeakAlgorithmReport() {
         </div>
       </div>
 
-      {/* ── 1. Tarama özeti ── */}
-      <div className="wa-kpis" role="group" aria-label={t('wa.scanTitle')}>
+      {/* ── 1. Tarama özeti ── telefonda 2'li ızgara */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(150px,1fr))]" role="group" aria-label={t('wa.scanTitle')}>
         <Kpi label={t('wa.kpiActive')} value={scan.active_domains ?? 0} sub={t('wa.kpiActiveSub')} />
         <Kpi label={t('wa.kpiChecked24h')} value={scan.checked_24h ?? 0} sub={t('wa.kpiCheckedSub', scan.checked ?? 0)} />
         <Kpi label={t('wa.kpiUnchecked')} value={(scan.never_checked ?? 0) + (scan.error ?? 0)}
@@ -317,139 +385,110 @@ export default function WeakAlgorithmReport() {
 
       {/* ── Hüküm bandı ── */}
       {clean ? (
-        <div className="wa-banner wa-banner--clean">
-          <div className="wa-banner-left"><ShieldCheck size={20} /><span>{t('wa.cleanTitle', scan.checked ?? 0)}</span></div>
-          <span className="wa-banner-sub">{t('wa.cleanSub', rulesSorted.length)}</span>
-        </div>
+        <AlertBanner tone="success" icon={ShieldCheck} title={t('wa.cleanTitle', scan.checked ?? 0)} className="mb-0">
+          {t('wa.cleanSub', rulesSorted.length)}
+        </AlertBanner>
       ) : (
-        <div className="wa-banner">
-          <div className="wa-banner-left"><AlertTriangle size={20} /><span>{t('wa.totalWeak', rows.length)}</span></div>
-          <div className="wa-banner-badges">
-            {data.critical > 0 && <span className="wa-banner-badge critical">{t('wa.bannerCritical', data.critical)}</span>}
-            {data.high > 0 && <span className="wa-banner-badge high">{t('wa.bannerHigh', data.high)}</span>}
-            {tlsRows.length > 0 && <span className="wa-banner-badge tls">{t('wa.bannerTls', tlsRows.length)}</span>}
-            {chainRows.length > 0 && <span className="wa-banner-badge chain">{t('wa.bannerChain', chainRows.length)}</span>}
-          </div>
-        </div>
+        <AlertBanner tone="warning" icon={AlertTriangle} title={t('wa.totalWeak', rows.length)} className="mb-0">
+          <span className="mt-1 flex flex-wrap gap-1.5">
+            {data.critical > 0 && <Badge className={SEV_BG.CRITICAL}>{t('wa.bannerCritical', data.critical)}</Badge>}
+            {data.high > 0 && <Badge className={SEV_BG.HIGH}>{t('wa.bannerHigh', data.high)}</Badge>}
+            {tlsRows.length > 0 && <Badge className="bg-violet-600 text-white">{t('wa.bannerTls', tlsRows.length)}</Badge>}
+            {chainRows.length > 0 && <Badge className="bg-sky-700 text-white">{t('wa.bannerChain', chainRows.length)}</Badge>}
+          </span>
+          <span className="mt-1.5 block text-xs opacity-90">{t('wa.bannerInfo')}</span>
+        </AlertBanner>
       )}
-      {!clean && <p className="wa-banner-info">{t('wa.bannerInfo')}</p>}
 
       {/* ── 9. Sertifika algoritması bulguları + eylemler ── */}
       <Section id="cert" icon={Lock} title={t('wa.secCert')} count={rows.length} tone={rows.length ? 'bad' : 'ok'} open={open.cert} onToggle={() => toggle('cert')}>
-        {rows.length === 0 ? <p className="wa-muted">{t('wa.empty')}</p> : (
-          <div className="wa-table-wrap">
-            <table className="wa-table">
-              <thead><tr>
-                <th>{t('wa.colSeverity')}</th><th>{t('wa.colDomain')}</th><th>{t('wa.colOwner')}</th><th>{t('wa.colTeam')}</th>
-                <th>{t('wa.colSigAlgo')}</th><th>{t('wa.colKeyAlgo')}</th><th>{t('wa.colWeakness')}</th><th>{t('wa.colExpiry')}</th>
-                <th>{t('wa.colStatus')}</th><th>{t('wa.colActions')}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map(row => (
-                  <tr key={row.domain} className={`wa-row wa-row-${(row.severity || '').toLowerCase()}${row.exception && !row.exception.expired ? ' wa-row--excepted' : ''}`}>
-                    <td><SeverityBadge severity={row.severity} /></td>
-                    <td className="wa-cell-domain">{row.domain}<ExceptionChip ex={row.exception} /></td>
-                    <td>
-                      {row.owner && <div>{row.owner}</div>}
-                      {row.description && <div className="wa-sub">{row.description}</div>}
-                      {!row.owner && !row.description && <span className="wa-muted">{t('wa.noOwner')}</span>}
-                    </td>
-                    <td><TeamCell row={row} />{row.team_email && <div className="wa-sub">{row.team_email}</div>}</td>
-                    <td className="wa-mono">{row.signature_algorithm || '—'}</td>
-                    <td className="wa-mono">{row.public_key_algorithm || '—'}{row.public_key_size && <span className="wa-sub">{row.public_key_size} bit</span>}</td>
-                    <td>{(row.weaknesses || []).map((w, i) => <div key={i} className="wa-weakness-chip">{w}</div>)}</td>
-                    <td>
-                      <div>{row.not_after ? formatDate(row.not_after) : '—'}</div>
-                      {row.days_remaining != null && (
-                        <div className={`wa-sub ${row.days_remaining < 0 ? 'wa-expired' : row.days_remaining <= 30 ? 'wa-expiring' : ''}`}>
-                          {row.days_remaining < 0 ? t('wa.daysPast', Math.abs(row.days_remaining)) : t('wa.daysLeft', row.days_remaining)}
-                        </div>
-                      )}
-                    </td>
-                    <td><StatusBadge status={row.status} /></td>
-                    <td><Actions row={row} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {rows.length === 0 ? empty(t('wa.empty')) : (
+          <Grid testId="wa-cert" head={[t('wa.colSeverity'), t('wa.colDomain'), t('wa.colOwner'), t('wa.colTeam'), t('wa.colSigAlgo'), t('wa.colKeyAlgo'), t('wa.colWeakness'), t('wa.colExpiry'), t('wa.colStatus'), t('wa.colActions')]}>
+            {rows.map(row => (
+              <TableRow key={row.domain} data-severity={row.severity} data-excepted={row.exception && !row.exception.expired ? 'true' : undefined}
+                className="data-[excepted]:opacity-70">
+                <TableCell className={TD}><SeverityBadge severity={row.severity} /></TableCell>
+                <TableCell className={DOMAIN}>{row.domain}{exceptionChip(row.exception)}</TableCell>
+                <TableCell className={TD}>
+                  {row.owner && <div>{row.owner}</div>}
+                  {row.description && <Sub>{row.description}</Sub>}
+                  {!row.owner && !row.description && <span className="text-muted-foreground">{t('wa.noOwner')}</span>}
+                </TableCell>
+                <TableCell className={TD}>{teamCell(row)}{row.team_email && <Sub className="break-all">{row.team_email}</Sub>}</TableCell>
+                <TableCell className={MONO}>{row.signature_algorithm || '—'}</TableCell>
+                <TableCell className={MONO}>{row.public_key_algorithm || '—'}{row.public_key_size && <Sub>{row.public_key_size} bit</Sub>}</TableCell>
+                <TableCell className={TD}>{(row.weaknesses || []).map((w, i) => <RuleChip key={i}>{w}</RuleChip>)}</TableCell>
+                <TableCell className={TD}>
+                  <div>{row.not_after ? formatDate(row.not_after) : '—'}</div>
+                  {row.days_remaining != null && (
+                    <Sub className={row.days_remaining < 0 ? 'font-semibold text-destructive' : row.days_remaining <= 30 ? 'font-semibold text-amber-600 dark:text-amber-400' : ''}>
+                      {row.days_remaining < 0 ? t('wa.daysPast', Math.abs(row.days_remaining)) : t('wa.daysLeft', row.days_remaining)}
+                    </Sub>
+                  )}
+                </TableCell>
+                <TableCell className={TD}><StatusBadge status={row.status} /></TableCell>
+                <TableCell className={TD}>{actions(row)}</TableCell>
+              </TableRow>
+            ))}
+          </Grid>
         )}
       </Section>
 
       {/* ── 5. TLS / şifre bulguları ── */}
       <Section id="tls" icon={ShieldAlert} title={t('wa.secTls')} count={tlsRows.length} tone={tlsRows.length ? 'bad' : 'ok'} open={open.tls} onToggle={() => toggle('tls')} hint={t('wa.secTlsHint')}>
-        {tlsRows.length === 0 ? <p className="wa-muted">{t('wa.tlsEmpty')}</p> : (
-          <div className="wa-table-wrap">
-            <table className="wa-table">
-              <thead><tr>
-                <th>{t('wa.colSeverity')}</th><th>{t('wa.colDomain')}</th><th>{t('wa.colTeam')}</th><th>{t('wa.colTls')}</th><th>{t('wa.colCipher')}</th><th>{t('wa.colFindings')}</th><th>{t('wa.colActions')}</th>
-              </tr></thead>
-              <tbody>
-                {tlsRows.map(row => (
-                  <tr key={row.domain} className={`wa-row wa-row-${(row.severity || '').toLowerCase()}`}>
-                    <td><SeverityBadge severity={row.severity} /></td>
-                    <td className="wa-cell-domain">{row.domain}<ExceptionChip ex={row.exception} /></td>
-                    <td><TeamCell row={row} /></td>
-                    <td className="wa-mono">{row.tls_version || '—'}</td>
-                    <td className="wa-mono">{row.cipher_suite || '—'}</td>
-                    <td>{(row.findings || []).map(k => <div key={k} className="wa-weakness-chip" title={t(`wa.ruleDesc.${k}`)}>{ruleLabel(k)}</div>)}</td>
-                    <td><Actions row={row} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {tlsRows.length === 0 ? empty(t('wa.tlsEmpty')) : (
+          <Grid testId="wa-tls" head={[t('wa.colSeverity'), t('wa.colDomain'), t('wa.colTeam'), t('wa.colTls'), t('wa.colCipher'), t('wa.colFindings'), t('wa.colActions')]}>
+            {tlsRows.map(row => (
+              <TableRow key={row.domain} data-severity={row.severity}>
+                <TableCell className={TD}><SeverityBadge severity={row.severity} /></TableCell>
+                <TableCell className={DOMAIN}>{row.domain}{exceptionChip(row.exception)}</TableCell>
+                <TableCell className={TD}>{teamCell(row)}</TableCell>
+                <TableCell className={MONO}>{row.tls_version || '—'}</TableCell>
+                <TableCell className={MONO}>{row.cipher_suite || '—'}</TableCell>
+                <TableCell className={TD}>{(row.findings || []).map(k => <RuleChip key={k} title={t(`wa.ruleDesc.${k}`)}>{ruleLabel(k)}</RuleChip>)}</TableCell>
+                <TableCell className={TD}>{actions(row)}</TableCell>
+              </TableRow>
+            ))}
+          </Grid>
         )}
       </Section>
 
       {/* ── 6. Zincir / güven bulguları ── */}
       <Section id="chain" icon={Link2} title={t('wa.secChain')} count={chainRows.length} tone={chainRows.length ? 'bad' : 'ok'} open={open.chain} onToggle={() => toggle('chain')} hint={t('wa.secChainHint')}>
-        {chainRows.length === 0 ? <p className="wa-muted">{t('wa.chainEmpty')}</p> : (
-          <div className="wa-table-wrap">
-            <table className="wa-table">
-              <thead><tr>
-                <th>{t('wa.colSeverity')}</th><th>{t('wa.colDomain')}</th><th>{t('wa.colTeam')}</th><th>{t('wa.colIssuer')}</th><th>{t('wa.colFindings')}</th><th>{t('wa.colIntermediate')}</th><th>{t('wa.colActions')}</th>
-              </tr></thead>
-              <tbody>
-                {chainRows.map(row => (
-                  <tr key={row.domain} className={`wa-row wa-row-${(row.severity || '').toLowerCase()}`}>
-                    <td><SeverityBadge severity={row.severity} /></td>
-                    <td className="wa-cell-domain">{row.domain}<ExceptionChip ex={row.exception} /></td>
-                    <td><TeamCell row={row} /></td>
-                    <td className="wa-mono">{row.issuer || '—'}</td>
-                    <td>{(row.findings || []).map(k => <div key={k} className="wa-weakness-chip" title={t(`wa.ruleDesc.${k}`)}>{ruleLabel(k)}</div>)}</td>
-                    <td>{row.intermediate_days != null ? t('wa.daysLeft', row.intermediate_days) : '—'}</td>
-                    <td><Actions row={row} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {chainRows.length === 0 ? empty(t('wa.chainEmpty')) : (
+          <Grid testId="wa-chain" head={[t('wa.colSeverity'), t('wa.colDomain'), t('wa.colTeam'), t('wa.colIssuer'), t('wa.colFindings'), t('wa.colIntermediate'), t('wa.colActions')]}>
+            {chainRows.map(row => (
+              <TableRow key={row.domain} data-severity={row.severity}>
+                <TableCell className={TD}><SeverityBadge severity={row.severity} /></TableCell>
+                <TableCell className={DOMAIN}>{row.domain}{exceptionChip(row.exception)}</TableCell>
+                <TableCell className={TD}>{teamCell(row)}</TableCell>
+                <TableCell className={MONO}>{row.issuer || '—'}</TableCell>
+                <TableCell className={TD}>{(row.findings || []).map(k => <RuleChip key={k} title={t(`wa.ruleDesc.${k}`)}>{ruleLabel(k)}</RuleChip>)}</TableCell>
+                <TableCell className={TD}>{row.intermediate_days != null ? t('wa.daysLeft', row.intermediate_days) : '—'}</TableCell>
+                <TableCell className={TD}>{actions(row)}</TableCell>
+              </TableRow>
+            ))}
+          </Grid>
         )}
       </Section>
 
       {/* ── 2. Kural kataloğu ── */}
       <Section id="rules" icon={ListChecks} title={t('wa.secRules')} count={rulesSorted.length} open={open.rules} onToggle={() => toggle('rules')} hint={t('wa.secRulesHint')}>
-        <div className="wa-table-wrap">
-          <table className="wa-table wa-table--rules">
-            <thead><tr><th>{t('wa.colRule')}</th><th>{t('wa.colRuleDesc')}</th><th>{t('wa.colSeverity')}</th><th>{t('wa.colMatched')}</th></tr></thead>
-            <tbody>
-              {rulesSorted.map(r => (
-                <tr key={r.key} className={r.matched > 0 ? 'wa-rule--hit' : ''}>
-                  <td className="wa-cell-domain">{ruleLabel(r.key)}</td>
-                  <td className="wa-sub">{t(`wa.ruleDesc.${r.key}`)}</td>
-                  <td><SeverityBadge severity={r.severity} /></td>
-                  <td><b className={r.matched > 0 ? 'wa-expired' : 'wa-ok'}>{r.matched}</b></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Grid testId="wa-rules" head={[t('wa.colRule'), t('wa.colRuleDesc'), t('wa.colSeverity'), t('wa.colMatched')]}>
+          {rulesSorted.map(r => (
+            <TableRow key={r.key} data-hit={r.matched > 0 ? 'true' : undefined} className="data-[hit]:bg-destructive/5">
+              <TableCell className={DOMAIN}>{ruleLabel(r.key)}</TableCell>
+              <TableCell className={cn(TD, 'min-w-[220px] text-xs text-muted-foreground')}>{t(`wa.ruleDesc.${r.key}`)}</TableCell>
+              <TableCell className={TD}><SeverityBadge severity={r.severity} /></TableCell>
+              <TableCell className={TD}><Num bad={r.matched} /></TableCell>
+            </TableRow>
+          ))}
+        </Grid>
       </Section>
 
       {/* ── 3. Dağılım ── */}
       <Section id="dist" icon={BarChart3} title={t('wa.secDist')} open={open.dist} onToggle={() => toggle('dist')} hint={t('wa.secDistHint')}>
-        <div className="wa-dist-grid">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Bars title={t('wa.distSig')} items={data?.distribution?.signature || []} />
           <Bars title={t('wa.distKey')} items={data?.distribution?.key || []} />
           <Bars title={t('wa.distTls')} items={data?.distribution?.tls || []} />
@@ -467,33 +506,33 @@ export default function WeakAlgorithmReport() {
           const sunset = ol.sunset ? formatDate(ol.sunset) : '31.12.2030'
           const years = Math.max(0, Math.round(((sm.days_to_sunset ?? 0) / 365.25) * 10) / 10)
           const actionLabel = (a) => t(`wa.outlookAction.${a || 'unknown'}`)
+          const ACTION_TONE = { reissue: 'danger', renew: 'warning' }
           return (
-            <>
-              {/* Uyarı bandı — bugün güvenli, yarın uyumsuz: risk sayılarla */}
-              <div className={`wa-outlook-warn${rowsO.length ? '' : ' is-clear'}`} role="note">
-                <div className="wa-outlook-warn-head">
-                  {rowsO.length ? <AlertTriangle size={18} aria-hidden="true" /> : <ShieldCheck size={18} aria-hidden="true" />}
-                  <b>{rowsO.length ? t('wa.outlookRiskTitle', rowsO.length, sm.pct_of_checked ?? 0, sunset) : t('wa.outlookEmpty')}</b>
-                </div>
-                <p>{t('wa.outlookWhat', ol.rsa_min_bits ?? 3072, sunset)}</p>
-                <p>{t('wa.outlookWhy')}</p>
-                {rowsO.length > 0 && (
-                  <ul className="wa-outlook-risk">
-                    <li>{t('wa.outlookRiskReissue', sm.reissue ?? 0)}</li>
-                    <li>{t('wa.outlookRiskRenew', sm.renew ?? 0)}</li>
-                    {(sm.unknown ?? 0) > 0 && <li>{t('wa.outlookRiskUnknown', sm.unknown)}</li>}
-                    <li>{t('wa.outlookRiskTime', years, sm.days_to_sunset ?? 0)}</li>
-                    {(sm.by_team || []).length > 0 && (
-                      <li>{t('wa.outlookRiskTeams')} {sm.by_team.map(b => `${b.label} (${b.count})`).join(' · ')}</li>
-                    )}
-                  </ul>
-                )}
-              </div>
+            <div className="flex flex-col gap-3">
+              {/* Uyarı bandı — bugün güvenli, yarın uyumsuz: risk sayılarla (TÜM çerçeve; sol şerit YOK) */}
+              <AlertBanner tone={rowsO.length ? 'warning' : 'success'} icon={rowsO.length ? AlertTriangle : ShieldCheck} className="mb-0"
+                title={rowsO.length ? t('wa.outlookRiskTitle', rowsO.length, sm.pct_of_checked ?? 0, sunset) : t('wa.outlookEmpty')}>
+                <span className="flex flex-col gap-1.5">
+                  <span>{t('wa.outlookWhat', ol.rsa_min_bits ?? 3072, sunset)}</span>
+                  <span>{t('wa.outlookWhy')}</span>
+                  {rowsO.length > 0 && (
+                    <ul className="list-disc pl-5">
+                      <li>{t('wa.outlookRiskReissue', sm.reissue ?? 0)}</li>
+                      <li>{t('wa.outlookRiskRenew', sm.renew ?? 0)}</li>
+                      {(sm.unknown ?? 0) > 0 && <li>{t('wa.outlookRiskUnknown', sm.unknown)}</li>}
+                      <li>{t('wa.outlookRiskTime', years, sm.days_to_sunset ?? 0)}</li>
+                      {(sm.by_team || []).length > 0 && (
+                        <li>{t('wa.outlookRiskTeams')} {sm.by_team.map(b => `${b.label} (${b.count})`).join(' · ')}</li>
+                      )}
+                    </ul>
+                  )}
+                </span>
+              </AlertBanner>
 
               {/* Ne bekleniyor — takımın yapacağı iş, adım adım */}
-              <div className="wa-outlook-expect">
-                <div className="wa-bars-title">{t('wa.outlookExpectTitle')}</div>
-                <ol className="wa-outlook-steps">
+              <div className="rounded-[10px] border bg-card px-3.5 py-3">
+                <div className="mb-1.5 text-[0.8em] font-bold tracking-wide text-muted-foreground uppercase">{t('wa.outlookExpectTitle')}</div>
+                <ol className="list-decimal space-y-1 pl-5 text-sm">
                   <li>{t('wa.outlookStep1')}</li>
                   <li>{t('wa.outlookStep2')}</li>
                   <li>{t('wa.outlookStep3')}</li>
@@ -503,116 +542,105 @@ export default function WeakAlgorithmReport() {
               </div>
 
               {rowsO.length > 0 && (
-                <div className="wa-table-wrap">
-                  <table className="wa-table">
-                    <thead><tr>
-                      <th>{t('wa.colAction')}</th><th>{t('wa.colDomain')}</th><th>{t('wa.colTeam')}</th><th>{t('wa.colKeyAlgo')}</th>
-                      <th>{t('wa.colTarget')}</th><th>{t('wa.colExpiry')}</th><th>{t('wa.colRenewBy')}</th><th>{t('wa.colActions')}</th>
-                    </tr></thead>
-                    <tbody>
-                      {rowsO.map(r => (
-                        <tr key={r.domain} className={`wa-row wa-row-${r.action === 'reissue' ? 'high' : 'medium'}`}>
-                          <td>
-                            <span className={`wa-outlook-action wa-outlook-action--${r.action || 'unknown'}`}>{actionLabel(r.action)}</span>
-                            <div className="wa-sub">{t(`wa.outlookActionHint.${r.action || 'unknown'}`)}</div>
-                          </td>
-                          <td className="wa-cell-domain">{r.domain}<ExceptionChip ex={r.exception} /></td>
-                          <td><TeamCell row={r} /></td>
-                          <td className="wa-mono">{r.public_key_algorithm} {r.public_key_size}<div className="wa-sub">{t('wa.outlookNow')}</div></td>
-                          <td className="wa-mono">{r.target}<div className="wa-sub">{t('wa.outlookTargetHint')}</div></td>
-                          <td>
-                            <div>{r.not_after ? formatDate(r.not_after) : '—'}</div>
-                            {r.days_remaining != null && <div className="wa-sub">{t('wa.daysLeft', r.days_remaining)}</div>}
-                          </td>
-                          <td className={r.action === 'reissue' ? 'wa-expiring' : ''}>{r.renewal_by ? formatDate(r.renewal_by) : '—'}</td>
-                          <td><Actions row={r} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <Grid testId="wa-outlook" head={[t('wa.colAction'), t('wa.colDomain'), t('wa.colTeam'), t('wa.colKeyAlgo'), t('wa.colTarget'), t('wa.colExpiry'), t('wa.colRenewBy'), t('wa.colActions')]}>
+                  {rowsO.map(r => (
+                    <TableRow key={r.domain} data-action={r.action || 'unknown'}>
+                      <TableCell className={cn(TD, 'min-w-[160px]')}>
+                        <ToneBadge tone={ACTION_TONE[r.action] || 'muted'} className="font-bold">{actionLabel(r.action)}</ToneBadge>
+                        <Sub>{t(`wa.outlookActionHint.${r.action || 'unknown'}`)}</Sub>
+                      </TableCell>
+                      <TableCell className={DOMAIN}>{r.domain}{exceptionChip(r.exception)}</TableCell>
+                      <TableCell className={TD}>{teamCell(r)}</TableCell>
+                      <TableCell className={MONO}>{r.public_key_algorithm} {r.public_key_size}<Sub>{t('wa.outlookNow')}</Sub></TableCell>
+                      <TableCell className={MONO}>{r.target}<Sub>{t('wa.outlookTargetHint')}</Sub></TableCell>
+                      <TableCell className={TD}>
+                        <div>{r.not_after ? formatDate(r.not_after) : '—'}</div>
+                        {r.days_remaining != null && <Sub>{t('wa.daysLeft', r.days_remaining)}</Sub>}
+                      </TableCell>
+                      <TableCell className={cn(TD, r.action === 'reissue' && 'font-semibold text-amber-600 dark:text-amber-400')}>{r.renewal_by ? formatDate(r.renewal_by) : '—'}</TableCell>
+                      <TableCell className={TD}>{actions(r)}</TableCell>
+                    </TableRow>
+                  ))}
+                </Grid>
               )}
-            </>
+            </div>
           )
         })()}
       </Section>
 
       {/* ── 7. Takım kırılımı ── */}
       <Section id="teams" icon={Users} title={t('wa.secTeams')} count={(data?.teams?.rows || []).length} open={open.teams} onToggle={() => toggle('teams')}>
-        {data?.teams?.unowned?.total > 0 && (
-          <p className={`wa-banner-info${data.teams.unowned.weak + data.teams.unowned.tls + data.teams.unowned.chain > 0 ? ' wa-expired' : ''}`}>
-            {t('wa.unowned', data.teams.unowned.total, data.teams.unowned.weak + data.teams.unowned.tls + data.teams.unowned.chain)}
-          </p>
-        )}
-        <div className="wa-table-wrap">
-          <table className="wa-table">
-            <thead><tr><th>{t('wa.colTeam')}</th><th>{t('wa.colTotal')}</th><th>{t('wa.colWeakCount')}</th><th>{t('wa.kpiTls')}</th><th>{t('wa.kpiChain')}</th><th>{t('wa.colRatio')}</th></tr></thead>
-            <tbody>
-              {(data?.teams?.rows || []).map(r => {
-                const bad = r.weak + r.tls + r.chain
-                return (
-                  <tr key={r.team_id} className={bad > 0 ? 'wa-rule--hit' : ''}>
-                    <td><TeamBadge teamId={r.team_id} teamName={r.team_name} /></td>
-                    <td>{r.total}</td>
-                    <td><b className={r.weak > 0 ? 'wa-expired' : 'wa-ok'}>{r.weak}</b></td>
-                    <td><b className={r.tls > 0 ? 'wa-expired' : 'wa-ok'}>{r.tls}</b></td>
-                    <td><b className={r.chain > 0 ? 'wa-expired' : 'wa-ok'}>{r.chain}</b></td>
-                    <td className="wa-mono">{r.total ? `${Math.round(100 * (r.total - r.weak) / r.total)}%` : '—'}</td>
-                  </tr>
-                )
-              })}
-              {(data?.teams?.rows || []).length === 0 && <tr><td colSpan={6} className="wa-muted">{t('wa.noData')}</td></tr>}
-            </tbody>
-          </table>
+        <div className="flex flex-col gap-2.5">
+          {data?.teams?.unowned?.total > 0 && (
+            <p className={cn('text-sm text-muted-foreground', data.teams.unowned.weak + data.teams.unowned.tls + data.teams.unowned.chain > 0 && 'font-semibold text-destructive')}>
+              {t('wa.unowned', data.teams.unowned.total, data.teams.unowned.weak + data.teams.unowned.tls + data.teams.unowned.chain)}
+            </p>
+          )}
+          <Grid testId="wa-teams" head={[t('wa.colTeam'), t('wa.colTotal'), t('wa.colWeakCount'), t('wa.kpiTls'), t('wa.kpiChain'), t('wa.colRatio')]}>
+            {(data?.teams?.rows || []).map(r => {
+              const bad = r.weak + r.tls + r.chain
+              return (
+                <TableRow key={r.team_id} data-hit={bad > 0 ? 'true' : undefined} className="data-[hit]:bg-destructive/5">
+                  <TableCell className={TD}><TeamBadge teamId={r.team_id} teamName={r.team_name} /></TableCell>
+                  <TableCell className="tabular-nums">{r.total}</TableCell>
+                  <TableCell><Num bad={r.weak} /></TableCell>
+                  <TableCell><Num bad={r.tls} /></TableCell>
+                  <TableCell><Num bad={r.chain} /></TableCell>
+                  <TableCell className="font-mono">{r.total ? `${Math.round(100 * (r.total - r.weak) / r.total)}%` : '—'}</TableCell>
+                </TableRow>
+              )
+            })}
+            {(data?.teams?.rows || []).length === 0 && (
+              <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t('wa.noData')}</TableCell></TableRow>
+            )}
+          </Grid>
         </div>
       </Section>
 
       {/* ── 8. Trend ── */}
       <Section id="trend" icon={TrendingUp} title={t('wa.secTrend', data?.trend?.days ?? 30)} open={open.trend} onToggle={() => toggle('trend')}
         count={(data?.trend?.detected || []).length + (data?.trend?.resolved || []).length}>
-        <TrendChart series={data?.trend?.series || []} />
-        <div className="wa-trend-lists">
-          <div>
-            <div className="wa-bars-title">{t('wa.trendDetected', (data?.trend?.detected || []).length)}</div>
-            {(data?.trend?.detected || []).length === 0 && <div className="wa-muted">{t('wa.trendNone')}</div>}
-            {(data?.trend?.detected || []).map(d => <div key={d.domain} className="wa-sub"><span className="wa-mono">{d.day}</span> · {d.domain}</div>)}
-          </div>
-          <div>
-            <div className="wa-bars-title">{t('wa.trendResolved', (data?.trend?.resolved || []).length)}</div>
-            {(data?.trend?.resolved || []).length === 0 && <div className="wa-muted">{t('wa.trendNone')}</div>}
-            {(data?.trend?.resolved || []).map(d => <div key={d.domain} className="wa-sub"><span className="wa-mono">{d.day}</span> · {d.domain}</div>)}
+        <div className="flex flex-col gap-3">
+          <div className="rounded-lg border bg-card p-2"><TrendChart series={data?.trend?.series || []} /></div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {[['detected', t('wa.trendDetected', (data?.trend?.detected || []).length)], ['resolved', t('wa.trendResolved', (data?.trend?.resolved || []).length)]].map(([k, title]) => (
+              <div key={k} className="min-w-0">
+                <div className="mb-1 text-[0.8em] font-bold tracking-wide text-muted-foreground uppercase">{title}</div>
+                {(data?.trend?.[k] || []).length === 0 && <div className="text-sm text-muted-foreground">{t('wa.trendNone')}</div>}
+                {(data?.trend?.[k] || []).map(d => <Sub key={d.domain} className="break-all"><span className="font-mono">{d.day}</span> · {d.domain}</Sub>)}
+              </div>
+            ))}
           </div>
         </div>
       </Section>
 
       {/* ── İstisnalar ── */}
       <Section id="exceptions" icon={ClipboardCheck} title={t('wa.secExceptions')} count={(data?.exceptions || []).length} open={open.exceptions} onToggle={() => toggle('exceptions')} hint={t('wa.secExceptionsHint')}>
-        {(data?.exceptions || []).length === 0 ? <p className="wa-muted">{t('wa.exceptionsEmpty')}</p> : (
-          <div className="wa-table-wrap">
-            <table className="wa-table">
-              <thead><tr><th>{t('wa.colDomain')}</th><th>{t('wa.exceptionUntil')}</th><th>{t('wa.exceptionReason')}</th><th>{t('wa.colBy')}</th>{canManage && <th>{t('wa.colActions')}</th>}</tr></thead>
-              <tbody>
-                {data.exceptions.map(e => (
-                  <tr key={e.domain} className={e.expired ? 'wa-rule--hit' : ''}>
-                    <td className="wa-cell-domain">{e.domain}</td>
-                    <td>{formatDateOnly(e.until)}{e.expired && <span className="wa-sub wa-expired">{t('wa.exceptionExpiredShort')}</span>}</td>
-                    <td className="wa-sub">{e.reason || '—'}</td>
-                    <td className="wa-sub">{e.created_by || '—'}{e.created_at && <div>{formatDateSec(e.created_at)}</div>}</td>
-                    {canManage && (
-                      <td className="wa-actions">
-                        <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: e.domain, existing: e })}><ClipboardCheck size={13} /> {t('wa.exceptionEdit')}</Button>
-                        <Button type="button" variant="secondary" size="sm" onClick={() => clearException(e.domain)}><ClipboardX size={13} /> {t('wa.exceptionClear')}</Button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {(data?.exceptions || []).length === 0 ? empty(t('wa.exceptionsEmpty')) : (
+          <Grid testId="wa-exceptions" head={[t('wa.colDomain'), t('wa.exceptionUntil'), t('wa.exceptionReason'), t('wa.colBy'), ...(canManage ? [t('wa.colActions')] : [])]}>
+            {data.exceptions.map(e => (
+              <TableRow key={e.domain} data-hit={e.expired ? 'true' : undefined} className="data-[hit]:bg-destructive/5">
+                <TableCell className={DOMAIN}>{e.domain}</TableCell>
+                <TableCell className={TD}>{formatDateOnly(e.until)}{e.expired && <Sub className="font-semibold text-destructive">{t('wa.exceptionExpiredShort')}</Sub>}</TableCell>
+                <TableCell className={cn(TD, 'min-w-[180px] text-xs text-muted-foreground')}>{e.reason || '—'}</TableCell>
+                <TableCell className={cn(TD, 'text-xs text-muted-foreground')}>{e.created_by || '—'}{e.created_at && <div>{formatDateSec(e.created_at)}</div>}</TableCell>
+                {canManage && (
+                  <TableCell className={TD}>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button type="button" variant="secondary" size="sm" onClick={() => setExModal({ domain: e.domain, existing: e })}
+                        aria-label={t('a11y.rowAction', t('wa.exceptionEdit'), e.domain)}><ClipboardCheck size={13} /> {t('wa.exceptionEdit')}</Button>
+                      <Button type="button" variant="secondary" size="sm" onClick={() => clearException(e.domain)}
+                        aria-label={t('a11y.rowAction', t('wa.exceptionClear'), e.domain)}><ClipboardX size={13} /> {t('wa.exceptionClear')}</Button>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </Grid>
         )}
       </Section>
 
-      <p className="wa-banner-info"><Bell size={12} aria-hidden="true" /> {t('wa.weeklyNote')}</p>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Bell size={12} aria-hidden="true" className="shrink-0" /> {t('wa.weeklyNote')}</p>
 
       {exModal && (
         <ExceptionModal domain={exModal.domain} existing={exModal.existing} onClose={() => setExModal(null)} onSaved={load} />

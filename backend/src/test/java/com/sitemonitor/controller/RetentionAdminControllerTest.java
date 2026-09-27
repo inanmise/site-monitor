@@ -297,7 +297,7 @@ class RetentionAdminControllerTest {
     }
 
     @org.junit.jupiter.api.Test
-    @org.junit.jupiter.api.DisplayName("GET /runs: size 100'e kırpılır, bilinmeyen sort/kind varsayılana düşer, eski limit param'ı sayfa boyutu sayılır")
+    @org.junit.jupiter.api.DisplayName("GET /runs: size 200'e kırpılır (ön yüz 'panel' ön ayarının en büyüğü), bilinmeyen sort/kind varsayılana düşer, eski limit param'ı sayfa boyutu sayılır")
     void runs_clampsAndDefaults() throws Exception {
         org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pg =
                 org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
@@ -306,7 +306,7 @@ class RetentionAdminControllerTest {
 
         mvc.perform(get("/api/admin/retention/runs?size=999&kind=bogus&sort=hack&dir=sideways").session(admin()))
                 .andExpect(status().isOk());
-        org.assertj.core.api.Assertions.assertThat(pg.getValue().getPageSize()).isEqualTo(100);
+        org.assertj.core.api.Assertions.assertThat(pg.getValue().getPageSize()).isEqualTo(200);
         org.assertj.core.api.Assertions.assertThat(pg.getValue().getSort().getOrderFor("startedAt").getDirection())
                 .isEqualTo(org.springframework.data.domain.Sort.Direction.DESC);
 

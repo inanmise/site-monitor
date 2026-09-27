@@ -34,6 +34,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.mockito.Mockito.never;
@@ -89,7 +90,7 @@ class LoginIssueControllerTest {
         LoginIssueReport r = new LoginIssueReport();
         r.setId(9L); r.setStatus("OPEN"); r.setReportedAt("2026-07-23T10:00:00");
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
-        when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString()))
+        when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString(), any()))
                 .thenThrow(new IllegalArgumentException("Çözüm notu zorunludur"));
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\"}"))
@@ -101,7 +102,7 @@ class LoginIssueControllerTest {
         LoginIssueReport r = new LoginIssueReport();
         r.setId(9L); r.setStatus("IN_PROGRESS"); r.setReportedAt("2026-07-23T10:00:00");
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
-        when(loginIssueService.updateStatus(eq(9L), eq("IN_PROGRESS"), any(), anyString())).thenReturn(r);
+        when(loginIssueService.updateStatus(eq(9L), eq("IN_PROGRESS"), any(), anyString(), any())).thenReturn(r);
         when(loginIssueService.images(9L)).thenReturn(List.of());
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_PROGRESS\"}"))
@@ -115,7 +116,7 @@ class LoginIssueControllerTest {
         r.setId(9L); r.setStatus("RESOLVED"); r.setReportedAt("2026-07-24T09:00:00");
         r.setReporterEmail("reporter@example.com"); r.setResolutionNote("Hesap açıldı"); r.setResolvedAt("2026-07-24T10:00:00");
         when(loginIssueService.get(9L)).thenReturn(Optional.of(r));
-        when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString())).thenReturn(r);
+        when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString(), any())).thenReturn(r);
         when(loginIssueService.images(9L)).thenReturn(List.of());
         when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@example.com");
         mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
@@ -255,5 +256,139 @@ class LoginIssueControllerTest {
                 .andExpect(status().isNotFound());
 
         verify(loginIssueService, never()).purge(any());
+    }
+
+    // ── Konuşma dizisi (2026-09-26): yanıt maili tam bir kez, iç not sessiz, durum maili yalnız gerçek geçişte ──
+
+    private static LoginIssueReport reported(long id, String status, String username) {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(id); r.setStatus(status); r.setReportedAt("2026-09-20T10:00:00"); r.setUpdatedAt("2026-09-21T10:00:00");
+        r.setUsername(username); r.setReporterEmail("kullanici.x@example.com"); r.setMessage("mesaj");
+        return r;
+    }
+
+    private static com.sitemonitor.model.IssueReportComment comment(long id, boolean internal) {
+        com.sitemonitor.model.IssueReportComment c = new com.sitemonitor.model.IssueReportComment();
+        c.setId(id); c.setReportId(9L); c.setKind("COMMENT"); c.setAuthorUsername("someadmin"); c.setAuthorRole("ADMIN");
+        c.setInternal(internal); c.setByReporter(false); c.setBody(internal ? "iç not" : "yanıt"); c.setCreatedAt("2026-09-21T10:00:00");
+        return c;
+    }
+
+    @Test
+    @DisplayName("POST comments: herkese açık yanıt → TAM BİR yanıt maili + audit; iç not → mail YOK (audit var)")
+    void adminReply_publicMailsOnce_internalNever() throws Exception {
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(reported(9L, "OPEN", "kullanici.x")));
+        when(loginIssueService.addComment(eq(9L), eq("someadmin"), eq("ADMIN"), eq(false), eq(false), eq("yanıt")))
+                .thenReturn(new LoginIssueService.CommentResult(comment(1L, false), false));
+        when(loginIssueService.addComment(eq(9L), eq("someadmin"), eq("ADMIN"), eq(true), eq(false), eq("iç not")))
+                .thenReturn(new LoginIssueService.CommentResult(comment(2L, true), false));
+
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"yanıt\",\"internal\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.internal").value(false))
+                .andExpect(jsonPath("$.data.body").value("yanıt"));
+        verify(loginIssueMailService, org.mockito.Mockito.times(1)).dispatchAdminReply(eq(9L), eq("LIR-2026-000009"),
+                eq("kullanici.x@example.com"), eq("kullanici.x"), eq("OPEN"), eq("yanıt"), any(), any());
+
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"iç not\",\"internal\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.internal").value(true));
+        verify(loginIssueMailService, org.mockito.Mockito.times(1)).dispatchAdminReply(any(), any(), any(), any(), any(), any(), any(), any());   // hâlâ 1
+        verify(auditService, org.mockito.Mockito.times(2)).recordAction(eq("LOGIN_ISSUE_COMMENT"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("LOGIN_ISSUE"), eq("9"), anyString());
+    }
+
+    @Test
+    @DisplayName("POST comments: yönetici KENDİ raporuna yanıt yazarsa kendine mail gitmez (büyük/küçük harf duyarsız)")
+    void adminReply_ownReportNoSelfMail() throws Exception {
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(reported(9L, "OPEN", "SomeAdmin")));
+        when(loginIssueService.addComment(eq(9L), eq("someadmin"), eq("ADMIN"), eq(false), eq(false), eq("kendime not")))
+                .thenReturn(new LoginIssueService.CommentResult(comment(3L, false), false));
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"kendime not\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueMailService, never()).dispatchAdminReply(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST comments: boş / 4001 karakter → 400; olmayan kayıt → 404; izinsiz → 403")
+    void adminReply_validation() throws Exception {
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(reported(9L, "OPEN", "kullanici.x")));
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\" \"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"" + "x".repeat(4001) + "\"}"))
+                .andExpect(status().isBadRequest());
+        when(loginIssueService.get(99L)).thenReturn(Optional.empty());
+        mvc.perform(post("/api/admin/login-issues/99/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"x\"}"))
+                .andExpect(status().isNotFound());
+        verify(loginIssueService, never()).addComment(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any());
+        doThrow(new SecurityException("yetki yok"))
+                .when(permissionService).require(any(HttpSession.class), eq("issues.login-reports"), eq("edit"));
+        mvc.perform(post("/api/admin/login-issues/9/comments").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("GET comments: iç notlar DÂHİL döner (yönetici görünümü) + zaman çizelgesi")
+    void comments_includeInternalForAdmin() throws Exception {
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(reported(9L, "OPEN", "kullanici.x")));
+        when(loginIssueService.comments(9L)).thenReturn(List.of(comment(1L, false), comment(2L, true)));
+        mvc.perform(get("/api/admin/login-issues/9/comments").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[1].internal").value(true))
+                .andExpect(jsonPath("$.timeline[0].status").value("OPEN"));
+    }
+
+    @Test
+    @DisplayName("PUT status OPEN→IN_PROGRESS: kısa durum maili TAM BİR kez; aynı durumu tekrar kaydetmek mail üretmez; çözüldü maili yok")
+    void statusChange_shortMailOnlyOnRealChange() throws Exception {
+        LoginIssueReport before = reported(9L, "OPEN", "kullanici.x");
+        LoginIssueReport after = reported(9L, "IN_PROGRESS", "kullanici.x");
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(before));
+        when(loginIssueService.updateStatus(eq(9L), eq("IN_PROGRESS"), any(), anyString(), any())).thenReturn(after);
+        when(loginIssueService.images(9L)).thenReturn(List.of());
+
+        mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_PROGRESS\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueMailService, org.mockito.Mockito.times(1)).dispatchStatusChange(eq(9L), eq("LIR-2026-000009"),
+                eq("kullanici.x@example.com"), eq("kullanici.x"), eq("IN_PROGRESS"), any(), any(), any());
+        verify(loginIssueMailService, never()).dispatchResolved(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // Aktörün ROLÜ servise geçer (zaman çizelgesi satırı)
+        verify(loginIssueService).updateStatus(eq(9L), eq("IN_PROGRESS"), any(), eq("someadmin"), eq("ADMIN"));
+
+        // Aynı durum tekrar (yalnız not güncellemesi): gerçek geçiş yok → mail yok
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(after));
+        mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_PROGRESS\",\"resolutionNote\":\"not\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueMailService, org.mockito.Mockito.times(1)).dispatchStatusChange(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("PUT status RESOLVED: zengin çözüldü maili gider, kısa durum maili GİTMEZ (çift mail yok)")
+    void resolve_noShortStatusMail() throws Exception {
+        LoginIssueReport before = reported(9L, "IN_PROGRESS", "kullanici.x");
+        LoginIssueReport after = reported(9L, "RESOLVED", "kullanici.x");
+        after.setResolutionNote("Hesap açıldı"); after.setResolvedAt("2026-09-21T11:00:00");
+        when(loginIssueService.get(9L)).thenReturn(Optional.of(before));
+        when(loginIssueService.updateStatus(eq(9L), eq("RESOLVED"), any(), anyString(), any())).thenReturn(after);
+        when(loginIssueService.images(9L)).thenReturn(List.of());
+        when(appSettings.getString(eq("site.monitor.system-admin.email"), anyString())).thenReturn("admin@example.com");
+
+        mvc.perform(put("/api/admin/login-issues/9/status").session(authed())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"RESOLVED\",\"resolutionNote\":\"Hesap açıldı\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueMailService, org.mockito.Mockito.times(1)).dispatchResolved(eq(9L), anyString(), eq("kullanici.x@example.com"),
+                eq("admin@example.com"), any(), any(), any(), any(), any(), any(), any());
+        verify(loginIssueMailService, never()).dispatchStatusChange(any(), any(), any(), any(), any(), any(), any(), any());
     }
 }

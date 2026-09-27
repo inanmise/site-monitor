@@ -153,9 +153,11 @@ class IncidentNotificationServiceTest {
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", null)));
         IncidentImage img = new IncidentImage();
         img.setId(5L); img.setContentType("image/png"); img.setData(new byte[]{1, 2, 3});
+        img.setIncidentId(1L);   // gerçek akış: kaydedilen olayın görseli o olaya bağlıdır (Y-1 süzgeci)
         when(imageRepo.findById(5L)).thenReturn(Optional.of(img));
 
         Map<String, Object> d = dto();
+        d.put("id", 1L);
         d.put("resolution_steps", "Düzeltildi.\n\n![web.config](/api/incidents/images/5)");
 
         service.doNotify(d, "RESOLVED");
@@ -167,6 +169,34 @@ class IncidentNotificationServiceTest {
         assertThat(inlineCap.getValue()).hasSize(1);
         assertThat(inlineCap.getValue().get(0).cid()).isEqualTo("incimg5");
         assertThat(inlineCap.getValue().get(0).contentType()).isEqualTo("image/png");
+    }
+
+    @Test
+    @DisplayName("Y-1: YALNIZ bu olayın görseli eklenir — başka olayın ve taslağın görseli maille dışarı gitmez")
+    void notify_foreignImagesNotAttached() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@example.com", null)));
+        IncidentImage own = new IncidentImage();
+        own.setId(5L); own.setIncidentId(1L); own.setContentType("image/png"); own.setData(new byte[]{1});
+        IncidentImage foreign = new IncidentImage();
+        foreign.setId(6L); foreign.setIncidentId(2L); foreign.setContentType("image/png"); foreign.setData(new byte[]{2});
+        IncidentImage draft = new IncidentImage();
+        draft.setId(7L); draft.setIncidentId(null); draft.setContentType("image/png"); draft.setData(new byte[]{3});
+        when(imageRepo.findById(5L)).thenReturn(Optional.of(own));
+        when(imageRepo.findById(6L)).thenReturn(Optional.of(foreign));
+        when(imageRepo.findById(7L)).thenReturn(Optional.of(draft));
+
+        Map<String, Object> d = dto();
+        d.put("id", 1L);
+        d.put("description", "![a](/api/incidents/images/5) ![b](/api/incidents/images/6) ![c](/api/incidents/images/7)");
+
+        service.doNotify(d, "NEW");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<EmailNotificationService.InlineImage>> inlineCap =
+                ArgumentCaptor.forClass(java.util.List.class);
+        verify(emailService).sendHtml(any(), isNull(), anyString(), anyString(), inlineCap.capture());
+        assertThat(inlineCap.getValue()).extracting(EmailNotificationService.InlineImage::cid)
+                .containsExactly("incimg5");
     }
 
     @Test

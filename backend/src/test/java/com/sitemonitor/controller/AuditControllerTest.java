@@ -91,7 +91,7 @@ class AuditControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("TEAM"));
         verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("")), any());
+                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("#no-member#")), any());
     }
 
     // ── Ekip kapsamı (2026-09-25, "ekip üyeleri görebilsin — tüm olaylar, tam ayrıntı") ──────────────
@@ -234,7 +234,7 @@ class AuditControllerTest {
                 .andExpect(jsonPath("$.total").value(1));
         // Kapsamı olmayan kullanıcı: kukla listelerle sorgulanır (R7: kapsam sorguda), sonuç boş.
         when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), eq("PORT_MONITOR"), eq("7"), any(), any(), any(), any(),
-                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("")), any()))
+                anyBoolean(), any(), eq(false), eq(List.of(-1L)), eq(List.of(-1L)), eq(List.of("#no-member#")), any()))
                 .thenReturn(new PageImpl<>(List.of()));
         mvc.perform(get("/api/admin/audit/resource/PORT_MONITOR/7").session(session("USER")))
                 .andExpect(status().isOk())
@@ -270,6 +270,87 @@ class AuditControllerTest {
                 .andExpect(status().isOk());
         verify(auditService).recordAction(eq("AUDIT_EXPORT"), any(HttpSession.class), any(HttpServletRequest.class),
                 eq("AUDIT_LOG"), eq("export"), contains("csv"));
+    }
+
+    // ── Dışa aktarma bellek tavanı (prod kapısı 2026-09-25, Y-2) ───────────────────────────
+    // Dışa aktarma bu sürümde her kullanıcıya açıldı ve 50.000 tam satırı belleğe topluyordu;
+    // tek pod'da birkaç paralel istek heap'i doldurabiliyordu.
+
+    private org.springframework.data.domain.Pageable exportPageable(MockHttpSession s) throws Exception {
+        org.mockito.Mockito.clearInvocations(auditLogRepo);
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(new AuditLog())));
+        mvc.perform(get("/api/admin/audit/export?format=json").session(s)).andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> page =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), any(), any(), page.capture());
+        return page.getValue();
+    }
+
+    @Test
+    @DisplayName("Y-2: ekip kapsamında dışa aktarma 5.000 satırla, tam kapsamda 50.000 satırla sınırlı")
+    void export_rowCapDependsOnScope() throws Exception {
+        stubTeamMate(5L, 41L, "N11111");
+        org.assertj.core.api.Assertions.assertThat(exportPageable(teamUser(5L)).getPageSize()).isEqualTo(5_000);
+        org.assertj.core.api.Assertions.assertThat(exportPageable(session("AUDIT")).getPageSize()).isEqualTo(50_000);
+    }
+
+    @Test
+    @DisplayName("Y-2: eşzamanlı dışa aktarma yuvaları doluysa 429 + Retry-After, sorgu HİÇ koşmaz")
+    void export_busySlots_return429() throws Exception {
+        AuditController.EXPORT_SLOTS.acquire(2);   // iki yuva da "süren" dışa aktarmalarca tutuluyor
+        try {
+            mvc.perform(get("/api/admin/audit/export?format=csv").session(session("AUDIT")))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(header().exists("Retry-After"));
+        } finally {
+            AuditController.EXPORT_SLOTS.release(2);
+        }
+        verify(auditLogRepo, org.mockito.Mockito.never()).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any());
+        // Yuvalar geri verildi: sonraki dışa aktarma normal çalışır (sızan izin yok).
+        org.assertj.core.api.Assertions.assertThat(AuditController.EXPORT_SLOTS.availablePermits()).isEqualTo(2);
+    }
+
+    // ── Ekip kapsamı: sistem-geneli üyeler (prod kapısı 2026-09-25, D-1 / D-2) ──────────────────
+
+    @Test
+    @DisplayName("D-2: takıma üye ADMIN/AUDIT kullanıcısı Denetim Logu ekip kapsamının aktör listelerine GİRMEZ")
+    void teamScope_excludesSystemWideMembers() throws Exception {
+        when(appUserRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(
+                new Object[]{41L, "n11111", "USER"},
+                new Object[]{42L, "n22222", "ADMIN"},
+                new Object[]{43L, "n33333", "AUDIT"}));
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        mvc.perform(get("/api/admin/audit").session(teamUser(5L))).andExpect(status().isOk());
+
+        verify(auditLogRepo).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any());
+    }
+
+    @Test
+    @DisplayName("D-1: boş kapsamın kukla adı kullanıcı adı OLAMAZ (boş adlı LOGIN_FAILED satırlarıyla eşleşmez)")
+    void emptyScope_dummyNameIsNotBlank() {
+        TeamActorScope none = TeamActorScope.ofTeams(List.of(), appUserRepo, true);
+        org.assertj.core.api.Assertions.assertThat(none.actorNames()).singleElement()
+                .satisfies(n -> org.assertj.core.api.Assertions.assertThat(n).isNotBlank());
+        org.assertj.core.api.Assertions.assertThat(none.allows(null, null, "")).isFalse();
+    }
+
+    @Test
+    @DisplayName("D-2 sınırı: excludeSystemWide=false (İzleme Değişiklikleri kapsamı) ADMIN üyeyi KORUR — davranış değişmedi")
+    void teamScope_monitoringVariantKeepsAdminMembers() {
+        when(appUserRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(
+                new Object[]{41L, "n11111", "USER"},
+                new Object[]{42L, "n22222", "ADMIN"}));
+        TeamActorScope sc = TeamActorScope.ofTeams(List.of(5L), appUserRepo);
+        org.assertj.core.api.Assertions.assertThat(sc.actorIds()).containsExactly(41L, 42L);
+        org.assertj.core.api.Assertions.assertThat(sc.actorNames()).containsExactly("n11111", "n22222");
     }
 
     @Test

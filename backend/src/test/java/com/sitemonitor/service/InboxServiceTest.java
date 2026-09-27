@@ -168,4 +168,63 @@ class InboxServiceTest {
         assertThat(MonitorRefResolver.paramsFor(ref, "a.example.com")).containsEntry("domain", "a.example.com").doesNotContainKey("q");
         assertThat(MonitorRefResolver.paramsFor(ref, null)).isEmpty();
     }
+
+    // ── Sorun bildirimi haberleri (2026-09-26) ───────────────────────────────
+
+    private static com.sitemonitor.model.IssueReportComment row(long id, String kind, boolean byReporter, String body) {
+        com.sitemonitor.model.IssueReportComment c = new com.sitemonitor.model.IssueReportComment();
+        c.setId(id); c.setReportId(42L); c.setKind(kind); c.setByReporter(byReporter); c.setInternal(false); c.setBody(body);
+        c.setAuthorUsername(byReporter ? "kullanici.x" : "someadmin"); c.setCreatedAt("2026-09-25T10:0" + id + ":00");
+        return c;
+    }
+
+    @Test
+    @DisplayName("sorun bildirimi haberleri: her herkese-açık yönetici hareketi TAM BİR satır (anahtar = satır kimliği), derin bağlantı raporu açar; yeniden açma YALNIZ global yöneticiye")
+    void issueItems_oncePerAdminAction_reopenOnlyForGlobalAdmin() {
+        var repo = org.mockito.Mockito.mock(com.sitemonitor.repository.IssueReportCommentRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "issueCommentRepo", repo);
+        com.sitemonitor.model.LoginIssueReport r = new com.sitemonitor.model.LoginIssueReport();
+        r.setId(42L); r.setReportedAt("2026-09-20T10:00:00"); r.setUsername("kullanici.x"); r.setResolutionNote("çözüldü notu");
+        var reply = row(1L, "COMMENT", false, "Merhaba, kaydınızı inceledik");
+        var resolved = row(2L, "STATUS", false, "RESOLVED");
+        var reopen = row(3L, "STATUS", true, "IN_PROGRESS");
+        // Sorgu zaten byReporter=false & internal=false süzer (JPQL); servis her satırı BİR habere çevirir.
+        when(repo.findAdminActivityForReporter(eq("kullanici.x"), anyString()))
+                .thenReturn(List.of(new Object[]{resolved, r}, new Object[]{reply, r}));
+        when(repo.findReopensSince(anyString())).thenReturn(List.<Object[]>of(new Object[]{reopen, r}));
+
+        // Bildiren (USER): iki haber — durum + yanıt; yeniden açma haberi YOK; kullanıcı adı küçük harfe normalize
+        List<InboxService.Item> user = svc.build(t -> true, List.of(1L), "Kullanici.X", false);
+        var issue = user.stream().filter(i -> i.kind().startsWith("issue_")).toList();
+        assertThat(issue).extracting(InboxService.Item::kind).containsExactly("issue_status_resolved", "issue_reply");
+        assertThat(issue).extracting(InboxService.Item::key).containsExactly("issue:2", "issue:1");
+        assertThat(issue.get(0).tab()).isEqualTo("login-issues");
+        assertThat(issue.get(0).params()).containsEntry("ir_id", 42L);
+        assertThat(issue.get(0).title()).isEqualTo("LIR-2026-000042");
+        assertThat(issue.get(0).sub()).isEqualTo("çözüldü notu");
+        assertThat(issue.get(0).level()).isEqualTo("OK");
+        assertThat(issue.get(1).sub()).isEqualTo("Merhaba, kaydınızı inceledik");
+        org.mockito.Mockito.verify(repo).findAdminActivityForReporter(eq("kullanici.x"), anyString());
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).findReopensSince(anyString());
+
+        // Global yönetici: yeniden açma haberi (bildiren adı alt satırda, yönetici sekmesine derin bağlantı)
+        when(repo.findAdminActivityForReporter(eq("someadmin"), anyString())).thenReturn(List.of());
+        List<InboxService.Item> admin = svc.build(t -> true, List.of(1L), "someadmin", true);
+        var re = admin.stream().filter(i -> i.kind().startsWith("issue_")).toList();
+        assertThat(re).hasSize(1);
+        assertThat(re.get(0).kind()).isEqualTo("issue_reopened");
+        assertThat(re.get(0).key()).isEqualTo("issue:3");
+        assertThat(re.get(0).sub()).isEqualTo("kullanici.x");
+        assertThat(re.get(0).params()).containsEntry("ir_id", 42L).containsEntry("ir_view", "all");
+
+        // Kapsamlı müdür (rol ADMIN ama global değil) ve eski iki-arg build: sorun haberi YOK
+        assertThat(svc.build(t -> true, List.of(1L), "someadmin", false)).noneMatch(i -> i.kind().startsWith("issue_"));
+        assertThat(svc.build(t -> true, List.of(1L))).noneMatch(i -> i.kind().startsWith("issue_"));
+    }
+
+    @Test
+    @DisplayName("sorun bildirimi deposu yoksa (eski yapıcı / test bağlamı) haber üretilmez, kutu çökmez")
+    void issueItems_withoutRepositoryIsEmpty() {
+        assertThat(svc.build(t -> true, List.of(1L), "kullanici.x", true)).noneMatch(i -> i.kind().startsWith("issue_"));
+    }
 }

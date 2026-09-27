@@ -106,11 +106,12 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("whyReceivingBlock: takım varsa adı; yoksa jenerik ifade (çökme yok)")
+    @DisplayName("'Neden bu e-postayı aldınız?' alt bilgisi: takım varsa adı; yoksa jenerik ifade (çökme yok)")
     void whyReceivingBlock_teamOrGeneric() {
-        assertThat(EmailTemplateBuilder.whyReceivingBlock("SY-Takım A")).contains("SY-Takım A").contains("ekibine");
-        assertThat(EmailTemplateBuilder.whyReceivingBlock(null)).contains("Neden bu e-postayı aldınız?")
-                .doesNotContain("null");
+        assertThat(b.buildHtml(domainMail("HIGH", 20))).contains("SY-Takım A").contains("ekibine");
+        String generic = b.buildResolvedHtml("x.example.com", "EXPIRY", "admin", "2026-08-06T10:00:00", null, null, null);
+        assertThat(generic).contains("Neden bu e-postayı aldınız?").contains("ilgili izleme grubuna")
+                .doesNotContain(">null<").doesNotContain("null ekibine");
     }
 
     @Test
@@ -125,30 +126,32 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("aciliyet skalası: renk kalan günden gelir (35 yeşil, 20 amber, 10 turuncu, 5 kırmızı, 2 koyu+ACİL)")
+    @DisplayName("aciliyet skalası: renk kalan günden gelir (35 yeşil, 20/10 amber, 5 kırmızı, 2 kırmızı+ACİL)")
     void urgencyColors() {
-        assertThat(b.buildHtml(domainMail("HIGH", 35))).contains("#1E8449");
-        assertThat(b.buildHtml(domainMail("HIGH", 20))).contains("#D68910");
-        assertThat(b.buildHtml(domainMail("HIGH", 10))).contains("#CA6F1E");
-        assertThat(b.buildHtml(domainMail("HIGH", 5))).contains("#C0392B");
+        // Metrik rakamı + ilerleme çubuğu ton rengiyle çizilir (e-posta yeniden tasarımı 2026-09-26: MailTokens.Tone).
+        assertThat(b.buildHtml(domainMail("HIGH", 35))).contains("color:#16a34a").doesNotContain("#dc2626");
+        assertThat(b.buildHtml(domainMail("HIGH", 20))).contains("color:#d97706").doesNotContain("#dc2626");
+        assertThat(b.buildHtml(domainMail("HIGH", 10))).contains("color:#d97706");
+        assertThat(b.buildHtml(domainMail("HIGH", 5))).contains("color:#dc2626").doesNotContain(">ACİL<");
         String urgent = b.buildHtml(domainMail("HIGH", 2));
-        assertThat(urgent).contains("#7B241C").contains("ACİL");
+        assertThat(urgent).contains("color:#dc2626").contains(">ACİL<");
         // Gün yoksa severity fallback
-        assertThat(EmailTemplateBuilder.urgencyColor(null, "CRITICAL")).isEqualTo("#C0392B");
-        assertThat(EmailTemplateBuilder.urgencyColor(null, "WARNING")).isEqualTo("#2874A6");
+        assertThat(EmailTemplateBuilder.urgencyColor(null, "CRITICAL")).isEqualTo("#dc2626");
+        assertThat(EmailTemplateBuilder.urgencyColor(null, "HIGH")).isEqualTo("#d97706");
+        assertThat(EmailTemplateBuilder.urgencyColor(null, "WARNING")).isEqualTo("#2563eb");
     }
 
     @Test
-    @DisplayName("alan doldurma: domain, 72px hero sayaç, registrar, footer alt-sistem, CTA, 600px, lockup header")
+    @DisplayName("alan doldurma: domain, metrik sayaç, registrar, alt-sistem, CTA, akışkan 600px kart, nötr lockup başlık")
     void fields() {
         String html = b.buildHtml(domainMail("HIGH", 25));
-        assertThat(html).contains("kartfree.com").contains(">25<").contains("GÜN<br>KALDI").contains("font-size:72px");
+        assertThat(html).contains("kartfree.com").contains(">25<").contains("gün kaldı").contains("font-size:44px");
         assertThat(html).contains("GoDaddy.com, LLC");
         assertThat(html).contains("client transfer prohibited");
-        assertThat(html).contains("Alan Adı İzleme");        // footer alt-sistem
+        assertThat(html).contains("Alan Adı İzleme");        // başlık/alt bilgi alt-sistem
         assertThat(html).contains("tab=domain");             // CTA deep-link
-        assertThat(html).contains("#0F1B2D");                // koyu-lacivert üst bant
-        assertThat(html).contains("width='600'");            // 640px kart
+        assertThat(html).contains(BrandMailAssets.headerLockup(com.sitemonitor.service.mail.MailTokens.FG)); // beyaz başlık, koyu yazı
+        assertThat(html).contains("max-width:600px");        // akışkan kart (mobil-web)
         assertThat(html).contains("Görüntüle");              // CTA (apostrof HTML'de &#39; olarak escape'li)
         assertThat(html).contains("color-scheme");           // light-only meta
     }
@@ -157,11 +160,11 @@ class EmailTemplateBuilderTest {
     @DisplayName("progress bar: 15 gün → ~%17 dolu td + 'Bitişe 15 gün · Son tarih'; gün yoksa bar yok + tip etiketi")
     void progressBar() {
         String html = b.buildHtml(domainMail("HIGH", 15));
-        assertThat(html).contains("width='17%'").contains("Bitişe 15 gün").contains("Son tarih:");
+        assertThat(html).contains("width=\"17%\"").contains("Bitişe 15 gün").contains("Son tarih:");
         var noDays = new EmailTemplateBuilder.AlertMail("DOMAINMON_STATUS", "HIGH", "kartfree.com",
                 "durum kodu uyarısı", null, new LinkedHashMap<>(), null);
         String html2 = b.buildHtml(noDays);
-        assertThat(html2).doesNotContain("Bitişe ").contains("ALAN ADI DURUM UYARISI");
+        assertThat(html2).doesNotContain("Bitişe ").contains("Alan Adı Durum Uyarısı");
     }
 
     @Test
@@ -322,7 +325,7 @@ class EmailTemplateBuilderTest {
         // Gönderilmeyen (Hayır olan) bayraklar hiç geçmemeli — liste zaten filtrelenmiş gelir.
         assertThat(html).doesNotContain("OpenShift").doesNotContain("SSL Pinning");
         // Çipler td bgcolor ile boyanır (Outlook kuralı), span background ile değil.
-        assertThat(html).contains("<td bgcolor='#EEF1F4'");
+        assertThat(html).contains("<td bgcolor=\"" + com.sitemonitor.service.mail.MailTokens.SECONDARY + "\"");
     }
 
     // ── Sorumlu Ekipler (sertifikayı kim yenileyecek) ──────────────────────────
@@ -354,9 +357,9 @@ class EmailTemplateBuilderTest {
         String html = b.buildHtml(certMail(contacts(
                 "Servis Yönetimi", "Ad Soyad - ad.soyad@example.com")));
 
-        assertThat(html).contains("<a href='mailto:ad.soyad@example.com'");
+        assertThat(html).contains("<a href=\"mailto:ad.soyad@example.com\"");
         // Adresin ÖNÜNDEKİ serbest metin link DEĞİL, düz metin olarak kalır.
-        assertThat(html).contains("Ad Soyad - <a href='mailto:");
+        assertThat(html).contains("Ad Soyad - <a href=\"mailto:");
     }
 
     @Test

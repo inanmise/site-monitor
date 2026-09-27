@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { Trash2, ArrowRightLeft } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -8,6 +8,8 @@ import SearchableSelect from '../ui/SearchableSelect.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Card, CardTitle } from '@/components/shadcn/card'
+import { Label } from '@/components/shadcn/label'
 
 const SECTIONS = ['domains', 'monitors', 'users', 'contacts', 'groups']
 
@@ -23,6 +25,7 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
   const [error, setError] = useState(null)
   const [target, setTarget] = useState('')
   const [busy, setBusy] = useState(false)
+  const targetId = useId()
 
   useEffect(() => {
     let alive = true
@@ -74,35 +77,35 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
       {error && <AlertBanner tone="danger" role="alert">{error}</AlertBanner>}
       {!impact && !error && <LoadingBlock label={t('team.impactLoading')} size={16} />}
       {impact && (
-        <div className="tdi" data-testid="team-impact">
+        <div className="flex flex-col gap-3" data-testid="team-impact">
           {empty ? (
             <AlertBanner tone="info">{t('team.impactEmpty')}</AlertBanner>
           ) : (
             <AlertBanner tone="warning">{t('team.impactWarn')}</AlertBanner>
           )}
-          {Number(impact.open_alerts) > 0 && <p className="field-hint">{t('team.impactOpenAlerts', impact.open_alerts)}</p>}
-          <div className="tdi-grid">
+          {Number(impact.open_alerts) > 0 && <p className="text-xs text-muted-foreground">{t('team.impactOpenAlerts', impact.open_alerts)}</p>}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-2.5">
             {SECTIONS.map(k => {
               const s = impact[k] || { count: 0, items: [] }
               if (!s.count) return null
               return (
-                <div key={k} className="tdi-block">
-                  <h4>{t(`team.impact.${k}`, s.count)}</h4>
-                  <ul className="tdi-list">
+                <Card key={k} className="gap-1.5 px-2.5 py-2 shadow-none">
+                  <CardTitle role="heading" aria-level={4} className="text-[0.88em]">{t(`team.impact.${k}`, s.count)}</CardTitle>
+                  <ul className="max-h-40 list-disc overflow-y-auto pl-4 text-[0.84em]">
                     {(s.items || []).map(x => <li key={x}>{x}</li>)}
-                    {s.count > (s.items || []).length && <li className="field-hint">{t('team.impactMore', s.count - s.items.length)}</li>}
+                    {s.count > (s.items || []).length && <li className="text-xs text-muted-foreground">{t('team.impactMore', s.count - s.items.length)}</li>}
                   </ul>
-                </div>
+                </Card>
               )
             })}
           </div>
           {!empty && (
-            <div className="tdi-target">
-              <label className="field-hint">{t('team.moveTarget')}</label>
-              <SearchableSelect value={target} onChange={setTarget} placeholder={t('team.movePick')} ariaLabel={t('team.moveTarget')}
+            <div className="flex max-w-[420px] flex-col gap-1.5">
+              <Label htmlFor={targetId} className="text-xs font-normal text-muted-foreground">{t('team.moveTarget')}</Label>
+              <SearchableSelect id={targetId} value={target} onChange={setTarget} placeholder={t('team.movePick')}
                 searchThreshold={4}
                 options={[{ value: '', label: t('team.movePick') }, ...others.map(x => ({ value: String(x.id), label: x.name }))]} />
-              {others.length === 0 && <span className="field-hint">{t('team.moveNoTarget')}</span>}
+              {others.length === 0 && <span className="text-xs text-muted-foreground">{t('team.moveNoTarget')}</span>}
             </div>
           )}
         </div>

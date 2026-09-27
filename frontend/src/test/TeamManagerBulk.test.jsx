@@ -39,7 +39,8 @@ describe('TeamManager — süzgeç + toplu işlem (2026-09-20)', () => {
     api.admin.bulkTeams.mockResolvedValue({ success: true, data: { ok: 2, failed: 0, results: [] } })
     confirmMock.mockResolvedValue(true)
   })
-  const rows = () => [...document.querySelectorAll('.admin-table tbody tr')].filter((r) => r.querySelector('td.um-col-check'))
+  // Veri satırları: tbody'deki çok hücreli satırlar (boş-durum satırı tek hücre, colSpan)
+  const rows = () => [...document.querySelectorAll('[data-slot="table-body"] > tr')].filter((r) => r.cells.length > 1)
 
   it('arama lider / müdür adıyla da bulur; süzgeçler: açık alarm, müdür, durum, lider yok', async () => {
     render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
@@ -121,6 +122,7 @@ describe('TeamManager — süzgeç + toplu işlem (2026-09-20)', () => {
     expect(screen.queryByLabelText(/Payments takımını seç|Select team Payments/)).toBeNull()
     expect(screen.getByLabelText(/Ledger takımını seç|Select team Ledger/)).toBeInTheDocument()
     expect(document.querySelector('.audit-pagination')).toBeNull()
-    await waitFor(() => expect(screen.getByRole('group', { name: /Sayfa başına|Per page/ })).toBeInTheDocument())
+    // Standart PaginationBar (iç düzeni sayfalama ajanının elinde değişiyor → kök kancasıyla doğrulanır)
+    await waitFor(() => expect(document.querySelector('[data-slot="pagination-bar"]')).not.toBeNull())
   })
 })

@@ -7,8 +7,10 @@
 export function clipboardToMarkdownTable(clipboardData) {
   if (!clipboardData) return null
 
+  // HTML'de tablo aranırken metin taraması yerine doğrudan DOM'a sorulur (tablo yoksa querySelector null →
+  // TSV denemesine düşülür; yapıştırma nadir bir olay, ayrıştırma maliyeti önemsiz).
   const html = clipboardData.getData('text/html')
-  if (html && html.toLowerCase().includes('<table')) {
+  if (html) {
     try {
       const doc = new DOMParser().parseFromString(html, 'text/html')
       const table = doc.querySelector('table')

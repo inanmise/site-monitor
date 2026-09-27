@@ -1,3 +1,5 @@
+import { Card } from '@/components/shadcn/card'
+
 // Peak login ısı haritası — saf SVG, 7 (hafta-günü) × 24 (saat). MiniChart gibi bağımsız.
 // props: matrix [7][24] login sayıları, failed [7][24] başarısız login sayıları, max (en yoğun hücre),
 //        dayLabels (7 kısa ad), title, hourLabel, onCellClick(weekday, hour),
@@ -30,15 +32,16 @@ export default function LoginHeatmap({
   }
 
   return (
-    <div className="mini-chart">
+    <Card data-slot="login-heatmap" className="gap-1 px-3 pt-2.5 pb-2 shadow-none">
       {title && (
-        <div className="mini-chart-hdr">
-          <span className="mini-chart-lbl">{title}</span>
-          <span className="mini-chart-cur mini-chart-na">{hourLabel}{total ? ` · Σ ${total}` : ''}</span>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+          <span className="text-[.78em] font-medium text-muted-foreground">{title}</span>
+          <span className="text-[.9em] font-bold text-muted-foreground tabular-nums">{hourLabel}{total ? ` · Σ ${total}` : ''}</span>
         </div>
       )}
-      <svg viewBox={`0 0 ${W} ${H}`} className="mini-chart-svg" role="img" aria-label={title}
-           style={{ width: '100%', height: 'auto' }}>
+      {/* Telefonda 24 sütun okunmaz hâle gelmesin: dar ekranda yatay kayar (en az 560 px), geniş ekranda sığar. */}
+      <div className="-mx-1 overflow-x-auto px-1">
+      <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full min-w-[560px] overflow-visible md:min-w-0" role="img" aria-label={title}>
         <defs>
           <pattern id="lh-off" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(148,163,184,.45)" strokeWidth="2" />
@@ -103,6 +106,7 @@ export default function LoginHeatmap({
           </g>
         ))}
       </svg>
-    </div>
+      </div>
+    </Card>
   )
 }

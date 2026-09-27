@@ -54,6 +54,19 @@ public class InventoryAutoPurgeService {
 
     public record Result(int days, int purged, int checksDeleted, List<String> domains) {}
 
+    /**
+     * Kendi proxy'si (BO4/O1 kardeşi, bug regresyon 2026-09-27). {@link #scheduled} {@link #purgeOlderThan}'ı
+     * {@code this.} ile çağırıyordu → {@code @Transactional} ve {@code @CacheEvict} HİÇ devreye girmiyordu.
+     * İlk silinecek kayıtta {@code certificateCheckRepo.deleteByDomain} (tx'i çağırana bırakan
+     * {@code @Modifying} sorgu) {@code TransactionRequiredException} atıyor, aşağıdaki catch onu
+     * {@code log.warn}'la yutuyordu: gece otomatik boşaltma hiçbir kaydı silemiyordu. {@code @Lazy}: öz
+     * enjeksiyonun dairesel bağımlılığını kırar (EscalationService/CertificateService deseni). Birim testinde
+     * ({@code @InjectMocks}) alan boş kalır → {@code this}'e düşülür. Kapı: {@code TransactionalSelfInvocationGuardTest}.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private InventoryAutoPurgeService self;
+
     @Scheduled(cron = "${site.monitor.inventory.auto-purge-cron:0 40 4 * * *}", zone = "Europe/Istanbul")
     public void scheduled() {
         int days = appSettings.getInt(KEY, 0);
@@ -63,7 +76,7 @@ public class InventoryAutoPurgeService {
             return;
         }
         try {
-            Result r = purgeOlderThan(days);
+            Result r = (self != null ? self : this).purgeOlderThan(days);   // proxy üzerinden: tx + önbellek boşaltma
             if (r.purged() > 0) log.info("Envanter çöp kutusu boşaltıldı: {} kayıt, {} kontrol satırı (eşik {} gün)", r.purged(), r.checksDeleted(), days);
         } catch (Exception e) {
             log.warn("Envanter otomatik purge başarısız: {}", e.toString());

@@ -2,7 +2,9 @@ package com.sitemonitor.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.IssueReportComment;
 import com.sitemonitor.model.LoginIssueReport;
+import com.sitemonitor.model.LoginIssueReportImage;
 import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditService;
@@ -17,10 +19,14 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
@@ -202,6 +208,193 @@ public class IssueReportController {
         return ResponseEntity.ok(out);
     }
 
+    // ── "Bildirimlerim" (2026-09-26): kullanıcı kendi bildirimlerini görür, durumunu izler, yorum yazar ──
+    //
+    // Kimlik OTURUMDAN (istek parametresinden asla); sahiplik = username büyük/küçük harf duyarsız eşleşmesi
+    // (USER_REPORT + aynı kullanıcının CLIENT_ERROR otomatik kayıtları + login ekranından yazılan LOGIN).
+    // Başkasının raporu → 404 (403 varlığı sızdırır). İç notlar (internal) HİÇBİR yanıta girmez.
+
+    private static final int MAX_COMMENTS_PER_WINDOW = 30;   // yorum: saatte 30 (bildirim kaydı 10)
+
+    @GetMapping("/api/issue-reports/mine")
+    public ResponseEntity<Map<String, Object>> mine(@RequestParam(required = false) String status,
+                                                    @RequestParam(defaultValue = "0") int page,
+                                                    @RequestParam(defaultValue = "20") int size,
+                                                    HttpSession session) {
+        String username = sessionUser(session);
+        if (username == null) return err(HttpStatus.UNAUTHORIZED, "Oturum gerekli");
+        Page<LoginIssueReport> p = loginIssueService.listMine(username, status, page, size);
+        Map<Long, Long> commentCounts = loginIssueService.publicCommentCounts(
+                p.getContent().stream().map(LoginIssueReport::getId).toList());
+        List<Map<String, Object>> data = new ArrayList<>();
+        for (LoginIssueReport r : p.getContent()) data.add(mineListItem(r, commentCounts.getOrDefault(r.getId(), 0L)));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", true);
+        body.put("data", data);
+        body.put("total", p.getTotalElements());
+        body.put("page", p.getNumber());
+        body.put("size", p.getSize());
+        body.put("counts", loginIssueService.countsMine(username));
+        body.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.ok(body);
+    }
+
+    /** Kendi raporunun ayrıntısı — açılış "görüldü" damgası vurur (okunmamış-yanıt göstergesi sıfırlanır). */
+    @GetMapping("/api/issue-reports/mine/{id}")
+    public ResponseEntity<Map<String, Object>> mineDetail(@PathVariable Long id, HttpSession session) {
+        String username = sessionUser(session);
+        if (username == null) return err(HttpStatus.UNAUTHORIZED, "Oturum gerekli");
+        LoginIssueReport r = loginIssueService.getMine(id, username).orElse(null);
+        if (r == null) return err(HttpStatus.NOT_FOUND, "Kayıt bulunamadı");
+        loginIssueService.markSeenByReporter(r.getId());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("data", mineDetail(r));
+        out.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.ok(out);
+    }
+
+    /**
+     * Bildirenin yorumu. ÇÖZÜLMÜŞ rapora yazınca rapor kendiliğinden yeniden açılır (→ IN_PROGRESS) ve global
+     * yöneticilerin bildirim kutusuna düşer (InboxService; STATUS satırı byReporter=true). Bildirenin kendi yorumu
+     * kendisine bildirim/mail üretmez.
+     */
+    @PostMapping("/api/issue-reports/mine/{id}/comments")
+    public ResponseEntity<Map<String, Object>> mineComment(@PathVariable Long id, @RequestBody Map<String, Object> body,
+                                                           HttpSession session, HttpServletRequest request) {
+        String username = sessionUser(session);
+        if (username == null) return err(HttpStatus.UNAUTHORIZED, "Oturum gerekli");
+        LoginIssueReport r = loginIssueService.getMine(id, username).orElse(null);
+        if (r == null) return err(HttpStatus.NOT_FOUND, "Kayıt bulunamadı");
+        String text = str(body.get("body"));
+        if (text.isBlank()) return err(HttpStatus.BAD_REQUEST, "Yorum boş olamaz");
+        if (text.length() > IssueReportComment.MAX_BODY)
+            return err(HttpStatus.BAD_REQUEST, "Yorum en fazla " + IssueReportComment.MAX_BODY + " karakter olabilir");
+        if (!allow("comment:" + username, MAX_COMMENTS_PER_WINDOW)) {
+            return err(HttpStatus.TOO_MANY_REQUESTS, "Çok fazla yorum gönderildi — lütfen daha sonra tekrar deneyin.");
+        }
+        String role = String.valueOf(session.getAttribute("systemRole"));
+        LoginIssueService.CommentResult res;
+        try {
+            res = loginIssueService.addComment(r.getId(), username, role, false, true, text);
+        } catch (IllegalArgumentException e) {
+            return err(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        String refCode = LoginIssueService.refCode(r);
+        try {
+            auditService.recordAction("ISSUE_REPORT_COMMENT", session, request, "LOGIN_ISSUE", String.valueOf(r.getId()),
+                    "{\"ref\":\"" + refCode + "\",\"comment\":" + res.comment().getId() + ",\"reopened\":" + res.reopened() + "}");
+            if (res.reopened()) {
+                auditService.recordAction("ISSUE_REPORT_REOPEN", session, request, "LOGIN_ISSUE", String.valueOf(r.getId()),
+                        "{\"ref\":\"" + refCode + "\",\"status\":\"" + LoginIssueService.IN_PROGRESS + "\"}");
+            }
+        } catch (Exception e) {
+            log.warn("Sorun bildirimi {} yorum audit kaydı yazılamadı (yorum saklandı): {}", refCode, e.getMessage());
+        }
+        if (res.reopened()) log.info("Sorun bildirimi {} bildirenin yorumuyla yeniden açıldı: user='{}'", refCode, username);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", true);
+        out.put("data", Map.of(
+                "comment", commentItem(res.comment()),
+                "reopened", res.reopened(),
+                "status", res.reopened() ? LoginIssueService.IN_PROGRESS : r.getStatus()));
+        out.put("timestamp", ISO.format(Instant.now()));
+        return ResponseEntity.ok(out);
+    }
+
+    private static String sessionUser(HttpSession session) {
+        Object u = session != null ? session.getAttribute("username") : null;
+        return u == null || u.toString().isBlank() ? null : u.toString();
+    }
+
+    /** Liste satırı (bildiren görünümü): hafif — resim yok, IP/UA yok. */
+    private static Map<String, Object> mineListItem(LoginIssueReport r, long commentCount) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.getId());
+        m.put("refCode", LoginIssueService.refCode(r));
+        m.put("status", r.getStatus());
+        m.put("source", r.getSource());
+        m.put("category", r.getCategory());
+        m.put("reportedAt", r.getReportedAt());
+        m.put("resolvedAt", r.getResolvedAt());
+        m.put("messageSummary", summarize(r.getMessage()));
+        m.put("imageCount", r.getImageCount());
+        m.put("lastActivityAt", r.getLastActivityAt() != null ? r.getLastActivityAt() : r.getReportedAt());
+        m.put("commentCount", commentCount);
+        m.put("unread", r.hasUnreadForReporter());
+        return m;
+    }
+
+    /** Ayrıntı (bildiren görünümü): mesaj + hata + görseller + zaman çizelgesi + HERKESE AÇIK yorumlar. */
+    private Map<String, Object> mineDetail(LoginIssueReport r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", r.getId());
+        m.put("refCode", LoginIssueService.refCode(r));
+        m.put("status", r.getStatus());
+        m.put("source", r.getSource());
+        m.put("category", r.getCategory());
+        m.put("reportedAt", r.getReportedAt());
+        m.put("message", r.getMessage());
+        m.put("errorText", r.getErrorText());
+        m.put("appVersion", r.getAppVersion());
+        m.put("tabKey", r.getTabKey());
+        m.put("linkedReference", r.getLinkedReference());
+        m.put("resolvedAt", r.getResolvedAt());
+        m.put("resolvedBy", r.getResolvedBy());
+        m.put("resolutionNote", r.getResolutionNote());
+        m.put("lastActivityAt", r.getLastActivityAt() != null ? r.getLastActivityAt() : r.getReportedAt());
+        List<String> imgs = new ArrayList<>();
+        for (LoginIssueReportImage img : loginIssueService.images(r.getId())) {
+            imgs.add("data:" + img.getContentType() + ";base64," + img.getDataBase64());
+        }
+        m.put("images", imgs);
+        m.put("imageCount", r.getImageCount());
+        List<IssueReportComment> rows = loginIssueService.publicComments(r.getId());
+        m.put("timeline", timeline(r, rows));
+        List<Map<String, Object>> comments = new ArrayList<>();
+        for (IssueReportComment c : rows) if (IssueReportComment.KIND_COMMENT.equals(c.getKind())) comments.add(commentItem(c));
+        m.put("comments", comments);
+        return m;
+    }
+
+    /** Zaman çizelgesi: "açıldı" (rapor kaydı) + STATUS satırları (kim / ne zaman / bildiren mi). */
+    static List<Map<String, Object>> timeline(LoginIssueReport r, List<IssueReportComment> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        Map<String, Object> opened = new LinkedHashMap<>();
+        opened.put("status", LoginIssueService.OPEN);
+        opened.put("at", r.getReportedAt());
+        opened.put("by", r.getUsername());
+        opened.put("byReporter", true);
+        out.add(opened);
+        for (IssueReportComment c : rows) {
+            if (!IssueReportComment.KIND_STATUS.equals(c.getKind())) continue;
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("status", c.getBody());
+            e.put("at", c.getCreatedAt());
+            e.put("by", c.getAuthorUsername());
+            e.put("byReporter", c.isByReporter());
+            out.add(e);
+        }
+        return out;
+    }
+
+    /** Yorum satırı — iç not bayrağı bildiren yanıtında YOK (zaten süzülmüş; alan bile dönmez). */
+    static Map<String, Object> commentItem(IssueReportComment c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", c.getId());
+        m.put("author", c.getAuthorUsername());
+        m.put("byReporter", c.isByReporter());
+        m.put("body", c.getBody());
+        m.put("createdAt", c.getCreatedAt());
+        return m;
+    }
+
+    private static String summarize(String msg) {
+        if (msg == null) return "";
+        String s = msg.strip().replaceAll("\\s+", " ");
+        return s.length() > 120 ? s.substring(0, 120) + "…" : s;
+    }
+
     /** Otomatik bağlamı JSON'a derler — istemciden gelen alanlar beyaz-listeli ve maskeli;
      *  sunucu bilinenleri (ip/ua/zaman) eklenir. Başarısız istek listesi yol+durum+zamanla sınırlı. */
     private String buildAutoContext(Map<String, Object> body, String maskedUrl,
@@ -242,13 +435,15 @@ public class IssueReportController {
     private static String blankToNull(String s) { return (s == null || s.isBlank()) ? null : s; }
 
     /** Kullanıcı başına sliding-window; map boyutu sınırlı. LoginHelpController deseni. */
-    private boolean allow(String key) {
+    private boolean allow(String key) { return allow(key, MAX_PER_WINDOW); }
+
+    private boolean allow(String key, int maxPerWindow) {
         long now = System.currentTimeMillis();
         if (rate.size() > MAX_MAP_ENTRIES) rate.clear();
         Deque<Long> dq = rate.computeIfAbsent(key != null ? key : "?", k -> new ArrayDeque<>());
         synchronized (dq) {
             while (!dq.isEmpty() && now - dq.peekFirst() > WINDOW_MS) dq.pollFirst();
-            if (dq.size() >= MAX_PER_WINDOW) return false;
+            if (dq.size() >= maxPerWindow) return false;
             dq.addLast(now);
             return true;
         }

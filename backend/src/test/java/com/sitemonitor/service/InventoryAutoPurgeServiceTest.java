@@ -72,6 +72,23 @@ class InventoryAutoPurgeServiceTest {
     }
 
     @Test
+    @DisplayName("BO4/O1 kardeşi: zamanlanmış koşu purge'ü KENDİ PROXY'si üzerinden çağırır (@Transactional + @CacheEvict devrede)")
+    void scheduled_callsPurgeThroughProxy() {
+        InventoryAutoPurgeService proxy = org.mockito.Mockito.mock(InventoryAutoPurgeService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "self", proxy);
+        when(appSettings.getInt(InventoryAutoPurgeService.KEY, 0)).thenReturn(30);
+        when(schedulerService.tryAcquireSchedulerLock("inventory-auto-purge", 30)).thenReturn(true);
+        when(proxy.purgeOlderThan(30)).thenReturn(new InventoryAutoPurgeService.Result(30, 0, 0, List.of()));
+
+        service.scheduled();
+
+        // this.purgeOlderThan(..) proxy'yi atlıyordu: tx yok → ilk deleteByDomain TransactionRequiredException,
+        // catch yutuyordu → gece boşaltma HİÇBİR kaydı silemiyordu.
+        verify(proxy).purgeOlderThan(30);
+        verify(inventoryRepo, never()).findByDeletedAtIsNotNullOrderByDomainAsc();   // hedefin kendi gövdesi koşmadı
+    }
+
+    @Test
     @DisplayName("ayar 0 (kapalı) → zamanlanmış koşu hiçbir şey okumaz; kilit başka pod'da → atlanır")
     void scheduledRespectsSettingAndLock() {
         when(appSettings.getInt(InventoryAutoPurgeService.KEY, 0)).thenReturn(0);

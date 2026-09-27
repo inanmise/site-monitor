@@ -149,6 +149,22 @@ class SqlPlaygroundServiceTest {
     }
 
     @Test
+    @DisplayName("Hata metni EN ÖZGÜL neden (PostgreSQL mesajı + konum) — Spring 6 sarmalayıcı metni değil")
+    void execute_error_usesMostSpecificCause() {
+        java.sql.SQLException pg = new java.sql.SQLException("ERROR: column \"nope\" does not exist" + System.lineSeparator() + "  Position: 8");
+        when(jdbc.queryForList(anyString())).thenThrow(new org.springframework.jdbc.BadSqlGrammarException("StatementCallback", "SELECT nope FROM teams", pg));
+
+        Map<String, Object> result = service.execute("SELECT nope FROM teams", "admin");
+
+        assertThat(result.get("ok")).isEqualTo(false);
+        assertThat((String) result.get("error")).contains("column \"nope\" does not exist").contains("Position: 8")
+            .doesNotContain("StatementCallback");
+        ArgumentCaptor<SqlQueryHistory> saved = ArgumentCaptor.forClass(SqlQueryHistory.class);
+        verify(historyRepo).save(saved.capture());
+        assertThat(saved.getValue().getErrorMessage()).contains("does not exist");
+    }
+
+    @Test
     @DisplayName("Empty SQL rejected")
     void execute_empty_rejected() {
         assertThatThrownBy(() -> service.execute("   ", "admin"))

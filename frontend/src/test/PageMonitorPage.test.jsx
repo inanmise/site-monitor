@@ -33,6 +33,19 @@ const monitor = {
 }
 
 /**
+ * Kartın başlığı (stretched button) — URL görsel olarak PARÇALI çizilir (2026-09-27 kart yeniden tasarımı: host vurgulu,
+ * yol soluk, https şeması gizli), bu yüzden kart düz metinle değil ROL + erişilebilir adla ("<url> — open details") bulunur.
+ */
+const escapeRx = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+const cardTitleName = (url) => new RegExp(`^${escapeRx(url)} — (open details|detayları aç)$`)
+const findCard = (url) => screen.findByRole('button', { name: cardTitleName(url) })
+const getCard = (url) => screen.getByRole('button', { name: cardTitleName(url) })
+const queryCard = (url) => screen.queryByRole('button', { name: cardTitleName(url) })
+/** 50 kartlık ızgarada rol sorgusu çok yavaş (her düğmenin adı hesaplanır) — AYNI başlık düğmesini adıyla doğrudan bulur. */
+const cardOpenEl = (url) => [...document.querySelectorAll('[data-monitor-open]')]
+  .find((b) => cardTitleName(url).test(b.getAttribute('aria-label') || '')) || null
+
+/**
  * O2: loadIssues'un üç eşzamanlı çağıranı var (filtre tıklaması, checkNow, 30sn sessiz
  * refreshModal) ve sıra guard'ı yoktu — yavaş bir 'all' yanıtı, kullanıcının sonradan seçtiği
  * filtrenin sonucunu EZEBİLİYORDU (çip 'Kırıklar' iken liste 'Hepsi'). Kardeş PageSpeed sayfası
@@ -63,7 +76,7 @@ describe("PageMonitorPage — yarış guardı (O2)", () => {
       ] })
 
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-    fireEvent.click(await screen.findByText('https://www.example.com/'))
+    fireEvent.click(await findCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalledTimes(1))
 
     // Kullanıcı filtreyi değiştiriyor → İKİNCİ istek hızlı döner ve ekranı doldurur.
@@ -92,7 +105,7 @@ describe('PageMonitorPage', () => {
   it('izleme kartını (url) listeler', async () => {
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
+    expect(await findCard('https://www.example.com/')).toBeInTheDocument()
   })
 
   it('Yeni modal açılır (form alanları görünür)', async () => {
@@ -153,19 +166,30 @@ describe('PageMonitorPage', () => {
     ] })
     const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
-    expect(screen.getByText(/yapılandırma hatası|configuration error/i)).toBeInTheDocument()
-    // Kesinti gibi gösterilmez — kart "down" sınıfını almaz (alarm/e-posta da üretilmez).
-    expect(container.querySelector('.upt-card--down')).toBeNull()
+    await findCard('https://www.example.com/')
+    // Kesinti gibi gösterilmez — kart "down" durumunu almaz (alarm/e-posta da üretilmez); "bilinmiyor"
+    // sözlüğünde durur (shadcn MonitorCard `data-status`).
+    const card = container.querySelector('.upt-grid > [data-slot="card"]')
+    expect(card).not.toBeNull()
+    expect(card.querySelector('[data-slot="badge"][data-status]')).toHaveTextContent(/yapılandırma hatası|configuration error/i)
+    // Sonuç paneli mor "URL denetlenemiyor" + sunucunun nedeni (kesinti kırmızısı değil)
+    const panel = card.querySelector('[data-slot="page-integrity"]')
+    expect(panel).toHaveAttribute('data-tone', 'config')
+    expect(panel.querySelector('[data-slot="page-reason"]')).toHaveAttribute('data-reason', 'config')
+    expect(panel.textContent).toMatch(/(The URL can’t be checked|URL denetlenemiyor)(It has no valid host|URL'de geçerli bir host yok)/)
+    expect(card.getAttribute('data-status')).toBe('unknown')
+    expect(container.querySelector('[data-slot="card"][data-status="down"]')).toBeNull()
   })
 
   it('karta tıkla → detay modalında Sorunlar + Grafik sekmeleri; issues yüklenir', async () => {
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: /issues|sorunlar/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /chart|grafik/i })).toBeInTheDocument()
+    // Detay penceresi ui/ModalShell (role="dialog"), sekmeler shadcn Tabs (role="tab")
+    const detail = screen.getByRole('dialog')
+    expect(within(detail).getByRole('tab', { name: /issues|sorunlar/i })).toHaveAttribute('aria-selected', 'true')
+    expect(within(detail).getByRole('tab', { name: /chart|grafik/i })).toBeInTheDocument()
   })
 
   it('E5: issues istegi REJECT ederse spinner kalici kalmaz (modal kapanmadan cozulur)', async () => {
@@ -176,7 +200,7 @@ describe('PageMonitorPage', () => {
 
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
     // Sinif adi ayirt edici DEGIL: yukleme bloguyla "sorun yok" blogu ayni `upt-modal-loading`
@@ -184,7 +208,7 @@ describe('PageMonitorPage', () => {
     // "Yukleniyor..." kalir, inerse bos-durum metni gelir.
     expect(await screen.findByText(/sorunlu kaynak yok|no resource issues/i)).toBeInTheDocument()
     expect(screen.queryByText(/^yükleniyor\.\.\.$|^loading\.\.\.$/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /issues|sorunlar/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /issues|sorunlar/i })).toBeInTheDocument()
   })
 
   it('istatistik panosu: OK/DEGRADED/DOWN ayrımı + filtreleme', async () => {
@@ -195,24 +219,24 @@ describe('PageMonitorPage', () => {
     ] })
     const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://a.example.com')
+    await findCard('https://a.example.com')
 
-    expect(container.querySelector('.stats-panel')).toBeNull()
-    fireEvent.click(container.querySelector('.stats-collapse-bar'))
-    expect(container.querySelector('.stats-panel')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).toBeNull()
+    fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
+    expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
 
-    expect(container.querySelector('.stat-item-total .stat-value').textContent).toBe('3')
-    expect(container.querySelector('.stat-item-valid .stat-value').textContent).toBe('1')     // OK
-    expect(container.querySelector('.stat-item-warning .stat-value').textContent).toBe('1')   // DEGRADED
-    expect(container.querySelector('.stat-item-critical .stat-value').textContent).toBe('1')  // DOWN
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="total"] [data-slot="stat-value"]').textContent).toBe('3')
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="valid"] [data-slot="stat-value"]').textContent).toBe('1')     // OK
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="warning"] [data-slot="stat-value"]').textContent).toBe('1')   // DEGRADED
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="critical"] [data-slot="stat-value"]').textContent).toBe('1')  // DOWN
 
-    fireEvent.click(container.querySelector('.stat-item-warning'))
-    await waitFor(() => expect(screen.queryByText('https://a.example.com')).not.toBeInTheDocument())
-    expect(screen.getByText('https://b.example.com')).toBeInTheDocument()
-    expect(screen.queryByText('https://c.example.com')).not.toBeInTheDocument()
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="warning"]'))
+    await waitFor(() => expect(queryCard('https://a.example.com')).not.toBeInTheDocument())
+    expect(getCard('https://b.example.com')).toBeInTheDocument()
+    expect(queryCard('https://c.example.com')).not.toBeInTheDocument()
 
-    fireEvent.click(container.querySelector('.stat-item-warning'))
-    await screen.findByText('https://a.example.com')
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="warning"]'))
+    await findCard('https://a.example.com')
   })
 
   it('Kopyala: TÜM kullanıcı ayarları birebir kopyalanır (yalnız ad "(Kopya)" olur)', async () => {
@@ -224,21 +248,23 @@ describe('PageMonitorPage', () => {
       slow_resource_ms: 1500, alert_third_party: true, alert_mixed_content: false, alert_timeout: false,
       resource_concurrency: 8, interval_seconds: 600, timeout_ms: 6000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      active: false, notification_group_id: 7,
+      active: false, notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
     }] })
     api.monitoring.createPageMonitor.mockResolvedValue({ success: true, data: {} })
 
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await findCard('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
-    expect(document.querySelector('.page-exclude-ta').value).toBe('/ads/\n/tracker/')
+    // Hariç desenleri alanı (shadcn Textarea, etiketine bağlı) + etiketteki desen sayacı rozeti
+    expect(screen.getByRole('textbox', { name: /exclude patterns|hariç tutulan/i }).value).toBe('/ads/\n/tracker/')
+    expect(screen.getByText(/^(2 patterns|2 desen)$/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
@@ -254,6 +280,8 @@ describe('PageMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -273,13 +301,19 @@ describe('PageMonitorPage', () => {
 
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
-    // Düğmenin erişilebilir adı artık KAYNAK URL'ini taşıyor (satırlar ayırt edilsin diye),
-    // yani dile bağlı sabit bir desenle aranamaz. Etkin (disabled olmayan) dışlama düğmesi:
-    await waitFor(() => expect(document.querySelector('.page-exclude-btn:not([disabled])')).not.toBeNull())
-    const btn = document.querySelector('.page-exclude-btn:not([disabled])')
+    // Düğmenin erişilebilir adı KAYNAK URL'ini taşıyor (satırlar ayırt edilsin diye): EN "Exclude <url>",
+    // TR "<url> — hariç tut". Etkin (disabled olmayan) dışlama düğmesi:
+    const btn = await screen.findByRole('button', {
+      name: /^Exclude https:\/\/voting\.institutionalinvestor\.com\/welcome$|^https:\/\/voting\.institutionalinvestor\.com\/welcome — hariç tut$/,
+    })
+    expect(btn).not.toBeDisabled()
+    // İkon düğmesinin ipucu artık shadcn Tooltip (title değil): odaklanınca görünür
+    expect(btn).not.toHaveAttribute('title')
+    fireEvent.focus(btn)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/^(Exclude|Hariç tut)$/)
     fireEvent.click(btn)
 
     // Prompt açıldı, giriş değeri = kaynak URL'i (düzenlenebilir)
@@ -303,7 +337,7 @@ describe('PageMonitorPage', () => {
     ] })
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
 
     const out = await screen.findAllByText(/kapsam dışı|out of scope/i)
@@ -322,11 +356,11 @@ describe('PageMonitorPage', () => {
     ] })
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
     await screen.findAllByText(/googletagmanager|voting\.institutionalinvestor/)
 
-    const hdrs = document.querySelectorAll('.page-run-hdr')
+    const hdrs = document.querySelectorAll('[data-slot="issue-run-header"]')
     expect(hdrs.length).toBe(2)
     expect(hdrs[0].textContent).toMatch(/2 sorun|2 issues/)
     expect(hdrs[1].textContent).toMatch(/1 sorun|1 issues/)
@@ -340,7 +374,7 @@ describe('PageMonitorPage', () => {
 
     const { unmount } = render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     const already = await screen.findByRole('button', { name: /zaten hariç|already matches/i })
     expect(already).toBeDisabled()
     unmount()
@@ -359,7 +393,7 @@ describe('PageMonitorPage', () => {
     api.monitoring.getConfirmations.mockResolvedValue({ success: true, data: [] })
     render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(getCard('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getPageIssues).toHaveBeenCalled())
     await screen.findByText(/voting\.institutionalinvestor\.com/)
     expect(screen.queryByRole('button', { name: /hariç tut$|^exclude$|zaten hariç|already matches/i })).toBeNull()
@@ -371,21 +405,21 @@ describe('PageMonitorPage', () => {
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: many })
     const { container, unmount } = render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
-    await screen.findByText('https://m1.example.com/')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    await waitFor(() => expect(cardOpenEl('https://m1.example.com/')).not.toBeNull())
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    await screen.findByText('https://m51.example.com/')
-    expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+    await waitFor(() => expect(cardOpenEl('https://m51.example.com/')).not.toBeNull())
+    expect(cardOpenEl('https://m1.example.com/')).toBeNull()
     expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
     unmount()
 
     // Tek sayfa (30 kayıt): gezinme yok ama kayıt bilgisi var
     api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: many.slice(0, 30) })
     render(<PageMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://m1.example.com/')
+    await waitFor(() => expect(cardOpenEl('https://m1.example.com/')).not.toBeNull())
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
   })
@@ -411,5 +445,58 @@ describe('PageMonitorPage', () => {
     } finally {
       window.history.replaceState({}, '', '/')
     }
+  })
+
+  // ── shadcn geçişi (2026-09-25) ────────────────────────────────────────────
+  it('durum sözlüğü: OK/DEGRADED/DOWN/CONFIG_ERROR → kart ve rozet up/warn/down/unknown', async () => {
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [
+      { ...monitor, id: 1, url: 'https://ok.example.com/', status: 'OK' },
+      { ...monitor, id: 2, url: 'https://deg.example.com/', status: 'DEGRADED' },
+      { ...monitor, id: 3, url: 'https://down.example.com/', status: 'DOWN' },
+      { ...monitor, id: 4, url: 'https://cfg.example.com/', status: 'CONFIG_ERROR' },
+    ] })
+    const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await findCard('https://ok.example.com/')
+    const cards = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    expect(cards.map(c => c.getAttribute('data-status'))).toEqual(['up', 'warn', 'down', 'unknown'])
+    // Rozet kartın sözlüğünü izler; yapılandırma hatası "bilinmiyor"da ama kendi metniyle
+    const badges = cards.map(c => c.querySelector('[data-slot="badge"][data-status]'))
+    expect(badges.map(b => b.getAttribute('data-status'))).toEqual(['up', 'warn', 'down', 'unknown'])
+    expect(badges[3]).toHaveTextContent(/configuration error|yapılandırma hatası/i)
+  })
+
+  it('canlı teyit zinciri detayda uyarı bandı (AlertBanner + Spinner) olarak görünür', async () => {
+    api.monitoring.getConfirmations.mockResolvedValue({ success: true, data: [
+      { alert_type: 'PAGE_DOWN', attempt: 2, total_attempts: 3, next_attempt_at: '2026-09-25T10:00:30' },
+      { alert_type: 'HTTP_DOWN', attempt: 1, total_attempts: 3, next_attempt_at: null },   // başka tür → gösterilmez
+    ] })
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await findCard('https://www.example.com/'))
+    const text = await screen.findByText(/^(Confirmation attempt 2\/3|Teyit denemesi 2\/3) — /)
+    const banner = text.closest('[data-slot="alert"]')
+    expect(banner).toHaveAttribute('data-tone', 'warning')
+    expect(banner.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    expect(screen.getAllByText(/Confirmation attempt|Teyit denemesi/)).toHaveLength(1)
+  })
+
+  it('Gelişmiş ayarlar (Collapsible) kapalı başlar; açınca alanlar görünür ve değer payload\'a gider', async () => {
+    api.monitoring.createPageMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getPageMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni izleme/i }))
+    const form = screen.getByRole('dialog')
+    const toggle = within(form).getByRole('button', { name: /advanced settings|gelişmiş ayarlar/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(form).queryByRole('spinbutton', { name: /timeout \(ms\)|zaman aşımı/i })).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.change(within(form).getByRole('spinbutton', { name: /timeout \(ms\)|zaman aşımı/i }), { target: { value: '7500' } })
+
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createPageMonitor.mock.calls[0][0].timeoutMs).toBe(7500)
   })
 })

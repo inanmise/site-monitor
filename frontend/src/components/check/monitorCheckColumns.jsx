@@ -1,4 +1,4 @@
-import { fmtDay, daysClass, httpClass } from './CheckRunShell.jsx'
+import { fmtDay, daysClass, httpClass, CELL } from './CheckRunShell.jsx'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { formatBytes } from '../../utils/formatBytes.js'
 
@@ -47,7 +47,7 @@ const ms = (v) => (v == null ? '—' : `${v} ms`)
 export function monitorCheckColumns(type, t) {
   const httpCol = {
     key: 'http', label: t('app.checkColHttp'),
-    tdClassName: r => `chk-mono ${httpClass((r.data || {}).http_status ?? null)}`,
+    tdClassName: r => `${CELL.mono} ${httpClass((r.data || {}).http_status ?? null)}`,
     render: r => num((r.data || {}).http_status),
   }
   const msCol = {
@@ -89,7 +89,7 @@ export function monitorCheckColumns(type, t) {
         targetOf: m => (m?.domain ? `${m.domain} · ${m.record_type || ''}`.trim().replace(/ ·$/, '') : ''),
         columns: [
           // Yalnız İLK satır: bir A kaydı onlarca IP dönebilir ve tablo satırı sürüklerdi.
-          { key: 'value', label: t('mon.checkColValue'), tdClassName: 'chk-td-target',
+          { key: 'value', label: t('mon.checkColValue'), tdClassName: CELL.target,
             render: r => String((r.data || {}).value || '').split('\n')[0] || '—' },
           { key: 'changed', label: t('mon.checkColChanged'), render: r => {
             const d = r.data || {}
@@ -116,7 +116,7 @@ export function monitorCheckColumns(type, t) {
         targetOf: m => m?.domain || '',
         columns: [
           { key: 'days', label: t('app.checkColDays'),
-            tdClassName: r => `chk-mono chk-days ${daysClass((r.data || {}).days_remaining ?? null)}`,
+            tdClassName: r => `${CELL.mono} ${CELL.days} ${daysClass((r.data || {}).days_remaining ?? null)}`,
             render: r => {
               const days = (r.data || {}).days_remaining ?? null
               return days == null ? '—' : t('app.checkDaysUnit', days)

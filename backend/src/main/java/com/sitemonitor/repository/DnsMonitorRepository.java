@@ -15,11 +15,18 @@ public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
     long countByStandaloneTrueAndActiveTrue();
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);
-    List<DnsMonitor> findByStandaloneTrueAndActiveTrue();
-    Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrue(String domain, String recordType);
+    /** Liste ucu (2026-09-27): SİLİNMEMİŞ standalone satırlar — duraklatılmışlar DÂHİL (bkz. PortMonitorRepository). */
+    List<DnsMonitor> findByStandaloneTrueAndDeletedAtIsNull();
+
+    /** Mükerrer guard'ı: aynı (domain, tip) için CANLI (aktif ya da duraklatılmış, silinmemiş) standalone satır. */
+    Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(String domain, String recordType);
+
+    /** Yeniden ekleme: aynı (domain, tip) için en son SİLİNMİŞ standalone satır — canlandırılır (id ve geçmiş korunur). */
+    Optional<DnsMonitor> findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc(String domain, String recordType);
 
     /** [teamId, grup adı, sayı] — TAKIM-bazlı grup listesi (boş/null hariç); satır çekmeden DB-side GROUP BY. */
-    @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM DnsMonitor m WHERE m.groupName IS NOT NULL AND m.groupName <> '' GROUP BY m.teamId, m.groupName")
+    // Silinmiş standalone satır grup sayısına girmez (2026-09-27).
+    @Query("SELECT m.teamId, m.groupName, COUNT(m) FROM DnsMonitor m WHERE m.groupName IS NOT NULL AND m.groupName <> '' AND m.deletedAt IS NULL GROUP BY m.teamId, m.groupName")
     List<Object[]> groupCountsByTeam();
 
     /** Bir TAKIMIN grup adını yeniden adlandır (yalnız o takımın monitörleri). Caller'da @Transactional zorunlu. */

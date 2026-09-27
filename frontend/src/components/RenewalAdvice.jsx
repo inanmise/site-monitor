@@ -1,120 +1,170 @@
-import { useEffect, useMemo, useState } from 'react'
-import { api, formatDateOnly, localDayKey } from '../api/client'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  AlertOctagon, AlertTriangle, BookOpenText, CalendarClock, Clock, Download, FileDown, FolderOpen, Hourglass, Layers,
+  Link2Off, ListFilter, RefreshCw, ShieldCheck, Tag, Users,
+} from 'lucide-react'
+import { api, formatDate, formatDateOnly, localDayKey } from '../api/client'
 import { useT } from '../i18n/index.jsx'
-import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
-import { LoadingBlock } from './ui/Progress.jsx'
-import StatusBlock from './ui/StatusBlock.jsx'
-import AlertBanner from './ui/AlertBanner.jsx'
-import MonthCalendar from './ui/MonthCalendar.jsx'
-import SearchableSelect from './ui/SearchableSelect.jsx'
-import TeamBadge from './ui/TeamBadge.jsx'
-import PaginationBar from './ui/PaginationBar.jsx'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import { useIsMobile } from '../hooks/use-mobile.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { buildIcs, downloadIcs } from '../utils/ics.js'
 import { csvRows } from '../utils/csv.js'
-import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
-import { CalendarDays, List, Download, ShieldCheck, Table2, Search, FolderOpen, Copy, FileDown, Stethoscope } from 'lucide-react'
+import { copyText } from '../utils/copyText.js'
+import { navigateTo } from '../utils/navigate.js'
+import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
+import RenewalPlanModal from './RenewalPlanModal.jsx'
+import { expiryKey } from '../pages/forecastModel.js'
+import MonitorStatsBar from './MonitorStatsBar.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import AlertBanner from './ui/AlertBanner.jsx'
+import MonthCalendar from './ui/MonthCalendar.jsx'
+import PaginationBar from './ui/PaginationBar.jsx'
+import { useToast } from './ui/Toast.jsx'
+import AdviceCard from './renewal/AdviceCard.jsx'
+import AdviceTable from './renewal/AdviceTable.jsx'
+import AdviceToolbar from './renewal/AdviceToolbar.jsx'
+import {
+  CODES, NONE, SORT_KEYS, STAT_KEYS, facetOptions, filterAdvice, fingerprintCounts, isShared, joinList, parseList,
+  sortAdvice, summarise, tagFacetOptions,
+} from './renewal/renewalModel.js'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 
-const PRIORITY_COLOR = { critical: '#dc3545', warning: '#fd7e14', info: '#0d6efd' }
-const PRIORITY_ORDER = { critical: 0, warning: 1, info: 2 }
-const CODES = ['REVOKED', 'DEPLOYMENT_INCOMPLETE', 'CHAIN_BROKEN', 'UNREACHABLE', 'EXPIRED', 'EXPIRING_CRITICAL', 'EXPIRING_WARNING', 'EXPIRING_INFO']
+const VIEWS = ['list', 'table', 'calendar']
+const GROUP_ICON = { critical: AlertOctagon, warning: AlertTriangle, info: CalendarClock }
 
 /**
- * Yenileme Önerileri — yeniden tasarım (2026-09-18, kullanıcı isteği: "çok daha kullanışlı").
+ * Sertifika Yenileme Önerileri — shadcn yeniden tasarımı (2026-09-26, kullanıcı isteği: "shadcn ile yeniden tasarla,
+ * zenginleştir, mweb duyarlı yap"). Önceki tur (2026-09-18) süzgeç/sayfalama/tablo/takvim getirmişti; bu tur:
  *
- * Eski sayfa: sunucu sırasında düz kart listesi, süzgeç yok, sayfalama yok, bağlam yok (takım/kademe/veren).
- * Yeni sayfa:
- *  - Özet şeridi: kritik / uyarı / bilgi + "bu hafta" + "toplu iş" (aynı parmak izini paylaşan alanlar) — tıklayınca süzer.
- *  - Süzgeç çubuğu: arama (alan/veren/grup/etiket), neden (kod), takım, grup, etiket, sıralama; "Filtreleri temizle";
- *    durum URL'de (paylaşılabilir bağlantı).
- *  - Üç görünüm: kart (zengin), tablo (sıkı, sıralanabilir), takvim. Kart ve tablo SAYFALI.
- *  - Satır eylemleri: detay, tanılama (ulaşılamayan), alan adını kopyala. Dışa aktarma: CSV + ICS (süzülmüş liste).
- *  - Aynı sertifika (parmak izi) birden çok alanı kapsıyorsa "N alan bu sertifikayı paylaşıyor" rozeti: tek yenileme
- *    işi olduğunu gösterir — ekipler aynı sertifikayı iki kez yenilemesin.
+ *  - Başlık satırı: amaç cümlesi + "HH:MM itibarıyla" + Yenile / Dışa aktar (CSV, .ics) / Değişim Rehberi bağlantısı.
+ *  - Özet şeridi = `MonitorStatsBar` (tek etkin süzgeç, URL `r_stat`): Hemen ilgilenin · Bu hafta · Bu ay ·
+ *    Önümüzdeki 60 gün · Zincir/erişim sorunu · Paylaşılan sertifika. Eski `r_pri` bağlantıları okunur.
+ *  - Süzgeçler (renewal/AdviceToolbar): arama + Neden/Takım/Grup/Etiket çoklu fasetleri (telefonda alttan Sheet) +
+ *    sıralama menüsü + görünüm; etkin süzgeç çipleri tek tek kaldırılır.
+ *  - Kart (renewal/AdviceCard): öncelik + neden rozeti, alan adı + TeamBadge, önerilen işlem + gerekçe, kalan gün +
+ *    60 günlük pencere çubuğu, "Sertifikayı aç" / "Yenilemeyi planla" (RenewalPlanModal) / "Tanıla".
+ *  - Varsayılan sıralamada (öncelik) liste öncelik öbeklerine bölünür (öbek başlığı + sayı).
+ *  - Yükleniyor: Skeleton; boş: StatusBlock; hata: AlertBanner + "Tekrar dene".
+ *
+ * Sayfalama standardı korunur: usePagination (panel ön ayarı) + `<PaginationBar {...pager} />`, `page`/`ps` adreste.
+ * API: `/api/renewal-advice` plan bilgisi DÖNMEZ — plan rozeti yalnız bu oturumda kaydedilen plan için görünür.
  */
 export default function RenewalAdvice({ onSelectDomain }) {
   const t = useT()
+  const toast = useToast()
+  const isMobile = useIsMobile()
+  const canPlan = usePermissions().canEdit('inventory.crud')
+
   const [advice, setAdvice] = useState([])
   const [loading, setLoading] = useState(true)
-  const [diag, setDiag] = useState(null)   // { domain, port } → DiagnosticsModal
+  const [refreshing, setRefreshing] = useState(false)
   const [loadError, setLoadError] = useState(null)
-  const [view, setView] = useState(() => { try { const v = localStorage.getItem('renewal-view'); return ['list', 'table', 'calendar'].includes(v) ? v : 'list' } catch { return 'list' } })
+  const [asOf, setAsOf] = useState(null)
+  const [diag, setDiag] = useState(null)       // { domain, port } → DiagnosticsModal
+  const [planRow, setPlanRow] = useState(null) // RenewalPlanModal satırı
+  const [plans, setPlans] = useState({})       // domain → { renewal_planned_at, renewal_planned_note } (bu oturum)
+
+  const [view, setView] = useState(() => { try { const v = localStorage.getItem('renewal-view'); return VIEWS.includes(v) ? v : 'list' } catch { return 'list' } })
   const switchView = (v) => { setView(v); try { localStorage.setItem('renewal-view', v) } catch { /* yoksay */ } }
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
-  const [priority, setPriority] = useState(() => readUrlParam('r_pri', 'all'))
-  const [code, setCode] = useState(() => readUrlParam('r_code', 'all'))
-  const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
-  const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
-  const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))
-  const [sortKey, setSortKey] = useState(() => readUrlParam('sort', 'priority'))
-  const [copied, setCopied] = useState(null)
+  const [stat, setStat] = useState(() => { const v = readUrlParam('r_stat', null) ?? readUrlParam('r_pri', null); return STAT_KEYS.includes(v) ? v : null })
+  const [codes, setCodes] = useState(() => parseList(readUrlParam('r_code', '')).filter((c) => c !== 'all'))
+  const [teams, setTeams] = useState(() => parseList(readUrlParam('team', '')).filter((c) => c !== 'all'))
+  const [groups, setGroups] = useState(() => parseList(readUrlParam('group', '')).filter((c) => c !== 'all'))
+  const [tags, setTags] = useState(() => parseList(readUrlParam('tag', '')).filter((c) => c !== 'all'))
+  const [sortKey, setSortKey] = useState(() => { const v = readUrlParam('sort', 'priority'); return SORT_KEYS.includes(v) ? v : 'priority' })
 
-  // Mesaj/eylem arayüz dilinde (QA 2026-09-12, ISSUE-002): sunucu yalnız TR üretir; `code` + gün sayısı
-  // ile çevrilir, bilinmeyen kodda sunucu metni kalır.
-  const adviceText = (a) => {
+  // Mesaj/eylem arayüz dilinde (QA 2026-09-12, ISSUE-002): sunucu yalnız TR üretir; `code` + gün sayısı ile çevrilir,
+  // bilinmeyen kodda sunucu metni kalır.
+  const adviceText = useCallback((a) => {
     const n = a.days_remaining == null ? '' : Math.abs(a.days_remaining)
     const msg = t(`renewal.msg.${a.code}`, n), act = t(`renewal.act.${a.code}`, n)
     return { message: msg.startsWith('renewal.msg.') ? a.message : msg, action: act.startsWith('renewal.act.') ? a.action : act }
-  }
-  const codeLabel = (c) => { const k = `renewal.code.${c}`; const v = t(k); return v === k ? c : v }
+  }, [t])
+  const codeLabel = useCallback((c) => { const k = `renewal.code.${c}`; const v = t(k); return v === k ? c : v }, [t])
 
-  // .catch YOKTU: request() ag hatasinda {success:false} DONDURMEZ, throw eder; promise reject olunca
-  // setLoading(false) hic calismiyor, spinner sonsuza kadar donuyordu.
-  useEffect(() => {
-    api.getRenewalAdvice()
+  // request() ağ hatasında throw eder → .catch ŞART (yoksa spinner sonsuza kadar dönüyordu). Yenilemede eldeki veri
+  // korunur; hata bandı listenin üstünde "tekrar dene" ile görünür.
+  const load = useCallback((initial = false) => {
+    if (!initial) setRefreshing(true)
+    return api.getRenewalAdvice()
       .then((res) => {
-        if (res?.success) { setAdvice(res.data || []); setLoadError(null) }
-        else setLoadError(res?.error || 'load failed')
+        if (res?.success) { setAdvice(res.data || []); setLoadError(null); setAsOf(res.timestamp || new Date().toISOString()) }
+        else setLoadError(res?.error || t('renewal.loadError'))
       })
-      .catch((e) => setLoadError(e?.message || 'network error'))
-      .finally(() => setLoading(false))
-  }, [])
+      .catch((e) => setLoadError(e?.message || t('renewal.loadError')))
+      .finally(() => { setLoading(false); setRefreshing(false) })
+  }, [t])
+  useEffect(() => { load(true) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Aynı parmak izi = aynı sertifika = TEK yenileme işi (alan sayısı rozet için)
-  const fpCount = useMemo(() => {
-    const m = new Map()
-    for (const a of advice) if (a.fingerprint) m.set(a.fingerprint, (m.get(a.fingerprint) || 0) + 1)
-    return m
-  }, [advice])
+  const fpCount = useMemo(() => fingerprintCounts(advice), [advice])
+  const summary = useMemo(() => summarise(advice, fpCount), [advice, fpCount])
 
-  const kpi = useMemo(() => {
-    const k = { critical: 0, warning: 0, info: 0, week: 0, batches: 0 }
-    for (const a of advice) {
-      if (k[a.priority] != null) k[a.priority]++
-      if (a.days_remaining != null && a.days_remaining >= 0 && a.days_remaining <= 7) k.week++
-    }
-    for (const n of fpCount.values()) if (n > 1) k.batches++
-    return k
-  }, [advice, fpCount])
+  const facetState = { codes, teams, groups, tags }
+  const filtered = useMemo(
+    () => sortAdvice(filterAdvice(advice, { q: search, stat, ...facetState }, fpCount), sortKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [advice, fpCount, search, stat, codes, teams, groups, tags, sortKey])
 
-  const teamOptions = useMemo(() => {
-    const names = new Set(); let none = false
-    for (const a of advice) { if (a.team_name) names.add(a.team_name); else none = true }
-    const o = [{ value: 'all', label: t('app.allTeams') }]
-    ;[...names].sort((x, y) => x.localeCompare(y)).forEach((n) => o.push({ value: n, label: n }))
-    if (none) o.push({ value: '__none__', label: t('app.noTeam') })
-    return o
-  }, [advice, t])
-  const groupOptions = useMemo(() => {
-    const names = new Set(); let none = false
-    for (const a of advice) { if (a.group_name) names.add(a.group_name); else none = true }
-    const o = [{ value: 'all', label: t('app.allGroups') }]
-    ;[...names].sort((x, y) => x.localeCompare(y)).forEach((n) => o.push({ value: n, label: n }))
-    if (none) o.push({ value: '__none__', label: t('app.noGroup') })
-    return o
-  }, [advice, t])
-  const tagOptions = useMemo(() => {
-    const o = [{ value: 'all', label: t('mon.allTags') }]
-    tagNamesOf(advice).forEach((n) => o.push({ value: n, label: n }))
-    if (advice.some((a) => !(a.tags || '').trim())) o.push({ value: '__none__', label: t('mon.noTags') })
-    return o
-  }, [advice, t])
-  const codeOptions = useMemo(() => {
-    const present = new Set(advice.map((a) => a.code))
-    return [{ value: 'all', label: t('renewal.allReasons') }, ...CODES.filter((c) => present.has(c)).map((c) => ({ value: c, label: codeLabel(c) }))]
-  }, [advice, t])   // eslint-disable-line react-hooks/exhaustive-deps
+  const listKey = (l) => l.join('|')
+  // Sayfalama standardı (2026-09-26): panel ön ayarı (ağır kart listesi); `page`/`ps` adresten okunur ve yazılır.
+  const pager = usePagination(filtered, {
+    listKey: 'renewal-advice', preset: 'panel',
+    resetDeps: [search, stat, listKey(codes), listKey(teams), listKey(groups), listKey(tags), sortKey, view],
+    url: { pageKey: 'page', sizeKey: 'ps' },
+  })
+  useUrlQuerySync({
+    q: search.trim() || null, r_stat: stat, r_pri: null, r_code: joinList(codes),
+    team: joinList(teams), group: joinList(groups), tag: joinList(tags), sort: sortKey !== 'priority' ? sortKey : null,
+  })
+
+  const clearFilters = () => { setSearch(''); setStat(null); setCodes([]); setTeams([]); setGroups([]); setTags([]) }
+  const addTo = (setter) => (v) => setter((cur) => (cur.includes(v) ? cur : [...cur, v]))
+
+  // ── Faset seçenekleri (sayılı) ──
+  const codeOpts = useMemo(() => {
+    const present = new Map(); for (const a of advice) present.set(a.code, (present.get(a.code) || 0) + 1)
+    const known = CODES.filter((c) => present.has(c)).map((c) => ({ value: c, label: codeLabel(c), count: present.get(c) }))
+    const unknown = [...present.keys()].filter((c) => !CODES.includes(c)).map((c) => ({ value: c, label: codeLabel(c), count: present.get(c) }))
+    return [...known, ...unknown]
+  }, [advice, codeLabel])
+  const teamOpts = useMemo(() => facetOptions(advice, (a) => (a.team_name ? [a.team_name] : []), t('app.noTeam')), [advice, t])
+  const groupOpts = useMemo(() => facetOptions(advice, (a) => (a.group_name ? [a.group_name] : []), t('app.noGroup')), [advice, t])
+  const tagOpts = useMemo(() => tagFacetOptions(advice, t('mon.noTags')), [advice, t])
+  const facets = [
+    { key: 'code', title: t('renewal.reason'), icon: ListFilter, options: codeOpts, value: codes, onChange: setCodes },
+    { key: 'team', title: t('inv.colTeam'), icon: Users, options: teamOpts, value: teams, onChange: setTeams },
+    { key: 'group', title: t('renewal.group'), icon: FolderOpen, options: groupOpts, value: groups, onChange: setGroups },
+    { key: 'tag', title: t('renewal.tag'), icon: Tag, options: tagOpts, value: tags, onChange: setTags },
+  ].filter((f) => f.options.length > 0)
+
+  const statLabel = (k) => t(`renewal.stat.${k}`)
+  const optLabel = (opts, v) => opts.find((o) => o.value === v)?.label ?? (v === NONE ? t('app.noTeam') : v)
+  const chips = [
+    ...(stat ? [{ key: `s:${stat}`, label: statLabel(stat), onRemove: () => setStat(null) }] : []),
+    ...codes.map((v) => ({ key: `c:${v}`, label: `${t('renewal.reason')}: ${optLabel(codeOpts, v)}`, onRemove: () => setCodes((l) => l.filter((x) => x !== v)) })),
+    ...teams.map((v) => ({ key: `t:${v}`, label: `${t('inv.colTeam')}: ${optLabel(teamOpts, v)}`, onRemove: () => setTeams((l) => l.filter((x) => x !== v)) })),
+    ...groups.map((v) => ({ key: `g:${v}`, label: `${t('renewal.group')}: ${optLabel(groupOpts, v)}`, onRemove: () => setGroups((l) => l.filter((x) => x !== v)) })),
+    ...tags.map((v) => ({ key: `e:${v}`, label: `${t('renewal.tag')}: ${optLabel(tagOpts, v)}`, onRemove: () => setTags((l) => l.filter((x) => x !== v)) })),
+    ...(search.trim() ? [{ key: 'q', label: `“${search.trim()}”`, onRemove: () => setSearch('') }] : []),
+  ]
+
+  const statItems = [
+    { key: 'critical', Icon: AlertOctagon, cls: 'critical', value: summary.critical },
+    { key: 'week', Icon: Hourglass, cls: 'high', value: summary.week },
+    { key: 'warning', Icon: AlertTriangle, cls: 'warning', value: summary.warning },
+    { key: 'info', Icon: CalendarClock, cls: 'total', value: summary.info },
+    { key: 'problems', Icon: Link2Off, cls: 'certissue', value: summary.problems },
+    { key: 'shared', Icon: Layers, cls: 'weak', value: summary.batches, sub: t('renewal.stat.sharedSub', summary.shared) },
+  ].map((s) => ({ label: statLabel(s.key), sub: t(`renewal.stat.${s.key}Sub`), hint: t(`renewal.stat.${s.key}Hint`), ...s }))
+
   const sortOptions = [
     { value: 'priority', label: t('renewal.sortPriority') },
     { value: 'days', label: t('renewal.sortDays') },
@@ -122,39 +172,22 @@ export default function RenewalAdvice({ onSelectDomain }) {
     { value: 'team', label: t('renewal.sortTeam') },
   ]
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    const list = advice.filter((a) => {
-      if (priority !== 'all' && a.priority !== priority) return false
-      if (code !== 'all' && a.code !== code) return false
-      if (teamFilter !== 'all') { if (teamFilter === '__none__') { if (a.team_name) return false } else if (a.team_name !== teamFilter) return false }
-      if (groupFilter !== 'all') { if (groupFilter === '__none__') { if (a.group_name) return false } else if (a.group_name !== groupFilter) return false }
-      if (!matchesTag(a, tagFilter)) return false
-      if (!q) return true
-      return (a.domain || '').toLowerCase().includes(q) || (a.issuer_cn || '').toLowerCase().includes(q) || matchesGroupOrTagText(a, q)
-    })
-    const days = (a) => (a.days_remaining == null ? -99999 : a.days_remaining)
-    list.sort((x, y) => {
-      if (sortKey === 'domain') return (x.domain || '').localeCompare(y.domain || '')
-      if (sortKey === 'team') return (x.team_name || '').localeCompare(y.team_name || '') || days(x) - days(y)
-      if (sortKey === 'days') return days(x) - days(y)
-      return (PRIORITY_ORDER[x.priority] ?? 9) - (PRIORITY_ORDER[y.priority] ?? 9) || days(x) - days(y)
-    })
-    return list
-  }, [advice, search, priority, code, teamFilter, groupFilter, tagFilter, sortKey])
-
-  const pager = usePagination(filtered, { listKey: 'renewal-advice', defaultSize: 25, resetDeps: [search, priority, code, teamFilter, groupFilter, tagFilter, sortKey, view] })
-  const filtersActive = !!search.trim() || priority !== 'all' || code !== 'all' || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || sortKey !== 'priority'
-  const clearFilters = () => { setSearch(''); setPriority('all'); setCode('all'); setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setSortKey('priority') }
-  useUrlQuerySync({
-    q: search.trim() || null, r_pri: priority !== 'all' ? priority : null, r_code: code !== 'all' ? code : null,
-    team: teamFilter !== 'all' ? teamFilter : null, group: groupFilter !== 'all' ? groupFilter : null, tag: tagFilter !== 'all' ? tagFilter : null,
-    sort: sortKey !== 'priority' ? sortKey : null, page: pager.page > 1 ? pager.page : null,
-  })
+  const openCert = (d) => onSelectDomain?.(d)
+  const openPlan = canPlan ? (a) => setPlanRow({
+    domain: a.domain,
+    renewal_planned_at: plans[a.domain]?.renewal_planned_at || '',
+    renewal_planned_note: plans[a.domain]?.renewal_planned_note || '',
+    // Yerel gün (2026-09-27): `not_after.slice(0,10)` UTC günüydü → İstanbul'da gece bitenler bir gün erken görünürdü.
+    expiry_key: expiryKey(a),
+  }) : null
+  const diagnose = (a) => setDiag({ domain: a.domain, port: a.port || 443 })
+  async function copyDomain(d) {
+    if (await copyText(d)) toast.success(t('renewal.copiedDomain', d))
+  }
 
   const calEvents = filtered.filter((a) => a.not_after).map((a) => ({
     date: a.not_after, label: a.domain, title: `${a.domain} · ${adviceText(a).message}`,   // takvim yerel güne yerleştirir (ISSUE-004)
-    tone: a.priority === 'critical' ? 'bad' : a.priority === 'warning' ? 'warn' : 'info', onClick: () => onSelectDomain?.(a.domain),
+    tone: a.priority === 'critical' ? 'bad' : a.priority === 'warning' ? 'warn' : 'info', onClick: () => openCert(a.domain),
   }))
   function exportIcs() {
     downloadIcs('sertifika-yenilemeleri.ics', buildIcs(filtered.filter((a) => a.not_after).map((a) => {
@@ -173,162 +206,140 @@ export default function RenewalAdvice({ onSelectDomain }) {
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch { /* jsdom */ }
   }
-  async function copyDomain(d) {
-    try { await navigator.clipboard.writeText(d); setCopied(d); setTimeout(() => setCopied(null), 1500) } catch { /* izin yok */ }
-  }
 
-  const PRIORITY_LABEL = { critical: t('renewal.critical'), warning: t('renewal.warning'), info: t('renewal.info') }
-  const daysNode = (a) => {
-    const d = a.days_remaining
-    if (d == null) return <span className="rn-days rn-days--unknown">{t('renewal.unknown')}</span>
-    const cls = d < 0 ? 'rn-days--past' : d <= 7 ? 'rn-days--crit' : d <= 30 ? 'rn-days--warn' : ''
-    return <span className={`rn-days ${cls}`}><b>{Math.abs(d)}</b> {d < 0 ? t('renewal.daysAgo') : t('renewal.daysLeft')}</span>
-  }
-
-  if (loading) return <LoadingBlock label={t('renewal.loading')} fullWidth />
-  // Hata bandi "her sey yolunda" bos durumunun ONUNDE: aksi halde yukleme hatasi
-  // "yenilenecek sertifika yok" gibi okunurdu.
-  if (loadError && advice.length === 0)
+  // ── Yükleniyor: gerçek yerleşimle aynı boyda iskelet (zıplama yok) ──
+  if (loading) {
     return (
-      <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">
+      <div data-slot="renewal-advice" aria-busy="true" className="flex min-w-0 flex-col gap-3">
+        <span role="status" className="sr-only">{t('renewal.loading')}</span>
+        <Skeleton className="h-4 w-full max-w-xl" />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-24 rounded-lg" />)}
+        </div>
+        <Skeleton className="h-9 w-full sm:w-2/3" />
+        {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-44 rounded-xl" />)}
+      </div>
+    )
+  }
+  // Hata bandı "her şey yolunda" boş durumunun ÖNÜNDE: yükleme hatası "yenilenecek sertifika yok" gibi okunmasın.
+  if (loadError && advice.length === 0) {
+    return (
+      <AlertBanner tone="danger" title={t('renewal.loadError')} role="alert"
+        actions={<Button type="button" variant="outline" size="sm" onClick={() => load()} disabled={refreshing}><RefreshCw aria-hidden="true" />{t('renewal.retry')}</Button>}>
         {String(loadError)}
       </AlertBanner>
     )
-  if (advice.length === 0)
-    return <StatusBlock tone="success" icon={ShieldCheck} title={t('renewal.allGood')} description={t('empty.hintAllGood')} />
+  }
 
-  const Kpi = ({ k, label, value, color, onClick, active }) => (
-    <button type="button" className={`rn-kpi${active ? ' is-active' : ''}`} style={{ '--kpi': color }} onClick={onClick} title={t('renewal.kpiTip')} data-kpi={k}>
-      <span className="rn-kpi-num">{value}</span>
-      <span className="rn-kpi-lbl">{label}</span>
-    </button>
+  const header = (
+    <div data-slot="rn-header" className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <p className="max-w-[78ch] text-sm text-muted-foreground">{t('renewal.subtitle')}</p>
+        {asOf && (
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground" data-slot="rn-asof">
+            <Clock aria-hidden="true" className="size-3.5" />{t('renewal.asOf', formatDate(asOf))}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => load()} disabled={refreshing} aria-busy={refreshing || undefined}>
+          <RefreshCw aria-hidden="true" className={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />{t('renewal.refresh')}
+        </Button>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" disabled={!filtered.length}><Download aria-hidden="true" />{t('renewal.export')}</Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-(--z-menu)">
+            <DropdownMenuItem onSelect={exportCsv} title={t('renewal.csvTip')}><FileDown aria-hidden="true" />{t('renewal.exportCsv')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={exportIcs} disabled={!calEvents.length} title={t('renewal.icsTip')}><CalendarClock aria-hidden="true" />{t('renewal.ics')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" onClick={() => navigateTo('renewal-guide')}>
+          <BookOpenText aria-hidden="true" />{t('renewal.openGuide')}
+        </Button>
+      </div>
+    </div>
   )
 
+  if (advice.length === 0) {
+    return (
+      <div data-slot="renewal-advice" className="flex min-w-0 flex-col gap-4">
+        {header}
+        <StatusBlock tone="success" icon={ShieldCheck} title={t('renewal.allGood')} description={t('empty.hintAllGood')}
+          className="rounded-xl border border-dashed" />
+      </div>
+    )
+  }
+
+  const grouped = view === 'list' && sortKey === 'priority'
+  const groupCount = (p) => filtered.filter((a) => a.priority === p).length
+
   return (
-    <div className="renewal-container rn">
-      {/* ── Özet şeridi ── */}
-      <div className="rn-kpis">
-        <Kpi k="critical" label={t('renewal.critical')} value={kpi.critical} color={PRIORITY_COLOR.critical} active={priority === 'critical'} onClick={() => setPriority((p) => (p === 'critical' ? 'all' : 'critical'))} />
-        <Kpi k="warning" label={t('renewal.warning')} value={kpi.warning} color={PRIORITY_COLOR.warning} active={priority === 'warning'} onClick={() => setPriority((p) => (p === 'warning' ? 'all' : 'warning'))} />
-        <Kpi k="info" label={t('renewal.info')} value={kpi.info} color={PRIORITY_COLOR.info} active={priority === 'info'} onClick={() => setPriority((p) => (p === 'info' ? 'all' : 'info'))} />
-        <div className="rn-kpi rn-kpi--static" style={{ '--kpi': '#6366f1' }}>
-          <span className="rn-kpi-num">{kpi.week}</span>
-          <span className="rn-kpi-lbl">{t('renewal.kpiWeek')}</span>
-        </div>
-        <div className="rn-kpi rn-kpi--static" style={{ '--kpi': '#14b8a6' }} title={t('renewal.batchTip')}>
-          <span className="rn-kpi-num">{kpi.batches}</span>
-          <span className="rn-kpi-lbl">{t('renewal.kpiBatches')}</span>
-        </div>
+    <div data-slot="renewal-advice" className="flex min-w-0 flex-col gap-4">
+      {header}
+
+      {loadError && (
+        <AlertBanner tone="warning" title={t('renewal.refreshFailed')} className="mb-0"
+          actions={<Button type="button" variant="outline" size="sm" onClick={() => load()} disabled={refreshing}><RefreshCw aria-hidden="true" />{t('renewal.retry')}</Button>}>
+          {String(loadError)}
+        </AlertBanner>
+      )}
+
+      <div className="[&>[data-slot=stats-panel]]:mb-0">
+        <MonitorStatsBar items={statItems} activeFilter={stat} onStatClick={(k) => setStat((cur) => (cur === k ? null : k))} />
       </div>
 
-      {/* ── Süzgeç çubuğu ── */}
-      <div className="rn-toolbar">
-        <div className="rn-search-wrap">
-          <Search size={14} aria-hidden="true" />
-          <input className="rn-search" type="text" placeholder={t('renewal.searchPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t('renewal.searchPlaceholder')} />
-        </div>
-        <SearchableSelect value={code} onChange={setCode} options={codeOptions} ariaLabel={t('renewal.reason')} />
-        {teamOptions.length > 1 && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('inv.colTeam')} />}
-        {groupOptions.length > 1 && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupOptions} searchThreshold={2} ariaLabel={t('app.groupLabel')} />}
-        {tagOptions.length > 1 && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagOptions} searchThreshold={2} ariaLabel={t('app.tagLabel')} />}
-        <SearchableSelect value={sortKey} onChange={setSortKey} options={sortOptions} ariaLabel={t('renewal.sort')} />
-        {filtersActive && <Button type="button" variant="secondary" size="sm" onClick={clearFilters}>{t('app.clearFilters')}</Button>}
-        <span className="rn-count">{t('renewal.shown', filtered.length, advice.length)}</span>
-        <div className="seg rn-views" role="group" aria-label={t('renewal.viewLabel')}>
-          <Button type="button" variant={view === 'list' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('list')} aria-pressed={view === 'list'}><List size={13} /> {t('renewal.viewList')}</Button>
-          <Button type="button" variant={view === 'table' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('table')} aria-pressed={view === 'table'}><Table2 size={13} /> {t('renewal.viewTable')}</Button>
-          <Button type="button" variant={view === 'calendar' ? 'default' : 'secondary'} size="sm" onClick={() => switchView('calendar')} aria-pressed={view === 'calendar'}><CalendarDays size={13} /> {t('renewal.viewCalendar')}</Button>
-        </div>
-        <Button type="button" variant="secondary" size="sm" onClick={exportCsv} disabled={!filtered.length} title={t('renewal.csvTip')}><FileDown size={13} /> CSV</Button>
-        <Button type="button" variant="secondary" size="sm" onClick={exportIcs} disabled={!calEvents.length} title={t('renewal.icsTip')}><Download size={13} /> {t('renewal.ics')}</Button>
-      </div>
+      <AdviceToolbar t={t} isMobile={isMobile} search={search} onSearch={setSearch} facets={facets}
+        sortKey={sortKey} sortOptions={sortOptions} onSort={setSortKey} view={view} onView={switchView}
+        chips={chips} onClearAll={clearFilters} shown={filtered.length} total={advice.length} />
 
-      {filtered.length === 0 && <StatusBlock tone="neutral" title={t('renewal.noneFiltered')} description={t('empty.hintFilter')} />}
+      {filtered.length === 0 && (
+        <StatusBlock tone="neutral" icon={ListFilter} title={t('renewal.noneFiltered')} description={t('empty.hintFilter')}
+          className="rounded-xl border border-dashed"
+          actions={<Button type="button" variant="outline" size="sm" onClick={clearFilters}>{t('app.clearFilters')}</Button>} />
+      )}
 
       {view === 'calendar' && filtered.length > 0 && <MonthCalendar events={calEvents} ariaLabel={t('renewal.viewCalendar')} />}
 
       {view === 'table' && filtered.length > 0 && (
-        <div className="admin-table-wrap">
-          <table className="admin-table rn-table">
-            <thead><tr>
-              <th>{t('renewal.colPriority')}</th><th>{t('renewal.colDomain')}</th><th>{t('renewal.reason')}</th>
-              <th>{t('renewal.colDays')}</th><th>{t('renewal.expiry')}</th><th>{t('inv.colTeam')}</th><th>{t('renewal.colIssuer')}</th><th></th>
-            </tr></thead>
-            <tbody>{pager.pageItems.map((a) => (
-              <tr key={a.domain + a.code} className="rn-row">
-                <td><span className="renewal-badge" style={{ background: PRIORITY_COLOR[a.priority] || '#71717a' }}>{PRIORITY_LABEL[a.priority] || a.priority}</span></td>
-                <td>
-                  <button type="button" className="inv-domain" onClick={() => onSelectDomain?.(a.domain)}>{a.domain}</button>
-                  {a.port && a.port !== 443 ? <span className="inv-dim">:{a.port}</span> : null}
-                  {a.tier && <span className={`tier-badge tier-badge-${a.tier}`}> T{a.tier}</span>}
-                  {fpCount.get(a.fingerprint) > 1 && <span className="rn-shared" title={t('renewal.batchTip')}>{t('renewal.shared', fpCount.get(a.fingerprint))}</span>}
-                </td>
-                <td>{codeLabel(a.code)}</td>
-                <td>{daysNode(a)}</td>
-                <td className="inv-dim">{a.not_after ? formatDateOnly(a.not_after) : '—'}</td>
-                <td>{a.team_name ? <TeamBadge teamId={a.team_id} teamName={a.team_name} /> : <span className="inv-dim">—</span>}</td>
-                <td className="inv-dim rn-issuer" title={a.issuer_cn || ''}>{a.issuer_cn || '—'}</td>
-                <td className="rn-actions">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => onSelectDomain?.(a.domain)}>{t('renewal.detail')}</Button>
-                  {a.code === 'UNREACHABLE' && <Button type="button" variant="secondary" size="sm" onClick={() => setDiag({ domain: a.domain, port: a.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnoseShort')}</Button>}
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
+        <AdviceTable rows={pager.pageItems} t={t} codeLabel={codeLabel} fpCount={fpCount}
+          onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain} />
       )}
 
-      {view === 'list' && pager.pageItems.map((item) => {
-        const color = PRIORITY_COLOR[item.priority] || '#71717a'
-        const label = PRIORITY_LABEL[item.priority] || item.priority
-        const days = item.days_remaining
-        const daysAbs = days !== null && days !== undefined ? Math.abs(days) : null
-        const daysLabel = days === null || days === undefined ? t('renewal.unknown') : days < 0 ? t('renewal.daysAgo') : t('renewal.daysLeft')
-        const shared = fpCount.get(item.fingerprint) > 1 ? fpCount.get(item.fingerprint) : 0
-        return (
-          <div key={item.domain + item.code} className="renewal-card" style={{ borderLeftColor: color }}>
-            <div className="renewal-card-body">
-              <div className="renewal-card-header">
-                <span className="renewal-badge" style={{ background: color }}>{label}</span>
-                <button type="button" className="renewal-domain rn-domain-btn" onClick={() => onSelectDomain?.(item.domain)} title={t('renewal.openDetail')}>{item.domain}{item.port && item.port !== 443 ? `:${item.port}` : ''}</button>
-                {item.tier && <span className={`tier-badge tier-badge-${item.tier}`}>T{item.tier}</span>}
-                {item.team_name && <TeamBadge teamId={item.team_id} teamName={item.team_name} />}
-                <span className="rn-code-chip">{codeLabel(item.code)}</span>
-                {shared > 0 && <span className="rn-shared" title={t('renewal.batchTip')}>{t('renewal.shared', shared)}</span>}
-              </div>
-              <div className="renewal-message">{adviceText(item).message}</div>
-              <div className="renewal-action">
-                <strong>{t('renewal.action')}</strong> <code>{adviceText(item).action}</code>
-              </div>
-              <div className="rn-meta">
-                {item.issuer_cn && <span className="rn-meta-item" title={t('renewal.colIssuer')}><ShieldCheck size={11} aria-hidden="true" /> {item.issuer_cn}</span>}
-                {item.group_name && <button type="button" className="inv-tag upt-group-chip" title={t('card.group')} onClick={() => setGroupFilter(item.group_name)}><FolderOpen size={10} /> {item.group_name}</button>}
-                {tagsOf(item).map((tag) => <button key={tag} type="button" className="inv-tag" title={t('card.tag')} onClick={() => setTagFilter(tag)}>{tag}</button>)}
-              </div>
-              <div className="rn-card-actions">
-                <Button type="button" variant="secondary" size="sm" onClick={() => onSelectDomain?.(item.domain)}>{t('renewal.detail')}</Button>
-                {item.code === 'UNREACHABLE' && (
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setDiag({ domain: item.domain, port: item.port || 443 })}><Stethoscope size={12} /> {t('renewal.diagnose')}</Button>
+      {view === 'list' && filtered.length > 0 && (
+        <div data-slot="rn-list" className="flex min-w-0 flex-col gap-3">
+          {pager.pageItems.map((item, i) => {
+            const head = grouped && (i === 0 || pager.pageItems[i - 1].priority !== item.priority)
+            const GIcon = GROUP_ICON[item.priority] ?? CalendarClock
+            const shared = isShared(item, fpCount) ? fpCount.get(item.fingerprint) : 0
+            return (
+              <Fragment key={item.domain + item.code}>
+                {head && (
+                  <h3 data-slot="rn-group" data-priority={item.priority} className="flex items-center gap-2 pt-1 text-sm font-semibold">
+                    <GIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+                    {t(`renewal.group.${item.priority}`)}
+                    <Badge variant="secondary" className="tabular-nums">{groupCount(item.priority)}</Badge>
+                    <span aria-hidden="true" className="h-px flex-1 bg-border" />
+                  </h3>
                 )}
-                <Button type="button" variant="secondary" size="sm" onClick={() => copyDomain(item.domain)}><Copy size={12} /> {copied === item.domain ? t('renewal.copied') : t('renewal.copy')}</Button>
-              </div>
-            </div>
-            <div className="renewal-expiry-stamp" style={{ background: `linear-gradient(150deg, ${color}18 0%, ${color}38 100%)`, borderLeftColor: `${color}50` }}>
-              <span className="expiry-days-num" style={{ color }}>{daysAbs !== null ? daysAbs : '?'}</span>
-              <span className="expiry-days-lbl" style={{ color }}>{daysLabel}</span>
-              <div className="expiry-divider" style={{ background: `${color}40` }} />
-              <span className="expiry-date-caption">{t('renewal.expiry')}</span>
-              <span className="expiry-date-val">{item.not_after ? formatDateOnly(item.not_after) : '—'}</span>
-            </div>
-          </div>
-        )
-      })}
+                <AdviceCard item={item} t={t} text={adviceText(item)} codeLabel={codeLabel(item.code)} shared={shared}
+                  plan={plans[item.domain]} onOpen={openCert} onPlan={openPlan} onDiagnose={diagnose} onCopy={copyDomain}
+                  onFilterGroup={addTo(setGroups)} onFilterTag={addTo(setTags)} />
+              </Fragment>
+            )
+          })}
+        </div>
+      )}
 
       {view !== 'calendar' && filtered.length > 0 && <PaginationBar {...pager} />}
 
       {/* Tanılama modalı (envanter ile ortak) — backend izlenen domainlere açık */}
       {diag && <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />}
+      {planRow && (
+        <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
+          onSaved={(data) => { setPlans((p) => ({ ...p, [planRow.domain]: data || { renewal_planned_at: planRow.renewal_planned_at } })); setPlanRow(null) }}
+          onCleared={() => { setPlans((p) => { const n = { ...p }; delete n[planRow.domain]; return n }); setPlanRow(null) }} />
+      )}
     </div>
   )
 }
-

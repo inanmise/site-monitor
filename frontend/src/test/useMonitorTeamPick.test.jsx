@@ -41,6 +41,36 @@ describe('useMonitorTeamPick', () => {
   })
 })
 
+describe('useMonitorTeamPick — varsayılan takım (2026-09-26, USER izleme ekleyebilmeli)', () => {
+  const pick = (p) => renderHook(() => useMonitorTeamPick({ isAdmin: false, adminTeams: [], ...p })).result.current
+
+  it('tek takımlı üye, oturum takımı BOŞ: varsayılan o tek takım (eskiden "Takımsız" kilidi + gri Kaydet)', () => {
+    const r = pick({ myTeams: [{ id: 4, name: 'Takım A' }], teamId: null })
+    expect(r.defaultTeamId).toBe(4)
+    expect(r.defaultTeamName).toBe('Takım A')
+    expect(r.teamless).toBe(false)
+  })
+
+  it('oturum takımı varsa o önceliklidir; adı oturumdan, yoksa üyelik listesinden', () => {
+    expect(pick({ myTeams: [{ id: 4, name: 'Takım A' }, { id: 5, name: 'Takım B' }], teamId: 5, teamName: 'Takım B' }))
+      .toMatchObject({ defaultTeamId: 5, defaultTeamName: 'Takım B' })
+    expect(pick({ myTeams: [{ id: 4, name: 'Takım A' }, { id: 5, name: 'Takım B' }], teamId: 5 }).defaultTeamName).toBe('Takım B')
+  })
+
+  it('iki+ takımlı, oturum takımı boş: varsayılan YOK (kullanıcı kutudan seçer)', () => {
+    const r = pick({ myTeams: [{ id: 4, name: 'Takım A' }, { id: 5, name: 'Takım B' }], teamId: null })
+    expect(r.canPickTeam).toBe(true)
+    expect(r.defaultTeamId).toBeNull()
+    expect(r.teamless).toBe(false)
+  })
+
+  it('hiç takımı olmayan üye → teamless (form açık uyarı gösterir); admin asla teamless değildir', () => {
+    expect(pick({ myTeams: [], teamId: null })).toMatchObject({ teamless: true, defaultTeamId: null, defaultTeamName: null })
+    const admin = renderHook(() => useMonitorTeamPick({ isAdmin: true, adminTeams: [], myTeams: [], teamId: null })).result.current
+    expect(admin.teamless).toBe(false)
+  })
+})
+
 describe('teamsFromMe', () => {
   it('/me paralel dizilerini (team_ids × team_names) nesneye çevirir; ad eksikse id yazar', () => {
     expect(teamsFromMe({ team_ids: [1, 2, 3], team_names: ['Takım A', 'Takım B'] }))

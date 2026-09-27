@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor } from './test-utils.jsx'
 
 /** Kart listesinde alan adı birden çok yerde geçer (başlık + mesaj) — kart SAYISIYLA ölçeriz. */
-const cardsWith = (re) => [...document.querySelectorAll('.alert-card')].filter((c) => re.test(c.textContent))
+const cardsWith = (re) => [...document.querySelectorAll('[data-alert-card]')].filter((c) => re.test(c.textContent))
 
 /**
  * Bildirim kutusu → Alarm Geçmişi derin bağlantısı (2026-09-16).
@@ -51,7 +51,7 @@ describe('AlertHistory — bildirim derin bağlantısı', () => {
     setUrl('tab=alerthistory&type=KEYWORD_SSL&q=keyword.example.com&alert=78')
     render(<AlertHistory urlSync />)
     await waitFor(() => expect(cardsWith(/keyword\.example\.com/).length).toBe(1))
-    await waitFor(() => expect(document.querySelector('.alert-card.alh-card-linked')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-alert-card][data-linked="true"]')).not.toBeNull())
     expect(api.admin.getAlerts.mock.calls[0][0]).toMatchObject({ alertType: 'KEYWORD_SSL', q: 'keyword.example.com' })
     // param tüketilir: sekme dönüşünde eski alarm yeniden vurgulanmasın
     await waitFor(() => expect(window.location.search).not.toContain('alert=78'))
@@ -60,7 +60,7 @@ describe('AlertHistory — bildirim derin bağlantısı', () => {
   it('AÇIKKEN ikinci bildirim: sm:navigate paramları uygulanır, yeni alarm vurgulanır (eski kart kalmaz)', async () => {
     setUrl('tab=alerthistory&type=KEYWORD_SSL&q=keyword.example.com&alert=78')
     render(<AlertHistory urlSync />)
-    await waitFor(() => expect(document.querySelector('.alert-card.alh-card-linked')).not.toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-alert-card][data-linked="true"]')).not.toBeNull())
     expect(cardsWith(/keyword\.example\.com/).length).toBe(1)
 
     navigate({ alert: 87, type: 'PING_DOWN', q: 'ping.example.com' })
@@ -68,7 +68,7 @@ describe('AlertHistory — bildirim derin bağlantısı', () => {
     await waitFor(() => expect(cardsWith(/ping\.example\.com/).length).toBe(1))
     expect(cardsWith(/keyword\.example\.com/)).toHaveLength(0)   // ESKİ kart ekranda kalmaz (asıl kusur)
     await waitFor(() => {
-      const linked = document.querySelector('.alert-card.alh-card-linked')
+      const linked = document.querySelector('[data-alert-card][data-linked="true"]')
       expect(linked).not.toBeNull()
       expect(linked.textContent).toMatch(/ping.example.com/)
     })

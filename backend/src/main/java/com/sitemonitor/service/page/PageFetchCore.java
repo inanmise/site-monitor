@@ -246,9 +246,16 @@ public class PageFetchCore {
                 // send() başlıklar geldiğinde döner → ilk-bayt anı burasıdır (gövde henüz okunmadı).
                 long ttfb = Math.max(0L, System.currentTimeMillis() - start - guardMs);
                 int sc = resp.statusCode();
+                // Gövde SÜRE bütçesi (prod kapısı 2026-09-25, N1): istek zaman aşımı yalnız başlıklara kadar
+                // işliyor; gövdeyi bitirmeyen bir kaynak (MJPEG <img>, SSE) okuyan iş parçacığını ve soketi
+                // süresiz tutuyor, sayfa kontrolünün deadline'ı dolunca da SIZIYORDU. Gövde başlık süresi
+                // kadar daha beklenir.
+                long bodyMs = Math.max(1000, opts.timeoutMs());
                 if (sc >= 300 && sc < 400) {
                     String loc = resp.headers().firstValue("location").orElse(null);
-                    try (InputStream is = resp.body()) { is.readNBytes(4096); } catch (Exception ignore) { /* gövde iadesi */ }
+                    try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
+                        is.readNBytes(4096);
+                    } catch (Exception ignore) { /* gövde iadesi */ }
                     // Hedef yok / http(s) DIŞI şema (file:, gopher:) / host'suz → olduğu gibi dön.
                     // Politika SafeRedirect'te tek kopya: aynı kural keyword/HTTP/HSTS için de geçerli.
                     String next = SafeRedirect.nextHop(current, loc);
@@ -263,24 +270,30 @@ public class PageFetchCore {
                 long count = 0L;
                 boolean truncated = false;
                 String encoding = resp.headers().firstValue("content-encoding").orElse(null);
-                try (InputStream is = resp.body()) {
+                try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(resp.body(), bodyMs, "Sayfa")) {
                     if (opts.wantBody()) {
                         // SAYIM telden gelen (sıkıştırılmış) bayt üzerinden; GÖVDE ayrıştırmak için açılır.
                         // İkisini karıştırmak iki ayrı hataya yol açardı: sıkıştırılmışı parse etmek
                         // envanteri BOŞ bırakır (hiç kaynak ölçülmez), açılmışı saymak da "transfer
                         // boyutu" etiketini yine yalancı yapardı.
+                        // Süre dolarsa BodyDeadlineException → aşağıdaki catch: kesik gövdeyi ayrıştırmak
+                        // sahte "sayfa değişti"/eksik envanter üretirdi, hata olarak raporlanır.
                         byte[] raw = is.readNBytes(MAX_BODY_BYTES);
                         count = raw.length;
                         body = decode(raw, encoding);
                         if (opts.countBytes()) {                   // tavanın ötesini SAY (sakla değil)
-                            count += drain(is, MAX_COUNT_BYTES - count);
-                            truncated = count >= MAX_COUNT_BYTES;
+                            Drained d = drain(is, MAX_COUNT_BYTES - count);
+                            count += d.bytes();
+                            truncated = count >= MAX_COUNT_BYTES || d.timedOut();
                         }
                     } else if (opts.countBytes()) {
-                        count = drain(is, MAX_COUNT_BYTES);
-                        truncated = count >= MAX_COUNT_BYTES;
+                        Drained d = drain(is, MAX_COUNT_BYTES);
+                        count = d.bytes();
+                        truncated = count >= MAX_COUNT_BYTES || d.timedOut();
                     } else {
-                        is.readNBytes(4096);   // gövdeyi tüket (bağlantı iadesi)
+                        // Yalnız ulaşılabilirlik: durum kodu başlıkta — gövdesini bitirmeyen kaynak HATA değil.
+                        try { is.readNBytes(4096); }   // gövdeyi tüket (bağlantı iadesi)
+                        catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException ignore) { /* akış kesildi */ }
                     }
                 }
                 return new Fetch(sc, ttfb, System.currentTimeMillis() - start, count, body, null, false, truncated);
@@ -347,18 +360,26 @@ public class PageFetchCore {
      * (8 KB) aşılıyordu. Bunu düzeltmek şart: kırpılan bir kaynak ekranda "≥ 10 MB" olarak
      * gösteriliyor ve rakamın gerçekten tavanda durması gerekiyor, tavanın biraz üstünde değil.
      */
-    private static long drain(InputStream is, long cap) throws java.io.IOException {
-        if (cap <= 0) return 0L;
+    private static Drained drain(InputStream is, long cap) throws java.io.IOException {
+        if (cap <= 0) return new Drained(0L, false);
         byte[] buf = new byte[8192];
         long total = 0L;
-        while (total < cap) {
-            int want = (int) Math.min(buf.length, cap - total);
-            int n = is.read(buf, 0, want);
-            if (n <= 0) break;
-            total += n;
+        try {
+            while (total < cap) {
+                int want = (int) Math.min(buf.length, cap - total);
+                int n = is.read(buf, 0, want);
+                if (n <= 0) break;
+                total += n;
+            }
+        } catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException te) {
+            // Süre doldu (N1): bayt tavanıyla AYNI anlam — "en az bu kadar", truncated işaretlenir.
+            return new Drained(total, true);
         }
-        return total;
+        return new Drained(total, false);
     }
+
+    /** Sayım sonucu: okunan bayt + gövde süre bütçesinde bitmedi mi. */
+    private record Drained(long bytes, boolean timedOut) {}
 
     /** Çekirdeğin kendi başlıkları ek başlıklarla EZİLEMEZ; ayrıca kontrol karakteri (CR/LF) taşıyan
      *  satırlar sessizce atılır — başlık enjeksiyonu kapanır. */

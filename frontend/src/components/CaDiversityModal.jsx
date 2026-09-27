@@ -1,7 +1,17 @@
-import { X, Globe } from 'lucide-react'
+import { Globe, Search, ShieldCheck } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { useT } from '../i18n/index.jsx'
+import ModalShell from './ui/ModalShell.jsx'
+import StatusBlock from './ui/StatusBlock.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Card } from '@/components/shadcn/card'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadcn/input-group'
 
+/**
+ * Sertifika otoritesi (CA) çeşitliliği — hangi CA kaç alan adına sertifika vermiş. Çizim ui/ModalShell
+ * (shadcn Dialog: Escape / odak tuzağı / odak iadesi) + arama için InputGroup + her CA için Card (sayı rozeti +
+ * alan adı listesi). Uzun liste pencerenin gövdesinde kayar; telefonda pencere ekrana sığar.
+ */
 export default function CaDiversityModal({ certs, onClose }) {
   const t = useT()
   const [search, setSearch] = useState('')
@@ -32,52 +42,42 @@ export default function CaDiversityModal({ certs, onClose }) {
   const totalDomains = grouped.reduce((s, [, d]) => s + d.length, 0)
 
   return (
-    <div className="modal show" onClick={e => e.target.classList.contains('modal') && onClose()}>
-      <div className="modal-content" style={{ maxWidth: 660 }}>
-        <div className="modal-header-row">
-          <div className="modal-header-domain">
-            <h2 className="modal-title">{t('stat.caDiv')}</h2>
-            <span className="modal-status-pill modal-status-valid">
-              {t('cadiv.summary', grouped.length, totalDomains)}
-            </span>
-          </div>
-          <button className="modal-close-btn" onClick={onClose} aria-label={t('app.close')}>
-            <X size={16} />
-          </button>
-        </div>
+    <ModalShell open onClose={onClose} title={t('stat.caDiv')} icon={ShieldCheck} size="md" scrollBody
+      closeLabel={t('app.close')}>
+      <Badge variant="secondary" data-slot="cadiv-summary"
+        className="mb-3 bg-success/15 text-success dark:bg-success/20">
+        {t('cadiv.summary', grouped.length, totalDomains)}
+      </Badge>
+      <InputGroup className="mb-4">
+        <InputGroupInput placeholder={t('cadiv.search')} aria-label={t('cadiv.search')} value={search}
+          onChange={e => setSearch(e.target.value)} />
+        <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+      </InputGroup>
 
-        <div className="modal-body" style={{ paddingTop: 12 }}>
-          <input
-            className="cadiv-search"
-            placeholder={t('cadiv.search')}
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-
-          <div className="cadiv-list">
-            {filtered.map(([issuer, domains]) => (
-              <div key={issuer} className="cadiv-ca-card">
-                <div className="cadiv-ca-header">
-                  <span className="cadiv-ca-badge">{domains.length}</span>
-                  <span className="cadiv-ca-label">{issuer}</span>
-                </div>
-                <div className="cadiv-domain-list">
-                  {domains.map(domain => (
-                    <div key={domain} className="cadiv-domain-item">
-                      <Globe size={13} className="cadiv-domain-icon" />
-                      <span className="cadiv-domain-text">{domain}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {filtered.length === 0 && (
-            <div className="cadiv-empty">{t('cadiv.noResults')}</div>
-          )}
-        </div>
+      <div className="flex flex-col gap-3">
+        {filtered.map(([issuer, domains]) => (
+          <Card key={issuer} data-slot="cadiv-ca" className="gap-0 overflow-hidden py-0 shadow-none">
+            <div className="flex items-center gap-3 border-b bg-muted/50 px-4 py-2.5">
+              <span className="flex h-9 min-w-9 shrink-0 items-center justify-center rounded-lg bg-primary px-1.5 text-[1.1em] font-extrabold text-primary-foreground">
+                {domains.length}
+              </span>
+              <span className="min-w-0 text-[.9em] font-bold [overflow-wrap:anywhere]">{issuer}</span>
+            </div>
+            <ul className="py-1">
+              {domains.map(domain => (
+                <li key={domain} className="flex items-center gap-2.5 border-b px-4 py-[7px] last:border-b-0 hover:bg-muted/50">
+                  <Globe size={13} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 font-mono text-[.88em] font-medium break-all">{domain}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ))}
       </div>
-    </div>
+
+      {filtered.length === 0 && (
+        <StatusBlock tone="neutral" icon={Search} title={t('cadiv.noResults')} />
+      )}
+    </ModalShell>
   )
 }

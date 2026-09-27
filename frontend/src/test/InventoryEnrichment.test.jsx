@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const confirmMock = vi.fn(() => Promise.resolve(true))
 const toastMock = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
@@ -43,7 +44,7 @@ const HYGIENE = { success: true, data: { total: 3, scanned: 3, groups: [
 
 const TEAMS = [{ id: 5, name: 'Takım A' }, { id: 9, name: 'Takım B' }]
 const renderIm = (role = 'ADMIN') => render(<LangProvider><InventoryManager systemRole={role} teams={TEAMS} /></LangProvider>)
-const rowsShown = () => [...document.querySelectorAll('tbody .inv-domain')].map((b) => b.textContent)
+const rowsShown = () => [...document.querySelectorAll('tbody [data-inv-domain]')].map((b) => b.textContent)
 
 describe('Domain Envanteri — zenginleştirme', () => {
   beforeEach(() => {
@@ -60,14 +61,16 @@ describe('Domain Envanteri — zenginleştirme', () => {
   it('#3 canlı sertifika sütunu: durum + kalan gün; #1 arama süzer ve sayaç "x / y" güncellenir; etiket çipi (#14) aramaya yazar', async () => {
     renderIm()
     await screen.findByText('a.example.com')
-    expect(screen.getByText(/^Valid$|^Geçerli$/)).toBeInTheDocument()
-    expect(screen.getByText(/^Error$|^Hata$/)).toBeInTheDocument()
-    expect(screen.getByText('120')).toBeInTheDocument()
-    expect(document.querySelector('.invtb-count').textContent).toMatch(/3 (of|\/) 3/)
+    // Tablo içinde ara: özet kartlarında da "Geçerli" etiketi var (2026-09-27)
+    const table = within(document.querySelector('[data-slot="inv-table"]'))
+    expect(table.getByText(/^Valid$|^Geçerli$/)).toBeInTheDocument()
+    expect(table.getByText(/^Error$|^Hata$/)).toBeInTheDocument()
+    expect(table.getByText(/^(in 120 days|120 gün içinde)$/)).toBeInTheDocument()   // bitiş: göreli metin + tarih
+    expect(document.querySelector('[data-slot="inv-count"]').textContent).toMatch(/3 (of|\/) 3/)
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'takım b' } })
     await waitFor(() => expect(rowsShown()).toEqual(['b.example.com']))
-    expect(document.querySelector('.invtb-count').textContent).toMatch(/1 (of|\/) 3/)
+    expect(document.querySelector('[data-slot="inv-count"]').textContent).toMatch(/1 (of|\/) 3/)
     await waitFor(() => expect(window.location.search).toContain('i_q=tak'))
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } })
@@ -111,7 +114,7 @@ describe('Domain Envanteri — zenginleştirme', () => {
     renderIm()
     await screen.findByText('a.example.com')
     const row = screen.getByText('a.example.com').closest('tr')
-    fireEvent.click(within(row).getByRole('checkbox', { name: /Active|Aktif/ }))
+    fireEvent.click(within(row).getByRole('switch', { name: /Active|Aktif/ }))   // shadcn Switch (aç/kapa ayarı)
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     const [id, body] = api.admin.updateInventory.mock.calls[0]
     expect(id).toBe(1)
@@ -136,7 +139,8 @@ describe('Domain Envanteri — zenginleştirme', () => {
     fireEvent.click(screen.getByText('a.example.com'))
     const dlg = await screen.findByRole('dialog')
     expect(dlg).toHaveAttribute('aria-label', 'a.example.com')
-    fireEvent.click(within(dlg).getByRole('button', { name: /^Checks$|^Kontroller$/ }))
+    // Çekmece sekmeleri shadcn Tabs (Radix): tetik role="tab", mousedown ile etkinleşir
+    pressMenuTrigger(within(dlg).getByRole('tab', { name: /^Checks$|^Kontroller$/ }))
     expect(await within(dlg).findByText('CHECKS-TAB uptime-ssl a.example.com')).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: /Next record|Sonraki kayıt/ }))
     expect(within(screen.getByRole('dialog')).getByText('b.example.com')).toBeInTheDocument()

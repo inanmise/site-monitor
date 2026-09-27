@@ -89,10 +89,21 @@ const SCROLL_BOX = 'flex max-h-[min(88vh,calc(100dvh-2rem))] flex-col overflow-h
 const SCROLL_BODY = '-mr-1 min-h-0 flex-1 overflow-y-auto pr-1'
 const PLAIN_BOX = 'max-h-[calc(100dvh-2rem)] overflow-y-auto'
 
+/*
+ * Ek (isteğe bağlı) kancalar — varsayılanlarıyla eski davranış birebir aynı:
+ *   • `headerExtra`     başlık satırında, başlık ile kapat düğmesi arasında çizilir (ör. "Kaydediliyor… N sn"
+ *                       şeridi, detay penceresinin eylem düğmeleri).
+ *   • `hideClose`       yerleşik X çizilmez — çağıran kendi kapatmasını `headerExtra` içinde veriyorsa
+ *                       (MonitorModalActions'ın X'i) iki kapat düğmesi olmasın.
+ *   • `bodyRef`         kaydırılan gövdenin ref'i (useModalScrollHint "devamı için kaydırın" ipucu).
+ *   • `dismissOnEscape` false → Escape pencereyi KAPATMAZ (emek biriktiren izleme formları eskiden de
+ *                       Escape ile kapanmıyordu). Üstte açık bir liste/menü Escape'i yine önce kendisi alır.
+ */
 export default function ModalShell({
   open, onClose, title, icon: Icon, size = 'md', busy = false,
-  dismissOnBackdrop = true, scrollBody = false,
+  dismissOnBackdrop = true, dismissOnEscape = true, scrollBody = false,
   closeLabel, footer, children, className = '',
+  headerExtra = null, hideClose = false, bodyRef,
 }) {
   const t = useT()
   const parentDepth = useContext(DepthCtx)
@@ -154,7 +165,7 @@ export default function ModalShell({
           // Dış tıklama / odağın dışarı (toast, portal'lı menü, üstte açılan ham modal) kayması
           // kabuğu KAPATMAZ — eski sözleşme: yalnız scrim, X ve Escape.
           onInteractOutside={(e) => e.preventDefault()}
-          onEscapeKeyDown={(e) => { if (busy) e.preventDefault() }}
+          onEscapeKeyDown={(e) => { if (busy || !dismissOnEscape) e.preventDefault() }}
           // Radix tetiksiz kapanışta odağı hiçbir yere vermez; iade yukarıdaki effect'te.
           onCloseAutoFocus={(e) => e.preventDefault()}
         >
@@ -163,16 +174,19 @@ export default function ModalShell({
               {Icon && <Icon size={18} aria-hidden="true" className="shrink-0" />}
               {title}
             </DialogTitle>
-            <DialogClose asChild>
-              <Button type="button" variant="ghost" size="icon-sm" disabled={busy}
-                className="-my-1 -mr-2 shrink-0 text-muted-foreground"
-                aria-label={closeLabel || t('app.close')}>
-                <X aria-hidden="true" />
-              </Button>
-            </DialogClose>
+            {headerExtra}
+            {!hideClose && (
+              <DialogClose asChild>
+                <Button type="button" variant="ghost" size="icon-sm" disabled={busy}
+                  className="-my-1 -mr-2 shrink-0 text-muted-foreground pointer-coarse:size-10"
+                  aria-label={closeLabel || t('app.close')}>
+                  <X aria-hidden="true" />
+                </Button>
+              </DialogClose>
+            )}
           </DialogHeader>
 
-          <div data-slot="modal-shell-body" className={cn('min-w-0', scrollBody && SCROLL_BODY)}>
+          <div data-slot="modal-shell-body" ref={bodyRef} className={cn('min-w-0', scrollBody && SCROLL_BODY)}>
             {children}
           </div>
 

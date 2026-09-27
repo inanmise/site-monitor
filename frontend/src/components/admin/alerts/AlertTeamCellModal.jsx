@@ -4,12 +4,22 @@ import { api, formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
+import { useServerPagination } from '../../../hooks/useServerPagination.js'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
+import ToneBadge from '../ToneBadge.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
+/** Seviye rozeti dolgusu (Alarm Geçmişi ile aynı `--severity-*` jetonları). */
+const LEVEL_BG = {
+  warning: 'bg-(--severity-warn) text-white', high: 'bg-(--severity-high) text-white',
+  critical: 'bg-(--severity-critical) text-white', unknown: 'bg-border text-foreground',
+}
 
 /**
  * Takım kırılımı hücresi → o takımın ilgili alarmları, SAYFALI (2026-09-18, kullanıcı isteği).
@@ -33,56 +43,61 @@ export function bucketQuery(bucket, windowDays = 30, now = Date.now()) {
 
 export default function AlertTeamCellModal({ cell, onClose, onOpenAlert }) {
   const t = useT()
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(25)
-  const [state, setState] = useState({ loading: true, error: null, rows: [], total: 0 })
+  // Pencere içi sunucu listesi → modal ön ayarı (10 / [10,25,50] + compact; eski [10,25,50,100] kalktı).
+  // Başka hücre açılınca sayfa 1 (değer karşılaştırmalı). API 0-tabanlı.
+  const sp = useServerPagination({ listKey: 'alert-team-cell', preset: 'modal',
+    resetDeps: [cell.team.team_id, cell.bucket, cell.windowDays], apiBase: 0 })
+  const { apiPage, pageSize, setTotal } = sp
+  const [state, setState] = useState({ loading: true, error: null, rows: [] })
 
   useEffect(() => {
     let alive = true
     setState((s) => ({ ...s, loading: true, error: null }))
-    api.admin.getAlerts({ teamId: cell.team.team_id, page: page - 1, size: pageSize, ...bucketQuery(cell.bucket, cell.windowDays) })
-      .then((r) => { if (!alive) return; if (r?.success) setState({ loading: false, error: null, rows: r.data || [], total: Number(r.total) || 0 }); else setState({ loading: false, error: r?.error || t('mon.loadError'), rows: [], total: 0 }) })
-      .catch((e) => { if (alive) setState({ loading: false, error: String(e?.message || e), rows: [], total: 0 }) })
+    api.admin.getAlerts({ teamId: cell.team.team_id, page: apiPage, size: pageSize, ...bucketQuery(cell.bucket, cell.windowDays) })
+      .then((r) => {
+        if (!alive) return
+        if (r?.success) { setState({ loading: false, error: null, rows: r.data || [] }); setTotal(Number(r.total) || 0) }
+        // Hata yolunda setTotal ÇAĞRILMAZ (useServerPagination kuralı): `setTotal(0)` toplam sayfayı 1'e indirip
+        // kullanıcıyı 3. sayfadan 1. sayfaya atıyor, geçici bir hata yüzünden yeni bir istek daha tetikliyordu.
+        else setState({ loading: false, error: r?.error || t('mon.loadError'), rows: [] })
+      })
+      .catch((e) => { if (alive) setState({ loading: false, error: String(e?.message || e), rows: [] }) })
     return () => { alive = false }
-  }, [cell, page, pageSize, t])
+  }, [cell, apiPage, pageSize, t, setTotal])
 
-  const totalPages = Math.max(1, Math.ceil(state.total / pageSize))
   const title = `${cell.team.team_name || t('alhts.unassigned')} · ${t('alhts.bucket.' + cell.bucket)} (${cell.count})`
   return (
     <ModalShell open onClose={onClose} title={title} icon={AlertCircle} size="lg" scrollBody
       footer={<Button type="button" variant="secondary" onClick={onClose}>{t('app.close')}</Button>}>
       {state.loading && state.rows.length === 0 ? <LoadingBlock label={t('tbl.loading')} fullWidth /> : null}
       {state.error && <AlertBanner tone="danger" title={t('mon.loadError')} role="alert">{state.error}</AlertBanner>}
-      {!state.error && !state.loading && state.rows.length === 0 && <div className="alh-ts-empty">{t('alhts.cellEmpty')}</div>}
+      {!state.error && !state.loading && state.rows.length === 0 && <div className="pt-2 pb-3 text-[0.86em] text-muted-foreground">{t('alhts.cellEmpty')}</div>}
       {state.rows.length > 0 && (
-        <table className="admin-table alh-cell-table">
-          <thead><tr>
-            <th>{t('alhts.cellLevel')}</th><th>{t('alhts.cellTarget')}</th>
-            <th>{t('alhts.cellOpened')}</th><th>{t('alhts.cellStatus')}</th>
-          </tr></thead>
-          <tbody>{state.rows.map((a) => (
-            <tr key={a.id} className="alh-cell-row">
-              <td><span className={`alert-level-badge alh-cell-lvl alh-lvl-bg--${levelClass(a.alert_level)}`}>{a.alert_level}</span></td>
-              <td>
+        <Table className="table-fixed text-[0.85em]">
+          <TableHeader><TableRow>
+            <TableHead className="w-[78px]">{t('alhts.cellLevel')}</TableHead><TableHead>{t('alhts.cellTarget')}</TableHead>
+            <TableHead className="w-[118px]">{t('alhts.cellOpened')}</TableHead><TableHead className="w-[96px]">{t('alhts.cellStatus')}</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>{state.rows.map((a) => (
+            <TableRow key={a.id} data-cell-row="">
+              <TableCell className="py-2 align-top">
+                <Badge className={cn('rounded-full px-1.5 text-[0.68em] font-bold', LEVEL_BG[levelClass(a.alert_level)])}>{a.alert_level}</Badge>
+              </TableCell>
+              <TableCell className="overflow-hidden py-2 align-top">
                 {onOpenAlert
-                  ? <button type="button" className="inv-domain" title={a.domain} onClick={() => onOpenAlert(a)}>{a.domain}</button>
-                  : <span className="alh-cell-target" title={a.domain}>{a.domain}</span>}
-                <div className="inv-dim alh-cell-msg" title={a.message || ''}>{alertTypeLabel(t, a.alert_type)}{a.message ? ` · ${a.message}` : ''}</div>
-              </td>
-              <td className="inv-dim">{formatDate(a.created_at)}</td>
-              <td>{a.resolved
-                ? <><span className="badge badge-ok">{t('alhts.colClosed')}</span>{a.resolved_at && <div className="inv-dim alh-cell-msg">{formatDate(a.resolved_at)}</div>}</>
-                : <span className="badge badge-err">{t('alhts.colOpen')}</span>}</td>
-            </tr>
-          ))}</tbody>
-        </table>
+                  ? <Button type="button" variant="link" size="xs" className="block h-auto max-w-full truncate p-0 text-left text-[1em]" title={a.domain} onClick={() => onOpenAlert(a)}>{a.domain}</Button>
+                  : <span className="block truncate" title={a.domain}>{a.domain}</span>}
+                <div className="truncate text-[0.85em] text-muted-foreground" title={a.message || ''}>{alertTypeLabel(t, a.alert_type)}{a.message ? ` · ${a.message}` : ''}</div>
+              </TableCell>
+              <TableCell className="py-2 align-top text-muted-foreground">{formatDate(a.created_at)}</TableCell>
+              <TableCell className="py-2 align-top">{a.resolved
+                ? <><ToneBadge tone="success">{t('alhts.colClosed')}</ToneBadge>{a.resolved_at && <div className="truncate text-[0.85em] text-muted-foreground">{formatDate(a.resolved_at)}</div>}</>
+                : <ToneBadge tone="danger">{t('alhts.colOpen')}</ToneBadge>}</TableCell>
+            </TableRow>
+          ))}</TableBody>
+        </Table>
       )}
-      {state.total > 0 && (
-        <PaginationBar page={page} totalPages={totalPages} totalItems={state.total}
-          rangeStart={(page - 1) * pageSize + 1} rangeEnd={Math.min(page * pageSize, state.total)}
-          pageSize={pageSize} sizeOptions={[10, 25, 50, 100]}
-          onPageChange={setPage} onPageSizeChange={(n) => { setPageSize(n); setPage(1) }} />
-      )}
+      <PaginationBar {...sp.bar} />
     </ModalShell>
   )
 }

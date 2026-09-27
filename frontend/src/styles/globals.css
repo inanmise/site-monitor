@@ -53,13 +53,15 @@
   --chart-3: #f59e0b;
   --chart-4: #dc2626;
   --chart-5: #8b5cf6;
-  --sidebar: #fafafa;
+  /* Kenar çubuğu kendi yüzeyinde (2026-09-26 tur 2): sayfa zemini --bg #fafafa (zinc-50) ile AYNI olduğu için menü
+     içerikle kaynaşıyordu → panel zinc-100, vurgu zinc-200, kenar zinc-300 (metin zinc-700 / zinc-100 ≈ 8.9:1). */
+  --sidebar: #f4f4f5;
   --sidebar-foreground: #3f3f46;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f4f4f5;
+  --sidebar-accent: #e4e4e7;
   --sidebar-accent-foreground: #18181b;
-  --sidebar-border: #e4e4e7;
+  --sidebar-border: #d4d4d8;
   --sidebar-ring: var(--ring);
 }
 
@@ -81,11 +83,12 @@
   --destructive: #ef4444;
   --border: #27272a;
   --input: #3f3f46;
+  /* Koyu: panel zinc-900 (sayfa zinc-950'den ayrışır), vurgu zinc-800, kenar zinc-700 (metin zinc-300 ≈ 11:1). */
   --sidebar: #18181b;
   --sidebar-foreground: #d4d4d8;
   --sidebar-accent: #27272a;
   --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #27272a;
+  --sidebar-border: #3f3f46;
 }
 
 @theme inline {
@@ -130,14 +133,134 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/*
+ * sRGB PALETİ (2026-09-27): Tailwind v4 paletinin 89 rengi oklch ile sRGB DIŞINDA tanımlı. Chromium/Edge bu
+ * renkleri yarı saydam bir kenarlıkla (`border-orange-500/40`) ve yarı saydam zeminle (`bg-orange-500/5`) aynı
+ * yuvarlak köşede karıştırırken köşe kenar yumuşatmasında TERS renkli pikseller üretir: turuncu köşe TURKUAZ,
+ * mavi/mor köşe SARI görünür (Genel Bakış kartlarında yakalandı). Her renk, ekranda zaten görünen kırpılmış sRGB
+ * karşılığıyla (Tailwind'in yayımladığı hex ile aynı) EZİLİR → sRGB ekranda görünüm değişmez, köşe bozulması biter.
+ * Kapı: src/test/paletteGamut.test.js — Tailwind güncellenip yeni bir gam dışı renk gelirse kırmızıya döner.
+ */
+@theme {
+  --color-red-200: #ffc9c9;
+  --color-red-300: #ffa2a2;
+  --color-red-400: #ff6467;
+  --color-red-600: #e7000b;
+  --color-red-700: #c10007;
+  --color-orange-50: #fff7ed;
+  --color-orange-100: #ffedd4;
+  --color-orange-200: #ffd6a7;
+  --color-orange-300: #ffb86a;
+  --color-orange-400: #ff8904;
+  --color-orange-500: #ff6900;
+  --color-orange-600: #f54900;
+  --color-orange-700: #ca3500;
+  --color-amber-50: #fffbeb;
+  --color-amber-300: #ffd230;
+  --color-amber-400: #ffb900;
+  --color-amber-500: #fe9a00;
+  --color-amber-600: #e17100;
+  --color-amber-700: #bb4d00;
+  --color-amber-800: #973c00;
+  --color-yellow-300: #ffdf20;
+  --color-yellow-400: #fdc700;
+  --color-yellow-500: #f0b100;
+  --color-yellow-600: #d08700;
+  --color-yellow-700: #a65f00;
+  --color-yellow-800: #894b00;
+  --color-lime-400: #9ae600;
+  --color-lime-500: #7ccf00;
+  --color-lime-600: #5ea500;
+  --color-lime-700: #497d00;
+  --color-green-500: #00c950;
+  --color-green-600: #00a63e;
+  --color-green-700: #008236;
+  --color-emerald-400: #00d492;
+  --color-emerald-500: #00bc7d;
+  --color-emerald-600: #009966;
+  --color-emerald-700: #007a55;
+  --color-emerald-800: #006045;
+  --color-emerald-900: #004f3b;
+  --color-teal-400: #00d5be;
+  --color-teal-500: #00bba7;
+  --color-teal-600: #009689;
+  --color-teal-700: #00786f;
+  --color-teal-800: #005f5a;
+  --color-cyan-400: #00d3f2;
+  --color-cyan-500: #00b8db;
+  --color-cyan-600: #0092b8;
+  --color-cyan-700: #007595;
+  --color-sky-50: #f0f9ff;
+  --color-sky-300: #74d4ff;
+  --color-sky-400: #00bcff;
+  --color-sky-500: #00a6f4;
+  --color-sky-600: #0084d1;
+  --color-sky-700: #0069a8;
+  --color-sky-800: #00598a;
+  --color-blue-200: #bedbff;
+  --color-blue-300: #8ec5ff;
+  --color-blue-400: #51a2ff;
+  --color-blue-500: #2b7fff;
+  --color-indigo-50: #eef2ff;
+  --color-indigo-100: #e0e7ff;
+  --color-indigo-200: #c6d2ff;
+  --color-indigo-300: #a3b3ff;
+  --color-indigo-400: #7c86ff;
+  --color-indigo-500: #615fff;
+  --color-violet-200: #ddd6ff;
+  --color-violet-300: #c4b4ff;
+  --color-violet-400: #a684ff;
+  --color-violet-500: #8e51ff;
+  --color-purple-200: #e9d4ff;
+  --color-purple-300: #dab2ff;
+  --color-purple-400: #c27aff;
+  --color-purple-500: #ad46ff;
+  --color-purple-700: #8200db;
+  --color-fuchsia-100: #fae8ff;
+  --color-fuchsia-200: #f6cfff;
+  --color-fuchsia-300: #f4a8ff;
+  --color-fuchsia-400: #ed6aff;
+  --color-fuchsia-600: #c800de;
+  --color-fuchsia-700: #a800b7;
+  --color-pink-600: #e60076;
+  --color-pink-700: #c6005c;
+  --color-pink-800: #a3004c;
+  --color-rose-300: #ffa1ad;
+  --color-rose-400: #ff637e;
+  --color-rose-500: #ff2056;
+  --color-rose-600: #ec003f;
+  --color-rose-700: #c70036;
+  --color-rose-800: #a50036;
+}
+
 @layer base {
   /* App.css'ten taşındı (katmansız kalsa her boşluk yardımcısını ezerdi) */
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* `hidden` özniteliği HER ZAMAN gizler — Tailwind preflight'ın kuralı (projede preflight yok). Olmadan bir
+     görüntü sınıfı (`flex`, `grid` …) UA'nın `display:none`'ını ezer: Radix Tabs pasif sekme içeriğini `hidden`
+     ile DOM'da tutar, `flex flex-1` taşıyan pasif panel görünmez ama YER KAPLAR — Bildirimler panelinde liste
+     yüksekliğin yarısında bitiyordu (2026-09-25 kullanıcı bildirimi). Collapsible `hidden={!open}` da buna dayanır. */
+  [hidden]:where(:not([hidden="until-found"])) { display: none !important; }
+  /* Varsayılan kenar RENGİ (yalnız renk; genişlik/stil değil → kenarı olmayan öğe etkilenmez). Tailwind v4'te
+     varsayılan currentColor'dır: data-slot'suz `<div className="border">` SİYAH çiziyordu (2026-09-26, B1 dalgası
+     48 yerde elle `border-border` eklemişti). shadcn kurulumunun `* { @apply border-border }` kuralının karşılığı.
+     Legacy App.css'teki `border: 1px solid` kısaltmaları katmansız olduğu için rengi yine kendileri belirler;
+     `border-primary` gibi yardımcılar utilities katmanında → bunu yener. */
+  *, ::before, ::after, ::backdrop { border-color: var(--color-border); }
+  /* Sınıf taşıyan listelerde madde işareti YOK (preflight'ın `ol, ul { list-style: none }` kuralının dar hali,
+     2026-09-26): Tailwind ile kurulan her `<ul className="flex …">` tarayıcının "•" işaretini çiziyordu (sayfalama
+     çubuğu, üye kartları, eskalasyon kartları…). Sınıfsız listeler (Markdown yardım/kılavuz içeriği) UA işaretini
+     korur; işaret isteyen Tailwind listesi `list-disc` verir (utilities katmanı bunu yener). Kenar boşluğu/dolgu
+     sıfırlanmaz — legacy listeler UA dolgusuna güveniyor. Kapı: src/test/globalsBase.test.js */
+  ul[class], ol[class], menu[class] { list-style: none; }
   /* shadcn bileşenlerinin preflight'tan beklediği dar sıfırlama — yalnız data-slot taşıyan öğeler */
   [data-slot] { border: 0 solid var(--color-border); }
   button[data-slot], input[data-slot], textarea[data-slot], select[data-slot] {
     font: inherit; color: inherit; background-color: transparent; letter-spacing: inherit;
   }
+  /* Bağlantı olarak çizilen shadcn öğeleri (Button asChild <a>, Badge <a>): tarayıcının mavi + altı çizili bağlantı
+     görünümünü almasın — preflight'ın `a { color: inherit; text-decoration: inherit }` karşılığı (2026-09-27). */
+  a[data-slot] { color: inherit; text-decoration: inherit; }
   button[data-slot] { cursor: pointer; }
   button[data-slot]:disabled { cursor: not-allowed; }
   [data-slot] svg { display: inline-block; vertical-align: middle; }

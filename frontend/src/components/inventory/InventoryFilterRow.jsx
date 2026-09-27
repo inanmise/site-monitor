@@ -4,6 +4,9 @@ import { useT } from '../../i18n/index.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import { columnFilterOptions, INVENTORY_COLUMNS } from './inventoryModel.js'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { TableCell, TableRow } from '@/components/shadcn/table'
+import { cn } from '@/lib/utils'
 
 /** Kolon anahtarı → başlık i18n anahtarı (seçicinin erişilebilir adı başlıkla aynı sözcüğü taşır). */
 const COL_LABEL = Object.fromEntries(INVENTORY_COLUMNS.map((c) => [c.key, c.labelKey]))
@@ -16,7 +19,10 @@ const FILTER_COL = { ugTeam: 'ug_team', flag: 'flags', domainExp: 'domain_exp', 
  * diğerleri aranabilir açılır liste. Seçenekler o an tabloda olabilecek satırlardan türer (columnFilterOptions), yani
  * listede hiç eşleşmeyecek değer yoktur. team/tier/group/cert/contacts/domainExp/ugTeam üstteki süzgeç paneliyle AYNI
  * anahtarı kullanır — iki yerden de aynı süzgeç görünür/temizlenir. Hücre sırası thead ile birebir (cols + canManage).
+ * Çizim shadcn: TableRow/TableCell + InputGroup (temizle düğmeli metin) + ui/SearchableSelect.
  */
+const CELL = 'bg-muted/40 px-1.5 py-1 align-middle border-b-2 border-border'
+
 export default function InventoryFilterRow({ filters, onFilters, allRows = [], cols, canManage, statusFilter, platformNames = {} }) {
   const t = useT()
   const show = (k) => cols.includes(k)
@@ -47,18 +53,24 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
     }, 250)
     return () => clearTimeout(id)
   }, [domainDraft]) // eslint-disable-line react-hooks/exhaustive-deps
-  const cell = (key, node, extra = '') => <td key={key} className={`inv-fr-cell${extra}`}>{node}</td>
+  const cell = (key, node, extra = '') => <TableCell key={key} className={cn(CELL, extra)}>{node}</TableCell>
 
   return (
-    <tr className="inv-filter-row" data-testid="inv-filter-row">
-      {canManage && <td className="inv-fr-cell" />}
+    <TableRow data-testid="inv-filter-row" className="hover:bg-transparent">
+      {canManage && <TableCell className={CELL} />}
       {cell('domain', (
-        <span className="inv-fr-text">
-          <input type="search" className="input input-sm" value={domainDraft} onChange={(e) => setDomainDraft(e.target.value)}
-            placeholder={t('inv.colFilterDomainPh')} aria-label={t('inv.colFilterDomain')} />
-          {domainDraft && <button type="button" className="inv-fr-clear" onClick={() => { setDomainDraft(''); set({ domain: '' }) }} aria-label={t('inv.filterClear')}><X size={11} /></button>}
-        </span>
-      ), ' inv-td--sticky')}
+        <InputGroup className="h-8 min-w-[140px]">
+          <InputGroupInput type="search" value={domainDraft} onChange={(e) => setDomainDraft(e.target.value)}
+            className="md:text-[.82em]" placeholder={t('inv.colFilterDomainPh')} aria-label={t('inv.colFilterDomain')} />
+          {domainDraft && (
+            <InputGroupAddon align="inline-end">
+              <InputGroupButton size="icon-xs" onClick={() => { setDomainDraft(''); set({ domain: '' }) }} aria-label={t('inv.filterClear')}>
+                <X aria-hidden="true" />
+              </InputGroupButton>
+            </InputGroupAddon>
+          )}
+        </InputGroup>
+      ), 'sticky left-0 z-[2] bg-muted')}
       {show('port') && cell('port', sel('port', opts.ports.map((p) => ({ value: p, label: p }))))}
       {show('tier') && cell('tier', sel('tier', [
         { value: '1', label: 'T1' }, { value: '2', label: 'T2' }, { value: '3', label: 'T3' }, { value: '4', label: 'T4' }, { value: 'none', label: t('inv.tierNone') },
@@ -93,7 +105,7 @@ export default function InventoryFilterRow({ filters, onFilters, allRows = [], c
         { value: '24', label: t('inv.colFilterLast24h') }, { value: '168', label: t('inv.colFilterLast7d') }, { value: '720', label: t('inv.colFilterLast30d') },
       ]))}
       {cell('active', statusFilter === 'deleted' ? null : sel('active', [{ value: 'yes', label: t('inv.colFilterActiveYes') }, { value: 'no', label: t('inv.colFilterActiveNo') }]))}
-      <td className="inv-fr-cell" />
-    </tr>
+      <TableCell className={CELL} />
+    </TableRow>
   )
 }

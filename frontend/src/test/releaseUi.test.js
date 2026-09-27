@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   fmtDuration, groupChanges, changeGroup, isNewVersion, readLastSeenVersion, writeLastSeenVersion,
-  LAST_SEEN_KEY, shortSha, bumpIcon, DEPLOY_KIND_STYLE,
+  LAST_SEEN_KEY, shortSha, bumpIcon, DEPLOY_KIND_STYLE, DEPLOY_KIND_TONE, deployKindTone,
 } from '../utils/releaseUi.js'
 
 const U = { d: 'g', h: 's', m: 'd' }
@@ -72,5 +72,18 @@ describe('releaseUi — küçük yardımcılar', () => {
       expect(typeof DEPLOY_KIND_STYLE[k].tone).toBe('string')
     }
     vi.restoreAllMocks()
+  })
+})
+
+describe('releaseUi — dağıtım türü tonu (Sürüm & Dağıtım rozet/nokta)', () => {
+  it('yükseltme yeşil, geri alma kırmızı, değişim amber, yeniden başlatma bilgi; bilinmeyen sessiz', () => {
+    expect(deployKindTone('UPGRADE')).toBe('success')
+    expect(deployKindTone('FIRST_SEEN')).toBe('success')
+    expect(deployKindTone('ROLLBACK')).toBe('danger')
+    expect(deployKindTone('CHANGED')).toBe('warning')
+    expect(deployKindTone('RESTART')).toBe('info')
+    expect(deployKindTone('UNKNOWN')).toBe('muted')
+    expect(deployKindTone('WHATEVER')).toBe('muted')
+    for (const k of Object.keys(DEPLOY_KIND_TONE)) expect(DEPLOY_KIND_STYLE[k]).toBeTruthy()
   })
 })

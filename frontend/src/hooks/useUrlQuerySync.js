@@ -18,7 +18,8 @@ import { useEffect, useRef } from 'react'
 export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident', 'sec', 'view', 'alert', 'type', 'level', 'ack', 'from', 'to',
   'atype', 'astatus', 'arange', 'aq',   // Aktivite Logu süzgeçleri (QA ISSUE-003: sekme değişince başka sekmeye taşınıyordu)
   'via', 'dq',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
-  'platform']    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
+  'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
+  'scope']       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli)
 
 /**
  * Sekme değişince temizlenecek param AİLELERİ (önek eşleşmesi).
@@ -29,7 +30,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
  * kullanıcı başka bir sekmeye geçip geri döndüğünde kendisinin kurmadığı bir filtreyle
  * karşılaşıyor, boş listeyi "kayıt yok" sanıyordu.
  */
-export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_', 'm_', 'p_', 'g_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar · m_: SMTP Gönderim Logu · p_: Webhook Push Gönderim Logu · g_: Yönetim Paneli (alt sekme + süzgeçler)
+export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_', 'm_', 'p_', 'g_', 'ir_', 'wa_', 'n_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar · m_: SMTP Gönderim Logu · p_: Webhook Push Gönderim Logu · g_: Yönetim Paneli (alt sekme + süzgeçler) · ir_: Sorun Bildirimleri (ir_id açık rapor, ir_view yönetici sekmesi, ir_status süzgeç) · wa_: Dikkat Gerektiren Sertifikalar (wa_why/wa_q/wa_team/wa_tier/wa_sort/wa_view/wa_page/wa_ps) · n_: 7/24 Kapsamı (n_q/n_team/n_type/n_reason/n_status/n_ct/n_page/n_ps)
 
 /** Mount'ta URL'den string param okur (useState initializer'ında kullanılır — flicker yok). */
 export function readUrlParam(key, fallback = null) {

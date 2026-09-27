@@ -22,7 +22,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CertificateInventoryOpsTest {
 
     /** Operasyonel bayrak sayılmayan Boolean alanlar (varsa) — gerekçeli muafiyet listesi. */
-    private static final List<String> EXEMPT = List.of("active");
+    private static final List<String> EXEMPT = List.of(
+            "active",
+            // @Transient yetki bayrağı (2026-09-26, org geneli envanter görünürlüğü): "bu oturum bu kaydı
+            // değiştirebilir mi" — istek başına hesaplanır, DB'de yoktur, alan adının bir özelliği değildir;
+            // e-postada GÖRÜNMEMELİDİR (alıcıya göre değişen bir değer sabit raporda anlamsızdır).
+            "canManage",
+            // 7/24 İzleme Ekibi bildirimi (2026-09-27, NOC): yenileme OPERASYONU değil, uyarının kime gideceğini
+            // belirleyen bildirim YÖNLENDİRME ayarı — "Operasyonel Bilgiler" listesine (Netscaler, WAF, sunucuda
+            // değiştirilecek …) ait değil; 7/24 e-postasının kendisi zaten bu ayarın sonucu.
+            "nocNotify");
 
     private static List<String> booleanFieldNames() {
         List<String> out = new ArrayList<>();

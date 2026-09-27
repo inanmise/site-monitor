@@ -1,24 +1,20 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
-import { dateLocale } from '../i18n/dateLocale.js'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
@@ -26,12 +22,9 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
-import { RefreshCw, Plus, Trash2, CalendarClock, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Building2, Activity, Calendar, Inbox, Lock, LockOpen, ShieldCheck, ShieldOff, ListX, Server, Download, ChevronDown, CalendarPlus } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -47,13 +40,35 @@ import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
-import { ProgressBar } from './ui/Progress.jsx'
-import { eppLabel, domainLife } from '../utils/domainEpp.js'
+import { eppLabel } from '../utils/domainEpp.js'
 import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
 import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
 import { formatDateOnly } from '../api/client'
+import ModalShell from './ui/ModalShell.jsx'
+import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
+import { loadNocGroupNames } from './noc/forms/useNocFormOptions.js'
+import SimpleTooltip from './ui/SimpleTooltip.jsx'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
+import { Input } from '@/components/shadcn/input'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { cn } from '@/lib/utils'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import DomainMonitorCard from './domain/DomainMonitorCard.jsx'
+import { EPP_BADGE } from './domain/DomainCardParts.jsx'
+import { SOON_DAYS, alarmMatchesStatus, daysTone, expiryKey, fmtExpiry, sourceTag, statusKey } from './domain/domainCardModel.js'
+import { useCardDensity } from '../hooks/useCardDensity.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
+} from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -61,7 +76,6 @@ const REFRESH_INTERVAL = 60
 const SORTS = ['days_asc', 'days_desc', 'name', 'registrar', 'team', 'changed']   // registrar/takım/son değişiklik (2026-09-22, B)
 /** Hızlı süzgeç (2026-09-22, B): URL `dq`. 'all' | 'nolock' | 'unsigned' | 'soon' | 'rdap' | 'whois' | 'alarm' */
 const QUICK = ['all', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
-const SOON_DAYS = 30
 const QUICK_PRED = {
   all: () => true,
   soon: m => m.days_remaining != null && m.days_remaining <= SOON_DAYS,
@@ -70,6 +84,16 @@ const QUICK_PRED = {
   alarm: m => !!m.active_alarm,
   rdap: m => m.source === 'RDAP',
   whois: m => m.source === 'WHOIS',
+}
+/**
+ * İstatistik kartı yüklemleri (2026-09-26 kullanıcı seçimi) — sayım ve tıklayınca süzme AYNI yüklemden geçer, iki yol
+ * ayrışmaz. Bilinmeyen (null) değerler sayılmaz: ölçülmemiş bir NS'i "çözülmüyor" demek yanlış alarm olurdu.
+ */
+const STAT_PRED = {
+  nsfail: m => m.ns_resolves === false,
+  unsigned: QUICK_PRED.unsigned,
+  blacklisted: m => m.blacklist_status === 'LISTED',   // CLEAN / UNKNOWN / SKIPPED sayılmaz (DnsblCheckerService)
+  expired: m => m.days_remaining != null && m.days_remaining < 0,
 }
 // Domain kaydi gunde birkac kez sorgulanir; taban SAAT olcegindedir (WHOIS/RDAP nezaketi).
 // Diger turlerdeki dakika olcegi burada anlamsiz olurdu — bu yuzden liste TURE OZEL.
@@ -81,7 +105,7 @@ const INTERVALS = [
 ]
 
 const emptyForm = {
-  name: '', domain: '', groupName: '', tags: '', notificationGroupId: '', teamId: '',
+  name: '', domain: '', groupName: '', tags: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '',
   thresholdsCsv: '60,30,14,7,3,1', warningDays: 30, criticalDays: 7, intervalSeconds: 86400, active: true,
   checkTimeoutMs: '',
   // Koruma anahtarlari: kilit ve degisiklik ACIK (bugunku fiili davranis), kara liste KAPALI
@@ -98,69 +122,38 @@ function normalizeDomainInput(s) {
     .split('@').pop().split(':')[0].replace(/\.$/, '').toLowerCase()
 }
 
-/** Bitiş tarihi gösterimi — hem WHOIS date-only ("2029-10-26") hem RDAP datetime ("...Z") güvenli. */
-function fmtExpiry(iso) {
-  if (!iso) return '—'
-  const s = String(iso).length <= 10 ? iso + 'T00:00:00Z' : (iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z')
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? String(iso).substring(0, 10)
-    : d.toLocaleDateString(dateLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' })
+// Bitiş tarihi / kaynak etiketi / kalan gün tonu / koruma ve EPP rozetleri: domain/domainCardModel.js +
+// domain/DomainCardParts.jsx (kart yeniden tasarımı 2026-09-27) — detay penceresi ve geçmiş satırı da oradan okur.
+
+/** Geçmiş satırındaki durum metni tonu (eski .dom-st--up/warn/down/unknown). */
+const STATUS_TEXT = {
+  up: 'text-success', warn: 'text-amber-700 dark:text-amber-400', down: 'text-destructive', unknown: 'text-muted-foreground',
 }
 
-/** .tr WHOIS kaynak anahtarı → okunur etiket (cevabı hangi kaynak verdi). */
-const WHOIS_PROVIDER_LABEL = { isimtescil: 'isimtescil.net', trabis: 'trabis.gov.tr', trabis43: 'whois:43' }
-/** Kaynak rozeti metni: WHOIS ise ve sağlayıcı biliniyorsa "WHOIS · isimtescil.net", değilse ham kaynak. */
-function sourceTag(source, provider) {
-  if (!source) return null
-  const p = provider && WHOIS_PROVIDER_LABEL[provider]
-  return (source === 'WHOIS' && p) ? `WHOIS · ${p}` : source
-}
-
-/**
- * Kart koruma rozetleri (2026-09-22): transfer kilidi, DNSSEC, kara liste, NS sayısı — kartta yalnız EPP kodları
- * vardı; kilit/DNSSEC/kara liste yalnız Domain Kaydı sekmesinde görülüyordu. Kaynak yoksa (UNKNOWN) "Doğrulanamadı",
- * izleme kapalıysa (SKIPPED) rozet çizilmez — kapalı bir şeyi "temiz" göstermek yanlış iddia olurdu.
- */
-function DomainProtectionBadges({ m, t }) {
-  const lock = m.transfer_lock
-  const lockCls = lock === 'NONE' ? 'bad' : (lock === 'BOTH' || lock === 'SERVER' || lock === 'CLIENT') ? 'ok' : 'muted'
-  const lockLabel = lock === 'BOTH' ? t('dom.lockBoth') : lock === 'SERVER' ? t('dom.lockServer') : lock === 'CLIENT' ? t('dom.lockClient') : lock === 'NONE' ? t('dom.lockNone') : t('dom.lockUnknown')
-  const bl = m.blacklist_status
-  const nsCount = Array.isArray(m.nameservers) ? m.nameservers.length : String(m.nameservers || '').split(',').filter(Boolean).length
-  return (
-    <div className="dom-badges">
-      <span className={`dom-badge dom-badge--${lockCls}`} title={t('dom.transferLock')}>{lockCls === 'ok' ? <Lock size={11} /> : lockCls === 'bad' ? <LockOpen size={11} /> : <ShieldOff size={11} />}{lockLabel}</span>
-      {m.dnssec && <span className={`dom-badge dom-badge--${m.dnssec === 'signed' ? 'ok' : 'muted'}`} title="DNSSEC">{m.dnssec === 'signed' ? <ShieldCheck size={11} /> : <ShieldOff size={11} />}DNSSEC {m.dnssec === 'signed' ? t('dreg.dnssecSigned') : t('dreg.dnssecUnsigned')}</span>}
-      {bl && bl !== 'SKIPPED' && <span className={`dom-badge dom-badge--${bl === 'LISTED' ? 'bad' : bl === 'CLEAN' ? 'ok' : 'muted'}`} title={t('dom.blacklist')}><ListX size={11} />{t('dom.blacklist')}: {bl === 'LISTED' ? t('dom.blListed').replace('{n}', String((m.blacklist_detail || '').split(/\r?\n/).filter(Boolean).length || '?')) : bl === 'CLEAN' ? t('dom.blClean') : t('dom.blUnknown')}</span>}
-      {nsCount > 0 && <span className="dom-badge dom-badge--muted" title={Array.isArray(m.nameservers) ? m.nameservers.join(', ') : String(m.nameservers || '')}><Server size={11} />{t('dom.nsCount', nsCount)}</span>}
-    </div>
-  )
-}
-
-export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
   const canCheckRow = canManageRow
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Toplu seçim — dokuz izleme sayfasının STANDARDI (2026-09-26 kullanıcı bildirimi: Alan Adı sayfasında kart sol üstten
+  // seçilemiyor, toplu Duraklat/Sürdür/takım/grup/sil yoktu). Yalnız yönetebildiği satırlar seçilebilir (Http ile aynı).
+  const [bulkSel, setBulkSel] = useState(() => new Set())
+  const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -168,7 +161,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [form, setForm] = useState(emptyForm)
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('app.noTeam'))
-    : (teamName || t('app.noTeam'))
+    : (defaultTeamName || t('app.noTeam'))
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [defaults, setDefaults] = useState(null)
@@ -180,11 +173,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('control')
+  const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
   const [diag, setDiag] = useState(null)   // Sorun Tanıla modalı: { domain, loading?, data?, error? }
+  const diagSeq = useRef(0)                 // yalnız EN SON tanılamanın yanıtı pencereye yazılır (bkz. diagnose)
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -194,18 +189,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
-  // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF — envanterle aynı menü deseni
-  const [exportOpen, setExportOpen] = useState(false)
+  // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF. shadcn DropdownMenu —
+  // dış tıklama / Escape / odak iadesi Radix'te (eskiden elle document dinleyicileri vardı).
   const [planRow, setPlanRow] = useState(null)   // yenileme planı modalı: izleme satırı (2026-09-22, H)
+  const [density, setDensity] = useCardDensity('domain')   // Kompakt / Zengin kart (2026-09-27): her açılış Zengin başlar, Kompakt seçimi kalıcı DEĞİL
   const [exporting, setExporting] = useState(false)
-  const exportRef = useRef(null)
-  useEffect(() => {
-    if (!exportOpen) return
-    const onClick = (e) => { if (!exportRef.current?.contains(e.target)) setExportOpen(false) }
-    const onKey = (e) => { if (e.key === 'Escape') setExportOpen(false) }
-    document.addEventListener('mousedown', onClick); document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('mousedown', onClick); document.removeEventListener('keydown', onKey) }
-  }, [exportOpen])
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -227,6 +215,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updateDomainMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -265,12 +258,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
   useMonitorDeepLink(monitors, openDetail)
 
-  function openDetail(m) { setSelected(m); setDetailTab('control') }
+  function openDetail(m) { setSelected(m); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       warningDays: defaults?.warningDays ?? emptyForm.warningDays,
       criticalDays: defaults?.criticalDays ?? emptyForm.criticalDays,
@@ -279,7 +272,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+    return { name: m.name || '', domain: m.domain || '', groupName: m.group_name || '', tags: m.tags || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       teamId: m.team_id != null ? String(m.team_id) : '',
       thresholdsCsv: m.thresholds_csv || '60,30,14,7,3,1',
       warningDays: m.warning_days ?? 30, criticalDays: m.critical_days ?? 7,
@@ -334,6 +327,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         thresholdsCsv: form.thresholdsCsv?.trim() || '60,30,14,7,3,1',
         warningDays: Number(form.warningDays), criticalDays: Number(form.criticalDays),
         intervalSeconds: Number(form.intervalSeconds), active: form.active,
@@ -455,7 +449,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) setSelected(res.data)
+        // İşlevsel güncelleme (bayat kapanış YOK): yanıt gelene kadar pencere kapanmış ya da başka izlemeye
+        // geçilmiş olabilir — A'nın sonucu B'nin penceresini değiştirmesin / kapalı pencereyi yeniden açmasın.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -464,12 +460,18 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   }
 
   async function diagnose(m) {
+    // Yarış: A'nın tanılaması sürerken pencere kapatılıp B tanılanırsa A'nın geç yanıtı B'nin penceresine yazılmasın;
+    // kapatılmış pencere de geç yanıtla yeniden açılmasın (işlevsel güncelleme — prev null ise dokunma).
+    const my = ++diagSeq.current
     setDiag({ domain: m.domain, loading: true })
     try {
       const res = await api.admin.runDomainExpiryDiagnostics(m.domain)
-      setDiag(res?.success ? { domain: m.domain, data: res.data } : { domain: m.domain, error: res?.error || t('dexp.error') })
+      if (my !== diagSeq.current) return
+      const next = res?.success ? { domain: m.domain, data: res.data } : { domain: m.domain, error: res?.error || t('dexp.error') }
+      setDiag(prev => (prev ? next : prev))
     } catch (e) {
-      setDiag({ domain: m.domain, error: e?.message || t('dexp.error') })
+      if (my !== diagSeq.current) return
+      setDiag(prev => (prev ? { domain: m.domain, error: e?.message || t('dexp.error') } : prev))
     }
   }
 
@@ -480,25 +482,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     setSelected(sel => (sel && sel.id === row.id) ? { ...sel, ...row } : sel)
     setPlanRow(null)
   }
-  /** Plan rozeti: gecikmiş (plan tarihi geçti, bitiş ilerlemedi) kırmızı; aksi hâlde bilgi. */
-  function planBadge(m) {
-    if (!m.renewal_planned_at) return null
-    return (
-      <button type="button" className={`ccx-chip ${m.renewal_overdue ? 'ccx-chip--bad' : 'ccx-chip--info'} dom-plan-chip`}
-        title={[m.renewal_planned_by, m.renewal_planned_note].filter(Boolean).join(' · ')}
-        onClick={e => { e.stopPropagation(); if (canManageRow(m)) setPlanRow(m) }}>
-        <CalendarPlus size={11} />{m.renewal_overdue ? t('ccx.planOverdue', formatDateOnly(m.renewal_planned_at)) : t('ccx.plan', formatDateOnly(m.renewal_planned_at))}
-        {m.renewal_planned_by && <span className="ccx-muted"> · {m.renewal_planned_by}</span>}
-      </button>
-    )
-  }
-
   async function doExport(kind) {
-    setExportOpen(false)
     if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
     setExporting(true)
     try {
-      const n = kind === 'csv' ? exportDomainsCsv(displayMonitors, t) : await exportDomainsPdf(displayMonitors, t)
+      // CSV 7/24 grup ADLARINI yazar (liste yanıtında yalnız kimlik var) — seçenekler önbellekli (formla ortak)
+      const n = kind === 'csv' ? exportDomainsCsv(displayMonitors, t, await loadNocGroupNames()) : await exportDomainsPdf(displayMonitors, t)
       toast.success(t('inv.exportSuccess', n))
     } catch { toast.error(t('inv.exportError')) } finally { setExporting(false) }
   }
@@ -545,7 +534,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   }), [monitors, teamFilter, groupFilter, tagFilter, quick, search])
 
   const counts = useMemo(() => {
-    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0, soon: 0, nolock: 0 }
+    const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0, soon: 0, nolock: 0, nsfail: 0, unsigned: 0, blacklisted: 0, expired: 0 }
     for (const m of scoped) {
       const s = m.status
       if (s === 'OK') c.ok++
@@ -555,6 +544,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       if (m.changed) c.changed++
       if (m.days_remaining != null && m.days_remaining <= SOON_DAYS) c.soon++
       if (m.transfer_lock === 'NONE') c.nolock++
+      for (const k of Object.keys(STAT_PRED)) if (STAT_PRED[k](m)) c[k]++
     }
     return c
   }, [scoped])
@@ -567,6 +557,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         critical: m => m.status === 'CRITICAL', unknown: m => m.status !== 'OK' && m.status !== 'WARNING' && m.status !== 'CRITICAL',
         changed: m => m.changed,
         soon: QUICK_PRED.soon, nolock: QUICK_PRED.nolock,
+        ...STAT_PRED,
       }[statFilter]
       if (pred) list = list.filter(pred)
     }
@@ -587,7 +578,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'domain-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy],
+    listKey: 'domain-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -611,73 +602,242 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     { key: 'changed',  Icon: Activity, label: t('dom.dashChanged'),  value: counts.changed,  cls: 'error'    },
     { key: 'soon',     Icon: CalendarClock,    label: t('dom.dashSoon', SOON_DAYS), value: counts.soon, cls: 'warning' },
     { key: 'nolock',   Icon: LockOpen,         label: t('dom.dashNoLock'),   value: counts.nolock,   cls: 'high'     },
+    { key: 'nsfail',      Icon: ServerCrash, label: t('dom.dashNsFail'),      value: counts.nsfail,      cls: 'high',     hint: t('dom.dashNsFailHint') },
+    { key: 'unsigned',    Icon: ShieldOff,   label: t('dom.dashUnsigned'),    value: counts.unsigned,    cls: 'warning',  hint: t('dom.dashUnsignedHint') },
+    { key: 'blacklisted', Icon: Ban,         label: t('dom.dashBlacklisted'), value: counts.blacklisted, cls: 'critical', hint: t('dom.dashBlacklistedHint') },
+    { key: 'expired',     Icon: CalendarX,   label: t('dom.dashExpired'),     value: counts.expired,     cls: 'critical', hint: t('dom.dashExpiredHint') },
   ]
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  function statusCls(s) {
-    if (s === 'OK') return 'up'
-    if (s === 'WARNING') return 'warn'
-    if (s === 'CRITICAL') return 'down'
-    return 'unknown'
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı) — paylaşılan: up | warn | down | unknown.
+  function statusCls(s) { return statusKey(s) }
   function statusLabel(s) {
     return s === 'OK' ? t('dom.stOk') : s === 'WARNING' ? t('dom.stWarning') : s === 'CRITICAL' ? t('dom.stCritical') : t('dom.stUnknown')
   }
   function statusBadge(m) {
-    const c = statusCls(m?.status)
-    return <span className={`upt-badge upt-badge--${c}`}><span className="upt-badge-dot" />{statusLabel(m?.status)}</span>
+    return <MonitorStatusBadge status={statusCls(m?.status)}>{statusLabel(m?.status)}</MonitorStatusBadge>
   }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={`${t('dom.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`}><AlertTriangle size={14} /></span>
+  const alarmLabel = (m) => `${t('dom.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
+  /**
+   * Alarm seviyesi durumla AYNIYSA (Kritik durum + Kritik alarm, Uyarı + Uyarı) ayrı alarm rozeti yeni bilgi
+   * taşımaz — kartta "Kritik" iki kez yazıyordu (2026-09-26). O durumda alarm işareti durum rozetinin İÇİNE
+   * girer: ⚠ ikonu (onaylanmamışsa nabız) + ekran okuyucuya tam metin ("Aktif alarm — CRITICAL"); seviye
+   * rozet metninde görünür kalır. Seviye durumdan farklıysa (ör. Kritik durum + Yüksek alarm) ayrı rozet kalır.
+   */
+  function cardStatusBadge(m) {
+    if (!alarmMatchesStatus(m)) return statusBadge(m)
+    return (
+      <MonitorStatusBadge status={statusCls(m.status)}>
+        <AlertTriangle aria-hidden="true" data-slot="monitor-alarm-inline"
+          className={cn('size-3', !m.alarm_acknowledged && 'animate-pulse motion-reduce:animate-none')} />
+        {statusLabel(m.status)}
+        <span className="sr-only">{alarmLabel(m)}</span>
+      </MonitorStatusBadge>
+    )
   }
-  function daysColor(d) {
-    if (d == null) return 'var(--text-muted)'
-    if (d < 0) return '#c0392b'
-    if (d <= 7) return '#dc2626'
-    if (d <= 30) return '#e07b00'
-    return 'var(--text)'
-  }
+
+  // ── İç içe pencereler ── ModalShell iç içe derinliği React AĞACINDAN okur: bir pencere, onu açan
+  // pencerenin İÇİNDE çizilirse onun üstünde katmanlanır (eskiden "en son portal üstte kalır" sırasına
+  // güveniliyordu). Bu yüzden Tanıla / Plan / Form pencereleri en derindeki açık pencereye yerleşir.
+
+  // Sorun Tanıla (Alan Adı Süre Bitişi Tanılama): formdan (admin) ya da detayın geçmiş sekmesinden açılır.
+  const diagModal = diag && (
+    <ModalShell open onClose={() => setDiag(null)} icon={ShieldAlert} size="md" scrollBody
+      title={`${t('dexp.diagnose')} — ${diag.domain}`}
+      footer={<Button variant="secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</Button>}>
+      {diag.loading && <LoadingBlock label={t('dexp.running')} className="upt-modal-loading" />}
+      {diag.error && <AlertBanner tone="danger">{diag.error}</AlertBanner>}
+      {diag.data && <DomainExpiryTrace data={diag.data} />}
+    </ModalShell>
+  )
+
+  // Yenileme planı (2026-09-22, H): sertifika envanteriyle ORTAK modal, izleme uçlarıyla.
+  const planModal = planRow && (
+    <RenewalPlanModal
+      row={{ domain: planRow.domain, renewal_planned_at: planRow.renewal_planned_at, renewal_planned_note: planRow.renewal_planned_note,
+        renewal_planned_by: planRow.renewal_planned_by, expiry_key: expiryKey(planRow), renew_by_key: null }}
+      plan={(date, note) => api.monitoring.domainRenewalPlan(planRow.id, date, note)}
+      unplan={() => api.monitoring.domainRenewalUnplan(planRow.id)}
+      hint={t('dom.planHint', fmtExpiry(planRow.expiry_date))}
+      onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />
+  )
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={CalendarClock} width={640}
+      title={modal === 'new' ? t('dom.modalNew') : t('dom.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('dom.testing') : null}
+      footer={<>
+        <div className="mr-auto flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
+            <FlaskConical size={14} />{t('dom.test')}
+          </Button>
+          {isAdmin && (
+            <Button variant="secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
+              <ShieldAlert size={14} />{t('dexp.diagnose')}
+            </Button>
+          )}
+        </div>
+        {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('dom.delete')}</Button>}
+        <Button variant="secondary" onClick={closeEdit}>{t('dom.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.domain.trim() || !form.teamId}>{t('dom.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={CalendarClock}>{t('dom.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('dom.domain')} required hint={t('dom.domainHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.domain} placeholder="example.com" autoFocus
+              onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
+              onBlur={e => { const n = normalizeDomainInput(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, domain: n })) }} />
+          )}
+        </FormField>
+
+        <FormField label={t('dom.name')}>
+          {({ id }) => (
+            <Input id={id} value={form.name} placeholder={form.domain} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('dom.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('dom.noTeam')} disabled />}
+        </FormField>
+        <FormField full label={t('dom.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="DOMAIN" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <FormHint>{t('dom.groupInfo')}</FormHint>
+        <FormField label={t('verify.attempts')}>
+          {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.attemptEvery')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.recoveryChecks')}>
+          {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('verify.recoveryEvery')}>
+          {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+        </FormField>
+        <FormHint>ⓘ {t('verify.hint')}</FormHint>
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+        {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
+        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        <FormField label={t('dom.warningDays')}>
+          {({ id }) => <Input id={id} type="number" min="1" value={form.warningDays} onChange={e => setForm(f => ({ ...f, warningDays: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField label={t('dom.criticalDays')}>
+          {({ id }) => <Input id={id} type="number" min="1" value={form.criticalDays} onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} />}
+        </FormField>
+        <FormField full label={t('dom.thresholds')} hint={t('dom.thresholdsHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.thresholdsCsv} placeholder="60,30,14,7,3,1"
+              onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField full label={t('dom.checkTimeout')} hint={t('dom.checkTimeoutHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} type="number" min="1000" max="30000" step="500" value={form.checkTimeoutMs}
+              placeholder={t('dom.checkTimeoutPh')}
+              onChange={e => setForm(f => ({ ...f, checkTimeoutMs: e.target.value }))} />
+          )}
+        </FormField>
+        <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('dom.active')} />
+        <FormHint>{t('dom.unknownHint')}</FormHint>
+
+        {/* Koruma anahtarlari. Sure bitisi BILEREK toggle DEGIL: bizde esik alanlariyla
+            (uyari/kritik gun + esik listesi) zaten var ve acik/kapali bir anahtar onu
+            fakirlestirirdi. */}
+        <FormSection title={t('dom.alarmSettings')} boxed={false}>
+          <CheckField checked={form.transferLockAlert} onCheckedChange={v => setForm(f => ({ ...f, transferLockAlert: v }))}
+            label={t('dom.transferLockAlert')} hint={t('dom.transferLockHint')} />
+          <CheckField checked={form.blacklistEnabled} onCheckedChange={v => setForm(f => ({ ...f, blacklistEnabled: v }))}
+            label={t('dom.blacklistEnabled')} hint={t('dom.blacklistHint')} />
+          <CheckField checked={form.changeAlert} onCheckedChange={v => setForm(f => ({ ...f, changeAlert: v }))}
+            label={t('dom.changeAlert')} hint={t('dom.changeAlertHint')} />
+        </FormSection>
+      </FormGrid>
+
+      {testResult && (() => {
+        // Veri yok (hata / UNKNOWN) nötr bilgi tonunda: "sorun" değil, "doğrulanamadı".
+        const noData = testResult.error || testResult.status === 'UNKNOWN'
+        const details = [
+          testResult.days_remaining != null && `${testResult.days_remaining} ${t('dom.daysLeft')}`,
+          testResult.expiry_date && fmtExpiry(testResult.expiry_date),
+          testResult.registrar,
+          testResult.source && testResult.source !== 'NONE' && testResult.source,
+          noData && (testResult.error || t('dom.noData')),
+        ].filter(Boolean).join(' · ')
+        return (
+          <AlertBanner className="mt-3"
+            tone={noData ? 'info' : testResult.status === 'OK' ? 'success' : 'warning'}
+            icon={testResult.status === 'OK' ? undefined : AlertTriangle}
+            title={statusLabel(testResult.status)}>
+            {details || null}
+          </AlertBanner>
+        )
+      })()}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="domain-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+      {diagModal}
+    </MonitorFormModal>
+  )
 
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('dom.title')}</h2>
-          <p className="upt-subtitle">{t('dom.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">{t('dom.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}</span>
-          <Button variant="outline" size="sm" onClick={load}><RefreshCw size={14} />{t('dom.refresh')}</Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <div className="sqlpg-menu-wrap" ref={exportRef}>
-            <Button type="button" variant="outline" size="sm" className={`sqlpg-menu-trigger ${exportOpen ? ' is-open' : ''}`}
-              onClick={() => setExportOpen(o => !o)} disabled={exporting} aria-haspopup="menu" aria-expanded={exportOpen}>
-              <Download size={14} />{t('inv.export')}<ChevronDown size={12} className="sqlpg-menu-chev" />
-            </Button>
-            {exportOpen && (
-              <div className="sqlpg-menu inv-export-menu" role="menu">
-                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('csv')}>
-                  <div className="sqlpg-item-label">{t('inv.exportCsv')}</div>
-                  <div className="sqlpg-item-preview">{t('dom.exportCsvHint', displayMonitors.length)}</div>
-                </button>
-                <button type="button" className="sqlpg-item" role="menuitem" onClick={() => doExport('pdf')}>
-                  <div className="sqlpg-item-label">{t('inv.exportPdf')}</div>
-                  <div className="sqlpg-item-preview">{t('dom.exportPdfHint', displayMonitors.length)}</div>
-                </button>
-              </div>
-            )}
-          </div>
-          <MonitorGuideButton type="domain" />
-          {canWrite && <Button size="sm" onClick={openNew}><Plus size={14} />{t('dom.addMonitor')}</Button>}
-        </div>
-      </div>
+      <MonitorPageHeader type="domain" title={t('dom.title')} subtitle={t('dom.subtitle')}
+        count={loading ? null : monitors.length}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('dom.addMonitor')}
+        extraActions={(
+          /* modal={false}: açık menü varken başka bir tetiğe tek basışta geçilir (ui/KebabMenu ile aynı).
+             Telefonda yalnız ikon (ad aria-label'da) — başlık satırı 360 px'te de taşmasın. */
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" disabled={exporting} aria-label={t('inv.export')} title={t('inv.export')}
+                className="h-10 shrink-0 sm:h-9">
+                <Download aria-hidden="true" /><span className="hidden sm:inline">{t('inv.export')}</span>
+                <ChevronDown aria-hidden="true" className="hidden size-3 opacity-70 sm:inline" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" collisionPadding={8} className="z-(--z-menu) w-64 max-w-[calc(100vw-2rem)]">
+              <DropdownMenuItem onSelect={() => doExport('csv')} className="flex-col items-start gap-0.5">
+                <span className="font-medium">{t('inv.exportCsv')}</span>
+                <span className="text-xs text-muted-foreground">{t('dom.exportCsvHint', displayMonitors.length)}</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => doExport('pdf')} className="flex-col items-start gap-0.5">
+                <span className="font-medium">{t('inv.exportPdf')}</span>
+                <span className="text-xs text-muted-foreground">{t('dom.exportPdfHint', displayMonitors.length)}</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )} />
 
       <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7'), t('dom.how8')]} />
 
@@ -690,12 +850,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           <SearchableSelect value={sortBy} onChange={setSortBy} options={sortOptions} ariaLabel={t('flt.sort')} />
           <SearchableSelect value={quick} onChange={setQuick} options={quickOptions} ariaLabel={t('dom.quickLabel')} />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('dom.searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dom.searchPlaceholder')} aria-label={t('dom.searchPlaceholder')}
+            value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
 
@@ -708,137 +870,101 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('dom.noMonitorsAdmin') : t('dom.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DOMAIN"
+          api={{ update: api.monitoring.updateDomainMonitor, remove: api.monitoring.deleteDomainMonitor }}
+          onClear={() => setBulkSel(new Set())} onDone={load}
+          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card upt-card--${statusCls(m.status)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.domain)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.domain} />
-                {m.changed && <span className="dom-changed-ico" title={m.change_detail ? `${t('dom.changedTip')} — ${m.change_detail}` : t('dom.changedTip')}><Activity size={13} /></span>}
-                <span className="upt-card-top-right">
-                  {m.source && <span className="upt-port-tag" title={m.whois_provider ? t('dom.sourceVia') : undefined}>{sourceTag(m.source, m.whois_provider)}</span>}
-                  <CopyLinkButton iconOnly url={monitorDeepLink('domain', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.domain}>{m.domain}</div>
-              {m.registrar && (
-                <div className="dom-registrar" title={m.registrar}>
-                  <Building2 size={12} /><span>{m.registrar}</span>
-                </div>
+            /* Alan Adı kartı (domain/DomainMonitorCard, 2026-09-27): kalan gün kahraman paneli (bitiş tarihi, kalan kayıt
+               süresi çubuğu, yenileme planı çipi / kısayolu), koruma çipleri, EPP kodları. Yetkiye, seçime ve eylemlere
+               bağlı parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, kart eylemleri (telefonda
+               "Diğer işlemler" menüsü + Yenileme planla), plan penceresi. Durum sözlüğü detay penceresiyle ortak. */
+            <DomainMonitorCard key={m.id} monitor={m} density={density} status={statusCls(m.status)} badge={cardStatusBadge(m)}
+              alarmLabel={alarmLabel(m)} onOpen={() => openDetail(m)}
+              onPlanRenewal={canManageRow(m) ? () => setPlanRow(m) : undefined}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.domain)} />
               )}
-              <MonitorCardMeta monitor={m} />
-              <div className="upt-card-divider" />
-              <div className="dom-hero">
-                {(() => { const life = domainLife(m.last_changed || m.registration_date, m.expiry_date); return (
-                <div className="dom-hero-row" title={life ? t('dom.lifeTip', fmtExpiry(m.last_changed || m.registration_date), life.elapsed, life.total) : undefined}>
-                  <div className="dom-hero-number" style={{ color: daysColor(m.days_remaining) }}>{m.days_remaining == null ? '—' : Math.abs(m.days_remaining)}</div>
-                  {/* Kayıt ömrü çubuğu (2026-09-22): sertifika kartındaki ömür çubuğunun eşi — oluşturma→bitiş */}
-                  {life && (
-                    <div className="cc-life-block">
-                      <ProgressBar value={life.pct} max={100} size="sm" decorative className="cc-life-bar dom-life-bar" />
-                      <div className="cc-life-caption">{life.elapsed} / {life.total} {t('card.daysUnit')}</div>
-                    </div>
-                  )}
-                </div>) })()}
-                <div className="dom-hero-label">{m.days_remaining != null && m.days_remaining < 0 ? t('dom.expiredAgo') : t('dom.daysLeft')}</div>
-                <div className="dom-hero-expiry"><Calendar size={12} /><span>{t('dom.expiresShort')} {fmtExpiry(m.expiry_date)}</span></div>
-              </div>
-              <DomainProtectionBadges m={m} t={t} />
-              {planBadge(m) && <div className="dom-plan-row">{planBadge(m)}</div>}
-              {Array.isArray(m.status_codes) && m.status_codes.length > 0 && (
-                <div className="dom-epp-row">
-                  {m.status_codes.slice(0, 4).map(sc => <span key={sc} className="dom-epp-chip" title={eppLabel(sc)}>{eppLabel(sc)}</span>)}
-                  {m.status_codes.length > 4 && <span className="dom-epp-chip">+{m.status_codes.length - 4}</span>}
-                </div>
-              )}
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.domain}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('dom.check')} editTitle={t('dom.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('dom.delete')} />
-                )}
-              </div>
-            </div>
+              meta={<MonitorCardMeta monitor={m} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('dom.check')} editTitle={t('dom.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('dom.delete')}
+                  phoneMenu menuItems={[{
+                    label: m.renewal_planned_at ? t('forecast.editPlan') : t('forecast.planRenewal'),
+                    icon: <CalendarPlus aria-hidden="true" />, onClick: () => setPlanRow(m),
+                  }]} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${statusCls(selected.status)}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.domain}</span>
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('dom.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('dom.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('dom.delete')}
-                onClose={closeDetail}>
-                {canManageRow(selected) && (
-                  <Button type="button" variant="outline" size="sm" onClick={() => setPlanRow(selected)} title={t('ccx.planCta')}>
-                    <CalendarPlus size={14} />{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusCls(selected.status)} badge={statusBadge(selected)} title={selected.domain} nocNotify={!!selected.noc_notify}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('dom.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('dom.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('dom.delete')}
+              onClose={closeDetail}>
+              {canManageRow(selected) && (
+                <SimpleTooltip content={t('ccx.planCta')}>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setPlanRow(selected)}>
+                    <CalendarPlus size={14} aria-hidden="true" />
+                    {/* Telefonda başlık satırı dar: metin görsel olarak gizlenir ama erişilebilir ad kalır. */}
+                    <span className="sr-only sm:not-sr-only">{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}</span>
                   </Button>
-                )}
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
+                </SimpleTooltip>
+              )}
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-0" />
+          <DetailSummary items={[
+            { key: 'days', value: selected.days_remaining ?? '—', label: t('dom.daysLeft'), valueClassName: daysTone(selected.days_remaining) },
+            { key: 'expiry', value: fmtExpiry(selected.expiry_date), label: t('dom.expiry') },
+            { key: 'registrar', value: selected.registrar || '—', label: t('dom.registrar'), valueClassName: 'text-xs' },
+            { key: 'source', value: sourceTag(selected.source, selected.whois_provider) || '—', label: t('dom.source'), valueClassName: 'text-xs' },
+            { key: 'ns', label: t('dom.nsResolves'),
+              value: selected.ns_resolves == null ? '—' : <OnOff on={selected.ns_resolves} onText={t('dom.on')} offText={t('dom.off')} /> },
+            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('dom.lastCheck'), time: true },
+          ]} />
+          {Array.isArray(selected.status_codes) && selected.status_codes.length > 0 && (
+            <div data-slot="domain-epp" className="mt-3 flex flex-wrap gap-1 px-1">
+              {selected.status_codes.map(sc => <Badge key={sc} variant="outline" className={EPP_BADGE}>{eppLabel(sc)}</Badge>)}
             </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ color: daysColor(selected.days_remaining) }}>{selected.days_remaining ?? '—'}</span><span className="upt-modal-metric-lbl">{t('dom.daysLeft')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{fmtExpiry(selected.expiry_date)}</span><span className="upt-modal-metric-lbl">{t('dom.expiry')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ fontSize: '.8em' }}>{selected.registrar || '—'}</span><span className="upt-modal-metric-lbl">{t('dom.registrar')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ fontSize: '.8em' }}>{sourceTag(selected.source, selected.whois_provider) || '—'}</span><span className="upt-modal-metric-lbl">{t('dom.source')}</span></div>
-              <div className="upt-modal-metric"><span className={selected.ns_resolves === false ? 'kw-off' : 'kw-on'}>{selected.ns_resolves == null ? '—' : selected.ns_resolves ? t('dom.on') : t('dom.off')}</span><span className="upt-modal-metric-lbl">{t('dom.nsResolves')}</span></div>
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('dom.lastCheck')}</span></div>}
-            </div>
-            {Array.isArray(selected.status_codes) && selected.status_codes.length > 0 && (
-              <div className="dom-epp-row" style={{ padding: '0 4px 6px' }}>
-                {selected.status_codes.map(sc => <span key={sc} className="dom-epp-chip">{eppLabel(sc)}</span>)}
-              </div>
-            )}
-            <div className="upt-modal-divider" />
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'registration' ? ' active' : ''}`} onClick={() => setDetailTab('registration')}>{t('dom.tabRegistration')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('dom.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('dom.tabGuide')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'control' && (<>
+          )}
+          <DetailDivider />
+          <DetailTabs value={detailTab} onValueChange={setDetailTab} className="mt-0"
+            countsFor={{ kind: 'domain', monitorId: selected.id, notesType: 'DOMAIN', notesTarget: selected.domain, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['control', t('hist.tab')], ['registration', t('dom.tabRegistration')], ['alerts', t('dom.tabAlerts')],
+              ['notes', t('dom.tabGuide')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="control">
               {isAdmin && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                <div className="mb-2 flex justify-end">
                   <Button type="button" variant="secondary" size="sm" onClick={() => diagnose(selected)}>
                     <ShieldAlert size={13} />{t('dexp.diagnose')}
                   </Button>
@@ -858,208 +984,42 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                     <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
                     <span>{sourceTag(c.source, c.whois_provider) || '—'}</span>
                     <span>{fmtExpiry(c.expiry_date)}</span>
-                    <span style={{ color: daysColor(cDays), fontWeight: 600 }}>{cDays ?? '—'}</span>
-                    <span className={`dom-st dom-st--${statusCls(c.status)}`}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
+                    <span className={cn('font-semibold', daysTone(cDays))}>{cDays ?? '—'}</span>
+                    <span className={cn('font-semibold', STATUS_TEXT[statusCls(c.status)])}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
                     {/* Çözülen IP ayrı sütun değil: 7. sütun tabloyu kırıyordu; IP registrar hücresinin tooltip'inde (Domain Kaydı sekmesinde tam liste) */}
-                    <span title={[c.registrar, cIps.length ? 'IP: ' + cIps.join(', ') : null].filter(Boolean).join(' · ')} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.registrar || (c.error ? c.error : '—')}{cIps.length ? <span className="dom-rt-ipcount"> · {cIps.length} IP</span> : null}</span>
+                    <span className="truncate" title={[c.registrar, cIps.length ? 'IP: ' + cIps.join(', ') : null].filter(Boolean).join(' · ')}>
+                      {c.registrar || (c.error ? c.error : '—')}{cIps.length ? <span className="font-normal text-muted-foreground"> · {cIps.length} IP</span> : null}
+                    </span>
                   </>)
                 }} />
-            </>)}
+            </TabsContent>
 
-            {detailTab === 'registration' && <DomainRegistrationTab monitor={selected} />}
-            {detailTab === 'alerts' && <AlertHistory domain={selected.domain} types={alertTypesFor('domain')} />}
-            {detailTab === 'notes' && (
+            <TabsContent value="registration"><DomainRegistrationTab monitor={selected} /></TabsContent>
+
+            <TabsContent value="alerts"><AlertHistory domain={selected.domain} types={alertTypesFor('domain')} /></TabsContent>
+
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="DOMAIN" target={selected.domain} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="domain" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {!modal && diagModal}
+          {planModal}
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--domain">
-              <div className="modal-icon-hdr-badge"><CalendarClock size={20} /></div>
-              <h3>{modal === 'new' ? t('dom.modalNew') : t('dom.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('dom.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="http-type-banner"><CalendarClock size={16} /><span>{t('dom.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('dom.domain')} <span className="req-star">*</span></span>
-                <input value={form.domain} placeholder="example.com" autoFocus onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
-                  onBlur={e => { const n = normalizeDomainInput(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, domain: n })) }} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.domainHint')}</div>
-
-              <label><span>{t('dom.name')}</span>
-                <input value={form.name} placeholder={form.domain} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('dom.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('dom.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('dom.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.groupInfo')}</div>
-              <label><span>{t('verify.attempts')}</span>
-                <input type="number" min="0" max="10" value={form.confirmAttempts}
-                  onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.attemptEvery')}</span>
-                <input type="number" min="10" max="600" value={form.confirmIntervalSeconds}
-                  onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.recoveryChecks')}</span>
-                <input type="number" min="1" max="20" value={form.recoveryChecks}
-                  onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-              <label><span>{t('verify.recoveryEvery')}</span>
-                <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds}
-                  onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-              <div className="full-width field-hint">ⓘ {t('verify.hint')}</div>
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-              {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-              <div className="full-width http-tags-block">
-                <div className="http-block-title">{t('mon.tagsTitle')} <span className="req-star">*</span></div>
-                <div className="field-hint" style={{ marginBottom: 6 }}>{t('mon.tagsHint')}</div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-              <label><span>{t('dom.warningDays')}</span>
-                <input type="number" min="1" value={form.warningDays} onChange={e => setForm(f => ({ ...f, warningDays: Number(e.target.value) }))} /></label>
-              <label><span>{t('dom.criticalDays')}</span>
-                <input type="number" min="1" value={form.criticalDays} onChange={e => setForm(f => ({ ...f, criticalDays: Number(e.target.value) }))} /></label>
-              <label className="full-width"><span>{t('dom.thresholds')}</span>
-                <input value={form.thresholdsCsv} placeholder="60,30,14,7,3,1" onChange={e => setForm(f => ({ ...f, thresholdsCsv: e.target.value }))} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.thresholdsHint')}</div>
-              <label className="full-width"><span>{t('dom.checkTimeout')}</span>
-                <input type="number" min="1000" max="30000" step="500" value={form.checkTimeoutMs}
-                  placeholder={t('dom.checkTimeoutPh')}
-                  onChange={e => setForm(f => ({ ...f, checkTimeoutMs: e.target.value }))} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.checkTimeoutHint')}</div>
-              <label className="checkbox-label">
-                <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('dom.active')}</label>
-              <div className="full-width field-hint">{t('dom.unknownHint')}</div>
-
-              {/* Koruma anahtarlari. Sure bitisi BILEREK toggle DEGIL: bizde esik alanlariyla
-                  (uyari/kritik gun + esik listesi) zaten var ve acik/kapali bir anahtar onu
-                  fakirlestirirdi. */}
-              <div className="full-width form-section-header">{t('dom.alarmSettings')}</div>
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.transferLockAlert}
-                  onChange={e => setForm(f => ({ ...f, transferLockAlert: e.target.checked }))} />
-                {t('dom.transferLockAlert')}</label>
-
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.transferLockHint')}</div>
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.blacklistEnabled}
-                  onChange={e => setForm(f => ({ ...f, blacklistEnabled: e.target.checked }))} />
-                {t('dom.blacklistEnabled')}</label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.blacklistHint')}</div>
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.changeAlert}
-                  onChange={e => setForm(f => ({ ...f, changeAlert: e.target.checked }))} />
-                {t('dom.changeAlert')}</label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('dom.changeAlertHint')}</div>
-            </div>
-
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error || testResult.status === 'UNKNOWN'
-                  ? { background: '#fafafa', borderColor: '#e4e4e7', color: '#52525b' }
-                  : testResult.status === 'OK'
-                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
-                {testResult.status === 'OK' ? <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} /> : <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  <strong>{statusLabel(testResult.status)}</strong>
-                  {testResult.days_remaining != null && <> — {testResult.days_remaining} {t('dom.daysLeft')}</>}
-                  {testResult.expiry_date && <> · {fmtExpiry(testResult.expiry_date)}</>}
-                  {testResult.registrar && <> · {testResult.registrar}</>}
-                  {testResult.source && testResult.source !== 'NONE' && <> · {testResult.source}</>}
-                  {(testResult.error || testResult.status === 'UNKNOWN') && <> · {testResult.error || t('dom.noData')}</>}
-                </span>
-              </div>
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="domain-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <span style={{ display: 'flex', gap: 8, marginRight: 'auto' }}>
-                <Button variant="secondary" onClick={runTest} aria-busy={testing || undefined} disabled={testing || !form.domain.trim()}>
-                  <FlaskConical size={14} />{t('dom.test')}
-                </Button>
-                {isAdmin && (
-                  <Button variant="secondary" onClick={() => diagnose({ domain: normalizeDomainInput(form.domain) })} disabled={!form.domain.trim()}>
-                    <ShieldAlert size={14} />{t('dexp.diagnose')}
-                  </Button>
-                )}
-              </span>
-              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('dom.delete')}</Button>}
-              <Button variant="secondary" onClick={closeEdit}>{t('dom.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.domain.trim() || !form.teamId}>{t('dom.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
-      {/* Yenileme planı (2026-09-22, H): sertifika envanteriyle ORTAK modal, izleme uçlarıyla */}
-      {planRow && <RenewalPlanModal
-        row={{ domain: planRow.domain, renewal_planned_at: planRow.renewal_planned_at, renewal_planned_note: planRow.renewal_planned_note,
-          expiry_key: planRow.expiry_date ? String(planRow.expiry_date).substring(0, 10) : null, renew_by_key: null }}
-        plan={(date, note) => api.monitoring.domainRenewalPlan(planRow.id, date, note)}
-        unplan={() => api.monitoring.domainRenewalUnplan(planRow.id)}
-        hint={t('dom.planHint', planRow.expiry_date ? formatDateOnly(String(planRow.expiry_date).substring(0, 10)) : '—')}
-        onClose={() => setPlanRow(null)} onSaved={applyPlanRow} onCleared={applyPlanRow} />}
-
-      {/* ── Sorun Tanıla (Alan Adı Süre Bitişi Tanılama) Modal — en son portal: diğer modalların ÜSTÜNde durur ── */}
-      {diag && createPortal(
-        <div className="modal-overlay" onClick={() => setDiag(null)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()} style={{ maxWidth: 660, width: '92vw', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--domain">
-              <div className="modal-icon-hdr-badge"><ShieldAlert size={20} /></div>
-              <h3>{t('dexp.diagnose')} — {diag.domain}</h3>
-            </div>
-            {diag.loading && <LoadingBlock label={t('dexp.running')} className="upt-modal-loading" />}
-            {diag.error && <div className="alert-msg alert-msg--err">{diag.error}</div>}
-            {diag.data && <DomainExpiryTrace data={diag.data} />}
-            <div className="modal-actions">
-              <Button variant="secondary" onClick={() => setDiag(null)}>{t('dom.cancel')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
+      {!selected && planModal}
+      {!selected && !modal && diagModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

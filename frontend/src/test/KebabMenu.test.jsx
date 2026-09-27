@@ -33,6 +33,13 @@ function TwoCards() {
 const tick = () => act(() => new Promise((r) => setTimeout(r, 0)))
 
 describe('KebabMenu', () => {
+  it('tetik masaüstünde 28 px, dokunmatikte (pointer-coarse) 40 px dokunma hedefi', () => {
+    render(<KebabMenu label="İşlemler" items={[{ label: 'Düzenle', onClick: vi.fn() }]} />)
+    const trigger = screen.getByRole('button', { name: 'İşlemler' })
+    expect(trigger).toHaveClass('size-7')                 // masaüstü görünümü değişmedi
+    expect(trigger).toHaveClass('pointer-coarse:size-10') // RESPONSIVE.md: dokunma hedefi ≥ 40 px
+  })
+
   it('menü body\'ye portal\'lanır (transform\'lu kart onu konumdan koparmasın)', () => {
     render(<TwoCards />)
     pressMenuTrigger(screen.getByLabelText('A menü'))

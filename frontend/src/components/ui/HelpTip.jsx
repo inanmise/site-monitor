@@ -57,7 +57,7 @@ export default function HelpTip({ helpKey, label }) {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button asChild variant="ghost" size="icon-xs"
-          className="ml-[5px] size-[18px] cursor-pointer rounded-full align-[-3px] text-muted-foreground hover:bg-transparent hover:text-primary data-[state=open]:text-primary dark:hover:bg-transparent">
+          className="relative ml-[5px] size-[18px] cursor-pointer rounded-full align-[-3px] pointer-coarse:after:absolute pointer-coarse:after:-inset-[11px] text-muted-foreground hover:bg-transparent hover:text-primary data-[state=open]:text-primary dark:hover:bg-transparent">
           {/* <button> DEĞİL, role="button" taşıyan <span>: tetikleyici çoğu ekranda kontrolü
               SARAN bir <label> içinde duruyor ve <button> "labelable" bir elemandır — etiketin
               kontrolü sessizce bu düğme olur, asıl input ERİŞİLEBİLİR ADINI KAYBEDER ve etikete

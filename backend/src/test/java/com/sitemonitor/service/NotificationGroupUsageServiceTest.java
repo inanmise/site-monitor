@@ -63,6 +63,27 @@ class NotificationGroupUsageServiceTest {
     }
 
     @Test
+    @DisplayName("2026-09-27: SİLİNMİŞ standalone Port/DNS izleme 'kullanım' sayılmaz — görünmeyen izleme grup silmeyi kilitlemez")
+    void usage_ignoresDeletedPortAndDns() {
+        com.sitemonitor.model.PortMonitor livePort = new com.sitemonitor.model.PortMonitor();
+        livePort.setId(11L); livePort.setName("canlı"); livePort.setNotificationGroupId(GROUP);
+        com.sitemonitor.model.PortMonitor deletedPort = new com.sitemonitor.model.PortMonitor();
+        deletedPort.setId(12L); deletedPort.setName("silinmiş"); deletedPort.setNotificationGroupId(GROUP);
+        deletedPort.setDeletedAt("2026-09-01T00:00:00");
+        com.sitemonitor.model.DnsMonitor deletedDns = new com.sitemonitor.model.DnsMonitor();
+        deletedDns.setId(13L); deletedDns.setName("silinmiş dns"); deletedDns.setNotificationGroupId(GROUP);
+        deletedDns.setDeletedAt("2026-09-01T00:00:00");
+        when(portRepo.findByNotificationGroupId(GROUP)).thenReturn(List.of(livePort, deletedPort));
+        when(dnsRepo.findByNotificationGroupId(GROUP)).thenReturn(List.of(deletedDns));
+
+        var u = service.usage(GROUP);
+
+        assertThat(u.total()).isEqualTo(1);
+        assertThat(u.byType()).containsOnlyKeys("port");
+        assertThat(u.items()).extracting(NotificationGroupUsageService.Ref::id).containsExactly(11L);
+    }
+
+    @Test
     @DisplayName("Hiç referans yoksa kullanımda DEĞİL — grup silinebilir")
     void usage_none_isNotInUse() {
         var u = service.usage(GROUP);

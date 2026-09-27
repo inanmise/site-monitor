@@ -116,4 +116,22 @@ class ForecastControllerTest {
                 .andExpect(status().isBadRequest());
         verify(inventoryRepo, never()).save(any());
     }
+
+    @Test
+    @DisplayName("org geneli görünürlük (2026-09-26): planı TEMİZLEMEK de yabancı takımda 403 — kapsamlı AD ADMIN (müdür) ve USER dâhil")
+    void unplanScope_foreignRejectedForScopedRoles() throws Exception {
+        CertificateInventory inv = new CertificateInventory(); inv.setId(3L); inv.setDomain("f.example.com"); inv.setTeamId(9L);
+        inv.setRenewalPlannedAt("2099-01-15");
+        when(inventoryRepo.findByDomain("f.example.com")).thenReturn(Optional.of(inv));
+        mvc.perform(delete("/api/forecast/f.example.com/plan").session(session("TEAM_ADMIN", 5L, true)))
+                .andExpect(status().isForbidden());
+        // Kapsamlı müdür: rol ADMIN ama viewTeamIds dolu → GLOBAL DEĞİL, yalnız kendi takımı.
+        mvc.perform(delete("/api/forecast/f.example.com/plan").session(session("ADMIN", 5L, true)))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/forecast/f.example.com/plan").session(session("USER", 5L, false)).contentType("application/json")
+                        .content("{\"date\":\"2099-02-01\"}"))
+                .andExpect(status().isForbidden());
+        verify(inventoryRepo, never()).save(any());
+        org.assertj.core.api.Assertions.assertThat(inv.getRenewalPlannedAt()).isEqualTo("2099-01-15");
+    }
 }

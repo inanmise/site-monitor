@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import ScriptedMonitorPage, { invalidNumericField, SCRIPTED_NUM_FIELDS }
   from '../components/ScriptedMonitorPage.jsx'
@@ -37,7 +37,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
           tags: 'prod,kritik', alert_level: 'HIGH', notify_email: false,
           interval_seconds: 900, timeout_seconds: 45,
           confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-          active: false, script: 'export default function(){}', notification_group_id: 7,
+          active: false, script: 'export default function(){}', notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
           // gizli env değeri şifreli saklanır → kopyaya taşınamaz (yalnız ad+secret bayrağı gider)
           env: [{ name: 'BASE_URL', secret: false, value: 'https://x.example.com' },
                 { name: 'PASSWORD', secret: true, value_set: true }],
@@ -54,9 +54,11 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu: modal={} → id yok)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
-    expect(document.querySelector('.form-grid input').value).toMatch(/\(Kopya\)$/)
+    const dlg = screen.getByRole('dialog')
+    expect(dlg.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(within(dlg).getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
+    // Ad alanı (büyük/küçük harf DUYARLI: env satırlarının "AD"/"NAME" adlı kutuları eşleşmesin)
+    expect(within(dlg).getByRole('textbox', { name: /^(Ad|Name)\b/ }).value).toMatch(/\(Kopya\)$/)
     expect(screen.getByTestId('code-editor').value).toBe('export default function(){}')
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -70,6 +72,8 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       confirmAttempts: 5, confirmIntervalSeconds: 45, recoveryChecks: 4, recoveryIntervalSeconds: 90,
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       script: 'export default function(){}',
       useProxy: 'AUTO',   // vekil tercihi de kopyalanır (kaynakta yoksa AUTO)
@@ -107,8 +111,10 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     }
     const NEVER_RUN = { id: 9, name: 'hic-kosmadi', status: 'unknown', team_id: 5, script: 'export default function(){}' }
 
-    // Modal createPortal ile document.body'ye çiziliyor → sorgular container'a DEĞİL belgeye yapılır.
-    const inModal = (sel) => document.querySelector(`.modal-box ${sel}`)
+    // Pencere (ModalShell) document.body'ye portal'lanıyor → sorgular container'a DEĞİL belgeye yapılır.
+    const inModal = (sel) => document.querySelector(`[role="dialog"] ${sel}`)
+    /** Kartın Düzenle düğmesi — adı satırı taşır ("<ad> — Düzenle", R15). */
+    const editButtonFor = (name) => screen.getByRole('button', { name: new RegExp(`^${name} — (Düzenle|Edit)$`, 'i') })
     /** Script kaynağı artık aranabilir seçici (SearchableSelect): tetikleyiciye tıkla, seçeneği tıkla. */
     // Tetikleyici TOGGLE: açıkken yeniden tıklamak kapatır → yalnız kapalıysa aç (idempotent).
     // Tetik role="combobox" (shadcn Combobox deseni); liste body'ye PORTAL'lanır → seçenekler ve dal
@@ -149,7 +155,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // düşer ve konsolu uyarıyla doldurur (kural: test çıktısı temiz kalır).
       await waitFor(() => expect(api.monitoring.getScriptedTemplates).toHaveBeenCalled())
       await screen.findByText(row.name)
-      fireEvent.click(utils.container.querySelector('.mon-act--edit'))
+      fireEvent.click(editButtonFor(row.name))
       return utils
     }
 
@@ -193,10 +199,10 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         success: true,
         data: { k6_available: true, k6_version: 'v0.49.0', can_manage: true, monitors: [FAILING, otherTeam] },
       })
-      const utils = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
       await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
       await screen.findByText('llm-test')
-      fireEvent.click(utils.container.querySelector('.mon-act--edit'))
+      fireEvent.click(editButtonFor('llm-test'))
 
       openSource()
       const labels = sourceOptions().map(o => o.textContent)
@@ -206,13 +212,15 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
     it('düzenleme açılışında panel "son kontrol" etiketiyle ve o monitörün hatasıyla gelir', async () => {
       await openEditFor(FAILING)
-      expect(await screen.findByText(/last check|son kontrol/i)).toBeInTheDocument()
-      expect(screen.getByText(/request timeout/)).toBeInTheDocument()
+      // Form penceresinin İÇİNDE ara: kartların alt çubuğu da ekran okuyucuya "Son kontrol:" öneki taşıyor (2026-09-26).
+      expect(await within(await screen.findByRole('dialog')).findByText(/last check|son kontrol/i)).toBeInTheDocument()
+      // Pencerenin İÇİNDE: kart da (2026-09-27) başarısız koşunun nedenini tek satırda gösteriyor.
+      expect(within(screen.getByRole('dialog')).getByText(/request timeout/)).toBeInTheDocument()
     })
 
     it('hiç koşmamış monitörde panel HİÇ açılmaz', async () => {
       await openEditFor(NEVER_RUN)
-      expect(inModal('.sc-testrun')).toBeNull()
+      expect(inModal('[data-slot="test-run"]')).toBeNull()
     })
 
     it('yerleşik şablonlar KATEGORİ dalları altında; dal açılınca script seçilebilir', async () => {
@@ -246,11 +254,11 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
 
     it('şablon seçilince panel KAYBOLUR (asıl şikayet) ve script şablonunkiyle değişir', async () => {
       await openEditFor(FAILING)
-      expect(inModal('.sc-testrun')).not.toBeNull()
+      expect(inModal('[data-slot="test-run"]')).not.toBeNull()
 
       pickSource(/smoke/i)
 
-      expect(inModal('.sc-testrun')).toBeNull()
+      expect(inModal('[data-slot="test-run"]')).toBeNull()
       // Şablonun GÖVDESİ liste yanıtında gelmez (bilinçli), tekil uçtan asenkron çekilir → bekle.
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
     })
@@ -258,23 +266,23 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     it('kayıtlı script seçilince o monitörün script+env\'i yüklenir ve paneli geri gelir', async () => {
       await openEditFor(FAILING)
       pickSource(/smoke/i)
-      expect(inModal('.sc-testrun')).toBeNull()
+      expect(inModal('[data-slot="test-run"]')).toBeNull()
       await waitFor(() => expect(screen.getByTestId('code-editor').value).toContain('www.example.com'))
 
       pickSource(/llm-test/)
 
       expect(screen.getByTestId('code-editor').value).toBe(FAILING.script)
-      expect(inModal('.sc-testrun')).not.toBeNull()
-      expect(screen.getByText(/request timeout/)).toBeInTheDocument()
+      expect(inModal('[data-slot="test-run"]')).not.toBeNull()
+      expect(within(screen.getByRole('dialog')).getByText(/request timeout/)).toBeInTheDocument()
       // env tanımları da geldi; gizli değer TAŞINMAZ (kullanıcı yeniden girer)
-      const envNames = [...document.querySelectorAll('.modal-box .env-row .env-name')].map(i => i.value)
+      const envNames = within(screen.getByRole('dialog')).getAllByRole('textbox', { name: /^(AD|NAME)$/ }).map(i => i.value)
       expect(envNames).toEqual(['BASE_URL', 'TOKEN'])
     })
 
     it('script\'i ELLE düzenlemek paneli kaybettirmez (hatayı okurken düzeltme yapılabilsin)', async () => {
       await openEditFor(FAILING)
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* elle */ }' } })
-      expect(inModal('.sc-testrun')).not.toBeNull()
+      expect(inModal('[data-slot="test-run"]')).not.toBeNull()
     })
 
     it('yeni monitörde boş seçenek VAR ve script\'i temizler; düzenlemede boş seçenek YOK', async () => {
@@ -347,7 +355,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       // Sonuc: kullanici bir sonraki acilista "kaydedilmemis taslaginiz var" gorup onu yukluyor ve
       // ARADA baskasinin yaptigi degisikligi sessizce geri aliyordu.
       await renderPage()
-      fireEvent.click(document.querySelector('.mon-act--edit'))
+      fireEvent.click(within(document.querySelector('.upt-grid')).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'export default function(){ /* duzeltme */ }' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
@@ -361,19 +369,21 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     it('F1: SİLME sonrası da taslak yazılmaz (erişilemez yetim satır kalmasın)', async () => {
       api.monitoring.deleteScriptedMonitor.mockResolvedValue({ success: true })
       await renderPage()
-      fireEvent.click(document.querySelector('.mon-act--edit'))
+      fireEvent.click(within(document.querySelector('.upt-grid')).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
       fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'kirli icerik' } })
 
       api.monitoring.saveScriptedDraft.mockClear()
-      // Hedef DÜZENLEME MODALININ silme düğmesi (`[data-slot="button"][data-variant="destructive"]`). Kartta da artık bir silme
-      // düğmesi var (`.mon-act--danger`, dokuz türün tamamına eklendi), bu yüzden yalnız
-      // erişilebilir adla sorgulamak iki eşleşme döndürüyor. Satır 360'taki `.mon-act--edit`
-      // ile aynı ayrıştırma.
-      fireEvent.click(document.querySelector('.modal-box [data-slot="button"][data-variant="destructive"], [data-slot="button"][data-variant="destructive"]'))
+      // Hedef DÜZENLEME PENCERESİNİN silme düğmesi. Kartta da bir silme düğmesi var (adı satırı
+      // taşır: "llm-test — Sil"), bu yüzden arama form penceresiyle SINIRLI ve ad TAM eşleşir.
+      const form = screen.getByRole('dialog')
+      const del = within(form).getByRole('button', { name: /^(sil|delete)$/i })
+      expect(del.dataset.variant).toBe('destructive')
+      fireEvent.click(del)
       // Onay artık PROJENİN diyaloğu (window.confirm değil): tarayıcı-varsayılanı kutu tasarım
       // sisteminin dışındaydı ve jsdom'da hiç çalışmadığı için bu yol yalnız spy ile test
       // edilebiliyordu — yani gerçek onay akışı test EDİLMİYORDU.
-      const dlg = await screen.findByRole('dialog')
+      // Onay penceresi form penceresinin ÜSTÜNDE açılır — adıyla (başlık "Sil") ayırt edilir.
+      const dlg = await screen.findByRole('dialog', { name: /^(sil|delete)$/i })
       fireEvent.click(within(dlg).getByRole('button', { name: /^sil$|^delete$/i }))
       await waitFor(() => expect(api.monitoring.deleteScriptedMonitor).toHaveBeenCalled())
 
@@ -394,7 +404,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         fireEvent.change(screen.getByTestId('code-editor'), { target: { value: 'yeni bir sey' } })
 
         // Teklif gorunuyor: kullanici karar verene kadar yazim DURUR
-        expect(document.querySelector('.modal-box [data-slot="alert"]')).not.toBeNull()
+        expect(screen.getByRole('dialog').querySelector('[data-slot="alert"]')).not.toBeNull()
         await vi.advanceTimersByTimeAsync(2000)
         expect(api.monitoring.saveScriptedDraft,
           'karar verilmeden taslak uzerine yazildi').not.toHaveBeenCalled()
@@ -425,7 +435,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         }
         fireEvent.mouseDown([...document.querySelectorAll('[role="listbox"] [role="option"]')]
           .find(o => /OAuth2/i.test(o.textContent)))
-        const secretInput = document.querySelector('.modal-box .env-row input.env-val[type="password"]')
+        const secretInput = screen.getByRole('dialog').querySelector('[data-slot="env-row"] input[type="password"]')
         if (secretInput) fireEvent.change(secretInput, { target: { value: 'COK-GIZLI' } })
         await vi.advanceTimersByTimeAsync(1600)
 
@@ -491,7 +501,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
           updated_at: '2026-08-13T09:30:00' },
       ] } })
       const { container } = await renderPage()
-      fireEvent.click(container.querySelector('.mon-act--edit'))
+      fireEvent.click(within(container).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
 
       // Kaydedilmiş script yüklü kalır; taslak yalnız TEKLİF edilir
       expect(screen.getByTestId('code-editor').value).toBe(MON.script)
@@ -513,13 +523,14 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         id: 21, version: '1.0.0', script: 'export default function(){ /* eski surum */ }', env: [],
       } })
       const { container } = await renderPage()
-      fireEvent.click(container.querySelector('.upt-card'))
-      fireEvent.click(await screen.findByRole('button', { name: /^versions$|^sürümler$/i }))
+      fireEvent.click(within(container).getByRole('button', { name: /^llm-test — (detayları aç|open details)$/i }))
+      fireEvent.mouseDown(await screen.findByRole('tab', { name: /^versions$|^sürümler$/i }), { button: 0 })
 
-      expect(await screen.findByText('v1.0.2')).toBeInTheDocument()
+      // Pencerenin İÇİNDE: kart da (2026-09-27) güncel sürüm çipini (v1.0.2) taşıyor.
+      expect(await within(screen.getByRole('dialog')).findByText('v1.0.2')).toBeInTheDocument()
       expect(screen.getByText('v1.0.0')).toBeInTheDocument()
 
-      fireEvent.click(screen.getByText('v1.0.0').closest('.sc-vt-row'))
+      fireEvent.click(screen.getByText('v1.0.0').closest('[data-slot="version-pick"]'))
       const loadBtn = await screen.findByRole('button', { name: /load this version|editöre yükle/i })
       fireEvent.click(loadBtn)
 
@@ -543,14 +554,16 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       })
       api.monitoring.triggerScriptedCheck.mockResolvedValue({ success: true, data: { queued: true } })
 
-      fireEvent.click(container.querySelector('.mon-act--edit'))
+      fireEvent.click(within(container).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
       fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
       await waitFor(() => expect(api.monitoring.triggerScriptedCheck).toHaveBeenCalledWith(MON.id))
       // Modal KAPANMAZ: sonuç formda gösterilecek.
       // Doğrulama şeridi (AlertBanner) ve "Kapat" eylemi görünür.
-      expect(await screen.findByText(/Doğrulama koşumu|Verification run|Koşum sürüyor|The run is still going/)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /^Kapat$|^Close$/ })).toBeInTheDocument()
+      const smokeMsg = await screen.findByText(/Doğrulama koşumu|Verification run|Koşum sürüyor|The run is still going/)
+      expect(smokeMsg).toBeInTheDocument()
+      // "Kapat" şeridin KENDİ eylemi (pencerenin başlıktaki X'i de "Kapat" adını taşır → şeritle sınırla)
+      expect(within(smokeMsg.closest('[data-slot="alert"]')).getByRole('button', { name: /^Kapat$|^Close$/ })).toBeInTheDocument()
     })
 
     it('YALNIZ AYAR kaydında (sürüm değişmedi) doğrulama koşumu tetiklenMEZ', async () => {
@@ -559,7 +572,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
         success: true, data: { id: MON.id, script_version: '1.0.2' },   // MON ile AYNI sürüm
       })
 
-      fireEvent.click(container.querySelector('.mon-act--edit'))
+      fireEvent.click(within(container).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
       fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
 
       await waitFor(() => expect(api.monitoring.updateScriptedMonitor).toHaveBeenCalled())
@@ -597,6 +610,26 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     expect(invalidNumericField({ ...ok, slowResponseEnabled: true, slowThresholdMs: 15000 })).toBeNull()
   })
 
+  it('USER + tek takım + oturum teamId BOŞ: yeni izlemede takım o takımla doğar, Kaydet açık ve teamId kayda gider', async () => {
+    // 2026-09-26: USER izleme ekleyebilmeli. Oturumun birincil takımı (teamId) boş geldiğinde form takımı ''
+    // doğuyor, Kaydet "takım zorunlu" diye kilitli kalıyordu; tek takımlı kullanıcıda o takım varsayılandır.
+    api.monitoring.createScriptedMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<ScriptedMonitorPage systemRole="USER" teamId={null} teamName={null} myTeams={[{ id: 5, name: 'SY-A' }]} />)
+    fireEvent.click(await screen.findByRole('button', { name: /new monitor|yeni monitör/i }))
+
+    const dlg = screen.getByRole('dialog')
+    // Kilitli takım kutusu formun GERÇEK takımını gösterir ("Takım seçin" DEĞİL)
+    expect(within(dlg).getByRole('textbox', { name: /^(Takım|Team)\b/ })).toHaveValue('SY-A')
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Ad|Name)\b/ }), { target: { value: 'yeni-senaryo' } })
+    await fillGroupAndTags({ root: dlg })
+
+    const save = within(dlg).getByRole('button', { name: /^save$|^kaydet$/i })
+    expect(save).not.toBeDisabled()
+    fireEvent.click(save)
+    await waitFor(() => expect(api.monitoring.createScriptedMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createScriptedMonitor.mock.calls[0][0].teamId).toBe(5)
+  })
+
   it('F3: "Gizli" işaretlemek girilen env DEĞERİNİ silmez', async () => {
     // Eskiden `value: ''` yazılıyordu: 200 karakterlik token yapıştırıp gizli yapan kullanıcı
     // değerini kaybediyor, alan password olduğu için fark etmiyor, kayıtta env boş kalıyordu.
@@ -604,11 +637,16 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new monitor|yeni monitör/i }))
     fireEvent.click(await screen.findByRole('button', { name: /add variable|değişken ekle/i }))
 
-    const val = document.querySelector('.modal-box .env-row input.env-val')
+    const dlg = screen.getByRole('dialog')
+    const val = within(dlg).getByLabelText(/^(değer|value)$/i)
     fireEvent.change(val, { target: { value: 'cok-gizli-token' } })
-    fireEvent.click(document.querySelector('.modal-box .env-row input[type="checkbox"]'))
+    const secret = within(dlg).getByRole('checkbox', { name: /gizli|secret/i })
+    fireEvent.click(secret)
+    expect(secret).toBeChecked()
 
-    expect(document.querySelector('.modal-box .env-row input.env-val').value).toBe('cok-gizli-token')
+    const after = within(dlg).getByLabelText(/^(değer|value)$/i)
+    expect(after.getAttribute('type')).toBe('password')      // gizlilik gösterimde
+    expect(after.value).toBe('cok-gizli-token')              // değer KORUNDU
   })
 
   it('yavaş koşum alarmı: eşik alanı alarm kapalıyken DİSABLE, açılınca payload’a girer', async () => {
@@ -623,7 +661,7 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
-    fireEvent.click(container.querySelector('.mon-act--edit'))
+    fireEvent.click(within(container).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i }))
 
     const thresholdInput = await waitFor(() => {
       const el = document.querySelector('input[type="number"][max="180000"]')
@@ -653,12 +691,13 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
    * (sütun yönü + input'lara metin-kutusu padding/kenarlığı) — yani hata sessizdir: konsol temiz,
    * test yeşil, yalnız ekran bozuk.
    *
-   * jsdom yerleşim HESAPLAMAZ; bu yüzden burada piksel değil SÖZLEŞME kilitleniyor: form ızgarasının
-   * doğrudan label çocuğu olan her tik kutusu, satır yönünü veren PAYLAŞILAN `checkbox-label`
-   * sınıfını kullanmalı. Tek bir kutuya değil, hata SINIFINA bakıyor — sonraki checkbox aynı tuzağa
-   * düşerse bu test onu da yakalar. (Gerçek görünüm tarayıcıda doğrulanmalı: [[jsdom kör noktası]])
+   * jsdom yerleşim HESAPLAMAZ; bu yüzden burada piksel değil SÖZLEŞME kilitleniyor. shadcn geçişinden
+   * (2026-09-25) sonra sözleşme: form ızgarasındaki her tik kutusu PAYLAŞILAN `CheckField` ile çizilir
+   * — shadcn Field (yatay yön) + Checkbox + kutuya `htmlFor` ile BAĞLI etiket. Tek bir kutuya değil,
+   * hata SINIFINA bakıyor — sonraki checkbox elle yazılırsa (yönsüz kap / bağsız etiket) bu test onu
+   * da yakalar. (Gerçek görünüm tarayıcıda doğrulanmalı: [[jsdom kör noktası]])
    */
-  it('form ızgarasındaki HER tik kutusu paylaşılan checkbox-label sınıfını kullanır (ölü sınıf = kaymış kutu)', async () => {
+  it('form ızgarasındaki HER tik kutusu paylaşılan CheckField desenini kullanır (yatay Field + bağlı etiket)', async () => {
     api.monitoring.getScriptedMonitors.mockResolvedValue({ success: true, data: {
       k6_available: true, k6_version: 'v0.49.0', can_manage: true,
       monitors: [{ id: 1, name: 'OIDC Login', status: 'PASS', team_id: 5, team_name: 'SY-A',
@@ -670,22 +709,25 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
     } })
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(screen.getByText('OIDC Login')).toBeInTheDocument())
-    fireEvent.click(container.querySelector('.mon-act--edit'))
+    fireEvent.click(within(container).getByRole('button', { name: /^OIDC Login — (Düzenle|Edit)$/i }))
 
     const slow = await screen.findByRole('checkbox', { name: /yavaş koşum alarmı|slow-run alert/i })
-    expect(slow.closest('label').className).toContain('checkbox-label')
+    expect(slow.closest('[data-slot="field"]').dataset.orientation).toBe('horizontal')
 
-    // Izgaranın DOĞRUDAN label çocukları: env satırlarındaki (.env-secret) kendi düzeni olan
-    // kutular kapsam dışı, onlar ızgara hücresi değil.
-    const gridCheckboxLabels = [...document.querySelectorAll('.form-grid > label')]
-      .filter(l => l.querySelector('input[type="checkbox"]'))
+    // Izgaranın DOĞRUDAN hücreleri: env satırlarındaki kendi düzeni olan kutular ve ortak
+    // bildirim bloğunun (NotifyChannels) döşemeleri kapsam dışı — onlar ızgara hücresi değil.
+    const grid = screen.getByRole('dialog').querySelector('[data-slot="form-grid"]')
+    const gridCheckboxCells = [...grid.children].filter(c => c.querySelector(':scope > [role="checkbox"]'))
     // B1: e-posta ve webhook kutuları ortak bildirim bloğuna (NotifyChannels) taşındı, artık
-    // ızgara hücresi değiller. KURAL değişmedi — ızgaradaki her kutu paylaşılan sınıfı taşır;
+    // ızgara hücresi değiller. KURAL değişmedi — ızgaradaki her kutu paylaşılan deseni taşır;
     // taban yalnız "seçici boşa düşmesin" güvencesi olarak kalıyor (yavaş alarm + aktif).
-    expect(gridCheckboxLabels.length).toBeGreaterThanOrEqual(2)
-    for (const label of gridCheckboxLabels) {
-      expect(label.className, `sınıfsız/ölü sınıflı tik kutusu: "${label.textContent.trim()}"`)
-        .toContain('checkbox-label')
+    expect(gridCheckboxCells.length).toBeGreaterThanOrEqual(2)
+    for (const cell of gridCheckboxCells) {
+      const box = cell.querySelector(':scope > [role="checkbox"]')
+      expect(cell.dataset.slot, `yönsüz/elle kurulu tik kutusu: "${cell.textContent.trim()}"`).toBe('field')
+      expect(cell.dataset.orientation, `dikey düzende tik kutusu: "${cell.textContent.trim()}"`).toBe('horizontal')
+      expect(box.id && cell.querySelector(`label[for="${box.id}"]`),
+        `etiketi kutuya BAĞLI değil: "${cell.textContent.trim()}"`).toBeTruthy()
     }
   })
 })

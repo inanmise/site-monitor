@@ -40,7 +40,7 @@ describe('HelpPage — görünüm (2026-09-11)', () => {
   it('?view=releases ile açılınca Yenilikler paneli, kılavuz TOC değil', async () => {
     window.history.replaceState({}, '', '/?tab=help&view=releases')
     render(<HelpPage />)
-    expect(document.querySelector('.rel-panel')).not.toBeNull()
+    expect(document.querySelector('[data-slot="release-notes"]')).not.toBeNull()
     expect(screen.queryByRole('navigation')).toBeNull()
     window.history.replaceState({}, '', '/')
   })
@@ -50,7 +50,7 @@ describe('HelpPage — görünüm (2026-09-11)', () => {
     render(<HelpPage />)
     expect(screen.getByRole('navigation')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Yenilikler/ }))
-    expect(document.querySelector('.rel-panel')).not.toBeNull()
+    expect(document.querySelector('[data-slot="release-notes"]')).not.toBeNull()
   })
 })
 
@@ -59,7 +59,7 @@ describe('HelpPage — aynı sekmede param olayı (2026-09-11)', () => {
     render(<HelpPage />)
     expect(screen.getByRole('navigation')).toBeInTheDocument()
     await act(async () => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail: { view: 'releases' } })) })
-    expect(document.querySelector('.rel-panel')).not.toBeNull()
+    expect(document.querySelector('[data-slot="release-notes"]')).not.toBeNull()
   })
 })
 

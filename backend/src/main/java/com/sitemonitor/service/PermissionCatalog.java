@@ -61,6 +61,12 @@ public final class PermissionCatalog {
         // ── Alarmlar ──────────────────────────────────────────────────────
         r("alerts.read",        "alerts", VIEW),
         r("alerts.actions",     "alerts", EXECUTE),
+        // 7/24 İzleme Ekibi (NOC) arama kaydı (2026-09-27): uyarının üzerinden "kim, ne zaman arandı, sonuç, not".
+        // Varsayılan YALNIZ ADMIN (diğer rollerin listesine EKLENMEZ; AUDIT'in VIEW kuralı EDIT'i açmaz). Hassas:
+        // izni taşıyan TÜM takımların uyarılarını görür (uyarı listesi/detayı + arama uçları — NocCallLogService).
+        // Önerilen kurulum: 7/24 operatörleri AUDIT rolünde (global salt okur) + bu izin AUDIT'e verilir. Kapsamlı
+        // müdür (rol ADMIN, takım kapsamlı) ADMIN satırından bu izni ALMAZ — kural NocCallLogService.canWrite'ta.
+        r("noc_calls.write",    "alerts", EDIT, Set.of(EDIT)),
 
         // ── İzleme ────────────────────────────────────────────────────────
         r("system_health.read",          "monitoring", VIEW),
@@ -264,8 +270,11 @@ public final class PermissionCatalog {
             "system_health.read",
             // release_history.read (2026-09-19, ürün kararı): Sistem Sağlığı'ndaki her bölüm her kademeye açık.
             "release_history.read",
-            // monitoring.crud/trigger: USER kendi takımı için keyword/ping izleme oluşturur/düzenler/çalıştırır
-            // (silme canManage ile TEAM_ADMIN/ADMIN'de; Port/DNS yazma requireAdmin ile admin-only kalır)
+            // monitoring.crud/trigger: USER kendi takımı için izleme (HTTP/keyword/ping/port/DNS/sayfa …)
+            // oluşturur/düzenler/çalıştırır (silme canManage ile TEAM_ADMIN/ADMIN'de). DNS yazmada ayrıca
+            // requireAdmin YOK; Port'ta yalnız ham payload (sendData — BANNER/UDP/iç servis SSRF yükü) girilirse
+            // requireAdmin istenir (MonitoringController create/update/test). Eski "Port/DNS admin-only" notu
+            // güncel değildi (2026-09-25).
             "monitoring.read", "monitoring.crud", "monitoring.trigger", "domain.registration.view", "monitoring.group",
             // Şablon kütüphanesi: USER kendi TAKIMINA şablon yazar (K2).
             // Genel şablonu düzenlemek uçta requireAdmin ile ayrıca korunur.

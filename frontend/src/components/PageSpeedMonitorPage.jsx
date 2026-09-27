@@ -1,37 +1,32 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useToast } from './ui/Toast.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, Gauge, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Trash2, Gauge, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
@@ -43,8 +38,11 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
+import PageSpeedMonitorCard from './pagespeed/PageSpeedMonitorCard.jsx'
+import { budgetFor } from './pagespeed/pageSpeedCardModel.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
@@ -52,9 +50,24 @@ import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
 import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Input } from '@/components/shadcn/input'
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/shadcn/input-group'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { Textarea } from '@/components/shadcn/textarea'
+import { cn } from '@/lib/utils'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
+} from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -77,22 +90,22 @@ const intervalIdx = (secs) => {
 }
 const REFRESH_INTERVAL = 60
 const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, IFRAME: Frame, FONT: Type, FAVICON: Image, OTHER: Link2 }
-/** Kaynak tablosu kolonları: Tür | Kaynak | Boyut | Süre | HTTP | Taraf. */
-const RES_COLS = '0.7fr 3fr 0.7fr 0.7fr 0.5fr 0.7fr'
 
 /** Grafik metrikleri — sunucu `?metric=` ile TEK seriyi projekte eder (yeni tarama üretmez). */
-/** Eşik üstü kontrol sayısı bu hafta / geçen hafta — sayfa hızında "fail" = eşik aşımı ya da hata (MonitorSparklineService). */
-function BreachWeekLine({ w7, w14, t }) {
-  if (!w7 || !w14 || !w14.n) return null
-  const thisWeek = w7.fail ?? 0
-  const lastWeek = Math.max(0, (w14.fail ?? 0) - thisWeek)
-  const trend = thisWeek > lastWeek ? '↑' : thisWeek < lastWeek ? '↓' : '='
-  return (
-    <div className={`pspd-breach-week${thisWeek > lastWeek ? ' is-worse' : thisWeek < lastWeek ? ' is-better' : ''}`} title={t('pspd.breachWeekTip')}>
-      {t('pspd.breachWeek', thisWeek, lastWeek)} <b>{trend}</b>
-    </div>
-  )
+// (Kartın haftalık eşik üstü satırı, boyut/ihlal yardımcıları → pagespeed/PageSpeedMonitorCard + pageSpeedCardModel.)
+
+/**
+ * Durum metin tonu (özet değeri / geçmiş satırı) — eski satır içi STATUS_COLOR hex'lerinin jeton
+ * karşılığı. SLOW ayrı bir ton: kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
+ * CONFIG_ERROR kendi (mor) tonunu korur: kesinti değil, izlemenin YAPILANDIRMASI hatalı.
+ */
+const STATUS_TEXT = {
+  OK: 'text-success', SLOW: 'text-amber-600 dark:text-amber-400', DOWN: 'text-destructive',
+  CONFIG_ERROR: 'text-violet-600 dark:text-violet-400', unknown: 'text-muted-foreground',
 }
+const statusText = (s) => STATUS_TEXT[s] || STATUS_TEXT.unknown
+/** Sekme içi küçük bölüm etiketi (eski .pspd-metric-label). */
+const SECTION_LABEL = 'text-[.82em] font-semibold tracking-[.03em] text-muted-foreground uppercase'
 
 const METRICS = [
   { key: 'load',     labelKey: 'pspd.metricLoad',     unit: 'ms' },
@@ -102,7 +115,7 @@ const METRICS = [
 ]
 
 const emptyForm = {
-  name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
+  name: '', url: '', groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   intervalSeconds: 1800, timeoutMs: 10000,
   maxLoadMs: '', maxTtfbMs: '', maxPageKb: '', maxRequests: '',
   userAgent: '', sendDnt: false, useProxy: 'OFF', excludeTrackers: false, trackerPatterns: '',
@@ -133,30 +146,29 @@ function BreachEvidence({ metrics, detail, t }) {
   const rows = parsed.length > 0 ? parsed : keys.map(k => ({ key: k }))
 
   return (
-    <span className="pspd-breach-why">
+    <span className="mt-[3px] flex flex-wrap gap-1">
       {rows.map(r => (
-        <span key={r.key} className="pspd-breach-chip">
+        <Badge key={r.key} variant="warning" className="items-baseline gap-[5px] px-[7px] py-px text-[11px] font-semibold">
           {label(r.key)}
           {r.threshold != null && (
-            <span className="pspd-breach-nums">{r.threshold} → <strong>{r.measured}</strong></span>
+            <span data-slot="breach-nums" className="font-mono text-[10.5px] font-normal opacity-90">{r.threshold} → <strong>{r.measured}</strong></span>
           )}
-        </span>
+        </Badge>
       ))}
     </span>
   )
 }
 
-export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -175,15 +187,18 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
   const [resources, setResources] = useState([])
   const [resTotal, setResTotal] = useState(0)   // listedeki değil, KIRILIMDAKİ toplam kaynak sayısı
   const [breaches, setBreaches] = useState([])
   const [resCheckId, setResCheckId] = useState(null)   // null = son ölçüm (LATEST)
   const [resLoading, setResLoading] = useState(false)
+  // await SONRASI için güncel değerler (bayat kapanış YOK): checkNow/refreshModal yanıtı gelene kadar pencere
+  // kapanmış, başka izlemeye geçilmiş ya da başka bir ölçüm (anlık görüntü) seçilmiş olabilir.
+  const selectedIdRef = useRef(null)
+  selectedIdRef.current = selected?.id ?? null
+  const resCheckIdRef = useRef(resCheckId)
+  resCheckIdRef.current = resCheckId
   const [modal, setModal] = useState(null)
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -199,6 +214,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
+  const deepLinkTab = useDeepLinkTab('resources')   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
@@ -212,6 +228,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [secondsSince, setSecondsSince] = useState(0)
+  // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — sayfa HER AÇILIŞTA Zengin başlar; Kompakt seçimi yalnız sayfada
+  // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
+  const [density, setDensity] = useCardDensity('pagespeed')
 
   const load = useCallback(async () => {
     // Hata dalı ŞART: API düşerse liste boş kalır ve ekran "henüz izleme yok" der —
@@ -232,6 +251,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updatePageSpeedMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -297,7 +321,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   function openDetail(m) {
     resSeq.current++            // onceki izlemenin ucusan yaniti bu modali DOLDURMASIN
     setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null)
-    setDetailTab('resources'); setMetric('load')
+    setDetailTab(deepLinkTab()); setMetric('load')
     loadResources(m.id)
   }
   function closeDetail() {
@@ -307,19 +331,23 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   async function refreshModal() {
     if (!selected) return
+    const id = selected.id
     const res = await api.monitoring.getPageSpeedMonitors()
     if (res?.success) {
       setMonitors(res.data)
-      const fresh = (res.data || []).find(x => x.id === selected.id)
-      if (fresh) setSelected(fresh)
+      const fresh = (res.data || []).find(x => x.id === id)
+      if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
     }
-    loadResources(selected.id, resCheckId, true)
+    // Pencere o arada kapandı / başka izlemeye geçildi → A'nın kaynakları B'nin penceresine yüklenmesin
+    // (loadResources'ın resSeq'i EN SON isteği kazandırır — bayat çağrı en son olmamalı).
+    if (selectedIdRef.current !== id) return
+    loadResources(id, resCheckIdRef.current, true)
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
   function openNew() {
     setTestResult(null); setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       resourceConcurrency: defaults?.resourceConcurrency ?? emptyForm.resourceConcurrency })
@@ -330,7 +358,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
    *  Parola BİLİNÇLİ olarak taşınmaz: API onu hiç döndürmez (yalnız "kayıtlı mı" bayrağı gelir). */
   function formFrom(m) {
     return {
-      name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+      name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       intervalSeconds: m.interval_seconds ?? 1800, timeoutMs: m.timeout_ms ?? 10000,
@@ -366,6 +394,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       // Bos = takim varsayilani -> takim adresi (zincirin kalani).
       notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
         ? null : Number(form.notificationGroupId),
+      nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
       teamId: form.teamId === '' ? null : Number(form.teamId),
       tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
       intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -494,7 +523,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       const res = await api.monitoring.triggerPageSpeedCheck(m.id)
       if (res?.success) {
         setMonitors(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x))
-        if (selected?.id === m.id) { setSelected(res.data); setResCheckId(null); loadResources(m.id) }
+        // Bayat kapanış YOK: `selected` isteğin başladığı andaki penceredir. Yanıt gelene kadar pencere kapanmış ya da
+        // başka izlemeye geçilmiş olabilir → yalnız HÂLÂ açık olan aynı kayıt tazelenir (A'nın kaynakları B'ye düşmez).
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
+        if (selectedIdRef.current === m.id) { setResCheckId(null); loadResources(m.id) }
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -582,7 +614,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   }, [scoped, statFilter])
 
   const pager = usePagination(displayMonitors, {
-    listKey: 'pagespeed-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
+    listKey: 'pagespeed-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -594,6 +626,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     q: search.trim() || null,
     stat: statFilter || null,
     page: pager.page > 1 ? pager.page : null,
+    // ps de yazılır (standart kural, monitorUrlState ile aynı): 2. sayfada varsayılan boyutta bile — bağlantıyı
+    // alan kişi aynı dilimi görsün (eskiden yalnız `page` yazılıyordu).
+    ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'resources' ? detailTab : null,
   })
@@ -609,64 +644,309 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  // SLOW ayrı bir renk: kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
-  const STATUS_COLOR = { OK: '#15803d', SLOW: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#71717a' }
-  function cardClass(m) {
-    if (m.status === 'OK') return 'upt-card--up'
-    if (m.status === 'DOWN') return 'upt-card--down'
-    return 'upt-card--unknown'
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı): up | warn | down | unknown.
+  // SLOW ayrı bir ton (warn): kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
+  const statusKey = (m) => (m?.status === 'OK' ? 'up' : m?.status === 'SLOW' ? 'warn' : m?.status === 'DOWN' ? 'down' : 'unknown')
   const statusLabel = (s) => s === 'OK' ? t('pspd.statusOk') : s === 'SLOW' ? t('pspd.statusSlow')
     : s === 'DOWN' ? t('pspd.statusDown') : s === 'CONFIG_ERROR' ? t('pspd.statusConfigError')
     : t('pspd.statusUnknown')
   function statusBadge(m) {
-    const c = STATUS_COLOR[m?.status] || STATUS_COLOR.unknown
-    return <span className="upt-badge" style={{ color: c }}>
-      <span className="upt-badge-dot" style={{ background: c }} />{statusLabel(m?.status)}</span>
+    // CONFIG_ERROR paylaşılan sözlükte yok (unknown şeridi) ama rozet kendi mor tonunu korur.
+    return (
+      <MonitorStatusBadge status={statusKey(m)} className={m?.status === 'CONFIG_ERROR' ? STATUS_TEXT.CONFIG_ERROR : undefined}>
+        {statusLabel(m?.status)}
+      </MonitorStatusBadge>
+    )
   }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('pspd.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
-  }
-  /** Aşılan eşik anahtarlarını okunur rozete çevirir. */
-  const breachLabel = (k) => t(`pspd.breach_${String(k).toLowerCase()}`)
-
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('pspd.noTeam'))
-    : (teamName || t('pspd.noTeam'))
+    : (defaultTeamName || t('pspd.noTeam'))
   const activeMetric = METRICS.find(x => x.key === metric) ?? METRICS[0]
-  // Bütçe çizgisi (2026-09-12, #15): seçili ölçütün eşiği (yük ms / TTFB ms / boyut KB→B / istek sayısı)
-  const budgetFor = (m, key) => key === 'load' ? m.max_load_ms : key === 'ttfb' ? m.max_ttfb_ms : key === 'size' ? (m.max_page_kb ? m.max_page_kb * 1024 : null) : key === 'requests' ? m.max_requests : null
+  // Bütçe çizgisi (2026-09-12, #15): seçili ölçütün eşiği — `budgetFor` kartın bütçe ölçerleriyle ORTAK
+  // (pagespeed/pageSpeedCardModel: yük ms / TTFB ms / boyut KB→B / istek sayısı; 0 ya da boş = eşik yok, çizgi yok).
+
+  /** Birimli sayı alanı (eski `.field-unit` soneki) — shadcn InputGroup; etiket FormField'dan. */
+  const unitInput = (id, unit, props) => (
+    <InputGroup>
+      <InputGroupInput id={id} type="number" {...props} />
+      <InputGroupAddon align="inline-end"><InputGroupText>{unit}</InputGroupText></InputGroupAddon>
+    </InputGroup>
+  )
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={Gauge}
+      title={modal === 'new' ? t('pspd.modalNew') : t('pspd.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('pspd.testing') : null}
+      footer={<>
+        {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
+            (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
+        <Button variant="secondary" className="mr-auto" onClick={runTest}
+          aria-busy={testing || undefined} disabled={testing || !form.url.trim()}
+          title={!form.url.trim() ? t('pspd.testNeedsUrl') : undefined}>
+          <FlaskConical size={14} />{t('pspd.test')}
+        </Button>
+        {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</Button>}
+        <Button variant="secondary" onClick={closeEdit}>{t('pspd.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={Gauge}>{t('pspd.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('pspd.url')} required hint={t('pspd.urlHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
+          )}
+        </FormField>
+        <FormField label={t('pspd.name')}>
+          {({ id }) => (
+            <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+          )}
+        </FormField>
+        <FormField label={t('pspd.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('pspd.noTeam')} disabled />}
+        </FormField>
+        <FormField full label={t('pspd.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="PAGESPEED" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+
+        {/* ── Alarm eşikleri: DÖRDÜ DE opsiyonel ── */}
+        <FormSection title={t('pspd.thresholdsTitle')} hint={t('pspd.thresholdsHint')}>
+          <FormGrid>
+            <FormField label={t('pspd.maxLoadMs')}>
+              {({ id }) => unitInput(id, 'ms', { min: '0', step: '100', value: form.maxLoadMs, placeholder: t('pspd.noThreshold'),
+                onChange: e => setForm(f => ({ ...f, maxLoadMs: e.target.value })) })}
+            </FormField>
+            <FormField label={t('pspd.maxTtfbMs')}>
+              {({ id }) => unitInput(id, 'ms', { min: '0', step: '50', value: form.maxTtfbMs, placeholder: t('pspd.noThreshold'),
+                onChange: e => setForm(f => ({ ...f, maxTtfbMs: e.target.value })) })}
+            </FormField>
+            <FormField label={t('pspd.maxPageKb')}>
+              {({ id }) => unitInput(id, 'KB', { min: '0', step: '100', value: form.maxPageKb, placeholder: t('pspd.noThreshold'),
+                onChange: e => setForm(f => ({ ...f, maxPageKb: e.target.value })) })}
+            </FormField>
+            <FormField label={t('pspd.maxRequests')}>
+              {({ id }) => (
+                <Input id={id} type="number" min="0" step="10" value={form.maxRequests} placeholder={t('pspd.noThreshold')}
+                  onChange={e => setForm(f => ({ ...f, maxRequests: e.target.value }))} />
+              )}
+            </FormField>
+          </FormGrid>
+        </FormSection>
+
+        {/* Etiketler */}
+        <FormSection title={t('pspd.tagsTitle')} required>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        {/* ── Gelişmiş ── (shadcn Collapsible; kapalıyken içerik DOM'da yok — eski koşullu çizimle aynı) */}
+        <Collapsible open={advOpen} onOpenChange={setAdvOpen}
+          className="min-w-0 overflow-hidden rounded-lg border bg-muted/30 sm:col-span-2">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost"
+              className="h-auto w-full justify-start gap-2 rounded-none px-3.5 py-3 font-semibold hover:bg-muted/60">
+              <ChevronDown size={16} aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform duration-200 motion-reduce:transition-none', advOpen && 'rotate-180')} />
+              {t('pspd.advanced')}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-3.5 pb-3.5">
+            <FormGrid>
+              <FormField label={t('pspd.timeoutMs')}>
+                {({ id }) => unitInput(id, 'ms', { min: '1000', step: '500', value: form.timeoutMs,
+                  onChange: e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) })) })}
+              </FormField>
+              <FormField label={t('pspd.resourceConcurrency')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.resourceConcurrency} onChange={e => setForm(f => ({ ...f, resourceConcurrency: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('pspd.confirmAttempts')}>
+                {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('pspd.confirmInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('pspd.recoveryChecks')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('pspd.recoveryInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+
+              <FormField full label={t('pspd.userAgent')} hint={t('pspd.userAgentHint')}>
+                {({ id, describedBy }) => (
+                  <Input id={id} aria-describedby={describedBy} value={form.userAgent} placeholder={t('pspd.userAgentPh')}
+                    onChange={e => setForm(f => ({ ...f, userAgent: e.target.value }))} />
+                )}
+              </FormField>
+
+              <CheckField full checked={form.sendDnt} onCheckedChange={v => setForm(f => ({ ...f, sendDnt: v }))}
+                label={t('pspd.sendDnt')} hint={t('pspd.sendDntHint')} />
+
+              {/* Kurumsal vekil (2026-09-21): Sayfa Hızı'nda varsayılan DOĞRUDAN — vekil gecikmesi ölçüme karışır; vekil-zorunlu
+                  sayfalar için açılabilir. Düzenlemede kaydedilmiş etkin karar ipucu (MonitorProxyField sözleşmesi). */}
+              <LabelSlot full>
+                <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+                  effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+              </LabelSlot>
+              <FormHint>{t('pspd.proxyNote')}</FormHint>
+
+              <CheckField full checked={form.excludeTrackers} onCheckedChange={v => setForm(f => ({ ...f, excludeTrackers: v }))}
+                label={t('pspd.excludeTrackers')} hint={t('pspd.excludeTrackersHint')} />
+              <div className="flex min-w-0 flex-col gap-1.5 rounded-lg border bg-background px-3.5 py-3 sm:col-span-2">
+                <TagInput value={form.trackerPatterns} onChange={v => setForm(f => ({ ...f, trackerPatterns: v }))}
+                  placeholder={t('pspd.trackerPatternsPh')} />
+                <FormHint full={false}>{t('pspd.trackerPatternsHint')}</FormHint>
+              </div>
+
+              <FormSection title={t('pspd.authTitle')} boxed={false}>
+                <FormGrid>
+                  <FormField label={t('pspd.basicAuthUser')}>
+                    {({ id }) => (
+                      <Input id={id} value={form.basicAuthUser} autoComplete="off"
+                        onChange={e => setForm(f => ({ ...f, basicAuthUser: e.target.value }))} />
+                    )}
+                  </FormField>
+                  <FormField label={t('pspd.basicAuthPass')}>
+                    {({ id }) => (
+                      <Input id={id} type="password" value={form.basicAuthPass} autoComplete="new-password"
+                        placeholder={modal !== 'new' && modal.has_basic_auth_pass ? '••••••••' : ''}
+                        onChange={e => setForm(f => ({ ...f, basicAuthPass: e.target.value }))} />
+                    )}
+                  </FormField>
+                </FormGrid>
+                <FormHint full={false}>
+                  {modal !== 'new' && modal.has_basic_auth_pass ? t('pspd.basicAuthSavedHint') : t('pspd.basicAuthHint')}
+                </FormHint>
+              </FormSection>
+
+              {/* Özel başlıklar YALNIZ global admin'e çizilir: serbest başlık iç servislere
+                  yetki/SSRF yüzeyi açar (PORT sendData ile aynı gerekçe). */}
+              {isAdmin && (
+                <FormField full label={t('pspd.customHeaders')}
+                  hint={
+                    /* Kardeşi KeywordMonitorPage ile aynı yedek: isim listesi boş olduğunda
+                       yer tutucu boş dizeyle doldurulup cümle kırılmasın. */
+                    modal !== 'new' && modal.has_custom_headers
+                      ? t('pspd.customHeadersSavedHint').replace('{0}',
+                          (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
+                      : t('pspd.customHeadersHint')}>
+                  {({ id, describedBy }) => (
+                    <Textarea id={id} aria-describedby={describedBy} rows={3} spellCheck={false} className="font-mono text-xs"
+                      value={form.customHeaders} placeholder={t('pspd.customHeadersPh')}
+                      onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} />
+                  )}
+                </FormField>
+              )}
+
+              <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('pspd.active')} />
+              <FormHint>ⓘ {t('pspd.confirmHint')}</FormHint>
+            </FormGrid>
+          </CollapsibleContent>
+        </Collapsible>
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.error ? 'danger' : testResult.reachable ? 'success' : 'warning'}
+          icon={testResult.error || !testResult.reachable ? AlertTriangle : undefined}
+          title={testResult.error ? t('pspd.testError') : statusLabel(testResult.status)}>
+          {testResult.error
+            ? testResult.error
+            : <>
+                {testResult.response_ms} ms · TTFB {testResult.ttfb_ms} ms
+                {' · '}{formatBytes(testResult.total_bytes, testResult.bytes_truncated)}
+                {' · '}{testResult.request_count} {t('pspd.mRequests')}
+                {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
+                {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
+                <br /><span className="opacity-80">{t('pspd.testNoThresholds')}</span>
+              </>}
+        </AlertBanner>
+      )}
+
+      {/* ── Önerilen eşikler ──────────────────────────────────────────────────────
+          Ham ölçüme bakıp dört alana elle sayı yazmak, hangi metriğin ne kadar
+          oynadığını bilmeyi gerektiriyor. Öneri KURALIYLA BİRLİKTE gösterilir ve tek
+          tıkla forma yazılır; kullanıcı sonra istediğini değiştirebilir (kaydedilmiş
+          bir şey değil, yalnız form). */}
+      {testResult && !testResult.error && testResult.reachable && (() => {
+        const sug = suggestThresholds(testResult)
+        const partial = suggestionIsPartial(testResult)
+        const apply = () => {
+          setForm(f => ({ ...f,
+            maxLoadMs: sug.maxLoadMs ?? '', maxTtfbMs: sug.maxTtfbMs ?? '',
+            maxPageKb: sug.maxPageKb ?? '', maxRequests: sug.maxRequests ?? '' }))
+          toast.success(t('pspd.suggestApplied'))
+        }
+        const rows = [
+          [t('pspd.maxLoadMs'), `${sug.maxLoadMs ?? '—'} ms`, t('pspd.suggestWhyLoad')],
+          [t('pspd.maxTtfbMs'), `${sug.maxTtfbMs ?? '—'} ms`, t('pspd.suggestWhyTtfb')],
+          [t('pspd.maxPageKb'), `${sug.maxPageKb ?? '—'} KB`, t('pspd.suggestWhySize')],
+          [t('pspd.maxRequests'), sug.maxRequests ?? '—', t('pspd.suggestWhyRequests')],
+        ]
+        return (
+          <Card data-slot="suggested-thresholds" className="mb-3.5 gap-2 rounded-lg bg-muted/30 px-3.5 py-3 shadow-none">
+            <CardHeader className="px-0">
+              <CardTitle className="text-[.88em] font-bold">{t('pspd.suggestTitle')}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2.5 px-0">
+              <ul className="m-0 list-none p-0">
+                {rows.map(([k, v, why]) => (
+                  <li key={k} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 border-t py-1 text-[.85em] first:border-t-0">
+                    <span className="text-muted-foreground">{k}</span>
+                    <strong className="whitespace-nowrap tabular-nums">{v}</strong>
+                    {/* Gerekçe tam genişlikte alt satıra düşer — dar modalde sayıyı sıkıştırmasın. */}
+                    <em className="col-span-full text-[.92em] text-muted-foreground not-italic">{why}</em>
+                  </li>
+                ))}
+              </ul>
+              {partial && <FormHint full={false} tone="warn">{t('pspd.suggestPartial')}</FormHint>}
+              <Button type="button" size="sm" className="self-start" onClick={apply}>
+                <Wand2 size={14} />{t('pspd.suggestApply')}
+              </Button>
+              <FormHint full={false}>{t('pspd.suggestNote')}</FormHint>
+            </CardContent>
+          </Card>
+        )
+      })()}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="pagespeed-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
 
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('pspd.title')}</h2>
-          <p className="upt-subtitle">{t('pspd.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('pspd.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('pspd.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="pagespeed" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('pspd.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="pagespeed" title={t('pspd.title')} subtitle={t('pspd.subtitle')}
+        count={loading ? null : monitors.length} down={counts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('pspd.addMonitor')} />
 
       <MonitorHowBox bullets={[t('pspd.how1'), t('pspd.how2'), t('pspd.how3'), t('pspd.how4'),
         t('pspd.how5'), t('pspd.how6'), t('pspd.how7')]} />
@@ -680,11 +960,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {/* Kart görünümü seçicisi araç çubuğunun İLK öğesi (mr-auto → süzgeçler ve arama sağda kalır; telefonda satır sarar) */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('pspd.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('pspd.searchPlaceholder')} aria-label={t('pspd.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -698,173 +980,96 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('pspd.noMonitorsAdmin') : t('pspd.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PAGESPEED"
           api={{ update: api.monitoring.updatePageSpeedMonitor, remove: api.monitoring.deletePageSpeedMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-card-top-right">
-                  <CopyLinkButton iconOnly url={monitorDeepLink('pagespeed', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.url}>{m.url}</div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              {/* Eşik üstü karşılaştırması (2026-09-12, #15): bu hafta / geçen hafta (14 gün − 7 gün) */}
-              <BreachWeekLine w7={week7.data[String(m.id)]} w14={week14.data[String(m.id)]} t={t} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.response_ms != null ? `${m.response_ms} ms` : '—'}</span>
-                  <span className="upt-metric-lbl">{t('pspd.mLoad')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.ttfb_ms != null ? `${m.ttfb_ms} ms` : '—'}</span>
-                  <span className="upt-metric-lbl">{t('pspd.mTtfb')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val" title={m.bytes_truncated ? t('pspd.truncatedHint') : undefined}>
-                    {formatBytes(m.total_bytes, m.bytes_truncated)}</span>
-                  <span className="upt-metric-lbl">{t('pspd.mSize')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.request_count ?? '—'}</span>
-                  <span className="upt-metric-lbl">{t('pspd.mRequests')}</span>
-                </div>
-              </div>
-              {Array.isArray(m.breached_metrics) && m.breached_metrics.length > 0 && (
-                /* `tag-chips` projenin mevcut cip-satiri primitifi (flex + wrap + gap).
-                   Onceki `upt-card-tags` HICBIR YERDE tanimli DEGILDI: birden fazla ihlal
-                   rozeti bosluksuz, sarmasiz yan yana diziliyordu. */
-                <div className="tag-chips">
-                  {m.breached_metrics.map(k => (
-                    <span key={k} className="upt-port-tag pspd-breach-tag">{breachLabel(k)}</span>
-                  ))}
-                </div>
+            /* Kart: pagespeed/PageSpeedMonitorCard (shadcn Card + "stretched button" + bütçe ölçerleri). Yetki
+               kapıları ve olay işleyicileri SAYFADA kalır: seçim kutusu, meta ve eylemler kart yuvalarına geçer. */
+            <PageSpeedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density}
+              onOpen={() => openDetail(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              week7={week7.data[String(m.id)]} week14={week14.data[String(m.id)]}
+              selection={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
               )}
-              <div className="upt-card-foot">
-                <span>{m.last_check ? formatDateSec(m.last_check) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.url}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
-                )}
-              </div>
-            </div>
+              meta={<MonitorCardMeta monitor={m} />}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detay modali ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${selected.status === 'OK' ? 'up' : selected.status === 'DOWN' ? 'down' : 'unknown'}`}
-            onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.url}</span>
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('pspd.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('pspd.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('pspd.delete')}
-                onClose={closeDetail}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val" style={{ color: STATUS_COLOR[selected.status] }}>{statusLabel(selected.status)}</span>
-                <span className="upt-modal-metric-lbl">{t('pspd.lastStatus')}</span></div>
-              <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val">{selected.response_ms != null ? `${selected.response_ms} ms` : '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('pspd.mLoad')}</span></div>
-              <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val">{selected.ttfb_ms != null ? `${selected.ttfb_ms} ms` : '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('pspd.mTtfb')}</span></div>
-              <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val" title={selected.bytes_truncated ? t('pspd.truncatedHint') : undefined}>
-                  {formatBytes(selected.total_bytes, selected.bytes_truncated)}</span>
-                <span className="upt-modal-metric-lbl">{t('pspd.mSize')}</span></div>
-              <div className="upt-modal-metric">
-                <span className="upt-modal-metric-val">{selected.request_count ?? '—'}</span>
-                <span className="upt-modal-metric-lbl">{t('pspd.mRequests')}</span></div>
-              {selected.last_check && (
-                <div className="upt-modal-metric">
-                  <span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.last_check)}</span>
-                  <span className="upt-modal-metric-lbl">{t('pspd.lastCheck')}</span></div>
-              )}
-            </div>
-            {selected.error && (
-              <div className="page-confirm-banner" role="alert">
-                <AlertTriangle size={13} />{selected.error}
-              </div>
-            )}
-            {selected.capped && (
-              <div className="page-confirm-banner">
-                <AlertTriangle size={13} />{t('pspd.cappedWarn')}
-              </div>
-            )}
-            {selected.bytes_truncated && (
-              <div className="page-confirm-banner">
-                <AlertTriangle size={13} />{t('pspd.truncatedWarn')}
-              </div>
-            )}
-            <div className="upt-modal-divider" />
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'resources' ? ' active' : ''}`} onClick={() => setDetailTab('resources')}>{t('pspd.tabResources')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('pspd.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('pspd.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('pspd.tabNotes')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle KARIŞTIRILMAMALI:
-                  orası "sayfa ne kadar sürdü", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'resources' && (<>
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('pspd.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('pspd.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('pspd.delete')}
+              onClose={closeDetail}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-0" />
+          <DetailSummary items={[
+            { key: 'status', value: statusLabel(selected.status), label: t('pspd.lastStatus'), valueClassName: statusText(selected.status) },
+            { key: 'load', value: selected.response_ms != null ? `${selected.response_ms} ms` : '—', label: t('pspd.mLoad') },
+            { key: 'ttfb', value: selected.ttfb_ms != null ? `${selected.ttfb_ms} ms` : '—', label: t('pspd.mTtfb') },
+            { key: 'size', value: formatBytes(selected.total_bytes, selected.bytes_truncated), label: t('pspd.mSize'),
+              hint: selected.bytes_truncated ? t('pspd.truncatedHint') : undefined },
+            { key: 'req', value: selected.request_count ?? '—', label: t('pspd.mRequests') },
+            selected.last_check && { key: 'last', value: formatDateSec(selected.last_check), label: t('pspd.lastCheck'), time: true },
+          ]} />
+          {selected.error && (
+            <AlertBanner tone="danger" role="alert" icon={AlertTriangle} className="mt-3.5">{selected.error}</AlertBanner>
+          )}
+          {selected.capped && (
+            <AlertBanner tone="warning" className="mt-3.5">{t('pspd.cappedWarn')}</AlertBanner>
+          )}
+          {selected.bytes_truncated && (
+            <AlertBanner tone="warning" className="mt-3.5">{t('pspd.truncatedWarn')}</AlertBanner>
+          )}
+          <DetailDivider />
+          <DetailTabs value={detailTab} onValueChange={setDetailTab} className="mt-0"
+            countsFor={{ kind: 'pagespeed', monitorId: selected.id, notesType: 'PAGESPEED', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['resources', t('pspd.tabResources')], ['chart', t('pspd.tabChart')], ['control', t('hist.tab')],
+              ['alerts', t('pspd.tabAlerts')], ['notes', t('pspd.tabNotes')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle KARIŞTIRILMAMALI:
+              // orası "sayfa ne kadar sürdü", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="resources">
               {/* Ihlal anlari EskiDEN her biri ayri bir dugmeydi; birikince (20'ye kadar) tablonun
                   ustunu iki-uc sira doldurup paneli kullanilmaz hale getiriyordu. Tek bir secici
                   hem sabit yer kaplar hem de tarihleri okunur birakir. Ihlal yoksa secici HIC
                   cizilmez: secilecek bir sey olmadiginda kontrol gostermek bos gurultudur. */}
-              <div className="pspd-snapshot-row">
+              <div className="mb-2 flex flex-wrap items-center gap-2.5">
                 {breaches.length > 0 && (<>
-                  <span className="pspd-metric-label">{t('pspd.snapshotLabel')}</span>
+                  <span className={SECTION_LABEL}>{t('pspd.snapshotLabel')}</span>
                   <SearchableSelect
                     value={resCheckId == null ? '' : String(resCheckId)}
                     onChange={(v) => {
@@ -877,15 +1082,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                       ...breaches.map(b => ({ value: String(b.check_id), label: formatDateSec(b.checked_at) })),
                     ]}
                     searchThreshold={8} ariaLabel={t('pspd.snapshotLabel')} />
-                  <span className="field-hint pspd-snapshot-count">
-                    {t('pspd.breachCount', breaches.length)}</span>
+                  <span className="text-xs text-muted-foreground">{t('pspd.breachCount', breaches.length)}</span>
                 </>)}
-                <Button type="button" variant="secondary" size="sm" className="pspd-snapshot-csv"
+                <Button type="button" variant="secondary" size="sm" className="ml-auto"
                   disabled={!resources.length} onClick={exportResourcesCsv}><Download size={12} />{t('pspd.exportCsv')}</Button>
               </div>
               {/* Sunucu en agir N kaynagi dondurur. Kirpildiysa bunu SOYLEMEK zorunlu: yoksa
                   kullanici 50 satiri sayfanin tamami sanip agirligin nereden geldigini yanlis okur. */}
-              <div className="field-hint" style={{ margin: '0 0 8px' }}>
+              <p className="mb-2 text-xs text-muted-foreground">
                 {t('pspd.resHint')}
                 {resTotal > resources.length && resources.length > 0
                   && ` ${t('pspd.resTruncated', resources.length, resTotal)}`}
@@ -894,42 +1098,55 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                     bosaltiyordu) — o yuzden "Son olcum" etiketi tek basina yaniltabilir. */}
                 {resCheckId == null && resources[0]?.checked_at
                   && ` ${t('pspd.resMeasuredAt', formatDateSec(resources[0].checked_at))}`}
-              </div>
+              </p>
               {resLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />
-                : resources.length === 0 ? <LoadingBlock label={t('pspd.noResources')} className="upt-modal-loading" />
+                : resources.length === 0 ? <StatusBlock tone="neutral" icon={Inbox} title={t('pspd.noResources')} className="py-6" />
                 : (
-                <div className="upt-rt-list">
-                  <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: RES_COLS }}>
-                    <span>{t('pspd.colType')}</span><span>{t('pspd.colResource')}</span>
-                    <span>{t('pspd.colBytes')}</span><span>{t('pspd.colDuration')}</span>
-                    <span>HTTP</span><span>{t('pspd.colParty')}</span>
-                  </div>
-                  {resources.map((r, i) => {
-                    const RI = RES_ICON[r.type] || Link2
-                    return (
-                      <div key={`${r.url}#${i}`} className="upt-rt-grid" style={{ gridTemplateColumns: RES_COLS }}>
-                        <span><RI size={13} /> {r.type}</span>
-                        <span className="upt-rt-url" title={r.url}>{r.url}</span>
-                        <span title={r.truncated ? t('pspd.truncatedHint') : undefined}>
-                          {formatBytes(r.bytes, r.truncated)}</span>
-                        <span>{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</span>
-                        <span style={{ color: r.http_status != null && r.http_status >= 400 ? '#b91c1c' : undefined }}>
-                          {r.http_status ?? '—'}</span>
-                        <span>{r.third_party ? t('pspd.thirdParty') : t('pspd.firstParty')}</span>
-                      </div>
-                    )
-                  })}
+                /* shadcn Table. Telefonda düşük öncelikli sütunlar (süre / HTTP / taraf) gizlenir, tablo
+                   yatay taşmaz; masaüstünde liste kendi içinde kayar (telefonda iç içe kaydırma yok —
+                   pencere gövdesi zaten kayıyor). URL hücresi KIRPILIR (`max-w-0 w-full` + truncate):
+                   kaynak URL'leri rutin olarak 150+ karakter ve tek parça, kırpılmazsa tablo pencereden taşar. */
+                <div data-slot="resource-table" className="rounded-md border sm:max-h-[420px] sm:overflow-y-auto">
+                  <Table className="text-xs">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('pspd.colType')}</TableHead>
+                        <TableHead className="w-full">{t('pspd.colResource')}</TableHead>
+                        <TableHead className="text-right">{t('pspd.colBytes')}</TableHead>
+                        <TableHead className="hidden text-right sm:table-cell">{t('pspd.colDuration')}</TableHead>
+                        <TableHead className="hidden text-right sm:table-cell">HTTP</TableHead>
+                        <TableHead className="hidden md:table-cell">{t('pspd.colParty')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {resources.map((r, i) => {
+                        const RI = RES_ICON[r.type] || Link2
+                        return (
+                          <TableRow key={`${r.url}#${i}`}>
+                            <TableCell><span className="inline-flex items-center gap-1"><RI size={13} aria-hidden="true" />{r.type}</span></TableCell>
+                            <TableCell className="w-full max-w-0"><span className="block truncate" title={r.url}>{r.url}</span></TableCell>
+                            <TableCell className="text-right tabular-nums" title={r.truncated ? t('pspd.truncatedHint') : undefined}>
+                              {formatBytes(r.bytes, r.truncated)}</TableCell>
+                            <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.duration_ms != null ? `${r.duration_ms} ms` : '—'}</TableCell>
+                            <TableCell className={cn('hidden text-right tabular-nums sm:table-cell', r.http_status != null && r.http_status >= 400 && 'text-destructive')}>
+                              {r.http_status ?? '—'}</TableCell>
+                            <TableCell className="hidden md:table-cell">{r.third_party ? t('pspd.thirdParty') : t('pspd.firstParty')}</TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
-            </>)}
+            </TabsContent>
 
-            {detailTab === 'chart' && (<>
+            <TabsContent value="chart">
               {/* Metrik seçimi ile ZAMAN ARALIĞI seçimi iki ayrı şeydir. Eskiden ikisi de aynı
                   görünen etiketsiz düğme sırasıydı ve hangisinin ne yaptığı anlaşılmıyordu.
                   Metrik artık etiketli bir segmented control; aralık düğmeleri grafiğin kendi
                   satırında kalıyor ve iki satır görsel olarak ayrışıyor. */}
-              <div className="pspd-metric-row">
-                <span className="pspd-metric-label">{t('pspd.metricLabel')}</span>
+              <div className="mb-2.5 flex flex-wrap items-center gap-2.5 border-b pb-2.5">
+                <span className={SECTION_LABEL}>{t('pspd.metricLabel')}</span>
                 <SegmentedControl
                   ariaLabel={t('pspd.metricLabel')}
                   value={metric} onChange={setMetric}
@@ -940,11 +1157,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   metric={activeMetric.key} unit={activeMetric.unit}
                   budget={budgetFor(selected, activeMetric.key)} budgetLabel={t('pspd.budgetLine')} />
               </Suspense>
-            </>)}
+            </TabsContent>
 
-            {detailTab === 'control' && (
-              /* columns + renderRow ZORUNLU: CheckHistoryTab satirlari cizmeyi cagirana birakir.
-                 Gecilmezse map icinde "renderRow is not a function" ile sekme comple coker. */
+            <TabsContent value="control">
+              {/* columns + renderRow ZORUNLU: CheckHistoryTab satirlari cizmeyi cagirana birakir.
+                  Gecilmezse map icinde "renderRow is not a function" ile sekme comple coker. */}
               <CheckHistoryTab kind="pagespeed" monitorId={selected.id} listKey="pagespeed-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="pspd-rt-grid"
                 columns={[t('pspd.colTime'), t('pspd.colStatus'), t('pspd.mLoad'),
@@ -955,7 +1172,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   const st = c.ok === false ? 'DOWN' : breached ? 'SLOW' : 'OK'
                   return (<>
                     <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                    <span style={{ color: STATUS_COLOR[st], fontWeight: 600 }}>
+                    <span className={cn('font-semibold', statusText(st))}>
                       {statusLabel(st)}
                       {/* HANGİ eşik, kaçtı, kaç ölçüldü. Yalnız "Eşik aşıldı" demek kullanıcıyı
                           sebebi aramaya gönderiyordu — veri zaten kayıtlıydı, gösterilmiyordu. */}
@@ -967,14 +1184,17 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                     <span className="upt-rt-ms">{c.request_count ?? '—'}</span>
                   </>)
                 }} />
-            )}
-            {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('pagespeed')} />}
-            {detailTab === 'notes' && (
+            </TabsContent>
+
+            <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('pagespeed')} /></TabsContent>
+
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGESPEED" target={selected.url} />
               </Suspense>
-            )}
-            {detailTab === 'changes' && (
+            </TabsContent>
+
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 {/* Prop adlari ChangeHistoryTab imzasiyla BIREBIR: t / kind / monitorId /
                     teamNames / canManage. Yanlis adla gecmek sessiz degil — t cagrilinca
@@ -982,257 +1202,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 <ChangeHistoryTab t={t} kind="pagespeed" monitorId={selected.id}
                   teamNames={teamNameById} canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Form modali ── */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()}
-            style={{ maxWidth: 720, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--keyword">
-              <div className="modal-icon-hdr-badge"><Gauge size={20} /></div>
-              <h3>{modal === 'new' ? t('pspd.modalNew') : t('pspd.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('pspd.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="kw-type-banner"><Gauge size={16} /><span>{t('pspd.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('pspd.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('pspd.urlHint')}</div>
-              <label><span>{t('pspd.name')}</span>
-                <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('pspd.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('pspd.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('pspd.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-
-              {/* ── Alarm eşikleri: DÖRDÜ DE opsiyonel ── */}
-              <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('pspd.thresholdsTitle')}</div>
-                <div className="field-hint" style={{ marginBottom: 8 }}>{t('pspd.thresholdsHint')}</div>
-                <div className="kw-adv-grid">
-                  <label><span>{t('pspd.maxLoadMs')} <span className="field-unit">ms</span></span>
-                    <input type="number" min="0" step="100" value={form.maxLoadMs} placeholder={t('pspd.noThreshold')}
-                      onChange={e => setForm(f => ({ ...f, maxLoadMs: e.target.value }))} /></label>
-                  <label><span>{t('pspd.maxTtfbMs')} <span className="field-unit">ms</span></span>
-                    <input type="number" min="0" step="50" value={form.maxTtfbMs} placeholder={t('pspd.noThreshold')}
-                      onChange={e => setForm(f => ({ ...f, maxTtfbMs: e.target.value }))} /></label>
-                  <label><span>{t('pspd.maxPageKb')} <span className="field-unit">KB</span></span>
-                    <input type="number" min="0" step="100" value={form.maxPageKb} placeholder={t('pspd.noThreshold')}
-                      onChange={e => setForm(f => ({ ...f, maxPageKb: e.target.value }))} /></label>
-                  <label><span>{t('pspd.maxRequests')}</span>
-                    <input type="number" min="0" step="10" value={form.maxRequests} placeholder={t('pspd.noThreshold')}
-                      onChange={e => setForm(f => ({ ...f, maxRequests: e.target.value }))} /></label>
-                </div>
-              </div>
-
-              {/* Etiketler */}
-              <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('pspd.tagsTitle')} <span className="req-star">*</span></div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-
-
-              {/* ── Gelişmiş ── */}
-              <div className="full-width kw-adv">
-                <button type="button" className="kw-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
-                  <ChevronDown size={16} className={`kw-adv-chevron${advOpen ? ' open' : ''}`} />
-                  <span>{t('pspd.advanced')}</span>
-                </button>
-                {advOpen && (
-                  <div className="kw-adv-body">
-                    <div className="kw-adv-grid">
-                      <label><span>{t('pspd.timeoutMs')} <span className="field-unit">ms</span></span>
-                        <input type="number" min="1000" step="500" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-                      <label><span>{t('pspd.resourceConcurrency')}</span>
-                        <input type="number" min="1" max="20" value={form.resourceConcurrency} onChange={e => setForm(f => ({ ...f, resourceConcurrency: Number(e.target.value) }))} /></label>
-                      <label><span>{t('pspd.confirmAttempts')}</span>
-                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-                      <label><span>{t('pspd.confirmInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-                      <label><span>{t('pspd.recoveryChecks')}</span>
-                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-                      <label><span>{t('pspd.recoveryInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-                    </div>
-
-                    <label className="full-width" style={{ marginTop: 10 }}><span>{t('pspd.userAgent')}</span>
-                      <input value={form.userAgent} placeholder={t('pspd.userAgentPh')}
-                        onChange={e => setForm(f => ({ ...f, userAgent: e.target.value }))} /></label>
-                    <div className="field-hint">{t('pspd.userAgentHint')}</div>
-
-                    <label className="checkbox-label" style={{ marginTop: 10 }}>
-                      <input type="checkbox" checked={form.sendDnt} onChange={e => setForm(f => ({ ...f, sendDnt: e.target.checked }))} />{t('pspd.sendDnt')}</label>
-                    <div className="field-hint">{t('pspd.sendDntHint')}</div>
-
-                    {/* Kurumsal vekil (2026-09-21): Sayfa Hızı'nda varsayılan DOĞRUDAN — vekil gecikmesi ölçüme karışır; vekil-zorunlu
-                        sayfalar için açılabilir. Düzenlemede kaydedilmiş etkin karar ipucu (MonitorProxyField sözleşmesi). */}
-                    <div style={{ marginTop: 10 }}>
-                      <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                        effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
-                      <div className="field-hint">{t('pspd.proxyNote')}</div>
-                    </div>
-
-                    <label className="checkbox-label" style={{ marginTop: 10 }}>
-                      <input type="checkbox" checked={form.excludeTrackers} onChange={e => setForm(f => ({ ...f, excludeTrackers: e.target.checked }))} />{t('pspd.excludeTrackers')}</label>
-                    <div className="field-hint">{t('pspd.excludeTrackersHint')}</div>
-                    <div className="full-width kw-tags-block" style={{ marginTop: 8 }}>
-                      <TagInput value={form.trackerPatterns} onChange={v => setForm(f => ({ ...f, trackerPatterns: v }))}
-                        placeholder={t('pspd.trackerPatternsPh')} />
-                      <div className="field-hint">{t('pspd.trackerPatternsHint')}</div>
-                    </div>
-
-                    <div className="kw-block-title" style={{ marginTop: 14 }}>{t('pspd.authTitle')}</div>
-                    <div className="kw-adv-grid">
-                      <label><span>{t('pspd.basicAuthUser')}</span>
-                        <input value={form.basicAuthUser} autoComplete="off"
-                          onChange={e => setForm(f => ({ ...f, basicAuthUser: e.target.value }))} /></label>
-                      <label><span>{t('pspd.basicAuthPass')}</span>
-                        <input type="password" value={form.basicAuthPass} autoComplete="new-password"
-                          placeholder={modal !== 'new' && modal.has_basic_auth_pass ? '••••••••' : ''}
-                          onChange={e => setForm(f => ({ ...f, basicAuthPass: e.target.value }))} /></label>
-                    </div>
-                    <div className="field-hint">
-                      {modal !== 'new' && modal.has_basic_auth_pass ? t('pspd.basicAuthSavedHint') : t('pspd.basicAuthHint')}
-                    </div>
-
-                    {/* Özel başlıklar YALNIZ global admin'e çizilir: serbest başlık iç servislere
-                        yetki/SSRF yüzeyi açar (PORT sendData ile aynı gerekçe). */}
-                    {isAdmin && (<>
-                      <label className="full-width" style={{ marginTop: 12 }}><span>{t('pspd.customHeaders')}</span>
-                        <textarea rows={3} spellCheck={false} value={form.customHeaders}
-                          placeholder={t('pspd.customHeadersPh')}
-                          onChange={e => setForm(f => ({ ...f, customHeaders: e.target.value }))} /></label>
-                      <div className="field-hint">
-                        {/* Kardeşi KeywordMonitorPage ile aynı yedek: isim listesi boş olduğunda
-                            yer tutucu boş dizeyle doldurulup cümle kırılmasın. */}
-                        {modal !== 'new' && modal.has_custom_headers
-                          ? t('pspd.customHeadersSavedHint').replace('{0}',
-                              (modal.custom_header_names || []).filter(Boolean).join(', ') || t('mon.customHeadersSavedUnnamed'))
-                          : t('pspd.customHeadersHint')}
-                      </div>
-                    </>)}
-
-                    <label className="checkbox-label" style={{ marginTop: 12 }}>
-                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('pspd.active')}</label>
-                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('pspd.confirmHint')}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error
-                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
-                  : testResult.reachable
-                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
-                {testResult.error || !testResult.reachable
-                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.error
-                    ? <><strong>{t('pspd.testError')}:</strong> {testResult.error}</>
-                    : <><strong>{statusLabel(testResult.status)}</strong>
-                        {' — '}{testResult.response_ms} ms · TTFB {testResult.ttfb_ms} ms
-                        {' · '}{formatBytes(testResult.total_bytes, testResult.bytes_truncated)}
-                        {' · '}{testResult.request_count} {t('pspd.mRequests')}
-                        {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
-                        {testResult.via && <> · {testResult.via === 'proxy' ? t('mon.proxy.effProxy') : t('mon.proxy.effDirect')}</>}
-                        <br /><span style={{ opacity: .8 }}>{t('pspd.testNoThresholds')}</span></>}
-                </span>
-              </div>
-            )}
-
-            {/* ── Önerilen eşikler ──────────────────────────────────────────────────────
-                Ham ölçüme bakıp dört alana elle sayı yazmak, hangi metriğin ne kadar
-                oynadığını bilmeyi gerektiriyor. Öneri KURALIYLA BİRLİKTE gösterilir ve tek
-                tıkla forma yazılır; kullanıcı sonra istediğini değiştirebilir (kaydedilmiş
-                bir şey değil, yalnız form). */}
-            {testResult && !testResult.error && testResult.reachable && (() => {
-              const sug = suggestThresholds(testResult)
-              const partial = suggestionIsPartial(testResult)
-              const apply = () => {
-                setForm(f => ({ ...f,
-                  maxLoadMs: sug.maxLoadMs ?? '', maxTtfbMs: sug.maxTtfbMs ?? '',
-                  maxPageKb: sug.maxPageKb ?? '', maxRequests: sug.maxRequests ?? '' }))
-                toast.success(t('pspd.suggestApplied'))
-              }
-              return (
-                <div className="pspd-suggest">
-                  <div className="pspd-suggest-head">{t('pspd.suggestTitle')}</div>
-                  <ul className="pspd-suggest-list">
-                    <li><span>{t('pspd.maxLoadMs')}</span>
-                      <strong>{sug.maxLoadMs ?? '—'} ms</strong>
-                      <em>{t('pspd.suggestWhyLoad')}</em></li>
-                    <li><span>{t('pspd.maxTtfbMs')}</span>
-                      <strong>{sug.maxTtfbMs ?? '—'} ms</strong>
-                      <em>{t('pspd.suggestWhyTtfb')}</em></li>
-                    <li><span>{t('pspd.maxPageKb')}</span>
-                      <strong>{sug.maxPageKb ?? '—'} KB</strong>
-                      <em>{t('pspd.suggestWhySize')}</em></li>
-                    <li><span>{t('pspd.maxRequests')}</span>
-                      <strong>{sug.maxRequests ?? '—'}</strong>
-                      <em>{t('pspd.suggestWhyRequests')}</em></li>
-                  </ul>
-                  {partial && <div className="field-hint field-hint--warn">{t('pspd.suggestPartial')}</div>}
-                  <Button type="button" size="sm" onClick={apply}>
-                    <Wand2 size={14} />{t('pspd.suggestApply')}
-                  </Button>
-                  <div className="field-hint">{t('pspd.suggestNote')}</div>
-                </div>
-              )
-            })()}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="pagespeed-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              {/* URL boşken ölçüm yapılamaz. Buton zaten kapalı; title kapalı olma SEBEBİNİ söyler
-                  (sessizce tıklanmayan bir buton kullanıcıya arıza gibi görünüyor). */}
-              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                aria-busy={testing || undefined} disabled={testing || !form.url.trim()}
-                title={!form.url.trim() ? t('pspd.testNeedsUrl') : undefined}>
-                <FlaskConical size={14} />{t('pspd.test')}
-              </Button>
-              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('pspd.delete')}</Button>}
-              <Button variant="secondary" onClick={closeEdit}>{t('pspd.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('pspd.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

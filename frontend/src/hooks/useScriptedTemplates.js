@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client.js'
 
 /**
@@ -17,11 +17,16 @@ export function useScriptedTemplates(scope) {
   const [meta, setMeta] = useState({ can_create_general: false, can_view_trash: false, writable_team_ids: [] })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  // Fetch yarışı: kapsam değişimi ve işlem sonrası reload art arda istek çıkarır; geç dönen ESKİ kapsamın listesi
+  // yenisini ezmesin, bastırılan yanıt uçuştaki isteğin yükleniyor bayrağını söndürmesin.
+  const seq = useRef(0)
 
   const reload = useCallback(async () => {
+    const my = ++seq.current
     setLoading(true)
     try {
       const res = await api.monitoring.getScriptedTemplates(scope)
+      if (my !== seq.current) return   // bayat yanıt — daha yeni bir istek yolda
       const d = res?.data || {}
       setTemplates(d.templates || [])
       setMeta({
@@ -32,10 +37,11 @@ export function useScriptedTemplates(scope) {
       })
       setError(null)
     } catch (e) {
+      if (my !== seq.current) return
       setError(e?.message || String(e))
       setTemplates([])
     } finally {
-      setLoading(false)
+      if (my === seq.current) setLoading(false)
     }
   }, [scope])
 

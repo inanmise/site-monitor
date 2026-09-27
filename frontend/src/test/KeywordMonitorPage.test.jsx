@@ -33,6 +33,27 @@ const monitor = {
   status: 'up', http_status: 200, occurrences: 5, active: true, checked_at: '2026-06-24T00:00:00',
 }
 
+// Kart başlığı GERÇEK düğmedir (MonitorCardTitle), adı "<url> — open details". Kart URL'i kısaltılmış gösterir
+// (keyword/KeywordMonitorCard 2026-09-27: https:// ve kök "/" gizli, host vurgulu) → kart ham URL METNİYLE değil
+// başlığın erişilebilir adıyla bulunur (metinle arayan "yok" iddiaları sessizce vakum kalırdı).
+// Ad eşlemesi `[data-monitor-open]` (başlık düğmesi kancası) üzerinde yapılır: 50 kartlık ızgarada getByRole her sorguda
+// yüzlerce düğmenin adını hesaplıyor, sayfalama testi 15 sn sınırına yaklaşıyordu.
+const titleRe = (url) => new RegExp(`^${url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} — (open details|detayları aç)$`)
+// Toplu seçim kutusunun satır adlı erişilebilir adı (EN / TR)
+const titleLikeBulk = (url) => {
+  const u = url.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+  return new RegExp(`^(Select ${u} for bulk action|${u} — toplu işlem için seç)$`)
+}
+const cardTitle = {
+  query: (url) => [...document.querySelectorAll('[data-monitor-open]')].find((b) => titleRe(url).test(b.getAttribute('aria-label') || '')) || null,
+  get: (url) => {
+    const el = cardTitle.query(url)
+    if (!el) throw new Error(`kart başlığı yok: ${url}`)
+    return el
+  },
+  find: (url) => waitFor(() => cardTitle.get(url)),
+}
+
 describe('KeywordMonitorPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -46,8 +67,12 @@ describe('KeywordMonitorPage', () => {
   it('izleme kartını (url + kelime) listeler', async () => {
     render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    expect(await screen.findByText('https://www.example.com/')).toBeInTheDocument()
-    expect(screen.getByText('example')).toBeInTheDocument()
+    expect(await cardTitle.find('https://www.example.com/')).toBeInTheDocument()
+    // Kartın kalbi kural paneli (keyword/KeywordMonitorCard): aranan metin « » çipinde + kural rozeti + son sonuç
+    const panel = document.querySelector('[data-slot="keyword-panel"]')
+    expect(within(panel).getByText('example')).toBeInTheDocument()
+    expect(panel.querySelector('[data-slot="keyword-rule"]').textContent).toMatch(/^(Must contain|İçermeli)$/)
+    expect(panel).toHaveAttribute('data-result', 'found')
   })
 
   it('Yeni modal: dinamik tetiklenme açıklaması görünür + güncellenir', async () => {
@@ -80,10 +105,12 @@ describe('KeywordMonitorPage', () => {
   it('karta tıkla → detay modalında 3 sekme görünür', async () => {
     render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    fireEvent.click(screen.getByText('https://www.example.com/'))
+    fireEvent.click(await cardTitle.find('https://www.example.com/'))
     await waitFor(() => expect(api.monitoring.getCheckHistory).toHaveBeenCalled())
-    expect(screen.getByRole('button', { name: /check history|kontrol/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /response chart|süre/i })).toBeInTheDocument()
+    // Detay penceresi ui/ModalShell (role="dialog"), sekmeler shadcn Tabs (role="tab")
+    const detail = screen.getByRole('dialog')
+    expect(within(detail).getByRole('tab', { name: /check history|kontrol/i })).toBeInTheDocument()
+    expect(within(detail).getByRole('tab', { name: /response chart|süre/i })).toBeInTheDocument()
   })
 
   // ── Şemasız URL sahte alarmı (2026-08-04): giriş normalizasyonu ────────────
@@ -122,12 +149,15 @@ describe('KeywordMonitorPage', () => {
 
     render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await cardTitle.find('https://www.example.com/')
     fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
 
-    const hint = [...document.querySelectorAll('.field-hint')]
+    // İpucu artık shadcn Field açıklaması (FormField `hint`), alana aria-describedby ile bağlı
+    const hint = [...document.querySelectorAll('[data-slot="field-description"]')]
       .find(h => /Kayıtlı başlıklar|Stored headers/i.test(h.textContent))
     expect(hint).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: /custom http headers|özel http header/i }).getAttribute('aria-describedby'))
+      .toContain(hint.id)
     expect(hint.textContent).not.toMatch(/:\s*\./)          // sarkan nokta YOK
     expect(hint.textContent).toMatch(/Ad: değer|Name: value/) // yedek metin geldi
   })
@@ -141,10 +171,10 @@ describe('KeywordMonitorPage', () => {
 
     render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await cardTitle.find('https://www.example.com/')
     fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
 
-    const hint = [...document.querySelectorAll('.field-hint')]
+    const hint = [...document.querySelectorAll('[data-slot="field-description"]')]
       .find(h => /Kayıtlı başlıklar|Stored headers/i.test(h.textContent))
     expect(hint.textContent).toContain('X-Api-Key, Cache-Control')
     expect(hint.textContent).not.toMatch(/Ad: değer|Name: value/)
@@ -162,19 +192,19 @@ describe('KeywordMonitorPage', () => {
       slow_response_enabled: true, slow_threshold_ms: 4500,
       interval_seconds: 900, timeout_ms: 8000,
       confirm_attempts: 5, confirm_interval_seconds: 45, recovery_checks: 4, recovery_interval_seconds: 90,
-      custom_headers: 'X-Api-Key: abc', active: false, notification_group_id: 7,
+      custom_headers: 'X-Api-Key: abc', active: false, notification_group_id: 7, noc_notify: true, noc_group_ids: [2, 3],
     }] })
     api.monitoring.createKeywordMonitor.mockResolvedValue({ success: true, data: {} })
 
     render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://www.example.com/')
+    await cardTitle.find('https://www.example.com/')
 
     fireEvent.click(screen.getByRole('button', { name: /kopyala|duplicate/i }))
 
     // Kopya rozeti + ipucu görünür (yeni-kayıt modu, kaynak belli)
-    expect(document.querySelector('.mon-dup-badge')).not.toBeNull()
-    expect(document.querySelector('.mon-dup-hint')).not.toBeNull()
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).not.toBeNull()
+    expect(screen.getByText(/kaynak izlemenin birebir kopyası|an exact copy of the source monitor/i)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('https://www.example.com/').value).toMatch(/\(Kopya\)$/)
 
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
@@ -197,6 +227,8 @@ describe('KeywordMonitorPage', () => {
       active: false,   // duraklatılmış kaynağın kopyası da pasif doğar
       // Bildirim grubu da kopyalanir: kopya, kaynagin alarmini ALAN ekibe gitsin.
       notificationGroupId: 7,
+      // 7/24 izleme ekibi (2026-09-27): açık anahtar + açık grup seçimi de kopyalanır
+      nocNotify: true, nocGroupIds: [2, 3],
     })
   })
 
@@ -208,28 +240,28 @@ describe('KeywordMonitorPage', () => {
     ] })
     const { container } = render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://a.example.com')
+    await cardTitle.find('https://a.example.com')
 
     // Pano varsayılan KAPALI → aç/kapa çubuğuna tıkla
-    expect(container.querySelector('.stats-panel')).toBeNull()
-    fireEvent.click(container.querySelector('.stats-collapse-bar'))
-    expect(container.querySelector('.stats-panel')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).toBeNull()
+    fireEvent.click(container.querySelector('[data-slot="stats-toggle"]'))
+    expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
 
-    expect(container.querySelector('.stat-item-total .stat-value').textContent).toBe('3')
-    expect(container.querySelector('.stat-item-critical .stat-value').textContent).toBe('1')  // İhlal (down)
-    expect(container.querySelector('.stat-item-error .stat-value').textContent).toBe('1')       // Hata (error)
-    expect(container.querySelector('.stat-item-high .stat-value').textContent).toBe('1')         // Aktif alarm
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="total"] [data-slot="stat-value"]').textContent).toBe('3')
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="critical"] [data-slot="stat-value"]').textContent).toBe('1')  // İhlal (down)
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="error"] [data-slot="stat-value"]').textContent).toBe('1')       // Hata (error)
+    expect(container.querySelector('[data-slot="stat-item"][data-tone="high"] [data-slot="stat-value"]').textContent).toBe('1')         // Aktif alarm
 
     // "Hata" kartına tıkla → yalnız error url kalır (İhlal'den ayrı)
-    fireEvent.click(container.querySelector('.stat-item-error'))
-    await waitFor(() => expect(screen.queryByText('https://a.example.com')).not.toBeInTheDocument())
-    expect(screen.getByText('https://c.example.com')).toBeInTheDocument()
-    expect(screen.queryByText('https://b.example.com')).not.toBeInTheDocument()
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="error"]'))
+    await waitFor(() => expect(cardTitle.query('https://a.example.com')).not.toBeInTheDocument())
+    expect(cardTitle.get('https://c.example.com')).toBeInTheDocument()
+    expect(cardTitle.query('https://b.example.com')).not.toBeInTheDocument()
 
     // Tekrar tıkla → filtre temizlenir
-    fireEvent.click(container.querySelector('.stat-item-error'))
-    await screen.findByText('https://a.example.com')
-    expect(screen.getByText('https://b.example.com')).toBeInTheDocument()
+    fireEvent.click(container.querySelector('[data-slot="stat-item"][data-tone="error"]'))
+    await cardTitle.find('https://a.example.com')
+    expect(cardTitle.get('https://b.example.com')).toBeInTheDocument()
   })
 
   it('sayfalama: 120 kayıt → 50 kart + "Page 1 of 3"; Sonraki → 51.; tek sayfada nav yok', async () => {
@@ -238,21 +270,21 @@ describe('KeywordMonitorPage', () => {
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: many })
     const { container, unmount } = render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
-    await screen.findByText('https://m1.example.com/')
-    expect(container.querySelectorAll('.upt-card')).toHaveLength(50)
+    await cardTitle.find('https://m1.example.com/')
+    expect(container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(50)
     expect(screen.getByText('Page 1 of 3')).toBeInTheDocument()
     expect(screen.getByText('1–50 of 120 records')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
-    await screen.findByText('https://m51.example.com/')
-    expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+    await cardTitle.find('https://m51.example.com/')
+    expect(cardTitle.query('https://m1.example.com/')).toBeNull()
     expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
     unmount()
 
     // Tek sayfa (30 kayıt): gezinme yok ama kayıt bilgisi var
     api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: many.slice(0, 30) })
     render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
-    await screen.findByText('https://m1.example.com/')
+    await cardTitle.find('https://m1.example.com/')
     expect(screen.getByText('1–30 of 30 records')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
   })
@@ -267,8 +299,8 @@ describe('KeywordMonitorPage', () => {
         { ...monitor, id: 2, url: 'https://b.example.com/', group_name: 'G2' },
       ] })
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-      await screen.findByText('https://b.example.com/')
-      expect(screen.queryByText('https://a.example.com/')).toBeNull()
+      await cardTitle.find('https://b.example.com/')
+      expect(cardTitle.query('https://a.example.com/')).toBeNull()
     } finally { window.history.replaceState({}, '', '/') }
   })
 
@@ -276,7 +308,7 @@ describe('KeywordMonitorPage', () => {
     window.history.replaceState({}, '', '/?tab=keyword')
     try {
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-      await screen.findByText('https://www.example.com/')
+      await cardTitle.find('https://www.example.com/')
       const box = screen.getByPlaceholderText(/ara|search/i)
       fireEvent.change(box, { target: { value: 'example' } })
       await waitFor(() => expect(window.location.search).toContain('q=example'), { timeout: 1500 })
@@ -293,8 +325,8 @@ describe('KeywordMonitorPage', () => {
       const many = Array.from({ length: 120 }, (_, i) => ({ ...monitor, id: i + 1, url: `https://m${i + 1}.example.com/` }))
       api.monitoring.getKeywordMonitors.mockResolvedValue({ success: true, data: many })
       render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
-      await screen.findByText('https://m51.example.com/')
-      expect(screen.queryByText('https://m1.example.com/')).toBeNull()
+      await cardTitle.find('https://m51.example.com/')
+      expect(cardTitle.query('https://m1.example.com/')).toBeNull()
       expect(screen.getByText('51–100 of 120 records')).toBeInTheDocument()
     } finally { window.history.replaceState({}, '', '/'); localStorage.clear() }
   })
@@ -332,5 +364,85 @@ describe('KeywordMonitorPage', () => {
     } finally {
       window.history.replaceState({}, '', '/')
     }
+  })
+
+  // ── shadcn geçişi (2026-09-25): Gelişmiş ayarlar Collapsible + zaman aşımı Slider ─────────
+  it('Gelişmiş ayarlar (Collapsible) kapalı başlar; açınca zaman aşımı Slider klavyeyle değişir ve payload timeoutMs taşır', async () => {
+    api.monitoring.createKeywordMonitor.mockResolvedValue({ success: true, data: {} })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor|yeni monitör/i }))
+    const form = screen.getByRole('dialog')
+
+    const toggle = within(form).getByRole('button', { name: /advanced settings|gelişmiş ayarlar/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Kapalıyken içerik DOM'da yok (eskisi gibi). Not: kontrol ARALIĞI çubuğu (IntervalSlider) da
+    // role="slider" — ada göre ayrılır.
+    expect(within(form).queryByRole('slider', { name: /request timeout|istek zaman aşımı/i })).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const thumb = within(form).getByRole('slider', { name: /request timeout|istek zaman aşımı/i })
+    expect(thumb).toHaveAttribute('aria-valuenow', '10')   // varsayılan 10000 ms → 10 sn
+    fireEvent.keyDown(thumb, { key: 'ArrowRight' })
+    expect(thumb).toHaveAttribute('aria-valuenow', '11')
+    expect(thumb.getAttribute('aria-valuetext')).toMatch(/\b11 (s|sn)\b/)   // okunur değer birimli
+
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'example' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createKeywordMonitor).toHaveBeenCalled())
+    expect(api.monitoring.createKeywordMonitor.mock.calls[0][0].timeoutMs).toBe(11000)
+  })
+
+  it('cache busting yardımı formun ÜSTÜNDE ayrı bir pencerede açılır; Kapat yalnız onu kapatır', async () => {
+    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor|yeni monitör/i }))
+    const form = screen.getByRole('dialog')
+
+    fireEvent.click(within(form).getByRole('button', { name: /how to use|nasıl kullanılır/i }))
+    const help = await screen.findByRole('dialog', { name: /what is cache busting|cache busting nedir/i })
+    expect(within(help).getByText(/^Cache busting: (add|URL içine)/)).toBeInTheDocument()
+    // İç içe ModalShell: derinlik React ağacından → yardım penceresi formdan YÜKSEK katmanda
+    expect(Number(help.style.zIndex)).toBeGreaterThan(Number(form.style.zIndex))
+
+    fireEvent.click(within(help).getByRole('button', { name: /^(close|kapat)$/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /what is cache busting|cache busting nedir/i })).toBeNull())
+    expect(form).toBeInTheDocument()   // form (ve yazılanlar) yerinde
+  })
+
+  it('kart yoğunluğu (2026-09-27): araç çubuğunun İLK öğesi Kompakt/Zengin seçici; her açılış Zengin, seçim ızgaraya + kartlara iner, toplu seçim ve detay çalışır; Kompakt KALICI DEĞİL', async () => {
+    const storedModes = () => Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((k) => k && k.startsWith('sm.cardMode'))
+    const first = render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle.find('https://www.example.com/')
+    const grid = document.querySelector('.upt-grid')
+    const toolbar = document.querySelector('.upt-toolbar')
+    expect(toolbar.firstElementChild).toHaveAttribute('data-slot', 'card-density-toggle')
+    expect(toolbar.firstElementChild.className).toMatch(/(^|\s)mr-auto(\s|$)/)
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(grid).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'rich')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('radio', { name: /^(Compact|Kompakt)$/ }))
+    expect(grid).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="card"]')).toHaveAttribute('data-density', 'compact')
+    expect(grid.querySelector('[data-slot="monitor-card-rich"]')).toBeNull()
+    expect(storedModes()).toEqual([])   // seçim tarayıcıya yazılmaz
+    // Kompakt'ta da toplu seçim çalışır ve başlık (stretched button) detayı açar
+    fireEvent.click(screen.getByRole('checkbox', { name: titleLikeBulk('https://www.example.com/') }))
+    await waitFor(() => expect(document.querySelector('[data-slot="bulk-action-bar"]')).toHaveTextContent(/1 (selected|seçili)/))
+    fireEvent.click(grid.querySelector('[data-monitor-open]'))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    first.unmount()
+
+    // sayfaya dönüş (yeni bağlama) yeniden Zengin açılır — Kompakt hatırlanmaz
+    render(<KeywordMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await cardTitle.find('https://www.example.com/')
+    expect(document.querySelector('.upt-grid')).toHaveAttribute('data-density', 'rich')
+    expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
+    expect(document.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
   })
 })

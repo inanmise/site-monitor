@@ -2,6 +2,9 @@ import { History, Clock3, ArrowRightCircle } from 'lucide-react'
 import { formatDate } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 /**
  * Alarm kartı imza şeridi (2026-09-16, kullanıcı isteği): "bu alarm hangi takımın, daha önce kaç kez
@@ -10,8 +13,10 @@ import TeamBadge from '../../ui/TeamBadge.jsx'
  *
  * <p>İmza = alan adı + alarm tipi (sunucudaki `RepeatKey` ile aynı tanım). Sayılar liste ucundan
  * TEK toplu sorguyla gelir (history_*), kart başına istek YOKTUR.
+ * Çizim shadcn: çipler Badge (outline, hap), geçmiş bağlantısı ghost Button.
  */
 const DAY = 86_400_000
+const CHIP = 'rounded-full font-normal text-muted-foreground [&_strong]:font-semibold [&_strong]:text-foreground'
 
 /** ISO (zone'suz = UTC) damgayı ms'e çevirir; bozuksa null. */
 function ms(iso) {
@@ -41,34 +46,35 @@ export default function AlertSignatureStrip({ alert: a, teamName, onShowHistory 
   if (count <= 1 && !hasTeam && !prev && quietDays == null) return null
 
   return (
-    <div className="alh-sig">
+    <div className="mt-1.5 mb-0.5 flex flex-wrap items-center gap-1.5 text-[0.78em]">
       {hasTeam && (
-        <span className="alh-sig-chip alh-sig-chip--team">
+        <Badge variant="outline" className={cn(CHIP, 'bg-primary/5')}>
           {t('alh.sig.team')}: <TeamBadge teamId={a.team_id} teamName={teamName} size={11} />
-        </span>
+        </Badge>
       )}
       {count > 1 && (
-        <span className="alh-sig-chip" title={t('alh.sig.countTip')}>
+        <Badge variant="outline" className={CHIP} title={t('alh.sig.countTip')}>
           <History size={11} aria-hidden="true" /> {t('alh.sig.count', count)}
-        </span>
+        </Badge>
       )}
       {prev ? (
-        <span className="alh-sig-chip" title={t('alh.sig.prevTip')}>
+        <Badge variant="outline" className={CHIP} title={t('alh.sig.prevTip')}>
           <Clock3 size={11} aria-hidden="true" /> {t('alh.sig.prev')}: <strong>{formatDate(prev)}</strong>
-          {gapDays != null && <span className="alh-sig-dim"> · {gapDays === 0 ? t('alh.sig.gapSameDay') : t('alh.sig.gap', gapDays)}</span>}
-        </span>
+          {gapDays != null && <span className="opacity-75"> · {gapDays === 0 ? t('alh.sig.gapSameDay') : t('alh.sig.gap', gapDays)}</span>}
+        </Badge>
       ) : count <= 1 ? (
-        <span className="alh-sig-chip alh-sig-chip--first">{t('alh.sig.first')}</span>
+        <Badge variant="outline" className={cn(CHIP, 'border-success/40 text-success')}>{t('alh.sig.first')}</Badge>
       ) : null}
       {quietDays != null && (
-        <span className="alh-sig-chip alh-sig-chip--quiet" title={t('alh.sig.quietTip')}>
+        <Badge variant="outline" className={cn(CHIP, 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300')} title={t('alh.sig.quietTip')}>
           {t('alh.sig.quiet', quietDays)}
-        </span>
+        </Badge>
       )}
       {count > 1 && (
-        <button type="button" className="alh-sig-link" onClick={() => onShowHistory?.(a)}>
+        <Button type="button" variant="ghost" size="xs" className="h-auto rounded-full px-2 py-0.5 text-[1em] text-primary hover:bg-primary/10 hover:text-primary"
+          onClick={() => onShowHistory?.(a)}>
           <ArrowRightCircle size={12} aria-hidden="true" /> {t('alh.sig.showHistory')}
-        </button>
+        </Button>
       )}
     </div>
   )

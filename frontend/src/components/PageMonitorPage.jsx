@@ -1,57 +1,66 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, Fragment } from 'react'
-import { createPortal } from 'react-dom'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
-import { CheckRunningStrip } from './ui/CheckRunning.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
-import CheckAllButton from './check/CheckAllButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
 import CheckTeamPicker, { monitorTeamBuckets } from './check/CheckTeamPicker.jsx'
 import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
-import { monitorDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import MaintenanceBadge from './ui/MaintenanceBadge.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
-import MonitorGuideButton from './ui/MonitorGuideButton.jsx'
+import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { RefreshCw, Plus, Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox } from 'lucide-react'
-import { useModalScrollHint } from '../hooks/useModalScrollHint.js'
-import ModalScrollHint from './ui/ModalScrollHint.jsx'
+import { Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox, Copy } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
-import { LoadingBlock } from './ui/Progress.jsx'
+import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
+import SimpleTooltip from './ui/SimpleTooltip.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText, matchesProxy } from '../utils/monitorFilters.js'
-import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
-import MonitorSpark from './ui/MonitorSpark.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
+import CardDensityToggle from './ui/CardDensityToggle.jsx'
+import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
-import { useEscapeKey } from '../hooks/useEscapeKey.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
+import { useMonitorResume } from '../hooks/useMonitorResume.js'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
+import { Input } from '@/components/shadcn/input'
+import { TabsContent } from '@/components/shadcn/tabs'
+import { Textarea } from '@/components/shadcn/textarea'
+import { cn } from '@/lib/utils'
+import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import PageMonitorCard from './page/PageMonitorCard.jsx'
+import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import {
+  MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
+} from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
@@ -79,23 +88,39 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, LINK: Link2, IFRAME:
 const PAGE_ISSUE_COLS = '1fr 0.9fr 2fr 0.7fr 0.45fr 0.5fr 0.85fr 0.4fr'
 // Hariç desenleri check-time'da 50 satırda kırpılır (PageCheckerService.EXCLUDE_MAX_LINES) — istemci de aynı sınırı uygular.
 const EXCLUDE_MAX_LINES = 50
-const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
+// Durum metin rengi (özet metriği, geçmiş satırı). CONFIG_ERROR: URL'de host yok (şemasız/bozuk) →
+// kesinti DEĞİL, alarm üretmez; mor ile ayrışır. Eski hex paletinin Tailwind karşılıkları (+ koyu tema).
+const STATUS_TEXT = {
+  OK: 'text-success',
+  DEGRADED: 'text-amber-600 dark:text-amber-400',
+  DOWN: 'text-destructive',
+  CONFIG_ERROR: 'text-violet-600 dark:text-violet-400',
+  unknown: 'text-muted-foreground',
+}
+// Sorun türü metin rengi — BLOCKED/TIMEOUT nötr tonlarda (kesin kırık değil).
+const ISSUE_TEXT = {
+  MIXED_CONTENT: 'text-amber-700 dark:text-amber-400',
+  SLOW: 'text-sky-700 dark:text-sky-400',
+  BLOCKED: 'text-stone-500 dark:text-stone-400',
+  TIMEOUT: 'text-yellow-700 dark:text-yellow-500',
+  BROKEN: 'text-red-700 dark:text-red-400',
+}
+const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', nocNotify: false, nocGroupIds: [], teamId: '', tags: '', notifyEmail: true, alertLevel: 'WARNING', notifyWebhook: true,
   mode: 'SINGLE_PAGE', crawlDepth: 2, crawlMaxPages: 50, excludePatterns: '', slowResourceMs: 2000, useProxy: 'AUTO',
   alertThirdParty: false, alertMixedContent: true, alertTimeout: true, resourceConcurrency: 5,
   intervalSeconds: 300, timeoutMs: 4000, confirmAttempts: 3, confirmIntervalSeconds: 30,
   recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true }
 
-export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams = [] }) {
+export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const { showPrompt, showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canWrite = isAdmin || isTeamAdmin || systemRole === 'USER'
-  const myTeam = teamId != null ? String(teamId) : null
   const [teams, setTeams] = useState([])   // hook'tan ÖNCE tanımlı olmalı (TDZ)
   // Takım seçimi + "kendi takımı" kapısı artık ÜYESİ olunan tüm takımlar (2026-09-18); hook 9 sayfada ortak.
-  const { canPickTeam, pickTeams, isOwnTeam } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId })
+  const { canPickTeam, pickTeams, isOwnTeam, defaultTeamId, defaultTeamName, teamless } = useMonitorTeamPick({ isAdmin, adminTeams: teams, myTeams, teamId, teamName })
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
@@ -107,18 +132,23 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   const sparks = useSparklines('page')   // kart mini trendi (2026-09-12)
   const sla = useSla('page')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
+  // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
+  const [density, setDensity] = useCardDensity('page')
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
-  const [selected, setSelected] = useState(null)
-  useEscapeKey(!!selected, closeDetail)   // Escape ile kapat (QA ISSUE-002, 2026-09-13; ModalShell'e taşınmamış detay modalı)
+  const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [issues, setIssues] = useState([])
   const [issuesLoading, setIssuesLoading] = useState(false)
   const [confirmations, setConfirmations] = useState([])   // canlı teyit zincirleri (Teyit denemesi X/N)
   const [issueFilter, setIssueFilter] = useState('all')   // all | BROKEN | MIXED_CONTENT | SLOW | firstParty
+  // await SONRASI için güncel değerler (bayat kapanış YOK): checkNow/refreshModal yanıtı gelene kadar pencere
+  // kapanmış, başka izlemeye geçilmiş ya da sorun süzgeci değişmiş olabilir.
+  const selectedIdRef = useRef(null)
+  selectedIdRef.current = selected?.id ?? null
+  const issueFilterRef = useRef(issueFilter)
+  issueFilterRef.current = issueFilter
   const [modal, setModal] = useState(null)
-  // Düzenleme modalı: sabit başlık + kaydırılan gövde + sabit alt bar (useModalScrollHint).
-  const scrollHint = useModalScrollHint()
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -136,6 +166,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('issues')
+  const deepLinkTab = useDeepLinkTab('issues')   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
@@ -169,6 +200,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       setLoading(false); setSecondsSince(0)
     }
   }, [])
+  // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
+  // çubuğuyla aynı yazma yolu ({ active: true }); açık detay penceresinin kopyası da etkin olarak işaretlenir.
+  const { resume, isResuming } = useMonitorResume(api.monitoring.updatePageMonitor, (r) => {
+    load(); setSelected((cur) => (cur && cur.id === r.id ? { ...cur, active: true } : cur))
+  })
 
   const checkable = monitors.filter(canCheckRow)
   const checkRun = useCheckRun({
@@ -240,7 +276,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     setConfirmations(res?.success ? (res.data ?? []) : [])
   }
   function openDetail(m) {
-    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab('issues')
+    setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
   function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]) }
@@ -249,20 +285,23 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // (Kontrol Geçmişi kendi 30sn canlı yenilemesini CheckHistoryTab içinde yapar.)
   async function refreshModal() {
     if (!selected) return
+    const { id, url } = selected
     const res = await api.monitoring.getPageMonitors()
     if (res?.success) {
       setMonitors(res.data)
-      const fresh = (res.data || []).find(x => x.id === selected.id)
-      if (fresh) setSelected(fresh)
+      const fresh = (res.data || []).find(x => x.id === id)
+      if (fresh) setSelected(prev => (prev?.id === id ? fresh : prev))   // A'nın tazesi B'nin penceresini değiştirmesin
     }
-    loadIssues(selected.id, issueFilter, true)
-    loadConfirmations(selected.url)
+    // Pencere o arada kapandı / başka izlemeye geçildi → A'nın sorunları B'nin penceresine yüklenmesin.
+    if (selectedIdRef.current !== id) return
+    loadIssues(id, issueFilterRef.current, true)
+    loadConfirmations(url)
   }
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? 30000 : 0, false)
 
   function openNew() {
     setTestResult(null); setDupSource(null)
-    setForm({ ...emptyForm, teamId: isAdmin ? '' : (myTeam ?? ''),
+    setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs,
       slowResourceMs: defaults?.slowResourceMs ?? emptyForm.slowResourceMs,
@@ -273,7 +312,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   }
   /** Monitör (snake_case) → form state eşlemesi. Edit ve Kopyala AYNI eşlemeyi kullanır → alan kaçmaz. */
   function formFrom(m) {
-    return { name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '',
+    return { name: m.name || '', url: m.url || '', groupName: m.group_name || '', notificationGroupId: m.notification_group_id != null ? String(m.notification_group_id) : '', nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
       teamId: m.team_id != null ? String(m.team_id) : '',
       tags: m.tags || '', notifyEmail: m.notify_email !== false, alertLevel: m.alert_level || 'WARNING', notifyWebhook: m.notify_webhook !== false,
       mode: m.mode || 'SINGLE_PAGE', crawlDepth: m.crawl_depth ?? 2, crawlMaxPages: m.crawl_max_pages ?? 50,
@@ -323,6 +362,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
+        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
         excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs), useProxy: form.useProxy || 'AUTO',
@@ -429,7 +469,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Buradaki eski loadHistory(m.id, rangeDays) çağrısı geçmiş yönetimi o bileşene taşınırken
         // temizlenmemişti; ikisi de TANIMSIZ olduğu için modal açıkken kontrol butonu ReferenceError
         // atıyor, altındaki setChecking(null) hiç çalışmıyor ve buton kalıcı kilitleniyordu.
-        if (selected?.id === m.id) { setSelected(res.data); loadIssues(m.id, issueFilter) }
+        // Bayat kapanış YOK: `selected`/`issueFilter` isteğin başladığı andaki değerlerdir. Yanıt gelene kadar
+        // pencere kapanmış ya da başka izlemeye geçilmiş olabilir → yalnız HÂLÂ açık olan aynı kayıt tazelenir.
+        setSelected(prev => (prev?.id === m.id ? res.data : prev))
+        if (selectedIdRef.current === m.id) loadIssues(m.id, issueFilterRef.current)
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
@@ -491,7 +534,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     const res = await api.monitoring.updatePageMonitor(selected.id, { excludePatterns: merged })
     if (res?.success) {
       toast.success(t('page.excludeAdded'))
-      if (res.data) setSelected(res.data)
+      if (res.data) { const id = selected.id; setSelected(prev => (prev?.id === id ? res.data : prev)) }   // kardeş: bayat kapanış yok
       load()
     } else {
       toast.error(res?.error || 'Error')
@@ -581,7 +624,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'page-monitors', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
+    listKey: 'page-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -605,60 +648,193 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const onStatClick = (key) => setStatFilter(k => k === key ? null : key)
   const toggleStats = () => { if (statsVisible) setStatFilter(null); setStatsVisible(v => !v) }
 
-  // CONFIG_ERROR: URL'de host yok (şemasız/bozuk) → kesinti DEĞİL, alarm üretmez; mor ile ayrışır.
-  const STATUS_COLOR = { OK: '#15803d', DEGRADED: '#e07b00', DOWN: '#c0392b', CONFIG_ERROR: '#7c3aed', unknown: '#71717a' }
-  function cardClass(m) {
-    if (m.status === 'OK') return 'upt-card--up'
-    if (m.status === 'DOWN') return 'upt-card--down'
-    return 'upt-card--unknown'   // DEGRADED / CONFIG_ERROR / unknown
-  }
+  // Durum sözlüğü (kart şeridi / rozet / detay kenarı): OK → up, DOWN → down, DEGRADED → warn;
+  // CONFIG_ERROR ve bilinmeyen → unknown (kesinti gibi KIRMIZI çizilmez — alarm da üretmez).
+  const statusKey = (m) => (m?.status === 'OK' ? 'up' : m?.status === 'DOWN' ? 'down' : m?.status === 'DEGRADED' ? 'warn' : 'unknown')
+  const statusText = (s) => STATUS_TEXT[s] || STATUS_TEXT.unknown
   function statusBadge(m) {
     const s = m?.status
     const label = s === 'OK' ? t('page.statusOk') : s === 'DEGRADED' ? t('page.statusDegraded')
       : s === 'DOWN' ? t('page.statusDown') : s === 'CONFIG_ERROR' ? t('page.statusConfigError')
       : t('page.statusUnknown')
-    return <span className="upt-badge" style={{ color: STATUS_COLOR[s] || STATUS_COLOR.unknown }}>
-      <span className="upt-badge-dot" style={{ background: STATUS_COLOR[s] || STATUS_COLOR.unknown }} />{label}</span>
-  }
-  const alarmLevelColor = (lvl) => lvl === 'CRITICAL' ? '#c0392b' : lvl === 'HIGH' ? '#e07b00' : '#f0a500'
-  function alarmBadge(m) {
-    if (!m?.active_alarm) return null
-    const title = `${t('page.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
-    return <span className={`upt-alarm-ico${m.alarm_acknowledged ? '' : ' pulse'}`}
-      style={{ color: alarmLevelColor(m.alarm_level) }} title={title}><AlertTriangle size={14} /></span>
+    // Yapılandırma hatası "bilinmiyor" sözlüğünde ama MOR mürekkeple ayrışır (eski palet).
+    return <MonitorStatusBadge status={statusKey(m)} className={s === 'CONFIG_ERROR' ? 'border-violet-300 text-violet-700 dark:border-violet-800 dark:text-violet-300' : undefined}>{label}</MonitorStatusBadge>
   }
 
   const selectedTeamLabel = canPickTeam
     ? (pickTeams.find(tm => String(tm.id) === String(form.teamId))?.name || t('page.noTeam'))
-    : (teamName || t('page.noTeam'))
+    : (defaultTeamName || t('page.noTeam'))
   const issueFilters = ['all', 'BROKEN', 'TIMEOUT', 'BLOCKED', 'MIXED_CONTENT', 'SLOW', 'firstParty']
+  const excludeCount = (form.excludePatterns || '').split('\n').map(s => s.trim()).filter(Boolean).length
+
+  // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
+  // Detay penceresi açıkken form ONUN İÇİNDE çizilir: ModalShell iç içe derinliği React ağacından okur,
+  // böylece form (ve örtüsü) detay penceresinin ÜSTÜNDE katmanlanır.
+  const formModal = modal && (
+    <MonitorFormModal onClose={closeEdit} icon={ScanSearch}
+      title={modal === 'new' ? t('page.modalNew') : t('page.modalEdit')}
+      duplicate={!!dupSource} busy={saving}
+      // Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen).
+      busyLabel={saving ? t('mon.saving') : testing ? t('page.testing') : null}
+      footer={<>
+        <Button variant="secondary" className="mr-auto" onClick={runTest}
+          aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
+          <FlaskConical size={14} />{t('page.test')}
+        </Button>
+        {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('page.delete')}</Button>}
+        <Button variant="secondary" onClick={closeEdit}>{t('page.cancel')}</Button>
+        <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('page.save')}</Button>
+      </>}>
+      {dupSource
+        ? <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>
+        : <AlertBanner tone="info" icon={ScanSearch}>{t('page.typeInfo')}</AlertBanner>}
+
+      {modal === 'new' && teamless && <FormNoTeamAlert />}
+      <FormGrid>
+        <FormField full label={t('page.url')} required hint={t('page.urlHint')}>
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
+              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
+          )}
+        </FormField>
+        <FormField label={t('page.name')}>
+          {({ id }) => <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
+        </FormField>
+        <FormField label={t('page.team')} required>
+          {({ id }) => canPickTeam
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            : <Input id={id} value={defaultTeamName || t('page.noTeam')} disabled />}
+        </FormField>
+        <FormField full label={t('page.group')} required>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              options={[{ value: '', label: t('page.noGroup') }, ...groupSelectOptions]}
+              creatable onCreate={() => {}} searchThreshold={2} placeholder={t('page.noGroup')} />
+          )}
+        </FormField>
+        <NotifyChannels
+          notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
+          alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+          teamLabel={selectedTeamLabel} teamId={form.teamId}
+          groupId={form.notificationGroupId}
+          onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
+        <NocNotifyField type="PAGE" checked={form.nocNotify} groupIds={form.nocGroupIds} canOpenSettings={globalAdmin}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))} />
+        <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
+          onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
+
+        {/* Mod seçimi */}
+        <FormField label={t('page.mode')}>
+          {({ id }) => (
+            <SearchableSelect id={id} value={form.mode} onChange={v => setForm(f => ({ ...f, mode: v }))}
+              options={[{ value: 'SINGLE_PAGE', label: t('page.modeSingle') }, { value: 'SITE_CRAWL', label: t('page.modeCrawl') }]} />
+          )}
+        </FormField>
+        {form.mode === 'SITE_CRAWL' && (<>
+          <FormField label={t('page.crawlDepth')}>
+            {({ id }) => <Input id={id} type="number" min="0" max="5" value={form.crawlDepth} onChange={e => setForm(f => ({ ...f, crawlDepth: Number(e.target.value) }))} />}
+          </FormField>
+          <FormField label={t('page.crawlMaxPages')}>
+            {({ id }) => <Input id={id} type="number" min="1" max="500" value={form.crawlMaxPages} onChange={e => setForm(f => ({ ...f, crawlMaxPages: Number(e.target.value) }))} />}
+          </FormField>
+        </>)}
+        <FormField full hint={t('page.excludeHint')}
+          label={<>{t('page.excludePatterns')}
+            {excludeCount > 0 && <Badge variant="outline" className="font-semibold text-muted-foreground">{t('page.excludeCount', excludeCount)}</Badge>}</>}>
+          {({ id, describedBy }) => (
+            <Textarea id={id} aria-describedby={describedBy} rows={4} className="font-mono text-[13px] leading-normal"
+              value={form.excludePatterns} spellCheck={false} placeholder={t('page.excludePh')}
+              onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))} />
+          )}
+        </FormField>
+        {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
+        <LabelSlot full>
+          <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
+            effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
+        </LabelSlot>
+
+        <CheckField full checked={form.alertThirdParty} onCheckedChange={v => setForm(f => ({ ...f, alertThirdParty: v }))}
+          label={t('page.alertThirdParty')} hint={t('page.alertThirdPartyHint')} />
+        <CheckField full checked={form.alertMixedContent} onCheckedChange={v => setForm(f => ({ ...f, alertMixedContent: v }))}
+          label={t('page.alertMixedContent')} hint={t('page.alertMixedContentHint')} />
+        <CheckField full checked={form.alertTimeout} onCheckedChange={v => setForm(f => ({ ...f, alertTimeout: v }))}
+          label={t('page.alertTimeout')} hint={t('page.alertTimeoutHint')} />
+
+        {/* Etiketler */}
+        <FormSection title={t('page.tagsTitle')} required>
+          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('page.tagsPlaceholder')} suggestions={teamTags} />
+        </FormSection>
+
+        {/* Gelişmiş — açılır/kapanır (shadcn Collapsible; kapalıyken içerik DOM'da yok, eskisi gibi) */}
+        <Collapsible open={advOpen} onOpenChange={setAdvOpen} className="min-w-0 rounded-lg border bg-muted/30 sm:col-span-2">
+          <CollapsibleTrigger asChild>
+            <Button type="button" variant="ghost"
+              className="h-auto w-full justify-start gap-2 rounded-lg px-3.5 py-3 font-semibold hover:bg-muted/50">
+              <ChevronDown size={16} aria-hidden="true"
+                className={cn('text-muted-foreground transition-transform motion-reduce:transition-none', advOpen && 'rotate-180')} />
+              {t('page.advanced')}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="flex min-w-0 flex-col gap-3 px-3.5 pb-3.5">
+            <FormGrid>
+              <FormField label={t('page.slowResourceMs')}>
+                {({ id }) => <Input id={id} type="number" min="100" step="100" value={form.slowResourceMs} onChange={e => setForm(f => ({ ...f, slowResourceMs: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.resourceConcurrency')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.resourceConcurrency} onChange={e => setForm(f => ({ ...f, resourceConcurrency: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.timeoutMs')}>
+                {({ id }) => <Input id={id} type="number" min="1000" step="500" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.confirmAttempts')}>
+                {({ id }) => <Input id={id} type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.confirmInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.recoveryChecks')}>
+                {({ id }) => <Input id={id} type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} />}
+              </FormField>
+              <FormField label={t('page.recoveryInterval')}>
+                {({ id }) => <Input id={id} type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} />}
+              </FormField>
+            </FormGrid>
+            <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('page.active')} />
+            <FormHint full={false}>ⓘ {t('page.confirmHint')}</FormHint>
+          </CollapsibleContent>
+        </Collapsible>
+      </FormGrid>
+
+      {testResult && (
+        <AlertBanner className="mt-3"
+          tone={testResult.error ? 'danger' : testResult.status === 'OK' ? 'success' : 'warning'}
+          icon={testResult.error || testResult.status !== 'OK' ? AlertTriangle : Check}
+          title={testResult.error ? t('page.testError')
+            : t(`page.status${testResult.status === 'OK' ? 'Ok' : testResult.status === 'DEGRADED' ? 'Degraded' : 'Down'}`)}>
+          {testResult.error
+            ? testResult.error
+            : <>
+                {testResult.total_resources} {t('page.mResources')} · {testResult.broken_resources} {t('page.mBroken')} · {testResult.timeout_count ?? 0} {t('page.mTimeout')} · {testResult.mixed_content_count} {t('page.mMixed')}
+                {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}
+              </>}
+        </AlertBanner>
+      )}
+      {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
+      {modal !== 'new' && (
+        <ChangeNoteField t={t} id="page-change-note" value={changeNote} onChange={setChangeNote} />
+      )}
+    </MonitorFormModal>
+  )
 
   return (
     <div className="upt-page">
-      <div className="upt-header">
-        <div>
-          <h2 className="upt-title">{t('page.title')}</h2>
-          <p className="upt-subtitle">{t('page.subtitle')}</p>
-        </div>
-        <div className="upt-header-right">
-          <span className="upt-last-check">
-            {t('page.autoRefresh').replace('{0}', Math.max(0, REFRESH_INTERVAL - secondsSince))}
-          </span>
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} />{t('page.refresh')}
-          </Button>
-          <CheckAllButton count={checkable.length} running={checkRun.running}
-            done={checkRun.run?.rows.length ?? 0} total={checkRun.run?.total ?? 0}
-            onClick={checkRun.openPicker} />
-          <CopyLinkButton iconOnly variant="outline" />
-          <MonitorGuideButton type="page" />
-          {canWrite && (
-            <Button size="sm" onClick={openNew}>
-              <Plus size={14} />{t('page.addMonitor')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <MonitorPageHeader type="page" title={t('page.title')} subtitle={t('page.subtitle')}
+        count={loading ? null : monitors.length} down={counts.down}
+        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
+        canWrite={canWrite} onNew={openNew} newLabel={t('page.addMonitor')} />
 
       <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7'), t('page.how8')]} />
 
@@ -671,11 +847,13 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {!loading && monitors.length > 0 && (
         <div className="upt-toolbar" style={{ justifyContent: 'flex-end', gap: 8 }}>
+          {/* Kart görünümü seçicisi satırın İLK öğesi (mr-auto): süzgeçler + arama sağda kalır; telefonda satır sarar */}
+          <CardDensityToggle value={density} onChange={setDensity} className="mr-auto" />
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          <input className="upt-search" type="text" placeholder={t('page.searchPlaceholder')}
+          <Input type="text" className="w-full sm:w-auto sm:min-w-[200px]" placeholder={t('page.searchPlaceholder')} aria-label={t('page.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       )}
@@ -689,141 +867,98 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         <StatusBlock tone="neutral" icon={Inbox} title={canWrite ? t('page.noMonitorsAdmin') : t('page.noMonitors')} description={canWrite ? t('empty.hintMonitorsAdmin') : t('empty.hintMonitors')} />
       ) : (
         <>
-        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow}
+        <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="PAGE"
           api={{ update: api.monitoring.updatePageMonitor, remove: api.monitoring.deletePageMonitor }}
           onClear={() => setBulkSel(new Set())} onDone={load}
           onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22; vekil süzgeciyle görünür oldu) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
-        <div className="upt-grid">
+        <div className="upt-grid" data-density={density}>
           {pager.pageItems.map(m => (
-            /* Kart klavyeyle de açılabilir (ScriptedMonitorPage kalıbı): role+tabIndex+Enter/Space.
-               onKeyDown YALNIZ kartın KENDİ hedefinde çalışır — içerideki düğmelerde Enter'a
-               basıldığında tuş olayı karta baloncuklanıp detayı DA açardı (çift eylem). */
-            <div key={m.id} className={`upt-card ${cardClass(m)}${m.active_alarm ? ' upt-card--alarm' : ''}${!m.active ? ' mon-row-inactive' : ''}`}
-              role="button" tabIndex={0} aria-label={t('mon.openDetailFor', m.url)}
-              onKeyDown={e => {
-                if (e.target !== e.currentTarget) return
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(m) }
-              }}
-              onClick={() => openDetail(m)}>
-              <div className="upt-card-top">
-                {canManageRow(m) && (
-                  <input type="checkbox" className="upt-card-check" checked={bulkSel.has(m.id)} onChange={() => toggleBulk(m.id)} onClick={(e) => e.stopPropagation()} aria-label={t('bulk.selectOneFor', m.url)} />
-                )}
-                {statusBadge(m)}
-                {alarmBadge(m)}<MaintenanceBadge target={m.url} />
-                <span className="upt-card-top-right">
-                  <span className="upt-port-tag">{m.mode === 'SITE_CRAWL' ? t('page.modeCrawl') : t('page.modeSingle')}</span>
-                  <CopyLinkButton iconOnly url={monitorDeepLink('page', m.id)} variant="ghost" size="icon-xs" className="upt-card-copy" />
-                </span>
-              </div>
-              <div className="upt-card-domain" title={m.url}>{m.url}</div>
-              <MonitorCardMeta monitor={m} />
-              <MonitorSpark spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days} />
-              <div className="upt-card-divider" />
-              <div className="upt-card-metrics">
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.broken_resources ?? '—'}</span>
-                  <span className="upt-metric-lbl">{t('page.mBroken')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.timeout_count ?? '—'}</span>
-                  <span className="upt-metric-lbl">{t('page.mTimeout')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.mixed_content_count ?? '—'}</span>
-                  <span className="upt-metric-lbl">{t('page.mMixed')}</span>
-                </div>
-                <div className="upt-metric">
-                  <span className="upt-metric-val">{m.total_resources ?? '—'}</span>
-                  <span className="upt-metric-lbl">{t('page.mResources')}</span>
-                </div>
-              </div>
-              <div className="upt-card-foot">
-                <span>{m.checked_at ? formatDateSec(m.checked_at) : ''}</span>
-                {canManageRow(m) && (
-                  <MonitorCardActions rowLabel={m.url}
-                    running={isRunning(m.id)}
-                    onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
-                    checkTitle={t('page.check')} editTitle={t('page.edit')}
-                    onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
-                    deleting={deleting === m.id} deleteTitle={t('page.delete')} />
-                )}
-              </div>
-            </div>
+            /* Kart sunumu page/PageMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama yuva
+               olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak; CONFIG_ERROR mor
+               rozet), toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
+            <PageMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+              spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
+              select={canManageRow(m) && (
+                <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
+              )}
+              actions={canManageRow(m) && (
+                <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
+                  running={isRunning(m.id)}
+                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  checkTitle={t('page.check')} editTitle={t('page.edit')}
+                  onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
+                  deleting={deleting === m.id} deleteTitle={t('page.delete')} />
+              )} />
           ))}
         </div>
         <PaginationBar {...pager} />
         </>
       )}
 
-      {/* ── Detail Modal ── */}
-      {selected && createPortal(
-        <div className="upt-modal-overlay" onClick={closeDetail}>
-          <div className={`upt-modal upt-modal--${selected.status === 'OK' ? 'up' : selected.status === 'DOWN' ? 'down' : 'unknown'}`} onClick={e => e.stopPropagation()}>
-            <div className="upt-modal-header">
-              <div className="upt-modal-header-left">
-                {statusBadge(selected)}
-                <span className="upt-modal-domain">{selected.url}</span>
-              </div>
-              {/* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
-                  koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
-                  kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */}
-              <MonitorModalActions
-                running={isRunning(selected.id)}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
-                checkTitle={t('page.check')}
-                onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
-                editTitle={t('page.edit')}
-                onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
-                onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
-                deleting={deleting === selected.id}
-                deleteTitle={t('page.delete')}
-                onClose={closeDetail}>
-                <CopyLinkButton iconOnly variant="outline" />
-              </MonitorModalActions>
-            </div>
-            <div className="upt-modal-divider" />
-            <div className="upt-modal-summary">
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val" style={{ color: STATUS_COLOR[selected.status] }}>{t(`page.status${selected.status === 'OK' ? 'Ok' : selected.status === 'DEGRADED' ? 'Degraded' : selected.status === 'DOWN' ? 'Down' : 'Unknown'}`)}</span><span className="upt-modal-metric-lbl">{t('page.lastStatus')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.broken_resources ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mBroken')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.timeout_count ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mTimeout')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.mixed_content_count ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mMixed')}</span></div>
-              <div className="upt-modal-metric"><span className="upt-modal-metric-val">{selected.total_resources ?? '—'}</span><span className="upt-modal-metric-lbl">{t('page.mResources')}</span></div>
-              {selected.checked_at && <div className="upt-modal-metric"><span className="upt-modal-metric-val upt-modal-metric-time">{formatDateSec(selected.checked_at)}</span><span className="upt-modal-metric-lbl">{t('page.lastCheck')}</span></div>}
-            </div>
-            <div className="upt-modal-divider" />
-            {/* Canlı teyit durumu — 30sn oto-yenilemeyle ilerler; kullanıcı denemenin kaçıncı bacağında olduğunu görür. */}
-            {confirmations.filter(c => c.alert_type === 'PAGE_DOWN' || c.alert_type === 'PAGE_INTEGRITY').map((c, i) => (
-              <div key={`cf-${i}`} className="page-confirm-banner">
-                <RefreshCw size={13} className="page-confirm-spin" />
-                {t('page.confirmBanner', Math.max(1, c.attempt), c.total_attempts,
-                  c.next_attempt_at ? formatDateSec(c.next_attempt_at) : '—')}
-              </div>
-            ))}
-            <div className="modal-tabs">
-              <button className={`modal-tab${detailTab === 'issues' ? ' active' : ''}`} onClick={() => setDetailTab('issues')}>{t('page.tabIssues')}</button>
-              <button className={`modal-tab${detailTab === 'chart' ? ' active' : ''}`} onClick={() => setDetailTab('chart')}>{t('page.tabChart')}</button>
-              <button className={`modal-tab${detailTab === 'control' ? ' active' : ''}`} onClick={() => setDetailTab('control')}>{t('hist.tab')}</button>
-              <button className={`modal-tab${detailTab === 'alerts' ? ' active' : ''}`} onClick={() => setDetailTab('alerts')}>{t('page.tabAlerts')}</button>
-              <button className={`modal-tab${detailTab === 'notes' ? ' active' : ''}`} onClick={() => setDetailTab('notes')}>{t('page.tabNotes')}</button>
-              {/* Yapılandırma geçmişi — kontrol geçmişiyle (ilk sekme) KARIŞTIRILMAMALI:
-                  orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi". */}
-              <button className={`modal-tab${detailTab === 'changes' ? ' active' : ''}`} onClick={() => setDetailTab('changes')}>{t('chg.tab')}</button>
-            </div>
-
-            {detailTab === 'issues' && (<>
-              <div className="upt-range-btns page-issue-filters" style={{ flexWrap: 'wrap' }}>
+      {/* ── Detay penceresi (ui/ModalShell) ── */}
+      {selected && (
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+          actions={
+            /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
+               koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
+               kapıları da kartla birebir — modal ayrı bir yetki yüzeyi DEĞİL. */
+            <MonitorModalActions
+              onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
+              resuming={isResuming(selected.id)}
+              running={isRunning(selected.id)}
+              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              checkTitle={t('page.check')}
+              onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
+              editTitle={t('page.edit')}
+              onDuplicate={canManageRow(selected) ? () => openDuplicate(selected) : undefined}
+              onDelete={canDeleteRow(selected) ? () => deleteMonitor(selected) : undefined}
+              deleting={deleting === selected.id}
+              deleteTitle={t('page.delete')}
+              onClose={closeDetail}>
+              <CopyLinkButton iconOnly variant="outline" />
+            </MonitorModalActions>
+          }>
+          <DetailDivider className="mt-0" />
+          <DetailSummary items={[
+            { key: 'status', label: t('page.lastStatus'), valueClassName: STATUS_TEXT[selected.status],
+              value: t(`page.status${selected.status === 'OK' ? 'Ok' : selected.status === 'DEGRADED' ? 'Degraded' : selected.status === 'DOWN' ? 'Down' : 'Unknown'}`) },
+            { key: 'broken', value: selected.broken_resources ?? '—', label: t('page.mBroken') },
+            { key: 'timeout', value: selected.timeout_count ?? '—', label: t('page.mTimeout') },
+            { key: 'mixed', value: selected.mixed_content_count ?? '—', label: t('page.mMixed') },
+            { key: 'res', value: selected.total_resources ?? '—', label: t('page.mResources') },
+            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('page.lastCheck'), time: true },
+          ]} />
+          <DetailDivider />
+          {/* Canlı teyit durumu — 30sn oto-yenilemeyle ilerler; kullanıcı denemenin kaçıncı bacağında olduğunu görür. */}
+          {confirmations.filter(c => c.alert_type === 'PAGE_DOWN' || c.alert_type === 'PAGE_INTEGRITY').map((c, i) => (
+            <AlertBanner key={`cf-${i}`} tone="warning" icon={Spinner} className="font-semibold">
+              {t('page.confirmBanner', Math.max(1, c.attempt), c.total_attempts,
+                c.next_attempt_at ? formatDateSec(c.next_attempt_at) : '—')}
+            </AlertBanner>
+          ))}
+          <DetailTabs value={detailTab} onValueChange={setDetailTab}
+            countsFor={{ kind: 'page', monitorId: selected.id, notesType: 'PAGE', notesTarget: selected.url, openAlerts: selected.active_alarm ? 1 : 0 }}
+            tabs={[['issues', t('page.tabIssues')], ['chart', t('page.tabChart')], ['control', t('hist.tab')],
+              ['alerts', t('page.tabAlerts')], ['notes', t('page.tabNotes')],
+              // Yapılandırma geçmişi — kontrol geçmişiyle KARIŞTIRILMAMALI:
+              // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
+              ['changes', t('chg.tab')]]}>
+            <TabsContent value="issues">
+              {/* Süzgeç düğmeleri: seçili olan aria-pressed. Kap yerleşim sınıfları (.upt-range-btns /
+                  .page-issue-filters) küçük düğme aralık köprüsünü sıfırlar (App.css katmansız). */}
+              <div className="upt-range-btns page-issue-filters">
                 {issueFilters.map(f => (
                   <Button key={f} type="button" variant={issueFilter === f ? 'default' : 'secondary'} size="sm"
+                    aria-pressed={issueFilter === f}
                     onClick={() => selectIssueFilter(selected.id, f)}>{t(`page.filter_${f}`)}</Button>
                 ))}
-                <Button type="button" variant="secondary" size="sm" style={{ marginLeft: 'auto' }}
+                <Button type="button" variant="secondary" size="sm" className="ml-auto"
                   disabled={!issues.length} onClick={exportIssuesCsv}><Download size={12} />{t('page.exportCsv')}</Button>
               </div>
               {issuesLoading ? <LoadingBlock label={t('modal.loading')} className="upt-modal-loading" /> : issues.length === 0 ? (
-                <LoadingBlock label={t('page.noIssues')} className="upt-modal-loading" />
+                <StatusBlock tone="neutral" icon={Inbox} title={t('page.noIssues')} className="py-8" />
               ) : (
                 <div className="upt-rt-list">
                   <div className="upt-rt-grid upt-rt-head" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
@@ -831,8 +966,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   </div>
                   {issues.map((r, i) => {
                     const RI = RES_ICON[r.resource_type] || Link2
-                    const issueColor = r.issue_type === 'MIXED_CONTENT' ? '#b45309' : r.issue_type === 'SLOW' ? '#0369a1'
-                      : r.issue_type === 'BLOCKED' ? '#78716c' : r.issue_type === 'TIMEOUT' ? '#a16207' : '#b91c1c'   // BLOCKED/TIMEOUT nötr (kesin kırık değil)
                     const scope = alarmScope(r, selected)
                     // Her tarama turunun (checked_at) başına belirgin başlık bandı — turlar net ayrışır.
                     const runStart = i === 0 || (issues[i - 1].checked_at !== r.checked_at)
@@ -840,43 +973,56 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                     return (
                       <Fragment key={`${r.id || ''}#${i}`}>
                       {runStart && (
-                        <div className="page-run-hdr">
+                        <div data-slot="issue-run-header"
+                          className="mt-2.5 flex items-center gap-2.5 border-t-[3px] border-t-primary bg-muted/50 px-2 py-1.5 text-xs font-bold">
                           <span>{r.checked_at ? formatDateSec(r.checked_at) : '—'}</span>
-                          <span className="page-run-hdr-count">{t('page.runHdrCount', runCount)}</span>
+                          <Badge variant="outline" className="bg-card font-semibold text-muted-foreground">{t('page.runHdrCount', runCount)}</Badge>
                         </div>
                       )}
                       <div className="upt-rt-grid" style={{ gridTemplateColumns: PAGE_ISSUE_COLS }}>
                         <span className="upt-rt-time">{r.checked_at ? formatDateSec(r.checked_at) : '—'}</span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          <RI size={13} />{r.resource_type}{!r.first_party && <span title={t('page.thirdParty')} style={{ color: 'var(--text-muted)' }}>·3P</span>}
+                        <span className="flex items-center gap-1.5">
+                          <RI size={13} aria-hidden="true" />{r.resource_type}{!r.first_party && <span title={t('page.thirdParty')} className="text-muted-foreground">·3P</span>}
                         </span>
-                        <span style={{ wordBreak: 'break-all' }} title={r.source_page ? `${t('page.foundOn')}: ${r.source_page}` : ''}>
+                        <span className="break-all" title={r.source_page ? `${t('page.foundOn')}: ${r.source_page}` : ''}>
                           {/* href guard (L3): yalnız http(s) source_page linklenir — javascript:/data: vb. şema tıklanabilir XSS'i engellenir */}
                           {r.source_page && r.source_page !== r.resource_url && /^https?:\/\//i.test(r.source_page)
-                            ? <a href={r.source_page} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: 'inherit' }}>{r.resource_url}</a>
+                            ? <a href={r.source_page} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-inherit">{r.resource_url}</a>
                             : r.resource_url}
                         </span>
-                        <span style={{ color: issueColor, fontWeight: 600 }}>
-                          {r.issue_type === 'MIXED_CONTENT' ? <ShieldAlert size={12} style={{ verticalAlign: '-2px' }} /> : null} {t(`page.issue_${r.issue_type}`)}
+                        <span className={cn('font-semibold', ISSUE_TEXT[r.issue_type] || ISSUE_TEXT.BROKEN)}>
+                          {r.issue_type === 'MIXED_CONTENT' ? <ShieldAlert size={12} aria-hidden="true" className="inline align-[-2px]" /> : null} {t(`page.issue_${r.issue_type}`)}
                         </span>
                         <span className="upt-rt-ms">{r.http_status ?? '—'}</span>
                         <span className="upt-rt-ms">{r.duration_ms != null ? r.duration_ms + 'ms' : '—'}</span>
                         <span>
-                          <span className={scope.inScope ? 'page-scope-in' : 'page-scope-out'}
-                            title={scope.reasonKey ? t(scope.reasonKey) : t('page.scopeInTitle')}>
+                          {/* Alarm kapsamı rozeti — neden (title) üzerine gelince */}
+                          <Badge variant="outline" data-scope={scope.inScope ? 'in' : 'out'}
+                            title={scope.reasonKey ? t(scope.reasonKey) : t('page.scopeInTitle')}
+                            className={cn('cursor-help rounded-sm',
+                              scope.inScope
+                                ? 'border-destructive/40 bg-destructive/10 font-bold text-destructive dark:bg-destructive/20'
+                                : 'border-dashed font-semibold text-muted-foreground')}>
                             {scope.inScope ? t('page.scopeIn') : t('page.scopeOut')}
-                          </span>
+                          </Badge>
                         </span>
                         <span>
                           {canManageRow(selected) && (
                             isExcluded(selected, r.resource_url)
-                              ? <Button type="button" variant="secondary" size="sm" className="page-exclude-btn" disabled
-                                  title={t('page.excludeAlready')} aria-label={t('page.excludeAlreadyFor', r.resource_url)}>
-                                  <EyeOff size={12} /></Button>
-                              : <Button type="button" variant="secondary" size="sm" className="page-exclude-btn"
-                                  title={t('page.excludeAdd')} aria-label={t('page.excludeAddFor', r.resource_url)}
-                                  onClick={e => { e.stopPropagation(); addExclude(r) }}>
-                                  <EyeOff size={12} /></Button>
+                              // Devre dışı düğme işaretçi olayı üretmez → ipucu sarmalayıcı <span>'da (SHADCN.md §4.3 Tooltip).
+                              ? <SimpleTooltip content={t('page.excludeAlready')}>
+                                  <span className="inline-flex">
+                                    <Button type="button" variant="secondary" size="icon-xs" disabled
+                                      aria-label={t('page.excludeAlreadyFor', r.resource_url)}>
+                                      <EyeOff size={12} aria-hidden="true" /></Button>
+                                  </span>
+                                </SimpleTooltip>
+                              : <SimpleTooltip content={t('page.excludeAdd')}>
+                                  <Button type="button" variant="secondary" size="icon-xs"
+                                    aria-label={t('page.excludeAddFor', r.resource_url)}
+                                    onClick={e => { e.stopPropagation(); addExclude(r) }}>
+                                    <EyeOff size={12} aria-hidden="true" /></Button>
+                                </SimpleTooltip>
                           )}
                         </span>
                       </div>
@@ -885,204 +1031,50 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
                   })}
                 </div>
               )}
-            </>)}
+            </TabsContent>
 
-            {detailTab === 'chart' && (
+            <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="page" />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'control' && (
-              /* Kırık ve Zaman aşımı AYRI kolonlar (2026-08-04); eski kayıtlarda timeout '—' (o dönem kırığa dahildi). */
+            <TabsContent value="control">
+              {/* Kırık ve Zaman aşımı AYRI kolonlar (2026-08-04); eski kayıtlarda timeout '—' (o dönem kırığa dahildi). */}
               <CheckHistoryTab kind="page" monitorId={selected.id} listKey="page-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="page-rt-grid"
                 columns={[t('page.colTime'), t('page.colStatus'), t('page.mBroken'), t('page.mTimeout'), t('page.mMixed')]}
                 renderRow={(c) => (<>
                   <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                  <span style={{ color: STATUS_COLOR[c.status] || STATUS_COLOR.unknown, fontWeight: 600 }}>
+                  <span className={cn('font-semibold', statusText(c.status))}>
                     {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
                       : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
                   <span className="upt-rt-ms">{c.broken_resources ?? '—'}</span>
                   <span className="upt-rt-ms">{c.timeout_count ?? '—'}</span>
                   <span className="upt-rt-ms">{c.mixed_content_count ?? '—'}</span>
                 </>)} />
-            )}
+            </TabsContent>
 
-            {detailTab === 'alerts' && <AlertHistory domain={selected.url} types={alertTypesFor('page')} />}
+            <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('page')} /></TabsContent>
 
-            {detailTab === 'notes' && (
+            <TabsContent value="notes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <MonitorNotes type="PAGE" target={selected.url} />
               </Suspense>
-            )}
+            </TabsContent>
 
-            {detailTab === 'changes' && (
+            <TabsContent value="changes">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ChangeHistoryTab t={t} kind="page" monitorId={selected.id} teamNames={teamNameById}
                   canManage={canManageRow(selected)} />
               </Suspense>
-            )}
-          </div>
-        </div>,
-        document.body
+            </TabsContent>
+          </DetailTabs>
+
+          {formModal}
+        </MonitorDetailModal>
       )}
-
-      {/* ── Create / Edit Modal ── */}
-      {modal && createPortal(
-        <div className="modal-overlay">
-          <div className="modal-box modal-sticky-actions" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '92vw' }}>
-            <div className="modal-icon-hdr modal-icon-hdr--keyword">
-              <div className="modal-icon-hdr-badge"><ScanSearch size={20} /></div>
-              <h3>{modal === 'new' ? t('page.modalNew') : t('page.modalEdit')}
-                {dupSource && <span className="mon-dup-badge">{t('mon.duplicateBadge')}</span>}</h3>
-              {/* Meşgul evresi BAŞLIKTA (Kaydediliyor… / Test ediliyor… N sn): alt bardaki düğme metinleri sabit kalır, hiçbir düğme kaymaz (2026-09-19, envanter formuyla aynı desen). */}
-              <span className="modal-icon-hdr-running"><CheckRunningStrip running={saving || testing} label={saving ? t('mon.saving') : t('page.testing')} /></span>
-            </div>
-            <div className="modal-scroll-body" ref={scrollHint.ref}>
-
-            {dupSource
-              ? <div className="mon-dup-hint">{t('mon.duplicateHint')}</div>
-              : <div className="kw-type-banner"><ScanSearch size={16} /><span>{t('page.typeInfo')}</span></div>}
-
-            <div className="form-grid form-grid--top">
-              <label className="full-width"><span>{t('page.url')} <span className="req-star">*</span></span>
-                <input value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-                  onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                  onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} /></label>
-              <div className="full-width field-hint" style={{ marginTop: -6 }}>{t('page.urlHint')}</div>
-              <label><span>{t('page.name')}</span>
-                <input value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label><span>{t('page.team')} <span className="req-star">*</span></span>
-                {canPickTeam
-                  ? <SearchableSelect value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
-                  : <input value={teamName || t('page.noTeam')} disabled />}</label>
-              <label className="full-width"><span>{t('page.group')} <span className="req-star">*</span></span>
-                <SearchableSelect value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
-                  options={[{ value: '', label: t('page.noGroup') }, ...groupSelectOptions]}
-                  creatable onCreate={() => {}} searchThreshold={2} placeholder={t('page.noGroup')} /></label>
-              <NotifyChannels
-                notifyEmail={form.notifyEmail} notifyWebhook={form.notifyWebhook}
-                alertLevel={form.alertLevel} onAlertLevelChange={v => setForm(f => ({ ...f, alertLevel: v }))}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-                teamLabel={selectedTeamLabel} teamId={form.teamId}
-                groupId={form.notificationGroupId}
-                onGroupChange={v => setForm(f => ({ ...f, notificationGroupId: v }))} />
-              <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
-                onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
-
-              {/* Mod seçimi */}
-              <label><span>{t('page.mode')}</span>
-                <SearchableSelect value={form.mode} onChange={v => setForm(f => ({ ...f, mode: v }))}
-                  options={[{ value: 'SINGLE_PAGE', label: t('page.modeSingle') }, { value: 'SITE_CRAWL', label: t('page.modeCrawl') }]} /></label>
-              {form.mode === 'SITE_CRAWL' && (<>
-                <label><span>{t('page.crawlDepth')}</span>
-                  <input type="number" min="0" max="5" value={form.crawlDepth} onChange={e => setForm(f => ({ ...f, crawlDepth: Number(e.target.value) }))} /></label>
-                <label><span>{t('page.crawlMaxPages')}</span>
-                  <input type="number" min="1" max="500" value={form.crawlMaxPages} onChange={e => setForm(f => ({ ...f, crawlMaxPages: Number(e.target.value) }))} /></label>
-              </>)}
-              <label className="full-width"><span>{t('page.excludePatterns')}
-                {(() => { const n = (form.excludePatterns || '').split('\n').map(s => s.trim()).filter(Boolean).length
-                  return n > 0 ? <span className="page-exclude-count">{t('page.excludeCount', n)}</span> : null })()}</span>
-                <textarea rows={4} className="page-exclude-ta" value={form.excludePatterns} spellCheck={false}
-                  placeholder={t('page.excludePh')}
-                  onChange={e => setForm(f => ({ ...f, excludePatterns: e.target.value }))} />
-                <span className="field-hint">{t('page.excludeHint')}</span></label>
-              {/* Kurumsal vekil (2026-09-21): sertifika envanteriyle aynı karar */}
-              <MonitorProxyField value={form.useProxy} onChange={v => setForm(f => ({ ...f, useProxy: v }))}
-                effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.alertThirdParty} onChange={e => setForm(f => ({ ...f, alertThirdParty: e.target.checked }))} />{t('page.alertThirdParty')}</label>
-              <div className="full-width field-hint">{t('page.alertThirdPartyHint')}</div>
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.alertMixedContent} onChange={e => setForm(f => ({ ...f, alertMixedContent: e.target.checked }))} />{t('page.alertMixedContent')}</label>
-              <div className="full-width field-hint">{t('page.alertMixedContentHint')}</div>
-
-              <label className="checkbox-label full-width">
-                <input type="checkbox" checked={form.alertTimeout} onChange={e => setForm(f => ({ ...f, alertTimeout: e.target.checked }))} />{t('page.alertTimeout')}</label>
-              <div className="full-width field-hint">{t('page.alertTimeoutHint')}</div>
-
-              {/* Etiketler */}
-              <div className="full-width kw-tags-block">
-                <div className="kw-block-title">{t('page.tagsTitle')} <span className="req-star">*</span></div>
-                <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('page.tagsPlaceholder')} suggestions={teamTags} />
-              </div>
-
-
-
-              {/* Gelişmiş */}
-              <div className="full-width kw-adv">
-                <button type="button" className="kw-adv-toggle" onClick={() => setAdvOpen(o => !o)}>
-                  <ChevronDown size={16} className={`kw-adv-chevron${advOpen ? ' open' : ''}`} />
-                  <span>{t('page.advanced')}</span>
-                </button>
-                {advOpen && (
-                  <div className="kw-adv-body">
-                    <div className="kw-adv-grid">
-                      <label><span>{t('page.slowResourceMs')}</span>
-                        <input type="number" min="100" step="100" value={form.slowResourceMs} onChange={e => setForm(f => ({ ...f, slowResourceMs: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.resourceConcurrency')}</span>
-                        <input type="number" min="1" max="20" value={form.resourceConcurrency} onChange={e => setForm(f => ({ ...f, resourceConcurrency: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.timeoutMs')}</span>
-                        <input type="number" min="1000" step="500" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.confirmAttempts')}</span>
-                        <input type="number" min="0" max="10" value={form.confirmAttempts} onChange={e => setForm(f => ({ ...f, confirmAttempts: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.confirmInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.confirmIntervalSeconds} onChange={e => setForm(f => ({ ...f, confirmIntervalSeconds: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.recoveryChecks')}</span>
-                        <input type="number" min="1" max="20" value={form.recoveryChecks} onChange={e => setForm(f => ({ ...f, recoveryChecks: Number(e.target.value) }))} /></label>
-                      <label><span>{t('page.recoveryInterval')}</span>
-                        <input type="number" min="10" max="600" value={form.recoveryIntervalSeconds} onChange={e => setForm(f => ({ ...f, recoveryIntervalSeconds: Number(e.target.value) }))} /></label>
-                    </div>
-                    <label className="checkbox-label" style={{ marginTop: 10 }}>
-                      <input type="checkbox" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />{t('page.active')}</label>
-                    <div className="field-hint" style={{ marginTop: 6 }}>ⓘ {t('page.confirmHint')}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {testResult && (
-              <div style={{ margin: '2px 0 12px', padding: '10px 12px', borderRadius: 8, fontSize: '.86em', lineHeight: 1.5,
-                display: 'flex', alignItems: 'flex-start', gap: 8, border: '1px solid',
-                ...(testResult.error
-                  ? { background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }
-                  : testResult.status === 'OK'
-                    ? { background: '#f0fdf4', borderColor: '#bbf7d0', color: '#15803d' }
-                    : { background: '#fff7ed', borderColor: '#fed7aa', color: '#b45309' }) }}>
-                {testResult.error || testResult.status !== 'OK'
-                  ? <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-                  : <Check size={16} style={{ flexShrink: 0, marginTop: 1 }} />}
-                <span>
-                  {testResult.error
-                    ? <><strong>{t('page.testError')}:</strong> {testResult.error}</>
-                    : <><strong>{t(`page.status${testResult.status === 'OK' ? 'Ok' : testResult.status === 'DEGRADED' ? 'Degraded' : 'Down'}`)}</strong>
-                        {' — '}{testResult.total_resources} {t('page.mResources')} · {testResult.broken_resources} {t('page.mBroken')} · {testResult.timeout_count ?? 0} {t('page.mTimeout')} · {testResult.mixed_content_count} {t('page.mMixed')}
-                        {testResult.http_status != null && <> · HTTP {testResult.http_status}</>}</>}
-                </span>
-              </div>
-            )}
-            {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
-            {modal !== 'new' && (
-              <ChangeNoteField t={t} id="page-change-note" value={changeNote} onChange={setChangeNote} />
-            )}
-            </div>
-            <ModalScrollHint show={scrollHint.show} scrollMore={scrollHint.scrollMore} />
-            <div className="modal-actions">
-              <Button variant="secondary" style={{ marginRight: 'auto' }} onClick={runTest}
-                aria-busy={testing || undefined} disabled={testing || !form.url.trim()}>
-                <FlaskConical size={14} />{t('page.test')}
-              </Button>
-              {modal !== 'new' && canDeleteRow(modal) && <Button variant="destructive" onClick={del}><Trash2 size={14} />{t('page.delete')}</Button>}
-              <Button variant="secondary" onClick={closeEdit}>{t('page.cancel')}</Button>
-              <Button onClick={save} aria-busy={saving || undefined} disabled={saving || !form.url.trim() || !form.teamId}>{t('page.save')}</Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+      {!selected && formModal}
 
       {/* Sayfa düzeyi toplu kontrol: önce takım seçimi, sonra akan sonuç tablosu.
           Depolama anahtarı TÜR BAŞINA ayrı — tek anahtar paylaşılsaydı buradaki seçim

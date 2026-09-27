@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Save, ShieldAlert, Send } from 'lucide-react'
+import { ShieldAlert, Send } from 'lucide-react'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
-import { Spinner } from '../ui/Progress.jsx'
-import HelpTip from '../ui/HelpTip.jsx'
+import { LoadingBlock, Spinner } from '../ui/Progress.jsx'
+import Field from '../ui/Field.jsx'
+import ToneBadge from './ToneBadge.jsx'
+import {
+  FIELD_GRID_3, SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow,
+} from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { Card, CardContent } from '@/components/shadcn/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 
 /**
  * "Login Anomali" — başarısız-login anomali tespiti + sistem-admin e-posta uyarısı yapılandırması.
@@ -82,129 +89,101 @@ export default function LoginAnomalySettings() {
   }
 
   if (loading || !form) {
-    return <div className="admin-section"><Spinner size={20} inline decorative /> {t('settings.loading')}</div>
+    return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
   return (
-    <div className="ldap-settings">
-      <div className="admin-section">
-        <h3><ShieldAlert size={18} style={{ verticalAlign: '-3px', marginRight: 6 }} />{t('loginAnomaly.title')}</h3>
-        <p className="section-desc">{t('loginAnomaly.desc')}</p>
-      </div>
+    <div className={SETTINGS_STACK} data-testid="login-anomaly-settings">
+      <SettingsHeader icon={ShieldAlert} title={t('loginAnomaly.title')} description={t('loginAnomaly.desc')} />
 
       {/* Master toggle */}
-      <div className="admin-section">
-        <label className="ldap-toggle ldap-toggle-major">
-          <input type="checkbox" checked={!!form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
-          <span>{t('loginAnomaly.enabled')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.failed-login.enabled" label={t('loginAnomaly.enabled')} />
-        <p className="hint">{t('loginAnomaly.enabledHint')}</p>
-      </div>
+      <MasterToggleCard checked={!!form.enabled} onChange={(v) => set('enabled', v)}
+        label={t('loginAnomaly.enabled')} helpKey="help.set.site.monitor.failed-login.enabled" hint={t('loginAnomaly.enabledHint')} />
 
       {/* Recipients */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('loginAnomaly.recipientsTitle')}<HelpTip helpKey="help.set.site.monitor.failed-login.alert-recipients" label={t('loginAnomaly.recipientsTitle')} /></h4>
-        <input
-          className="la-input-wide"
-          placeholder={t('loginAnomaly.recipientsPh')}
-          value={form.alert_recipients || ''}
-          onChange={(e) => set('alert_recipients', e.target.value)}
-        />
-        <p className="hint">{t('loginAnomaly.recipientsHint', form.system_admin_email || '—')}</p>
-      </div>
+      <SettingsSection title={helpLabel(t('loginAnomaly.recipientsTitle'), 'help.set.site.monitor.failed-login.alert-recipients')}>
+        <Field hint={t('loginAnomaly.recipientsHint', form.system_admin_email || '—')} className="mb-0 xl:max-w-3xl">
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} aria-label={t('loginAnomaly.recipientsTitle')}
+              placeholder={t('loginAnomaly.recipientsPh')}
+              value={form.alert_recipients || ''} onChange={(e) => set('alert_recipients', e.target.value)} />
+          )}
+        </Field>
+      </SettingsSection>
 
-      {/* Thresholds */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('loginAnomaly.thresholdsTitle')}</h4>
-        <p className="section-desc">{t('loginAnomaly.thresholdsDesc')}</p>
-        <div className="la-grid">
+      {/* Thresholds — geniş ekranda üç sütun (12 kısa sayısal alan) */}
+      <SettingsSection title={t('loginAnomaly.thresholdsTitle')} description={t('loginAnomaly.thresholdsDesc')}>
+        <div className={FIELD_GRID_3}>
           {NUM_FIELDS.map((f) => (
-            <label key={f.key} className="la-field">
-              <span className="help-label-row">
-                {t('loginAnomaly.f.' + f.key)}
-                {/* form alanı adı snake_case, katalog anahtarı kebab-case */}
-                <HelpTip helpKey={'help.set.site.monitor.failed-login.' + f.key.replace(/_/g, '-')}
-                  label={t('loginAnomaly.f.' + f.key)} />
-              </span>
-              <input
-                type="number"
-                min={f.min}
-                step={f.step || 1}
-                value={form[f.key] ?? ''}
-                onChange={(e) => set(f.key, e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </label>
+            // form alanı adı snake_case, katalog anahtarı kebab-case
+            <Field key={f.key} className="mb-3"
+              label={helpLabel(t('loginAnomaly.f.' + f.key), 'help.set.site.monitor.failed-login.' + f.key.replace(/_/g, '-'))}>
+              {({ id }) => (
+                <Input id={id} type="number" min={f.min} step={f.step || 1} value={form[f.key] ?? ''}
+                  onChange={(e) => set(f.key, e.target.value === '' ? '' : Number(e.target.value))} />
+              )}
+            </Field>
           ))}
         </div>
-      </div>
+      </SettingsSection>
 
       {/* Resolved email toggle */}
-      <div className="admin-section">
-        <label className="ldap-toggle">
-          <input type="checkbox" checked={!!form.resolved_email_enabled}
-            onChange={(e) => set('resolved_email_enabled', e.target.checked)} />
-          <span>{t('loginAnomaly.resolvedEmail')}</span>
-        </label><HelpTip helpKey="help.set.site.monitor.failed-login.resolved-email-enabled" label={t('loginAnomaly.resolvedEmail')} />
-        <p className="hint">{t('loginAnomaly.resolvedEmailHint')}</p>
+      <Card className="gap-2 py-4">
+        <CardContent className="flex flex-col gap-2 px-4 sm:px-6">
+          <ToggleRow checked={!!form.resolved_email_enabled} onChange={(v) => set('resolved_email_enabled', v)}
+            label={t('loginAnomaly.resolvedEmail')} helpKey="help.set.site.monitor.failed-login.resolved-email-enabled" />
+          <p className="text-xs text-muted-foreground">{t('loginAnomaly.resolvedEmailHint')}</p>
+        </CardContent>
+      </Card>
+
+      {/* Test email + recent incidents — geniş ekranda yan yana */}
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <SettingsSection title={t('loginAnomaly.testTitle')} description={t('loginAnomaly.testDesc')}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Input type="email" aria-label={t('loginAnomaly.testTitle')} placeholder={t('loginAnomaly.testPh')} className="min-w-0 flex-1"
+              value={testEmail} onChange={(e) => setTestEmail(e.target.value)} />
+            <Button variant="outline" onClick={sendTest} disabled={testing} aria-busy={testing || undefined} className="shrink-0">
+              {testing ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('loginAnomaly.testSend')}
+            </Button>
+          </div>
+        </SettingsSection>
+
+        <SettingsSection title={t('loginAnomaly.recentTitle')}>
+          {incidents.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t('loginAnomaly.recentEmpty')}</p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border">
+              <Table data-testid="la-incidents">
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead>{t('loginAnomaly.colOpened')}</TableHead>
+                    <TableHead>{t('loginAnomaly.colRules')}</TableHead>
+                    <TableHead className="text-right">{t('loginAnomaly.colPeak')}</TableHead>
+                    <TableHead>{t('loginAnomaly.colStatus')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {incidents.map((it) => (
+                    <TableRow key={it.id}>
+                      <TableCell className="tabular-nums">{formatDate(it.opened_at)}</TableCell>
+                      <TableCell className="min-w-[180px] font-mono text-xs break-all whitespace-normal">{it.rules_signature || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{it.peak_total}</TableCell>
+                      <TableCell>
+                        <ToneBadge tone={it.resolved ? 'success' : 'danger'} className="font-semibold">
+                          {it.resolved ? t('loginAnomaly.stResolved') : t('loginAnomaly.stActive')}
+                        </ToneBadge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </SettingsSection>
       </div>
 
       {/* Save */}
-      <div className="admin-section">
-        <Button onClick={save} disabled={saving}>
-          {saving ? <Spinner size={15} inline decorative /> : <Save size={15} />} {t('loginAnomaly.save')}
-        </Button>
-      </div>
-
-      {/* Test email */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('loginAnomaly.testTitle')}</h4>
-        <p className="section-desc">{t('loginAnomaly.testDesc')}</p>
-        <div className="la-test-row">
-          <input
-            className="la-input-wide"
-            type="email"
-            placeholder={t('loginAnomaly.testPh')}
-            value={testEmail}
-            onChange={(e) => setTestEmail(e.target.value)}
-          />
-          <Button variant="outline" onClick={sendTest} disabled={testing}>
-            {testing ? <Spinner size={15} inline decorative /> : <Send size={15} />} {t('loginAnomaly.testSend')}
-          </Button>
-        </div>
-      </div>
-
-      {/* Recent incidents */}
-      <div className="admin-section">
-        <h4 className="ldap-subhdr">{t('loginAnomaly.recentTitle')}</h4>
-        {incidents.length === 0 ? (
-          <p className="hint">{t('loginAnomaly.recentEmpty')}</p>
-        ) : (
-          <table className="la-incidents">
-            <thead>
-              <tr>
-                <th>{t('loginAnomaly.colOpened')}</th>
-                <th>{t('loginAnomaly.colRules')}</th>
-                <th>{t('loginAnomaly.colPeak')}</th>
-                <th>{t('loginAnomaly.colStatus')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {incidents.map((it) => (
-                <tr key={it.id}>
-                  <td>{formatDate(it.opened_at)}</td>
-                  <td className="la-rules">{it.rules_signature || '—'}</td>
-                  <td>{it.peak_total}</td>
-                  <td>
-                    <span className={`la-badge ${it.resolved ? 'ok' : 'active'}`}>
-                      {it.resolved ? t('loginAnomaly.stResolved') : t('loginAnomaly.stActive')}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <SettingsSaveBar saving={saving} onSave={save} saveLabel={t('loginAnomaly.save')} />
     </div>
   )
 }

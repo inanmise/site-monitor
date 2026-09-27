@@ -70,7 +70,7 @@ Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP
 | DNS | dnsjava (çok-resolver sorgu, SOA/NS) |
 | Frontend | React 18.3, Vite 5, recharts, react-markdown, lucide-react |
 | Test | JUnit 5 + Mockito (backend), Vitest + Testing Library (frontend) |
-| Konteyner | Docker çok-aşamalı (Node 20 → Maven 3.9/Temurin 25 → **Temurin 25 JRE** Alpine, non-root UID 1000) |
+| Konteyner | Docker çok-aşamalı (Node 24 → Maven 3.9/Temurin 25 → **Temurin 25 JRE** Alpine, non-root UID 1000; taban imajlar tag + digest ile sabit) |
 | K8s | Helm chart (sürüm `VERSION` dosyasından) |
 | CI/CD | GitHub Actions — release: sürüm bump → Docker/GHCR + Trivy tarama → Helm push → git tag → GitHub Release → develop back-merge |
 
@@ -106,7 +106,7 @@ site-monitor/
 │   └── environments/            # master.yaml, develop.yaml, release.yaml
 ├── scripts/                     # build-image.sh / build-image.ps1
 ├── .github/workflows/           # ci.yml, docker-build.yml, release.yml
-├── Dockerfile                   # Çok aşamalı build (Node 20 → Maven 3.9/Temurin 25 → Temurin 25 JRE)
+├── Dockerfile                   # Çok aşamalı build (Node 24 → Maven 3.9/Temurin 25 → Temurin 25 JRE)
 ├── docker-compose.yml
 └── sertifikaListesi.txt         # Dosya tabanlı domain listesi (isteğe bağlı)
 ```
@@ -117,7 +117,7 @@ site-monitor/
 
 - Java 25 (Azul Zulu / Eclipse Temurin)
 - Maven 3.9+
-- Node.js 20+
+- Node.js 24 (CI ve Docker build ile aynı major)
 
 ### Yerel Geliştirme
 
@@ -172,14 +172,16 @@ Uygulama `http://localhost:8080` adresinde çalışır.
 ./scripts/build-image.sh --registry ghcr.io/your-org --push
 ```
 
-İmaj etiketleri branch'e göre otomatik belirlenir:
+Registry'deki imaj etiketleri (`ghcr.io/<owner>/site-monitor`):
 
-| Branch | Etiket |
+| Kaynak | Etiket |
 |--------|--------|
-| `master` | `{VERSION}`, `latest` |
-| `release/*` | `{VERSION}-rc`, `staging` |
-| `develop` | `develop-{sha}`, `develop` |
-| diğer | `{branch-adı}-{sha}` |
+| `main` → Release iş akışı (`release.yml`) | **`v{VERSION}`** (ör. `v20.86.0`), `latest` — öneksiz `{VERSION}` etiketi **basılmaz** |
+| `release/*` → `docker-build.yml` | `{VERSION}-rc`, `staging` |
+| `develop` → `docker-build.yml` | `develop-{sha}`, `develop` |
+
+Yerel `scripts/build-image.sh` main dalında öneksiz `{VERSION}` etiketler; böyle bir imajı dağıtırken
+etiketi birebir verin. Helm chart'ı `image.tag` boşken `v<Chart.AppVersion>` kullanır.
 
 ## Yapılandırma
 
@@ -572,22 +574,48 @@ PostgreSQL kullanılır. Bağlantı `DB_URL` ortam değişkeniyle yapılandırı
 
 ## Kubernetes Dağıtımı
 
+Tüm ortamlar Helm chart'ı [`helm/site-monitor/`](helm/site-monitor/) ile kurulur. `k8s/` dizini **legacy**'dir,
+olduğu gibi uygulanmaz ([`k8s/README.md`](k8s/README.md)).
+
+**Prod** için tek geçerli komut, ön kontroller, duman testi ve geri alma:
+[`docs/PROD_DEPLOY_CHECKLIST.md`](docs/PROD_DEPLOY_CHECKLIST.md). Olay anı prosedürleri: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+
 ```bash
-VERSION=$(cat VERSION)
-helm upgrade --install site-monitor ./helm/site-monitor \
+# Değerleri canlı kümeden okuyun (helm list -A); aşağıdakiler yer tutucudur.
+REL=<gerçek release adı>; NS=<gerçek namespace>; SECRET=<pod'un kullandığı Secret>
+VERSION=X.Y.Z; IMAGE_REPO=ghcr.io/<owner>/site-monitor; PRIVATE_VALUES=/guvenli/yol/prod-private.yaml
+
+git checkout "v${VERSION}"
+helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   -f helm/site-monitor/values.yaml \
   -f helm/site-monitor/environments/master.yaml \
-  --set image.tag=${VERSION} \
-  --set secret.adminPassword=$ADMIN_PASSWORD \
-  --set secret.dbPassword=$DB_PASSWORD \
-  -n site-monitor --create-namespace
+  -f "$PRIVATE_VALUES" \
+  --set image.repository="$IMAGE_REPO" \
+  --set image.tag="v${VERSION}" \
+  --set secret.existingSecret="$SECRET" \
+  --set config.logLevel=DEBUG \
+  --atomic --wait --timeout 10m
 ```
+
+- **İmaj etiketi `v` önekli.** Release yalnız `:vX.Y.Z` ve `:latest` basar; `$(cat VERSION)` gibi öneksiz etiket
+  `ImagePullBackOff` verir.
+- **`--reuse-values` kullanılmaz.** `master.yaml` (havuz 30, `NO_PROXY`, CORS, vekil) prod'a ancak açıkça
+  verildiğinde ulaşır; eski değerleri taşımak prod'daki sapmanın kaynağıydı.
+- **`REL`/`NS` gerçek değer olmalı** — farklı adla `upgrade --install` ikinci bir release kurar.
+- **`PRIVATE_VALUES`** repo dışıdır: `config.dbHost/dbName/dbUser` ve canlı release'te elle verilmiş diğer değerler.
+- **Secret:** `secret.existingSecret` tercih edilir. Kullanılmazsa her `secret.*` **şu anki** değeriyle verilmelidir;
+  verilmeyenler `values.yaml` yer tutucularıyla canlı Secret'ın üzerine yazılır (`REPLACE_ME` parolalar, boş
+  `secretKey`, örnek posta kutusu, boş vekil kimliği → açılmayan pod ya da sessizce düşen e-posta/RDAP).
+- ⚠ **`SITE_MONITOR_SECRET_KEY` aynen taşınır, asla değiştirilmez.** Değişirse uygulama açılır ama kayıtlı
+  tüm sırlar (LDAP bind, SMTP parolası, başlık/push sırları, PageSpeed anahtarı, senaryo env sırları) çözülemez.
+  Dağıtımdan sonra: `kubectl logs -n "$NS" deploy/<ad> | grep -c "decrypt failed"` → **0**.
+- **`config.logLevel=DEBUG` bilinçlidir** (ürün sahibinin prod kararı); bayrak düşerse prod INFO'ya döner.
 
 Ortam bazlı değer dosyaları:
 
 | Dosya | Ortam | Özellikler |
 |-------|-------|-----------|
-| `environments/master.yaml` | Üretim | **Tek pod** (dikey ölçekleme); HPA/PDB/topology spread kapalı |
+| `environments/master.yaml` | Üretim | **Tek pod** (dikey ölçekleme), bellek 3Gi limit / 1.5Gi request; HPA/PDB/topology spread kapalı |
 | `environments/release.yaml` | Staging | 2 replica, HPA min:2/max:5 |
 | `environments/develop.yaml` | Geliştirme | 1 replica, HPA kapalı, e-posta kapalı |
 
@@ -649,4 +677,4 @@ Dahili kullanım için tasarlanmıştır.
 
 ---
 
-**Sürüm:** 19.44.1 — Son Güncelleme: 8 Temmuz 2026
+**Sürüm:** kök `VERSION` dosyası (Release iş akışı günceller) — değişiklikler için [`CHANGELOG.md`](CHANGELOG.md).

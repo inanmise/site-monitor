@@ -71,6 +71,14 @@ public class EscalationService {
     @Autowired @Lazy
     private EscalationService self;
 
+    /**
+     * 7/24 İzleme Ekibi (NOC) — takım e-postasından BAĞIMSIZ ikinci hedef (2026-09-27). Karar ve teslim TEK
+     * serviste ({@code NocNotificationService}); bu sınıf yalnız açılış ve çözüm anında haber verir. Alan
+     * enjeksiyonu + isteğe bağlı: testler servisi elle kuruyor, yokken (null) NOC yolu hiç koşmaz.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.noc.NocNotificationService nocNotifications;
+
     // Inter-domain catch-up pacing now comes from the DB-backed SMTP settings
     // (admin Settings → SMTP → Gelişmiş), falling back to the env default.
     private long interDomainDelayMs() {
@@ -420,7 +428,8 @@ public class EscalationService {
                 ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                 : null;
         return new ReNotifyTargets(domainTeamId, ugTeamId,
-                getContactsForLevel(event.getAlertLevel(), domainTeamId), event.getNotificationGroupId());
+                contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId),   // O-1: açılışla aynı karar
+                event.getNotificationGroupId());
     }
 
     /**
@@ -452,8 +461,10 @@ public class EscalationService {
     public Map<String, Object> simulateRecipients(Long teamId, String level, boolean standaloneMonitor, Long groupId) {
         String lvl = level == null ? "HIGH" : level.trim().toUpperCase(Locale.ROOT);
         if (!LEVEL_ORDER.containsKey(lvl)) throw new IllegalArgumentException("Bilinmeyen seviye: " + level);
-        String alertType = standaloneMonitor ? TYPE_HTTP_DOWN : "EXPIRY";
-        boolean managers = includeManagerContacts(alertType, lvl);
+        // Gerçek gönderimle AYNI karar (prod kapısı 2026-09-25, O-1): eskiden kontaklar YALNIZ seviyeye bakılarak
+        // kapatılıyordu ve WARNING'de hiç kontak gösterilmiyordu — oysa sertifika / envanter türevli izleme
+        // alarmında (bağımsız OLMAYAN) WARNING eşikli kontaklar gerçekte ekleniyor. Yönetici eksik liste görüyordu.
+        boolean managers = !teamOnly(standaloneMonitor, lvl);
 
         List<Map<String, Object>> emails = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -730,7 +741,10 @@ public class EscalationService {
             List<AlertEvent> open = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
             List<String> notified = new ArrayList<>();
             for (AlertEvent e : open) {
-                if (e.getId() != null && !notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(e.getId()).isEmpty())
+                // 7/24 (NOC) satırı TAKIMIN bildirimi değildir: yalnız NOC'a gitmiş bir açılış için takıma "ÇÖZÜLDÜ"
+                // gönderilirse takım, hiç almadığı bir alarmın kapanışını alırdı (NOC çözümü kendi yolundan gider).
+                if (e.getId() != null && notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(e.getId()).stream()
+                        .anyMatch(n -> !"NOC".equals(n.getRecipientRole())))
                     notified.add(e.getAlertType());
             }
             if (!notified.isEmpty()) {
@@ -1022,7 +1036,8 @@ public class EscalationService {
             ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
         }
         // Standalone izleme (keyword/ping/http/domain) takım-özeldir; AMA KRİTİK domain alarmında müdür de eklenir.
-        boolean teamOnly = teamOnlyRecipients(alertType, alertLevel);
+        // Bağlamda team_id damgası = bağımsız izleme (PORT/DNS dâhil — O-1).
+        boolean teamOnly = teamOnly(isStandalone(alertType, outageContext), alertLevel);
 
         String message = monitoringMessage(domain, alertType, alertLevel, outageContext);
         Optional<AlertEvent> existing = alertEventRepo.findOpenAlert(domain, alertType);
@@ -1496,6 +1511,9 @@ public class EscalationService {
     }
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
+        // 7/24 İzleme Ekibi: takımın çözüm e-postasından BAĞIMSIZ (aşağıdaki "alıcı yok / e-posta kapalı" erken
+        // dönüşünden ÖNCE); açılışı NOC'a gitmediyse servis hiçbir şey göndermez.
+        notifyNocResolved(event);
         try {
             // Çözüm bildirimi alarmla AYNI alıcılara gitmeli: standalone izleme takımı AlertEvent.teamId'den (envanter
             // değil); KRİTİK domain alarmında müdür de dahildi → çözümü de alır. Diğer standalone → yalnız takım.
@@ -1520,7 +1538,8 @@ public class EscalationService {
                 ugTeamId     = includeInventoryUgTeam(event, invTeamId)
                         ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                         : null;
-                contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+                // Açılışla AYNI kontak kararı (O-1): bağımsız PORT/DNS izlemesinde (bağlamda team_id) WARNING yalnız takım.
+                contacts = contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId);
                 // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
                 if (event.getTeamId() == null && invTeamId != null) {
@@ -1550,9 +1569,14 @@ public class EscalationService {
             // burada erkenden okunabilir (cert alarmlarında contextJson yok → null → bugünkü davranış).
             Map<String, Object> earlyCtx = deserializeContext(event.getContextJson());
             boolean mailDisabled = earlyCtx != null && Boolean.TRUE.equals(earlyCtx.get("mail_disabled"));
+            String typeTr = resolvedTypeLabel(event.getAlertType());
+            String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
+                    + " — " + typeTr + " sorunu giderildi";
             if (mailDisabled || allEmails.isEmpty()) {
                 log.info("Çözüm bildirimi — mail atlandı ({}): {}",
                         mailDisabled ? "izlemede e-posta kapalı" : "alıcı yok", event.getDomain());
+                // Kontak webhook'u da mailden BAĞIMSIZ (O-2): açılış yolu mail atlansa da webhook'u gönderiyor.
+                sendResolutionWebhooks(event, contacts, subject, trigger);
                 // Kanal BAĞIMSIZLIĞI: e-posta alıcısı yoksa push da düşmemeli. Açılış yolunda bu
                 // düzeltilmişti (N10), çözüm yolunda erken dönüş enqueueResolve'dan ÖNCE olduğu için
                 // duruyordu: e-postasız takım açılış push'unu alıp "DÜZELDİ" push'unu ASLA almıyor,
@@ -1565,9 +1589,6 @@ public class EscalationService {
                 return;
             }
 
-            String typeTr = resolvedTypeLabel(event.getAlertType());
-            String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] " + event.getDomain()
-                    + " — " + typeTr + " sorunu giderildi";
             // İzleme çözüm mailleri süreyi createdAt→resolvedAt'ten hesaplar;
             // sertifika context'i alakasız olduğundan geçilmez.
             Map<String, Object> certContext;
@@ -1627,7 +1648,8 @@ public class EscalationService {
                     event.getDaysRemaining(), resolvedBy, event.getResolvedAt(),
                     event.getCreatedAt(), certContext, teamNames, uptime);
             saveLog(event.getId(), teamNames, String.join(", ", allEmails), subject, htmlBody, status, "SKIPPED", trigger);
-            log.info("Çözüm bildirimi → [{}] status={}", String.join(", ", allEmails), status);
+            log.info("Çözüm bildirimi → {} alıcı status={}", allEmails.size(), status);   // adres değil sayı (P4-1)
+            sendResolutionWebhooks(event, contacts, subject, trigger);
             // Kişi-webhook çözüm push'u — mail sonucundan bağımsız (kanal bağımsızlığı sözleşmesi).
             try {
                 userPushService.enqueueResolve(event, certContext, domainTeamId);
@@ -1636,6 +1658,36 @@ public class EscalationService {
             }
         } catch (Exception e) {
             log.warn("Çözüm bildirimi gönderilemedi: {} — {}", event.getDomain(), e.getMessage());
+        }
+    }
+
+    /**
+     * Çözümde kontak webhook'ları (Teams/Slack) — açılışın AYNASI (prod kapısı 2026-09-25, O-2).
+     *
+     * <p>Açılış, eskalasyon ve günlük tekrar {@code sendCombinedAlert} üzerinden her kontak webhook'una gidiyordu;
+     * bireysel çözüm yolu ise yalnız e-posta + kişi push'u gönderiyordu (log satırındaki webhook durumu sabit
+     * "SKIPPED"). Yalnız webhook'u olan bir kontak (Teams kanalı) "🔴 alarm"ı alıp "✅ çözüldü"yü hiç almıyor,
+     * kanal her olayı sonsuza dek açık gösteriyordu. Fırtına yolunda aynı kusur düzeltilmişti
+     * ({@code StormService} toplu recovery webhook'u); bireysel yol çok daha sık çalışıyor. Kontak listesi
+     * açılışla AYNI karardan gelir ({@link #contactsFor}); aynı adrese tek mesaj gider.
+     */
+    private void sendResolutionWebhooks(AlertEvent event, List<EscalationContact> contacts, String subject, String trigger) {
+        if (contacts == null || contacts.isEmpty()) return;
+        String text = "✅ " + event.getDomain() + " — " + resolvedTypeLabel(event.getAlertType()) + " sorunu giderildi"
+                + (event.getResolvedAt() != null ? " (" + event.getResolvedAt() + " UTC)" : "") + ".";
+        Set<String> sent = new HashSet<>();
+        for (EscalationContact c : contacts) {
+            if (c.getWebhookUrl() == null || c.getWebhookUrl().isBlank()) continue;
+            if (!sent.add(c.getWebhookUrl().trim())) continue;
+            String webhookStatus;
+            try {
+                webhookService.send(c.getWebhookType(), c.getWebhookUrl(), subject, text, "INFO");
+                webhookStatus = "SENT";
+            } catch (Exception e) {
+                webhookStatus = "FAILED: " + e.getMessage();
+                log.warn("Çözüm webhook'u başarısız [{}]: {}", WebhookService.maskUrl(c.getWebhookUrl()), e.getMessage());
+            }
+            saveLog(event.getId(), c, subject, text, "SKIPPED", webhookStatus, trigger);
         }
     }
 
@@ -1809,6 +1861,10 @@ public class EscalationService {
         AlertEvent stampEvent = alertEventId != null
                 ? alertEventRepo.findById(alertEventId).orElse(null) : null;
         Long stampedGroupId = stampEvent != null ? stampEvent.getNotificationGroupId() : null;
+
+        // 7/24 İzleme Ekibi: takım e-postasının atlanıp atlanmayacağından BAĞIMSIZ (aşağıdaki skipMail erken
+        // dönüşünden ÖNCE). Kurallar/tekilleştirme/bakım NocNotificationService'te; istisna buraya taşmaz.
+        notifyNocOpen(stampEvent, syTeamId, domain, level, alertType, trigger, certContext);
 
         List<String> teamEmails = collectTeamEmails(syTeamId, ugTeamId, stampedGroupId);
         Set<String> seen = new HashSet<>();
@@ -2017,6 +2073,27 @@ public class EscalationService {
      * da, hiç alıcı olmasa da, kanal kapalı olsa da koşar. İstisna yayılamaz — mail yolu bu
      * kanalın hiçbir arızasından etkilenmez.
      */
+    /** 7/24 (NOC) açılış tetiği — hiçbir hatası takım alarmına yayılmaz. */
+    private void notifyNocOpen(AlertEvent event, Long syTeamId, String domain, String level, String alertType,
+                               String trigger, Map<String, Object> ctx) {
+        if (nocNotifications == null) return;
+        try {
+            nocNotifications.onAlertDispatched(event, syTeamId, domain, level, alertType, trigger, ctx);
+        } catch (Exception e) {
+            log.warn("7/24 tetiği atlandı (takım alarmı etkilenmedi): {}", e.toString());
+        }
+    }
+
+    /** 7/24 (NOC) çözüm tetiği — yalnız açılışı NOC'a gitmiş alarmda e-posta üretir (karar serviste). */
+    private void notifyNocResolved(AlertEvent event) {
+        if (nocNotifications == null) return;
+        try {
+            nocNotifications.onAlertResolved(event);
+        } catch (Exception e) {
+            log.warn("7/24 çözüm tetiği atlandı: {}", e.toString());
+        }
+    }
+
     private void triggerUserPush(Long alertEventId, String trigger, Long syTeamId,
                                  Map<String, Object> certContext, Set<String> excludeUsernames) {
         try {
@@ -2489,10 +2566,55 @@ public class EscalationService {
     }
 
     private static boolean isStandaloneMon(String alertType) {
-        return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType)
+        // PING_SLOW (prod kapısı 2026-09-25, O-1): ping izlemesi HER ZAMAN bağımsızdır; PING_DOWN listedeydi,
+        // yavaşlık alarmı değildi — WARNING yavaşlık maili takım kontağı yoksa GLOBAL kontaklara düşüyordu.
+        return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType) || TYPE_PING_SLOW.equals(alertType)
                 || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType)
                 || isPageSpeed(alertType);
+    }
+
+    /**
+     * Bağımsız izleme alarmı mı (prod kapısı 2026-09-25, O-1) — tip listesi VEYA alarm bağlamında {@code team_id}
+     * damgası. PORT ve DNS ÇİFT kaynaklıdır: bağımsız izlemede sweep bağlama takımı damgalar, envanter türevlisinde
+     * damga yoktur; yalnız tip listesine bakmak bağımsız bir Port/DNS izlemesinin WARNING alarmını takımda kontak
+     * yoksa GLOBAL eskalasyon kontaklarına gönderiyordu. {@link #includeInventoryUgTeam} ile aynı ölçüt.
+     */
+    public static boolean isStandalone(String alertType, Map<String, Object> ctx) {
+        return isStandaloneMon(alertType) || (ctx != null && ctx.get("team_id") instanceof Number);
+    }
+
+    private static final ObjectMapper CTX_JSON = new ObjectMapper();
+
+    /** {@link #isStandalone(String, Map)} — olayın kalıcı bağlamından ({@code contextJson}). */
+    public static boolean isStandaloneEvent(AlertEvent e) {
+        return e != null && (isStandaloneMon(e.getAlertType()) || hasTeamStamp(e));
+    }
+
+    /** Alarm bağlamında {@code team_id} damgası var mı (sweep bağımsız izlemede takımı damgalar). */
+    @SuppressWarnings("unchecked")
+    public static boolean hasTeamStamp(AlertEvent e) {
+        String json = e == null ? null : e.getContextJson();
+        if (json == null || json.isBlank()) return false;
+        try {
+            Map<String, Object> ctx = CTX_JSON.readValue(json, Map.class);
+            return ctx != null && ctx.get("team_id") instanceof Number;
+        } catch (Exception ignore) {
+            return false;   // bozuk bağlam: tip listesine düş
+        }
+    }
+
+    /**
+     * TEK alıcı kararı (O-1): bağımsız izlemede WARNING → yalnız takım; aksi hâlde seviye eşikli eskalasyon
+     * kontakları ({@code getContactsForLevel} — takımda yoksa global). Açılış, çözüm, tekrar bildir, fırtına ve
+     * "Kim bilgilendirilir?" simülatörü BUNU kullanır.
+     */
+    static boolean teamOnly(boolean standalone, String level) {
+        return standalone && !includeManagerContacts(null, level);
+    }
+
+    private List<EscalationContact> contactsFor(boolean standalone, String level, Long teamId) {
+        return teamOnly(standalone, level) ? List.of() : getContactsForLevel(level, teamId);
     }
 
 
@@ -2516,7 +2638,12 @@ public class EscalationService {
      * gönderiyordu. Kopya yerine tek kaynak: DOMAINMON-KRİTİK müdür istisnası da otomatik doğru gelir.
      */
     public static boolean teamOnlyRecipients(String alertType, String level) {
-        return isStandaloneMon(alertType) && !includeManagerContacts(alertType, level);
+        return teamOnly(isStandaloneMon(alertType), level);
+    }
+
+    /** Olay farkındalıklı sürüm: bağlamdaki {@code team_id} damgasını da sayar (PORT/DNS bağımsız izleme, O-1). */
+    public static boolean teamOnlyRecipients(AlertEvent e) {
+        return teamOnly(isStandaloneEvent(e), e.getAlertLevel());
     }
 
     /** Domain monitör alarmı (DOMAINMON_*) için e-posta detay bağlamını EN GÜNCEL DomainCheck'ten kurar.

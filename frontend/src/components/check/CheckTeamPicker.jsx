@@ -1,7 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { Users, Play } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import ModalShell from '../ui/ModalShell.jsx'
+import StatusBlock from '../ui/StatusBlock.jsx'
 import { Button } from '@/components/shadcn/button'
+import { Checkbox } from '@/components/shadcn/checkbox'
+import { Field, FieldLabel } from '@/components/shadcn/field'
+import { cn } from '@/lib/utils'
 
 export const TEAMS_KEY = 'sm.checkRun.teams'
 /** Takımsız sertifikalar için sanal anahtar (gerçek team_id null). */
@@ -84,14 +89,26 @@ export default function CheckTeamPicker({
   // rutini tüm envanteri taramaktır; daraltma o koşum için bilinçli bir seçimdir. Son seçim yine yazılır (readSavedTeams
   // başka yüzeyler için kalır).
   const [selected, setSelected] = useState(() => allKeys)
+  // Kovalar açılıştan SONRA gelirse (liste henüz yüklenirken açıldı) varsayılan "tüm takımlar" boş kalıyor, Başlat pasif
+  // görünüyordu (2026-09-27 regresyon B5). Kullanıcı dokunmadıkça seçim takım listesini İZLER — değer karşılaştırmalı,
+  // render sırasında (React'in "önceki prop'a göre state" deseni): çağıranlar kovaları her çizimde yeni dizi olarak verir.
+  const [touched, setTouched] = useState(false)
+  const allSig = JSON.stringify(allKeys)
+  const [seenSig, setSeenSig] = useState(allSig)
+  if (!touched && seenSig !== allSig) {
+    setSeenSig(allSig)
+    setSelected(allKeys)
+  }
 
-  const total = buckets.filter(b => selected.includes(b.key)).reduce((s, b) => s + b.count, 0)
+  const total =buckets.filter(b => selected.includes(b.key)).reduce((s, b) => s + b.count, 0)
   const allSelected = selected.length === allKeys.length && allKeys.length > 0
 
   function toggle(key) {
+    setTouched(true)
     setSelected(cur => cur.includes(key) ? cur.filter(k => k !== key) : [...cur, key])
   }
   function toggleAll() {
+    setTouched(true)
     setSelected(allSelected ? [] : allKeys)
   }
   function start() {
@@ -104,43 +121,48 @@ export default function CheckTeamPicker({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box chk-team-modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-icon-hdr modal-icon-hdr--check">
-          <div className="modal-icon-hdr-badge"><Users size={20} /></div>
-          <h3>{t('app.checkTeamTitle')}</h3>
-        </div>
-        <p className="chk-team-desc">{descText || t('app.checkTeamDesc')}</p>
+    <ModalShell open onClose={onClose} title={t('app.checkTeamTitle')} icon={Users} size="sm"
+      footer={<>
+        <span data-slot="check-team-total" className="mr-auto self-center text-[13px] font-bold text-muted-foreground">
+          {totalText ? totalText(total) : t('app.checkTeamTotal', total)}
+        </span>
+        <Button variant="secondary" onClick={onClose}>{t('app.cancel')}</Button>
+        <Button onClick={start} disabled={total === 0}>
+          <Play size={14} aria-hidden="true" />{t('app.checkTeamStart')}
+        </Button>
+      </>}>
+      <p className="mb-3 text-[13px] text-muted-foreground">{descText || t('app.checkTeamDesc')}</p>
 
-        {buckets.length === 0 ? (
-          <p className="chk-team-empty">{emptyText || t('app.checkTeamEmpty')}</p>
-        ) : (
-          <>
-            <label className="chk-team-row chk-team-all">
-              <input type="checkbox" checked={allSelected} onChange={toggleAll} />
-              <span className="chk-team-name">{t('app.checkTeamAll')}</span>
-              <span className="chk-team-count">{allKeys.length}</span>
-            </label>
-            <div className="chk-team-list">
-              {buckets.map(b => (
-                <label key={b.key} className="chk-team-row">
-                  <input type="checkbox" checked={selected.includes(b.key)} onChange={() => toggle(b.key)} />
-                  <span className="chk-team-name">{b.label || t('app.checkTeamNone')}</span>
-                  <span className="chk-team-count">{b.count}</span>
-                </label>
-              ))}
-            </div>
-          </>
-        )}
+      {buckets.length === 0 ? (
+        <StatusBlock tone="neutral" description={emptyText || t('app.checkTeamEmpty')} className="py-4 md:py-4" />
+      ) : (
+        <>
+          <TeamRow checked={allSelected} onToggle={toggleAll} label={t('app.checkTeamAll')} count={allKeys.length} strong />
+          <div className="max-h-[46vh] overflow-auto rounded-lg border [&>*+*]:border-t">
+            {buckets.map(b => (
+              <TeamRow key={b.key} checked={selected.includes(b.key)} onToggle={() => toggle(b.key)}
+                label={b.label || t('app.checkTeamNone')} count={b.count} />
+            ))}
+          </div>
+        </>
+      )}
+    </ModalShell>
+  )
+}
 
-        <div className="modal-actions">
-          <span className="chk-team-total">{totalText ? totalText(total) : t('app.checkTeamTotal', total)}</span>
-          <Button variant="secondary" onClick={onClose}>{t('app.cancel')}</Button>
-          <Button onClick={start} disabled={total === 0}>
-            <Play size={14} />{t('app.checkTeamStart')}
-          </Button>
-        </div>
-      </div>
-    </div>
+/**
+ * Tek takım satırı — shadcn Field (yatay) + Checkbox + FieldLabel: satırın herhangi bir yerine
+ * (etikete) tıklamak kutuyu değiştirir. Ad kutunun etiketidir, sayaç ayrı bir sayı.
+ */
+function TeamRow({ checked, onToggle, label, count, strong = false }) {
+  const id = useId()
+  return (
+    <Field orientation="horizontal" role={undefined} className="gap-2.5 px-3 py-2 hover:bg-muted/50">
+      <Checkbox id={id} checked={checked} onCheckedChange={() => onToggle()} />
+      <FieldLabel htmlFor={id} className={cn('min-w-0 flex-1 cursor-pointer truncate text-sm', strong ? 'font-bold' : 'font-normal')}>
+        {label}
+      </FieldLabel>
+      <span className="text-[13px] font-bold tabular-nums text-muted-foreground">{count}</span>
+    </Field>
   )
 }

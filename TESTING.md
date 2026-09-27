@@ -141,8 +141,11 @@ that dips below fails.
   `i18n-used-keys.test.jsx` (kodda `t('...')` ile çağrılan her literal anahtar iki sözlükte de olmak zorunda),
   `brand-default.test.jsx` (varsayılan turp logosu seti + override'sız render'lar korunur).
   Backend eşleri: `NamingConsistencyTest`, `PropertiesEncodingTest` (properties'te ham non-ASCII yasak),
-  `EmailTemplateStandardTest` (Outlook-güvenli mail standardı: tek 32px lockup, 600px kart, style'sız,
-  BRAND.md §5.1) ve `EmailPreviewHarnessTest` (her mail türü × severity HTML'ini
+  `EmailResponsiveContractTest` (e-posta sözleşmesi, BRAND.md §5.1: tüm türler akışkan 600/640 kart + MSO
+  hayalet tablo, tek duyarlı `<style>`, sol şerit yok, ≥12px yazı, ≥44px buton, tek 32px lockup, dolu düz metin),
+  `EmailGalleryTest` (`-Demail.gallery.dir=<klasör>` ile tüm türleri 390/640px önizleme galerisine yazar;
+  ekran görüntüsü + yatay taşma kapısı `EMAIL_GALLERY_DIR=<klasör> npx playwright test e2e/email-gallery.spec.js`)
+  ve `EmailPreviewHarnessTest` (her mail türü × severity HTML'ini
   `backend/target/email-previews/sonra-*.html`'e yazar — şablon değişimi gözle doğrulanır;
   `-Demail.preview.prefix=once` ile değişiklik-öncesi çift üretilir).
 

@@ -26,6 +26,12 @@
 eklenen ya da değiştirilen her arayüz öğesi https://ui.shadcn.com/docs/components bileşenleriyle çizilir.
 Legacy bir sınıfı shadcn'e *benzetmek* yetmez; gerçek bileşen (`src/components/shadcn/*.jsx`) kullanılır.
 
+**Tasarım kararları (kullanıcı, kalıcı):**
+- **Kartlarda ve detay pencerelerinde SOL RENK ŞERİDİ YOK — hiçbir zaman** (2026-09-26). `before:` çubuğu,
+  `border-l-*` durum rengi, `inset 4px 0` gölgesi yazılmaz. Durum `Badge` (metin + renk) ve `data-status` ile
+  taşınır; aktif alarm TÜM kartın dış çizgisiyle gösterilebilir. İzleme kartı: `components/monitoring/MonitorCard.jsx`.
+- **Mobil web duyarlı** (2026-09-26): her ekran telefonda ve tablette eksiksiz — [`RESPONSIVE.md`](./RESPONSIVE.md).
+
 Kurallar:
 
 - **Yeni öğede legacy App.css sınıfı YASAK:** `.btn*` (zaten silindi), `.input`, `.modal-overlay`,
@@ -69,7 +75,7 @@ Kurallar:
 | tw-animate-css | ^1.4.0 | `animate-in`, `fade-in-0`… (eski `tailwindcss-animate`'in yerini aldı) |
 | lucide-react | ^1.16.0 | İkon kütüphanesi (`iconLibrary: "lucide"`) |
 | @fontsource-variable/inter | ^5.3.0 | Yazı tipi pakete gömülü (dış istek yok) |
-| react-datepicker | ^9.1.0 | **Legacy** — Calendar'a geçiş (2. dalga F) bitince kaldırılacak |
+| ~~react-datepicker~~ | — | **Kaldırıldı** (2026-09-26 temizlik): tarih seçiciler Calendar + Popover (`ui/DatePickerParts.jsx`); kapı kuralı `datepicker` yeniden girişi yakalar |
 
 Yok: `react-hook-form`, `@tanstack/react-form`, `zod`, `@tanstack/react-table`, `vaul`, `embla-carousel-react`,
 `input-otp`, `react-resizable-panels`, `next-themes`, `cn`.
@@ -112,6 +118,19 @@ Dosyalar: `frontend/src/styles/globals.css`, `frontend/src/App.css`, içe aktarm
   mirası, `button[data-slot] { cursor: pointer }` (belgedeki `init --pointer` seçeneğinin karşılığı),
   `[data-slot] svg { display:inline-block; vertical-align:middle }`. **Bu yüzden `data-slot` taşımayan elle
   yazılmış öğe bu sıfırlamayı almaz** — elle öğe yazıyorsan sınırı/fontu kendin ver.
+- **`[hidden]` kuralı** (`globals.css` `@layer base`): `[hidden]:where(:not([hidden="until-found"])) { display:none
+  !important }` — preflight'ın bu kuralı olmadan `flex`/`grid` sınıfı UA'nın `display:none`'ını ezer ve `hidden`
+  öğe görünmez ama YER KAPLAR. Radix Tabs pasif sekme içeriğini `hidden` ile DOM'da tuttuğu için Bildirimler
+  panelinde liste yüksekliğin yarısında bitiyordu (2026-09-25). Tarayıcı kapısı: `e2e/inbox-panel.spec.js`.
+- **Varsayılan kenar rengi** (`globals.css` `@layer base`): `*, ::before, ::after, ::backdrop { border-color:
+  var(--color-border) }` — yalnız RENK. Tailwind v4'te varsayılan currentColor olduğu için data-slot'suz
+  `<div className="border">` SİYAH çiziyordu (2026-09-26; B1 dalgası 48 yerde elle `border-border` eklemişti).
+  shadcn kurulumundaki `* { @apply border-border }` kuralının karşılığı. Legacy `border: 1px solid` kısaltmaları
+  katmansız olduğu için kendi renklerini (currentColor) korur; `border-primary` gibi yardımcılar bunu yener.
+  Kapı: `src/test/globalsBase.test.js` (bu ve `[hidden]` kuralını base katmanında pinler).
+- **Button içindeki SVG küçülür:** shadcn Button, `size-*` sınıfı TAŞIMAYAN iç SVG'yi `size-4`'e zorlar. Düğmenin
+  içindeki grafik/sparkline SVG'si `size-` içeren bir sınıf taşımalı (ör. `size-full h-auto` ya da
+  `size-auto h-[22px] w-[72px]`).
 - Koyu temada legacy global alan kuralı shadcn'e dokunmasın diye daraltıldı:
   `[data-theme="dark"] input:not([type="checkbox"]):not([data-slot])…` (`App.css:3843-3845`).
 - Düğme köprüsü: `:where([data-slot="button"][data-size="sm"]) { margin-right: 4px; }` (`App.css:78`) — eski
@@ -169,11 +188,16 @@ forwardRef'e çevrilmiş dosyalar (yerel dosyada doğrulandı):
 | `shadcn/input.jsx` | `Input` |
 | `shadcn/textarea.jsx` | `Textarea` |
 | `shadcn/native-select.jsx` | `NativeSelect` (ref `<select>`'e gider) |
-| `shadcn/dialog.jsx` | `DialogOverlay` |
-| `shadcn/alert-dialog.jsx` | `AlertDialogOverlay` |
+| `shadcn/dialog.jsx` | `DialogOverlay`, `DialogTrigger` |
+| `shadcn/alert-dialog.jsx` | `AlertDialogOverlay`, `AlertDialogTrigger` |
 | `shadcn/command.jsx` | `Command`, `CommandInput` |
 | `shadcn/collapsible.jsx` | `CollapsibleTrigger` |
 | `shadcn/sidebar.jsx` | `SidebarMenuButton` |
+| `shadcn/sheet.jsx` | `SheetOverlay` (2026-09-26 — Presence ref'i; telefon menüsü, Yardım, Envanter çekmecesi), `SheetTrigger` |
+| `shadcn/popover.jsx`, `tooltip.jsx`, `dropdown-menu.jsx`, `hover-card.jsx` | `PopoverTrigger`, `TooltipTrigger`, `DropdownMenuTrigger`, `HoverCardTrigger` (2026-09-27 — İÇ İÇE TETİK: `<TooltipTrigger asChild><PopoverTrigger asChild><Button>` ipucu çapasını kaybediyordu; Tüm Sertifikalar araç çubuğunda bulundu). Kilit: `test/shadcnTriggerRefs.test.jsx` |
+| `shadcn/switch.jsx` | `Switch` (2026-09-26 — Tooltip tetiği olabilsin) |
+| `shadcn/input-group.jsx` | `InputGroupButton` (2026-09-26 — Tooltip tetiği olabilsin) |
+| `shadcn/table.jsx` | `TableRow` (B1 dalgası) |
 
 Kalıp: `.migration/forwardref.py`. Yeni bir sarmalayıcıyı `<XTrigger asChild>` içinde kullanacaksan ya da
 ona `ref` vereceksen önce forwardRef'e çevir. Belirti: ref `null`, menü/popover yanlış yerde açılıyor,
@@ -191,12 +215,14 @@ konsolda "Function components cannot be given refs".
 | `progress.jsx` | `value`/`max` Radix Root'a iletilir (aria-valuenow), oran `max`'a göre, `indicatorClassName`, belirsiz durumda nabız şeridi |
 | `spinner.jsx` | `aria-label={t('app.loading')}`, `motion-reduce:animate-pulse` |
 | `sonner.jsx` | `next-themes` yerine `@/i18n/theme.jsx` `useTheme`; `zIndex: var(--z-toast)`; `pointerEvents: auto` (Radix modal `body`'ye `pointer-events:none` yazar); `style` birleştirilir; `fontFamily: inherit` |
-| `sheet.jsx` | Kapat metni `t('app.close')` (katman hâlâ `z-50`) |
-| `sidebar.jsx` | sr-only/aria metinleri i18n (`nav.toggleSidebar`, `nav.sidebarTitle`…); **Ctrl+B yazı alanında devre dışı** (Markdown editöründe kalın); `SidebarMenuButton` forwardRef. `SidebarProvider` içeride `TooltipProvider delayDuration={0}` sarar. Hâlâ `document.cookie` `sidebar_state` yazar ama App.jsx durumu kontrollü tutup `localStorage 'sidebar-open'`'a yazar. Dosyanın 1. satırında hâlâ `"use client"` var (Vite'da işlevsiz; §3.3 kuralına göre silinmeli) |
+| `sheet.jsx` | Kapat metni `t('app.close')` (katman hâlâ `z-50`); yerleşik kapat düğmesi `data-slot="sheet-close"` + 32/40 px ghost görünüm (2026-09-27 — data-slot'suz `<button>` `button[data-slot]` sıfırlamasını almıyor, tarayıcı-varsayılanı gri kutu çiziyordu); `SheetTitle` `text-base leading-snug` (preflight yok → `<h2>` 1.5em alıyordu) |
+| `sidebar.jsx` | `SidebarContext` globalThis'e sabit (`__smSidebarCtx`, HMR çift-modül çökmesi 2026-09-26 — i18n ile aynı desen); sr-only/aria metinleri i18n (`nav.toggleSidebar`, `nav.sidebarTitle`…); **Ctrl+B yazı alanında devre dışı** (Markdown editöründe kalın); `SidebarMenuButton` forwardRef. `SidebarProvider` içeride `TooltipProvider delayDuration={0}` sarar. Hâlâ `document.cookie` `sidebar_state` yazar ama App.jsx durumu kontrollü tutup `localStorage 'sidebar-open'`'a yazar. **2026-09-26 (kenar çubuğu yeniden tasarımı):** `SidebarMenu` ve `SidebarMenuSub` `list-none` taşır (preflight yok → `ul` madde işareti alt menüde görünüyordu); `SidebarMenuSubButton` `as` prop'u alır (varsayılan `"a"`; Nav alt sekmeleri `as="button" type="button"` — ham `<button>` + asChild yerine). `SidebarGroupLabel` ikon kipinde `invisible` (R17) |
 | `command.jsx` | `Command`/`CommandInput` forwardRef; `CommandDialog` başlık/açıklaması `t('palette.title')` / `t('palette.trigger')` |
 | `pagination.jsx` | Sabit İngilizce aria-label'lar kaldırıldı; `PaginationPrevious`/`PaginationNext` metni **`label`** prop'uyla verilir (resmî belgede bu prop'un adı artık `text`); `Pagination`'a `aria-label` çağıran verir; üç nokta `t('pg.morePages')` |
 | `tooltip.jsx` | `TooltipProvider` varsayılan `delayDuration=0`. `Tooltip` kendi sağlayıcısını **sarmaz** → sağlayıcı şart (§4, Tooltip) |
 | `collapsible.jsx` | `CollapsibleTrigger` forwardRef |
+| `calendar.jsx` | Ay gezinme düğmeleri (`PreviousMonthButton`/`NextMonthButton`) `data-slot="calendar-nav-button"` taşır — DayPicker'ın çıplak `<button>`'ı preflight'sız projede tarayıcı varsayılanıyla (gri zemin, kabarık kenar) çiziliyordu (2026-09-26, D1) |
+| `table.jsx` | `<table>` sınıfına **`border-collapse`** eklendi (preflight'ın `table { border-collapse: collapse }` kuralının karşılığı). Olmadan tarayıcı varsayılanı `separate` + 2px aralık çiziyordu: hücre zeminleri arasında beyaz çizgiler, `TableRow`'un `border-b` alt çizgisi HİÇ görünmüyordu (2026-09-26, D2). Çağıran `border-separate` verirse twMerge ile ezer (PermissionMatrix, WeeklyCompletionBoard). `TableRow` forwardRef |
 
 ### 3.3 CLI ile bileşen ekleme — adım adım
 
@@ -279,7 +305,7 @@ biçiminde; projede npm/npx ve sabit sürüm kullanılır.
 | Native Select (`native-select`) | Stilli yerel `<select>`: NativeSelect, NativeSelectOption, NativeSelectOptGroup; `size` | Kurulu (forwardRef), henüz kullanılmıyor | 24 ham `<select>` (3. aşama) | Belge: yerel davranış/performans/mobil için NativeSelect, zengin öğe içeriği için Select. Yerel dosyada `className` **`<select>`'e** gider, sarmalayıcı `w-fit` — tam genişlik için sarmalayıcı düzenini kontrol et |
 | Switch (`switch`) | Açık/kapalı anahtar; `checked`/`onCheckedChange`, `size` sm/default | Kurulu, kullanılmıyor | Elle `role="switch"`: BrandingSettings:218, InventoryFormModal:593, MyAuditLog:84, TeamManager:53, WeeklyReportAccessSettings:23, UserPushSettings:290 | Field `orientation="horizontal"` ile; "choice card" deseni. Anında etki eden ayar için Switch, form gönderimi bekleyen onay için Checkbox |
 | Slider (`slider`) | Aralık seçici (Radix); `value`/`defaultValue` **dizi**, `onValueChange`, `onValueCommit`, min/max/step, orientation | **Kurulu değil** | 4 ham `<input type="range">`: `ui/IntervalSlider.jsx:44`, KeywordMonitorPage:901, PortMonitorPage:852, admin/StormSettings:140 | Değer tek başparmakta da dizi (`[33]`). Başparmağa erişilebilir ad ver |
-| Calendar (`calendar`) | Tarih seçimi (react-day-picker): `mode` single/range/multiple, `selected`/`onSelect`, `captionLayout="dropdown"`, `numberOfMonths`, `disabled`, `locale`, `weekStartsOn`, `timeZone` | Kurulu, henüz kullanılmıyor (2. dalga F sürüyor) | `ui/DateTimeField`, `TimeRangePicker`, `DateTimeRangePicker`, `WeekDatePicker`, `MonthCalendar` → Calendar + Popover; react-datepicker kalkacak | TR/EN için date-fns `tr`/`enGB` locale, Pazartesi başlangıç, min/max, Europe/Istanbul davranışı korunmalı. Popover içinde `z-(--z-menu)` |
+| Calendar (`calendar`) | Tarih seçimi (react-day-picker): `mode` single/range/multiple, `selected`/`onSelect`, `captionLayout="dropdown"`, `numberOfMonths`, `disabled`, `locale`, `weekStartsOn`, `timeZone` | Kurulu, kullanımda (2026-09-26, D1) | **`ui/DatePickerParts.jsx`** (ortak: `useCalendarProps` yerel + i18n gezinme adları, `DateTrigger`, `DatePopoverContent`, `TimeField`, `DateTimePopover`) → `ui/DateTimeField`, `DateTimeRangePicker`, `TimeRangePicker`; `WeekDatePicker` (ISO hafta no. düğmesi). `MonthCalendar` olay takvimi: Card + Button ızgara (Calendar hücrelerine olay çipi sığmaz). react-datepicker artık içe aktarılmıyor | Yerel `react-day-picker/locale` `tr`/`enGB`, `weekStartsOn: 1`; takvim YEREL saatte, UTC dönüşümü çağıranda. `autoFocus` (açılınca odak seçili güne). Ay değişince takvim düğmeleri yeniden çizilir → testte düğmeyi her adımda yeniden sorgula; gün adı `Thursday, 17 September 2026` (enGB `PPPP`) |
 | Date Picker (`date-picker`) | **Bileşen değil, desen:** Popover + Calendar (+ date-fns biçimlendirme); tek, aralık, hazır ön ayarlı, doğum tarihi (dropdown başlık), input'lu, tarih+saat örnekleri | Desen (parçaları kurulu) | Yukarıdaki tarih seçicileri | Seçimde popover'ı kapat; saat için Input/NativeSelect |
 | Combobox (`combobox`) | Aranabilir seçim. Resmî sürüm **Base UI** üzerine (Radix sayfasında bile): ComboboxInput, ComboboxContent, ComboboxList, ComboboxItem, ComboboxEmpty, ComboboxChips/Chip/ChipsInput (çoklu), ComboboxGroup/Label/Collection/Separator; `items`, `itemToStringValue`, `multiple`, `showClear`, `autoHighlight` | Kurulu, **bilinçli olarak kullanılmıyor** | SearchableSelect (254 kullanım) / MultiTeamSelect klasik desenle: **Popover + Command + Button** (`ui/PickerPopover.jsx`) | Gerekçe (`ui/PickerPopover.jsx:13-16`): ModalShell Radix Dialog; Base UI listesi Radix katman yığınını tanımaz → listedeki Escape **pencereyi** kapatır. Radix Popover aynı yığında: Escape önce listeyi kapatır. Base UI Combobox'ı Radix modal içinde kullanma |
 | Label (`label`) | Kontrolle ilişkili etiket (`htmlFor`) | Kurulu, kullanımda | Login, Dialog | Formlarda belge Field/FieldLabel öneriyor |
@@ -291,7 +317,7 @@ biçiminde; projede npm/npx ve sabit sürüm kullanılır.
 | Accordion (`accordion`) | Başlıklı, açılır bölümler: Accordion (`type` single/multiple, `collapsible`, `defaultValue`/`value`), AccordionItem, AccordionTrigger, AccordionContent | Kurulu, kullanılmıyor | Çok bölümlü rehber/SSS, ayar bölümleri | Tek bir açılır alan için Collapsible yeterli |
 | Breadcrumb (`breadcrumb`) | Hiyerarşik yol: BreadcrumbList/Item/Link (`asChild`)/Page/Separator/Ellipsis | Kurulu değil | Bugün yok; derin detay sayfaları için aday | Geçerli sayfa BreadcrumbPage (`aria-current`) |
 | Navigation Menu (`navigation-menu`) | Site gezinme bağlantıları + açılır paneller | Kurulu değil | Uygulama gezinmesi **Sidebar** ile | Uygulama kabuğu için kullanma |
-| Sidebar (`sidebar`) | Uygulama kenar çubuğu: SidebarProvider, Sidebar (`side`, `variant` sidebar/floating/inset, `collapsible` offcanvas/icon/none), Header/Content/Footer, Group/GroupLabel/GroupAction/GroupContent, Menu/MenuItem/MenuButton (`isActive`, `tooltip`, `size`, `asChild`)/MenuAction/MenuBadge/MenuSub*/MenuSkeleton, Rail, Inset, Trigger; `useSidebar()` | Kurulu, kullanımda | `components/Nav.jsx` (`collapsible="icon"`), App.jsx `SidebarProvider` (open ↔ `localStorage 'sidebar-open'`) + `SidebarInset`, mobil başlıkta `SidebarTrigger`, InboxBell | `useSidebar()` sağlayıcı dışında **fırlatır** → testte `withSidebar(ui)` (§8). Hook'u App.jsx'te auth erken-return'lerinden **önce** koy. Kısayol Ctrl/⌘+B (projede yazı alanında kapalı). Genişlik: `--sidebar-width` 16rem, mobil 18rem, ikon 3rem. Yazdırmada `[data-slot="sidebar"]` gizli |
+| Sidebar (`sidebar`) | Uygulama kenar çubuğu: SidebarProvider, Sidebar (`side`, `variant` sidebar/floating/inset, `collapsible` offcanvas/icon/none), Header/Content/Footer, Group/GroupLabel/GroupAction/GroupContent, Menu/MenuItem/MenuButton (`isActive`, `tooltip`, `size`, `asChild`)/MenuAction/MenuBadge/MenuSub*/MenuSkeleton, Rail, Inset, Trigger; `useSidebar()` | Kurulu, kullanımda | `components/Nav.jsx` (`collapsible="icon"`; sidebar-07 deseni, parçalar `components/nav/`: `NavBrand` = team-switcher görünümlü marka, `NavMain` = nav-main bölümleri + ikon kipinde yana açılan DropdownMenu, `NavUser` = nav-user menüsü, Çıkış içinde; `MobileTopBar` = <768 px üst çubuk), App.jsx `SidebarProvider` (open ↔ `localStorage 'sidebar-open'`) + `SidebarInset`, InboxBell (`variant` sidebar/icon) | `useSidebar()` sağlayıcı dışında **fırlatır** → testte `withSidebar(ui)` (§8). Hook'u App.jsx'te auth erken-return'lerinden **önce** koy. Kısayol Ctrl/⌘+B (projede yazı alanında kapalı). Genişlik: `--sidebar-width` 16rem, mobil 18rem, ikon 3rem. Yazdırmada `[data-slot="sidebar"]` gizli |
 | Tabs (`tabs`) | Sekmeli paneller: Tabs (`value`/`onValueChange`/`defaultValue`, `orientation`, `activationMode`), TabsList (`variant` default/line), TabsTrigger, TabsContent | Kurulu, kullanımda (InboxBell) | Elle `role="tablist"`: admin/AdminSettings:95, monitoring/MaintenanceTargetPicker:76, ui/TeamMembersModal:54; `.tab-content` | Etkin olmayan TabsContent **DOM'dan çıkar** (durum/odak kaybolur) — korumak için `forceMount` + gizleme. Uygulama geneli `tab` URL parametresi uygulamanındır; sayfa sekmesini URL'e yazarken önekli anahtar kullan |
 | Separator (`separator`) | Görsel/anlamsal ayraç; `orientation`, `decorative` | Kurulu, kullanımda | VersionPopover; Field/Item/ButtonGroup içinde | — |
 | Scroll Area (`scroll-area`) | Tarayıcılar arası özel kaydırma çubuğu: ScrollArea, ScrollBar (`orientation`) | Kurulu, kullanılmıyor | — | **Sabit yükseklik şart**, yoksa kaydırmaz. Uzun formlarda ModalShell `scrollBody` zaten var |
@@ -345,7 +371,7 @@ biçiminde; projede npm/npx ve sabit sürüm kullanılır.
 
 | Bileşen | Ne işe yarar | Projede | site-monitor'de / yerini aldığı | Tuzak / not |
 |---|---|---|---|---|
-| Collapsible (`collapsible`) | Tek panel aç/kapa: Collapsible (`open`/`onOpenChange`/`defaultOpen`), Trigger, Content (`forceMount`) | Kurulu, kullanımda (forwardRef tetik) | Nav grupları; açılır çubuklar (`.stats-collapse-bar`, `.alh-group-head` — 3. aşama) | `forceMount` içeriği HEP açık çizer → kapalıyken `hidden={!open}` senin işin (`Nav.jsx:292`). Ürün turu `data-tour` kancaları bu sayede DOM'da kalır |
+| Collapsible (`collapsible`) | Tek panel aç/kapa: Collapsible (`open`/`onOpenChange`/`defaultOpen`), Trigger, Content (`forceMount`) | Kurulu, kullanımda (forwardRef tetik) | Nav grupları; açılır çubuklar (`.stats-collapse-bar`, `.alh-group-head` — 3. aşama) | `forceMount` içeriği HEP açık çizer → kapalıyken `hidden={!open}` senin işin (`components/nav/NavMain.jsx` `NavSection`). Ürün turu `data-tour` kancaları bu sayede DOM'da kalır |
 | Toggle (`toggle`) | İki durumlu düğme: `pressed`/`onPressedChange`, `variant`, `size` | Kurulu (ToggleGroup'un parçası) | — | Yalnız ikonluysa `aria-label` şart |
 | Toggle Group (`toggle-group`) | Durum düğmeleri kümesi: `type` single/multiple (**zorunlu**), `value`/`onValueChange`, `variant`, `size`, `spacing`, `orientation` | Kurulu, **3 dosyada** | `ui/SegmentedControl.jsx` (eski `role=group` + `aria-pressed` sözleşmesi korunarak), Pano Compact/Rich, PaginationBar | `type="single"`'da etkin öğeye tekrar basmak değeri **`""`** yapar → boşu yok say: `onValueChange={(v) => v && set(v)}`. Bitişik görünüm `spacing={0}` (yerel varsayılan zaten 0) |
 | Pagination (`pagination`) | Sayfa gezinme: Pagination, Content, Item, Link (`isActive`), Previous, Next, Ellipsis | Kurulu, kullanımda | **`ui/PaginationBar.jsx`** (+ ToggleGroup + Input) — `.pgn`/`.pg-*` yerine | Projede Previous/Next metni `label` prop'u, `Pagination`'a i18n `aria-label` (sabit İngilizce kaldırıldı) |
@@ -408,9 +434,17 @@ toggle `toggle-group.jsx`'in içinden dolaylı olarak kullanılıyor).
 | Tek açılır bölüm | Collapsible | `forceMount` + `hidden` tuzağı |
 | Birden çok açılır bölüm | Accordion | `type="multiple"` |
 | Satır/kart eylem menüsü | `ui/KebabMenu` (DropdownMenu) | `rowLabel` ile satırı ayırt eden ad |
+| İzleme kartı eylemleri telefonda (< 640 px) | `MonitorCardActions phoneMenu menuItems={[…]}` | 2026-09-27 (Alan Adı kartı; isteğe bağlı, varsayılan kapalı → diğer sayfalarda çıktı aynı): Sürdür + Şimdi kontrol et görünür kalır, Düzenle/Kopyala/Sil `max-sm:hidden`, yerine tek "Diğer işlemler" KebabMenu'sü (Düzenle · Kopyala · `menuItems` · Sil; adı satırı taşır) — sertifika kartının telefon düzeniyle aynı |
 | Genel açılır menü | DropdownMenu (`modal={false}`, `z-(--z-menu)`) | — |
 | Kısa ipucu (hover/odak) | Tooltip | TooltipProvider gerekir; temel bilgi taşımaz |
 | Tıklayınca açılan yardım/bilgi balonu | `ui/HelpTip` (Popover) | — |
+| Rozet/etiketin açıklaması (dokunmatikte de) | `ui/HintPopover` (Popover, tetik shadcn Button) | Tooltip telefonda açılmaz; temel bilgi taşıyan açıklama için bunu kullan (2026-09-26) |
+| Kart erişilebilirlik satırı (30 gün + dönemler) | `ui/MonitorSpark` (Button + Popover) | Dönem noktaları + ayrıntı penceresi; eski `mspark-*` hapları kalktı |
+| Katlanır "İstatistikler ▾" / bölüm başlığı | `ui/CollapsibleSection` (Collapsible + outline Button, `data-slot="stats-toggle"`) | Projenin TEK katlanır şeridi; el yapımı `div.stats-collapse-bar[role=button]` YASAK (2026-09-26) |
+| Tıklanabilir sayım kartları (süzgeç) | `MonitorStatsBar` (Button + `aria-pressed`, DENGELİ tam-genişlik yerleşim) | Pano (`StatsPanel`) dahil hepsi; `sub` alt satır, `tip` özel ad, `onClick` = süzgeç değil eylem kartı. Yerleşim (2026-09-27): kap `ResizeObserver` ile ölçülür, `balancedColumns` sütunları satırlara eşit dağıtır (11 kart → 6+5, 7+4 değil), kartlar `flex-grow` ile satırı doldurur, ≥220 px kart yatay içerik (`@container`); ölçüm yokken sınıf tabanı (telefon 2 sütun). Kendi ızgaranı kurma |
+| Sayfa başlığı + eylem çubuğu | `ui/PageHeader` (`icon`, `title`, `description`, `meta` çipleri, `actions`; `data-slot="page-header|page-title|page-actions"`) | HER sayfanın üstü aynı düzen (2026-09-27, Pano ilk): eylemler soldan sağa az→çok önemli, BİRİNCİL en sağda; telefonda düğmeler başlığın altına iner ve satırı eşit paylaşır. Sığmazsa (768 px + kenar çubuğu) eylemler alt satıra SARAR, başlık ezilmez. El yapımı başlık satırı YOK |
+| Kart yoğunluğu (Kompakt / Zengin) | `ui/CardDensityToggle` + `hooks/useCardDensity(sayfa)` + `MonitorCard density` + `MonitorCardRich` | 2026-09-27: Genel Bakış + 9 izleme sayfası AYNI seçici. Sayfa: `const [density, setDensity] = useCardDensity('ping')`; seçici `upt-toolbar`'ın İLK öğesi (`mr-auto`, filtreler sağda); ızgara `<div className="upt-grid" data-density={density}>` (Kompakt'ta 250 px taban → 1440'ta 4 sütun); kart `<MonitorCard density={density}>`. Kompakt = seçim kutusu, durum rozeti (+alarm/bakım/duraklatıldı), başlık + tek ikincil satır, ana ölçü, düşükse tek satır neden, takım rozeti, alt satır (zaman + eylemler). Zengin = bugünkü tam kart; yalnız-Zengin bölümler `MonitorCardRich` içinde (Kompakt'ta DOM'a girmez). İzleme sayfaları HER AÇILIŞTA Zengin başlar, Kompakt seçimi kalıcı DEĞİL; Genel Bakış ilk açılışta Zengin, oturum içinde son seçimi hatırlar (App durumu), çıkışta Zengin'e döner — hiçbiri tarayıcıya yazmaz (kullanıcı kararları 2026-09-27). Kapı: `cardDensityStandard.test.jsx` (PENDING cırcırı) |
+| İzleme sayfası başlığı (9 tür + Uptime) | `monitoring/MonitorPageHeader` (`type` → kenar çubuğu ikonu + kılavuz; `count`/`down`/`refreshIn` meta çipleri; `onRefresh`, `check`, `canWrite`+`onNew`+`newLabel`, `extraActions`, `showActions`, `children`) | 2026-09-27: Yenile · Şimdi Kontrol Et (N) · ek · Bağlantıyı kopyala + Nasıl doldurulur · Yeni Monitör (birincil, `data-tour="mon-new"`). Telefonda (<768) ikincil küme tek "Diğer işlemler" menüsü (40 px), Yeni Monitör tam genişlik. Kapı: `monitorCardStandard` + `monitorTypeSurfaces` |
 | Zengin yüzen içerik (form, liste) | Popover | `z-(--z-menu)` |
 | Komut paleti / hızlı arama | CommandDialog deseni (CommandPalette) | `shouldFilter={false}` + kendi süzgecin |
 | Tablo | Table | Sıralama/süzme gerekiyorsa Data Table kılavuzu (yeni paket = kullanıcı kararı) |
@@ -567,9 +601,10 @@ Ekranda elle `bg-green-100 text-green-800` benzeri ton yazmadan önce bunlara ba
 - Dialog, AlertDialog, Sheet, Popover, DropdownMenu, Tooltip, Sonner içeriği **`document.body`'ye portal'lanır**
   → `screen.*` ile ara; `container.querySelector` bulamaz.
 - **Collapsible `forceMount` tuzağı:** Radix `forceMount`'ta içeriği hep açık çizer; kapalıyken gizlemek
-  çağıranın işi (`hidden={!open}`, `Nav.jsx:292`). Testte kapalı grubun öğeleri DOM'da durur ama
+  çağıranın işi (`hidden={!open}`, `components/nav/NavMain.jsx`). Testte kapalı grubun öğeleri DOM'da durur ama
   `getByRole` onları (hidden) **döndürmez**; varlığını sınamak için `{ hidden: true }`.
-- Tabs: etkin olmayan TabsContent DOM'da yoktur (forceMount yoksa).
+- Tabs: etkin olmayan TabsContent DOM'da `hidden` öznitelikli, İÇERİKSİZ bir kap olarak durur; görünmez olması
+  `globals.css` `[hidden]` kuralına bağlı (bkz. §2.3). TabsContent'e `flex`/`grid` verirken bu kural şart.
 - **cmdk:** liste `role="listbox"`, öğeler `[cmdk-item]` + `role="option"` (`aria-selected`), arama kutusu
   `[cmdk-input]`; grup başlığı `[cmdk-group-heading]`. Öğe değeri `data-value`'da (projede `o:` önekli).
 - jsdom yerleşim hesaplamaz: yeşil vitest; kırpılma, taşma, z-index, kaydırma gibi **yerleşimi kanıtlamaz**
@@ -589,6 +624,7 @@ Var: `matchMedia` (use-mobile + ThemeProvider), `scrollIntoView`, `ResizeObserve
 | `src/test/rowAccessibleNames.test.js` | Sabit `aria-label` yasak (i18n); tıklanabilir div muafiyeti gerekçeli |
 | `src/test/progress-guard.test.jsx` | Ham `<div className="…loading">` bloğu yok (→ `LoadingBlock`); elle yüzde çubuğu yok (→ `ProgressBar`); lucide `Loader2` doğrudan spinner olarak kullanılmaz (→ `ui/Progress` `Spinner`); Progress ailesi reduced-motion kapsamında |
 | `src/test/css-hygiene.test.jsx` | Kullanılan yardımcı sınıflar tanımlı; katman jetonları (`--z-*`) tanımlı ve kullanılıyor; Dialog/AlertDialog/ModalShell scrim/Sonner/Spinner animasyonları `prefers-reduced-motion` kapsamında; yeni durum yüzeylerinin her tonunun koyu tema karşılığı var |
+| `src/test/shadcnOnly.test.js` | Ham `<button>/<input>/<select>/<textarea>/<table>/<details>`, elle switch/tabs/modal, react-datepicker, doğrudan recharts ve **`hand-button`** (düğme olmayan öğede `role="button"`; `ToggleGroupItem role="button"` toggle-button-group sözleşmesi muaf) dosya başına sayılır; taban `shadcn-only-baseline.json` **boş** ve yalnız küçülür. Gerekçeli izin listesi `scripts/shadcn-only-rules.mjs` `ALLOWLIST` (`{ dosya: { kural: sayı, reason } }`): string-kurulu bağımsız belgeler (`weekly/weeklyModel.js` A4 yazdırma) ve bilinçli `role="button"` span'ler (`ui/CopyButton` / `ui/TeamBadge` `as="span"` — düğme içinde düğme geçersiz; `ui/HelpTip` — tetik `<label>` içinde, `<button>` etiketi çalar). Canlılık testi: gerçek sayı izinden küçükse kırmızı (bayat giriş başka öğeyi örtemez). İç içe etkileşim gerekiyorsa çözüm izin değil "stretched button" (`monitoring/MonitorCard`, `scripted/VersionTimeline`, `admin/UserPushSettings` KPI kartı) |
 
 Tam kapı dizisi (seri, kaynak düzenlemeden): `.migration/PLAN.md` "Kapılar" bölümü.
 

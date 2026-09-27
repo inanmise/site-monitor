@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @Table(name = "domain_monitors")
 @Data
 @NoArgsConstructor
-public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule {
+public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -154,6 +154,16 @@ public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule {
      */
     @jakarta.persistence.Column(name = "notification_group_id")
     private Long notificationGroupId;
+
+    /** 7/24 İzleme Ekibi (NOC) bildirimi (2026-09-27) — null = KAPALI (varsayılan). Bkz. {@link NocTarget}. */
+    @jakarta.persistence.Column(name = "noc_notify")
+    private Boolean nocNotify;
+
+    /** Hedef NOC grupları (virgüllü kimlik); null = varsayılan gruplar. API'ye LİSTE olarak yazılır
+     *  ({@code noc_group_ids}) — ham virgüllü değer JSON'a çıkmaz. */
+    @jakarta.persistence.Column(name = "noc_group_ids", length = 500)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String nocGroupIds;
 
     // ── Planlanan yenileme (2026-09-22, madde H; sertifika envanterindeki renewal_planned_* eşi) ─────────────
     // Operatör "bu tarihte yenileyeceğiz" der; plan tarihi geçip bitiş ileri gitmemişse kart "gecikmiş" gösterir; gerçek

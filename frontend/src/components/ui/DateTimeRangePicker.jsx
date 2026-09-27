@@ -1,28 +1,8 @@
-import { useState, useEffect, forwardRef } from 'react'
-import { createPortal } from 'react-dom'
-import DatePicker, { registerLocale } from 'react-datepicker'
-import 'react-datepicker/dist/react-datepicker.css'
-import { tr, enUS } from 'date-fns/locale'
-import { Calendar, ChevronDown } from 'lucide-react'
-import { useT, useLanguage } from '../../i18n/index.jsx'
-
-registerLocale('tr', tr)
-registerLocale('en', enUS)
-
-// Module-level — never recreated between renders, react-datepicker stays stable
-const CustomDateInput = forwardRef(function CustomDateInput({ value, onClick, fieldLabel }, ref) {
-  return (
-    <button className="dp-trigger" onClick={onClick} ref={ref} type="button">
-      <Calendar size={13} className="dp-trigger-icon" />
-      <span className="dp-trigger-label">{fieldLabel}</span>
-      <span className="dp-trigger-value">{value || '—'}</span>
-      <ChevronDown size={12} className="dp-trigger-chevron" />
-    </button>
-  )
-})
-
-// Portals calendar to document.body, escaping modal overflow + z-index stacking
-const BodyPortal = ({ children }) => createPortal(children, document.body)
+import { useState, useEffect } from 'react'
+import { ArrowRight } from 'lucide-react'
+import { useT } from '../../i18n/index.jsx'
+import { Button } from '@/components/shadcn/button'
+import { DateTimePopover } from './DatePickerParts.jsx'
 
 const SHORTCUTS = (t) => [
   {
@@ -43,16 +23,34 @@ const SHORTCUTS = (t) => [
   },
 ]
 
+/** Takvimde seçili aralığın vurgusu (iki uç + ara günler) — shadcn Calendar'ın aralık görünümü. */
+function rangeModifiers(from, to) {
+  if (!from || !to || to < from) return undefined
+  return { range_start: from, range_end: to, range_middle: { after: from, before: to } }
+}
+
+/**
+ * Tarih-saat ARALIĞI seçici: hızlı kısayollar (Bugün / Son 7 gün / Son 30 gün / Bu ay — anında uygulanır) +
+ * Başlangıç → Bitiş tetikleri (her biri shadcn Popover + Calendar + 30 dk adımlı saat) + Uygula.
+ *
+ * Sözleşme (değişmedi): `from`/`to` YEREL `Date`; `onApply(from, to)` Date döner. Başlangıç Bitiş'ten sonra
+ * olamaz, Bitiş Başlangıç'tan önce ve bugünden sonra olamaz (gün düzeyinde seçilemez; saat taşarsa uca
+ * kırpılır). Telefonda tetikler alt alta, geniş ekranda tek satır.
+ */
 export default function DateTimeRangePicker({ from, to, onApply }) {
   const t = useT()
-  const { lang } = useLanguage()
-  const locale = lang === 'tr' ? 'tr' : 'en'
 
   const [localFrom, setLocalFrom] = useState(from)
   const [localTo,   setLocalTo]   = useState(to)
 
-  useEffect(() => { setLocalFrom(from) }, [from])
-  useEffect(() => { setLocalTo(to)     }, [to])
+  // Prop → taslak senkronu Date'in DEĞERİNE bağlı, referansına değil (2026-09-27 regresyon B1): çağıranlar her
+  // çizimde yeni bir Date nesnesi geçiyor (`new Date(since)`), izleme sayfaları da saniyede bir yeniden çiziliyor —
+  // referans karşılaştırması kullanıcının seçtiği ilk "Başlangıç"ı 1 sn içinde sıfırlıyordu. "Şimdi" gibi her
+  // çizimde DEĞERİ de değişen varsayılanlar çağıranda sabitlenir (useMemo) — bkz. CheckHistoryTab.
+  const fromMs = from?.getTime?.() ?? null
+  const toMs = to?.getTime?.() ?? null
+  useEffect(() => { setLocalFrom(from) }, [fromMs])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setLocalTo(to)     }, [toMs])     // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleFrom(date) {
     if (!date) return
@@ -71,65 +69,33 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
     onApply(s, e)
   }
 
+  const marks = rangeModifiers(localFrom, localTo)
+
   return (
-    <div className="dp-wrap">
-      {/* Quick shortcut chips */}
-      <div className="dp-shortcuts">
+    <div data-slot="date-range-picker" className="flex min-w-0 flex-col gap-2.5">
+      {/* Hızlı kısayollar */}
+      <div className="flex flex-wrap gap-1.5">
         {SHORTCUTS(t).map(sc => (
-          <button key={sc.label} className="dp-shortcut" type="button"
+          <Button key={sc.label} type="button" variant="outline" size="xs"
+            className="rounded-full px-3 text-muted-foreground hover:border-primary hover:text-primary"
             onClick={() => applyShortcut(sc)}>
             {sc.label}
-          </button>
+          </Button>
         ))}
       </div>
 
-      {/* From → To inputs + Apply */}
-      <div className="dp-range-row">
-        <DatePicker
-          selected={localFrom}
-          onChange={handleFrom}
-          selectsStart
-          startDate={localFrom}
-          endDate={localTo}
-          showTimeSelect
-          timeFormat="HH:mm"
-          timeIntervals={30}
-          dateFormat="dd.MM.yyyy HH:mm"
-          locale={locale}
-          maxDate={localTo}
-          popperContainer={BodyPortal}
-          customInput={<CustomDateInput fieldLabel={t('uptime.dateFrom')} />}
-          showPopperArrow={false}
-          popperPlacement="bottom-start"
-          calendarClassName="dp-calendar"
-        />
-
-        <span className="dp-range-sep">→</span>
-
-        <DatePicker
-          selected={localTo}
-          onChange={handleTo}
-          selectsEnd
-          startDate={localFrom}
-          endDate={localTo}
-          showTimeSelect
-          timeFormat="HH:mm"
-          timeIntervals={30}
-          dateFormat="dd.MM.yyyy HH:mm"
-          locale={locale}
-          minDate={localFrom}
-          maxDate={new Date()}
-          popperContainer={BodyPortal}
-          customInput={<CustomDateInput fieldLabel={t('uptime.dateTo')} />}
-          showPopperArrow={false}
-          popperPlacement="bottom-start"
-          calendarClassName="dp-calendar"
-        />
-
-        <button className="upt-apply-btn" type="button"
-          onClick={() => onApply(localFrom, localTo)}>
+      {/* Başlangıç → Bitiş + Uygula */}
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <DateTimePopover value={localFrom} onChange={handleFrom} timeStep={1800}
+          maxDate={localTo} modifiers={marks} label={t('uptime.dateFrom')}
+          className="sm:w-auto" triggerClassName="sm:w-auto" />
+        <ArrowRight aria-hidden="true" className="hidden size-4 shrink-0 text-muted-foreground sm:block" />
+        <DateTimePopover value={localTo} onChange={handleTo} timeStep={1800}
+          minDate={localFrom} maxDate={new Date()} modifiers={marks} label={t('uptime.dateTo')}
+          className="sm:w-auto" triggerClassName="sm:w-auto" />
+        <Button type="button" className="sm:w-auto" onClick={() => onApply(localFrom, localTo)}>
           {t('uptime.apply')}
-        </button>
+        </Button>
       </div>
     </div>
   )

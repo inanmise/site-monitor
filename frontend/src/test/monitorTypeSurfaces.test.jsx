@@ -109,11 +109,16 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
 
   it('Her izleme türünün sayfası var ve iki standart yardım bileşenini kullanıyor', () => {
     // Proje standardı: MonitorHowBox (nasıl/nereden) + MonitorGuideButton (form nasıl doldurulur).
+    // Kılavuz düğmesi 2026-09-27'den beri ORTAK başlıkta (monitoring/MonitorPageHeader; telefonda "Diğer" menüsünde):
+    // sayfa başlığı TÜRÜYLE çizer → kılavuz o türün rehberini açar. Başlığın kendisi de düğmeyi taşımalı.
+    const header = read('components/monitoring/MonitorPageHeader.jsx')
+    expect(header, 'MonitorPageHeader: MonitorGuideButton yok').toContain('<MonitorGuideButton')
     for (const type of MONITOR_TYPES) {
       const file = pageFileFor(type)
       const src = read(file)
       expect(src, `${file}: MonitorHowBox yok`).toContain('MonitorHowBox')
-      expect(src, `${file}: MonitorGuideButton yok`).toContain('MonitorGuideButton')
+      expect(src, `${file}: MonitorPageHeader type="${type}" yok (kılavuz düğmesi)`)
+        .toMatch(new RegExp(`<MonitorPageHeader\\b[^>]*\\btype="${type}"`))
     }
   })
 
@@ -232,10 +237,13 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
     // Eksik sayfa hata VERMEZ; o türde toplu kontrol yalnızca yok olur — MonitorHowBox /
     // MonitorGuideButton kapısıyla aynı hata sınıfı. Depolama anahtarı da tür başına ayrı
     // olmalı: tek anahtar paylaşılırsa bir sayfadaki takım seçimi panonunkini ezer.
+    // "Şimdi Kontrol Et (N)" düğmesi ortak başlıkta (MonitorPageHeader `check` prop'u → CheckAllButton, 2026-09-27).
+    expect(read('components/monitoring/MonitorPageHeader.jsx'), 'MonitorPageHeader: CheckAllButton yok').toContain('<CheckAllButton')
     for (const type of MONITOR_TYPES) {
       const file = pageFileFor(type)
       const src = read(file)
-      expect(src, `${file}: CheckAllButton yok`).toContain('CheckAllButton')
+      expect(src, `${file}: MonitorPageHeader check={…} yok (toplu kontrol düğmesi)`)
+        .toMatch(/<MonitorPageHeader\b[\s\S]{0,1200}?\bcheck=\{\{\s*count: checkable\.length/)
       expect(src, `${file}: MonitorCheckRunModal yok`).toContain('MonitorCheckRunModal')
       expect(src, `${file}: useCheckRun yok`).toContain('useCheckRun')
       expect(src, `${file}: takım seçici tür başına anahtar kullanmıyor`)

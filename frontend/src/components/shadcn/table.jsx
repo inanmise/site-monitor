@@ -1,4 +1,4 @@
-
+import * as React from "react"
 import { cn } from "@/lib/utils"
 
 function Table({
@@ -10,9 +10,12 @@ function Table({
       data-slot="table-container"
       className="relative w-full overflow-x-auto"
     >
+      {/* border-collapse: projede Tailwind preflight YOK (SHADCN.md §2.3) — preflight'ın `table { border-collapse:
+          collapse }` kuralı olmadan tarayıcı varsayılanı `separate` + 2px aralık çizer: hücre zeminleri arasında
+          beyaz çizgiler kalır, `<tr>` alt çizgileri (border-b) HİÇ görünmez. Çağıran `border-separate` verirse ezer. */}
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom border-collapse text-sm", className)}
         {...props}
       />
     </div>
@@ -61,12 +64,15 @@ function TableFooter({
   )
 }
 
-function TableRow({
+// React 18 (proje sürümü): ekranlar seçili satıra odak/kaydırma için ref veriyor (Denetim Kaydı
+// gezici tabindex'i) — işlev bileşeni ref'i DÜŞÜRÜR, forwardRef şart (bkz. button.jsx notu).
+const TableRow = React.forwardRef(function TableRow({
   className,
   ...props
-}) {
+}, ref) {
   return (
     <tr
+      ref={ref}
       data-slot="table-row"
       className={cn(
         "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
@@ -75,7 +81,7 @@ function TableRow({
       {...props}
     />
   )
-}
+})
 
 function TableHead({
   className,

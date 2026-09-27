@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import CheckHistoryTab from '../components/history/CheckHistoryTab.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -64,8 +64,25 @@ describe('CheckHistoryTab', () => {
   it('gün ayırıcıları: sayfadaki farklı günler için ayraç satırı basılır', async () => {
     renderTab()
     await screen.findByText('2026-08-07T10:00:00')
-    const seps = document.querySelectorAll('.hist-day-sep')
+    const seps = document.querySelectorAll('[data-slot="hist-day-sep"]')
     expect(seps.length).toBe(2)   // 07 Ağustos + 06 Ağustos
+  })
+
+  it('özet kutucukları: kontrol + hata (süzgeç, aria-pressed) · erişilebilirlik % · kesinti (salt gösterim)', async () => {
+    renderTab()
+    await screen.findByText('2026-08-07T10:00:00')
+    const tiles = [...document.querySelectorAll('[data-slot="hist-tile"]')]
+    expect(tiles).toHaveLength(4)
+    expect(tiles[0].tagName).toBe('BUTTON')
+    expect(tiles[0]).toHaveAttribute('aria-pressed', 'true')     // Tümü seçili
+    expect(tiles[0].textContent).toContain('120')
+    expect(tiles[1]).toHaveAttribute('aria-pressed', 'false')
+    expect(tiles[1].textContent).toContain('7')
+    expect(tiles[2].tagName).not.toBe('BUTTON')                  // erişilebilirlik süzgeç değil
+    expect(tiles[2].textContent).toContain('94.17%')              // (120 − 7) / 120
+    expect(tiles[3].textContent).toContain('0')                   // aralıkta kesinti alarmı yok
+    // Sol renk şeridi yok (kullanıcı kuralı): kutucuk tam çerçeveli
+    for (const tile of tiles) { expect(tile).toHaveClass('border'); expect(tile.className).not.toMatch(/border-l-/) }
   })
 
   it('alarm işaret satırları: pencere kuralına göre doğru kontrolün üstünde görünür', async () => {
@@ -78,12 +95,80 @@ describe('CheckHistoryTab', () => {
     // Çözülme, 1. sayfanın en-üst penceresinde (items[0]'dan yeni) — o da görünür.
     expect(screen.getByText(/alarm çözüldü|alert resolved/i)).toBeInTheDocument()
     expect(screen.getAllByText(/PING_DOWN/).length).toBe(2)   // tetiklenme + çözülme satırları
+    // 2026-09-26: alarm satırı SOL RENK ŞERİDİ taşımaz (kullanıcı kuralı) — tam çerçeve + hafif zemin
+    const rows = [...document.querySelectorAll('[data-slot="hist-alert-row"]')]
+    expect(rows.map((r) => r.dataset.kind)).toEqual(['resolved', 'triggered'])
+    for (const r of rows) {
+      expect(r.className).not.toMatch(/border-l|hist-alert-row/)
+      expect(r).toHaveClass('border')
+    }
+    // Olay KARTI (2026-09-27): seviye rozeti, çözüm satırında süre (09:30 → 10:15 = 45 dk), alarm geçmişi bağlantısı
+    expect(rows[1].querySelector('[data-slot="badge"][data-level="CRITICAL"]')).not.toBeNull()
+    expect(rows[0].textContent).toMatch(/45 (dk|min)/)
+    expect(within(rows[0]).getByRole('button', { name: /alarm geçmişinde aç|open in alert history/i })).toBeInTheDocument()
+  })
+
+  it('geniş ekranda satırlar shadcn Table: sütun başlıkları `columns`, sayfalama tablonun DIŞINDA, eski CSS ızgarası yok', async () => {
+    renderTab({ gridClass: 'dom-rt-grid' })
+    await screen.findByText('2026-08-07T10:00:00')
+    const rowsBox = document.querySelector('[data-slot="hist-list"] > [data-slot="hist-rows"]')
+    expect(rowsBox).toHaveAttribute('data-view', 'table')
+    expect(rowsBox.querySelector('[data-slot="table-container"]')).not.toBeNull()
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Zaman', 'Durum', 'RTT', 'Detay'])
+    // Sayfalama satır kabının DIŞINDA (genişlemez)
+    expect(rowsBox.querySelector('[data-slot="pagination"], nav')).toBeNull()
+    expect(document.querySelector('.upt-rt-grid, .upt-rt-head, .dom-rt-grid')).toBeNull()
+  })
+
+  it("'changed' kipi (DNS): değişen kayıt HATA değildir — kutucuk amber, erişilebilirlik zaman tabanlı (kesinti yoksa %100)", async () => {
+    renderTab({ filterMode: 'changed' })
+    await screen.findByText('2026-08-07T10:00:00')
+    const tiles = [...document.querySelectorAll('[data-slot="hist-tile"]')]
+    expect(tiles[1]).toHaveAttribute('data-tone', 'warning')          // 7 değişen kayıt → amber, kırmızı değil
+    expect(tiles[2].textContent).toContain('100%')                     // aralıkta kesinti alarmı yok
+    expect(tiles[2].textContent).not.toContain('94.17%')               // (120 − 7) / 120 DEĞİL
+  })
+
+  it('sütun sayısını AŞAN hücre (DNS değer farkı paneli) sütun kaymaz: altında tam genişlik ek satır olur', async () => {
+    renderTab({
+      renderRow: (c) => (<>
+        <span>{c.checked_at}</span><span>{c.up ? 'UP' : 'DOWN'}</span><span>{c.rtt_ms}ms</span><span>{c.error || '—'}</span>
+        {!c.up && <div data-testid="diff-panel">fark paneli</div>}
+      </>),
+    })
+    await screen.findByText('2026-08-07T10:00:00')
+    const extra = document.querySelector('[data-slot="hist-row-extra"]')
+    expect(extra).not.toBeNull()
+    const cell = extra.querySelector('td')
+    expect(cell).toHaveAttribute('colspan', '4')
+    expect(within(cell).getByTestId('diff-panel')).toBeInTheDocument()
+    // Veri satırları sütun sayısı kadar hücre taşır (ek içerik ayrı satırda) — koşul false iken ek satır yok
+    const dataRows = [...document.querySelectorAll('tbody tr')].filter((tr) => tr.children.length > 1)
+    expect(dataRows.every((tr) => tr.children.length === 4)).toBe(true)
+    expect(document.querySelectorAll('[data-slot="hist-row-extra"]')).toHaveLength(1)
+  })
+
+  it('telefonda satırlar KART: zaman + durum başlıkta, diğer hücreler sütun etiketiyle; tablo çizilmez', async () => {
+    const width = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true })
+    try {
+      renderTab()
+      await screen.findByText('2026-08-07T10:00:00')
+      await waitFor(() => expect(document.querySelector('[data-slot="hist-rows"][data-view="cards"]')).not.toBeNull())
+      expect(document.querySelector('table')).toBeNull()
+      const card = document.querySelector('[data-slot="hist-card"]')
+      expect(card.textContent).toContain('RTT')          // sütun etiketi hücrenin yanında
+      expect(card.textContent).toContain('10ms')
+      expect(document.querySelectorAll('[data-slot="hist-day-sep"]').length).toBe(2)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { value: width, configurable: true, writable: true })
+    }
   })
 
   it('yoğunluk şeridi: dilime tıklayınca o alt-aralık from/to ile istenir (zoom)', async () => {
     renderTab()
     await screen.findByText('2026-08-07T10:00:00')
-    const cells = document.querySelectorAll('.hist-strip-cell')
+    const cells = document.querySelectorAll('[data-cell]')
     expect(cells.length).toBe(2)
     fireEvent.click(cells[1])   // '2026-08-07T09' kovası (saatlik)
     await waitFor(() => {
@@ -113,7 +198,7 @@ describe('CheckHistoryTab', () => {
   it('CSV bağlantısı seçili filtre paramlarını taşır', async () => {
     renderTab()
     await screen.findByText('2026-08-07T10:00:00')
-    const csv = document.querySelector('.hist-csv-btn')
+    const csv = document.querySelector('a[data-slot="hist-csv"]')
     expect(csv).not.toBeNull()
     expect(api.monitoring.getCheckHistoryCsvUrl).toHaveBeenCalled()
   })

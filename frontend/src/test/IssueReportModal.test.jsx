@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useState } from 'react'
-import { render, screen, fireEvent, waitFor } from './test-utils'
+import { render, screen, fireEvent, waitFor, within } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -45,19 +45,38 @@ describe('IssueReportModal', () => {
     expect(await screen.findByPlaceholderText('you@company.com')).toBeInTheDocument()
     expect(screen.getByText('Save this address to my profile')).toBeInTheDocument()
     // Açıklama + e-posta girilmeden gönderim reddedilir (istemci tarafı)
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     expect(await screen.findByText('Description is required')).toBeInTheDocument()
     expect(api.sendIssueReport).not.toHaveBeenCalled()
+  })
+
+  it('"profilime kaydet" gerçek bir onay kutusu (shadcn Checkbox, etiketle bağlı); kaldırılınca false gider', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: null })
+    render(<IssueReportModal open onClose={() => {}} />)
+    const box = await screen.findByRole('checkbox', { name: 'Save this address to my profile' })
+    expect(box).toBeChecked()
+    fireEvent.click(screen.getByText('Save this address to my profile'))   // etikete basmak kutuyu çevirir
+    expect(box).not.toBeChecked()
+    fireEvent.change(screen.getByLabelText(/Your email address/i), { target: { value: 'ben@example.com' } })
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'bir şey' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'ben@example.com', saveEmailToProfile: false })))
   })
 
   it('kural 1: otomatik bağlam readonly özettedir — kullanıcıdan URL/sürüm/tema İSTEYEN input yoktur', async () => {
     api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
-    // Readonly özet başlığı var
-    expect(screen.getByText(/Automatically included info/i)).toBeInTheDocument()
+    // Readonly özet katlanır "eklenecek teknik ayrıntılar" bölümünde — varsayılan kapalı, açınca görünür
+    const tech = screen.getByRole('button', { name: /Technical details we’ll attach/i })
+    expect(tech).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/response-series/)).toBeNull()
+    fireEvent.click(tech)
     // Son başarısız istekler özette görünür (halka tamponundan)
-    expect(screen.getByText(/response-series/)).toBeInTheDocument()
+    expect(await screen.findByText(/response-series/)).toBeInTheDocument()
+    // Gizlilik notu neyin ASLA eklenmediğini söyler
+    expect(screen.getByText(/never attach passwords, cookies/i)).toBeInTheDocument()
     // Form alanları: yalnız açıklama (textarea) — URL/sürüm/tema için input YOK
     const textboxes = screen.getAllByRole('textbox')
     expect(textboxes).toHaveLength(1)   // yalnız açıklama textarea'sı
@@ -69,7 +88,7 @@ describe('IssueReportModal', () => {
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Grafik açılınca ekran çöktü' } })
     fireEvent.click(screen.getByText('Blocking me'))
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalled())
     const dto = api.sendIssueReport.mock.calls[0][0]
     expect(dto.message).toBe('Grafik açılınca ekran çöktü')
@@ -106,7 +125,7 @@ describe('IssueReportModal', () => {
 
     onClose.mockClear()
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'bir şey' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /Sending/i })).toBeInTheDocument())
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).not.toHaveBeenCalled()
@@ -118,7 +137,7 @@ describe('IssueReportModal', () => {
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'bir şey' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     const btn = await screen.findByRole('button', { name: /Sending/i })
     expect(btn.getAttribute('aria-busy')).toBe('true')
     expect(btn.querySelector('[data-slot="spinner"]')).toBeTruthy()
@@ -154,20 +173,25 @@ describe('IssueReportModal', () => {
     expect(screen.getByLabelText(/Your email address/i)).toBeInTheDocument()
   })
 
-  it('önem seçimi aria-pressed taşır; "Not specified" seçimi temizler', async () => {
+  it('önem = seçim kartları (RadioGroup, açıklamalı); "Seçimi temizle" belirtilmemiş hâle döndürür', async () => {
     api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
-    const blocker = screen.getByRole('button', { name: 'Blocking me' })
+    const group = screen.getByRole('radiogroup', { name: /Severity/i })
+    expect(group).toHaveAttribute('data-slot', 'issue-category-cards')
+    const blocker = screen.getByRole('radio', { name: /Blocking me/ })
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull()   // seçim yokken temizle yok
     fireEvent.click(blocker)
-    expect(blocker.getAttribute('aria-pressed')).toBe('true')
+    expect(blocker).toBeChecked()
+    // Kart açıklaması görünür metin (ipucuna saklanmaz)
+    expect(screen.getByText('I can’t get on with my work')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Not specified' }))
-    expect(blocker.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(blocker).not.toBeChecked()
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalled())
     expect(api.sendIssueReport.mock.calls[0][0].category).toBeUndefined()
   })
@@ -178,7 +202,7 @@ describe('IssueReportModal', () => {
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     fireEvent.change(await screen.findByLabelText(/What happened/i), { target: { value: 'bir şey' } })
     fireEvent.change(screen.getByLabelText(/Your email address/i), { target: { value: 'bozuk-adres' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
 
     expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument()
     expect(api.sendIssueReport).not.toHaveBeenCalled()
@@ -191,7 +215,7 @@ describe('IssueReportModal', () => {
     render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Sunucu reddetti')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
   })
@@ -203,7 +227,7 @@ describe('IssueReportModal', () => {
     const { container } = render(<IssueReportModal open onClose={() => {}} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
-    const zone = container.ownerDocument.querySelector('.issue-dropzone')
+    const zone = container.ownerDocument.querySelector('[data-slot="issue-dropzone"]')
     fireEvent.drop(zone, { dataTransfer: { files: [png()], types: ['Files'] } })
 
     expect(await screen.findByRole('button', { name: /Remove screenshot 1/i })).toBeInTheDocument()
@@ -217,7 +241,7 @@ describe('IssueReportModal', () => {
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
     const pdf = new File(['x'], 'rapor.pdf', { type: 'application/pdf' })
-    fireEvent.drop(container.ownerDocument.querySelector('.issue-dropzone'),
+    fireEvent.drop(container.ownerDocument.querySelector('[data-slot="issue-dropzone"]'),
       { dataTransfer: { files: [pdf], types: ['Files'] } })
 
     expect(await screen.findByText(/only PNG and JPEG are supported/i)).toBeInTheDocument()
@@ -230,7 +254,7 @@ describe('IssueReportModal', () => {
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
     const six = Array.from({ length: 6 }, (_, i) => png(`s${i}.png`))
-    fireEvent.drop(container.ownerDocument.querySelector('.issue-dropzone'),
+    fireEvent.drop(container.ownerDocument.querySelector('[data-slot="issue-dropzone"]'),
       { dataTransfer: { files: six, types: ['Files'] } })
 
     expect(await screen.findByText(/At most 5 images/i)).toBeInTheDocument()
@@ -244,7 +268,7 @@ describe('IssueReportModal', () => {
     const { container } = render(<IssueReportModal open onClose={onClose} />)
     await waitFor(() => expect(api.getMe).toHaveBeenCalled())
 
-    fireEvent.drop(container.ownerDocument.querySelector('.issue-dropzone'),
+    fireEvent.drop(container.ownerDocument.querySelector('[data-slot="issue-dropzone"]'),
       { dataTransfer: { files: [png()], types: ['Files'] } })
     fireEvent.click(await screen.findByRole('button', { name: /Enlarge screenshot 1/i }))
 
@@ -252,5 +276,124 @@ describe('IssueReportModal', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1))
     expect(onClose).not.toHaveBeenCalled()   // dıştaki modal AÇIK kalır
+  })
+
+  // ── 2026-09-27 rehberli form: bölümler, sayaç, yapıştırma, Ctrl+Enter, hata/başarı ekranları ─────────
+
+  it('numaralı bölümler + canlı karakter sayacı (5000)', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    const dlg = screen.getByRole('dialog')
+    expect(dlg.querySelectorAll('[data-slot="report-section"]')).toHaveLength(4)
+    expect(screen.getByRole('group', { name: /Describe the problem/ })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'abcde' } })
+    expect(dlg.querySelector('[data-slot="char-counter"]').textContent).toBe('5 / 5000')
+    expect(screen.getByRole('textbox')).toHaveAttribute('maxlength', '5000')
+  })
+
+  it('boş gönderim: satır içi hata + alan aria-invalid; API çağrılmaz', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    expect(await screen.findByText('Description is required')).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveAttribute('aria-invalid', 'true')
+    expect(api.sendIssueReport).not.toHaveBeenCalled()
+  })
+
+  it('Ctrl+Enter gönderir', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    const ta = screen.getByRole('textbox')
+    fireEvent.change(ta, { target: { value: 'kısayol ile' } })
+    fireEvent.keyDown(ta, { key: 'Enter', ctrlKey: true })
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalledWith(expect.objectContaining({ message: 'kısayol ile' })))
+  })
+
+  it('panodan yapıştırılan görsel ekran görüntüsü olarak eklenir (metin yapıştırmaya dokunulmaz)', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    const ta = screen.getByRole('textbox')
+    fireEvent.paste(ta, { clipboardData: { files: [png('pano.png')], items: [] } })
+    expect(await screen.findByRole('button', { name: /Remove screenshot 1/i })).toBeInTheDocument()
+    // Metin yapıştırma (dosya yok) — görsel eklenmez
+    fireEvent.paste(ta, { clipboardData: { files: [], items: [] } })
+    expect(screen.getAllByRole('button', { name: /Remove screenshot/i })).toHaveLength(1)
+  })
+
+  it('gönderim hatası: yazılanlar KORUNUR; "Try again" aynı içerikle yeniden gönderir', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    api.sendIssueReport.mockResolvedValueOnce({ success: false, error: 'Geçici hata' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'kaybolmasın' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Geçici hata')
+    expect(alert).toHaveTextContent(/has been kept/i)
+    expect(screen.getByRole('textbox').value).toBe('kaybolmasın')
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalledTimes(2))
+    expect(api.sendIssueReport.mock.calls[1][0].message).toBe('kaybolmasın')
+    expect(await screen.findByText('LIR-2026-000099')).toBeInTheDocument()
+  })
+
+  it('başarı ekranı: referans + kopyala + sırada ne var; "View my report" derin bağlantıyla sekmeye gider ve pencereyi kapatır', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    const onClose = vi.fn()
+    const nav = vi.fn()
+    window.addEventListener('sm:navigate', nav)
+    try {
+      render(<IssueReportModal open onClose={onClose} />)
+      await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+      const success = await waitFor(() => { const el = document.querySelector('[data-slot="report-success"]'); expect(el).not.toBeNull(); return el })
+      expect(success).toHaveAttribute('role', 'status')
+      expect(within(success).getByText('LIR-2026-000099')).toBeInTheDocument()
+      expect(within(success).getByRole('button', { name: 'Copy reference' })).toBeInTheDocument()
+      expect(within(success).getByText(/confirmation has been sent to ben@example\.com/i)).toBeInTheDocument()
+      const link = screen.getByRole('link', { name: /View my report/ })
+      expect(link).toHaveAttribute('href', '/?tab=login-issues&ir_id=99')
+      fireEvent.click(link)
+      expect(onClose).toHaveBeenCalled()
+      expect(nav).toHaveBeenCalledTimes(1)
+      expect(nav.mock.calls[0][0].detail).toEqual({ tab: 'login-issues', params: { ir_id: 99 } })
+    } finally {
+      window.removeEventListener('sm:navigate', nav)
+    }
+  })
+
+  it('çökme bağlamında (ErrorBoundary) "View my report" tam sayfa yüklemesine bırakılır (uygulama içi olay yok)', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    const nav = vi.fn()
+    window.addEventListener('sm:navigate', nav)
+    try {
+      render(<IssueReportModal open onClose={() => {}} errorText="TypeError: boom" linkedReference="LIR-2026-000077" />)
+      await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+      expect(screen.getByText('Captured error (will be attached)')).toBeInTheDocument()
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'x' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+      const link = await screen.findByRole('link', { name: /View my report/ })
+      const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+      link.dispatchEvent(ev)
+      expect(nav).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('sm:navigate', nav)
+    }
+  })
+
+  it('"Report something else" formu sıfırlar', async () => {
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'ilk' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Report something else/ }))
+    expect(screen.getByRole('textbox').value).toBe('')
+    expect(screen.getByRole('button', { name: 'Send report' })).toBeInTheDocument()
   })
 })

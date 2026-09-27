@@ -110,7 +110,7 @@ public class MonitorHistoryService {
             HttpServletRequest request = currentRequest();
             row.setActor(strAttr(session, "username"));
             row.setActorId(longAttr(session, "userId"));
-            row.setActorName(strAttr(session, "fullName"));
+            row.setActorName(strAttr(session, "displayName"));
             row.setIpAddress(request == null ? null : clientIpResolver.resolve(request));
             row.setUserAgent(request == null ? null : request.getHeader("User-Agent"));
 
@@ -172,13 +172,13 @@ public class MonitorHistoryService {
     public void stampCreated(Object entity, HttpSession session) {
         HttpServletRequest request = currentRequest();
         setIfPresent(entity, "setCreatedBy", strAttr(session, "username"));
-        setIfPresent(entity, "setCreatedByName", strAttr(session, "fullName"));
+        setIfPresent(entity, "setCreatedByName", strAttr(session, "displayName"));
         setIfPresent(entity, "setCreatedIp", request == null ? null : clientIpResolver.resolve(request));
     }
 
     public void stampUpdated(Object entity, HttpSession session) {
         setIfPresent(entity, "setUpdatedBy", strAttr(session, "username"));
-        setIfPresent(entity, "setUpdatedByName", strAttr(session, "fullName"));
+        setIfPresent(entity, "setUpdatedByName", strAttr(session, "displayName"));
     }
 
     /** Setter yoksa sessizce geçer — kimlik kolonu olmayan bir entity çağrıyı düşürmesin. */

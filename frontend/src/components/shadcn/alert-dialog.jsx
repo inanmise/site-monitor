@@ -10,13 +10,12 @@ function AlertDialog({
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
 }
 
-function AlertDialogTrigger({
-  ...props
-}) {
+// forwardRef (React 18): asChild iç içe tetiklerde ref zinciri kopmasın (SHADCN.md §3.1).
+const AlertDialogTrigger = React.forwardRef(function AlertDialogTrigger(props, ref) {
   return (
-    <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
+    <AlertDialogPrimitive.Trigger ref={ref} data-slot="alert-dialog-trigger" {...props} />
   )
-}
+})
 
 function AlertDialogPortal({
   ...props

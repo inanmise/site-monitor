@@ -51,10 +51,10 @@ describe('ReleaseNotesPanel', () => {
   it('satıra tıklayınca değişiklikler gruplu açılır; katlanan yama çipi "tüm sürümler" + aramaya geçer', async () => {
     render(<ReleaseNotesPanel />)
     await screen.findByText('v20.54.0')
-    fireEvent.click(screen.getByText('v20.54.0').closest('[role="button"]'))
+    fireEvent.click(screen.getByText('v20.54.0').closest('button'))
     expect(screen.getByText('yeni sürüm çipi')).toBeInTheDocument()
     expect(screen.getByText('timeout retry kaldırıldı')).toBeInTheDocument()
-    expect(document.querySelector('.rel-group--feat')).not.toBeNull()
+    expect(document.querySelector('[data-group="feat"]')).not.toBeNull()
     fireEvent.click(screen.getByText(/\+2 yama|\+2 patches/))
     await waitFor(() => expect(api.system.getReleases).toHaveBeenCalledWith(expect.objectContaining({ density: 'all', q: '20.53.1' })))
   })

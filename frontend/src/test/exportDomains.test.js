@@ -43,6 +43,19 @@ describe('exportDomainsCsv', () => {
     expect(row).toContain('D(2026-09-22)')
   })
 
+  it('7/24 sütunları (2026-09-27): açık/kapalı + grup ADLARI; varsayılan gruplar boş; başlık ve satır aynı genişlikte', async () => {
+    exportDomainsCsv([
+      { domain: 'a.example.com', noc_notify: true, noc_group_ids: [2] },
+      { domain: 'b.example.com', noc_notify: false, noc_group_ids: [] },
+    ], t, { 2: 'Hafta Sonu Vardiyası' })
+    const text = new TextDecoder('utf-8').decode(new Uint8Array(await captured.blob.arrayBuffer()))
+    const [head, a, b] = text.split('\r\n').map((l) => l.split(','))
+    expect(head.slice(-2)).toEqual(['nocf.csvNotify', 'nocf.csvGroups'])
+    expect(a).toHaveLength(head.length)
+    expect(a.slice(-2)).toEqual(['dom.on', 'Hafta Sonu Vardiyası'])
+    expect(b.slice(-2)).toEqual(['dom.off', ''])
+  })
+
   it('boş liste: 0 döner ve dosya üretmez', () => {
     expect(exportDomainsCsv([], t)).toBe(0)
     expect(captured.blob).not.toBeNull()   // başlık satırı yine yazılır (Excel şablonu olarak işe yarar)

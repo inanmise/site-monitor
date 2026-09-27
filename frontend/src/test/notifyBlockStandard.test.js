@@ -61,16 +61,20 @@ describe('bildirim bloğu standardı', () => {
   it('ortak blokta webhook döşemesi PASİF DEĞİL (görsel yalan kapısı)', () => {
     // Keyword/Port'ta yaşanan hata: kutu çalışıyor ama `--disabled` sınıfıyla soluk ve
     // "not-allowed" imleçle çiziliyordu. Yalnız SMS ve Sesli arama pasif olabilir.
+    // Döşemeler shadcn "seçim kartı" (`<ChannelTile …>`): pasiflik `disabled` prop'uyla verilir.
     const src = fs.readFileSync(path.join(COMPONENTS, 'ui', 'NotifyChannels.jsx'), 'utf8')
-    // Pencere DAR olmali: genis alinirsa bir onceki (Sesli arama) dosemesinin --disabled'i
-    // yanlislikla yakalanir. Webhook dosemesi kendi <label> etiketinden baslar.
-    // DIKKAT: 'userpush.monitorToggle' ayni zamanda 'monitorToggleHint'in ONEKI; duz indexOf
-    // title niteligini bulup pencereyi onChange'den ONCE kesiyordu. Tam etiketi ara.
+    // Pencere DAR olmali: webhook dosemesi KENDI <ChannelTile acilisindan baslar ve bir sonraki
+    // kapanisa (`/>`) kadar surer; genis alinirsa onceki (Sesli arama) dosemesinin disabled'i yakalanir.
+    // DIKKAT: 'userpush.monitorToggle' ayni zamanda 'monitorToggleHint'in ONEKI; tam etiketi ara.
     const at = src.indexOf("t('userpush.monitorToggle')")
-    const webhookTile = src.slice(src.lastIndexOf('<label', at), at)
-    expect(webhookTile).not.toContain('--disabled')
-    expect(webhookTile).toContain('onChange')
-    // Pasif olanlar SADECE iki tanedir.
-    expect((src.match(/http-channel--disabled/g) || []).length).toBe(2)
+    expect(at, 'webhook döşemesi bulunamadı').toBeGreaterThan(0)
+    const from = src.lastIndexOf('<ChannelTile', at)
+    const webhookTile = src.slice(from, src.indexOf('/>', at))
+    expect(webhookTile).not.toMatch(/(^|[^A-Za-z])disabled([^A-Za-z]|$)/)
+    expect(webhookTile).toContain('onCheckedChange')
+    // Pasif olanlar SADECE iki tanedir (SMS + Sesli arama).
+    const tiles = src.split('<ChannelTile').slice(1).map((chunk) => chunk.slice(0, chunk.indexOf('/>')))
+    expect(tiles).toHaveLength(4)
+    expect(tiles.filter((tile) => /(^|[^A-Za-z])disabled([^A-Za-z]|$)/.test(tile))).toHaveLength(2)
   })
 })

@@ -27,8 +27,8 @@ class GlobalSearchServiceTest {
         jdbc.update("CREATE TABLE teams(id BIGINT, name VARCHAR(100))");
         jdbc.update("CREATE TABLE http_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
         jdbc.update("CREATE TABLE ping_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
-        jdbc.update("CREATE TABLE port_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
-        jdbc.update("CREATE TABLE dns_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
+        jdbc.update("CREATE TABLE port_monitors(id BIGINT, name VARCHAR(100), host VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500), deleted_at VARCHAR(30))");
+        jdbc.update("CREATE TABLE dns_monitors(id BIGINT, name VARCHAR(100), domain VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500), deleted_at VARCHAR(30))");
         jdbc.update("CREATE TABLE keyword_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
         jdbc.update("CREATE TABLE page_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
         jdbc.update("CREATE TABLE pagespeed_monitors(id BIGINT, name VARCHAR(100), url VARCHAR(300), team_id BIGINT, group_name VARCHAR(100), tags VARCHAR(500))");
@@ -79,5 +79,19 @@ class GlobalSearchServiceTest {
         assertThat(svc.search("s", t -> true)).isEmpty();
         assertThat(svc.search("%", t -> true)).isEmpty();
         assertThat(svc.search("__", t -> true)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("2026-09-27: SİLİNMİŞ standalone Port/DNS izleme palet sonucunda YOK; duraklatılmış (silinmemiş) VAR")
+    void deletedPortDnsMonitorsAreNotHits() {
+        jdbc.update("INSERT INTO port_monitors VALUES (21, 'shop port', 'shop.example.com', 1, NULL, NULL, NULL), "
+                + "(22, 'shop port eski', 'shop.example.com', 1, NULL, NULL, '2026-09-01T00:00:00')");
+        jdbc.update("INSERT INTO dns_monitors VALUES (31, 'shop dns', 'shop.example.com', 1, NULL, NULL, NULL), "
+                + "(32, 'shop dns eski', 'shop.example.com', 1, 'shop-grup', NULL, '2026-09-01T00:00:00')");
+        List<GlobalSearchService.Hit> hits = svc.search("shop", t -> true);
+        assertThat(hits).extracting(GlobalSearchService.Hit::kind, GlobalSearchService.Hit::id)
+                .contains(org.assertj.core.groups.Tuple.tuple("port", "21"), org.assertj.core.groups.Tuple.tuple("dns", "31"))
+                // silinmiş satır: ad, hedef VE grup adı eşleşse de (parantezsiz OR zinciri yalnız son terimi süzerdi) yok
+                .doesNotContain(org.assertj.core.groups.Tuple.tuple("port", "22"), org.assertj.core.groups.Tuple.tuple("dns", "32"));
     }
 }
