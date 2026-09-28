@@ -110,6 +110,7 @@ export function parseHhmm(v) {
 export function DateTimePopover({
   value, onChange, withTime = true, timeStep = 300, minDate, maxDate, modifiers,
   label, placeholder, disabled, reserveEnd = false, triggerClassName, className, endSlot, displayFormat,
+  triggerProps,   // isteğe bağlı: tetiğe ek aria öznitelikleri (aria-invalid / aria-describedby — DateTimeField, 2026-09-28)
 }) {
   const t = useT()
   const cal = useCalendarProps()
@@ -141,7 +142,7 @@ export function DateTimePopover({
       <Popover open={open} onOpenChange={(next) => { if (!disabled) setOpen(next) }}>
         <PopoverTrigger asChild>
           <DateTrigger label={label} text={text} placeholder={placeholder} reserveEnd={reserveEnd}
-            disabled={disabled} className={triggerClassName} />
+            disabled={disabled} className={triggerClassName} {...triggerProps} />
         </PopoverTrigger>
         <DatePopoverContent>
           <Calendar mode="single" selected={value || undefined}

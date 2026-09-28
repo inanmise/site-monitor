@@ -182,6 +182,47 @@ describe('izleme listesi kart standardı', () => {
     expect(missing).toEqual([])
   })
 
+  /**
+   * 7/24 GÖSTERGESİ STANDARDI (2026-09-28, kullanıcı isteği: "kartların üzerinde küçük bir tasarımla, izleme 7/24 ekibine
+   * iletiliyorsa ve açıksa veya kapalı ise her izleme için bu bilgi gözükmeli"). Dokuz kart MonitorCard'a
+   * `noc={{ type: '<TÜR>', monitor: m, rowLabel, canEdit }}` verir; göstergeyi (noc/NocStatus) paylaşılan MonitorCardTop
+   * sağ grubun BAŞINA kendisi çizer → dokuz türde aynı yer, iki yoğunlukta da. Kart dosyası göstergeyi elle yerleştirmez
+   * (eski yalnız-Zengin NocBadge'i böyle kaymıştı: dört kartta meta satırında, beşinde Kompakt'ta hiç). Sayfa kartı
+   * `canEdit={canManageRow(m)}` ile çizer (düzenleme bağlantısı kart eylemleriyle AYNI kapı) ve detay penceresi aynı
+   * göstergeyi taşır (`noc={{ type: '<TÜR>', … }}`) — kart ile pencere ayrışmaz. Genel Bakış sertifika kartı da aynı
+   * bileşeni sağ grubun başında çizer (tür SSL). Çizim sözleşmesi (iki yoğunluk, üç durum, detay açmaz) nocStatus.cards.test.jsx.
+   */
+  it('dokuz kart + sertifika kartı 7/24 göstergesini paylaşılan yerden çizer; sayfa canEdit, detay penceresi noc verir', () => {
+    const TYPE = {
+      PingMonitorPage: 'PING', DnsMonitorPage: 'DNS', DomainMonitorPage: 'DOMAIN', HttpMonitorPage: 'HTTP', KeywordMonitorPage: 'KEYWORD',
+      PageMonitorPage: 'PAGE', PageSpeedMonitorPage: 'PAGESPEED', PortMonitorPage: 'PORT', ScriptedMonitorPage: 'SCRIPTED',
+    }
+    const missing = []
+    const shared = read('monitoring/MonitorCard')
+    if (!/export function MonitorCardTop\b[\s\S]*?<NocStatus\b[^>]*\bcompact=\{density === 'compact'\}/.test(shared)) {
+      missing.push('monitoring/MonitorCard → MonitorCardTop <NocStatus … compact> çizmiyor')
+    }
+    for (const p of MONITOR_PAGES) {
+      const mod = CARD_MODULES[p][0]
+      const cardName = path.basename(mod)
+      const card = read(mod)
+      if (!new RegExp(`<MonitorCard\\b[^>]*?\\bnoc=\\{\\{ type: '${TYPE[p]}', monitor: m\\b[^}]*\\bcanEdit\\b`).test(card)) {
+        missing.push(`${mod} → <MonitorCard noc={{ type: '${TYPE[p]}', monitor: m, …, canEdit }}>`)
+      }
+      if (!/<MonitorCardTop\b/.test(card)) missing.push(`${mod} → MonitorCardTop (göstergenin yeri)`)
+      if (/\bNocBadge\b|<NocStatus\b/.test(card)) missing.push(`${mod} → göstergeyi elle yerleştiriyor (MonitorCardTop çizer)`)
+      const src = read(p)
+      if (!new RegExp(`<${cardName}\\b[^>]*?\\bcanEdit=\\{canManageRow\\(m\\)\\}`).test(src)) missing.push(`${p} → <${cardName} canEdit={canManageRow(m)}>`)
+      const detail = p === 'DnsMonitorPage' ? read('DnsDetailModal') : src
+      if (!new RegExp(`<MonitorDetailModal\\b[^>]*?\\bnoc=\\{\\{ type: '${TYPE[p]}'`).test(detail)) missing.push(`${p} → <MonitorDetailModal noc={{ type: '${TYPE[p]}', … }}>`)
+      if (/\bnocNotify=\{/.test(detail)) missing.push(`${p} → eski nocNotify rozeti`)
+    }
+    if (!/<NocStatus type="SSL" monitor=\{cert\}/.test(read('CertificateCard'))) missing.push('CertificateCard → <NocStatus type="SSL" monitor={cert} …>')
+    expect(Object.keys(TYPE).sort(), 'tür eşlemesi dokuz sayfanın tamamı').toEqual([...MONITOR_PAGES].sort())
+    expect(fs.existsSync(path.join(COMPONENTS, 'noc/forms/NocBadge.jsx')), 'eski yalnız-Zengin rozeti geri geldi').toBe(false)
+    expect(missing).toEqual([])
+  })
+
   it('durum sınıfı paylaşılan sözlükten seçilir (uydurma sınıf = tarayıcı varsayılanı)', () => {
     // 'warn' senaryo izlemesine ozel MESRU dorduncu durum (kismi gecis) ve App.css:2892'de
     // TANIMLI. Listeye alinmasi, uydurma bir sinifin gozden kacmasina izin vermez.

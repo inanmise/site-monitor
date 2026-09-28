@@ -6,6 +6,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { Spinner } from '../ui/Progress.jsx'
+import NocStatus from '../noc/NocStatus.jsx'
 import { cn } from '@/lib/utils'
 
 /**
@@ -55,7 +56,7 @@ const STATUSES = new Set(['up', 'down', 'warn', 'unknown'])
  * olduğunu sayfa ayrıca prop geçmeden bilir: "Duraklatıldı" rozeti ve hızlı "Sürdür" düğmesi böylece HER izleme
  * sayfasında varsayılan (kullanıcı isteği 2026-09-26).
  */
-const MonitorCardContext = createContext({ inactive: false, density: 'rich', running: false })
+const MonitorCardContext = createContext({ inactive: false, density: 'rich', running: false, noc: null })
 export const useMonitorCard = () => useContext(MonitorCardContext)
 
 /**
@@ -66,12 +67,17 @@ export const useMonitorCard = () => useContext(MonitorCardContext)
  * <p>`running` (2026-09-28): bu izleme ŞU AN kontrol ediliyor (sayfanın `useRunningChecks().isRunning(id)` — eylem
  * düğmesine verilen değerin AYNISI). Kök `data-running` taşır; hiç sonucu olmayan kartın bekleme satırı
  * ({@link MonitorPendingText}) bununla "İlk kontrol yapılıyor…" der.
+ *
+ * <p>`noc` (2026-09-28, kullanıcı isteği: "her izleme için 7/24 ekibine iletiliyor mu / açık mı kapalı mı kartta
+ * görünsün"): `{ type, monitor, rowLabel, canEdit }` — verilirse {@link MonitorCardTop} 7/24 göstergesini
+ * (noc/NocStatus) durum satırının SAĞ grubunun BAŞINA kendiliğinden çizer: dokuz türde AYNI yer, iki yoğunlukta da
+ * (Zengin = hap, Kompakt = ikon + nokta). Kart dosyaları göstergeyi elle yerleştirmez (kapı: monitorCardStandard).
  */
-export function MonitorCard({ status = 'unknown', alarm = false, inactive = false, density = 'rich', running = false, className, children, ...rest }) {
+export function MonitorCard({ status = 'unknown', alarm = false, inactive = false, density = 'rich', running = false, noc = null, className, children, ...rest }) {
   const key = STATUSES.has(status) ? status : 'unknown'
   const dens = density === 'compact' ? 'compact' : 'rich'
   return (
-    <MonitorCardContext.Provider value={{ inactive, density: dens, running: !!running }}>
+    <MonitorCardContext.Provider value={{ inactive, density: dens, running: !!running, noc }}>
     <Card
       data-status={key}
       data-alarm={alarm ? 'true' : undefined}
@@ -169,12 +175,17 @@ export function MonitorCardHeader({ className, children }) {
 /**
  * Durum satırı: sol grup (kutu, durum rozeti, alarm, bakım) + `end` (yöntem/tür etiketi, bağlantı kopyala).
  * Dar ekranda SARAR: rozetler çoğalınca `end` grubu sağa yaslı ikinci satıra iner, hiçbir şey sıkışıp kesilmez.
+ *
+ * <p>Kart `noc` taşıyorsa (MonitorCard) 7/24 göstergesi sağ grubun İLK öğesidir — örtünün üstünde (`CARD_LAYER`),
+ * tıklaması detayı açmaz; yoğunluğu kart bağlamından alır.
  */
 export function MonitorCardTop({ end, className, children }) {
+  const { noc, density } = useMonitorCard()
+  const nocStatus = noc ? <NocStatus {...noc} compact={density === 'compact'} /> : null
   return (
     <div className={cn('mb-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1', className)}>
       {children}
-      {end && <span className={cn(CARD_LAYER, 'ml-auto flex shrink-0 items-center gap-1.5')}>{end}</span>}
+      {(end || nocStatus) && <span className={cn(CARD_LAYER, 'ml-auto flex shrink-0 items-center gap-1.5')}>{nocStatus}{end}</span>}
     </div>
   )
 }

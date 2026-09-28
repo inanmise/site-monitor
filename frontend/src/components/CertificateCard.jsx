@@ -3,7 +3,8 @@ import { useT } from '../i18n/index.jsx'
 import CertificateCardExtras from './CertificateCardExtras.jsx'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CopyButton from './ui/CopyButton.jsx'
-import { CARD_COPY, MonitorCardContent, MonitorCardFooter, MonitorCardHeader } from './monitoring/MonitorCard.jsx'
+import NocStatus from './noc/NocStatus.jsx'
+import { CARD_COPY, CARD_LAYER, MonitorCardContent, MonitorCardFooter, MonitorCardHeader } from './monitoring/MonitorCard.jsx'
 import {
   CertActions, CertCheckedAt, CertErrorNote, CertExtrasPending, CertHero, CertIssuerLine, CertMeta, CertNotices, CertPlanChip, CertReasons,
   CertStatusBadge, CertTierBadge,
@@ -45,7 +46,8 @@ import { cn } from '@/lib/utils'
  * `[data-cert-open]`; `cert-status`, `cert-tier`, `cert-insecure`, `cert-port`, `cert-issuer-line`, `cert-algo`
  * (`data-strength`), `cert-meta`, `cert-platform(-name|-detail)`, `cert-hero` (`data-tone`), `cert-days`,
  * `cert-validity`, `cert-renewed`, `cert-plan` (`data-state`), `cert-reasons` / `cert-reason` (`data-reason`),
- * `cert-error`, `cert-card-chips` + `data-chip="silent|mail"`, `cert-checked-at`, `cert-card-actions`, `cert-card-more`.
+ * `cert-error`, `cert-card-chips` + `data-chip="silent|mail"`, `cert-checked-at`, `cert-card-actions`, `cert-card-more`;
+ * 7/24 göstergesi `noc-status` (noc/NocStatus — izleme kartlarıyla aynı bileşen; `noc_notify` envanterden).
  */
 
 // Kritik / dolmuş: tüm kenar + hafif zemin; hata: kırmızı kenar (sol şerit değil — kalıcı kural).
@@ -97,7 +99,15 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
               {t('cert.sec.insecure')}
             </Badge>
           )}
-          {cert.tier && <span className="ml-auto flex shrink-0 items-center"><CertTierBadge tier={cert.tier} /></span>}
+          {/* Sağ grup: 7/24 göstergesi (izleme kartlarıyla AYNI yer — sağ grubun başı; Zengin = hap, Kompakt = ikon + nokta)
+              + katman. Gösterge örtünün üstünde (CARD_LAYER, tıklaması pencereyi açmaz); satır `noc_notify` taşımıyorsa
+              (Uyarılar'ın ham satırı) çizilmez. Düzenleme = kartın kendi Düzenle işleyicisi, form 7/24 alanına kaydırılmış. */}
+          {(typeof cert.noc_notify === 'boolean' || cert.tier) && (
+            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+              <NocStatus type="SSL" monitor={cert} rowLabel={domain} canEdit={!!onEdit} onEdit={onEdit} compact={!extra} triggerClassName={CARD_LAYER} />
+              {cert.tier && <CertTierBadge tier={cert.tier} />}
+            </span>
+          )}
         </div>
 
         {/* ── Alan adı = kartın AÇMA düğmesi (::after tüm kartı örter) · port · kopyala ── */}

@@ -27,10 +27,14 @@ async function fetchOptions() {
   if (!r.ok || r.data == null) return null
   const d = r.data
   // Güvenlik ağı: zarfın içi düz dizi gelirse (sözleşmenin ilk taslağı) yalnız gruplar bilinir.
-  if (Array.isArray(d)) return { groups: d, disabledTypes: null }
+  if (Array.isArray(d)) return { groups: d, disabledTypes: null, hasActiveGroup: null, minLevel: null }
   return {
     groups: Array.isArray(d.groups) ? d.groups : null,
     disabledTypes: Array.isArray(d.disabled_types) ? d.disabled_types : null,
+    // Kart göstergesi (2026-09-28, noc/useNocState): sunucunun kapsam yüklemiyle AYNI "kullanılabilir grup var mı"
+    // hükmü ve en düşük seviye. Eski sunucu göndermezse null — iddia üretilmez.
+    hasActiveGroup: typeof d.has_active_group === 'boolean' ? d.has_active_group : null,
+    minLevel: typeof d.min_level === 'string' && d.min_level ? d.min_level : null,
   }
 }
 

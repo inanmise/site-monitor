@@ -65,6 +65,13 @@ public class NocController {
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
     private final ActivityLogService activityLog;
+    /**
+     * SSL (sertifika envanteri) satırında 7/24 değişince Genel Bakış sertifika listesinin önbellekleri
+     * ({@code cert-latest} … {@code card-extras}) boşaltılır — kart {@code noc_notify}'ı o listeden okur (2026-09-28).
+     * Envanter formu (AdminController) zaten boşaltıyordu; bu uç (7/24 Kapsamı aç/kapa + toplu) boşaltmıyordu →
+     * kart 300 sn'ye dek eski durumu gösterirdi.
+     */
+    private final com.sitemonitor.service.CertificateService certService;
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
@@ -91,13 +98,22 @@ public class NocController {
      * İzleme formu grup seçicisi — e-posta YOK. Pasifler de döner (kayıtlı seçimi göstermek için).
      * {@code disabled_types}: yöneticinin 7/24'ü KAPATTIĞI türler — form "bu tür için kapatıldı" uyarısını yalnız
      * yönetici okuyabilen yapılandırma ucunu çağırmadan gösterir.
+     *
+     * <p>Kart göstergesi ekleri (2026-09-28, izleme/sertifika kartındaki "7/24 açık · iletilmiyor"): {@code has_active_group}
+     * = kapsam nedeninin ({@link NocCoverageService#reason}) grup yüklemiyle AYNI ({@link NocGroupService#anyUsable}:
+     * aktif VE adresli en az bir grup) — istemci "aktif grup yok" hükmünü kendisi tahmin etmez; {@code min_level} = 7/24'e
+     * giden en düşük seviye (açıklama metni). İkisi de hassas değil; e-posta/adres sayısı yine YOK.
      */
     @GetMapping("/groups/options")
     public ResponseEntity<Map<String, Object>> groupOptions(HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
+        List<com.sitemonitor.model.NocNotificationGroup> all = groupRepo.findAllByOrderByNameAsc();
+        var cfg = configService.get();
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("groups", groupRepo.findAllByOrderByNameAsc().stream().map(NocGroupService::toOptionDto).toList());
-        out.put("disabled_types", configService.get().disabledTypeKeys());
+        out.put("groups", all.stream().map(NocGroupService::toOptionDto).toList());
+        out.put("disabled_types", cfg.disabledTypeKeys());
+        out.put("has_active_group", NocGroupService.anyUsable(all));
+        out.put("min_level", cfg.minLevel());
         return ok(out);
     }
 
@@ -156,6 +172,7 @@ public class NocController {
         if (body.containsKey("groupIds")) patch.put("nocGroupIds", body.get("groupIds"));
         monitors.applyFromBody(m, patch);
         String changes = persist(t, m, before, row, team, session, null);
+        if (t == NocType.SSL && changes != null) certService.evictAllCaches();
         auditService.recordAction("NOC_MONITOR_UPDATE", session, t.auditResource, String.valueOf(id),
                 row != null ? row.name() : String.valueOf(id), changes);
         NocMonitorDirectory.Row fresh = monitors.row(t, id);
@@ -178,7 +195,9 @@ public class NocController {
         if (!(body.get("items") instanceof List<?> items)) return error(400, "items bir liste olmalı");
         if (items.size() > MAX_BULK) return error(400, "Tek istekte en fazla " + MAX_BULK + " izleme");
         int updated = 0;
+        boolean sslChanged = false;
         List<Map<String, Object>> skipped = new ArrayList<>();
+        try {
         for (Object o : items) {
             if (!(o instanceof Map<?, ?> it)) continue;
             Object rawType = it.get("type");
@@ -195,8 +214,13 @@ public class NocController {
             if (enabled.equals(Boolean.TRUE.equals(m.getNocNotify()))) { skipped.add(skip(t.name(), id, "UNCHANGED")); continue; }
             Map<String, Object> before = AuditDiff.snapshot(m, NOC_FIELDS);
             monitors.applyFromBody(m, Map.of("nocNotify", enabled));
-            persist(t, m, before, row, team, session, "toplu 7/24 işlemi");
+            if (persist(t, m, before, row, team, session, "toplu 7/24 işlemi") != null && t == NocType.SSL) sslChanged = true;
             updated++;
+        }
+        } finally {
+            // döngü sonunda TEK boşaltma — ortada bir kayıt düşse de o ana kadar değişen sertifikalar için
+            // (regresyon 2026-09-28b B5: istisnada boşaltma atlanıyor, kart 300 sn eski 7/24 durumu gösteriyordu)
+            if (sslChanged) certService.evictAllCaches();
         }
         auditService.recordAction("NOC_MONITOR_BULK", session, "NOC", "bulk",
                 com.sitemonitor.service.AuditDetail.of("enabled", enabled, "updated", updated, "skipped", skipped.size()), null);

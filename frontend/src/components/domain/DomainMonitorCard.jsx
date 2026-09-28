@@ -4,7 +4,6 @@ import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter,
   MonitorAlarmIcon, MonitorCardRich, CARD_LAYER, CARD_COPY,
@@ -55,7 +54,7 @@ const TITLE = cn(
  * @param {Function} onPlanRenewal yenileme planı penceresini aç; verilmezse plan çipi salt bilgi, kısayol yok
  */
 export default function DomainMonitorCard({
-  monitor: m, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions, running = false,
+  monitor: m, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions, running = false, canEdit = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -67,9 +66,10 @@ export default function DomainMonitorCard({
   // Kompakt: yalnız VAR OLAN plan çipi (kısayol Zengin'de ve telefon menüsünde)
   const endChip = chip && (!compact || chip.kind === 'plan') ? chip : null
   const name = String(m.name || '').trim()
-  const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length || m.noc_notify)
+  const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length)
   return (
     <MonitorCard status={status} density={density} running={running} alarm={alarm} inactive={paused} data-expiry={tone} data-domain={m.domain}
+      noc={{ type: 'DOMAIN', monitor: m, rowLabel: m.domain, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={<>
@@ -105,7 +105,6 @@ export default function DomainMonitorCard({
           {hasMeta && (
             <div className={cn(CARD_LAYER, 'mt-1 mb-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5')}>
               {meta}
-              {m.noc_notify && <NocBadge rowLabel={m.domain} />}
               <PingTags monitor={m} />
             </div>
           )}

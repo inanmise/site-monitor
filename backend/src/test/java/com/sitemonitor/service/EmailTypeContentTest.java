@@ -61,23 +61,30 @@ class EmailTypeContentTest {
     // ── Aylık sertifika envanteri ────────────────────────────────────────────
 
     @Test
-    @DisplayName("envanter: KPI kutuları, kalan gün renkleri, bulgular (+N daha), ek adları AYRI kaçırılır, CTA ?tab=domains")
+    @DisplayName("envanter (2026-09-28): KPI kutuları, ≤7 gün kırmızı hap, bulgu grubu sayısı (+N daha), ek adları AYRI kaçırılır, CTA ?tab=domains")
     void inventoryReport() {
-        List<EmailNotificationService.InventoryReportRow> rows = List.of(
-                new EmailNotificationService.InventoryReportRow("a.example.com", "Takım A", 1, 5, "2026-10-01", "Aktif"),
-                new EmailNotificationService.InventoryReportRow("b.example.com", null, null, null, null, null));
-        String html = svc.buildCertInventoryReportHtml("Eylül 2026", Map.of("active", 12, "passive", 3, "total", 15), rows,
-                List.of(new EmailNotificationService.InventoryFindingGroup("Sahipsiz kayıtlar", 4,
-                        List.<String[]>of(new String[]{"b.example.com", "Takım yok"}), 3)),
-                List.of("env<1>.csv", "env.pdf"));
-        assertThat(html).contains(">Aktif</p>").contains(">12</p>").contains(">Toplam</p>").contains(">15</p>")
-                .contains("a.example.com").contains("5 gün").contains("color:" + MailTokens.DESTRUCTIVE)   // ≤7 gün kırmızı
-                .contains("veri yok")
-                .contains("Sahipsiz kayıtlar (4)").contains("+3 kayıt daha")
-                .contains("<strong>env&lt;1&gt;.csv</strong>, <strong>env.pdf</strong>")          // ayırıcı kaçış DIŞINDA
+        var cert = new com.sitemonitor.service.mail.CertInventoryMail.Cert("a.example.com", "Takım A", 1, 5, "01.10.2026", "DigiCert Inc", "geçerli");
+        var findings = new java.util.ArrayList<com.sitemonitor.service.mail.CertInventoryMail.Finding>();
+        for (int i = 0; i < 13; i++) findings.add(new com.sitemonitor.service.mail.CertInventoryMail.Finding("b" + i + ".example.com", "Takım yok"));
+        var report = new com.sitemonitor.service.mail.CertInventoryMail.Report("Eylül 2026", "Tüm kurum envanteri", 2, 12, 3, 15,
+                new com.sitemonitor.service.mail.CertInventoryMail.Buckets(0, 1, 0, 0, 0, 10, 1), 0, List.of(cert), List.of(),
+                List.of(new com.sitemonitor.service.mail.CertInventoryMail.FindingGroup("missing", "Sahipsiz kayıtlar", 13, findings)), 13,
+                List.of(), List.of(),
+                List.of(new com.sitemonitor.service.mail.CertInventoryMail.Attachment("env<1>.csv", "CSV"),
+                        new com.sitemonitor.service.mail.CertInventoryMail.Attachment("env.pdf", "PDF")), null, null);
+        String html = svc.buildCertInventoryReportHtml(report);
+        assertThat(html).contains(">Toplam kayıt</p>").contains(">15</p>").contains("12 aktif · 3 pasif")
+                .contains("a.example.com").contains(">5 gün</span>").contains("color:" + MailTokens.DESTRUCTIVE)   // ≤7 gün kırmızı
+                .contains(">Veri yok</p>").doesNotContain("null gün")
+                .contains(">Sahipsiz kayıtlar</td>").contains(">13 kayıt</td>").contains("+3 kayıt daha")
+                .contains("env&lt;1&gt;.csv").doesNotContain("env<1>.csv").contains(">env.pdf</span>")          // her ad AYRI kaçırılır
                 .contains(BASE + "/?tab=domains");
-        String clean = svc.buildCertInventoryReportHtml("Eylül 2026", Map.of("active", 1, "passive", 0, "total", 1), rows, List.of(), List.of());
-        assertThat(clean).contains("Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı").doesNotContain("ektedir");
+        var clean = new com.sitemonitor.service.mail.CertInventoryMail.Report("Eylül 2026", "Tüm kurum envanteri", 1, 1, 0, 1,
+                new com.sitemonitor.service.mail.CertInventoryMail.Buckets(0, 0, 0, 0, 0, 1, 0), 0, List.of(),
+                List.of(new com.sitemonitor.service.mail.CertInventoryMail.Cert("a.example.com", "Takım A", 1, 200, "13.04.2027", "DigiCert Inc", "geçerli")),
+                List.of(), 0, List.of(), List.of(), List.of(), null, null);
+        assertThat(svc.buildCertInventoryReportHtml(clean))
+                .contains("Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı").doesNotContain("ektedir");
     }
 
     // ── Alan adı süre bitişi hatırlatması ────────────────────────────────────
@@ -265,14 +272,32 @@ class EmailTypeContentTest {
     @Test
     @DisplayName("kayıtlı/yabancı HTML'den türetilen düz metin: mobil kopya, MSO/VML ve önizleme dolgusu metne sızmaz")
     void derivedTextSkipsDuplicates() {
-        String html = new EmailSamples().svc.buildWeeklyAvailabilityHtml("Takım A", "W39",
+        // Haftalık e-posta 2026-09-28'de yeniden tasarlandı: telefon kopyası (.m-only) ÜRETMEYEN sıralı listeye geçti ve
+        // alan adı artık hüküm/KPI/liste/bağlantılarda da geçiyor → eski "≤ 4" sayacı yerine düzenden bağımsız, AYNI
+        // derecede sıkı ölçüt (kopya metne HİÇBİR ŞEY eklemez) ve kopyayı GERÇEKTEN üreten aile parçaları: veri tablosu
+        // (istif kart kopyası) + VML düğme + önizleme dolgusu.
+        String weekly = new EmailSamples().svc.buildWeeklyAvailabilityHtml("Takım A", "W39",
                 List.of(new EmailNotificationService.AvailabilityRow("x.example.com", 99.0, 1, 5, 5, 100L, 200L, 30)),
                 new EmailNotificationService.AvailabilitySummary(1, 1, 99.0, "x.example.com", 99.0, "x.example.com", 99.0, 1, 30));
+        assertThat(MailKit.htmlToText(new String(weekly.toCharArray()))).contains("Takım A").contains("x.example.com")
+                .doesNotContain("v:roundrect").doesNotContain("@media");
+        String html = com.sitemonitor.service.mail.MailDoc.create("Takım A").preheader("Önizleme satırı").title("Takım A", null)
+                .table(List.of(MailKit.Col.of("Alan adı"), MailKit.Col.num("Kalan"), MailKit.Col.opt("Registrar")),
+                        List.of(List.of(MailKit.Cell.of("x.example.com"), MailKit.Cell.of("5 gün"), MailKit.Cell.of("Reg X"))))
+                .button(BASE + "/?tab=domains", "Aç").html();
+        assertThat(html).contains("<!--[if !mso]><!--><div class=\"m-only\"");   // kapı boşa geçmesin: kopya VAR
         String copy = new String(html.toCharArray());   // kayıt dışı (farklı nesne) → türetme yolu
         String derived = MailKit.htmlToText(copy);
-        assertThat(derived).contains("Takım A").contains("x.example.com").doesNotContain("v:roundrect").doesNotContain("@media");
-        // Mobil kart kopyası metne ikinci kez girmez: alan adı tablo + kesinti listesi kadar geçer, kart kadar değil.
+        assertThat(derived).contains("Takım A").contains("x.example.com").doesNotContain("v:roundrect").doesNotContain("@media")
+                .doesNotContain("Önizleme satırı");
+        // Kopyalar elle sökülmüş HTML'in türetilmiş metniyle AYNI sayıda geçer → kopya metne ikinci kez girmedi.
+        StringBuilder noMobile = new StringBuilder(html);
+        for (int i; (i = noMobile.indexOf("<!--[if !mso]><!--><div class=\"m-only\"")) >= 0; ) {
+            int end = noMobile.indexOf("</div><!--<![endif]-->", i);
+            noMobile.delete(i, end + "</div><!--<![endif]-->".length());
+        }
         int n = derived.split("x\\.example\\.com", -1).length - 1;
-        assertThat(n).isLessThanOrEqualTo(4);
+        int expected = MailKit.htmlToText(noMobile.toString()).split("x\\.example\\.com", -1).length - 1;
+        assertThat(n).isPositive().isEqualTo(expected);
     }
 }

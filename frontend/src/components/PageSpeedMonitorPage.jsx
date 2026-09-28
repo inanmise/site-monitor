@@ -999,7 +999,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           {pager.pageItems.map(m => (
             /* Kart: pagespeed/PageSpeedMonitorCard (shadcn Card + "stretched button" + bütçe ölçerleri). Yetki
                kapıları ve olay işleyicileri SAYFADA kalır: seçim kutusu, meta ve eylemler kart yuvalarına geçer. */
-            <PageSpeedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
+            <PageSpeedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
               onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               week7={week7.data[String(m.id)]} week14={week14.data[String(m.id)]}
@@ -1023,7 +1023,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} noc={{ type: 'PAGESPEED', monitor: selected, canEdit: canManageRow(selected) }}
           actions={
             /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
                koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
@@ -1159,7 +1159,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 <SegmentedControl
                   ariaLabel={t('pspd.metricLabel')}
                   value={metric} onChange={setMetric}
-                  options={METRICS.map(mt => ({ value: mt.key, label: t(mt.labelKey) }))} />
+                  options={METRICS.map(mt => ({ value: mt.key, label: t(mt.labelKey) }))} className="max-w-full flex-wrap pointer-coarse:[&>[data-slot=toggle-group-item]]:h-10" />
               </div>
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
                 <ResponseTimeChart monitorId={selected.id} kind="pagespeed"

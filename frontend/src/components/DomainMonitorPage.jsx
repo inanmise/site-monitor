@@ -892,7 +892,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                süresi çubuğu, yenileme planı çipi / kısayolu), koruma çipleri, EPP kodları. Yetkiye, seçime ve eylemlere
                bağlı parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, kart eylemleri (telefonda
                "Diğer işlemler" menüsü + Yenileme planla), plan penceresi. Durum sözlüğü detay penceresiyle ortak. */
-            <DomainMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusCls(m.status)} badge={cardStatusBadge(m)}
+            <DomainMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusCls(m.status)} badge={cardStatusBadge(m)}
               alarmLabel={alarmLabel(m)} onOpen={() => openDetail(m)}
               onPlanRenewal={canManageRow(m) ? () => setPlanRow(m) : undefined}
               select={canManageRow(m) && (
@@ -919,7 +919,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={statusCls(selected.status)} badge={statusBadge(selected)} title={selected.domain} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeDetail} status={statusCls(selected.status)} badge={statusBadge(selected)} title={selected.domain} noc={{ type: 'DOMAIN', monitor: selected, canEdit: canManageRow(selected) }}
           className={DETAIL_PHONE_FULLSCREEN}   // telefonda (< 640) tam ekran; paylaşılan kabuk değişmedi (2026-09-28)
           actions={
             /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol

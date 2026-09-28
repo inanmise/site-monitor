@@ -23,6 +23,8 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -101,6 +103,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             "(?i)([?&](?:" + SENSITIVE_FIELD_NAMES + ")=)[^&]*"
     );
 
+    /**
+     * Gövdesi (istek VE yanıt) HİÇ loglanmayan uçlar (2026-09-28). Alan adı maskesi burada yetmez: Anahtar
+     * Çözümleme isteği {@code {"key":"…"}}, yanıtı {@code {"data":[{"value":"<düz parola>"}]}} taşır — {@code key}
+     * ve {@code value} genel adlardır, maske listesine eklemek her ayar/istatistik logunu körleştirirdi. Bu uçlarda
+     * TRACE açıkken bile ne aday anahtar ne de çözülen parola log'a düşer (ekrandaki "loglanmaz" sözü buna dayanır).
+     */
+    private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/");
+    static final String BODY_OMITTED = "[omitted: sensitive endpoint]";
+
     private static final int MAX_BODY_LOG = 2000;
     // Yanıt gövdesinden loglama için yakalanacak azami bayt. truncate() zaten MAX_BODY_LOG
     // karaktere kısar; bu kadar yakalama yeter, gerisi atılır (bellek koruması).
@@ -138,11 +149,37 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             // gövde eksik kalmasın. Content-Length'e DOKUNMAYIZ; gövde gerçek yanıta zaten yazıldı.
             try { wResp.flushBuffer(); } catch (Exception ignore) { /* yanıt kapanmış olabilir */ }
             long durationMs = System.currentTimeMillis() - start;
-            String reqBody  = redact(bodyOf(wReq.getContentAsByteArray()));
-            String respBody = redact(bodyOf(wResp.getCaptured()));
+            boolean omit = bodyNeverLogged(req);
+            String reqBody  = omit ? BODY_OMITTED : redact(bodyOf(wReq.getContentAsByteArray()));
+            String respBody = omit ? BODY_OMITTED : redact(bodyOf(wResp.getCaptured()));
             log.trace("<<< {} {} -> {} ({} ms) | reqBody={} | respBody={}",
                     req.getMethod(), fullUri, wResp.getStatus(), durationMs,
                     truncate(reqBody), truncate(respBody));
+        }
+    }
+
+    /**
+     * Yol parametresi (;jsessionid=…), çift eğik çizgi, harf farkı ve YÜZDE KODLAMASI (%2D, %73…; konteyner çözüp aynı
+     * uca yönlendirir) eşleşmeyi atlatamasın — regresyon taraması 2026-09-28b B2. Ham URI ve iki tur çözülmüş biçimi
+     * denenir; biri eşleşirse gövde atlanır (şüphede atla).
+     */
+    static boolean bodyNeverLogged(HttpServletRequest req) {
+        String uri = req.getRequestURI();
+        if (uri == null) return false;
+        String once = percentDecode(uri);
+        for (String candidate : new String[] { uri, once, percentDecode(once) }) {
+            String norm = candidate.replaceAll(";[^/]*", "").replaceAll("/{2,}", "/").toLowerCase(Locale.ROOT);
+            if (BODY_NEVER_LOGGED.stream().anyMatch(norm::startsWith)) return true;
+        }
+        return false;
+    }
+
+    private static String percentDecode(String s) {
+        try {
+            // '+' yolda boşluk değildir — URLDecoder'ın form davranışına karşı koru
+            return java.net.URLDecoder.decode(s.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return s;   // bozuk kodlama → ham biçimle devam
         }
     }
 

@@ -161,6 +161,54 @@ class InventoryExportServiceTest {
     }
 
     @Test
+    @DisplayName("PDF (aylık rapor eki, 2026-09-28): gövdeyle AYNI özet — başlık/hüküm, KPI, dağılım, 90 gün tablosu ve hijyen TAM liste; kayıt bazında detay YOK")
+    void pdfWithSummary() throws Exception {
+        CertInventorySamples.Large l = CertInventorySamples.largeData();
+        var summary = CertInventorySamples.large();
+        byte[] pdf = service.pdf(l.rows, l.teams, summary);
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            String text = new PDFTextStripper().getText(doc);
+            // Kullanıcı kararı 2026-09-28: ek YALNIZ özet — 426 kayıtlık envanter eskiden ~146 sayfaydı
+            assertThat(doc.getNumberOfPages()).isBetween(2, 12);
+            assertThat(text).as("PDF özeti").contains("Sertifika Envanteri").contains("Eylül 2026")
+                    .contains("412 aktif sertifika").contains("36 tanesi 30 gün içinde bitiyor")
+                    .contains("Toplam kayıt").contains("30 gün içinde").contains("7 gün içinde").contains("Hijyen bulgusu")
+                    .contains("AKSİYON GEREKLİ").contains("Kalan süreye göre dağılım").contains("90 gün içinde bitenler")
+                    .contains("Envanter hijyeni").contains("Önerilen:");
+            // e-postanın KIRPTIĞI satırlar ekte TAM — ÖZET bölümünde aranır (alan adları detay bloklarında da geçer,
+            // tüm metinde aramak kırpılmış bir özeti yakalamazdı): 30 gün penceresinin 38'incisi, 31–90 günün sonuncusu,
+            // hijyen "sorumlu ekip" grubunun 14'üncüsü.
+            String summaryText = text;
+            String hygiene = summaryText.substring(summaryText.indexOf("Envanter hijyeni"));
+            assertThat(summaryText).contains("svc28.example.com").contains("app61.example.com");
+            assertThat(hygiene).contains("host011.example.com").contains("host014.example.com");
+            // en acil üstte
+            assertThat(text.indexOf("legacy.example.com")).isLessThan(text.indexOf("odeme.example.com"));
+            assertThat(text.indexOf("odeme.example.com")).isLessThan(text.indexOf("portal.example.com"));
+            // kayıt bazındaki detay blokları ekte YOK (ekrandaki "Dışa Aktar → PDF"te var — ayrı test)
+            assertThat(text).doesNotContain("Envanter Detayı").doesNotContain("TEMEL BİLGİLER").doesNotContain("OPERASYONEL BİLGİLER");
+            // alt bilgi: her sayfada rapor + ay ve sayfa numarası
+            assertThat(text).contains("Sayfa 1 / " + doc.getNumberOfPages());
+            PDFTextStripper page2 = new PDFTextStripper();
+            page2.setStartPage(2);
+            page2.setEndPage(2);
+            String p2 = page2.getText(doc);
+            assertThat(p2).contains("Eylül 2026").contains("Sayfa 2 / ");
+        }
+    }
+
+    @Test
+    @DisplayName("PDF özeti: kayıtsız envanterde tek sayfa (detay bölümü açılmaz), belge düşmez")
+    void pdfSummaryWithoutRows() throws Exception {
+        byte[] pdf = service.pdf(List.of(), Map.of(), CertInventorySamples.empty());
+        try (PDDocument doc = Loader.loadPDF(pdf)) {
+            assertThat(doc.getNumberOfPages()).isEqualTo(1);
+            assertThat(new PDFTextStripper().getText(doc)).contains("Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.")
+                    .doesNotContain("Envanter Detayı");
+        }
+    }
+
+    @Test
     @DisplayName("Boş envanterde bile geçerli PDF üretilir (rapor düşmez)")
     void pdfWithNoRows() throws Exception {
         byte[] pdf = service.pdf(List.of(), Map.of());

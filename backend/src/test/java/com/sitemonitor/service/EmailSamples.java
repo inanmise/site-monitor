@@ -448,51 +448,19 @@ final class EmailSamples {
     // ── #31–32 Raporlar ──────────────────────────────────────────────────────
 
     private void reports() {
-        List<EmailNotificationService.AvailabilityRow> rows = new ArrayList<>();
-        rows.add(new EmailNotificationService.AvailabilityRow(LONG_HOST, 97.42, 3, 260, 180, 812L, 2410L, 5));
-        rows.add(new EmailNotificationService.AvailabilityRow("www.example.com", 99.87, 1, 12, 12, 210L, 480L, 44));
-        for (int i = 1; i <= 10; i++) {
-            rows.add(new EmailNotificationService.AvailabilityRow("svc" + i + ".example.com", 100.0, 0, 0, 0, 90L + i * 7, 180L + i * 11, 30 * i));
+        // Haftalık Erişilebilirlik (2026-09-28 yeniden tasarım): olağan / %100 / kötü / büyük takım / veri yok —
+        // alarm tarafı GERÇEK eşleyiciden geçer (WeeklyAvailabilitySamples).
+        for (WeeklyAvailabilitySamples.Case c : WeeklyAvailabilitySamples.all()) {
+            addHtml(c.slug(), "report", "[Site Monitor] Takım A — Haftalık Erişilebilirlik", c.html(svc), "ok");
         }
-        rows.add(new EmailNotificationService.AvailabilityRow("nodata.example.com", null, 0, 0, 0, null, null, null));
-        EmailNotificationService.AvailabilitySummary sum = new EmailNotificationService.AvailabilitySummary(
-                13, 12, 99.77, "svc1.example.com", 100.0, LONG_HOST, 97.42, 2, 5);
-        EmailNotificationService.PageSpeedWeekly ps = new EmailNotificationService.PageSpeedWeekly(List.of(
-                new EmailNotificationService.PageSpeedWeeklyRow("Ana sayfa — " + TR, LONG_URL, 3120L, 2400L, 14),
-                new EmailNotificationService.PageSpeedWeeklyRow("Giriş", "https://www.example.com/login", 980L, 1200L, 0)), 6, 1);
-        EmailNotificationService.DomainExpiryWeekly dom = new EmailNotificationService.DomainExpiryWeekly(List.of(
-                new EmailNotificationService.DomainExpiryWeeklyRow("example.com", 5, "2026-10-01T00:00:00Z", "Örnek Registrar", "NONE", null, false),
-                new EmailNotificationService.DomainExpiryWeeklyRow(LONG_HOST, 40, "2026-11-05", null, "BOTH", "2026-09-20", true)), 18, 90, 1);
-        addHtml("report-availability", "report", "[Site Monitor] Takım A — Haftalık Erişilebilirlik",
-                svc.buildWeeklyAvailabilityHtml("Takım A", "39. hafta (22–28 Eylül)", rows, sum,
-                        new EmailNotificationService.AttachmentInfo("site-monitor-kesinti-raporu-takim-a-2026-W39.pdf", 14, 2, 9, 5), ps,
-                        new EmailNotificationService.DeploymentWeekly(2, "20.86.0", "20.87.0", 1, 1),
-                        new EmailNotificationService.WeakAlgoWeekly(2, 212), dom), "ok");
-        addHtml("report-availability-clean", "report", "[Site Monitor] Takım A — Haftalık Erişilebilirlik",
-                svc.buildWeeklyAvailabilityHtml("Takım A", "39. hafta (22–28 Eylül)", List.of(
-                                new EmailNotificationService.AvailabilityRow("www.example.com", 100.0, 0, 0, 0, 120L, 240L, 120)),
-                        new EmailNotificationService.AvailabilitySummary(1, 1, 100.0, "www.example.com", 100.0, "www.example.com", 100.0, 0, 120),
-                        new EmailNotificationService.AttachmentInfo("site-monitor-kesinti-raporu-takim-a-2026-W39.pdf", 0, 0, 0, 5), null,
-                        new EmailNotificationService.DeploymentWeekly(0, null, "20.87.0", 0, 0),
-                        new EmailNotificationService.WeakAlgoWeekly(0, 212),
-                        new EmailNotificationService.DomainExpiryWeekly(List.of(), 4, 90, 0)), "ok");
-        List<EmailNotificationService.InventoryReportRow> inv = new ArrayList<>();
-        inv.add(new EmailNotificationService.InventoryReportRow(LONG_HOST, "Takım A", 1, -2, "2026-09-24", "Süresi dolmuş"));
-        inv.add(new EmailNotificationService.InventoryReportRow("www.example.com", "Takım A", 1, 5, "2026-10-01", "Aktif"));
-        inv.add(new EmailNotificationService.InventoryReportRow("api.example.com", "Takım B", 2, 24, "2026-10-20", "Aktif"));
-        inv.add(new EmailNotificationService.InventoryReportRow("nodata.example.com", null, null, null, null, null));
-        for (int i = 1; i <= 6; i++) inv.add(new EmailNotificationService.InventoryReportRow("svc" + i + ".example.com", "Takım A", 3, 60 * i, "2027-0" + i + "-01", "Aktif"));
-        List<EmailNotificationService.InventoryFindingGroup> findings = List.of(
-                new EmailNotificationService.InventoryFindingGroup("Sorumlu takımı olmayan kayıtlar", 3,
-                        List.<String[]>of(new String[]{"nodata.example.com", "Takım atanmamış"}, new String[]{LONG_HOST, "Takım atanmamış — " + TR}), 1),
-                new EmailNotificationService.InventoryFindingGroup("Güncel olmayan kayıtlar", 1,
-                        List.<String[]>of(new String[]{"old.example.com", "Son kontrol 120 gün önce"}), 0));
+        // Aylık envanter (2026-09-28 yeniden tasarım): veri GERÇEK özetleyiciden geçer (CertInventorySamples).
         addHtml("report-inventory", "report", "[Site Monitor] Aylık Sertifika Envanteri",
-                svc.buildCertInventoryReportHtml("Eylül 2026", Map.of("active", 212, "passive", 14, "total", 226), inv, findings,
-                        List.of("sertifika-envanteri-2026-09.csv", "sertifika-envanteri-2026-09.pdf")), "ok");
+                svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.large()), "ok");
+        addHtml("report-inventory-mid", "report", "[Site Monitor] Aylık Sertifika Envanteri",
+                svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.medium()), "ok");
         addHtml("report-inventory-clean", "report", "[Site Monitor] Aylık Sertifika Envanteri",
-                svc.buildCertInventoryReportHtml("Eylül 2026", Map.of("active", 3, "passive", 0, "total", 3),
-                        List.of(new EmailNotificationService.InventoryReportRow("www.example.com", "Takım A", 1, 200, "2027-04-14", "Aktif")),
-                        List.of(), List.of("sertifika-envanteri-2026-09.csv")), "ok");
+                svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.quiet()), "ok");
+        addHtml("report-inventory-empty", "report", "[Site Monitor] Aylık Sertifika Envanteri",
+                svc.buildCertInventoryReportHtml(com.sitemonitor.service.report.CertInventorySamples.empty()), "ok");
     }
 }

@@ -4,7 +4,6 @@ import CopyButton from '../ui/CopyButton.jsx'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import { TimeAgo, relTime } from '../admin/monitorchanges/changeParts.jsx'
 import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
@@ -69,7 +68,7 @@ const CHIP_TRIGGER = cn(CARD_LAYER, 'rounded-sm pointer-coarse:min-h-10')
  * dns-compact-changed · dns-compact-reason (`data-reason` mismatch|slow).
  */
 export default function DnsMonitorCard({
-  monitor: m, status = 'unknown', statusBadge, alarmLabel, onOpen, select, meta, spark, actions, density = 'rich', running = false,
+  monitor: m, status = 'unknown', statusBadge, alarmLabel, onOpen, select, meta, spark, actions, density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -81,7 +80,8 @@ export default function DnsMonitorCard({
   const name = m.name && m.name !== m.domain ? m.name : null
 
   return (
-    <MonitorCard density={density} running={running} status={status} alarm={!!m.active_alarm} inactive={!m.active} data-record-type={m.record_type || undefined}>
+    <MonitorCard density={density} running={running} status={status} alarm={!!m.active_alarm} inactive={!m.active} data-record-type={m.record_type || undefined}
+      noc={{ type: 'DNS', monitor: m, rowLabel: m.domain, canEdit }}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={<>
           <Badge variant="outline" data-slot="dns-record-type"
@@ -115,8 +115,6 @@ export default function DnsMonitorCard({
         <div className={cn(CARD_LAYER, 'flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1', compact ? 'mb-2' : 'mb-2.5')}>
           <SourceBadge standalone={!!m.standalone} />
           {compact ? <TeamOnly m={m} /> : meta}
-          {/* 7/24 rozeti yalnız Zengin'de (satır Kompakt ile ortak → MonitorCardRich, display:contents) */}
-          {m.noc_notify && <MonitorCardRich className="contents"><NocBadge rowLabel={m.domain} /></MonitorCardRich>}
         </div>
 
         <MonitorCardRich>

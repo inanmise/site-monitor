@@ -50,6 +50,7 @@ class NocControllerTest {
     @MockitoBean AuditService auditService;
     @MockitoBean MonitorHistoryService monitorHistory;
     @MockitoBean ActivityLogService activityLog;
+    @MockitoBean CertificateService certService;
 
     @MockitoBean AppSettingsService appSettings;
     @MockitoBean RememberMeService rememberMeService;
@@ -186,6 +187,40 @@ class NocControllerTest {
     }
 
     @Test
+    @DisplayName("seçenekler (kart göstergesi): has_active_group kapsamın grup yüklemiyle AYNI (aktif + adresli), min_level yapılandırmadan")
+    void optionsCarryActiveGroupAndMinLevel() throws Exception {
+        when(configService.get()).thenReturn(new NocConfigService.Config(Set.of(), "HIGH", true, "", null, null));
+        mvc.perform(get("/api/noc/groups/options").session(userA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.has_active_group").value(true))
+                .andExpect(jsonPath("$.data.min_level").value("HIGH"));
+
+        // Aktif ama adressiz grup + adresli ama pasif grup → KULLANILABİLİR grup yok. İstemci `active` bayrağından
+        // "aktif grup var" sonucunu çıkaramaz; hüküm sunucudan (NocGroupService.anyUsable) gelir.
+        NocNotificationGroup noMail = new NocNotificationGroup();
+        noMail.setId(6L); noMail.setName("Boş grup"); noMail.setEmails(""); noMail.setActive(true); noMail.setIsDefault(false);
+        NocNotificationGroup passive = new NocNotificationGroup();
+        passive.setId(7L); passive.setName("Pasif grup"); passive.setEmails("noc@example.com"); passive.setActive(false); passive.setIsDefault(false);
+        when(groupRepo.findAllByOrderByNameAsc()).thenReturn(List.of(noMail, passive));
+        mvc.perform(get("/api/noc/groups/options").session(userA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.groups[0].active").value(true))
+                .andExpect(jsonPath("$.data.has_active_group").value(false))
+                .andExpect(jsonPath("$.data.groups[0].emails").doesNotExist())
+                .andExpect(jsonPath("$.data.groups[0].email_count").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("seçenekler: her rol okur (monitoring.read — kapsamlı müdür, denetçi, kullanıcı); izin yoksa 403 ve veri YOK")
+    void optionsPermission() throws Exception {
+        for (MockHttpSession s : List.of(global, scoped, teamAdmin, userA, userB, audit))
+            mvc.perform(get("/api/noc/groups/options").session(s)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.has_active_group").exists());
+        doThrow(new SecurityException("izin yok")).when(permissionService)
+                .require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"));
+        mvc.perform(get("/api/noc/groups/options").session(userA)).andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
     @DisplayName("kapsam: görüş dışı takım süzgeci 403; bilinmeyen tür 400; kendi kapsamı 200")
     void coverageScope() throws Exception {
         mvc.perform(get("/api/noc/coverage").param("team_id", String.valueOf(TEAM_B)).session(userA)).andExpect(status().isForbidden());
@@ -274,6 +309,57 @@ class NocControllerTest {
         mvc.perform(put("/api/noc/monitors/SSL/3").session(userB).contentType(MediaType.APPLICATION_JSON).content(on))
                 .andExpect(status().isForbidden());
         verify(permissionService, atLeastOnce()).require(any(jakarta.servlet.http.HttpSession.class), eq("inventory.crud"), eq("edit"));
+    }
+
+    @Test
+    @DisplayName("SSL aç/kapa + toplu: DEĞİŞİNCE sertifika önbellekleri boşalır (Genel Bakış kartının noc_notify'ı taze); değişmeyince ya da başka türde boşalmaz")
+    void sslToggleEvictsCertificateCaches() throws Exception {
+        CertificateInventory inv = new CertificateInventory();
+        inv.setId(3L); inv.setDomain("www.example.com"); inv.setTeamId(TEAM_A);
+        when(monitors.load(NocType.SSL, 3L)).thenReturn(inv);
+        when(monitors.row(NocType.SSL, 3L)).thenReturn(
+                new NocMonitorDirectory.Row(NocType.SSL, 3, "www.example.com", "www.example.com", TEAM_A, null, true, false, null, false));
+        ping(1, TEAM_A);
+        // Gerçek gövde uygulaması (mock no-op olsaydı "değişmedi" dalı sınanırdı)
+        doAnswer(a -> { NocMonitorService.applyFromBody(a.getArgument(0), a.getArgument(1), null); return null; })
+                .when(monitors).applyFromBody(any(), anyMap());
+        String on = "{\"enabled\":true}";
+
+        mvc.perform(put("/api/noc/monitors/SSL/3").session(userA).contentType(MediaType.APPLICATION_JSON).content(on))
+                .andExpect(status().isOk());
+        verify(certService, times(1)).evictAllCaches();
+        // Aynı değer → değişiklik yok → boşaltma yok
+        mvc.perform(put("/api/noc/monitors/SSL/3").session(userA).contentType(MediaType.APPLICATION_JSON).content(on))
+                .andExpect(status().isOk());
+        // Başka tür (Ping) değişti → sertifika önbelleğine dokunulmaz
+        mvc.perform(put("/api/noc/monitors/PING/1").session(userA).contentType(MediaType.APPLICATION_JSON).content(on))
+                .andExpect(status().isOk());
+        verify(certService, times(1)).evictAllCaches();
+
+        String bulkOff = "{\"enabled\":false,\"items\":[{\"type\":\"SSL\",\"id\":3},{\"type\":\"PING\",\"id\":1}]}";
+        mvc.perform(post("/api/noc/monitors/bulk").session(userA).contentType(MediaType.APPLICATION_JSON).content(bulkOff))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.updated").value(2));
+        verify(certService, times(2)).evictAllCaches();   // toplu: döngü sonunda TEK boşaltma
+    }
+
+    @Test
+    @DisplayName("toplu: ortada bir kayıt düşse de o ana kadar değişen sertifikalar için önbellek boşalır (finally — regresyon 2026-09-28b B5)")
+    void bulk_failureMidway_stillEvictsCertificateCaches() throws Exception {
+        CertificateInventory inv = new CertificateInventory();
+        inv.setId(3L); inv.setDomain("www.example.com"); inv.setTeamId(TEAM_A);
+        when(monitors.load(NocType.SSL, 3L)).thenReturn(inv);
+        when(monitors.row(NocType.SSL, 3L)).thenReturn(
+                new NocMonitorDirectory.Row(NocType.SSL, 3, "www.example.com", "www.example.com", TEAM_A, null, true, false, null, false));
+        doAnswer(a -> { NocMonitorService.applyFromBody(a.getArgument(0), a.getArgument(1), null); return null; })
+                .when(monitors).applyFromBody(any(), anyMap());
+        when(monitors.load(NocType.PING, 7L)).thenThrow(new RuntimeException("veritabanı bağlantısı koptu"));
+        String body = "{\"enabled\":true,\"items\":[{\"type\":\"SSL\",\"id\":3},{\"type\":\"PING\",\"id\":7}]}";
+        try {
+            mvc.perform(post("/api/noc/monitors/bulk").session(userA).contentType(MediaType.APPLICATION_JSON).content(body));
+        } catch (Exception expected) {
+            // işlenmeyen istisna ServletException olarak yükselebilir — sınanan şey boşaltmanın yine de olması
+        }
+        verify(certService, times(1)).evictAllCaches();
     }
 
     @Test

@@ -2392,11 +2392,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 @media (max-width: 900px) { .help-toc { display: none; } }
 
-/* ══════════════════════════  STATS VIEW  ════════════════════════════ */
-.sv-root { display: flex; flex-direction: column; gap: 16px; }
 
-/* Widgets column */
-.sv-widgets > .ts-root { margin-bottom: 0; }
 
 /* ── DNS Monitor Page (project-styled redesign) ──────────────────────── */
 .dns-page { padding: 4px 0; }
@@ -2904,18 +2900,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .sml-table .smtp-log-date { white-space: nowrap; }
 .sml-table-card .pg-bar { padding: 8px 12px; }
 
-/* ── Yönetici özeti (İstatistik üstü, 2026-09-12 #20) ─────────────────────────────────────── */
-.exs { display: flex; flex-direction: column; gap: 12px; margin: 0 0 16px; }
-.exs-kpi.is-ok { border-left-color: var(--success); }
-.exs-kpi.is-warn { border-left-color: #d97706; }
-.exs-kpi.is-bad { border-left-color: var(--danger); }
-.exs-kpi.is-ok .exs-kpi-value { color: var(--success); }
-.exs-kpi.is-warn .exs-kpi-value { color: #d97706; }
-.exs-kpi.is-bad .exs-kpi-value { color: var(--danger); }
-.exs-delta.is-ok { color: var(--success); }
-.exs-delta.is-bad { color: var(--danger); }
-.exs-team-meta .is-warn { color: #d97706; }
-.exs-team-meta .is-bad { color: var(--danger); }
 
 /* ── "Sizin için — bugün" paneli (dashboard üstü, 2026-09-12 #3) ───────────────────────────── */
 .today { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-surface); margin: 0 0 16px; }

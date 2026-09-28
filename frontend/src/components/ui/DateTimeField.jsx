@@ -53,7 +53,8 @@ function toDateOnly(d) {
  * taşıyan bir SVG'ydi — odaklanamıyordu, düğme içinde düğme de geçersiz yapı (2026-09-25, R14). Tetik o
  * köşede ok yerine aynı genişlikte boş yer bırakır ki değer metni düğmenin altına kaymasın.
  */
-export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min, max }) {
+export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min, max,
+  invalid, describedBy }) {   // isteğe bağlı ui/Field bağları (hata/ipucu → tetiğin aria-invalid / aria-describedby'ı) — 2026-09-28
   const t = useT()
   const parse = dateOnly ? parseDateOnly : parseIso
   const selected = parse(value)
@@ -76,6 +77,7 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
       reserveEnd={clearShown}
       className={cn(inline ? 'w-auto' : 'w-full', extra)}
       triggerClassName={inline ? 'w-auto max-w-full' : undefined}
+      triggerProps={invalid || describedBy ? { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } : undefined}
       endSlot={clearShown && (
         <SimpleTooltip content={clearLabel}>
           <Button type="button" variant="ghost" size="icon-xs"

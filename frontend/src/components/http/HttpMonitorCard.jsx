@@ -4,7 +4,6 @@ import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter, MonitorCardRich,
@@ -49,7 +48,7 @@ import { httpFailureReason, metaRow, proxyMode, statusVerdict } from './httpCard
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function HttpMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
+  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const alarm = !!m.active_alarm
@@ -59,10 +58,11 @@ export default function HttpMonitorCard({
   const compact = density === 'compact'
   const name = String(m.name || '').trim()
   const subName = name && name !== m.url ? name : null
-  const hasMeta = !!(m.team_name || m.group_name || metaRow(m).proxy_effective || proxyMode(m) || tagsOf(m).length || m.noc_notify)
+  const hasMeta = !!(m.team_name || m.group_name || metaRow(m).proxy_effective || proxyMode(m) || tagsOf(m).length)
   const alarmLabel = `${t('http.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
     <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused} data-result={verdict.kind}
+      noc={{ type: 'HTTP', monitor: m, rowLabel: m.url, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={
@@ -105,7 +105,6 @@ export default function HttpMonitorCard({
             // dokunma alanını kesiyordu (Playwright 390 isabet testi).
             <div className={cn(CARD_LAYER, 'mt-2 mb-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 pointer-coarse:gap-y-2.5')}>
               {meta}
-              {m.noc_notify && <NocBadge rowLabel={m.url} />}
               <KeywordProxyChip monitor={m} rowLabel={m.url} />
               <PingTags monitor={m} />
             </div>

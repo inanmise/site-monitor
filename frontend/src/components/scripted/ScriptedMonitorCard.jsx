@@ -4,7 +4,6 @@ import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
 import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import {
@@ -42,7 +41,7 @@ import { isBrowserScript, scenarioTarget } from './scriptedCardModel.js'
  *   grup ve etiketler yalnız Zengin'de (MonitorCardRich — Kompakt'ta DOM'a girmez).
  */
 export default function ScriptedMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
+  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const target = useMemo(() => scenarioTarget(m), [m])
@@ -50,10 +49,11 @@ export default function ScriptedMonitorCard({
   const alarm = !!m.active_alarm
   const paused = m.active === false
   const compact = density === 'compact'
-  const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length || m.noc_notify)
+  const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length)
   const alarmLabel = `${t('scripted.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
     <MonitorCard status={status} density={density} running={running} alarm={alarm} inactive={paused}
+      noc={{ type: 'SCRIPTED', monitor: m, rowLabel: m.name, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60', compact && 'pt-3 sm:pt-3.5')}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={<>
@@ -89,7 +89,6 @@ export default function ScriptedMonitorCard({
           {hasMeta && (
             <div className={cn(CARD_LAYER, 'mt-2 mb-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5')}>
               <MonitorCardMeta monitor={m} />
-              {m.noc_notify && <NocBadge rowLabel={m.name} />}
               <ScriptedTags monitor={m} />
             </div>
           )}

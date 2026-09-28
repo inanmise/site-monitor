@@ -280,15 +280,76 @@ public class WeeklyAvailabilityReportService {
         List<CertificateInventory> domains =
                 inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
         Map<String, Integer> certDays = certDaysByDomain(domains);
-        List<AvailabilityRow> rows = new ArrayList<>();
-        for (CertificateInventory inv : domains) {
-            if (tierOnly != null && !tierOnly.equals(inv.getTier())) continue;
-            int port = inv.getPort() != null ? inv.getPort() : 443;
-            List<UptimeCheck> checks = uptimeCheckRepo
-                    .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
-            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays.get(inv.getDomain())));
+        List<CertificateInventory> scope = tierOnly == null ? domains
+                : domains.stream().filter(inv -> tierOnly.equals(inv.getTier())).toList();
+        return summarize(rowsFor(scope, w, certDays));
+    }
+
+    /** Tek sorguda okunan en çok domain (BO5/O15): sorgu sayısı ~N/{@value}'ye iner, bir parçanın satırları
+     *  (saatlik kontrol + kesintideki 30 sn'lik kurtarma denemeleri) bellekte sınırlı kalır — tek pod, OOM = kesinti. */
+    static final int UPTIME_CHUNK = 50;
+
+    /** (domain, port) bileşik anahtarı — dizeye paketlenmez (ayırıcı çakışması; bkz. source-control-bytes kuralı). */
+    private record DomainPort(String domain, int port) { }
+
+    /**
+     * Pencere içindeki erişilebilirlik satırları, envanter sırasıyla — TOPLU okuma (BO5/O15, 2026-09-28). Eskiden domain
+     * başına bir {@code findByDomainAndPort...} sorgusu atılıyordu (200 domain = 200 sorgu; {@code WeeklyReportKpiService}
+     * bunu ekran isteğinde DÖRT kez koşturuyor). Artık {@value #UPTIME_CHUNK}'lik parça başına TEK sorgu; satırlar
+     * (domain, port) ile gruplanır, envanterin portu seçilir. Hesap çekirdeği ({@link #computeRow}) değişmedi.
+     */
+    List<AvailabilityRow> rowsFor(List<CertificateInventory> domains, Window w, Map<String, Integer> certDays) {
+        List<AvailabilityRow> rows = new ArrayList<>(domains.size());
+        for (int i = 0; i < domains.size(); i += UPTIME_CHUNK) {
+            List<CertificateInventory> part = domains.subList(i, Math.min(i + UPTIME_CHUNK, domains.size()));
+            Set<String> names = new LinkedHashSet<>();
+            for (CertificateInventory inv : part) if (inv.getDomain() != null) names.add(inv.getDomain());
+            Map<DomainPort, List<UptimeCheck>> byKey = new HashMap<>();
+            if (!names.isEmpty()) {
+                for (UptimeCheck c : uptimeCheckRepo.findWindowForDomains(names, w.fromUtc(), w.toUtc())) {
+                    byKey.computeIfAbsent(new DomainPort(c.getDomain(), c.getPort() == null ? 443 : c.getPort()), k -> new ArrayList<>()).add(c);
+                }
+            }
+            for (CertificateInventory inv : part) {
+                int port = inv.getPort() != null ? inv.getPort() : 443;
+                List<UptimeCheck> checks = byKey.getOrDefault(new DomainPort(inv.getDomain(), port), List.of());
+                rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays.get(inv.getDomain())));
+            }
         }
-        return summarize(rows);
+        return rows;
+    }
+
+    /**
+     * GEÇEN haftanın ortalama erişilebilirliği ("geçen haftaya göre" çipi, 2026-09-28) — ham satır taşınmadan, (domain,
+     * port) başına [toplam, up] sayımıyla ({@code countWindowForDomains}, bakım hariç). Yüzde + ortalama kuralı
+     * {@link #computeRow}/{@link #summarize} ile AYNI; parça başına tek sorgu. Patlarsa null → çip çizilmez, rapor gider.
+     */
+    Double previousWeekAvg(List<CertificateInventory> domains, Window w) {
+        try {
+            Window prev = windowForMonday(mondayOfIsoWeek(w.year(), w.week()).minusWeeks(1));
+            Map<DomainPort, long[]> counts = new HashMap<>();
+            for (int i = 0; i < domains.size(); i += UPTIME_CHUNK) {
+                Set<String> names = new LinkedHashSet<>();
+                for (CertificateInventory inv : domains.subList(i, Math.min(i + UPTIME_CHUNK, domains.size())))
+                    if (inv.getDomain() != null) names.add(inv.getDomain());
+                if (names.isEmpty()) continue;
+                for (Object[] r : uptimeCheckRepo.countWindowForDomains(names, prev.fromUtc(), prev.toUtc())) {
+                    if (r[0] == null || !(r[1] instanceof Number port)) continue;
+                    counts.put(new DomainPort(String.valueOf(r[0]), port.intValue()),
+                            new long[]{ r[2] instanceof Number total ? total.longValue() : 0L, r[3] instanceof Number up ? up.longValue() : 0L });
+                }
+            }
+            List<AvailabilityRow> rows = new ArrayList<>(domains.size());
+            for (CertificateInventory inv : domains) {
+                long[] c = counts.get(new DomainPort(inv.getDomain(), inv.getPort() != null ? inv.getPort() : 443));
+                Double pct = c == null || c[0] == 0 ? null : com.sitemonitor.util.AvailabilityMath.pct(c[0], c[1], 2);
+                rows.add(new AvailabilityRow(inv.getDomain(), pct, 0, 0, 0, null, null, null));
+            }
+            return summarize(rows).avgAvailabilityPct();
+        } catch (Exception e) {
+            log.warn("Haftalık rapor geçen hafta ortalaması hesaplanamadı (değişim çipi atlanır): {}", e.toString());
+            return null;
+        }
     }
 
     /** Tek domain için son {@code hours} saatteki erişilebilirlik satırı (recovery e-postası özeti). Kaynak = HTTP
@@ -330,24 +391,29 @@ public class WeeklyAvailabilityReportService {
      * isteğinde patlıyordu. Desen: enrich* teamNameMap toplu-haritası.
      */
     private Map<String, Integer> certDaysByDomain(List<CertificateInventory> domains) {
-        List<String> keys = new ArrayList<>();
+        return certDaysOf(latestByDomain(domains));
+    }
+
+    /** Domain → son kontrol, TEK toplu sorguda ({@code findAllById}); sertifika günü ve zayıf algoritma aynı haritadan beslenir. */
+    private Map<String, LatestCheck> latestByDomain(List<CertificateInventory> domains) {
+        Set<String> keys = new LinkedHashSet<>();
         for (CertificateInventory inv : domains) if (inv.getDomain() != null) keys.add(inv.getDomain());
-        Map<String, Integer> out = new HashMap<>();
+        Map<String, LatestCheck> out = new HashMap<>();
         if (keys.isEmpty()) return out;
         for (LatestCheck lc : latestCheckRepo.findAllById(keys))
-            if (lc.getDomain() != null) out.put(lc.getDomain(), lc.getDaysRemaining());
+            if (lc.getDomain() != null) out.put(lc.getDomain(), lc);
+        return out;
+    }
+
+    private static Map<String, Integer> certDaysOf(Map<String, LatestCheck> latest) {
+        Map<String, Integer> out = new HashMap<>();
+        for (Map.Entry<String, LatestCheck> e : latest.entrySet()) out.put(e.getKey(), e.getValue().getDaysRemaining());
         return out;
     }
 
     TeamReport buildTeamReport(Team team, Window w, List<CertificateInventory> domains) {
-        Map<String, Integer> certDays = certDaysByDomain(domains);
-        List<AvailabilityRow> rows = new ArrayList<>();
-        for (CertificateInventory inv : domains) {
-            int port = inv.getPort() != null ? inv.getPort() : 443;
-            List<UptimeCheck> checks = uptimeCheckRepo
-                    .findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(inv.getDomain(), port, w.fromUtc(), w.toUtc());
-            rows.add(computeRow(inv.getDomain(), checks, w.windowEnd(), certDays.get(inv.getDomain())));
-        }
+        Map<String, LatestCheck> latest = latestByDomain(domains);
+        List<AvailabilityRow> rows = rowsFor(domains, w, certDaysOf(latest));
         // En kötü availability üstte (null = veri yok, en sona)
         rows.sort(Comparator.comparing(r -> r.availabilityPct() == null ? Double.MAX_VALUE : r.availabilityPct()));
 
@@ -366,11 +432,73 @@ public class WeeklyAvailabilityReportService {
 
         EmailNotificationService.PageSpeedWeekly pageSpeed = collectPageSpeed(team, w);
         EmailNotificationService.DeploymentWeekly deployments = collectDeployments(w);
-        EmailNotificationService.WeakAlgoWeekly weak = collectWeakAlgo(domains);
+        EmailNotificationService.WeakAlgoWeekly weak = collectWeakAlgo(domains, latest);
         EmailNotificationService.DomainExpiryWeekly domExp = collectDomainExpiry(team);
+        com.sitemonitor.service.mail.WeeklyAvailabilityMail.Insights insights;
+        try {
+            insights = insightsFor(team, w, previousWeekAvg(domains, w), outage);
+        } catch (Exception e) {
+            // Zenginleştirme (değişim çipi, alarm/tür bölümleri) raporun tamamlayıcısıdır — düşerse rapor onsuz gider.
+            log.warn("Haftalık rapor özet bağlamı üretilemedi (team={} week={}) — alarm/tür bölümleri atlanır: {}",
+                    team.getName(), w.weekLabel(), e.toString());
+            insights = null;
+        }
         String html = emailService.buildWeeklyAvailabilityHtml(
-                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments, weak, domExp);
+                team.getName(), w.weekLabel(), rows, summary, att, pageSpeed, deployments, weak, domExp, insights);
         return new TeamReport(rows, summary, subject, html, to, cc, outage);
+    }
+
+    // ── E-posta bağlamı (yeniden tasarım 2026-09-28) ─────────────────────────────
+
+    /**
+     * E-postanın hafta bağlamı + alarm/tür özeti. Alarm tarafı kesinti verisinden (ekteki PDF ile AYNI kaynak, ikinci
+     * sorgu YOK) türetilir; {@code outage} null ise (toplama düştü) alarm bölümleri çizilmez ama hafta bağlamı ve
+     * geçen haftaya göre değişim yine gider. Alarm Geçmişi süzgeci günleri kurum saatiyle (Pzt–Paz).
+     */
+    static com.sitemonitor.service.mail.WeeklyAvailabilityMail.Insights insightsFor(
+            Team team, Window w, Double prevAvg, WeeklyOutageReportService.WeeklyOutageData outage) {
+        LocalDate monday = mondayOfIsoWeek(w.year(), w.week());
+        return new com.sitemonitor.service.mail.WeeklyAvailabilityMail.Insights(team == null ? null : team.getId(),
+                w.year(), w.week(), monday.toString(), monday.plusDays(6).toString(), prevAvg,
+                outage == null ? null : alarmsOf(outage));
+    }
+
+    /**
+     * Alarm özeti: toplamlar kesinti verisinin kendi alanlarından; MTTR = ÇÖZÜLMÜŞ alarmların ortalama süresi (açılış →
+     * çözüm, dakika; AlertNoiseService'teki tanımla aynı); tür başına alarm süresi = o türün alarmlarının HAFTAYA DÜŞEN
+     * dakikalarının toplamı (çakışanlar ayrı sayılır — e-postada böyle yazılır). Alarm listesi {@code longest}
+     * (haftaya düşen süreye göre sıralı, PDF'in "en uzun" tablosuyla aynı).
+     */
+    static com.sitemonitor.service.mail.WeeklyAvailabilityMail.Alarms alarmsOf(WeeklyOutageReportService.WeeklyOutageData o) {
+        long resolvedMinutes = 0;
+        int resolved = 0;
+        Map<String, Long> minutesByType = new HashMap<>();
+        for (WeeklyOutageReportService.TypeGroup g : o.groups()) {
+            for (WeeklyOutageReportService.OutageRow r : g.rows()) {
+                if (!r.stillOpen()) { resolvedMinutes += r.durationMin(); resolved++; }
+                if (r.monitorType() != null) minutesByType.merge(r.monitorType(), r.weekDurationMin(), Long::sum);
+            }
+        }
+        Long mttr = resolved == 0 ? null : Math.round((double) resolvedMinutes / resolved);
+        List<com.sitemonitor.service.mail.WeeklyAvailabilityMail.TypeRow> types = new ArrayList<>();
+        for (MonitoringWeeklyStatsService.TypeStats t : o.typeStats()) {
+            if (t.activeMonitors() == 0 && t.totalChecks() == 0 && t.alarmsOpened() == 0 && t.alarmsOpen() == 0) continue;
+            types.add(new com.sitemonitor.service.mail.WeeklyAvailabilityMail.TypeRow(MonitorTypeCatalog.label(t.type()),
+                    t.activeMonitors(), t.totalChecks(), t.successRate(), t.successRateDelta(),
+                    t.alarmsOpened(), t.alarmsOpen(), minutesByType.getOrDefault(t.type(), 0L)));
+        }
+        List<com.sitemonitor.service.mail.WeeklyAvailabilityMail.IncidentRow> incidents = new ArrayList<>();
+        for (WeeklyOutageReportService.OutageRow r : o.longest()) {
+            String note = r.resolvedNote() != null && !r.resolvedNote().isBlank() ? r.resolvedNote()
+                    : r.acknowledgedNote() != null && !r.acknowledgedNote().isBlank() ? r.acknowledgedNote() : null;
+            incidents.add(new com.sitemonitor.service.mail.WeeklyAvailabilityMail.IncidentRow(r.alertId(),
+                    r.monitorType() == null ? "Diğer" : MonitorTypeCatalog.label(r.monitorType()),
+                    com.sitemonitor.service.noc.NocMailComposer.problemLabel(r.alertType(), null), r.target(), r.level(),
+                    com.sitemonitor.service.noc.NocMailComposer.levelTr(r.level()), WeeklyOutageReportService.shortStamp(r.startedAt()),
+                    r.stillOpen(), r.carriedOver(), r.durationMin(), r.weekDurationMin(), note));
+        }
+        return new com.sitemonitor.service.mail.WeeklyAvailabilityMail.Alarms(o.totalAlarms(), o.alarmsOpenedThisWeek(),
+                o.alarmsPrevWeek(), o.stillOpenCount(), o.carriedOverCount(), o.affectedTargets(), mttr, resolved, types, incidents);
     }
 
     /**
@@ -424,9 +552,17 @@ public class WeeklyAvailabilityReportService {
      */
     EmailNotificationService.WeakAlgoWeekly collectWeakAlgo(List<CertificateInventory> domains) {
         try {
+            return collectWeakAlgo(domains, latestByDomain(domains));
+        } catch (Exception e) {
+            log.warn("Haftalık rapor zayıf-algoritma satırı hesaplanamadı (bant atlanır): {}", e.toString());
+            return null;
+        }
+    }
+
+    /** {@code latest} = {@link #latestByDomain} haritası (TOPLU okuma, BO5/O15 — eskiden domain başına {@code findById}). */
+    EmailNotificationService.WeakAlgoWeekly collectWeakAlgo(List<CertificateInventory> domains, Map<String, LatestCheck> latest) {
+        try {
             List<String> names = domains.stream().map(CertificateInventory::getDomain).filter(Objects::nonNull).toList();
-            Map<String, LatestCheck> latest = new HashMap<>();
-            for (String d : names) latestCheckRepo.findById(d).ifPresent(lc -> latest.put(d, lc));
             int[] ws = WeakAlgorithmReportService.weakAndScannedFor(names, latestCheckRepo.findWeakAlgorithmCandidates(), latest);
             return new EmailNotificationService.WeakAlgoWeekly(ws[0], ws[1]);
         } catch (Exception e) {

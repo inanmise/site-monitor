@@ -19,7 +19,9 @@ import java.util.*;
  * Kurum-geneli TAKIM rehberi — UserDirectoryController'ın takım eşleniği. Oturum açmış herkes
  * (rol/kapsam fark etmez) takım adını tıklayıp üyelerini görebilir; bu yüzden projeksiyon
  * BEYAZ-LİSTELİDİR (kullanıcı kararı 2026-09-10): ad, unvan, birim, müdürlük, org rolü, e-posta.
- * Telefon, sicil no, sistem rolü, fotoğraf base64 ve LDAP alanları DÖNMEZ.
+ * Kullanıcı kararı 2026-09-28: takım üyeleri penceresinde SİSTEM ROLÜ ve FOTOĞRAF görünür — projeksiyona
+ * {@code system_role} + {@code has_photo} (fotoğrafın kendisi değil; olmayan için boşuna istek atılmasın) eklendi.
+ * Telefon, sicil no, fotoğraf base64 ve LDAP alanları DÖNMEZ.
  *
  * <p>/api/admin/teams ve /teams/{id}/users görüş-kapsamlı kalır (yönetim ekranı, tam entity);
  * bu uç yalnız "kim bu takımda?" sorusuna cevap verir. Fotoğraf mevcut /api/users/{id}/photo'dan.
@@ -122,6 +124,8 @@ public class TeamDirectoryController {
         m.put("email", u.getEmail());
         m.put("manager_id", u.getManagerId());
         m.put("manager_display_name", u.getManagerId() != null ? displayName(byId.get(u.getManagerId())) : null);
+        m.put("system_role", u.getSystemRole());
+        m.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
         return m;
     }
 

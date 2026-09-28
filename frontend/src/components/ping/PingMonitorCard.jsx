@@ -5,7 +5,6 @@ import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import {
@@ -44,7 +43,7 @@ import { failureReason, latencyBaseline, pingStatusKey, pingStatusLabelKey } fro
  * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
-export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, slaDays, density = 'rich', running = false, onOpen, select, actions }) {
+export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, slaDays, density = 'rich', running = false, canEdit = false, onOpen, select, actions }) {
   const t = useT()
   const status = pingStatusKey(m)
   const alarm = !!m.active_alarm
@@ -57,10 +56,11 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
   const never = !m.checked_at
   const name = String(m.name || '').trim()
   const subName = name && name !== m.host ? name : null
-  const hasMeta = !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length || m.noc_notify)
+  const hasMeta = !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length)
   const alarmLabel = `${t('ping.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
     <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused}
+      noc={{ type: 'PING', monitor: m, rowLabel: m.host, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={
@@ -103,7 +103,6 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
           {hasMeta && (
             <div className={cn(CARD_LAYER, 'mt-2 mb-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5')}>
               <MonitorCardMeta monitor={m} />
-              {m.noc_notify && <NocBadge rowLabel={m.host} />}
               <PingTags monitor={m} />
             </div>
           )}

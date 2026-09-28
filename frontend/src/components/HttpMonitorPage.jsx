@@ -720,7 +720,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
             /* Kart sunumu http/HttpMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
                yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada), meta (zorlanmış vekil kipinde yol rozeti kip
                çipine bırakılır — metaRow) ve eylemler (yetki + işleyiciler burada). */
-            <HttpMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+            <HttpMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />
@@ -742,7 +742,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.url} noc={{ type: 'HTTP', monitor: selected, canEdit: canManageRow(selected) }}
           actions={
             /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
                koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki

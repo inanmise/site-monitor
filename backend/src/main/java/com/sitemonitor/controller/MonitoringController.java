@@ -634,7 +634,8 @@ public class MonitoringController {
             @RequestParam(required = false) String kind, @RequestParam(required = false) String eventType,
             @RequestParam(required = false) String actor, @RequestParam(required = false) Long teamId,
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String q, @RequestParam(required = false) Long resourceId,
+            @RequestParam(defaultValue = "true") boolean counts,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
             HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
@@ -645,44 +646,231 @@ public class MonitoringController {
         if (teamId != null && !SessionScope.canView(session, teamId))
             return forbidden("Bu takımın değişikliklerini görme yetkiniz yok");
 
+        ChangeScope cs = changeScope(session, teamId);
+        if (cs == null) return ok(Map.of("changes", List.of(), "total", 0));
+        TeamActorScope sc = cs.sc(), fl = cs.fl();
+        boolean all = cs.all();
+
+        String kindKey = kind == null || kind.isBlank() ? null
+                : MonitorHistoryService.KIND_BY_PATH.getOrDefault(kind.toLowerCase(Locale.ROOT), kind.toUpperCase(Locale.ROOT));
+        // Duraklatma / sürdürme ayrı olay tipi DEĞİL (active alanını çeviren güncelleme): olay süzgeci
+        // desene çevrilir, olay tipi süzgeci kalkar (geri almayla duraklatılan izleme de sayılsın).
+        String ev = blankToNull(eventType);
+        String activeLike = null;
+        if (EVENT_PAUSE.equalsIgnoreCase(String.valueOf(ev))) { activeLike = MonitorChangeLogRepository.ACTIVE_PAUSED; ev = null; }
+        else if (EVENT_RESUME.equalsIgnoreCase(String.valueOf(ev))) { activeLike = MonitorChangeLogRepository.ACTIVE_RESUMED; ev = null; }
+        var pg = changeLogRepo.search(kindKey, ev, blankToNull(actor), teamId,
+                fl.actorIds(), fl.actorNames(),
+                blankToNull(from), blankToNull(to), blankToNull(q), resourceId, activeLike,
+                all, sc.teamIds(), sc.actorIds(), sc.actorNames(),
+                PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
+
+        // Satırın izlemesi SONRADAN silindiyse ekran ölü bağlantı çizmesin — sayfa başına tek sorgu.
+        Set<String> deleted = deletedKeys(pg.getContent().stream().map(com.sitemonitor.model.MonitorChangeLog::getResourceId).toList());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("changes", pg.getContent().stream().map(r -> {
+            Map<String, Object> m = changeRow(r, false);
+            m.put("resource_deleted", deleted.contains(r.getResourceKind() + ":" + r.getResourceId()));
+            return m;
+        }).toList());
+        out.put("total", pg.getTotalElements());
+        out.put("page", pg.getNumber());
+        out.put("size", pg.getSize());
+        // counts=false: sayfa çevirmek iki toplama sorgusunu yeniden koşturmasın — konsol sayaçları artık
+        // /changes/summary'den (pencere/takım değişince bir kez) okuyor. Varsayılan true: eski çağıranlar aynı yanıtı alır.
+        if (counts) {
+            out.put("event_counts", eventCounts(blankToNull(from), blankToNull(to), teamId, all, sc, fl));
+            out.put("kind_counts", kindCounts(blankToNull(from), blankToNull(to), teamId, all, sc, fl));
+        }
+        return ok(out);
+    }
+
+    /** Olay süzgecinin türetilmiş değerleri — {@code active} alanını çeviren güncellemeler. */
+    static final String EVENT_PAUSE = "PAUSE";
+    static final String EVENT_RESUME = "RESUME";
+    /** Günlük eğrinin geriye bakabileceği en uzun süre (saatlik kova sayısını sınırlar: ≤ 2160). */
+    static final int SUMMARY_DAILY_MAX_DAYS = 90;
+    /** "En çok değişen izlemeler" kartındaki satır sayısı. */
+    static final int SUMMARY_TOP_RESOURCES = 5;
+    /** Kişi süzgecinin seçenek tavanı (kart ilk beşini gösterir). */
+    static final int SUMMARY_ACTORS_MAX = 100;
+
+    /**
+     * İzleme Değişiklikleri özet kartları (2026-09-28) — seçili pencere + takım için TEK çağrı: olay dağılımı
+     * (+ türetilmiş duraklatma/sürdürme), tür kırılımı, günlük eğri, en çok değişen izlemeler, değişiklik yapan kişiler.
+     *
+     * <p>Liste ucundan AYRI: sayfa çevirmek / tür-olay-kişi-arama süzgeci değiştirmek kartları yeniden hesaplatmaz
+     * (tek pod, 100 eşzamanlı kullanıcı). Kapsam, takım süzgeci ve 403 kuralı liste ucuyla
+     * BİREBİR aynı ({@link #changeScope}); kartlar listeyle çelişmesin diye aynı tarih ve takım daraltmasını alır.
+     *
+     * <p>{@code tz}: günlük eğri İSTEMCİNİN takvim gününe kurulur (IANA adı; geçersizse kurum saat dilimi). Sunucu
+     * saatlik UTC kovaları toplar — gün sınırını SQL'de UTC'den kesmek İstanbul'da gece yarısı–03:00'ü önceki güne
+     * yazardı.
+     */
+    @GetMapping("/changes/summary")
+    public ResponseEntity<Map<String, Object>> changesSummary(
+            @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @RequestParam(required = false) String tz,
+            HttpSession session) {
+        permissionService.require(session, "monitoring.read", "view");
+        if (teamId != null && !SessionScope.canView(session, teamId))
+            return forbidden("Bu takımın değişikliklerini görme yetkiniz yok");
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        ChangeScope cs = changeScope(session, teamId);
+        if (cs == null) {
+            out.put("total", 0);
+            out.put("event_counts", Map.of());
+            out.put("kind_counts", Map.of());
+            out.put("daily", List.of());
+            out.put("top_resources", List.of());
+            out.put("actors", List.of());
+            return ok(out);
+        }
+        TeamActorScope sc = cs.sc(), fl = cs.fl();
+        boolean all = cs.all();
+        String f = blankToNull(from), tt = blankToNull(to);
+
+        Map<String, Object> events = eventCounts(f, tt, teamId, all, sc, fl);
+        long total = events.values().stream().mapToLong(v -> v instanceof Number n ? n.longValue() : 0L).sum();
+        // Duraklatma/sürdürme GÜNCELLEMELERİN alt kümesi — toplama eklenmez, ayrı anahtar olarak gelir.
+        events.put(EVENT_PAUSE, changeLogRepo.countActiveToggles(MonitorChangeLogRepository.ACTIVE_PAUSED, f, tt, teamId,
+                fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames()));
+        events.put(EVENT_RESUME, changeLogRepo.countActiveToggles(MonitorChangeLogRepository.ACTIVE_RESUMED, f, tt, teamId,
+                fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames()));
+        out.put("total", total);
+        out.put("event_counts", events);
+        out.put("kind_counts", kindCounts(f, tt, teamId, all, sc, fl));
+
+        // Günlük eğri: pencerenin en yeni SUMMARY_DAILY_MAX_DAYS günü (pencere daha kısaysa pencerenin kendisi).
+        java.time.ZoneId zone = parseZone(tz);
+        String floor = ISO.format(Instant.now().minus(SUMMARY_DAILY_MAX_DAYS, ChronoUnit.DAYS));
+        String since = f == null || f.compareTo(floor) < 0 ? floor : f;
+        Map<String, Long> daily = new TreeMap<>();
+        for (Object[] row : changeLogRepo.countByHour(since, tt, teamId,
+                fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames())) {
+            String day = localDayOfHour(String.valueOf(row[0]), zone);
+            if (day != null) daily.merge(day, ((Number) row[1]).longValue(), Long::sum);
+        }
+        out.put("daily_since", localDayOfHour(since.length() >= 13 ? since.substring(0, 13) : since, zone));
+        out.put("daily", daily.entrySet().stream()
+                .map(e -> Map.<String, Object>of("day", e.getKey(), "count", e.getValue())).toList());
+
+        // En çok değişen izlemeler: ad/takım kapsamdaki EN YENİ satırdan (tek findAllById), silinmiş bilgisi tek sorgu.
+        List<Object[]> top = changeLogRepo.topResources(f, tt, teamId, fl.actorIds(), fl.actorNames(),
+                all, sc.teamIds(), sc.actorIds(), sc.actorNames(), PageRequest.of(0, SUMMARY_TOP_RESOURCES));
+        Map<Long, com.sitemonitor.model.MonitorChangeLog> latest = latestRows(top, 3);
+        Set<String> deleted = deletedKeys(top.stream().map(r -> ((Number) r[1]).longValue()).toList());
+        Map<Long, String> teamNames = top.isEmpty() ? Map.of() : teamNameMap();
+        List<Map<String, Object>> resources = new ArrayList<>();
+        for (Object[] r : top) {
+            var row = latest.get(((Number) r[3]).longValue());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", String.valueOf(r[0]));
+            m.put("resource_id", ((Number) r[1]).longValue());
+            m.put("resource_name", row == null ? null : row.getResourceName());
+            m.put("team_id", row == null ? null : row.getTeamId());
+            m.put("team_name", row == null || row.getTeamId() == null ? null : teamNames.get(row.getTeamId()));
+            m.put("count", ((Number) r[2]).longValue());
+            m.put("deleted", deleted.contains(r[0] + ":" + r[1]));
+            resources.add(m);
+        }
+        out.put("top_resources", resources);
+
+        // Kişiler: kart ilk beşini, kişi süzgeci tamamını (tavanlı) kullanır. Ad-soyad en yeni satırdan.
+        List<Object[]> actors = changeLogRepo.topActors(f, tt, teamId, fl.actorIds(), fl.actorNames(),
+                all, sc.teamIds(), sc.actorIds(), sc.actorNames(), PageRequest.of(0, SUMMARY_ACTORS_MAX));
+        Map<Long, com.sitemonitor.model.MonitorChangeLog> actorRows = latestRows(actors, 2);
+        List<Map<String, Object>> people = new ArrayList<>();
+        for (Object[] a : actors) {
+            var row = actorRows.get(((Number) a[2]).longValue());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("actor", String.valueOf(a[0]));
+            m.put("actor_id", row == null ? null : row.getActorId());
+            m.put("actor_name", row == null ? null : row.getActorName());
+            m.put("count", ((Number) a[1]).longValue());
+            people.add(m);
+        }
+        out.put("actors", people);
+        return ok(out);
+    }
+
+    /** Konsol uçlarının (liste + özet) ortak kapsamı; {@code null} = kapsam boş, hiçbir şey görünmez. */
+    private record ChangeScope(boolean all, TeamActorScope sc, TeamActorScope fl) {}
+
+    private ChangeScope changeScope(HttpSession session, Long teamId) {
         boolean all = SessionScope.isGlobalViewer(session);
         List<Long> view = SessionScope.viewTeamIds(session);
-        if (!all && (view == null || view.isEmpty())) return ok(Map.of("changes", List.of(), "total", 0));
+        if (!all && (view == null || view.isEmpty())) return null;
         // Kapsam (2026-09-25): izlemenin takımı VEYA değişikliği yapan ekip üyesi — takımı boş satırlar
         // (envanter türevi / sentetik) takım arkadaşının değişikliği olarak da görünür. Boş IN listeleri
         // kukla değerle korunur (TeamActorScope).
         TeamActorScope sc = all ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(view, appUserRepo);
         // Takım SÜZGECİ aynı kuralla: o takımın izlemesi VEYA o takım üyesinin değişikliği.
         TeamActorScope fl = teamId == null ? TeamActorScope.unrestricted() : TeamActorScope.ofTeams(List.of(teamId), appUserRepo);
+        return new ChangeScope(all, sc, fl);
+    }
 
-        String kindKey = kind == null || kind.isBlank() ? null
-                : MonitorHistoryService.KIND_BY_PATH.getOrDefault(kind.toLowerCase(Locale.ROOT), kind.toUpperCase(Locale.ROOT));
-        var pg = changeLogRepo.search(kindKey, blankToNull(eventType), blankToNull(actor), teamId,
-                fl.actorIds(), fl.actorNames(),
-                blankToNull(from), blankToNull(to), blankToNull(q), all, sc.teamIds(), sc.actorIds(), sc.actorNames(),
-                PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
-
+    /** Özet şerit: olay tipi → adet (seçili pencere + kapsam + takım süzgeci). */
+    private Map<String, Object> eventCounts(String from, String to, Long teamId, boolean all, TeamActorScope sc, TeamActorScope fl) {
         Map<String, Object> counts = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByEventType(blankToNull(from), blankToNull(to), teamId,
+        for (Object[] row : changeLogRepo.countByEventType(from, to, teamId,
                 fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames())) {
             counts.put(String.valueOf(row[0]), row[1]);
         }
-        // Tür kartları: (tür → olay → adet). Sayfalanan listeden türetilemez (o yalnız görünen
-        // sayfayı taşır); kartlar seçili zaman penceresinin TAMAMINI özetler.
+        return counts;
+    }
+
+    /**
+     * Tür kartları: (tür → olay → adet). Sayfalanan listeden türetilemez (o yalnız görünen
+     * sayfayı taşır); kartlar seçili zaman penceresinin TAMAMINI özetler.
+     */
+    private Map<String, Map<String, Object>> kindCounts(String from, String to, Long teamId, boolean all, TeamActorScope sc, TeamActorScope fl) {
         Map<String, Map<String, Object>> byKind = new LinkedHashMap<>();
-        for (Object[] row : changeLogRepo.countByKindAndEventType(blankToNull(from), blankToNull(to), teamId,
+        for (Object[] row : changeLogRepo.countByKindAndEventType(from, to, teamId,
                 fl.actorIds(), fl.actorNames(), all, sc.teamIds(), sc.actorIds(), sc.actorNames())) {
             byKind.computeIfAbsent(String.valueOf(row[0]), k -> new LinkedHashMap<>())
                   .put(String.valueOf(row[1]), row[2]);
         }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("changes", pg.getContent().stream().map(r -> changeRow(r, false)).toList());
-        out.put("total", pg.getTotalElements());
-        out.put("page", pg.getNumber());
-        out.put("size", pg.getSize());
-        out.put("event_counts", counts);
-        out.put("kind_counts", byKind);
-        return ok(out);
+        return byKind;
+    }
+
+    /** "TÜR:id" kümesi — verilen kimliklerden silinmiş olanlar (boş listede sorgu açılmaz). */
+    private Set<String> deletedKeys(Collection<Long> ids) {
+        Set<Long> uniq = new LinkedHashSet<>();
+        for (Long id : ids) if (id != null) uniq.add(id);
+        if (uniq.isEmpty()) return Set.of();
+        Set<String> out = new HashSet<>();
+        List<Object[]> rows = changeLogRepo.findDeletedAmong(uniq);
+        for (Object[] r : rows == null ? List.<Object[]>of() : rows) out.add(r[0] + ":" + r[1]);
+        return out;
+    }
+
+    /** Toplama satırlarının {@code idCol} sütunundaki satır kimlikleri → satırlar (tek sorgu). */
+    private Map<Long, com.sitemonitor.model.MonitorChangeLog> latestRows(List<Object[]> agg, int idCol) {
+        if (agg == null || agg.isEmpty()) return Map.of();
+        List<Long> ids = agg.stream().map(r -> ((Number) r[idCol]).longValue()).toList();
+        Map<Long, com.sitemonitor.model.MonitorChangeLog> out = new HashMap<>();
+        List<com.sitemonitor.model.MonitorChangeLog> rows = changeLogRepo.findAllById(ids);
+        for (var r : rows == null ? List.<com.sitemonitor.model.MonitorChangeLog>of() : rows) out.put(r.getId(), r);
+        return out;
+    }
+
+    /** İstemcinin IANA saat dilimi; boş/geçersizse kurum saat dilimi (sessiz — eğri yine çizilir). */
+    private static java.time.ZoneId parseZone(String tz) {
+        if (tz == null || tz.isBlank() || tz.length() > 64) return ORG_ZONE;
+        try { return java.time.ZoneId.of(tz.trim()); } catch (Exception e) { return ORG_ZONE; }
+    }
+
+    /** UTC saat kovası ("yyyy-MM-ddTHH") → verilen dilimde yerel gün ("yyyy-MM-dd"); bozuksa null. */
+    static String localDayOfHour(String hourKey, java.time.ZoneId zone) {
+        try {
+            return LocalDateTime.parse(hourKey.substring(0, 13) + ":00:00", LDT)
+                    .atOffset(ZoneOffset.UTC).atZoneSameInstant(zone).toLocalDate().toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static String blankToNull(String s) {

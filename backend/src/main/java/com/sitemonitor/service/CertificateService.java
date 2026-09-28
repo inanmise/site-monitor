@@ -310,11 +310,14 @@ public class CertificateService {
         Map<String, String> tagsMap = new HashMap<>(activeInventory.size());
         Map<String, String> platformMap = new HashMap<>(activeInventory.size());        // platform (2026-09-22) — iki ayrı harita, dizeye paketleme YOK
         Map<String, String> platformDetailMap = new HashMap<>(activeInventory.size());
+        // 7/24 anahtarı (2026-09-28, kart göstergesi) — aynı tek envanter okumasından; null kolon = kapalı (sözleşme)
+        Map<String, Boolean> nocMap = new HashMap<>(activeInventory.size());
         Map<String, String> platformNames = platformNameMap();
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
             activeDomains.add(d);
+            nocMap.put(d, Boolean.TRUE.equals(inv.getNocNotify()));
             if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) groupMap.put(d, inv.getGroupName());
             if (inv.getTags() != null && !inv.getTags().isBlank()) tagsMap.put(d, inv.getTags());
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
@@ -346,6 +349,7 @@ public class CertificateService {
                     dto.setPlatformDetail(platformDetailMap.get(c.getDomain()));
                     if (dto.getPlatform() != null) dto.setPlatformName(platformNames.get(dto.getPlatform()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
+                    dto.setNocNotify(nocMap.getOrDefault(c.getDomain(), Boolean.FALSE));
                     int[] td = thresholds.days(tierMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
                     return dto;

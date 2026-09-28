@@ -19,7 +19,8 @@ vi.mock('../components/ui/Toast.jsx', () => ({ useToast: () => toast, ToastProvi
 
 import { api } from '../api/client'
 import NocNotifyField from '../components/noc/forms/NocNotifyField.jsx'
-import NocBadge from '../components/noc/forms/NocBadge.jsx'
+import NocStatus from '../components/noc/NocStatus.jsx'
+import { resetNocStateForTests } from '../components/noc/useNocState.js'
 import { resetNocFormOptionsCache } from '../components/noc/forms/useNocFormOptions.js'
 import {
   nocIdsFrom, nocGroupIdsBody, fallbackIds, shownSelection, toggleGroupId, listedGroups, isTypeDisabled,
@@ -51,9 +52,15 @@ const SWITCH = /7\/24 izleme ekibine bildir|Notify the 24\/7 monitoring team/
 const groupOption = (id) => document.querySelector(`[data-slot="noc-group-option"][data-group-id="${id}"]`)
 const groupBox = (id) => within(groupOption(id)).getByRole('checkbox')
 
-/** `GET /api/noc/groups/options` — sözleşme "Backend sapmaları": `{ groups, disabled_types }` (tek istek). */
+/**
+ * `GET /api/noc/groups/options` — sözleşme "Backend sapmaları": `{ groups, disabled_types }` (tek istek) + kart
+ * göstergesi ekleri (2026-09-28) `has_active_group`, `min_level` — sunucunun GERÇEK yanıt biçimi.
+ */
 function options({ groups = TWO_ACTIVE, disabled = [] } = {}) {
-  api.noc.groupOptions.mockResolvedValue({ success: true, data: { groups, disabled_types: disabled } })
+  api.noc.groupOptions.mockResolvedValue({
+    success: true,
+    data: { groups, disabled_types: disabled, has_active_group: groups.some((g) => g.active), min_level: 'CRITICAL' },
+  })
 }
 
 /** Formdaki gibi durum tutan sarmalayıcı: alan `onChange(patch)` verir, form birleştirir. */
@@ -301,7 +308,11 @@ describe('NocNotifyField', () => {
   })
 })
 
-describe('7/24 rozeti — kartta yalnız Zengin, detay başlığında', () => {
+// 2026-09-28: eski "7/24" rozeti (NocBadge — yalnız Zengin'de, yalnız açıkken) kaldırıldı; yerine her kartta, İKİ
+// yoğunlukta ve İKİ durumda (açık/kapalı) çizilen 7/24 göstergesi (noc/NocStatus) geldi. Ayrıntılı sözleşme
+// nocStatus.cards.test.jsx'te; bu blok dokuz kartın aynı yeri kullandığını ve detay penceresinin aynı bileşeni taşıdığını pinler.
+describe('7/24 göstergesi — dokuz kartta (iki yoğunluk, açık/kapalı) ve detay başlığında', () => {
+  beforeEach(() => { resetNocStateForTests() })
   const base = {
     id: 9, name: 'Örnek', url: 'https://www.example.com/', host: 'h.example.com', domain: 'example.com', port: 443,
     protocol: 'TCP', record_type: 'A', value: '203.0.113.10', status: 'up', active: true, team_id: 1, team_name: 'Takım A',
@@ -322,37 +333,41 @@ describe('7/24 rozeti — kartta yalnız Zengin, detay başlığında', () => {
     ['Domain', (m, d) => <DomainMonitorCard monitor={m} density={d} status="up" badge={badge} meta={meta(m)} onOpen={() => {}} />],
   ]
   for (const [name, card] of CARDS) {
-    it(`${name}: Zengin + noc_notify → rozet; Kompakt → yok; noc_notify=false → yok`, () => {
+    it(`${name}: iki yoğunlukta da gösterge durum satırının SAĞ grubunda; açık → "açık", kapalı → "kapalı" (hiç kaybolmaz)`, async () => {
       const r = render(card(base, 'rich'))
-      const b = document.querySelector('[data-slot="noc-badge"]')
-      expect(b, 'Zengin kartta 7/24 rozeti yok').not.toBeNull()
-      expect(b.closest('[data-slot="monitor-card-rich"]'), 'rozet MonitorCardRich içinde değil').not.toBeNull()
-      // Tetik satırı ayırt eden adla (hedef — 7/24 …) örtünün üstünde, dokun-gör balonu açılır
-      const trigger = b.closest('[data-slot="hint-trigger"]')
-      expect(trigger.getAttribute('aria-label')).toMatch(/ — (7\/24 izleme ekibine bildiriliyor|Notifies the 24\/7 monitoring team)$/)
+      const s = document.querySelector('[data-slot="noc-status"]')
+      expect(s, 'Zengin kartta 7/24 göstergesi yok').not.toBeNull()
+      expect(s.closest('[data-slot="monitor-card-rich"]'), 'gösterge yalnız-Zengin bölümde olmamalı').toBeNull()
+      expect(s.closest('[data-slot="card-header"]'), 'gösterge kartın başlık bölgesinde').not.toBeNull()
+      expect(s).not.toHaveAttribute('data-compact')
+      // Tetik satırı ayırt eden adla (hedef — 7/24 …); tür açık + aktif grup → doğrulanmış "açık"
+      const trigger = s.closest('[data-slot="hint-trigger"]')
+      expect(trigger.getAttribute('aria-label')).toMatch(/ — (7\/24 açık|24\/7 on)$/)
+      await waitFor(() => expect(document.querySelector('[data-slot="noc-status"]')).toHaveAttribute('data-verified', 'true'))
       fireEvent.click(trigger)
-      expect(screen.getByRole('tooltip')).toHaveTextContent(/Kritik uyarılar 7\/24|Critical alerts also go to the 24\/7/)
+      expect(await screen.findByRole('dialog')).toHaveTextContent(/Kritik uyarılar 7\/24|Critical alerts also go to the 24\/7/)
       r.unmount()
       const c = render(card(base, 'compact'))
-      expect(document.querySelector('[data-slot="noc-badge"]')).toBeNull()
+      expect(document.querySelector('[data-slot="noc-status"]')).toHaveAttribute('data-compact', 'true')
       c.unmount()
       render(card({ ...base, noc_notify: false }, 'rich'))
-      expect(document.querySelector('[data-slot="noc-badge"]')).toBeNull()
+      expect(document.querySelector('[data-slot="noc-status"]')).toHaveAttribute('data-state', 'off')
     })
   }
 
-  it('detay penceresi: nocNotify → başlık satırında rozet (pencere ADINA karışmaz)', () => {
-    const { rerender } = render(<MonitorDetailModal onClose={() => {}} title="www.example.com" nocNotify>gövde</MonitorDetailModal>)
+  it('detay penceresi: `noc` → başlık satırında AYNI gösterge (pencere ADINA karışmaz); `noc` yoksa yok', () => {
+    const { rerender } = render(
+      <MonitorDetailModal onClose={() => {}} title="www.example.com" noc={{ type: 'HTTP', monitor: base }}>gövde</MonitorDetailModal>)
     const dlg = screen.getByRole('dialog')
-    expect(dlg.querySelector('[data-slot="noc-badge"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-slot="noc-status"]')).toHaveAttribute('data-state', 'on')
     expect(dlg).toHaveAccessibleName('www.example.com')
     rerender(<MonitorDetailModal onClose={() => {}} title="www.example.com">gövde</MonitorDetailModal>)
-    expect(screen.getByRole('dialog').querySelector('[data-slot="noc-badge"]')).toBeNull()
+    expect(screen.getByRole('dialog').querySelector('[data-slot="noc-status"]')).toBeNull()
   })
 
-  it('bağımsız rozet: rowLabel yoksa genel ad', () => {
-    render(<NocBadge />)
-    expect(screen.getByRole('button', { name: /^(7\/24 izleme ekibine bildiriliyor|Notifies the 24\/7 monitoring team)$/ })).toBeInTheDocument()
+  it('bağımsız gösterge: rowLabel yoksa ad yalnız durum etiketi', () => {
+    render(<NocStatus type="HTTP" monitor={base} />)
+    expect(screen.getByRole('button', { name: /^(7\/24 açık|24\/7 on)$/ })).toBeInTheDocument()
   })
 })
 

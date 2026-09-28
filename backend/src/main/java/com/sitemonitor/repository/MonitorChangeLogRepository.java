@@ -14,6 +14,15 @@ import java.util.Optional;
 
 public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeLog, Long> {
 
+    /**
+     * Duraklatma: {@code active} alanı açıktan kapalıya dönen satır ({@code AuditDiff} boolean'ı tırnaksız yazar:
+     * {@code "active":{"from":true,"to":false}}). Anahtar tırnaklı arandığı için "isActive" gibi başka bir alan
+     * eşleşmez ({@link #lastActiveChange} ile aynı gerekçe). LIKE deseni olarak kullanılır.
+     */
+    String ACTIVE_PAUSED = "%\"active\":{\"from\":true,\"to\":false}%";
+    /** Sürdürme: {@code active} kapalıdan açığa. */
+    String ACTIVE_RESUMED = "%\"active\":{\"from\":false,\"to\":true}%";
+
     /** Bir kaynağın geçmişi — en yeni üstte. Sıralama createdAt+id ile KESİN (seq best-effort). */
     Page<MonitorChangeLog> findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(
             String resourceKind, Long resourceId, Pageable pageable);
@@ -52,6 +61,12 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
      * değil, Postgres'in tip çıkarımı; {@code AlertEventRepository} aynı çözümü kullanıyor.
      * Yalnız NULL geçilebilen parametreler sarılır — eşitlik aramalarındaki zorunlu
      * parametrelerin cast'e ihtiyacı yok.
+     *
+     * <p>İki süzgeç 2026-09-28'de eklendi (İzleme Değişiklikleri yeniden tasarımı): {@code resourceId}
+     * TEK bir izlemeye daraltır ("en çok değişen izlemeler" kartından; tür süzgeciyle birlikte gelir —
+     * kimlikler tür başına ayrı tablodan), {@code activeLike} duraklatma / sürdürme olaylarını seçer —
+     * bunlar ayrı bir olay tipi DEĞİL, {@code active} alanını çeviren güncellemelerdir
+     * ({@link #ACTIVE_PAUSED} / {@link #ACTIVE_RESUMED} desenleri).
      */
     @Query("""
            SELECT c FROM MonitorChangeLog c
@@ -64,6 +79,8 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
              AND (:from IS NULL OR c.createdAt >= :from)
              AND (:to IS NULL OR c.createdAt <= :to)
              AND (:q IS NULL OR LOWER(c.resourceName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+             AND (:resourceId IS NULL OR c.resourceId = :resourceId)
+             AND (:activeLike IS NULL OR c.changes LIKE CAST(:activeLike AS string))
              AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
                   AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
            ORDER BY c.createdAt DESC, c.id DESC
@@ -77,6 +94,8 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
                                   @Param("from") String from,
                                   @Param("to") String to,
                                   @Param("q") String q,
+                                  @Param("resourceId") Long resourceId,
+                                  @Param("activeLike") String activeLike,
                                   @Param("teamScopeAll") boolean teamScopeAll,
                                   @Param("teamIds") Collection<Long> teamIds,
                                   @Param("actorIds") Collection<Long> actorIds,
@@ -149,6 +168,133 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
                                            @Param("teamIds") Collection<Long> teamIds,
                                            @Param("actorIds") Collection<Long> actorIds,
                                            @Param("actorNames") Collection<String> actorNames);
+
+    // ── İzleme Değişiklikleri özet kartları (2026-09-28, /changes/summary) ─────────────────────────────
+    // Hepsi countByEventType ile AYNI kapsam + tarih + takım süzgecini alır: kartlar listeyle çelişmesin.
+    // Tür / olay / kişi / arama süzgeçlerini kasten ALMAZLAR — kartlar o süzgeçlerin GİRİŞ noktasıdır.
+
+    /**
+     * Duraklatma ya da sürdürme sayısı — {@code pattern} {@link #ACTIVE_PAUSED} / {@link #ACTIVE_RESUMED}.
+     * Olay tipinden bağımsız: {@code active}'i çeviren geri alma (RESTORE) da sayılır.
+     */
+    @Query("""
+           SELECT COUNT(c) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND c.changes LIKE :pattern
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
+           """)
+    long countActiveToggles(@Param("pattern") String pattern,
+                            @Param("from") String from,
+                            @Param("to") String to,
+                            @Param("teamId") Long teamId,
+                            @Param("filterActorIds") Collection<Long> filterActorIds,
+                            @Param("filterActorNames") Collection<String> filterActorNames,
+                            @Param("teamScopeAll") boolean teamScopeAll,
+                            @Param("teamIds") Collection<Long> teamIds,
+                            @Param("actorIds") Collection<Long> actorIds,
+                            @Param("actorNames") Collection<String> actorNames);
+
+    /**
+     * Saatlik (UTC) değişiklik sayısı — {@code [yyyy-MM-ddTHH, adet]}. Günlük eğri İSTEMCİNİN saat diliminde
+     * kurulur (sunucu kovaları gün sınırını UTC'de keserdi: İstanbul'da 00:00–03:00 arası önceki güne düşerdi);
+     * bu yüzden gün değil saat döner, çağıran yerel güne toplar. {@code since} zorunlu ve çağıran pencereyi
+     * sınırlar (en çok 90 gün → en çok 2160 satır). SUBSTRING sabit uzunlukla: SELECT ve GROUP BY aynı ifade
+     * (HistoryQueryGrammarTest'teki 42803 dersi — uzunluk parametre OLMAZ).
+     */
+    @Query("""
+           SELECT SUBSTRING(c.createdAt, 1, 13), COUNT(c) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND c.createdAt >= :since
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
+           GROUP BY SUBSTRING(c.createdAt, 1, 13)
+           ORDER BY SUBSTRING(c.createdAt, 1, 13)
+           """)
+    List<Object[]> countByHour(@Param("since") String since,
+                               @Param("to") String to,
+                               @Param("teamId") Long teamId,
+                               @Param("filterActorIds") Collection<Long> filterActorIds,
+                               @Param("filterActorNames") Collection<String> filterActorNames,
+                               @Param("teamScopeAll") boolean teamScopeAll,
+                               @Param("teamIds") Collection<Long> teamIds,
+                               @Param("actorIds") Collection<Long> actorIds,
+                               @Param("actorNames") Collection<String> actorNames);
+
+    /**
+     * En çok değişen kaynaklar — {@code [tür, id, adet, kapsamdaki en yeni satırın id'si]}, adede göre azalan.
+     * Ad ve takım o satırdan okunur (çağıran {@code findAllById}): kapsam DIŞINA taşınmış bir izlemenin YENİ adı
+     * sızmasın diye en yeni GENEL satır değil, kapsamdaki en yeni satır. Sınır {@code Pageable} ile.
+     */
+    @Query("""
+           SELECT c.resourceKind, c.resourceId, COUNT(c), MAX(c.id) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
+           GROUP BY c.resourceKind, c.resourceId
+           ORDER BY COUNT(c) DESC, MAX(c.id) DESC
+           """)
+    List<Object[]> topResources(@Param("from") String from,
+                                @Param("to") String to,
+                                @Param("teamId") Long teamId,
+                                @Param("filterActorIds") Collection<Long> filterActorIds,
+                                @Param("filterActorNames") Collection<String> filterActorNames,
+                                @Param("teamScopeAll") boolean teamScopeAll,
+                                @Param("teamIds") Collection<Long> teamIds,
+                                @Param("actorIds") Collection<Long> actorIds,
+                                @Param("actorNames") Collection<String> actorNames,
+                                Pageable pageable);
+
+    /**
+     * Değişiklik yapan kişiler — {@code [kullanıcı adı, adet, en yeni satırın id'si]}, adede göre azalan. Aktörsüz
+     * (zamanlanmış / geri doldurma) ve {@code system} satırları kişi değildir, dışarıda. Hem "en aktif kişiler"
+     * kartını hem kişi süzgecinin seçeneklerini besler (eskiden seçenekler yalnız GÖRÜNEN sayfadan türüyordu).
+     */
+    @Query("""
+           SELECT c.actor, COUNT(c), MAX(c.id) FROM MonitorChangeLog c
+           WHERE c.resourceKind <> 'SYSTEM'
+             AND c.actor IS NOT NULL AND LOWER(c.actor) <> 'system'
+             AND (:teamId IS NULL OR c.teamId = :teamId OR (c.teamId IS NULL
+                  AND (c.actorId IN :filterActorIds OR LOWER(c.actor) IN :filterActorNames)))
+             AND (:from IS NULL OR c.createdAt >= :from)
+             AND (:to IS NULL OR c.createdAt <= :to)
+             AND (:teamScopeAll = TRUE OR c.teamId IN :teamIds OR (c.teamId IS NULL
+                  AND (c.actorId IN :actorIds OR LOWER(c.actor) IN :actorNames)))
+           GROUP BY c.actor
+           ORDER BY COUNT(c) DESC, MAX(c.id) DESC
+           """)
+    List<Object[]> topActors(@Param("from") String from,
+                             @Param("to") String to,
+                             @Param("teamId") Long teamId,
+                             @Param("filterActorIds") Collection<Long> filterActorIds,
+                             @Param("filterActorNames") Collection<String> filterActorNames,
+                             @Param("teamScopeAll") boolean teamScopeAll,
+                             @Param("teamIds") Collection<Long> teamIds,
+                             @Param("actorIds") Collection<Long> actorIds,
+                             @Param("actorNames") Collection<String> actorNames,
+                             Pageable pageable);
+
+    /**
+     * Verilen kimliklerden SİLİNMİŞ olanlar — {@code [tür, id]}. Liste satırının izlemesi sonradan silindiyse
+     * bağlantı boş sayfaya gitmesin ("silinmiş" rozeti). Kimlikler tür başına ayrı tablodan geldiği için çağıran
+     * türle eşler. Bir sayfalık kimlik (≤ 200) — idx_mchg_resource.
+     */
+    @Query("""
+           SELECT DISTINCT c.resourceKind, c.resourceId FROM MonitorChangeLog c
+           WHERE c.eventType = 'DELETE' AND c.resourceId IN :ids
+           """)
+    List<Object[]> findDeletedAmong(@Param("ids") Collection<Long> ids);
 
     /**
      * "Ne zamandır duraklatılmış" (2026-09-23, bugün paneli): verilen kaynakların {@code active} alanının

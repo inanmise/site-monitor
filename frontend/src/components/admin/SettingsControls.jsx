@@ -95,11 +95,11 @@ export function SettingsSection({ title, description, level = 4, className = '',
  * Ana anahtar kartı — bölümün "açık/kapalı" anahtarı + kısa açıklama + (kapalıyken) uyarı. Her bölümde aynı
  * görünüm: SMTP, LDAP, Storm, Login Anomali, Haftalık E-posta, Envanter Raporu.
  */
-export function MasterToggleCard({ checked, onChange, label, helpKey, hint, disabled = false, children, className = '' }) {
+export function MasterToggleCard({ checked, onChange, label, helpKey, hint, disabled = false, touch = false, children, className = '' }) {
   return (
     <Card data-slot="master-toggle" className={cn('gap-2 py-4', className)}>
       <CardContent className="flex flex-col gap-2 px-4 sm:px-6">
-        <ToggleRow major checked={checked} onChange={onChange} label={label} helpKey={helpKey} disabled={disabled} />
+        <ToggleRow major checked={checked} onChange={onChange} label={label} helpKey={helpKey} disabled={disabled} touch={touch} />
         {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
         {children}
       </CardContent>
@@ -112,17 +112,20 @@ export function MasterToggleCard({ checked, onChange, label, helpKey, hint, disa
  * + pasif Kaydet; değişiklik varken yapışkan, vurgulu şerit + Vazgeç + etkin Kaydet (UserPush/Veri Saklama deseni,
  * telefonda güvenli alan payı). `dirty` verilmezse yalnız Kaydet (+ `children` ek düğmeler, ör. "Bağlantıyı test et").
  * Test kancası: data-slot="settings-save-bar" + data-dirty.
+ * `dirtyLabel` (isteğe bağlı, 2026-09-28 Login Anomali): kirliyken genel "Kaydedilmemiş değişiklikler" yerine sayılı
+ * metin ("3 kaydedilmemiş değişiklik"); verilmezse davranış aynı.
  */
 export function SettingsSaveBar({
-  dirty, saving = false, onSave, onDiscard, saveLabel, disabled = false, children, result = null, className = '',
+  dirty, saving = false, onSave, onDiscard, saveLabel, disabled = false, children, result = null, className = '', dirtyLabel,
 }) {
   const t = useT()
   const tracked = typeof dirty === 'boolean'
   const stuck = tracked && dirty
+  const unsavedText = dirtyLabel || t('settings.unsaved')
   return (
     <div data-slot="settings-save-bar" data-dirty={dirty ? 'true' : undefined}
       role={tracked ? 'region' : undefined}
-      aria-label={tracked ? (dirty ? t('settings.unsaved') : t('settings.allSaved')) : undefined}
+      aria-label={tracked ? (dirty ? unsavedText : t('settings.allSaved')) : undefined}
       className={cn('flex flex-wrap items-center gap-2.5 rounded-xl border bg-card px-4 py-3 shadow-xs',
         stuck && 'sticky bottom-0 z-[60] border-primary bg-card/95 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(0,0,0,.10)] backdrop-blur',
         className)}>
@@ -131,7 +134,7 @@ export function SettingsSaveBar({
           {dirty
             ? <span aria-hidden="true" className="size-2.5 rounded-full bg-amber-500 ring-3 ring-amber-500/25" />
             : <Check size={15} aria-hidden="true" />}
-          {dirty ? t('settings.unsaved') : t('settings.allSaved')}
+          {dirty ? unsavedText : t('settings.allSaved')}
         </span>
       )}
       {children}
@@ -154,14 +157,15 @@ export function SettingsSaveBar({
  * Test sonucu (bağlantı testi, test gönderimi) — AlertBanner (başarı yeşil, hata kırmızı) + sonucu panoya kopyala.
  * Kök `data-slot="test-result"` + `data-tone` (test kancası); kaydet çubuğunda tam satır kaplar (`basis-full`).
  */
-export function TestResult({ ok, children, className = '' }) {
+export function TestResult({ ok, children, className = '', copyClassName }) {
   const t = useT()
   const text = typeof children === 'string' ? children : null
   return (
     <div data-slot="test-result" data-tone={ok ? 'success' : 'danger'} className={cn('min-w-0 basis-full', className)}>
       <AlertBanner tone={ok ? 'success' : 'danger'} className="mb-0"
         actions={text ? (
-          <CopyButton value={text} variant="ghost" buttonSize="icon-sm" label={t('settings.copyResult')} copiedLabel={t('err.copied')} />
+          // copyClassName (isteğe bağlı, 2026-09-28): ör. dokunmatikte 40 px hedef — verilmezse görünüm aynı
+          <CopyButton value={text} variant="ghost" buttonSize="icon-sm" className={copyClassName} label={t('settings.copyResult')} copiedLabel={t('err.copied')} />
         ) : undefined}>
         {children}
       </AlertBanner>
@@ -180,13 +184,17 @@ export function CheckboxRow({ checked, onChange, label, disabled = false, classN
   )
 }
 
-/** Aç/kapa ayarı — shadcn Switch + bağlı etiket + yardım balonu. */
-export function ToggleRow({ checked, onChange, label, helpKey, major = false, disabled = false, className = '' }) {
+/**
+ * Aç/kapa ayarı — shadcn Switch + bağlı etiket + yardım balonu.
+ * `touch` (isteğe bağlı, 2026-09-28): telefonda / dokunmatikte satır en az 40 px, etiket satır boyu uzanır — küçük
+ * anahtarın yanında etiket de tam yükseklikte dokunma hedefi olur. Verilmezse görünüm aynı.
+ */
+export function ToggleRow({ checked, onChange, label, helpKey, major = false, disabled = false, touch = false, className = '' }) {
   const id = useId()
   return (
-    <div className={cn('inline-flex items-center gap-2', className)}>
+    <div className={cn('inline-flex items-center gap-2', touch && 'max-sm:min-h-10 pointer-coarse:min-h-10', className)}>
       <Switch id={id} checked={checked} onCheckedChange={onChange} disabled={disabled} />
-      <Label htmlFor={id} className={cn('cursor-pointer', major ? 'text-base font-bold' : 'font-normal')}>{label}</Label>
+      <Label htmlFor={id} className={cn('cursor-pointer', major ? 'text-base font-bold' : 'font-normal', touch && 'self-stretch')}>{label}</Label>
       {helpKey && <HelpTip helpKey={helpKey} label={label} />}
     </div>
   )

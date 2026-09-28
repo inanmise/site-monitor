@@ -115,6 +115,49 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("TRACE: Anahtar Çözümleme ucunda aday anahtar ve çözülen parola log'a DÜŞMEZ (gövdeler atlanır)")
+    void trace_secretTools_bodiesNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        // Sahte değerler — `key`/`value` alan adları maske listesinde YOK, bu yüzden uç bazlı atlama şart.
+        String reqJson = "{\"key\":\"SAHTE-ADAY-ANAHTAR-0000\"}";
+        String respJson = "{\"data\":[{\"column\":\"smtp_settings.password_enc\",\"value\":\"SAHTE-DUZ-PAROLA-0000\"}],\"success\":true}";
+        for (String uri : new String[] {
+                "/api/admin/secret-tools/decrypt",
+                "/api/admin/secret-tools/decrypt;jsessionid=ABC",
+                "//api/admin/Secret-Tools/decrypt",
+                // yüzde kodlaması (konteyner çözüp AYNI uca yönlendirir) — regresyon 2026-09-28b B2
+                "/api/admin/secret%2Dtools/decrypt",
+                "/api/admin/%73ecret-tools/decrypt",
+                "/api%2Fadmin%2Fsecret-tools/decrypt" }) {
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
+            req.setContentType("application/json");
+            req.setContent(reqJson.getBytes(StandardCharsets.UTF_8));
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+
+            FilterChain chain = (request, response) -> {
+                request.getInputStream().readAllBytes();   // controller @RequestBody okur → önbelleğe girer
+                ((HttpServletResponse) response).setStatus(200);
+                response.getOutputStream().write(respJson.getBytes(StandardCharsets.UTF_8));
+            };
+
+            filter.doFilter(req, resp, chain);
+
+            assertThat(resp.getContentAsString()).as("gerçek yanıt değişmez").isEqualTo(respJson);
+            String all = String.join("\n", appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+            assertThat(all).as(uri).contains("<<<").contains(RequestLoggingFilter.BODY_OMITTED)
+                    .doesNotContain("SAHTE-ADAY-ANAHTAR-0000").doesNotContain("SAHTE-DUZ-PAROLA-0000");
+        }
+
+        // Kontrol: sıradan bir uçta gövde hâlâ loglanır (atlama kapsamı dar)
+        appender.list.clear();
+        MockHttpServletRequest other = new MockHttpServletRequest("POST", "/api/admin/settings");
+        other.setContent("{\"note\":\"gorunur-deger\"}".getBytes(StandardCharsets.UTF_8));
+        filter.doFilter(other, new MockHttpServletResponse(), (request, response) -> request.getInputStream().readAllBytes());
+        assertThat(lastResponseLogLine()).contains("gorunur-deger").doesNotContain(RequestLoggingFilter.BODY_OMITTED);
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

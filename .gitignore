@@ -74,3 +74,6 @@ _review_src.tar.gz
 # Ajanların geçici Playwright iskeleleri (2026-09-28 regresyon taraması: commit edilirse CI E2E işinde koşar)
 frontend/**/*.tmp.*
 frontend/zz-*/
+
+# Oturum çıktıları (sunum vb.) — repoya girmez (2026-09-28 regresyon C1)
+Claude outputs/

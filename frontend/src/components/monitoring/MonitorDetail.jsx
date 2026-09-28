@@ -6,7 +6,7 @@ import { api } from '../../api/client'
 import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
+import NocStatus from '../noc/NocStatus.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Separator } from '@/components/shadcn/separator'
@@ -30,10 +30,12 @@ import { cn } from '@/lib/utils'
  * satırına sıkıştırılınca telefonda gizleniyordu (`hidden sm:inline`); artık her genişlikte kendi satırında,
  * pencere adına (aria-labelledby) karışmadan gövdenin başında durur.
  *
- * `nocNotify` (2026-09-27): izleme 7/24 izleme ekibine bildiriyorsa başlığın yanında "7/24" rozeti — pencere adına
- * (DialogTitle) KARIŞMAZ, başlık satırında eylem grubunun solunda durur.
+ * `noc` (2026-09-28; eski `nocNotify` rozetinin yerine): `{ type, monitor, canEdit }` — KARTLA AYNI 7/24 göstergesi
+ * (noc/NocStatus, Zengin hap): açık / açık · iletilmiyor / kapalı, dokun-gör açıklama + "7/24 ayarını düzenle" ya da
+ * "7/24 Kapsamı'nda gör". Kart ile pencere böylece hiç ayrışmaz. Pencere adına (DialogTitle) KARIŞMAZ, başlık satırında
+ * eylem grubunun solunda durur.
  */
-export function MonitorDetailModal({ open = true, onClose, status = 'unknown', badge, title, subtitle, actions, nocNotify = false, className, children }) {
+export function MonitorDetailModal({ open = true, onClose, status = 'unknown', badge, title, subtitle, actions, noc = null, className, children }) {
   return (
     <ModalShell
       open={open}
@@ -55,8 +57,8 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(960px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
         'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', className)}
       title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
-      headerExtra={(actions || nocNotify) ? <>
-        {nocNotify && <NocBadge />}
+      headerExtra={(actions || noc) ? <>
+        {noc && <NocStatus {...noc} />}
         {actions && <div className="ml-auto flex shrink-0 items-center">{actions}</div>}
       </> : null}
     >

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Building2, Mail, PhoneCall, RefreshCw, ShieldAlert, UserRound, Users } from 'lucide-react'
 import ModalShell from './ModalShell.jsx'
-import TeamMemberCards, { PersonAvatar, adSoyadInitials } from './TeamMemberCards.jsx'
+import TeamMemberCards, { PersonAvatar, adSoyadInitials, photoIdOf } from './TeamMemberCards.jsx'
 import { CallListPanel, EscalationPanel } from './TeamContactPanels.jsx'
 import AlertBanner from './AlertBanner.jsx'
 import CopyButton from './CopyButton.jsx'
@@ -38,8 +38,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/ta
  * <p><b>Yarış koruması:</b> yükleme sırası sayacı (`seq`) — `refreshKey` art arda değişince ya da takım değişince eski
  * yanıt yenisini EZMEZ. Aynı takımın yeniden yüklenmesinde eski veri ekranda kalır (başlıkta küçük döner simge).
  *
- * <p><b>Gizlilik:</b> kurum-geneli uç beyaz-listelidir (telefon/sicil/sistem rolü/fotoğraf DÖNMEZ); yönetim
- * yükleyicisi tam entity verse de bu pencere o alanları çizmez, fotoğraf istemez.
+ * <p><b>Gizlilik:</b> kurum-geneli uç beyaz-listelidir (telefon/sicil DÖNMEZ; sistem rolü + `has_photo` 2026-09-28
+ * kullanıcı kararıyla döner); yönetim yükleyicisi tam entity verse de bu pencere telefon/sicil çizmez. Fotoğraf
+ * `/api/users/{id}/photo`'dan.
  *
  * Test kancaları: `team-overview`, `team-member-count`, `team-manager`, `team-leader`, `team-mailbox`, `team-unit`,
  * ayrıca `TeamMemberCards` ve `TeamContactPanels` kancaları.
@@ -68,7 +69,8 @@ function PersonChip({ slot, caption, person, t, alsoLeader = false }) {
     <div data-slot={slot} data-empty={person ? undefined : 'true'} data-also-leader={alsoLeader ? 'true' : undefined}
       className="flex min-w-0 items-center gap-2.5 rounded-lg border bg-card px-2.5 py-2.5 sm:gap-3 sm:px-3">
       {person
-        ? <PersonAvatar name={person.label} seed={member ? memberSeed(member) : person.label} initials={member ? adSoyadInitials(member) : undefined} />
+        ? <PersonAvatar name={person.label} seed={member ? memberSeed(member) : person.label} initials={member ? adSoyadInitials(member) : undefined}
+            photoId={member ? photoIdOf(member) : (person.userId ?? null)} />
         : (
           <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full border border-dashed text-muted-foreground">
             <UserRound className="size-4" />

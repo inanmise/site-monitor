@@ -183,7 +183,7 @@ class CertificateInventoryReportServiceTest {
                 org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
         // build() yolunun kosabilmesi icin en az bu iki mock gerekli; testin ILGISI
         // guard'in gecilip gecilmedigi, rapor icerigi degil.
-        when(hygieneService.analyze(any()))
+        when(hygieneService.analyze(any(), anyInt()))
                 .thenReturn(new InventoryHygieneService.Result(List.of(), 0));
         when(hygieneService.counts(any())).thenReturn(java.util.Map.of());
         // Dun UTC olarak damgalanmis bir satir: ay ayni, GUN farkli -> atlanmamali.
@@ -210,6 +210,59 @@ class CertificateInventoryReportServiceTest {
         assertThat(service.sendMonthlyReport(false).status()).isEqualTo("ALREADY_SENT");
     }
 
+    // -- build(): özet + ekler + geçen ay (2026-09-28 yeniden tasarım) -------------------------------------
+
+    private org.mockito.ArgumentCaptor<com.sitemonitor.service.mail.CertInventoryMail.Report> stubBuild(byte[] pdf) {
+        CertInventorySamples.Large l = CertInventorySamples.largeData();
+        when(exportService.reportRows()).thenReturn(l.rows);
+        when(exportService.teamNames(any())).thenReturn(l.teams);
+        when(exportService.csv(any(), any())).thenReturn(new byte[]{ 1, 2, 3 });
+        when(exportService.pdf(any(), any(), any())).thenReturn(pdf);
+        when(certificateService.getAllLatest()).thenReturn(new java.util.ArrayList<>(l.latest.values()));
+        when(hygieneService.analyze(any(), eq(Integer.MAX_VALUE))).thenReturn(l.hygiene);
+        var prev = new com.sitemonitor.model.CertInventoryReportLog();
+        prev.setRowCount(400);
+        prev.setFindingCount(40);
+        when(logRepo.findByReportYearAndMonthNo(2026, 8)).thenReturn(java.util.Optional.of(prev));
+        var cap = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.mail.CertInventoryMail.Report.class);
+        when(emailService.buildCertInventoryReportHtml(cap.capture())).thenReturn("<html>");
+        return cap;
+    }
+
+    @Test
+    @DisplayName("build: gövde ve PDF AYNI özetten; hijyen TAM liste (tavansız) istenir; geçen ayın kaydı değişim çipine; konu sayıları")
+    void build_summaryPreviousMonthAndSubject() {
+        var cap = stubBuild(new byte[]{ 9 });
+        var built = service.build(java.time.LocalDate.of(2026, 9, 25));
+
+        var r = cap.getValue();
+        assertThat(r.monthLabel()).isEqualTo("Eylül 2026");
+        assertThat(r.active()).isEqualTo(412);
+        assertThat(r.prevTotal()).isEqualTo(400);
+        assertThat(r.prevFindings()).isEqualTo(40);
+        assertThat(r.findings().stream().filter(g -> "contacts".equals(g.key())).findFirst().orElseThrow().findings()).hasSize(14);
+        org.mockito.Mockito.verify(hygieneService).analyze(any(), eq(Integer.MAX_VALUE));
+        org.mockito.Mockito.verify(exportService).pdf(any(), any(), org.mockito.ArgumentMatchers.argThat(s -> s != null && s.active() == 412));
+        assertThat(r.attachments()).extracting(com.sitemonitor.service.mail.CertInventoryMail.Attachment::fileName)
+                .containsExactly("sertifika-envanteri-2026-09.csv", "sertifika-envanteri-2026-09.pdf");
+        assertThat(built.attachments()).hasSize(2);
+        assertThat(built.subject()).isEqualTo("[Site Monitor] Sertifika Envanteri Raporu · Eylül 2026 · 412 aktif"
+                + " · 2 süresi dolmuş · 36 tanesi 30 gün içinde bitiyor · 31 bulgu");
+        assertThat(built.rowCount()).isEqualTo(426);
+        assertThat(built.findingCount()).isEqualTo(31);
+    }
+
+    @Test
+    @DisplayName("build: PDF üretilemezse (0 bayt) ek GÖNDERİLMEZ ve gövdede ek olarak anılmaz (eskiden 0 baytlık PDF ekleniyordu)")
+    void build_emptyPdfIsNotAttached() {
+        var cap = stubBuild(new byte[0]);
+        var built = service.build(java.time.LocalDate.of(2026, 9, 25));
+        assertThat(built.attachments()).extracting(EmailNotificationService.MailAttachment::fileName)
+                .containsExactly("sertifika-envanteri-2026-09.csv");
+        assertThat(cap.getValue().attachments()).extracting(com.sitemonitor.service.mail.CertInventoryMail.Attachment::fileName)
+                .containsExactly("sertifika-envanteri-2026-09.csv");
+    }
+
     @Test
     @DisplayName("A4: AYRISTIRILAMAYAN damga gonderimi ENGELLEMEZ (guard kapi degil kolaylik)")
     void sendMonthlyReport_unparsableStamp_stillSends() {
@@ -217,7 +270,7 @@ class CertificateInventoryReportServiceTest {
                 org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(true);
         // build() yolunun kosabilmesi icin en az bu iki mock gerekli; testin ILGISI
         // guard'in gecilip gecilmedigi, rapor icerigi degil.
-        when(hygieneService.analyze(any()))
+        when(hygieneService.analyze(any(), anyInt()))
                 .thenReturn(new InventoryHygieneService.Result(List.of(), 0));
         when(hygieneService.counts(any())).thenReturn(java.util.Map.of());
         when(logRepo.findByReportYearAndMonthNo(anyInt(), anyInt()))

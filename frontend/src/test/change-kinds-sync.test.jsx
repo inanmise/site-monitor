@@ -30,7 +30,8 @@ function backendKinds() {
 
 /** const KINDS = ['port', ...] */
 function frontendKinds() {
-  const src = read(path.join(FRONT, 'components/admin/MonitorChangesConsole.jsx'))
+  // 2026-09-28: sabitler konsolun saf modeline taşındı (monitorchanges/changeModel.js)
+  const src = read(path.join(FRONT, 'components/admin/monitorchanges/changeModel.js'))
   const m = /const KINDS\s*=\s*\[([\s\S]*?)\]/.exec(src)
   if (!m) return []
   return [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1])
@@ -46,7 +47,8 @@ function iconKinds() {
 
 /** const TAB_BY_KIND = { port: 'port', ... } → ['port', 'dns', ...] */
 function tabKinds() {
-  const src = read(path.join(FRONT, 'components/admin/MonitorChangesConsole.jsx'))
+  // 2026-09-28: sabitler konsolun saf modeline taşındı (monitorchanges/changeModel.js)
+  const src = read(path.join(FRONT, 'components/admin/monitorchanges/changeModel.js'))
   const m = /const TAB_BY_KIND\s*=\s*\{([\s\S]*?)\}/.exec(src)
   if (!m) return []
   return [...m[1].matchAll(/(\w+)\s*:/g)].map(x => x[1])

@@ -15,6 +15,112 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- ⚠ Davranış — **Takım üyeleri penceresinde fotoğraf ve sistem rolü yeniden görünür** (kullanıcı kararı): üye
+  satırlarında, Takım Müdürü / Lideri kartlarında ve 7/24 arama listesinde kişinin AD fotoğrafı (yoksa baş harf),
+  üye satırında sistem rolü rozeti. Kurum geneli takım rehberi ucu (`/api/teams/{id}/members`) `system_role` ve
+  `has_photo` alanlarını döndürür (fotoğrafı olmayan kişi için boşuna istek atılmaz). Telefon ve sicil numarası
+  görünmemeye devam eder.
+- **Genel Bakış domain arama alanı genişledi:** geniş ekranda 26rem, tablette 20rem; telefonda tam satır ve 40 px
+  dokunma yüksekliği — uzun alan adları kırpılmadan yazılır.
+- **Olay & Hata Geçmişi yeniden tasarlandı:** başlık + tıklanabilir özet kutuları (açık / aktif, dönem toplamı, MTTR,
+  kritik), süzgeç çipleri ve adrese yazılan süzgeçler (`ih_*`), telefonda ve tablette süzgeç çekmecesi ile kart listesi,
+  masaüstünde zengin tablo; iskelet yalnız ilk yüklemede, sonrasında titremesiz geçiş. Günlük trend 7 / 30 / 60 / 90
+  gün aralığıyla; bir güne tıklamak listeyi süzer. Olay ayrıntısı önce okunur bir yan panelde açılır (zaman çizelgesi,
+  etki, kodlar, işlenmiş kök neden / çözüm; derin bağlantı `ih_id`). Oluştur / düzenle penceresi beş bölüme ayrıldı ve
+  boyutu sabit; satır içi doğrulama (ilk hatalı bölüme atlar), Ctrl/⌘+Enter ile kaydetme, kaydedilmemiş değişiklikte
+  vazgeç onayı, katlanır e-posta önizlemesi; kayıt hatası formun içinde gösterilir, form kaybolmaz.
+- **Olay trendine MTTR:** çözülmüş olayların ortalama süresi ve örneklem sayısı (`mttr_minutes` / `mttr_sample`).
+- **Her kartta 7/24 göstergesi:** 9 izleme türünün kartında (Kompakt ve Zengin) ve Genel Bakış sertifika kartında
+  izlemenin 7/24 ekibine iletilip iletilmediği görünür — "7/24 açık", "7/24 açık · iletilmiyor" (tür Ayarlar'da kapalı
+  ya da kullanılabilir 7/24 grubu yok) ve "7/24 kapalı". Dokununca açılan açıklamada neden, asgari seviye ve alıcı
+  gruplar; yetkiliye "7/24 ayarını düzenle" (form doğrudan 7/24 anahtarında açılır), diğerlerine "7/24 Kapsamı'nda gör".
+  Detay penceresi başlığı aynı göstergeyi kullanır (eski yalnız-Zengin "7/24" rozeti kaldırıldı). Durum sayfa başına tek
+  istekle gelir; okunamazsa yanlış "iletilmiyor" gösterilmez.
+- **Aylık Sertifika Envanteri e-postası yeniden tasarlandı:** tek satırlık durum özeti (gelen kutusu önizlemesi) ve
+  durum rozeti; 30 / 14 / 7 gün, süresi dolmuş, hata, veri yok ve hijyen özet kutuları (geçen aya göre değişimle); kalan
+  süre dağılım çubuğu; aciliyet rozetli "Önümüzdeki 30 gün" tablosu (her alan adı sertifika penceresini doğrudan açar);
+  önerili hijyen kartları; takım ve sağlayıcı kırılımı; eklerin ne içerdiği. Telefonda tam uyumlu, Outlook-güvenli;
+  e-posta 95 KB'ı aşarsa listeleri kendiliğinden kısaltır (Gmail kırpmaz). Konu satırı süresi dolmuş ve 30 gün içinde
+  bitecek sayılarını da içerir.
+- ⚠ Davranış — **Aylık raporun PDF eki artık yalnız özet:** özet kutuları, dağılım çubuğu, 90 gün içinde bitenler ve
+  hijyen bulgularının TAMAMI (e-postadaki "+N daha" listeleri ekte); her sayfanın altında rapor ayı ve sayfa numarası.
+  Kayıt bazındaki detay sayfaları eke girmez (kullanıcı kararı — büyük envanterde ek ~146 sayfaya çıkıyordu); kayıt
+  bazında tam liste CSV ekinde. Ekrandaki "Dışa Aktar → PDF" değişmedi.
+- **Anahtar Çözümleme yeniden tasarlandı:** riskleri ve güvenceleri anlatan başlık (anahtar yalnız çözme için sunucuya
+  gider, saklanmaz; değerler yalnız bu sekmenin belleğinde); göster / gizle, temizle ve uzunluk ipuçlu anahtar kartı;
+  sonuç satır içinde (eşleşiyor / yanlış anahtar ve nedeni / kısmi / doğrulanacak değer yok / sunucuya ulaşılamadı).
+  Şifreli değerler telefonda kartlarda — ad, kullanıldığı yer, kayıt ve çözüm rozetleri; gizli değer sayfada hiç
+  tutulmaz, "Göster" 30 sn sonra kendiliğinden kapanır, sekme arka plana geçince ve bölümden çıkınca her şey silinir;
+  satır adlı kopyala ve "Tümünü gizle".
+- **İzleme Değişiklikleri yeniden tasarlandı:** dönem özeti kartları (toplam + günlük eğri, işlem dağılımı, en çok
+  değişen izlemeler, en aktif kişiler — tıklanınca süzgeç), güne göre gruplanmış zaman çizelgesi ve satır içi alan
+  farkı (önce → sonra; açık / kapalı, süre, liste, JSON, script satır farkı); ayrıntı panelinde ham JSON ve
+  paylaşılabilir bağlantı. Süzgeçler, sayfa ve açık ayrıntı adreste (`ch_*`); yeni süzgeçler: tek izleme, duraklatma /
+  sürdürme. Süzülmüş listenin tamamı CSV olarak indirilebilir (formül enjeksiyonu korumalı); sonradan silinen izleme
+  "silinmiş" rozetiyle gösterilir, ölü bağlantı yok. Telefonda süzgeç çekmecesi, önce / sonra alt alta. Yeni uç
+  `/api/monitoring/changes/summary` (kapsam ve takım süzgeciyle); sayfa çevirmek toplama sorgularını yeniden koşturmaz.
+- **Raporlar → İstatistikler yeniden tasarlandı:** tıklanabilir özet kutuları (toplam, sağlıklı, 30 / 14 / 7 gün,
+  süresi dolmuş, hata) tabloyu süzer; kalan süre dağılımı halka grafiği ve "Yaklaşan bitişler" kartı; operasyon özeti
+  (sağlık, açık alarm, SLA → ilgili sayfaya; takım sağlığı → süzgeç). Takım × kademe matrisi ısı tonlarıyla (Üretim
+  T1–T2 / Tüm kademeler, yapışkan ilk sütun, telefonda takım kartları); seviyeler artık sunucunun kademe eşiklerinden
+  (`alert_level`, Genel Bakış ile aynı). Sertifika tablosu: gecikmeli arama, kalan süre ve sağlayıcı süzgeçleri, çipler,
+  başlıktan sıralama, CSV dışa aktarma, telefonda kart görünümü; süzgeç, sıralama ve sayfa adreste (`st_*`).
+- **İzleme süre grafikleri yeniden tasarlandı** (dokuz izleme türü + sertifika penceresi, ortak bileşen): özet
+  kutuları (ortalama / medyan, p95 — dilimli pencerede dürüstçe "tepe" etiketli, en yüksek / en düşük, erişilebilirlik,
+  başarısız kontrol, ping paket kaybı, sertifika kalan gün; dokununca açılan açıklamalar), degrade dolgulu ortalama +
+  p95 + min–maks bandı, eşik çizgisi (Sayfa Hızı bütçesi; Keyword / Port / Sentetik / DNS yavaş yanıt eşiği), başarısız
+  kontrol gölgesi ve işaretleri, veri olmayan dilimde kopan çizgi, kurum saatiyle ipucu. Telefonda aralık seçimi yerel
+  seçim kutusu, genişliğe göre seyrekleşen zaman etiketleri; ping paket kaybı ve sertifika kalan gün ikinci y ekseni
+  yerine ortak zaman eksenli küçük ikinci grafikte. 24 saate kadar olan aralıkta dakikalık canlı yenileme (sekme
+  görünürken); ekran okuyucu için grafik özeti.
+- **Haftalık Erişilebilirlik e-postası yeniden tasarlandı:** hüküm rozeti + tek satırlık özet, geçen haftaya göre
+  değişimli özet kutuları (erişilebilirlik, kesinti süresi, etkilenen domain, en yakın sertifika; alarm toplamı, açık,
+  MTTR), izleme türü başına başarı çubukları, en kötü 10 domain, haftanın en uzun 8 alarmı, yaklaşan sertifika
+  bitişleri; her satırda canlı taban adresli derin bağlantı, "Raporu uygulamada aç" ve tam düz metin paritesi. Telefonda
+  kutular 2×2, Outlook-güvenli; büyük takımda bile Gmail'in kırpma sınırının altında.
+- **Haftalık rapor sorguları toplulaştırıldı:** domain başına erişilebilirlik ve son kontrol sorguları 50'lik parçalarla
+  tek sorguya indi (200 domainli takımda ~400 → ~9 sorgu); Haftalık Raporlar özet şeridi de aynı yoldan hızlandı.
+- **Ayarlar → Başarısız Login Anomali Uyarısı yeniden tasarlandı:** canlı durum satırı (son 30 günde olay sayısı, son
+  olay, açık olay rozeti) ve alanlar değiştikçe güncellenen düz dil kural özeti; kurallar kart ailelerine ayrıldı
+  (Sabit eşikler / Görece sıçrama / Zamanlama ve bildirim), her alanda birim, ipucu, satır içi doğrulama ve alanlar arası
+  uyarı (ör. geriye dönük tarama sınırı pencereden kısaysa). Uyarı alıcıları doğrulamalı çip listesi (yinelenen / geçersiz
+  adres, liste yapıştırma; alıcı yoksa yönetici adresine düşüş açıkça yazılır). Test e-postası başlıktaki açılır
+  pencereden. Son olaylar dar alanda kart, geniş ekranda tablo; "Girişleri gör" olayın zaman aralığındaki başarısız
+  girişleri Denetim Logu'nda açar. Yapışkan kaydet çubuğu "N kaydedilmemiş değişiklik" + Vazgeç; hatalı alan varken
+  kaydetme kapalı. Kapsamlı müdürde olay saklama süresi salt okunur ve açıklamalı; global yöneticide saklamayı kısaltmak
+  onay ister.
+
+### Fixed
+- **Ayarlar menü aramasına "admin" yazılıyordu:** Anahtar Çözümleme (ve parola alanı olan başka ekranlar) açılınca
+  tarayıcı sayfayı giriş formu sanıp kayıtlı kullanıcı adını sol menünün arama kutusuna dolduruyor, "eşleşen bölüm yok"
+  görünüyordu — Chrome parola alanında `autocomplete="off"`u yok sayar. Uygulamadaki tüm parola alanları artık niyetini
+  açıkça söyler (`new-password` / `current-password`), arama kutusu parola yöneticilerine kapalı; kapı
+  `passwordAutocomplete.test.js` her parola alanını denetler.
+- **Olay & Hata Geçmişi özet kartları süzmüyordu:** "SLA İhlali" ve "Açık" kartları tek başına tıklandığında liste
+  süzülmüyordu; silme, aktarma ve seçenek işlemlerinde ağ hatası artık yakalanıp gösterilir.
+- **Sertifikanın 7/24 ayarı değişince Genel Bakış kartı eskiyordu:** 7/24 bildirimi açılıp kapatıldığında (tekli ya da
+  toplu) sertifika önbellekleri boşaltılır; kart 5 dakikaya kadar eski durumu göstermez.
+- **Aylık rapor PDF'indeki dağılım çubuğu son dilimi gizleyebiliyordu:** küçük dilimlere verilen asgari genişlik
+  telafi edilmediği için son dilim ("Tarih yok") eksi genişliğe düşüyordu; artık kalan genişlik büyük dilimlere
+  orantılı dağıtılır.
+- **Toplu 7/24 işleminde bir kayıt hata verirse sertifika kartları eskiyordu:** önbellek boşaltma her durumda yapılır.
+- **Aylık envanter raporu:** PDF üretilemediğinde 0 baytlık ek artık gönderilmiyor; bitiş tarihleri Türkiye saatine
+  çevrilerek gösteriliyor (gece yarısına yakın biten sertifikalar bir gün erken görünüyordu).
+- **Değişiklik geçmişinde liste / nesne değerleri "[object Object]" görünüyordu:** alan farkları artık listeleri
+  virgülle, nesneleri JSON olarak gösterir (izlemenin kendi "Değişiklikler" sekmesi dâhil).
+- **Sayfa Bütünlüğü grafiği kırık kaynak sayısını "ms" ekiyle gösteriyordu:** artık sayı olarak ("Kırık kaynak").
+- **Sayfa Hızı grafik sekmesindeki metrik seçici telefonda pencereyi yatay taşırıyordu.**
+- **İstatistikler ilk açılışta yalancı "sertifika yok" gösteriyordu:** veri gelene kadar iskelet; operasyon özetindeki
+  tabloyu süzmeyen yinelenen "30 gün altı" kutusu kaldırıldı.
+
+### Security
+- **TRACE istek günlüğü sırları yazıyordu:** istek / yanıt gövdesi günlüğü TRACE seviyesine alındığında Anahtar
+  Çözümleme ucu girilen aday anahtarı ve çözülen SMTP / LDAP parolasını düz metin yazıyordu (`key` / `value` alan adları
+  maske listesinde yoktu). `/api/admin/secret-tools/` istek ve yanıt gövdeleri artık hiç günlüğe yazılmaz (yol
+  varyasyonları dâhil — yüzde kodlanmış yol (`secret%2Dtools`, `%73ecret-tools`) da yakalanır); kapı
+  `RequestLoggingFilterTest`.
+
 ## [20.88.0] — 2026-09-28
 
 ### Added

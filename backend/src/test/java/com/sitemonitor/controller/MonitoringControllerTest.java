@@ -2483,7 +2483,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Toplu akış: admin TÜM takımları görür (kapsam süzgeci uygulanmaz)")
         void recent_globalAdmin_seesAll() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
             when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
@@ -2498,7 +2498,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Toplu akış: takım kullanıcısı KENDİ kapsamıyla sorgular")
         void recent_teamUser_isScoped() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
             when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(false), eq(List.of(5L)), any(), any()))
@@ -2513,7 +2513,7 @@ class MonitoringControllerTest {
         @DisplayName("Toplu akış: takım kapsamı ekip ÜYELERİNİN kimlik + küçük harf adlarını da taşır")
         void recent_teamUser_scopeCarriesTeamMembers() throws Exception {
             when(appUserRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(new Object[]{41L, "n11111"}));
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), eq(List.of(41L)), eq(List.of("n11111")), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
 
@@ -2530,7 +2530,7 @@ class MonitoringControllerTest {
         void recent_teamFilter_carriesFilterTeamMembers() throws Exception {
             when(appUserRepo.findMemberIdentities(List.of(9L))).thenReturn(List.<Object[]>of(new Object[]{77L, "n77777"}));
             when(changeLogRepo.search(any(), any(), any(), eq(9L), eq(List.of(77L)), eq(List.of("n77777")),
-                    any(), any(), any(), eq(true), any(), any(), any(), any()))
+                    any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(null))));
 
             mvc.perform(get("/api/monitoring/changes/recent").param("teamId", "9").session(session("ADMIN")))
@@ -2548,14 +2548,14 @@ class MonitoringControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.total").value(0));
 
-            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any());
         }
 
         @Test
         @DisplayName("kind yol anahtarı BÜYÜK/küçük harften bağımsız çözülür")
         void recent_kindIsCaseInsensitive() throws Exception {
-            when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
             when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
@@ -2565,7 +2565,7 @@ class MonitoringControllerTest {
                             .session(session("ADMIN")))
                     .andExpect(status().isOk());
 
-            verify(changeLogRepo).search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(),
+            verify(changeLogRepo).search(eq("SCRIPTED"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any(), any(), any());
         }
 
@@ -2583,7 +2583,7 @@ class MonitoringControllerTest {
                             .session(memberOf(5L)))
                     .andExpect(status().isForbidden());
 
-            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            verify(changeLogRepo, never()).search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any());
         }
 
@@ -2595,7 +2595,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Kapsam İÇİ takım süzgeci listeye VE iki sayıma birden geçer")
         void teamFilter_inScope_reachesCountsToo() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), eq(5L), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), eq(5L), any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
 
@@ -2610,7 +2610,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Global yönetici herhangi bir takımı süzebilir")
         void teamFilter_globalViewer_anyTeam() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), eq(9L), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), eq(9L), any(), any(), any(), any(), any(), any(), any(),
                     eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(9L))));
 
@@ -2626,7 +2626,7 @@ class MonitoringControllerTest {
         @Test
         @DisplayName("Takım süzgeci yokken sayımlara null geçer (kapsam yine uygulanır)")
         void noTeamFilter_passesNullToCounts() throws Exception {
-            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                     eq(false), eq(List.of(5L)), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
 
@@ -2635,6 +2635,175 @@ class MonitoringControllerTest {
 
             verify(changeLogRepo).countByEventType(any(), any(), org.mockito.ArgumentMatchers.isNull(), any(), any(),
                     eq(false), eq(List.of(5L)), any(), any());
+        }
+
+        // ── İzleme Değişiklikleri yeniden tasarımı (2026-09-28): yeni süzgeçler + özet ucu ─────────
+
+        @Test
+        @DisplayName("PAUSE olay süzgeci olay tipine DEĞİL active desenine çevrilir; resourceId olduğu gibi geçer")
+        void recent_pauseFilter_mapsToActivePattern() throws Exception {
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
+
+            mvc.perform(get("/api/monitoring/changes/recent").param("eventType", "PAUSE").param("kind", "port")
+                            .param("resourceId", "7").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            verify(changeLogRepo).search(eq("PORT"), isNull(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(7L), eq(MonitorChangeLogRepository.ACTIVE_PAUSED), eq(true), any(), any(), any(), any());
+
+            mvc.perform(get("/api/monitoring/changes/recent").param("eventType", "RESUME").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            verify(changeLogRepo).search(any(), isNull(), any(), any(), any(), any(), any(), any(), any(),
+                    isNull(), eq(MonitorChangeLogRepository.ACTIVE_RESUMED), eq(true), any(), any(), any(), any());
+
+            // Gerçek olay tipi DESENSİZ gider (eski davranış)
+            mvc.perform(get("/api/monitoring/changes/recent").param("eventType", "DELETE").session(session("ADMIN")))
+                    .andExpect(status().isOk());
+            verify(changeLogRepo).search(any(), eq("DELETE"), any(), any(), any(), any(), any(), any(), any(),
+                    isNull(), isNull(), eq(true), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Liste satırı, izlemesi SONRADAN silindiyse resource_deleted=true taşır (tür + kimlikle eşlenir)")
+        void recent_marksDeletedResources() throws Exception {
+            var alive = row(5L);
+            var gone = row(5L); gone.setId(2L); gone.setResourceId(8L); gone.setResourceName("Silinen port");
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(alive, gone)));
+            // 8 hem PORT'ta silinmiş, 7 yalnız DNS'te (başka tür, aynı kimlik) — PORT 7 silinmiş SAYILMAZ
+            when(changeLogRepo.findDeletedAmong(any())).thenReturn(List.of(new Object[]{"PORT", 8L}, new Object[]{"DNS", 7L}));
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.changes[0].resource_deleted").value(false))
+                    .andExpect(jsonPath("$.data.changes[1].resource_deleted").value(true));
+        }
+
+        @Test
+        @DisplayName("counts=false iki toplama sorgusunu KOŞTURMAZ; varsayılan eski yanıtı verir")
+        void recent_countsFalse_skipsAggregates() throws Exception {
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(row(5L))));
+
+            mvc.perform(get("/api/monitoring/changes/recent").param("counts", "false").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.event_counts").doesNotExist())
+                    .andExpect(jsonPath("$.data.kind_counts").doesNotExist());
+            verify(changeLogRepo, never()).countByEventType(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
+            verify(changeLogRepo, never()).countByKindAndEventType(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Özet: olay dağılımı + türetilmiş duraklatma/sürdürme (toplama eklenmez) + tür kırılımı")
+        void summary_eventsAndToggles() throws Exception {
+            when(changeLogRepo.countByEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"CREATE", 4L}, new Object[]{"UPDATE", 11L}, new Object[]{"DELETE", 2L}));
+            when(changeLogRepo.countActiveToggles(eq(MonitorChangeLogRepository.ACTIVE_PAUSED), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any())).thenReturn(3L);
+            when(changeLogRepo.countActiveToggles(eq(MonitorChangeLogRepository.ACTIVE_RESUMED), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any())).thenReturn(1L);
+            when(changeLogRepo.countByKindAndEventType(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"PORT", "UPDATE", 11L}));
+
+            mvc.perform(get("/api/monitoring/changes/summary").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.total").value(17))
+                    .andExpect(jsonPath("$.data.event_counts.PAUSE").value(3))
+                    .andExpect(jsonPath("$.data.event_counts.RESUME").value(1))
+                    .andExpect(jsonPath("$.data.kind_counts.PORT.UPDATE").value(11));
+        }
+
+        @Test
+        @DisplayName("Özet: en çok değişen izlemenin adı/takımı KAPSAMDAKİ en yeni satırdan, silinmiş bayrağıyla")
+        void summary_topResourcesFromLatestScopedRow() throws Exception {
+            var latest = row(5L); latest.setId(42L); latest.setResourceName("Ödeme portu (yeni ad)");
+            when(changeLogRepo.topResources(any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L, 9L, 42L}));
+            when(changeLogRepo.findAllById(List.of(42L))).thenReturn(List.of(latest));
+            when(changeLogRepo.findDeletedAmong(any())).thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L}));
+
+            mvc.perform(get("/api/monitoring/changes/summary").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.top_resources[0].kind").value("PORT"))
+                    .andExpect(jsonPath("$.data.top_resources[0].resource_id").value(7))
+                    .andExpect(jsonPath("$.data.top_resources[0].resource_name").value("Ödeme portu (yeni ad)"))
+                    .andExpect(jsonPath("$.data.top_resources[0].team_id").value(5))
+                    .andExpect(jsonPath("$.data.top_resources[0].count").value(9))
+                    .andExpect(jsonPath("$.data.top_resources[0].deleted").value(true));
+        }
+
+        @Test
+        @DisplayName("Özet: kişiler (ad-soyad en yeni satırdan) ve günlük eğri İSTEMCİNİN gününe toplanır")
+        void summary_actorsAndLocalDaily() throws Exception {
+            var a = row(5L); a.setId(77L); a.setActorId(41L);
+            when(changeLogRepo.topActors(any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"N23456", 6L, 77L}));
+            when(changeLogRepo.findAllById(List.of(77L))).thenReturn(List.of(a));
+            // UTC 21:00 ve 22:00 kovaları İstanbul'da (UTC+3) ERTESİ güne düşer; 20:00 aynı günde kalır.
+            String day = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(2).toString();
+            when(changeLogRepo.countByHour(any(), any(), any(), any(), any(), eq(true), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{day + "T20", 2L}, new Object[]{day + "T21", 3L}, new Object[]{day + "T22", 1L}));
+
+            String next = java.time.LocalDate.parse(day).plusDays(1).toString();
+            mvc.perform(get("/api/monitoring/changes/summary").param("tz", "Europe/Istanbul").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.actors[0].actor").value("N23456"))
+                    .andExpect(jsonPath("$.data.actors[0].actor_id").value(41))
+                    .andExpect(jsonPath("$.data.actors[0].actor_name").value("Ada Lovelace"))
+                    .andExpect(jsonPath("$.data.actors[0].count").value(6))
+                    .andExpect(jsonPath("$.data.daily[0].day").value(day))
+                    .andExpect(jsonPath("$.data.daily[0].count").value(2))
+                    .andExpect(jsonPath("$.data.daily[1].day").value(next))
+                    .andExpect(jsonPath("$.data.daily[1].count").value(4));
+            // UTC'de aynı istek üç kovayı TEK güne toplar
+            mvc.perform(get("/api/monitoring/changes/summary").param("tz", "UTC").session(session("ADMIN")))
+                    .andExpect(jsonPath("$.data.daily[0].count").value(6))
+                    .andExpect(jsonPath("$.data.daily.length()").value(1));
+        }
+
+        @Test
+        @DisplayName("Özet: takım kullanıcısı KENDİ kapsamıyla; kapsam dışı takım 403; boş kapsam boş özet (sorgu açılmaz)")
+        void summary_isScoped() throws Exception {
+            mvc.perform(get("/api/monitoring/changes/summary").session(memberOf(5L)))
+                    .andExpect(status().isOk());
+            verify(changeLogRepo).countByEventType(any(), any(), isNull(), any(), any(), eq(false), eq(List.of(5L)), any(), any());
+            verify(changeLogRepo).topResources(any(), any(), isNull(), any(), any(), eq(false), eq(List.of(5L)), any(), any(), any());
+            verify(changeLogRepo).topActors(any(), any(), isNull(), any(), any(), eq(false), eq(List.of(5L)), any(), any(), any());
+            verify(changeLogRepo).countByHour(any(), any(), isNull(), any(), any(), eq(false), eq(List.of(5L)), any(), any());
+
+            org.mockito.Mockito.clearInvocations(changeLogRepo);
+            mvc.perform(get("/api/monitoring/changes/summary").param("teamId", "9").session(memberOf(5L)))
+                    .andExpect(status().isForbidden());
+            verify(changeLogRepo, never()).countByEventType(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
+            verify(changeLogRepo, never()).topActors(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any());
+
+            MockHttpSession empty = sessionWithTeam("USER", 1L);
+            empty.setAttribute("viewTeamIds", List.of());
+            mvc.perform(get("/api/monitoring/changes/summary").session(empty))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.total").value(0))
+                    .andExpect(jsonPath("$.data.top_resources.length()").value(0))
+                    .andExpect(jsonPath("$.data.actors.length()").value(0));
+            verify(changeLogRepo, never()).topResources(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any());
+            verify(changeLogRepo, never()).countByHour(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("Özet: günlük eğri en çok 90 gün geriye bakar; kısa pencerede pencerenin başından")
+        void summary_dailyWindowIsCapped() throws Exception {
+            var since = org.mockito.ArgumentCaptor.forClass(String.class);
+            mvc.perform(get("/api/monitoring/changes/summary").session(session("ADMIN"))).andExpect(status().isOk());
+            verify(changeLogRepo).countByHour(since.capture(), any(), any(), any(), any(), eq(true), any(), any(), any());
+            java.time.LocalDate floorDay = java.time.LocalDate.parse(since.getValue().substring(0, 10));
+            long back = java.time.temporal.ChronoUnit.DAYS.between(floorDay, java.time.LocalDate.now(java.time.ZoneOffset.UTC));
+            assertThat(back).isBetween(89L, 91L);
+
+            String from = java.time.LocalDate.now(java.time.ZoneOffset.UTC).minusDays(6) + "T21:00:00";
+            mvc.perform(get("/api/monitoring/changes/summary").param("from", from).session(session("ADMIN"))).andExpect(status().isOk());
+            verify(changeLogRepo).countByHour(eq(from), any(), any(), any(), any(), eq(true), any(), any(), any());
         }
 
         // ── Geri döndürme (K6) ──────────────────────────────────────────────

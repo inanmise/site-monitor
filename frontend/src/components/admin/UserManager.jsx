@@ -740,7 +740,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           {modal === 'add' && (
             <Field label={t('usr.formPassword')} required>
               {({ id }) => (
-                <Input id={id} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                <Input id={id} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  autoComplete="new-password" />
               )}
             </Field>
           )}

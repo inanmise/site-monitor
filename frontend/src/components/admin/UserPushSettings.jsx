@@ -807,7 +807,7 @@ export default function UserPushSettings() {
                 <Input type="text" placeholder={t('userpush.headerName')} value={h.name || ''}
                   aria-label={t('a11y.rowAction', String(i + 1), t('userpush.headerName'))}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-                <Input type={h.secret ? 'password' : 'text'} placeholder={t('userpush.headerValue')}
+                <Input type={h.secret ? 'password' : 'text'} placeholder={t('userpush.headerValue')} autoComplete="new-password"
                   value={h.value || ''} aria-label={t('a11y.rowAction', rowName, t('userpush.headerValue'))}
                   onChange={(e) => setHeaders(headers.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
                 <span className="inline-flex items-center">

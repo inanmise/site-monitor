@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from './test-utils.jsx'
+import { render, screen, fireEvent, act } from './test-utils.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({ api: withApiFallback({ getExecutiveStats: vi.fn(), admin: { getTeams: vi.fn().mockResolvedValue({ success: true, data: [] }) } }) }))
@@ -30,9 +30,25 @@ describe('ExecutiveSummary', () => {
     expect(rows[0].textContent).toContain('Takım B')   // en kötü üstte
     fireEvent.click(rows[0])
     expect(onTeam).toHaveBeenCalledWith(2)
-    fireEvent.click(screen.getByRole('button', { name: /30 gün altı|Under 30 days/ }))
-    expect(nav.mock.calls[0][0].detail.tab).toBe('renewal')
+    // Gezinme kutucukları (2026-09-28): sağlık → Pano, açık alarm → Uyarılar, SLA → Uptime. "30 gün altı" kutucuğu
+    // kalktı — aynı sayı sayfanın üstündeki KPI kutucuklarında ve TABLOYU süzüyor (StatsView.redesign.test.jsx).
+    fireEvent.click(screen.getByRole('button', { name: /Açık alarm|Open alerts/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Filo sağlığı|Fleet health/ }))
+    fireEvent.click(screen.getByRole('button', { name: /SLA ihlali|SLA breaches/ }))
+    expect(nav.mock.calls.map((c) => c[0].detail.tab)).toEqual(['warnings', 'dashboard', 'uptime'])
+    expect(screen.queryByRole('button', { name: /30 gün altı|Under 30 days/ })).toBeNull()
     window.removeEventListener('sm:navigate', nav)
+  })
+
+  it('yanıt gelene kadar iskelet (yerleşim zıplamaz), sonra kutucuklar', async () => {
+    let resolve
+    api.getExecutiveStats.mockReturnValue(new Promise((r) => { resolve = r }))
+    const { container } = render(<ExecutiveSummary />)
+    expect(container.querySelector('[data-slot="exs-skeleton"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="exs"]')).toBeNull()
+    resolve({ success: true, data: { certs: { total: 2, ok: 2, health_pct: 100 }, alerts: {}, sla: {}, teams: [] } })
+    await screen.findByText(/^(%100|100%)$/)
+    expect(container.querySelector('[data-slot="exs-skeleton"]')).toBeNull()
   })
 
   it('tek takım → karşılaştırma bloğu çizilmez; uç başarısız → özet yok', async () => {
@@ -43,7 +59,8 @@ describe('ExecutiveSummary', () => {
     unmount()
     api.getExecutiveStats.mockResolvedValue({ success: false })
     const { container: c2 } = render(<ExecutiveSummary />)
-    await new Promise((r) => setTimeout(r, 10))
+    // Başarısız yanıt artık durumu `null`a çeker (iskelet kalkar) — güncelleme act içinde beklenir
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
     expect(c2.querySelector('[data-slot="exs"]')).toBeNull()
   })
 })
