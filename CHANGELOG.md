@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.88.0] — 2026-09-28
+
 ### Added
 - **"Kim bilgilendirilir?" — kişi bazlı push kararı:** push kartı artık takımın her üyesini "Alır / Almaz" kararıyla ve
   almayanın nedeniyle gösterir (org rolü yok, grup eşleşmedi ya da kapalı, seviye grubun asgarisinin altında, kişi
@@ -1350,7 +1352,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.87.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.88.0...HEAD
+[20.88.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.88.0
 [20.87.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.87.0
 [20.86.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.86.0
 [20.85.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.85.0

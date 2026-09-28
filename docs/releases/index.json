@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-27T16:27:56Z",
+  "generatedAt": "2026-09-28T02:07:20Z",
   "repo": "inanmise/site-monitor",
-  "count": 685,
+  "count": 686,
   "releases": [
+    {
+      "version": "20.88.0",
+      "tag": "v20.88.0",
+      "releasedAt": "2026-09-28T02:07:12Z",
+      "commit": "3a8f2220bdc48edcefe1bfcc2f8e5aae877b794f",
+      "prevVersion": "20.87.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3a8f2220",
+          "subject": "olay onay penceresi, takım üyeleri, alan adı ve sertifika penceresi yeniden tasarımı, 7/24 derin bağlantı, kişi bazlı push kararı; regresyon taramasının güvenlik ve güvenilirlik düzeltmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.87.0",
       "tag": "v20.87.0",
