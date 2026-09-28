@@ -47,4 +47,13 @@ public class HttpMetricMinute {
     /** Gecikme histogramı — HISTOGRAM_BOUNDS + overflow kova sayıları, virgülle ayrılmış. */
     @Column(columnDefinition = "TEXT")
     private String hist;
+
+    /**
+     * Durum kodu dağılımı — {@code "kod:sayı"} çiftleri, koda göre sıralı ve virgülle ayrılmış
+     * ({@code "200:118,304:3,404:2"}); 100–599 dışı kod {@code 0} altında toplanır (2026-09-28, İstek Gezgini).
+     * SONRADAN eklendi: dolu tabloya kolon ekleniyor → NULL'lanabilir BIRAKILIR (ddl-auto dolu tabloya NOT NULL
+     * kolonu sessizce ekleyemez); bu tarihten önceki satırlarda NULL = "sınıfsız" (sorgu tarafı öyle sayar).
+     */
+    @Column(name = "status_codes", columnDefinition = "TEXT")
+    private String statusCodes;
 }

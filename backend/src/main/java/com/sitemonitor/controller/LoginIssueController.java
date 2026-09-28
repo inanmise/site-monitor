@@ -73,14 +73,16 @@ public class LoginIssueController {
         body.put("page", p.getNumber());
         body.put("size", p.getSize());
         body.put("counts", loginIssueService.counts(since, until));   // kartlar liste tarih penceresiyle uyumlu
-        return ok(body);
+        // Bildirenin IP / tarayıcısı kimlik izidir (2026-09-28c): izin matrisiyle başka kademeye açılsa da yalnız
+        // global admin + AUDIT'e (ve bildirenin kendisine) gider — varsayılan ADMIN'de davranış değişmez.
+        return ok(IdentityMask.forSession(body, session));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> detail(@PathVariable Long id, HttpSession session) {
         requireAccess(session, "view");
         return loginIssueService.get(id)
-                .map(r -> ok(Map.of("data", toDetail(r))))
+                .map(r -> ok(IdentityMask.forSession(Map.of("data", toDetail(r)), session)))
                 .orElseGet(this::notFound);
     }
 
@@ -166,7 +168,7 @@ public class LoginIssueController {
                     updated.getReporterEmail(), updated.getUsername(), updated.getStatus(),
                     updated.getResolutionNote(), updated.getUpdatedAt(), summarize(updated.getMessage()));
         }
-        return ok(Map.of("data", toDetail(updated), "message", "Durum güncellendi"));
+        return ok(IdentityMask.forSession(Map.of("data", toDetail(updated), "message", "Durum güncellendi"), session));
     }
 
     // ── Konuşma dizisi (2026-09-26) ─────────────────────────────────────────────

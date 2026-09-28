@@ -509,7 +509,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           {conflict && (
             <div data-slot="inv-form-conflict" className="max-h-[45dvh] w-full overflow-y-auto">
               <DomainConflictBanner conflict={conflict} targetTeam={targetTeam}
-                onDismiss={() => setConflict(null)}
+                onDismiss={() => setConflict(null)} onLeave={onClose}
                 onResolved={(out) => { setConflict(null); onSaved?.({ success: true, data: out.record }, out.domain, { open: true, record: out.record }) }} />
             </div>
           )}

@@ -21,6 +21,8 @@ const SOURCES = [
   { file: 'controller/MonitoringController.java', name: 'SCRIPTED_FIELDS' },
   { file: 'controller/MonitoringController.java', name: 'PAGESPEED_FIELDS' },
   { file: 'controller/AdminController.java', name: 'INVENTORY_FIELDS' },
+  // İçe aktarma da envanter geçmişine YAZAR (2026-09-28: ugTeamId etiketsiz ham anahtar olarak görünüyordu)
+  { file: 'service/InventoryImportService.java', name: 'HISTORY_FIELDS' },
   { file: 'controller/MaintenanceController.java', name: 'MAINTENANCE_FIELDS' },
 ]
 

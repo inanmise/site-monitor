@@ -263,7 +263,15 @@ public class NocNotificationService {
             if (m.getDomain() != null && maintenance.isUnderMaintenance(m.getDomain())) continue;
             NocMonitorDirectory.Row row = snap.forAlert(type, m.getDomain(), monitorIdOf(m.getContextJson()));
             if (row == null || !row.nocNotify() || !row.active()) continue;
-            out.add(new StormMember(m, type, row, m.getTeamId() != null ? m.getTeamId() : row.teamId()));
+            Long owner = m.getTeamId() != null ? m.getTeamId() : row.teamId();
+            // Sahipsiz kayıt (ürün kararı 2026-09-28): SY/UG takımı olmayan alarm hiçbir kanaldan bildirim üretmez —
+            // bireysel yol EscalationService.sendCombinedAlert kapısında durur; fırtına 7/24 postası da onu taşımaz.
+            if (owner == null && row.ugTeamId() == null) {
+                log.warn("Sahipsiz kayıt — 7/24 fırtına bildirimine alınmadı: olay={} alan={} tür={}",
+                        m.getId(), m.getDomain(), m.getAlertType());
+                continue;
+            }
+            out.add(new StormMember(m, type, row, owner));
         }
         return out;
     }

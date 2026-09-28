@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   Search, SlidersHorizontal, X, FilterX, ChevronDown, Shapes, Gauge, UserCheck, CalendarRange, Users,
 } from 'lucide-react'
@@ -16,8 +16,12 @@ import {
 } from '@/components/shadcn/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/popover'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, SheetClose } from '@/components/shadcn/sheet'
+import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
+import { FieldLabel, Field as ShField, FieldContent, FieldTitle, FieldDescription } from '@/components/shadcn/field'
 import { cn } from '@/lib/utils'
-import { LEVELS, activeAlertFilters, quickRange, iso24hAgo, fmtFilterDate } from './alertHistoryModel.js'
+import {
+  LEVELS, RANGE_ACTIVE, activeAlertFilters, activeRangeOn, quickRange, iso24hAgo, fmtFilterDate,
+} from './alertHistoryModel.js'
 
 /** Radix radyo öğesi değeri boş dize olamaz → "Tümü" için sabit belirteç. */
 const ALL = '__all__'
@@ -65,11 +69,50 @@ function FacetMenu({ name, title, icon: Icon, value, options, onChange, block = 
   )
 }
 
-/** Tarih aralığı gövdesi: hızlı aralıklar + Başlangıç / Bitiş (ortak gün seçici, ui/DateTimeField). */
-function DateRangeBody({ filters, patch }) {
+/**
+ * "Tümü" görünümünde tarih aralığının KİPİ (2026-09-28, regresyon B3): aralıkta AÇILANLAR (varsayılan) ya da aralıkta
+ * AKTİF olanlar (daha önce açılıp aralığa devredenler dahil — haftalık e-postanın "Haftanın alarmları" sayısıyla aynı
+ * küme). shadcn RadioGroup "choice card" (FieldLabel + Field): kartın tamamı dokunma hedefi (≥ 40 px), fark görünür
+ * açıklamayla yazılı (dokunmatikte tooltip açılmaz).
+ */
+function RangeModePicker({ filters, patch }) {
+  const t = useT()
+  const base = useId()
+  const value = filters.range === RANGE_ACTIVE ? RANGE_ACTIVE : 'opened'
+  const options = [
+    { value: 'opened', title: t('alh.range.opened'), hint: t('alh.range.openedHint') },
+    { value: RANGE_ACTIVE, title: t('alh.range.active'), hint: t('alh.range.activeHint') },
+  ]
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span id={`${base}-legend`} className="text-xs font-semibold text-muted-foreground">{t('alh.range.legend')}</span>
+      <RadioGroup value={value} onValueChange={(v) => patch({ range: v === RANGE_ACTIVE ? RANGE_ACTIVE : '' })}
+        aria-labelledby={`${base}-legend`} data-slot="alert-range-mode" className="grid grid-cols-1 gap-1.5">
+        {options.map((o) => {
+          const id = `${base}-${o.value}`
+          return (
+            <FieldLabel key={o.value} htmlFor={id} className="w-full cursor-pointer">
+              <ShField orientation="horizontal" className="min-h-10 items-start gap-2 px-3! py-2!">
+                <RadioGroupItem value={o.value} id={id} className="mt-0.5" />
+                <FieldContent className="gap-0.5">
+                  <FieldTitle className="text-sm">{o.title}</FieldTitle>
+                  <FieldDescription className="m-0 text-xs leading-snug">{o.hint}</FieldDescription>
+                </FieldContent>
+              </ShField>
+            </FieldLabel>
+          )
+        })}
+      </RadioGroup>
+    </div>
+  )
+}
+
+/** Tarih aralığı gövdesi: ("Tümü"nde kip seçimi) + hızlı aralıklar + Başlangıç / Bitiş (ortak gün seçici, ui/DateTimeField). */
+function DateRangeBody({ filters, patch, tab }) {
   const t = useT()
   return (
     <div className="flex flex-col gap-2.5">
+      {tab === 'all' && <RangeModePicker filters={filters} patch={patch} />}
       <div className="grid grid-cols-2 gap-1.5">
         {QUICK.map(({ key, days }) => (
           <Button key={key} type="button" variant="outline" size="sm" className="h-9 font-normal"
@@ -132,7 +175,8 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
   const teamOptions = [{ value: '', label: t('alh.allTeams') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))]
   const teamName = (id) => teams.find((tm) => String(tm.id) === String(id))?.name ?? id
   const datesShown = tab !== 'open'
-  const rangeTitle = tab === 'closed' ? t('alh.facet.resolvedRange') : t('alh.facet.openedRange')
+  const rangeTitle = tab === 'closed' ? t('alh.facet.resolvedRange')
+    : activeRangeOn(filters, tab) ? t('alh.facet.activeRange') : t('alh.facet.openedRange')
   const rangeValue = filters.from || filters.to
     ? `${filters.from ? fmtFilterDate(filters.from, locale) : '…'} → ${filters.to ? fmtFilterDate(filters.to, locale) : '…'}`
     : null
@@ -144,6 +188,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
       case 'ack': return f.value === 'ack' ? t('alh.ackOnly') : t('alh.unackedOnly')
       case 'team': return t('alh.chip.team', teamName(f.value))
       case 'q': return t('alh.chip.search', f.value)
+      case 'range': return t('alh.chip.active')
       case 'from': return t('alh.chip.from', fmtFilterDate(f.value, locale))
       case 'to': return t('alh.chip.to', fmtFilterDate(f.value, locale))
       default: return String(f.value)
@@ -192,7 +237,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
       </PopoverTrigger>
       <PopoverContent align="start" collisionPadding={8} className="z-(--z-menu) w-[min(20rem,calc(100vw-1rem))]">
         <p className="mb-2 text-sm font-semibold">{rangeTitle}</p>
-        <DateRangeBody filters={filters} patch={patch} />
+        <DateRangeBody filters={filters} patch={patch} tab={tab} />
       </PopoverContent>
     </Popover>
   )
@@ -208,7 +253,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
               <SlidersHorizontal aria-hidden="true" />{t('alh.filters')}
               {active.length > 0 && <Badge data-slot="filter-count" className="h-5 min-w-5 justify-center px-1.5 tabular-nums">{active.length}</Badge>}
             </Button>
-            <SheetContent side="bottom" showCloseButton={false} data-slot="alert-filters-sheet"
+            <SheetContent overlayClassName="z-[1000]" side="bottom" showCloseButton={false} data-slot="alert-filters-sheet"
               className="z-[1001] max-h-[92dvh] gap-0 overflow-y-auto rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
               <SheetHeader className="flex-row items-center justify-between">
                 <div>
@@ -227,7 +272,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
                 {datesShown && (
                   <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-muted-foreground">{rangeTitle}</span>
-                    <DateRangeBody filters={filters} patch={patch} />
+                    <DateRangeBody filters={filters} patch={patch} tab={tab} />
                   </div>
                 )}
               </div>
@@ -249,16 +294,16 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
           {active.map((f) => {
             const label = labelFor(f)
             return (
-              <Badge key={f.key} variant="outline" data-filter={f.key} className="h-7 gap-1 rounded-full bg-primary/5 pr-1 pl-2.5 font-medium pointer-coarse:h-9">
+              <Badge key={f.key} variant="outline" data-filter={f.key} className="h-7 gap-1 rounded-full bg-primary/5 pr-1 pl-2.5 font-medium pointer-coarse:h-11 pointer-coarse:py-0">
                 <span className="max-w-[16rem] truncate">{label}</span>
-                <Button type="button" variant="ghost" size="icon-xs" className="size-5 rounded-full pointer-coarse:size-8"
+                <Button type="button" variant="ghost" size="icon-xs" className="size-5 rounded-full pointer-coarse:size-10"
                   aria-label={t('alh.removeFilter', label)} onClick={() => { if (f.key === 'q') setDraft(''); patch(f.patch) }}>
                   <X aria-hidden="true" className="size-3" />
                 </Button>
               </Badge>
             )
           })}
-          <Button type="button" variant="link" size="xs" className="h-7 px-1 text-muted-foreground pointer-coarse:h-9" onClick={clearAll}>
+          <Button type="button" variant="link" size="xs" className="h-7 px-1 text-muted-foreground pointer-coarse:h-10" onClick={clearAll}>
             {t('alh.clearFilters')}
           </Button>
         </div>

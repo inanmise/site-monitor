@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import ChangeDiff from './ChangeDiff.jsx'
 import { ActorBadge, EventBadge, IpCopy, KindIcon, TimeAgo, kindLabel } from './changeParts.jsx'
+import MaskedValue from '../../ui/MaskedValue.jsx'
 import { URL_KEYS, activeToggle, detailKey, fullText, isDeleted, linkFor, resourceName } from './changeModel.js'
 
 /**
@@ -152,10 +153,12 @@ export default function ChangeDetailSheet({ row, t, now, onClose, onFilterResour
               <Fact label={t('chg.filterTeam')}>
                 {r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} size={12} className="max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-3" /> : <span className="text-muted-foreground">—</span>}
               </Fact>
-              <Fact label={t('chg.colIp')}><IpCopy ip={r.ip_address} t={t} className="-ml-1 max-md:min-h-10" /></Fact>
-              {r.user_agent && (
+              <Fact label={t('chg.colIp')}><IpCopy ip={r.ip_address} t={t} masked={r.identity_masked === true} className="-ml-1 max-md:min-h-10" /></Fact>
+              {(r.user_agent || r.identity_masked === true) && (
                 <Fact label={t('chg.detailBrowser')} className="col-span-2">
-                  <SimpleTooltip content={r.user_agent}><span className="cursor-default">{shortUserAgent(r.user_agent)}</span></SimpleTooltip>
+                  {r.user_agent
+                    ? <SimpleTooltip content={r.user_agent}><span className="cursor-default">{shortUserAgent(r.user_agent)}</span></SimpleTooltip>
+                    : <MaskedValue />}
                 </Fact>
               )}
             </dl>

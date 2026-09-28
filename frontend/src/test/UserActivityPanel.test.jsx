@@ -190,3 +190,75 @@ describe('UserActivityPanel', () => {
     expect(screen.getByText('…')).toBeInTheDocument()
   })
 })
+
+/**
+ * Kimlik izi maskesi (2026-09-28c, B1): global olmayan görüntüleyiciye sunucu IP / konum / kuruluş / ters DNS /
+ * tarayıcı alanlarını HİÇ göndermez (kişinin kendi satırı hariç), `top_sources`'u düşürür ve `identity_masked: true`
+ * ekler. Fixture sunucunun kuralıyla (IdentityMask) üretilir — gerçek tel biçimi. Arayüz boş / "—" / 0 DEĞİL, açık
+ * "Gizli" durumu (`data-slot="id-masked"`) ve kaynaklar için yetki durumu çizer.
+ */
+const ID_FIELDS = ['ip', 'ip_address', 'country', 'city', 'org', 'reverse_dns', 'user_agent', 'ua_raw', 'ua_summary', 'last_login_ip', 'prev_login_ip', 'last_failed_ip']
+function serverMask(node, self) {
+  if (Array.isArray(node)) return node.map((x) => serverMask(x, self))
+  if (!node || typeof node !== 'object') return node
+  const own = [node.username, node.actor].some((n) => n != null && String(n).toLowerCase() === self)
+  return Object.fromEntries(Object.entries(node)
+    .filter(([k]) => k !== 'top_sources' && (own || !ID_FIELDS.includes(k)))
+    .map(([k, v]) => [k, serverMask(v, self)]))
+}
+const MASKED = { ...serverMask(DATA, 'admin'), identity_masked: true }
+const masks = (el) => el.querySelectorAll('[data-slot="id-masked"]')
+
+describe('UserActivityPanel — kimlik izi maskesi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); window.history.replaceState({}, '', '/?tab=health')
+    api.admin.getLoginSeries.mockResolvedValue({ success: true, data: { buckets: [], granularity: 'day' } })
+    api.admin.getUserTimeline.mockResolvedValue({ success: true, data: { username: 'bob', logins: 2, failed: 1, distinct_ips: 2, identity_masked: true, events: [
+      { id: 7, time: '2026-09-12T20:00:00', outcome: 'FAILURE', flags: 'OFF_HOURS' },
+      { id: 6, time: '2026-09-11T09:00:00', outcome: 'SUCCESS' },
+    ] } })
+  })
+
+  it('kaynaklar: IP anahtarlı liste gelmez → "kayıt yok" değil yetki durumu; kuruluş hiçbir yerde yok', () => {
+    render(<UserActivityPanel data={MASKED} error={false} onRefresh={vi.fn()} isAdmin={false} globalAdmin={false} username="admin" />)
+    expect(screen.getByText(/^(Giriş kaynakları gizli|Sign-in sources are hidden)$/)).toBeInTheDocument()
+    expect(screen.getByText(/ters DNS adları yalnız global yöneticilere|reverse DNS names are shown only to global admins/)).toBeInTheDocument()
+    expect(screen.queryByText(/Example ISP/)).toBeNull()
+  })
+
+  it('oturum + anomali tablolarında başkasının IP\'si "Gizli"; kişinin KENDİ satırı IP\'sini gösterir', () => {
+    render(<UserActivityPanel data={MASKED} error={false} onRefresh={vi.fn()} isAdmin={false} globalAdmin={false} username="admin" />)
+    const table = screen.getByTestId('uact-sessions')
+    const row = (u) => [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes(u))
+    expect(masks(row('bob'))).toHaveLength(1)
+    expect(row('bob').textContent).not.toContain('10.0.0.2')
+    expect(masks(row('Yönetici'))).toHaveLength(0)
+    expect(row('Yönetici').textContent).toContain('10.0.0.1')              // kendi satırı
+    // Anomali tablosu: "Onay/Ack" sütununu taşıyan tablo — iki satırın ikisi de bob'un (IP'si gizli)
+    const anomTable = screen.getByRole('columnheader', { name: /^(Onay|Ack)$/ }).closest('table')
+    const anomRows = [...anomTable.querySelectorAll('tbody tr')]
+    expect(anomRows).toHaveLength(2)
+    for (const tr of anomRows) expect(masks(tr)).toHaveLength(1)
+    expect(document.body.textContent).not.toContain('10.0.0.2')
+  })
+
+  it('oturum detayı (başkası): kaynak bölümü bilgi notu, önceki / başarısız giriş IP\'si ve zaman çizelgesi "Gizli"', async () => {
+    render(<UserActivityPanel data={MASKED} error={false} onRefresh={vi.fn()} isAdmin={false} globalAdmin={false} username="admin" />)
+    const table = screen.getByTestId('uact-sessions')
+    const bobRow = [...table.querySelectorAll('tbody tr')].find((tr) => tr.textContent.includes('bob'))
+    fireEvent.click(within(bobRow).getByRole('button', { name: /Detay|Details/ }))
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByText(/yalnız global yöneticilere ve denetçilere|only to global admins and auditors/)).toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: /User-Agent/ })).toBeNull()
+    await waitFor(() => expect(dlg.querySelectorAll('[data-tl]')).toHaveLength(2))
+    expect(masks(dlg).length).toBe(4)   // önceki IP + başarısız IP + 2 zaman çizelgesi satırı
+  })
+
+  it('pozitif kontrol: maskesiz yükte (global görüntüleyici) "Gizli" hiç yok, kaynak tablosu ve IP\'ler görünür', () => {
+    render(<UserActivityPanel data={{ ...DATA, identity_masked: false }} error={false} onRefresh={vi.fn()} isAdmin globalAdmin username="admin" />)
+    expect(masks(document.body)).toHaveLength(0)
+    expect(screen.queryByText(/Giriş kaynakları gizli|Sign-in sources are hidden/)).toBeNull()
+    expect(screen.getByText('Example ISP')).toBeInTheDocument()
+    expect(document.body.textContent).toContain('10.0.0.2')
+  })
+})

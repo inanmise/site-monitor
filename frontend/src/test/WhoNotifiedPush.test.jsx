@@ -29,7 +29,7 @@ const MEMBERS = [
 ]
 const base = (over = {}) => ({
   team_id: 7, team_name: 'Takım A', level: 'HIGH', standalone_monitor: false, managers_included: true,
-  contacts_fallback_global: false, email_total: 1,
+  team_contacts_missing: false, team_contacts_defined: true, email_total: 1,
   team_emails: [{ email: 'takim-a@example.com', team: 'Takım A', source: 'Takım maili', kind: 'TEAM' }],
   contacts: [], webhooks: [],
   push: MEMBERS, push_access: 'FULL', push_access_reason: 'GLOBAL_ADMIN', push_settings: 'FULL', push_viewer: 'admin',

@@ -122,6 +122,10 @@ public class TeamAdminService {
         Map<String, Object> out = new LinkedHashMap<>();
         List<CertificateInventory> inv = inventoryRepo.findByTeamIdOrderByDomainAsc(teamId);
         out.put("domains", sample(inv.stream().map(CertificateInventory::getDomain).toList()));
+        // UG olarak bağlı kayıtlar da etkidir (2026-09-28): sayılmazsa takım silinir, kaydın UG'si silinmiş takımı gösterir
+        // ve UG yolu (adres + kendi kişileri) sessizce kaybolur; yalnız UG'li kayıt sahipsiz kalır.
+        List<CertificateInventory> ugInv = inventoryRepo.findByUgTeamIdOrderByDomainAsc(teamId);
+        out.put("ug_domains", sample(ugInv.stream().map(CertificateInventory::getDomain).toList()));
         Map<String, Integer> byType = new LinkedHashMap<>();
         List<String> monitorNames = new ArrayList<>();
         for (var e : monitorRepos().entrySet()) {
@@ -143,7 +147,10 @@ public class TeamAdminService {
         out.put("groups", sample(groupRepo.findByTeamIdOrderByNameAsc(teamId).stream().map(NotificationGroup::getName).toList()));
         long open = alertEventRepo.findAllOpenOrderBySeverity().stream().filter(a -> Objects.equals(a.getTeamId(), teamId)).count();
         out.put("open_alerts", open);
-        boolean empty = inv.isEmpty() && monitorNames.isEmpty() && users.isEmpty()
+        // AÇIK alarm da bağlı kayıttır (2026-09-28, Y1): damgası bu takımda kalan açık alarmın yeniden uyarısı,
+        // eskalasyonu ve çözümü takım silinince hiçbir adrese/kişiye gitmezdi (sessiz susma). "Taşı" açık alarmları da
+        // taşır; taşımadan silme 409 alır.
+        boolean empty = inv.isEmpty() && ugInv.isEmpty() && monitorNames.isEmpty() && users.isEmpty() && open == 0
                 && contactRepo.findByTeamIdOrderByRoleAsc(teamId).isEmpty() && groupRepo.findByTeamIdOrderByNameAsc(teamId).isEmpty();
         out.put("empty", empty);
         return out;
@@ -167,8 +174,22 @@ public class TeamAdminService {
         if (teamRepo.findById(to).isEmpty()) throw new IllegalArgumentException("Hedef takım bulunamadı: " + to);
         Map<String, Integer> moved = new LinkedHashMap<>();
         int n = 0;
-        for (CertificateInventory i : inventoryRepo.findByTeamIdOrderByDomainAsc(from)) { i.setTeamId(to); inventoryRepo.save(i); n++; }
+        for (CertificateInventory i : inventoryRepo.findByTeamIdOrderByDomainAsc(from)) {
+            i.setTeamId(to);
+            if (from.equals(i.getUgTeamId())) i.setUgTeamId(null);   // SY = UG idi: taşınınca hedef ikisi → UG gereksiz
+            inventoryRepo.save(i); n++;
+        }
         moved.put("domains", n);
+        // UG bağı da taşınır (2026-09-28): eskiden yalnız SY taşınıyordu; takım silinince UG silinmiş takımı gösterip
+        // kaydın UG alıcıları (adres + kendi kişileri) sessizce kayboluyordu. Hedef zaten SY ise UG boşa düşer
+        // (aynı takım iki rolde anlamsız — SY yeter).
+        n = 0;
+        for (CertificateInventory i : inventoryRepo.findByUgTeamIdOrderByDomainAsc(from)) {
+            if (!from.equals(i.getUgTeamId())) continue;   // yukarıda zaten taşındı
+            i.setUgTeamId(to.equals(i.getTeamId()) ? null : to);
+            inventoryRepo.save(i); n++;
+        }
+        moved.put("ug_domains", n);
         n = 0;
         n += moveMonitors(httpRepo, from, to, (m, t) -> m.setTeamId(t));
         n += moveMonitors(portRepo, from, to, (m, t) -> m.setTeamId(t));
@@ -213,6 +234,18 @@ public class TeamAdminService {
             groupRepo.save(g); n++;
         }
         moved.put("groups", n);
+        // AÇIK alarmların takım damgası da hedefe geçer (2026-09-28, Y1). Damga, yeniden uyarı / eskalasyon / çözüm /
+        // tekrar bildir / fırtınada envanterden ÖNCE okunur; taşınmazsa açık alarm eski (ya da silinmiş) takıma
+        // gitmeye devam ederdi — adresi ve kişileri artık hedefte. KAPANMIŞ olayların damgası tarih kaydıdır, dokunulmaz.
+        // Bildirim grubu damgası taşınan gruba işaret ettiği için tutarlı kalır.
+        n = 0;
+        for (AlertEvent a : alertEventRepo.findAllOpenOrderBySeverity()) {
+            if (!Objects.equals(a.getTeamId(), from) || Boolean.TRUE.equals(a.getResolved())) continue;
+            a.setTeamId(to);
+            alertEventRepo.save(a);
+            n++;
+        }
+        moved.put("open_alerts", n);
         return moved;
     }
 

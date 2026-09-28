@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import {
-  activeToggle, changesCsv, dailySeries, dayLabel, diffModel, groupByDay, linkFor, listDelta, readUrlState,
+  activeToggle, changesCsv, dailySeries, dayLabel, diffModel, groupByDay, isDeleted, linkFor, listDelta, readUrlState,
   urlMapping, valueKind, windowFor, URL_KEYS, KINDS, TAB_BY_KIND,
 } from '../components/admin/monitorchanges/changeModel.js'
 
@@ -48,6 +48,7 @@ describe('valueKind / diffModel / listDelta / activeToggle', () => {
     expect(valueKind('active', false)).toBe('boolean')
     expect(valueKind('active', 'true')).toBe('boolean')
     expect(valueKind('teamId', 3)).toBe('team')
+    expect(valueKind('ugTeamId', 3)).toBe('team')   // UG takımı da takım rozeti (2026-09-28)
     expect(valueKind('intervalSeconds', 300)).toBe('duration')
     expect(valueKind('timeoutMs', 5000)).toBe('duration')
     expect(valueKind('intervalSeconds', 0)).toBe('number')     // sıfır süre biçimlenmez
@@ -89,6 +90,20 @@ describe('linkFor — ölü bağlantı yok', () => {
     expect(linkFor({ ...r, event_type: 'DELETE' })).toBeNull()
     expect(linkFor({ ...r, resource_deleted: true })).toBeNull()
     expect(linkFor({ ...r, kind: 'INVENTORY' })).toBeNull()
+  })
+
+  // 2026-09-28 regresyon B1: hüküm SUNUCUNUN (son geçmiş olayı silme mi); alan yoksa silme olayı yedek hükümdür.
+  it('sunucu hükmü olay tipinden üstün: geri yüklenen izlemenin SİLME satırı bağlantı taşır, silinmiş sayılmaz', () => {
+    const del = { kind: 'PORT', resource_id: 7, event_type: 'DELETE' }
+    expect(isDeleted(del)).toBe(true)                                   // eski yanıt: alan yok → yedek
+    expect(isDeleted({ ...del, resource_deleted: false })).toBe(false)  // geri yüklendi
+    expect(linkFor({ ...del, resource_deleted: false })).toMatchObject({ tab: 'port', href: '?tab=port&monitor=7&mtab=changes' })
+    expect(isDeleted({ ...del, resource_deleted: true })).toBe(true)
+    // Özet kartı öğesi `deleted` taşır
+    expect(isDeleted({ kind: 'PORT', resource_id: 7, deleted: false })).toBe(false)
+    expect(isDeleted({ kind: 'PORT', resource_id: 7, deleted: true })).toBe(true)
+    expect(isDeleted({ kind: 'PORT', resource_id: 7, event_type: 'UPDATE' })).toBe(false)
+    expect(isDeleted(null)).toBe(false)
   })
 
   it('izleme olmayan üç tür DIŞINDAKİ her tür sekme eşlemesinde (change-kinds-sync ile aynı muafiyet)', () => {
@@ -161,5 +176,20 @@ describe('changesCsv', () => {
     expect(row).toContain('"\'=HYPERLINK(""x"")"')           // formül nötr + tırnak kaçışı
     expect(row).toContain("'@bad")
     expect(row).toContain('⟨chg.field.tags⟩: a → a, b')
+  })
+
+  it('"Silinmiş" sütunu sunucunun hükmünü yazar: geri yüklenen izlemenin silme satırı BOŞ, alan yoksa silme olayı işaretli', () => {
+    const base = { kind: 'INVENTORY', resource_id: 4, resource_name: 'a.example.com', seq: 1, event_type: 'DELETE', at: '2026-09-01T10:00:00', actor: 'N1', changes: null }
+    const cells = (r) => changesCsv([r], t, (s) => s).replace(/^\uFEFF/, '').split('\r\n')[1]
+    expect(cells({ ...base, resource_deleted: false })).not.toContain('⟨chg.csvYes⟩')
+    expect(cells({ ...base, resource_deleted: true })).toContain('⟨chg.csvYes⟩')
+    expect(cells(base)).toContain('⟨chg.csvYes⟩')
+  })
+  it('kimlik izi gizlenen satır (identity_masked) IP / tarayıcı hücresine boş değil "Gizli" yazar; işaretsiz satır değeri yazar (2026-09-28c)', () => {
+    const base = { kind: 'PORT', resource_id: 7, resource_name: 'p', seq: 1, event_type: 'UPDATE', at: '2026-09-01T10:00:00', actor: 'N1', changes: null }
+    const cells = (r) => changesCsv([r], t, (s) => s).replace(/^\uFEFF/, '').split('\r\n')[1]
+    expect(cells({ ...base, identity_masked: true }).match(/⟨uact\.idMasked⟩/g)).toHaveLength(2)
+    expect(cells({ ...base, ip_address: '192.0.2.8', user_agent: 'UA/1' })).toContain('192.0.2.8')
+    expect(cells({ ...base, ip_address: '192.0.2.8' })).not.toContain('⟨uact.idMasked⟩')
   })
 })

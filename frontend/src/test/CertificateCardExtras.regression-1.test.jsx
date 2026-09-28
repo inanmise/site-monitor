@@ -2,7 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen } from './test-utils.jsx'
 import CertificateCard from '../components/CertificateCard.jsx'
 
-vi.mock('../contexts/TeamDirectoryProvider.jsx', () => ({ useTeamDirectory: () => ({ byId: {}, open: () => {} }) }))
+// Boş takım dizini (API çağrısı yok). Yol GERÇEK modül — eskiden var olmayan contexts/TeamDirectoryProvider.jsx
+// taklit ediliyordu, yani taklit hiç uygulanmıyordu (2026-09-28c C3; kapı viMockPaths.test.js). Şekil gerçek bağlamla aynı (Map).
+vi.mock('../components/ui/TeamDirectory.jsx', () => ({
+  TeamDirectoryProvider: ({ children }) => children,
+  useTeamDirectory: () => ({ byId: new Map(), byName: new Map(), ready: true }),
+}))
 
 // Regression: ISSUE-004 — EN arayuzde erisilebilirlik yuzdesi Turkce konumda ("%100 availability") yaziliyordu;
 // yuzde isareti dile bagli olmali (TR: %91.7, EN: 91.7%). Ayni ekrandaki HTTP kartlari zaten "100% available" diyordu.

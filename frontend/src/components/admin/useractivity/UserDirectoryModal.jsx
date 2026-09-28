@@ -1,243 +1,179 @@
-import { useMemo, useState } from 'react'
-import { Users, Download, ExternalLink, LogOut, Compass, Unlock, Eye, Mail, Copy } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
+import { AtSign, Compass, Copy, Download, ExternalLink, History, LogOut, Mail, PanelRight, RefreshCw, SearchX, Unlock, Users } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
-import { api, formatDateSec, formatDateOnly } from '../../../api/client'
+import { api, formatDateSec } from '../../../api/client'
 import { useToast } from '../../ui/Toast.jsx'
 import ModalShell from '../../ui/ModalShell.jsx'
-import TeamBadge from '../../ui/TeamBadge.jsx'
-import UserBadge from '../../ui/UserBadge.jsx'
-import KebabMenu from '../../ui/KebabMenu.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
-import SearchableSelect from '../../ui/SearchableSelect.jsx'
-import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
+import { LoadingBlock } from '../../ui/Progress.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
 import { navigateTo } from '../../../utils/navigate.js'
-import { toCsv, downloadCsv, stampedName } from '../../../utils/csvExport.js'
-import { relTime, loginStatus } from './uactModel.js'
-import { ToolbarSearch, FilterField } from '../ListToolbar.jsx'
-import { SystemRoleBadge, TONE_CLASS } from '../ToneBadge.jsx'
-import { TH, TD, MUTED_SM, DataTable, Pill, LinkButton, StatChip, AuthSourceBadge } from '../HealthUi.jsx'
+import { copyText } from '../../../utils/copyText.js'
+import { downloadCsv, stampedName } from '../../../utils/csvExport.js'
+import {
+  DEFAULT_SORT, EMPTY_FILTERS, directoryCsv, directoryMatches, directoryStats, facetOptions, initialFilters, isTourPreset,
+  mergeDirectory, rowActions, sortDirectory, userKey,
+} from './directoryModel.js'
+import DirectoryStats from './DirectoryStats.jsx'
+import DirectoryToolbar, { ActiveFilterChips, SortSelect, useFacetLabels } from './DirectoryToolbar.jsx'
+import DirectoryList from './DirectoryList.jsx'
+import UserDirectoryDetail from './UserDirectoryDetail.jsx'
+import { PHONE_MAX, WIDE_MIN, useViewportWidth } from './useViewportWidth.js'
 import { Button } from '@/components/shadcn/button'
-import { Card } from '@/components/shadcn/card'
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 
+// Geriye uyum: model işlevleri eskiden bu dosyadan dışa aktarılıyordu (testler / çağıranlar).
+export { TOUR_STATES, mergeDirectory, directoryMatches, directoryCsv } from './directoryModel.js'
+
 /**
- * Kullanıcı Dizini (2026-09-20, kullanıcı bildirimi): "1 Aktif oturum" kartı yalnız oturumdakileri
- * listeliyordu. Artık SİSTEMDEKİ BÜTÜN kullanıcılar tek listede — çevrimiçi olanlar en başta —
- * e-posta, rol, takım, kimlik kaynağı (LDAP / Yerel), son görülme, son giriş, oluşturulma, tur
- * durumu, hesap durumu ve zengin işlem menüsü ile; süzgeç + sayfalama. "Turu tamamlayan" kartı da
- * aynı dizini tour=completed süzgeciyle açar.
+ * Kullanıcı Dizini (2026-09-28 yeniden tasarım; ilk sürüm 2026-09-20). Sistem Sağlığı → Kullanıcı / Oturum →
+ * "N Aktif oturum" (ya da "Turu tamamlayan" kartı, `initial = { tour: 'completed' }`) ile açılır. Sistemdeki BÜTÜN
+ * kullanıcılar; çevrimiçi olanlar başta.
  *
- * Veri: SystemHealth payload'ındaki login_status (tüm kullanıcılar) + active_users (oturumdakiler)
- * kullanıcı adına göre birleştirilir; ek istek yok.
- * Çizim shadcn: Card süzgeç çubuğu, Table, Badge / Button çipleri (ortak parçalar ../HealthUi.jsx).
+ * Düzen (mobil-önce, shadcn): sabit yükseklikli pencere, YALNIZ gövde kayar → özet kutucukları (süzgeç düğmeleri) →
+ * YAPIŞKAN süzgeç çubuğu + etkin süzgeç çipleri → sonuç satırı → liste (lg+ sıralanabilir tablo, altında kart) →
+ * sayfalama. Satıra/karta tıklamak ayrıntı panelini (Sheet) açar. CSV görünen (süzgeçlenmiş + sıralanmış) listeyi indirir.
+ *
+ * Durum (süzgeç, sıralama, sayfa, açık ayrıntı) pencerede tutulur; SystemHealth 30 sn'de bir yeni payload verdiğinde
+ * KORUNUR (sayfa yalnız süzgeç/sıralama değişince başa döner, ayrıntı kullanıcı adıyla yeniden bulunur).
+ * Yetki kuralları `rowActions`'ta (işlem menüsü + ayrıntı paneli tek kaynak) — 2026-09-20 dizinindekiyle aynı.
+ * Ek istek yok: veri `data.login_status` + `data.active_users`; eylemler mevcut uçlar (tur sıfırlama, kilit açma) ve
+ * panelin geri çağrıları (`onUser` giriş geçmişi penceresi, `onTerminate` gerekçeli sonlandırma, `onRefresh`).
  */
-export const TOUR_STATES = ['completed', 'dismissed', 'snoozed', 'started', 'none']
-
-const ts = (iso) => { if (!iso) return 0; const t = Date.parse(iso.endsWith('Z') ? iso : iso + 'Z'); return Number.isNaN(t) ? 0 : t }
-
-/** login_status ⊕ active_users → dizin satırları; çevrimiçi (boşta süresi kısa) önce, sonra son giriş yeniye göre. */
-export function mergeDirectory(loginStatus = [], activeUsers = []) {
-  const act = new Map(activeUsers.map((u) => [String(u.username || '').toLowerCase(), u]))
-  const seen = new Set()
-  const rows = []
-  for (const r of loginStatus) {
-    const key = String(r.username || '').toLowerCase(); seen.add(key)
-    const a = act.get(key)
-    rows.push(a
-      ? { ...r, online: true, idle_sec: a.idle_sec, expires_in_sec: a.expires_in_sec, login_at: a.login_at, duration_min: a.duration_min, ip: a.ip, city: a.city, country: a.country, last_tab: a.last_tab, last_tab_at: a.last_tab_at, user_agent: a.user_agent, last_seen: a.last_seen || r.last_seen_at }
-      : { ...r, online: false, last_seen: r.last_seen_at })
-  }
-  for (const [key, a] of act) if (!seen.has(key)) rows.push({ ...a, online: true, last_seen: a.last_seen, tour_status: a.tour_status || 'none' })   // savunma: dizinde olmayan oturum
-  rows.sort((x, y) => {
-    if (x.online !== y.online) return x.online ? -1 : 1
-    if (x.online) return (x.idle_sec ?? 1e9) - (y.idle_sec ?? 1e9)
-    return ts(y.last_login_at) - ts(x.last_login_at) || String(x.username).localeCompare(String(y.username))
-  })
-  return rows
-}
-
-export function directoryMatches(r, f) {
-  if (f.view === 'online' && !r.online) return false
-  if (f.view === 'offline' && r.online) return false
-  if (f.tour && (r.tour_status || 'none') !== f.tour) return false
-  if (f.team && String(r.team_id ?? '') !== String(f.team) && !(r.team_ids || []).some((id) => String(id) === String(f.team))) return false
-  if (f.role && r.system_role !== f.role) return false
-  if (f.provider === 'LDAP' && r.auth_source !== 'LDAP') return false
-  if (f.provider === 'LOCAL' && r.auth_source === 'LDAP') return false
-  if (f.account === 'active' && r.active === false) return false
-  if (f.account === 'inactive' && r.active !== false) return false
-  if (f.account === 'locked' && !r.permanent_lock) return false
-  if (f.q) {
-    const q = f.q.toLowerCase()
-    if (![r.username, r.display_name, r.email, r.employee_id, r.team_name, r.title, r.department].some((v) => v && String(v).toLowerCase().includes(q))) return false
-  }
-  return true
-}
-
-export function directoryCsv(rows, t) {
-  const head = [t('uact.colUser'), t('uact.detailDisplayName'), t('uact.detailEmail'), t('uact.colRole'), t('uact.detailOrgRole'), t('uact.colTeam'), t('uact.colAuthSource'), t('uact.dirOnline'), t('uact.detailLastSeen'), t('uact.colLastLogin'), t('uact.colCreated'), t('uact.colTour'), t('uact.colAccount')]
-  return toCsv(head, rows.map((r) => [r.username, r.display_name, r.email, r.system_role, r.org_role, r.team_name, r.auth_source, r.online ? 1 : 0, r.last_seen, r.last_login_at, r.created_at, r.tour_status, r.active === false ? 'inactive' : r.permanent_lock ? 'locked' : 'active']))
-}
-
-export default function UserDirectoryModal({ data, initial = {}, isAdmin, globalAdmin, username, onClose, onUser, onTerminate, onRefresh }) {
+export default function UserDirectoryModal({ data, initial = {}, isAdmin, globalAdmin, username, refreshing = false, onClose, onUser, onTerminate, onRefresh }) {
   const t = useT()
   const toast = useToast()
-  const [f, setFRaw] = useState({ view: initial.view || 'all', tour: initial.tour || '', team: '', role: '', provider: '', account: '', q: '' })
-  const setF = (p) => setFRaw((x) => ({ ...x, ...p }))
-  const [busy, setBusy] = useState(null)
+  const width = useViewportWidth()
+  const wide = width >= WIDE_MIN
+  const phone = width < PHONE_MAX
+
+  const [f, setF] = useState(() => initialFilters(initial))
+  const patch = useCallback((p) => setF((x) => ({ ...x, ...p })), [])
+  const clearAll = useCallback(() => setF({ ...EMPTY_FILTERS }), [])
+  const [sort, setSort] = useState(DEFAULT_SORT)
+  const [selKey, setSelKey] = useState(null)      // açık ayrıntı paneli: kullanıcı adı (küçük harf)
+  // Eylemi süren satırlar — KÜME (2026-09-28c ek-10): tek anahtar iki satırda eşzamanlı işlemde önce bitenin göstergesini
+  // diğerininkiyle birlikte siliyordu. Her işlem yalnız KENDİ anahtarını ekler/çıkarır.
+  const [busyKeys, setBusyKeys] = useState(() => new Set())
+
+  // "Şimdi" payload başına sabit: kovalar (24 sa / 7 gün …) iki çizim arasında kaymasın.
+  const now = useMemo(() => (data ? Date.now() : 0), [data])
   const all = useMemo(() => mergeDirectory(data?.login_status || [], data?.active_users || []), [data])
-  const rows = useMemo(() => all.filter((r) => directoryMatches(r, f)), [all, f])
-  // Pencere içi liste → modal ön ayarı (10 / [10,25,50]; compact çubuk ön ayardan gelir)
-  const pager = usePagination(rows, { listKey: 'uact-directory', preset: 'modal', resetDeps: [f] })
-  const activeSet = useMemo(() => new Set(all.filter((r) => r.online).map((r) => String(r.username).toLowerCase())), [all])
-  const rel = (iso) => { const r = relTime(iso); return r ? t(`uact.rel.${r.unit}`, r.n) : '—' }
+  const stats = useMemo(() => directoryStats(all, now), [all, now])
+  const options = useMemo(() => facetOptions(all, now), [all, now])
+  const labels = useFacetLabels(options)
+  const rows = useMemo(() => sortDirectory(all.filter((r) => directoryMatches(r, f, now)), sort), [all, f, sort, now])
+  // Pencere içi liste → modal ön ayarı (10 / [10,25,50]); süzgeç ya da sıralama değişince başa döner, yenilemede DEĞİL.
+  const pager = usePagination(rows, { listKey: 'uact-directory', preset: 'modal', resetDeps: [f, sort] })
+  const selected = selKey ? (all.find((r) => userKey(r) === selKey) || null) : null
+  // identityMasked: giriş IP'leri bu görüntüleyiciye gelmedi (sunucu bayrağı, 2026-09-28c) → ayrıntıda "Gizli"
+  const ctx = { isAdmin, globalAdmin, username, identityMasked: data?.identity_masked === true }
 
-  const stats = useMemo(() => ({
-    total: all.length, online: all.filter((r) => r.online).length,
-    ldap: all.filter((r) => r.auth_source === 'LDAP').length, local: all.filter((r) => r.auth_source !== 'LDAP').length,
-    tour: all.filter((r) => r.tour_status === 'completed').length, inactive: all.filter((r) => r.active === false).length,
-    locked: all.filter((r) => r.permanent_lock).length,
-  }), [all])
-  const opt = (arr) => [{ value: '', label: t('uact.filterAny') }, ...arr]
-  const teamOptions = useMemo(() => {
-    const m = new Map()
-    for (const r of all) if (r.team_id != null && r.team_name) m.set(String(r.team_id), r.team_name)
-    return opt([...m.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([value, label]) => ({ value, label })))
-  }, [all]) // eslint-disable-line react-hooks/exhaustive-deps
-  const roleOptions = useMemo(() => opt([...new Set(all.map((r) => r.system_role).filter(Boolean))].sort().map((r) => ({ value: r, label: r }))), [all]) // eslint-disable-line react-hooks/exhaustive-deps
-  const tourOptions = opt(TOUR_STATES.map((s) => ({ value: s, label: t(`uact.tour.${s}`) })))
-  const providerOptions = opt([{ value: 'LDAP', label: 'LDAP' }, { value: 'LOCAL', label: t('usr.authLocal') }])
-  const accountOptions = [{ value: '', label: t('uact.colStatus') }, { value: 'active', label: t('usr.active') }, { value: 'inactive', label: t('usr.inactive') }, { value: 'locked', label: t('usr.permLocked') }]   // başlıkta 'Durum' okunur
-
-  async function run(row, label, fn) {
-    setBusy(row.username)
+  const openDetail = (r) => setSelKey(userKey(r))
+  async function run(row, doneLabel, failLabel, fn) {
+    const key = userKey(row)
+    setBusyKeys((cur) => new Set(cur).add(key))
     try {
       const r = await fn()
-      if (r?.success === false) toast.error(r?.error || t('uact.loadError')); else { toast.success(label); onRefresh?.() }
-    } catch (e) { toast.error(e?.message || t('uact.loadError')) } finally { setBusy(null) }
+      if (r?.success === false) toast.error(r?.error || failLabel)
+      else { toast.success(doneLabel); onRefresh?.() }
+    } catch (e) { toast.error(e?.message || failLabel) } finally {
+      setBusyKeys((cur) => { const next = new Set(cur); next.delete(key); return next })
+    }
   }
-  const menu = (r) => {
-    const self = username && String(r.username).toLowerCase() === String(username).toLowerCase()
+  const tourReset = (r) => run(r, t('usr.tourResetDone'), t('usr.tourResetFailed'), () => api.admin.resetUserTour(r.user_id))
+  const unlock = (r) => run(r, t('uact.unlocked'), t('udir.unlockFailed'), () => api.admin.unlockUser(r.user_id))
+  async function copy(kind, r) {
+    const ok = await copyText(kind === 'email' ? r.email : r.username)
+    if (ok) toast.success(kind === 'email' ? t('udir.copiedEmail') : t('uact.copiedUser'))
+    else toast.error(t('udir.copyFailed'))
+  }
+  const mail = (r) => { try { window.open(`mailto:${r.email}`, '_self') } catch { /* jsdom */ } }
+  const openAdmin = (r) => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: r.username }) }
+  // Başka pencere açan eylemler ayrıntı panelini ÖNCE kapatır: panel pencerenin üstünde, yeni pencere (panelin
+  // çizdiği giriş geçmişi / gerekçeli sonlandırma) dizin katmanında açılır — aksi hâlde panelin altında kalırdı.
+  const history = (r) => { setSelKey(null); onUser?.(r) }
+  const terminate = (r) => { setSelKey(null); onTerminate?.(r.username) }
+
+  const menuFor = (r) => {
+    const a = rowActions(r, ctx)
     return [
-      { label: t('uact.openDetail'), icon: <Eye size={14} />, onClick: () => onUser?.(r) },
-      { label: t('uact.actOpenAdmin'), icon: <ExternalLink size={14} />, hidden: !isAdmin, onClick: () => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: r.username }) } },
-      { label: t('uact.actMail'), icon: <Mail size={14} />, hidden: !r.email, onClick: () => { try { window.open(`mailto:${r.email}`, '_self') } catch { /* jsdom */ } } },
-      { label: t('uact.actCopyUser'), icon: <Copy size={14} />, onClick: () => { try { navigator.clipboard.writeText(r.username); toast.success(t('uact.copiedUser')) } catch { toast.error(t('uact.copyFailed')) } } },
-      { label: t('uact.terminate'), icon: <LogOut size={14} />, danger: true, hidden: !(isAdmin && r.online && !self), onClick: () => onTerminate?.(r.username) },
-      { label: t('usr.tourReset'), icon: <Compass size={14} />, hidden: !(isAdmin && r.user_id != null && (r.tour_status || 'none') !== 'none'), onClick: () => run(r, t('usr.tourResetDone'), () => api.admin.resetUserTour(r.user_id)) },
-      { label: t('uact.actUnlock'), icon: <Unlock size={14} />, hidden: !(globalAdmin && r.permanent_lock && r.user_id != null), onClick: () => run(r, t('uact.unlocked'), () => api.admin.unlockUser(r.user_id)) },
+      { label: t('udir.actDetails'), icon: <PanelRight size={14} />, onClick: () => openDetail(r) },
+      { label: t('udir.actHistory'), icon: <History size={14} />, onClick: () => history(r) },
+      { label: t('uact.actOpenAdmin'), icon: <ExternalLink size={14} />, hidden: !a.openAdmin, onClick: () => openAdmin(r) },
+      { label: t('uact.actMail'), icon: <Mail size={14} />, hidden: !a.mail, onClick: () => mail(r) },
+      { label: t('udir.actCopyEmail'), icon: <Copy size={14} />, hidden: !a.mail, onClick: () => copy('email', r) },
+      { label: t('uact.actCopyUser'), icon: <AtSign size={14} />, onClick: () => copy('user', r) },
+      { label: t('usr.tourReset'), icon: <Compass size={14} />, hidden: !a.tourReset, onClick: () => tourReset(r) },
+      { label: t('uact.actUnlock'), icon: <Unlock size={14} />, hidden: !a.unlock, onClick: () => unlock(r) },
+      { label: t('udir.actTerminate'), icon: <LogOut size={14} />, danger: true, hidden: !a.terminate, onClick: () => terminate(r) },
     ]
   }
-  const chip = (key, val, label, tone) => (
-    <StatChip key={key} val={val} label={label} tone={tone}
-      on={f.view === key || f.tour === key || f.account === key || f.provider === key}
-      onClick={() => {
-        if (key === 'online' || key === 'all') setF({ view: key })
-        else if (key === 'completed') setF({ tour: f.tour === 'completed' ? '' : 'completed' })
-        else if (key === 'LDAP' || key === 'LOCAL') setF({ provider: f.provider === key ? '' : key })
-        else if (key === 'inactive' || key === 'locked') setF({ account: f.account === key ? '' : key })
-      }} />
+
+  const title = isTourPreset(f) ? t('uact.tourKpi') : t('uact.dirTitle')
+  // Yenile: ipucu `title` ile (Tooltip değil — pencere açılışında odak ilk düğmeye düşer, odakta açılan balon başlığı örterdi).
+  const refreshBtn = onRefresh && (
+    <div className="ml-auto flex shrink-0 items-center">
+      <Button type="button" variant="ghost" size="icon-sm" className="-my-1 text-muted-foreground pointer-coarse:size-10"
+        onClick={onRefresh} disabled={refreshing} aria-busy={refreshing || undefined} aria-label={t('uact.refresh')} title={t('uact.refresh')}>
+        <RefreshCw aria-hidden="true" className={cn(refreshing && 'animate-spin motion-reduce:animate-none')} />
+      </Button>
+    </div>
   )
-  /** Satırdaki hesap rozeti = o duruma süzen düğme (toggle). */
-  const accountBtn = (key, tone, label) => (
-    <Button type="button" variant="outline" size="xs" aria-pressed={f.account === key} title={t('uact.dirFilterBy')}
-      onClick={() => setF({ account: f.account === key ? '' : key })}
-      className={cn('h-auto rounded-md px-[7px] py-0.5 text-[11px] font-semibold', TONE_CLASS[tone], 'hover:border-current aria-pressed:border-current')}>
-      {label}
-    </Button>
-  )
-  const title = f.tour === 'completed' && f.view === 'all' ? t('uact.tourKpi') : t('uact.dirTitle')
+  const touch = 'h-10 sm:pointer-fine:h-9'
 
   return (
-    <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Users} size="xl" scrollBody
-      footer={<>
-        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName('users'), directoryCsv(rows, t))}><Download size={14} /> {t('uact.exportDirectory')}</Button>
-        <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
-      </>}>
-      <div className="mb-2.5 flex flex-wrap gap-1.5" data-testid="udir-stats">
-        {chip('all', stats.total, t('uact.dirAll'))}
-        {chip('online', stats.online, t('uact.dirOnline'), 'ok')}
-        {chip('LDAP', stats.ldap, 'LDAP')}
-        {chip('LOCAL', stats.local, t('usr.authLocal'))}
-        {chip('completed', stats.tour, t('uact.tourKpi'))}
-        {chip('inactive', stats.inactive, t('usr.inactive'), stats.inactive > 0 ? 'warn' : undefined)}
-        {chip('locked', stats.locked, t('usr.permLocked'), stats.locked > 0 ? 'danger' : undefined)}
-      </div>
-      <Card data-testid="udir-filters" className="mb-2.5 flex-row flex-wrap items-end gap-2.5 px-3 py-2.5 shadow-none">
-        <SegmentedControl ariaLabel={t('uact.dirView')} value={f.view} onChange={(v) => setF({ view: v })}
-          options={[{ value: 'all', label: t('uact.dirAll') }, { value: 'online', label: t('uact.dirOnline') }, { value: 'offline', label: t('uact.dirOffline') }]} />
-        <FilterField label={t('uact.dirSearch')} className="flex-[1_1_200px]">
-          <ToolbarSearch value={f.q} onChange={(v) => setF({ q: v })} placeholder={t('uact.dirSearchPh')} ariaLabel={t('uact.dirSearch')} clearLabel={t('app.clear')} className="max-w-none flex-auto" />
-        </FilterField>
-        <FilterField label={t('uact.colTeam')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colTeam')} value={f.team} onChange={(v) => setF({ team: v })} options={teamOptions} searchThreshold={6} /></FilterField>
-        <FilterField label={t('uact.colRole')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colRole')} value={f.role} onChange={(v) => setF({ role: v })} options={roleOptions} searchThreshold={99} /></FilterField>
-        <FilterField label={t('uact.colAuthSource')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colAuthSource')} value={f.provider} onChange={(v) => setF({ provider: v })} options={providerOptions} searchThreshold={99} /></FilterField>
-        <FilterField label={t('uact.colTour')} className="w-full sm:w-auto sm:min-w-[140px]"><SearchableSelect ariaLabel={t('uact.colTour')} value={f.tour} onChange={(v) => setF({ tour: v })} options={tourOptions} searchThreshold={99} /></FilterField>
-        {(f.q || f.team || f.role || f.provider || f.tour || f.account || f.view !== 'all') && <Button type="button" variant="secondary" size="sm" onClick={() => setFRaw({ view: 'all', tour: '', team: '', role: '', provider: '', account: '', q: '' })}>{t('uact.filterClear')}</Button>}
-      </Card>
-      {rows.length === 0 ? <StatusBlock tone="neutral" icon={Users} title={t('uact.noRows')} /> : (
-        // Sabit yerleşim (yatay kaydırma yok): sütun genişlikleri başlık hücrelerinde (eski colgroup `.udir-c-*`)
-        <DataTable testId="udir-table" fixed>
-          <TableHeader><TableRow>
-            <TableHead className={cn(TH, 'w-[26%]')}>{t('uact.colUser')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-[10%] md:table-cell')}>{t('uact.colRole')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-[14%] md:table-cell')}>{t('uact.colTeam')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-[8%] lg:table-cell')}>{t('uact.colSource')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-[17%] md:table-cell')}>{t('uact.colActivity')}</TableHead>
-            <TableHead className={cn(TH, 'hidden w-[9%] lg:table-cell')}>{t('uact.colCreated')}</TableHead>
-            <TableHead data-testid="udir-th-filter" className={cn(TH, 'w-[12%] py-1 font-medium tracking-normal normal-case')}>
-              {/* Hesap süzgeci sütun üstünde (2026-09-20 kullanıcı bildirimi): panelden kaldırıldı */}
-              <SearchableSelect ariaLabel={t('uact.colAccount')} value={f.account} onChange={(v) => setF({ account: v })} options={accountOptions} searchThreshold={99} placeholder={t('uact.colStatus')} />
-            </TableHead>
-            <TableHead className={cn(TH, 'w-12 md:w-[4%]')}>{t('uact.colAction')}</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>{pager.pageItems.map((r) => {
-            const st = loginStatus(r, activeSet)
-            const self = username && String(r.username).toLowerCase() === String(username).toLowerCase()
-            const extra = (r.team_ids || []).filter((id) => String(id) !== String(r.team_id ?? ''))
-            const dept = r.display_name && /\([^)]*\)\s*$/.test(r.display_name) ? r.display_name.match(/\(([^)]*)\)\s*$/)[1] : (r.department || null)
-            const cell = cn(TD, 'overflow-hidden align-top')
-            const meta = 'mt-0.5 block truncate text-[11px] text-muted-foreground'
-            return (
-              <TableRow key={r.username} data-online={r.online ? 'true' : undefined} data-self={self ? 'true' : undefined}
-                className={cn(r.online && 'bg-green-500/5')}>
-                <TableCell data-label={t('uact.colUser')} className={cn(cell, 'relative pl-[22px]')}>
-                  {/* 2026-09-20 (kullanıcı bildirimi "karışık"): tek düzen — nokta + avatar + ad; altında kullanıcı adı · departman; altında e-posta */}
-                  <span className={cn('absolute top-3.5 left-2.5 size-2 rounded-full', r.online ? 'bg-green-500 shadow-[0_0_0_3px_rgba(34,197,94,.18)]' : 'bg-border')}
-                    title={r.online ? t('uact.dirOnline') : t('uact.dirOffline')} aria-hidden="true" />
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <LinkButton data-part="name" className="ml-0 max-w-full min-w-0 justify-start text-left no-underline" title={r.display_name || r.username} onClick={() => onUser?.(r)}><UserBadge username={r.username} userId={r.user_id} displayName={r.display_name} nameOnly inline /></LinkButton>
-                    {self && <Pill>{t('uact.selfSession')}</Pill>}
-                  </div>
-                  <div data-part="meta" className={cn(meta, 'pl-[33px]')} title={r.display_name || ''}><span className="font-mono">{r.username}</span>{dept && <> · {dept}</>}</div>
-                  <div data-part="email" className={cn(meta, 'pl-[33px] font-mono')} title={r.email || ''}>{r.email || '—'}</div>
-                </TableCell>
-                <TableCell data-label={t('uact.colRole')} className={cn(cell, 'hidden md:table-cell')}>{r.system_role ? <SystemRoleBadge role={r.system_role} /> : '—'}{r.org_role && <div className={meta}>{t('usr.orgRoleVal.' + r.org_role)}</div>}</TableCell>
-                <TableCell data-label={t('uact.colTeam')} className={cn(cell, 'hidden md:table-cell')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="text-muted-foreground">—</span>}{extra.length > 0 && <div className={cn(meta, 'inline-flex flex-wrap gap-1')} title={t('uact.dirExtraTeams', extra.length)}>{extra.slice(0, 2).map((id) => <TeamBadge key={id} teamId={id} size={11} />)}{extra.length > 2 ? ` +${extra.length - 2}` : ''}</div>}</TableCell>
-                <TableCell data-label={t('uact.colAuthSource')} className={cn(cell, 'hidden lg:table-cell')}><AuthSourceBadge source={r.auth_source} localLabel={t('usr.authLocal')} /></TableCell>
-                <TableCell data-label={t('uact.colActivity')} className={cn(cell, 'hidden pt-2 text-xs md:table-cell')}>
-                  <div className="flex items-baseline gap-1.5 truncate whitespace-nowrap"><span className="min-w-[62px] flex-none text-[10.5px] text-muted-foreground">{t('uact.detailLastSeen')}</span>{r.online ? <Pill tone="active" status="active">{t('uact.st.active')}{r.idle_sec > 0 ? ` · ${rel(r.last_seen)}` : ''}</Pill> : (r.last_seen ? <span title={formatDateSec(r.last_seen)}>{rel(r.last_seen)}</span> : '—')}</div>
-                  <div className="mt-[3px] flex items-baseline gap-1.5 truncate whitespace-nowrap"><span className="min-w-[62px] flex-none text-[10.5px] text-muted-foreground">{t('uact.colLastLogin')}</span>{r.last_login_at ? <span title={formatDateSec(r.last_login_at)}>{rel(r.last_login_at)}{r.last_login_method ? <span className="text-muted-foreground"> · {r.last_login_method}</span> : null}</span> : <Pill tone={st} status={st}>{t(`uact.st.${st}`)}</Pill>}</div>
-                </TableCell>
-                <TableCell data-label={t('uact.colCreated')} className={cn(cell, 'hidden text-xs lg:table-cell')}>{r.created_at ? <span title={formatDateSec(r.created_at)}>{formatDateOnly(r.created_at)}</span> : '—'}</TableCell>
-                <TableCell data-label={t('uact.colStatus')} className={cell}>
-                  <div className="flex flex-wrap gap-1">
-                    {r.active === false && accountBtn('inactive', 'danger', t('usr.inactive'))}
-                    {r.permanent_lock && accountBtn('locked', 'danger', t('usr.permLocked'))}
-                    {r.active !== false && !r.permanent_lock && accountBtn('active', 'success', t('usr.active'))}
-                    <Pill tone={r.tour_status || 'none'} status={`tour-${r.tour_status || 'none'}`} title={`${t('uact.colTour')}${r.tour_at ? ' · ' + formatDateSec(r.tour_at) : ''}`}>{t('uact.colTour')}: {t(`uact.tour.${r.tour_status || 'none'}`)}</Pill>
-                  </div>
-                </TableCell>
-                <TableCell data-label={t('uact.colAction')} className={cell}>{busy === r.username ? <span className={MUTED_SM}>…</span> : <KebabMenu items={menu(r)} label={t('uact.colAction')} rowLabel={r.username} />}</TableCell>
-              </TableRow>
-            )
-          })}</TableBody>
-        </DataTable>
+    <ModalShell open onClose={onClose} icon={Users} size="xl" scrollBody headerExtra={refreshBtn}
+      title={<span data-slot="udir-title" className="min-w-0 truncate">{`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`}</span>}
+      // SABİT BOYUT (CertificateModal / MonitorDetailModal deseni): süzgeç değişince pencere küçülüp zıplamasın —
+      // yükseklik sabit, başlık + altlık sabit, YALNIZ gövde kayar; kaydırma çubuğuna yer ayrılır (genişlik oynamaz).
+      // Telefonda neredeyse tam ekran (0,5 rem kenar), iç boşluk 16 px.
+      className={cn('max-w-[calc(100%-1rem)] gap-3 p-4 sm:gap-4 sm:p-6',
+        'h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] sm:h-[min(88vh,calc(100dvh-2rem))] sm:max-h-[min(88vh,calc(100dvh-2rem))] sm:w-full',
+        '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]')}
+      // Altlık telefonda da TEK satır (iki tam genişlik düğme alt alta listeye ~50 px daha az yer bırakıyordu).
+      footer={<div className="flex w-full gap-2 sm:w-auto">
+        <Button type="button" variant="secondary" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} disabled={!rows.length}
+          onClick={() => downloadCsv(stampedName('users'), directoryCsv(rows, t))}>
+          <Download size={14} aria-hidden="true" /> <span className="truncate">{t('uact.exportDirectory')}</span>
+        </Button>
+        <Button type="button" className={cn(touch, 'min-w-0 flex-1 sm:flex-none')} onClick={onClose}>{t('app.dismiss')}</Button>
+      </div>}>
+      {!data ? <LoadingBlock label={t('app.loading')} /> : (
+        <div className="flex min-w-0 flex-col gap-3">
+          <DirectoryStats stats={stats} f={f} onPatch={patch} onClearAll={clearAll} />
+
+          <div data-slot="udir-filterbar" className="sticky top-0 z-20 -mx-1 flex flex-col gap-2 border-b bg-background px-1 pt-1 pb-2.5">
+            <DirectoryToolbar f={f} onPatch={patch} onClearAll={clearAll} options={options} labels={labels}
+              compact={!wide} phone={phone} sort={sort} onSort={setSort} shown={{ count: rows.length, total: all.length }} />
+            <ActiveFilterChips f={f} labels={labels} onPatch={patch} onClearAll={clearAll} />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+            <span className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:flex-wrap sm:gap-x-3">
+              <span aria-live="polite" data-slot="udir-count" className="font-medium text-foreground tabular-nums">{t('udir.resultCount', rows.length, all.length)}</span>
+              {data.generated_at && <span className="truncate tabular-nums">{t('uact.dataAsOf', formatDateSec(data.generated_at))}</span>}
+            </span>
+            {!wide && rows.length > 1 && <SortSelect sort={sort} onSort={setSort} className="max-w-[11rem] sm:max-w-none" />}
+          </div>
+
+          {all.length === 0 ? (
+            <StatusBlock tone="neutral" icon={Users} title={t('udir.emptyTitle')} />
+          ) : rows.length === 0 ? (
+            <StatusBlock tone="neutral" icon={SearchX} title={t('udir.noMatchTitle')} description={t('udir.noMatchDesc')}
+              actions={<Button type="button" variant="secondary" className={touch} onClick={clearAll}>{t('uact.filterClear')}</Button>} />
+          ) : (
+            <DirectoryList wide={wide} rows={pager.pageItems} sort={sort} onSort={setSort} selectedKey={selKey} onOpen={openDetail}
+              menuFor={menuFor} busyKeys={busyKeys} username={username} />
+          )}
+          <PaginationBar {...pager} />
+        </div>
       )}
-      <PaginationBar {...pager} />
+
+      <UserDirectoryDetail open={!!selKey} row={selected} phone={phone} ctx={ctx} busy={!!selKey && busyKeys.has(selKey)}
+        onClose={() => setSelKey(null)} onCopy={copy} onHistory={history} onOpenAdmin={openAdmin} onTerminate={terminate}
+        onTourReset={tourReset} onUnlock={unlock} />
     </ModalShell>
   )
 }

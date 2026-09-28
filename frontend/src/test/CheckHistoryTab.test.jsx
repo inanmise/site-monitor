@@ -78,11 +78,24 @@ describe('CheckHistoryTab', () => {
     expect(tiles[0].textContent).toContain('120')
     expect(tiles[1]).toHaveAttribute('aria-pressed', 'false')
     expect(tiles[1].textContent).toContain('7')
-    expect(tiles[2].tagName).not.toBe('BUTTON')                  // erişilebilirlik süzgeç değil
+    expect(tiles[2]).not.toHaveAttribute('aria-pressed')         // erişilebilirlik süzgeç değil (basılı/basılmamış hâli yok)
     expect(tiles[2].textContent).toContain('94.17%')              // (120 − 7) / 120
     expect(tiles[3].textContent).toContain('0')                   // aralıkta kesinti alarmı yok
     // Sol renk şeridi yok (kullanıcı kuralı): kutucuk tam çerçeveli
     for (const tile of tiles) { expect(tile).toHaveClass('border'); expect(tile.className).not.toMatch(/border-l-/) }
+  })
+
+  /* E4 (2026-09-28e): salt gösterim kutucuğun açıklaması DOKUN-GÖR — eskiden odaklanamayan div + yalnız-hover ipucuydu. */
+  it('salt gösterim kutucuğu: açıklama klavye/dokunuşla açılır (HintPopover), süzgeç kutucukları aria-pressed kalır', async () => {
+    renderTab()
+    await screen.findByText('2026-08-07T10:00:00')
+    const tiles = [...document.querySelectorAll('[data-slot="hist-tile"]')]
+    expect(tiles[0]).toHaveAttribute('aria-pressed', 'true')
+    expect(tiles[2].tagName).toBe('BUTTON')                       // odaklanabilir tetik
+    expect(tiles[2]).toHaveAttribute('aria-haspopup', 'dialog')
+    fireEvent.click(tiles[2])
+    expect((await screen.findByRole('tooltip')).textContent).toMatch(/Share of successful checks|başarılı kontrollerin/)
+    expect(api.monitoring.getCheckHistory.mock.calls.every((c) => c[2].status === undefined)).toBe(true)   // süzgeç değişmedi
   })
 
   it('alarm işaret satırları: pencere kuralına göre doğru kontrolün üstünde görünür', async () => {
@@ -193,6 +206,32 @@ describe('CheckHistoryTab', () => {
     }))
     renderTab({ defaultPreset: 30 })
     await screen.findByText(/gösteriliyor|starting from/i)
+  })
+
+  /*
+   * E1 (2026-09-28e): kontrollü aralıkta (Uptime detayı: pencere her açılışta "bugün 00:00 → şimdi") istenen uç ÜSTÜN
+   * aralığıdır — iç ön ayar (şimdi − N gün) değil. Eskiden ön ayar 7 olan SSL sütununda HER açılışta, ön ayar 1 olan HTTP
+   * sütununda 22:00'ye dek sahte "saklama nedeniyle kırpıldı" bandı çıkıyordu. Uçlar "şimdi"den türer (sabit tarih yok).
+   */
+  it('kontrollü aralık: sunucu istenen ucu aynen döndürdüyse kırpma bandı YOK (iç ön ayar ne olursa olsun)', async () => {
+    const from = new Date(Date.now() - 6 * 3600000)
+    const to = new Date()
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope({
+      range: { from: from.toISOString().slice(0, 19), to: to.toISOString().slice(0, 19) },
+    }))
+    renderTab({ range: { from, to }, onRangeChange: () => {}, defaultPreset: 7, presets: [1, 7, 30, 90] })
+    await screen.findByText('2026-08-07T10:00:00')
+    expect(api.monitoring.getCheckHistory.mock.calls.at(-1)[2]).toMatchObject({ from: from.toISOString().slice(0, 19) })
+    expect(screen.queryByText(/gösteriliyor|starting from/i)).toBeNull()
+  })
+
+  it('kontrollü aralık: sunucu başlangıcı saklama sınırına kırptıysa bant VAR (kırpılan uç yazılır)', async () => {
+    const from = new Date(Date.now() - 20 * 86400000)
+    const to = new Date()
+    const clamped = new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 19)
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope({ range: { from: clamped, to: to.toISOString().slice(0, 19) } }))
+    renderTab({ range: { from, to }, onRangeChange: () => {}, defaultPreset: 30, presets: [1, 7, 30, 90] })
+    expect(await screen.findByText(/gösteriliyor|starting from/i)).toHaveTextContent(clamped)
   })
 
   it('CSV bağlantısı seçili filtre paramlarını taşır', async () => {

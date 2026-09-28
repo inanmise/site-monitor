@@ -6,9 +6,10 @@
  * paylaşsın diye.
  *
  * <p><b>Veri.</b> `/api/warnings` = `warning=true` (kalan gün ≤ genel uyarı eşiği) VEYA `status=error` olan aktif
- * envanter satırları, ham `CertificateDto` — takım/tier/alert_level/platform TAŞIMAZ (sunucu `getWarnings()`
+ * envanter satırları, `CertificateDto` — takım/tier/alert_level/platform TAŞIMAZ (sunucu `getWarnings()` bunlarla
  * zenginleştirmiyor). Bu alanlar Pano listesinden (`/api/certificates`, aynı takım kapsamı) alan adıyla doldurulur;
- * uyarı satırının kendi değeri varsa o kazanır.
+ * uyarı satırının kendi değeri varsa o kazanır. 7/24 alanları (`noc_notify`, `noc_group_ids` — 2026-09-28) satırın
+ * KENDİSİNDE gelir (sunucu aktif süzgecin aynı envanter okumasından yazar) → zenginleştirme listesinde YOK.
  *
  * <p><b>Gruplar</b> (bir satır TEK gruba düşer; öncelik sırası = görüntü sırası):
  *  - `now`    — dolmuş, ≤ 7 gün, erişilemeyen, iptal edilmiş, güvenilmeyen CA / ad uyuşmazlığı (tarayıcı reddediyor)

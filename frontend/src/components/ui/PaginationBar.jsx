@@ -20,6 +20,9 @@ import { cn } from '@/lib/utils'
  * - sm altı (telefon): 1. satır ortalı `‹ 3 / 12 ›` (+ Git); «», numaralar gizli; dokunma hedefleri
  *   40 px (`max-sm:size-10`, compact dâhil). 2. satır: kayıt aralığı + boyut Select.
  * - compact (modal ön ayarı): numara yok, her genişlikte `‹ x / y ›`.
+ * - DOKUNMATİK (2026-09-28): 40 px kuralı ekran genişliğine değil GİRİŞ TÜRÜNE bağlı — `pointer-coarse:` ile HER
+ *   genişlikte (768 px tablette compact oklar 24 px, normal kipte « ‹ › » 32 px ve Git kutusu 28/32 px kalıyordu).
+ *   Fare görünümü (sm ve üstü) değişmez: compact `icon-xs`, normal `icon-sm`.
  *
  * Kurallar:
  * - totalItems === 0 → hiç render edilmez.
@@ -99,8 +102,8 @@ export default function PaginationBar({
     setGotoVal('')
   }
 
-  // Telefonda (sm altı) her gezinme düğmesi 40 px dokunma hedefi — compact dâhil.
-  const touch = 'max-sm:size-10'
+  // Her gezinme düğmesi telefonda (sm altı) VE dokunmatikte (her genişlik — tablet) 40 px dokunma hedefi, compact dâhil.
+  const touch = 'max-sm:size-10 pointer-coarse:size-10'
   const edgeBtn = (label, disabled, target, Icon, edge) => (
     <PaginationItem className={edge ? 'max-sm:hidden' : undefined}>
       <Button type="button" variant="ghost" size={compact ? 'icon-xs' : 'icon-sm'} disabled={disabled} aria-label={label}
@@ -145,7 +148,7 @@ export default function PaginationBar({
     <form onSubmit={submitGoto}>
       <Input type="number" min="1" max={totalPages} value={gotoVal} placeholder={t('pg.gotoLabel')}
         aria-label={t('pg.goto')} onChange={e => setGotoVal(e.target.value)}
-        className={cn('w-16 px-2 max-sm:h-10', compact ? 'h-7' : 'h-8')} />
+        className={cn('w-16 px-2 max-sm:h-10', compact ? 'h-7' : 'h-8', 'pointer-coarse:h-10')} />
     </form>
   )
 

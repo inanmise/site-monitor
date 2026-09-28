@@ -189,6 +189,11 @@ public class WeeklyOutageReportService {
      * <p>findFiltered'ın createdAt aralığı ile resolvedAt aralığı VE'lendiği için "pencereyle
      * kesişen" koşulu tek sorguda yazılamıyor; yeni bir JPQL eklemek yerine mevcut, kapsamı
      * (IDOR) zaten doğrulanmış sorgu üç kez farklı parametrelerle çağrılıyor.
+     *
+     * <p>Aynı küme Alarm Geçmişi'nde "aralıkta aktif olanlar" kipiyle ({@code range=active}, findFiltered'ın
+     * {@code activeFrom} yüklemi) tek sorguda listelenir; haftalık e-postanın alarm bağlantısı o kipi açar. İki yol
+     * AYRIŞMASIN: {@code AlertActiveRangeQueryTest.activeModeMatchesWeeklyReportUnion} bu üç çağrıyı birebir kopyalayıp
+     * kipin aynı kümeyi verdiğini sınar — buradaki koşulu değiştirirsen oradaki kopyayı ve yüklemi birlikte güncelle.
      */
     private List<AlertEvent> loadWeekAlarms(Long teamId, Window w) {
         Map<Long, AlertEvent> byId = new LinkedHashMap<>();

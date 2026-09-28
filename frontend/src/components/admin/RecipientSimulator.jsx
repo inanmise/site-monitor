@@ -19,7 +19,7 @@ const DEBOUNCE_MS = 200
  * "Kim bilgilendirilir?" — Yönetim Paneli › Bildirim & Alarmlar altında AYRI sekme (2026-09-27; önceden Eskalasyon
  * Kişileri sayfasının içinde katlanır bir karttı). Takım + alarm seviyesi + alarm türü (+ bildirim grubu) seçilir,
  * alarm gitmeden alıcı zinciri görünür: e-posta (bildirim grubu → takım varsayılan grubu → takım adresi), eskalasyon
- * kişileri (seviye eşiği + takımsız/global düşüşü), kişi webhook'ları, kişi bazlı push kararları (alır / almaz + neden)
+ * kişileri (seviye eşiği; YALNIZ takımın kendi kişileri — yoksa "tanımlı değil", 2026-09-28), kişi webhook'ları, kişi bazlı push kararları (alır / almaz + neden)
  * ve 7/24 ekibi notu. Push satırlarını kimin göreceğini SUNUCU söyler (`push_access`, 2026-09-28): global yönetici her
  * takım, takımı yöneten tüm üyeler, üye yalnız kendini; göremeyen neden göremediğini okur.
  * Kararları sunucu verir — gerçek gönderimle AYNI kod yolu ({@code EscalationService.simulateRecipients}).
@@ -38,11 +38,15 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
   const [level, setLevel] = useState(() => normLevel(readUrlParam('g_level', DEFAULT_LEVEL)))
   const [kind, setKind] = useState(() => normKind(readUrlParam('g_kind', DEFAULT_KIND)))
   const [groupId, setGroupId] = useState(() => normId(readUrlParam('g_group', '')))
+  // Envanterin UG takımı (2026-09-28, "her sahip takım kendi kişisi") — yalnız sertifika senaryosunda anlamlı.
+  const [ugTeamId, setUgTeamId] = useState(() => normId(readUrlParam('g_ug', '')))
+  const effectiveUg = kind === 'MONITOR' || ugTeamId === teamId ? '' : ugTeamId
   useUrlQuerySync({
     g_team: teamId || null,
     g_level: level === DEFAULT_LEVEL ? null : level,
     g_kind: kind === DEFAULT_KIND ? null : kind,
     g_group: groupId || null,
+    g_ug: effectiveUg || null,
   })
 
   // Takımlar AdminPanel'de geç gelir: tek takımlı kullanıcının takımı yüklendiğinde seçilir (kullanıcı seçimini ezmez).
@@ -57,7 +61,8 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
       setTeamId('')
       setGroupId('')
     }
-  }, [teams, teamId])
+    if (ugTeamId && teams.length > 0 && !teams.some((tm) => String(tm.id) === ugTeamId)) setUgTeamId('')
+  }, [teams, teamId, ugTeamId])
 
   // Takımın bildirim grupları (isteğe bağlı "izlemenin grubu" seçimi).
   const [groupsState, setGroupsState] = useState({ teamId: '', list: [] })
@@ -87,7 +92,8 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
     let alive = true
     setResult((r) => ({ ...r, error: null, loading: true }))
     const timer = setTimeout(() => {
-      Promise.resolve(api.admin.simulateRecipients({ teamId: Number(teamId), level, kind, groupId: groupId ? Number(groupId) : null }))
+      Promise.resolve(api.admin.simulateRecipients({ teamId: Number(teamId), level, kind, groupId: groupId ? Number(groupId) : null,
+        ugTeamId: effectiveUg ? Number(effectiveUg) : null }))
         .then((res) => {
           if (!alive) return
           if (res?.success) setResult({ data: res.data, error: null, loading: false })
@@ -96,7 +102,7 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
         .catch((e) => { if (alive) setResult({ data: null, error: e?.message || t('sim.error'), loading: false }) })
     }, DEBOUNCE_MS)
     return () => { alive = false; clearTimeout(timer) }
-  }, [teamId, level, kind, groupId, runKey])   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [teamId, level, kind, groupId, effectiveUg, runKey])   // eslint-disable-line react-hooks/exhaustive-deps
 
   function changeTeam(v) {
     const id = normId(v)
@@ -139,6 +145,7 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
       <ScenarioForm teams={teams} teamId={teamId} onTeamChange={changeTeam}
         level={level} onLevelChange={setLevel} kind={kind} onKindChange={setKind}
         groups={groups} groupsLoaded={groupsLoaded} groupId={groupId} onGroupChange={(v) => setGroupId(normId(v))}
+        ugTeamId={effectiveUg} onUgTeamChange={(v) => setUgTeamId(normId(v))}
         onRun={rerun} running={result.loading} />
       {body}
       <HowDecided />

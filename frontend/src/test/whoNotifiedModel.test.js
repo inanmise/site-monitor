@@ -39,17 +39,41 @@ describe('whoNotifiedModel', () => {
     expect(v.excluded).toEqual([])
   })
 
-  it('global fallback marks contact rows; a contact without an address is excluded with NO_EMAIL', () => {
+  it('contact rows are always the team’s own; a contact without an address is excluded with NO_EMAIL', () => {
+    // 2026-09-28: "global" yedek yolu kalktı — eski sunucu bayrağı gelse bile satır "globalContact" olarak işaretlenmez.
     const v = buildView({
       email_total: 1, contacts_fallback_global: true, team_emails: [],
       contacts: [
-        { id: 5, name: 'Global', email: 'g@example.com', role: 'MANAGER', min_level: 'HIGH' },
-        { id: 6, name: 'No Mail', email: '  ', role: 'TECH', min_level: 'WARNING' },
+        { id: 5, name: 'Müdür', email: 'm@example.com', role: 'MANAGER', min_level: 'HIGH', team_id: 7 },
+        { id: 6, name: 'No Mail', email: '  ', role: 'TECH', min_level: 'WARNING', team_id: 7 },
       ],
     })
-    expect(v.emails.map((e) => e.source)).toEqual(['globalContact'])
-    expect(v.fallbackGlobal).toBe(true)
+    expect(v.emails.map((e) => e.source)).toEqual(['contact'])
+    expect(v).not.toHaveProperty('fallbackGlobal')
+    expect(v.teamContacts).toBe('ok')
     expect(v.excluded).toEqual([{ key: 'contact:6', channel: 'email', name: 'No Mail', sub: 'TECH', reason: 'NO_EMAIL' }])
+  })
+
+  it('teamContacts: none set up vs. none at this level vs. ok (server flags team_contacts_missing / _defined)', () => {
+    const base = { email_total: 1, team_emails: [{ email: 'team@example.com', team: 'Takım A', source: 'Takım maili' }], contacts: [] }
+    expect(buildView({ ...base, team_contacts_missing: true, team_contacts_defined: false }).teamContacts).toBe('none')
+    expect(buildView({ ...base, team_contacts_missing: true, team_contacts_defined: true }).teamContacts).toBe('noneAtLevel')
+    expect(buildView({ ...base, team_contacts_missing: false, team_contacts_defined: true }).teamContacts).toBe('ok')
+    expect(buildView(base).teamContacts).toBe('ok')   // bayraksız (eski sunucu) → uyarı yok
+  })
+
+  it('owners: SY + UG each with its own state; without the server list a single SY entry from the flags', () => {
+    const v = buildView({ team_id: 7, team_name: 'Takım A', team_contacts_missing: true, team_contacts_defined: true,
+      owners: [
+        { team_id: 7, role: 'SY', team_name: 'Takım A', contacts_missing: true, contacts_defined: true },
+        { team_id: 9, role: 'UG', team_name: 'Takım B', contacts_missing: true, contacts_defined: false },
+      ] })
+    expect(v.owners).toEqual([
+      { teamId: 7, role: 'SY', teamName: 'Takım A', state: 'noneAtLevel' },
+      { teamId: 9, role: 'UG', teamName: 'Takım B', state: 'none' },
+    ])
+    expect(buildView({ team_id: 7, team_name: 'Takım A', team_contacts_missing: false }).owners)
+      .toEqual([{ teamId: 7, role: 'SY', teamName: 'Takım A', state: 'ok' }])
   })
 
   it('push: RECIPIENT rows are recipients, every other decision is excluded with its reason; camelCase tolerated', () => {

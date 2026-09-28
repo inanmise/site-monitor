@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react'
 import {
   Users, LogIn, XCircle, ShieldAlert, UserCheck, UserX, Download, Link2, RefreshCw, ChevronDown, ChevronRight, Info, Check, BookOpen,
-  Compass,
+  Compass, Lock,
 } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { api, formatDateSec, formatDateOnly } from '../../../api/client'
@@ -22,8 +22,9 @@ import EventListModal from './EventListModal.jsx'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, hasActiveFilter, rowMatches, tabLabel, unusedTabs, idleBand, loginStatus,
   relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, FLAG_KEYS, splitFlags, sortRows,
-  sessionsCsv, loginStatusCsv, anomaliesCsv, usageCsv, teamBars, STATUS_ORDER,
+  sessionsCsv, loginStatusCsv, anomaliesCsv, usageCsv, teamBars, STATUS_ORDER, idHidden,
 } from './uactModel.js'
+import { MaskedValue } from './DirectoryParts.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import SimpleTooltip from '../../ui/SimpleTooltip.jsx'
 import { FilterField } from '../ListToolbar.jsx'
@@ -116,6 +117,9 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
   // ── Türetimler ──
   const ua = useMemo(() => data || {}, [data])
   const sum = ua.summary || {}
+  // Kimlik izi (IP / konum / kuruluş / tarayıcı) bu görüntüleyici için sunucuda düşürüldü mü (2026-09-28c): yalnız global
+  // yönetici + denetçi görür (kişinin kendi satırı hariç). Alan yoksa "Gizli" çizilir — boş / "—" değil.
+  const idMasked = ua.identity_masked === true
   const is7d = filters.range === '7d'
   const activeAll = useMemo(() => ua.active_users || [], [ua])
   const activeSet = useMemo(() => new Set(activeAll.map((u) => String(u.username || '').toLowerCase())), [activeAll])
@@ -264,9 +268,9 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
             <Button type="button" variant="secondary" size="sm"><Download size={13} /> {t('uact.export')}</Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="z-(--z-menu)">
-            <DropdownMenuItem onSelect={() => download('sessions.csv', sessionsCsv(active, t))}>{t('uact.exportSessions')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => download('sessions.csv', sessionsCsv(active, t, { masked: idMasked }))}>{t('uact.exportSessions')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => download('login-status.csv', loginStatusCsv(loginRows, t))}>{t('uact.exportStatus')}</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => download('anomalies.csv', anomaliesCsv(anomalies.recent || [], t))}>{t('uact.exportAnomalies')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => download('anomalies.csv', anomaliesCsv(anomalies.recent || [], t, { masked: idMasked }))}>{t('uact.exportAnomalies')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => download('page-usage.csv', usageCsv(usage.pages || [], t))}>{t('uact.exportUsage')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -367,7 +371,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                     <TableCell className={cn(TD_NUM, 'text-xs', LG)} data-label={t('uact.colExpires')}>{u.expires_in_sec != null ? dur(u.expires_in_sec) : '—'}</TableCell>
                     <TableCell className={cn(TD_NUM, LG)} data-label={t('uact.colDuration')}>{dur((u.duration_min || 0) * 60)}</TableCell>
                     <TableCell className={cn(TD, 'text-xs', MD)} data-label={t('uact.colLastTab')}>{u.last_tab ? <span title={u.last_tab_at ? formatDateSec(u.last_tab_at) : ''}>{tabLabel(u.last_tab, t)}</span> : '—'}</TableCell>
-                    <TableCell className={cn(TD, 'text-xs', LG)} data-label={t('uact.colLocation')}>{u.ip ? <span className="font-mono">{u.ip}</span> : '—'}{u.city || u.country ? <span className="text-muted-foreground"> {[u.city, u.country].filter(Boolean).join(', ')}</span> : null}</TableCell>
+                    <TableCell className={cn(TD, 'text-xs', LG)} data-label={t('uact.colLocation')}>{idHidden(u, 'ip', idMasked) ? <MaskedValue /> : <>{u.ip ? <span className="font-mono">{u.ip}</span> : '—'}{u.city || u.country ? <span className="text-muted-foreground"> {[u.city, u.country].filter(Boolean).join(', ')}</span> : null}</>}</TableCell>
                     <TableCell className={TD} data-label={t('uact.colAction')}>
                       <span className="inline-flex flex-wrap gap-1.5">
                         <Button type="button" variant="secondary" size="sm" onClick={() => setSessionDetail(u)}>{t('uact.openDetail')}</Button>
@@ -485,7 +489,10 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
 
       {/* 08 Kaynaklar (#8) */}
       <SectionCard num="08" title={t('uact.topSourcesTitle')}>
-        {(ua.top_sources || []).length === 0 ? <StatusBlock tone="neutral" icon={Info} title={t('uact.noRows')} /> : (
+        {idMasked && !Array.isArray(ua.top_sources)
+          // IP anahtarlı liste global olmayan görüntüleyiciye hiç gelmez (2026-09-28c) → "kayıt yok" DEĞİL, yetki durumu
+          ? <StatusBlock tone="neutral" icon={Lock} title={t('uact.sourcesMaskedTitle')} description={t('uact.sourcesMaskedDesc')} />
+          : (ua.top_sources || []).length === 0 ? <StatusBlock tone="neutral" icon={Info} title={t('uact.noRows')} /> : (
           <DataTable>
             <TableHeader><TableRow>
               <TableHead className={TH}>{t('uact.colIp')}</TableHead><TableHead className={cn(TH, LG)}>{t('uact.colLocation')}</TableHead>
@@ -540,7 +547,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
                 <TableCell className={cn(TD, 'font-mono text-xs')} data-label={t('uact.colTime')}>{r.time ? formatDateSec(r.time) : '—'}</TableCell>
                 <TableCell className={TD} data-label={t('uact.colUser')}>{r.actor ? <LinkButton onClick={() => setSessionDetail({ username: r.actor })}><UserBadge username={r.actor} userId={r.user_id} displayName={r.display_name} inline nameOnly size="sm" /></LinkButton> : '—'}</TableCell>
                 <TableCell className={cn(TD, MD)} data-label={t('uact.colTeam')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="text-muted-foreground">—</span>}</TableCell>
-                <TableCell className={cn(TD, 'font-mono text-xs')} data-label={t('uact.colIp')}>{r.ip || '—'}{r.city || r.country ? <span className="text-muted-foreground"> {[r.city, r.country].filter(Boolean).join(', ')}</span> : null}</TableCell>
+                <TableCell className={cn(TD, 'font-mono text-xs')} data-label={t('uact.colIp')}>{idHidden(r, 'ip', idMasked) ? <MaskedValue /> : <>{r.ip || '—'}{r.city || r.country ? <span className="text-muted-foreground"> {[r.city, r.country].filter(Boolean).join(', ')}</span> : null}</>}</TableCell>
                 <TableCell className={TD} data-label={t('uact.colFlags')}>{splitFlags(r.flags).map((f) => <FlagBadge key={f} flag={f} title={t(`uact.flagHelp.${f}`)}>{t(`uact.anom_${f}`)}</FlagBadge>)}</TableCell>
                 <TableCell className={cn(TD, 'text-xs', MD)} data-label={t('uact.colOutcome')}>{outcomeText(r.outcome)}{r.reason ? <span className="text-muted-foreground"> · {r.reason}</span> : null}</TableCell>
                 <TableCell className={TD} data-label={t('uact.ackCol')}>{r.ack
@@ -552,16 +559,16 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
         )}
       </SectionCard>
 
-      {heatCell && <HeatCellModal cell={heatCell} onClose={() => setHeatCell(null)} onUser={(u) => setSessionDetail({ username: u })} />}
+      {heatCell && <HeatCellModal cell={heatCell} identityMasked={idMasked} onClose={() => setHeatCell(null)} onUser={(u) => setSessionDetail({ username: u })} />}
       {kpiDetail && ['logins', 'failed', 'anomalies'].includes(kpiDetail.kind)
-        ? <EventListModal kind={kpiDetail.kind} title={kpiDetail.title} rows={ua.details?.[kpiDetail.kind] || []} winLabel={winLabel}
+        ? <EventListModal kind={kpiDetail.kind} title={kpiDetail.title} rows={ua.details?.[kpiDetail.kind] || []} winLabel={winLabel} identityMasked={idMasked}
             byName={new Map((ua.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))}
             onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} />
         : kpiDetail && <KpiDetailModal detail={kpiDetail} data={ua} onClose={() => setKpiDetail(null)} onUser={(row) => setSessionDetail(row)} winLabel={winLabel} />}
-      {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} onClose={() => setDirectory(null)}
+      {directory && <UserDirectoryModal data={ua} initial={directory} isAdmin={isAdmin} globalAdmin={globalAdmin} username={username} refreshing={refreshing} onClose={() => setDirectory(null)}
         onUser={(row) => setSessionDetail(row)} onTerminate={(u) => setTerminate({ username: u })} onRefresh={onRefresh} />}
       {sessionDetail && <SessionDetailModal row={sessionDetail} full={detailRecord(sessionDetail.username)}
-        isAdmin={isAdmin} globalAdmin={globalAdmin} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
+        isAdmin={isAdmin} globalAdmin={globalAdmin} identityMasked={idMasked} self={username && String(sessionDetail.username).toLowerCase() === String(username).toLowerCase()} activeSet={activeSet}
         onClose={() => setSessionDetail(null)} onTerminate={(u) => setTerminate({ username: u })} onAck={doAck} ackBusy={ackBusy} onRefresh={onRefresh} teams={ua.role_team?.by_team || []} />}
       {terminate && <TerminateModal target={terminate.username} busy={busyUser === terminate.username} onClose={() => setTerminate(null)} onConfirm={(reason) => doTerminate(terminate.username, reason)} />}
       {ackTarget && <AckModal row={ackTarget} busy={ackBusy === ackTarget.id} onClose={() => setAckTarget(null)} onConfirm={(note) => doAck(ackTarget, true, note)} />}

@@ -4,6 +4,7 @@ import { formatDate, formatDateOnly } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import CertificateCard from '../../components/CertificateCard'
 import TeamBadge from '../../components/ui/TeamBadge.jsx'
+import NocStatus from '../../components/noc/NocStatus.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -18,6 +19,8 @@ import { GROUP_META, NextActionButton, NextStepText, PlanChip, ReasonChips, RowM
  *  - `view="list"` + dar kap (telefon ya da tablette kenar çubuğu açık, ~440 px): dikkat kartları (shadcn Card) —
  *    gerekçe çipleri, sonraki adım kutusu, 40 px iki düğme.
  *  - `view="cards"`: Pano'nun CertificateCard'ı DEĞİŞMEDEN + altında gerekçe/sonraki adım şeridi.
+ * Üç çizimde de 7/24 göstergesi (noc/NocStatus, 2026-09-28): tablo ve dikkat kartında meta satırının başında (MetaLine),
+ * kart görünümünde CertificateCard'ın kendi yerinde (durum satırının sağ grubu) — üçü de aynı düzenleme işleyicisi.
  *
  * Test kancaları: grup `data-slot="attn-group"` + `data-group`, tablo satırı `data-slot="attn-row"`, dikkat kartı
  * `data-slot="attn-card"`, kart hücresi `data-slot="attn-card-cell"` (hepsi `data-domain`), şerit `data-slot="attn-strip"`.
@@ -57,10 +60,18 @@ function DomainButton({ row, h, className }) {
   )
 }
 
-/** Tier + takım + platform satırı. */
-function MetaLine({ row, className }) {
+/**
+ * 7/24 + tier + takım + platform satırı. 7/24 göstergesi (2026-09-28) kartlardaki sırayla — Genel Bakış kartının sağ
+ * grubunda da önce 7/24, sonra kritiklik: satırın BAŞINDA, Zengin hap (liste satırında yer var; Kompakt ikon yalnız
+ * Kompakt kartta). Düzenleme eylemi Genel Bakış kartıyla aynı işleyici (`h.nocEdit` → kartın Düzenle'si); satır
+ * `noc_notify` taşımıyorsa (eski sunucu) hiçbir şey çizilmez. Satırın/kartın kendisi tıklanabilir DEĞİL (açma = alan adı
+ * düğmesi), yani göstergeye dokunmak yalnız açıklamayı açar.
+ */
+function MetaLine({ row, h, className }) {
+  const onEdit = h?.nocEdit?.(row) || undefined
   return (
     <div className={cn('flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground', className)}>
+      <NocStatus type="SSL" monitor={row} rowLabel={row.domain} canEdit={!!onEdit} onEdit={onEdit} />
       <TierBadge tier={row.tier} />
       {row.team_name && <TeamBadge teamId={row.team_id} teamName={row.team_name} />}
       {(row.platform_name || row.platform) && (
@@ -112,7 +123,7 @@ function AttentionTable({ groups, groupCounts, h }) {
                 <TableCell className="max-w-[18rem] min-w-[11rem] align-top whitespace-normal">
                   <div className="flex min-w-0 flex-col gap-1">
                     <DomainButton row={it.row} h={h} />
-                    <MetaLine row={it.row} />
+                    <MetaLine row={it.row} h={h} />
                     {it.row.not_after && <span className="text-xs text-muted-foreground tabular-nums @3xl:hidden">{t('attn.expiresOn', formatDateOnly(it.row.not_after))}</span>}
                     {it.row.error && <span className="line-clamp-2 text-xs [overflow-wrap:anywhere] text-destructive" title={it.row.error}>{it.row.error}</span>}
                   </div>
@@ -160,7 +171,7 @@ function AttentionCards({ groups, groupCounts, h }) {
                 <CardHeader className="gap-1.5 px-4">
                   <CardTitle className="min-w-0 text-sm leading-snug"><DomainButton row={it.row} h={h} /></CardTitle>
                   <CardDescription className="min-w-0">
-                    <MetaLine row={it.row} />
+                    <MetaLine row={it.row} h={h} />
                   </CardDescription>
                   <CardAction><RowMenu item={it} h={h} /></CardAction>
                 </CardHeader>

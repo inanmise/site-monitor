@@ -1,6 +1,7 @@
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
+import { daysFromToday } from '../../utils/localDay.js'
 
 /**
  * Envanter sayfası saf modeli (2026-09-12, envanter zenginleştirme #1/#4/#5/#9/#12/#13/#6):
@@ -84,11 +85,9 @@ export function hasActiveFilter(f) {
     || f.domain || f.port || f.days || f.checked || f.flag || f.interval || f.tag || f.updated || f.active || f.platform)
 }
 
+/** Alan adı bitişine kalan gün ("≤ N gün" süzgeci) — detaydaki metinle AYNI hesap (yalnız tarih = yerel takvim günü, Ek 3/1). */
 export function daysUntil(iso) {
-  if (!iso) return null
-  const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T00:00:00Z' : (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso + 'Z'))
-  if (Number.isNaN(d.getTime())) return null
-  return Math.floor((d.getTime() - Date.now()) / 86400000)
+  return daysFromToday(iso)
 }
 
 // ── Özet kartları (2026-09-27 yeniden tasarım) — her kart mevcut bir süzgece eşlenir, YENİ süzgeç anahtarı yoktur ──

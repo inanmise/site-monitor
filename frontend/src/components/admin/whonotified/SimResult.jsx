@@ -102,7 +102,34 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
         </AlertBanner>
       )}
       {!view.managersIncluded && <AlertBanner tone="info" className="mb-0">{t('wn.managersSkipped')}</AlertBanner>}
-      {view.fallbackGlobal && <AlertBanner tone="warning" className="mb-0">{t('sim.fallbackGlobal')}</AlertBanner>}
+      {/* Takımda seviyeye uyan eskalasyon kişisi yok → YALNIZ takım alıcıları (2026-09-28: başka takımın/takımsız kişiye
+          düşülmez). "Kimse bilgilendirilmez" şeridi zaten kişi eklemeyi önerdiğinde tekrar edilmez. */}
+      {/* SY + UG (2026-09-28, "her sahip takım kendi kişisi"): kişi durumu TAKIM BAŞINA — hangi takımın kişisi yok. */}
+      {view.managersIncluded && !view.nobody && view.owners.length > 1 && view.owners.map((o) => o.state === 'ok' ? null : (
+        <AlertBanner key={`owner:${o.teamId}`} tone={o.state === 'none' ? 'warning' : 'info'} className="mb-0"
+          title={o.state === 'none' ? t('wn.teamContactsNoneTitle') : undefined}>
+          {o.state === 'none'
+            ? t('wn.ownerContactsNone', t('wn.ownerTeamLabel', o.role, o.teamName || '—'))
+            : t('wn.ownerContactsNoneAtLevel', t('wn.ownerTeamLabel', o.role, o.teamName || '—'), t(`sim.level.${data?.level || level}`))}
+        </AlertBanner>
+      ))}
+      {view.managersIncluded && view.owners.length <= 1 && view.teamContacts === 'none' && !view.nobody && (
+        <AlertBanner tone="warning" title={t('wn.teamContactsNoneTitle')} className="mb-0">
+          {t('wn.teamContactsNone')}
+          {onNavigate && (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" className="h-10 md:h-8" onClick={() => onNavigate('contacts', navParams)}>
+                <UserPlus aria-hidden="true" /> {t('wn.addContact')}
+              </Button>
+            </div>
+          )}
+        </AlertBanner>
+      )}
+      {view.managersIncluded && view.owners.length <= 1 && view.teamContacts === 'noneAtLevel' && !view.nobody && (
+        <AlertBanner tone="info" className="mb-0">
+          {t('wn.teamContactsNoneAtLevel', t(`sim.level.${data?.level || level}`))}
+        </AlertBanner>
+      )}
 
       <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-2">
         <EmailCard view={view} level={data?.level || level} cardRef={emailRef} />
@@ -131,7 +158,7 @@ export default function SimResult({ data, level, kind, refreshing = false, onNav
 export function HowDecided() {
   const t = useT()
   const [open, setOpen] = useState(false)
-  const steps = [t('wn.how1'), t('wn.how2'), t('wn.how3'), t('wn.how4'), t('wn.how5'), t('wn.how6'), t('wn.how7')]
+  const steps = [t('wn.how1'), t('wn.how2'), t('wn.how3Own'), t('wn.how4'), t('wn.how5'), t('wn.how6'), t('wn.how7')]
   return (
     <div data-slot="wn-how">
       <CollapsibleSection open={open} onOpenChange={setOpen} icon={Info} label={t('wn.howTitle')} hint={t('wn.howHint')}

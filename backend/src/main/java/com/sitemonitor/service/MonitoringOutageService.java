@@ -135,17 +135,27 @@ public class MonitoringOutageService {
                             Supplier<Map<String, Object>> recheck) {}
 
     /** Başarılı sorguda tespit edilen gerçek DNS kayıt değişikliği (CHANGED).
-     *  teamId: standalone monitör için takım (alarmı doğru takıma yönlendirir); envanter-türevinde null. */
+     *  teamId: standalone monitör için takım (alarmı doğru takıma yönlendirir); envanter-türevinde null.
+     *  standalone: kullanıcının eklediği (bağımsız) monitör mü — diğer altı Port/DNS bağlamı gibi bağlama
+     *  {@code "standalone": true} işareti olarak yazılır; takımı BOŞ bağımsız monitörün değişiklik alarmı da envanterdeki
+     *  başka takıma düşmez (2026-09-28, O1). */
     public record DnsChange(String domain, String recordType,
                             String previousValue, String newValue, String detectedAt, Long teamId,
                             Long notificationGroupId,
                             Supplier<Map<String, Object>> recheck,
-                            Boolean notifyEmail, Boolean notifyWebhook) {
+                            Boolean notifyEmail, Boolean notifyWebhook, Boolean standalone) {
+        /** Geriye uyumlu 10-arg kurucu (bağımsızlık bilinmiyor = işaret yok). */
+        public DnsChange(String domain, String recordType, String previousValue, String newValue,
+                         String detectedAt, Long teamId, Long notificationGroupId,
+                         Supplier<Map<String, Object>> recheck, Boolean notifyEmail, Boolean notifyWebhook) {
+            this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck,
+                    notifyEmail, notifyWebhook, null);
+        }
         /** Geriye uyumlu 8-arg kurucu (kanal bayrakları bilinmiyor = her ikisi de AÇIK). */
         public DnsChange(String domain, String recordType, String previousValue, String newValue,
                          String detectedAt, Long teamId, Long notificationGroupId,
                          Supplier<Map<String, Object>> recheck) {
-            this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck, null, null);
+            this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck, null, null, null);
         }
     }
 
@@ -895,16 +905,18 @@ public class MonitoringOutageService {
         return ctx;
     }
 
-    private Map<String, Object> changeCtx(DnsChange c) {
+    /** Paket içi statik: üretici sözleşmesi testle pinlenir (EscalationContactLeakTest bağlamı buradan kurar, D8). */
+    static Map<String, Object> changeCtx(DnsChange c) {
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("record_type", c.recordType());
         ctx.put("old_values", splitValues(c.previousValue()));
         ctx.put("new_values", splitValues(c.newValue()));
         ctx.put("changed_at", c.detectedAt());
-        // Standalone monitör: alarmı takıma yönlendir (processConfirmedOutage ctx team_id'yi kullanır).
-        // NOT: günlük re-alert reconstructChangeCtx'ten gelir (team_id taşımaz) → standalone re-alert
-        // alıcısı global'e düşer; açılan event'in teamId'si (çözüm bildirimi) doğru kalır.
+        // Standalone monitör: alarmı takıma yönlendir (processConfirmedOutage ctx team_id'yi kullanır). Envanter türevi
+        // monitörde teamId null gelir (SchedulerService.alarmTeamOf) → takım + UG envanterden. NOT: günlük re-alert
+        // reconstructChangeCtx'ten gelir (team_id taşımaz); takım açık olayın damgasından okunur (O5).
         if (c.teamId() != null) ctx.put("team_id", c.teamId());
+        if (Boolean.TRUE.equals(c.standalone())) ctx.put("standalone", true);   // O1: diğer altı Port/DNS bağlamı gibi
         // K5 damgasi: alarm acilirken AlertEvent'e yazilir (re-alert ctx'i tasimasa da
         // damga olayda kalir -- bkz. yukaridaki team_id notu).
         if (c.notificationGroupId() != null)

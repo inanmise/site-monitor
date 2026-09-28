@@ -4,7 +4,7 @@ import { parseUtc } from '../../../utils/incidentMeta.js'
 /**
  * Alarm Geçmişi'nin SAF modeli — bileşenlerden bağımsız yardımcılar (React'siz, test edilebilir).
  * Sunucu sözleşmesi (AdminController.listAlerts): `resolved | page | size | since | until | resolvedSince |
- * resolvedUntil | domain | alertType | alertTypes | q | level | acknowledged | teamId`; sıralama sunucuda sabittir
+ * resolvedUntil | domain | alertType | alertTypes | q | level | acknowledged | teamId | range`; sıralama sunucuda sabittir
  * (en yeni önce) — burada uydurma bir sıralama boyutu YOK.
  */
 
@@ -13,9 +13,16 @@ export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING']
 /** Seviye → ton anahtarı (rozet / kart `data-level`). */
 export const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
 
+/**
+ * Tarih aralığı kipi (URL `range`, 2026-09-28 — regresyon B3): varsayılan '' = aralıkta AÇILANLAR; `'active'` = aralıkta
+ * AKTİF olanlar (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç) — daha önce açılıp aralığa DEVREDENLER dahil). Yalnız
+ * "Tümü" görünümünde uygulanır; haftalık erişilebilirlik e-postasının "Haftanın alarmları" bağlantısı bu kipi açar.
+ */
+export const RANGE_ACTIVE = 'active'
+
 /** Süzgeç varsayılanları — URL'e yalnız varsayılan-dışı değer yazılır (anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde). */
-export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '' })
-export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to' }
+export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '' })
+export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range' }
 
 export function filtersFromUrl(read) {
   const f = { ...FILTER_DEFAULTS }
@@ -25,8 +32,12 @@ export function filtersFromUrl(read) {
   }
   if (f.level && !LEVELS.includes(f.level)) f.level = ''
   if (f.ack && f.ack !== 'ack' && f.ack !== 'unack') f.ack = ''
+  if (f.range && f.range !== RANGE_ACTIVE) f.range = ''   // `range` başka sayfalarda da kullanılıyor (7 / custom) — yalnız 'active'
   return f
 }
+
+/** "Aralıkta aktif" kipi bu görünümde GEÇERLİ mi? (yalnız "Tümü" — açık görünümde tarih yok, kapalıda kapanış anı) */
+export const activeRangeOn = (filters, tab) => tab === 'all' && filters.range === RANGE_ACTIVE
 
 /** Alt görünüm (URL `view`): açık (varsayılan) · kapalı · tümü. */
 export const TABS = ['open', 'closed', 'all']
@@ -42,6 +53,7 @@ export function filtersToUrl(filters, tab) {
 /**
  * Etkin süzgeç çipleri — [{ key, value, patch }] (etiket çağıranın t'siyle kurulur). Tarih aralığı AÇIK görünümde
  * uygulanmaz (açık alarm "şimdi"dir; açık kalma süresi kartta yazar) → çipi de çıkmaz: gizli süzgeç kalmaz.
+ * "Aralıkta aktif" kipi yalnız "Tümü"nde çip olur; × varsayılana ("aralıkta açılanlar") döner.
  */
 export function activeAlertFilters(filters, tab) {
   const out = []
@@ -50,6 +62,7 @@ export function activeAlertFilters(filters, tab) {
   if (filters.ack) out.push({ key: 'ack', value: filters.ack, patch: { ack: '' } })
   if (filters.team) out.push({ key: 'team', value: filters.team, patch: { team: '' } })
   if (filters.q) out.push({ key: 'q', value: filters.q, patch: { q: '' } })
+  if (activeRangeOn(filters, tab)) out.push({ key: 'range', value: RANGE_ACTIVE, patch: { range: '' } })
   if (tab !== 'open' && filters.from) out.push({ key: 'from', value: filters.from, patch: { from: '' } })
   if (tab !== 'open' && filters.to) out.push({ key: 'to', value: filters.to, patch: { to: '' } })
   return out
@@ -58,6 +71,7 @@ export function activeAlertFilters(filters, tab) {
 /**
  * Liste isteği parametreleri — sunucunun tanıdığı boyutlar. Tarih aralığı kapalı görünümde KAPANIŞ
  * (resolvedSince/Until), "tümü"nde AÇILIŞ (since/until) anına uygulanır; açık görünümde hiç gitmez.
+ * "Tümü"nde `range=active` kipinde sunucu since'ı aktiflik alt sınırı sayar (aralıkta AKTİF olanlar, devredenler dahil).
  * Tarih-gün süzgeci (yyyy-MM-dd) gün sınırlarına açılır: sunucu damgaları 19 karakterlik ISO ile
  * SÖZLÜKSEL karşılaştırır; çıplak "2026-09-27" bitiş günü o günün tamamını dışarıda bırakırdı.
  */
@@ -70,6 +84,7 @@ export function listParams({ tab, filters, page, pageSize, domain, typesParam })
   } else if (tab === 'all') {
     if (filters.from) params.since = dayStart(filters.from)
     if (filters.to) params.until = dayEnd(filters.to)
+    if (activeRangeOn(filters, tab)) params.range = RANGE_ACTIVE
   }
   if (domain) params.domain = domain
   if (typesParam) params.alertTypes = typesParam
@@ -230,14 +245,26 @@ export function alertHref(a) {
   return `?tab=all${dom ? `&domain=${encodeURIComponent(dom)}` : ''}`
 }
 
-/** Paylaşılabilir derin bağlantı — bildirim kutusuyla AYNI biçim (alert + tip + arama, kapalıysa view=closed). */
+/**
+ * Alarm Geçmişi derin bağlantısının parametreleri — TEK kaynak (bildirim kutusu, paylaşılan bağlantı ve Kontrol Geçmişi'nin
+ * kesinti çizelgesi / alarm olay kartı; `navigateTo('alerthistory', alertNavParams(a))`). Sözleşme AlertHistory'nin okuduğu
+ * anahtarlar: `alert` (açılacak kayıt), `type` + `q` (süzgeç — kayıt ilk sayfada bulunsun), `view=closed` (çözülmüş kayıt
+ * yalnız Kapalı görünümde listelenir). Ek 2026-09-28e/E2: Kontrol Geçmişi `{ incident: id }` gönderiyordu — `incident`
+ * UYGULAMANIN anahtarı (Olaylar), Alarm Geçmişi onu okumaz → hedef alarm hiç açılmıyordu.
+ */
+export function alertNavParams(a) {
+  const p = { alert: String(a.id) }
+  if (a.alert_type) p.type = a.alert_type
+  if (a.domain) p.q = a.domain
+  if (a.resolved) p.view = 'closed'
+  return p
+}
+
+/** Paylaşılabilir derin bağlantı — bildirim kutusuyla AYNI biçim ({@link alertNavParams}). */
 export function alertLink(a) {
   let origin = ''
   try { origin = window.location.origin + window.location.pathname } catch { /* jsdom */ }
-  const q = new URLSearchParams({ tab: 'alerthistory', alert: String(a.id) })
-  if (a.alert_type) q.set('type', a.alert_type)
-  if (a.domain) q.set('q', a.domain)
-  if (a.resolved) q.set('view', 'closed')
+  const q = new URLSearchParams({ tab: 'alerthistory', ...alertNavParams(a) })
   return `${origin}?${q.toString()}`
 }
 

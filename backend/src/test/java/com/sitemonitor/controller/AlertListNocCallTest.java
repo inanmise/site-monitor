@@ -115,7 +115,7 @@ class AlertListNocCallTest {
         alertA.setAlertLevel("CRITICAL"); alertA.setCreatedAt("2026-01-01T03:00:00");
         when(alertEventRepo.findById(50L)).thenReturn(Optional.of(alertA));
         when(inventoryRepo.findByDomain(anyString())).thenReturn(Optional.empty());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(alertA)));
 
         when(nocCallLog.seesAllAlerts(any())).thenAnswer(i -> isNoc(i.getArgument(0)));
@@ -140,7 +140,7 @@ class AlertListNocCallTest {
                 .andExpect(jsonPath("$.data[0].noc_last_call.contacted_name").value("Kişi A"))
                 .andExpect(jsonPath("$.data[0].noc_last_call.outcome").value("REACHED"))
                 .andExpect(jsonPath("$.data[0].noc_last_call.contacted_at").value("2026-01-01T03:12:00"));
-        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 any(), any(), eq(false), any(), any(Pageable.class));
         verify(nocCallLog, times(1)).decorate(anyList());
     }
@@ -150,8 +150,23 @@ class AlertListNocCallTest {
     void memberStaysScoped() throws Exception {
         mvc.perform(get("/api/admin/alerts").session(memberA)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.noc_can_write").value(false));
-        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
                 any(), any(), eq(true), eq(List.of(TEAM_A)), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("B3 range=active (haftalık e-posta bağlantısı): 7/24 operatörü yine kapsamsız, üye yine kendi kapsamında — kip kapsam kuralına dokunmaz")
+    void activeRangeKeepsVisibilityRules() throws Exception {
+        String from = "2026-09-20T21:00:00", to = "2026-09-27T20:59:59";
+        mvc.perform(get("/api/admin/alerts").param("since", from).param("until", to).param("range", "active")
+                .param("teamId", String.valueOf(TEAM_B)).session(nocB)).andExpect(status().isOk());
+        verify(alertEventRepo).findFiltered(any(), isNull(), eq(to), any(), any(), eq(from), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), eq(TEAM_B), eq(false), any(), any(Pageable.class));
+
+        mvc.perform(get("/api/admin/alerts").param("since", from).param("until", to).param("range", "active")
+                .param("teamId", String.valueOf(TEAM_B)).session(memberA)).andExpect(status().isOk());
+        verify(alertEventRepo).findFiltered(any(), isNull(), eq(to), any(), any(), eq(from), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), eq(TEAM_B), eq(true), eq(List.of(TEAM_A)), any(Pageable.class));
     }
 
     @Test

@@ -310,14 +310,14 @@ public class CertificateService {
         Map<String, String> tagsMap = new HashMap<>(activeInventory.size());
         Map<String, String> platformMap = new HashMap<>(activeInventory.size());        // platform (2026-09-22) — iki ayrı harita, dizeye paketleme YOK
         Map<String, String> platformDetailMap = new HashMap<>(activeInventory.size());
-        // 7/24 anahtarı (2026-09-28, kart göstergesi) — aynı tek envanter okumasından; null kolon = kapalı (sözleşme)
-        Map<String, Boolean> nocMap = new HashMap<>(activeInventory.size());
+        // 7/24 anahtarı + grupları (2026-09-28, kart göstergesi) — aynı tek envanter okumasından (bkz. applyNoc)
+        Map<String, CertificateInventory> nocSource = new HashMap<>(activeInventory.size());
         Map<String, String> platformNames = platformNameMap();
         for (CertificateInventory inv : activeInventory) {
             String d = inv.getDomain();
             if (d == null) continue;
             activeDomains.add(d);
-            nocMap.put(d, Boolean.TRUE.equals(inv.getNocNotify()));
+            nocSource.put(d, inv);
             if (inv.getGroupName() != null && !inv.getGroupName().isBlank()) groupMap.put(d, inv.getGroupName());
             if (inv.getTags() != null && !inv.getTags().isBlank()) tagsMap.put(d, inv.getTags());
             if (inv.getTier() != null) tierMap.put(d, inv.getTier());
@@ -349,12 +349,23 @@ public class CertificateService {
                     dto.setPlatformDetail(platformDetailMap.get(c.getDomain()));
                     if (dto.getPlatform() != null) dto.setPlatformName(platformNames.get(dto.getPlatform()));
                     dto.setCheckIntervalHours(intervalMap.get(c.getDomain()));
-                    dto.setNocNotify(nocMap.getOrDefault(c.getDomain(), Boolean.FALSE));
+                    applyNoc(dto, nocSource.get(c.getDomain()));
                     int[] td = thresholds.days(tierMap.get(c.getDomain()));
                     dto.setAlertLevel(computeAlertLevel(dto, td[0], td[1], td[2]));
                     return dto;
                 })
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 7/24 alanları (2026-09-28, sertifika satırındaki 7/24 göstergesi) — ÇAĞIRANIN ZATEN OKUDUĞU envanter satırından;
+     * satır başına sorgu yok. Sözleşme ({@code NocTarget}): null kolon = kapalı; boş/null grup listesi = varsayılan gruplar
+     * (izleme listeleriyle aynı biçim, {@link com.sitemonitor.service.noc.NocGroupIds#parse}). Envanter satırı yoksa
+     * (aktif küme dışı — normalde oluşmaz) kapalı sayılır: {@code getAllLatest}'in önceki {@code getOrDefault(FALSE)}'u.
+     */
+    static void applyNoc(CertificateDto dto, CertificateInventory inv) {
+        dto.setNocNotify(inv != null && Boolean.TRUE.equals(inv.getNocNotify()));
+        dto.setNocGroupIds(com.sitemonitor.service.noc.NocGroupIds.parse(inv != null ? inv.getNocGroupIds() : null));
     }
 
     private String computeAlertLevel(CertificateDto dto, int critDays, int highDays, int warnDays) {
@@ -687,14 +698,28 @@ public class CertificateService {
 
     private static String nz(String s) { return s == null ? "" : s; }
 
+    /**
+     * Uyarılar ({@code /api/warnings}): uyarı penceresindeki ya da hatalı AKTİF envanter satırları.
+     *
+     * <p>7/24 alanları (2026-09-28, Uyarılar göstergesi): aktif süzgeç için zaten yapılan TEK envanter okumasından
+     * ({@link #applyNoc}) — satır başına sorgu yok, ikinci tarama yok. Sonuç {@code cert-warnings}'te önbellekli;
+     * 7/24 aç/kapa (NocController → {@link #evictAllCaches}) ve envanter yazan her uç bu önbelleği boşaltır
+     * (kapı {@code CertificateServiceCacheEvictionTest}).
+     */
     @Cacheable(value = "cert-warnings", sync = true)
     public List<CertificateDto> getWarnings() {
-        Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc()
-                .stream().map(CertificateInventory::getDomain).collect(Collectors.toSet());
+        Map<String, CertificateInventory> active = new HashMap<>();
+        for (CertificateInventory inv : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
+            if (inv.getDomain() != null) active.putIfAbsent(inv.getDomain(), inv);
+        }
         return latestRepo.findByWarningTrueOrStatus("error").stream()
-                .filter(c -> activeDomains.contains(c.getDomain()))
+                .filter(c -> active.containsKey(c.getDomain()))
                 .sorted(Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 0 : c.getDaysRemaining()))
-                .map(this::toDto)
+                .map(c -> {
+                    CertificateDto dto = toDto(c);
+                    applyNoc(dto, active.get(c.getDomain()));
+                    return dto;
+                })
                 .collect(Collectors.toList());
     }
 
@@ -1077,6 +1102,9 @@ public class CertificateService {
         l.setFingerprint(c.getFingerprint());
         l.setChainStatus(c.getChainStatus());
         l.setRevocationStatus(c.getRevocationStatus());
+        // Güven durumu kopyalanmıyordu (2026-09-28): /history → sertifika penceresi Detaylar'da güven hiç görünmüyor,
+        // security_flags güven boşken hesaplandığı için UNTRUSTED_CA bayrağı da çıkamıyordu.
+        l.setTrustStatus(c.getTrustStatus());
         l.setDeploymentStatus(c.getDeploymentStatus());
         l.setIntermediateExpiry(c.getIntermediateExpiry());
         l.setIntermediateDaysRemaining(c.getIntermediateDaysRemaining());
@@ -1092,10 +1120,13 @@ public class CertificateService {
         l.setOcspUrl(c.getOcspUrl());
         l.setCrlUrl(c.getCrlUrl());
         l.setCheckedAt(c.getCheckedAt());
+        // TLS sürümü + şifre takımı (2026-09-28): sertifika penceresi Detaylar'ı bu yoldan okur. from() DOLDURMAZ —
+        // Pano/Tüm Sertifikalar listeleri şişmesin (alanlar NON_NULL, orada hiç yazılmaz).
         return CertificateDto.from(l,
                 checkerService.deserializeSan(c.getSan()),
                 checkerService.deserializeSan(c.getKeyUsage()),
-                checkerService.deserializeSan(c.getExtKeyUsage()));
+                checkerService.deserializeSan(c.getExtKeyUsage()))
+                .applyTls(c.getTlsVersion(), c.getCipherSuite());
     }
 
     private String issuerStr(CertificateDto c) {

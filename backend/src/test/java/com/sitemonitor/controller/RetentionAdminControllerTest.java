@@ -375,4 +375,26 @@ class RetentionAdminControllerTest {
         mvc.perform(get("/api/admin/retention/overview").session(scopedAdmin()))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    @DisplayName("GET /changes (2026-09-28c): eylemi yapanın IP'si kapsamlı müdüre düşer (satır işaretli); global admin tam görür")
+    void changes_masksActorIpForScopedAdmin() throws Exception {
+        AuditLog row = new AuditLog();
+        row.setResourceId("activity-log");
+        row.setActor("ADMIN");
+        row.setEventTime("2026-08-08T19:00:00");
+        row.setIpAddress("203.0.113.61");
+        row.setChanges("{\"days\":{\"from\":90,\"to\":365}}");
+        when(auditLogRepo.findByResourceTypeOrderByEventTimeDesc(eq("RETENTION_POLICY"), any())).thenReturn(List.of(row));
+        String body = mvc.perform(get("/api/admin/retention/changes").session(scopedAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].ip").doesNotExist())
+                .andExpect(jsonPath("$.data[0].identity_masked").value(true))
+                .andExpect(jsonPath("$.data[0].to").value(365))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("203.0.113.61");
+        mvc.perform(get("/api/admin/retention/changes").session(admin()))
+                .andExpect(jsonPath("$.data[0].ip").value("203.0.113.61"))
+                .andExpect(jsonPath("$.identity_masked").value(false));
+    }
 }

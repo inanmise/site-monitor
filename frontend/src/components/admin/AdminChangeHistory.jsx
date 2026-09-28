@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Toggle } from '@/components/shadcn/toggle'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import MaskedValue from '../ui/MaskedValue.jsx'
 
 /** Tablo ölçüleri (shadcn Data Table görünümü: soluk başlık, satır vurgusu) + ikincil metin + dipnot. */
 const TH = 'h-9 px-3 text-[0.75em] tracking-wide text-muted-foreground uppercase'
@@ -220,7 +221,7 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
                   <TableCell className={TD}><EventBadge kind={eventKind(r.action)} title={r.event_type}>{actLabel(r.action)}</EventBadge></TableCell>
                   <TableCell className={cn(TD, 'max-w-[16rem]')}>{target(r)}</TableCell>
                   <TableCell className={cn(TD, 'max-w-[34rem]')}><ChangeChips entries={m.chips} more={m.more} /></TableCell>
-                  <TableCell className={cn(TD, 'hidden font-mono text-muted-foreground lg:table-cell')} data-col="ip">{r.ip || '—'}</TableCell>
+                  <TableCell className={cn(TD, 'hidden font-mono text-muted-foreground lg:table-cell')} data-col="ip">{r.identity_masked === true ? <MaskedValue /> : (r.ip || '—')}</TableCell>
                 </TableRow>
                 {isOpen && m.parsed && (
                   <TableRow className="hover:bg-transparent">
@@ -270,7 +271,7 @@ export default function AdminChangeHistory({ resource, filter = null, onClearFil
               )}
               {isOpen && m.parsed && (
                 <div className="flex min-w-0 flex-col gap-2 border-t pt-2 text-xs">
-                  <span className="text-muted-foreground tabular-nums">{formatDateSec(r.at)}{r.ip ? ` · ${r.ip}` : ''}</span>
+                  <span className="text-muted-foreground tabular-nums">{formatDateSec(r.at)}{r.identity_masked === true ? <> · <MaskedValue /></> : r.ip ? ` · ${r.ip}` : ''}</span>
                   <div className="min-w-0 overflow-x-auto">{detail(r, m)}</div>
                 </div>
               )}

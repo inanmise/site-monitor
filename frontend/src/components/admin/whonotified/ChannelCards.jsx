@@ -102,7 +102,8 @@ export function LevelBadge({ level, prefix = '', className }) {
 const none = (t) => <p className="px-1 py-2 text-sm text-muted-foreground">{t('sim.none')}</p>
 const roleLabel = (t, role) => (role ? t(`ec.role.${String(role).toLowerCase()}`) : '')
 
-const SOURCE_TONE = { group: 'info', team: 'neutral', contact: 'muted', globalContact: 'warning' }
+// 'globalContact' kaynağı 2026-09-28'de kalktı: eskalasyon kişileri yalnız takımın kendi kişileridir (sunucu kuralı).
+const SOURCE_TONE = { group: 'info', team: 'neutral', contact: 'muted' }
 const SOURCE_ICON = { group: Users, team: Mail }
 
 export function EmailCard({ view, level, cardRef }) {
@@ -111,7 +112,6 @@ export function EmailCard({ view, level, cardRef }) {
   const whyOf = (r) => {
     if (r.source === 'group') return t('wn.why.group', r.groupName)
     if (r.source === 'team') return t('wn.why.team')
-    if (r.source === 'globalContact') return t('wn.why.globalContact', lvl(r.minLevel))
     return t('wn.why.contact', lvl(r.minLevel), lvl(level))
   }
   return (

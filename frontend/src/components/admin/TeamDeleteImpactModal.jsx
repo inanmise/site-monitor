@@ -11,7 +11,7 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardTitle } from '@/components/shadcn/card'
 import { Label } from '@/components/shadcn/label'
 
-const SECTIONS = ['domains', 'monitors', 'users', 'contacts', 'groups']
+const SECTIONS = ['domains', 'ug_domains', 'monitors', 'users', 'contacts', 'groups']   // ug_domains: UG olarak bağlı kayıtlar (2026-09-28)
 
 /**
  * Takım silme ETKİ önizlemesi (2026-09-20): silmeden önce "bu takıma bağlı N domain, M izleme, K kullanıcı,
@@ -83,7 +83,7 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
           ) : (
             <AlertBanner tone="warning">{t('team.impactWarn')}</AlertBanner>
           )}
-          {Number(impact.open_alerts) > 0 && <p className="text-xs text-muted-foreground">{t('team.impactOpenAlerts', impact.open_alerts)}</p>}
+          {Number(impact.open_alerts) > 0 && <p className="text-xs text-muted-foreground">{t('team.impactOpenAlertsMoved', impact.open_alerts)}</p>}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-2.5">
             {SECTIONS.map(k => {
               const s = impact[k] || { count: 0, items: [] }

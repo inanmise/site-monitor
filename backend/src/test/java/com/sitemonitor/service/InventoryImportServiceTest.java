@@ -90,6 +90,40 @@ class InventoryImportServiceTest {
     }
 
     @Test
+    @DisplayName("D9 (2026-09-28): bilinmeyen UG takım adı satır HATASIDIR (unknown_ug_team) — sessizce yok sayılıp 'create' raporlanmaz")
+    void unknownUgTeam_isRowError() {
+        var r = service.commit(List.of(row("domain", "ug.example.com", "team", "Takım A", "ug_team", "Takım Z")), t -> true, "admin", null);
+        assertThat(r.errors()).isEqualTo(1);
+        assertThat(r.rows().get(0).reason()).isEqualTo("unknown_ug_team");
+        verify(inventoryRepo, never()).save(any());
+        var ok = service.commit(List.of(row("domain", "ug2.example.com", "team", "Takım A", "ug_team", "Takım B")), t -> true, "admin", null);
+        assertThat(ok.created()).isEqualTo(1);   // bilinen UG adı → normal
+    }
+
+    @Test
+    @DisplayName("2026-09-28: içe aktarmada takım değişirse türev Port/DNS izlemeleri de yeni takıma eşitlenir (alarm ESKİ takıma gitmez); plan ve takımsız değişiklik eşitlemez")
+    void teamChange_syncsDerivedMonitors() {
+        DerivedMonitorTeamSync sync = mock(DerivedMonitorTeamSync.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "derivedMonitorTeamSync", sync);
+        CertificateInventory planned = new CertificateInventory();
+        planned.setId(7L); planned.setDomain("a.example.com"); planned.setTeamId(5L); planned.setTier(2); planned.setPort(443);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(planned));
+        service.plan(List.of(row("domain", "a.example.com", "team", "Takım B")), t -> true, "admin", null);
+        verifyNoInteractions(sync);                                   // prova yazmaz, eşitlemez
+
+        CertificateInventory ex = new CertificateInventory();
+        ex.setId(7L); ex.setDomain("a.example.com"); ex.setTeamId(5L); ex.setTier(2); ex.setPort(443);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(ex));
+        service.commit(List.of(row("domain", "a.example.com", "tier", "1")), t -> true, "admin", null);
+        verifyNoInteractions(sync);                                   // takım değişmedi
+
+        var r = service.commit(List.of(row("domain", "a.example.com", "team", "Takım B")), t -> true, "admin", null);
+        assertThat(r.rows().get(0).changes()).contains("team");
+        assertThat(ex.getTeamId()).isEqualTo(9L);
+        verify(sync).syncTeam("a.example.com", 9L);
+    }
+
+    @Test
     @DisplayName("kapsam SATIR BAŞINA: yabancı takım skip:scope, batch durmaz; silinmiş kayıt skip:deleted; aynı domain ikinci kez skip:duplicate_row")
     void scopeDeletedDuplicate() {
         CertificateInventory del = new CertificateInventory(); del.setId(1L); del.setDomain("gone.example.com"); del.setTeamId(5L); del.setDeletedAt("2026-09-01T00:00:00");

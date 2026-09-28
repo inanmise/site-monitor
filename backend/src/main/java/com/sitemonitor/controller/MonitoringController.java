@@ -440,7 +440,8 @@ public class MonitoringController {
         out.put("total", pg.getTotalElements());
         out.put("page", pg.getNumber());
         out.put("size", pg.getSize());
-        return ok(out);
+        // Eylemi yapanın IP / tarayıcısı kimlik izidir (2026-09-28c): yalnız global admin + AUDIT ve kişinin kendi satırı.
+        return ok(IdentityMask.forSession(out, session));
     }
 
     /** Tek olayın TAM detayı — snapshot dâhil ("şu tarihte bu izleme nasıldı"). */
@@ -453,7 +454,14 @@ public class MonitoringController {
 
         return changeLogRepo.findByResourceKindAndResourceIdAndSeq(resolved, id, seq)
                 .filter(r -> SessionScope.canView(session, r.getTeamId()))
-                .map(r -> ok(changeRow(r, true)))
+                .map(r -> {
+                    Map<String, Object> m = changeRow(r, true);
+                    // Derin bağlantı (`ch_id`) ayrıntıyı bu uçtan açar — listedeki satırla AYNI silinmiş hükmünü taşımalı,
+                    // yoksa sonradan silinen izlemeye ölü "İzlemeye git" bağlantısı çizilir (2026-09-28, regresyon B1).
+                    m.put("resource_deleted", deletedKeys(List.of(r.getResourceKind()), List.of(r.getResourceId()))
+                            .contains(r.getResourceKind() + ":" + r.getResourceId()));
+                    return ok(IdentityMask.forSession(m, session));   // kimlik izi kapısı (2026-09-28c)
+                })
                 .orElse(notFound("Kayıt bulunamadı"));
     }
 
@@ -665,8 +673,10 @@ public class MonitoringController {
                 all, sc.teamIds(), sc.actorIds(), sc.actorNames(),
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
 
-        // Satırın izlemesi SONRADAN silindiyse ekran ölü bağlantı çizmesin — sayfa başına tek sorgu.
-        Set<String> deleted = deletedKeys(pg.getContent().stream().map(com.sitemonitor.model.MonitorChangeLog::getResourceId).toList());
+        // Satırın izlemesi SONRADAN silindiyse (ve geri gelmediyse) ekran ölü bağlantı çizmesin — sayfa başına tek sorgu.
+        Set<String> deleted = deletedKeys(
+                pg.getContent().stream().map(com.sitemonitor.model.MonitorChangeLog::getResourceKind).toList(),
+                pg.getContent().stream().map(com.sitemonitor.model.MonitorChangeLog::getResourceId).toList());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("changes", pg.getContent().stream().map(r -> {
             Map<String, Object> m = changeRow(r, false);
@@ -682,7 +692,7 @@ public class MonitoringController {
             out.put("event_counts", eventCounts(blankToNull(from), blankToNull(to), teamId, all, sc, fl));
             out.put("kind_counts", kindCounts(blankToNull(from), blankToNull(to), teamId, all, sc, fl));
         }
-        return ok(out);
+        return ok(IdentityMask.forSession(out, session));   // kimlik izi kapısı (2026-09-28c)
     }
 
     /** Olay süzgecinin türetilmiş değerleri — {@code active} alanını çeviren güncellemeler. */
@@ -761,7 +771,8 @@ public class MonitoringController {
         List<Object[]> top = changeLogRepo.topResources(f, tt, teamId, fl.actorIds(), fl.actorNames(),
                 all, sc.teamIds(), sc.actorIds(), sc.actorNames(), PageRequest.of(0, SUMMARY_TOP_RESOURCES));
         Map<Long, com.sitemonitor.model.MonitorChangeLog> latest = latestRows(top, 3);
-        Set<String> deleted = deletedKeys(top.stream().map(r -> ((Number) r[1]).longValue()).toList());
+        Set<String> deleted = deletedKeys(top.stream().map(r -> String.valueOf(r[0])).toList(),
+                top.stream().map(r -> ((Number) r[1]).longValue()).toList());
         Map<Long, String> teamNames = top.isEmpty() ? Map.of() : teamNameMap();
         List<Map<String, Object>> resources = new ArrayList<>();
         for (Object[] r : top) {
@@ -836,13 +847,24 @@ public class MonitoringController {
         return byKind;
     }
 
-    /** "TÜR:id" kümesi — verilen kimliklerden silinmiş olanlar (boş listede sorgu açılmaz). */
-    private Set<String> deletedKeys(Collection<Long> ids) {
+    /**
+     * "TÜR:id" kümesi — verilen kaynaklardan ŞU AN silinmiş olanlar: en son geçmiş satırı DELETE olanlar
+     * ({@link MonitorChangeLogRepository#findDeletedAmong}; geri yükleme / aynı kimlikle yeniden oluşturma / sürdürme
+     * hükmü kaldırır). Liste, özet kartı ve tekil ayrıntı AYNI kuralı buradan alır. Boş listede sorgu açılmaz.
+     *
+     * <p>Canlı tabloya bakılmaz, geçmiş tablosu esas: silme ve geri gelme yollarının hepsi buraya satır yazıyor
+     * (envanter çöp kutusu DELETE/RESTORE, standalone DNS canlandırma CREATE, türev Port/DNS sürdürme UPDATE) ve
+     * canlı kontrol 12 türün her birine ayrı, "silinmiş" anlamı farklı (kalıcı silme / deleted_at / çöp kutusu /
+     * duraklatma) bir sorgu demekti.
+     */
+    private Set<String> deletedKeys(Collection<String> kinds, Collection<Long> ids) {
+        Set<String> kindSet = new LinkedHashSet<>();
+        for (String k : kinds) if (k != null) kindSet.add(k);
         Set<Long> uniq = new LinkedHashSet<>();
         for (Long id : ids) if (id != null) uniq.add(id);
-        if (uniq.isEmpty()) return Set.of();
+        if (uniq.isEmpty() || kindSet.isEmpty()) return Set.of();
         Set<String> out = new HashSet<>();
-        List<Object[]> rows = changeLogRepo.findDeletedAmong(uniq);
+        List<Object[]> rows = changeLogRepo.findDeletedAmong(kindSet, uniq);
         for (Object[] r : rows == null ? List.<Object[]>of() : rows) out.add(r[0] + ":" + r[1]);
         return out;
     }
@@ -1002,7 +1024,7 @@ public class MonitoringController {
      *  yalnız iş görebildikleri bir takıma — değilse kendi takımlarına düşer. */
     private Long resolveWriteTeam(HttpSession session, Map<String, Object> body) {
         Long requested = body.get("teamId") instanceof Number n ? n.longValue() : null;
-        if (SessionScope.isGlobalAdmin(session)) return requested;
+        if (SessionScope.isGlobalAdmin(session)) return requireExistingTeam(requested);
         if (requested != null && canOperateTeam(session, requested)) return requested;
         // Açıkça istenen ama iş görülemeyen takım: SESSİZCE birincile düşmek yerine reddet (2026-09-18).
         // Kullanıcı "X takımına ekledim" sanıp Y'de bulurdu; eski istemciler teamId göndermez → etkilenmez.
@@ -1010,12 +1032,30 @@ public class MonitoringController {
         return sessionTeamId(session);
     }
 
+    /**
+     * Takım kimliği gerçekten var mı (2026-09-28, O3): silinmiş/uydurma takıma yazılan izleme "sahipli" görünür ama
+     * alarmı ne takım adresine ne kişiye gider → 400. Global yönetici dalında (kapsamlı kullanıcı zaten kendi kapsamındaki
+     * takımlarla sınırlı — keşif sızıntısı yok).
+     */
+    private Long requireExistingTeam(Long teamId) {
+        if (teamId != null && !teamRepo.existsById(teamId)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Seçilen takım bulunamadı — geçerli bir takım seçin.", "The selected team doesn't exist — choose a valid team."));
+        }
+        return teamId;
+    }
+
     /** Güncellemede takım değişimini çözer: admin serbest; diğerleri yalnız iş görebildikleri
      *  bir takıma taşıyabilir — yetkisiz/null hedef yok sayılır (mevcut takım korunur). */
     private Long resolveTeamChange(HttpSession session, Long current, Object requestedRaw) {
         Long requested = requestedRaw instanceof Number n ? n.longValue() : null;
         // Takım ZORUNLU: admin bile null'a çekemez → null gelirse mevcut takım korunur.
-        if (SessionScope.isGlobalAdmin(session)) return requested != null ? requested : current;
+        if (SessionScope.isGlobalAdmin(session)) {
+            // Takım DEĞİŞİYORSA hedef gerçekten var olmalı (2026-09-28): silinmiş/uydurma kimliğe taşınan izleme
+            // sahipsiz kalır — alarmı ne takım adresine ne kişiye gider. Değişmeyen takım denetlenmez.
+            if (requested != null && !requested.equals(current)) requireExistingTeam(requested);
+            return requested != null ? requested : current;
+        }
         if (requested != null && canOperateTeam(session, requested)) return requested;
         return current;
     }

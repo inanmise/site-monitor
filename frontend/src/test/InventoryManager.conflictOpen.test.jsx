@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 
 /**
@@ -66,5 +66,52 @@ describe('Envanter — mükerrer bandından aktarım sonrası kaydı aç', () =>
     await waitFor(() => expect(api.admin.getInventory).toHaveBeenCalledTimes(2))
     expect(screen.queryByRole('dialog', { name: 'moved.example.com' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'plain.example.com' })).toBeNull()
+  })
+})
+
+/*
+ * Ek 3/4 (2026-09-28): Envanter sekmesi ZATEN açıkken gelen derin bağlantı — App aynı sekmede paramları adrese yazıp
+ * `sm:tab-params` yayar (sayfa yeniden bağlanmaz). `domain` yalnız mount'ta okunuyordu: mükerrer alan adı bandının
+ * penceresindeki "Envanterde aç" yalnız pencereyi kapatıyor, kayıt açılmıyordu. Başka takımın salt okunur kaydı yalnız
+ * "tüm takımlar"da listelenir → `i_scope=all` uygulanır ve karar o kapsamın listesi gelince verilir (eski liste kaydı
+ * bulamayıp bağlantıyı DÜŞÜRMEZ).
+ */
+describe('Envanter — sekme açıkken derin bağlantı (sm:tab-params)', () => {
+  const FOREIGN = { id: 8, domain: 'foreign.example.com', port: 443, active: true, team_id: 6, team_name: 'Takım B', can_manage: false }
+  const tabParams = (detail) => act(() => { window.dispatchEvent(new CustomEvent('sm:tab-params', { detail })) })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    window.history.replaceState(null, '', '/?tab=domains')
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'Takım A' }, { id: 6, name: 'Takım B' }] })
+    api.admin.getAlerts.mockResolvedValue({ success: true, total: 0 })
+    api.admin.getInventory.mockImplementation(async (_all, scope) => (scope === 'all'
+      ? { success: true, data: [OWN, FOREIGN], scope: 'all', visible_to_all: true }
+      : { success: true, data: [OWN], scope: 'mine', visible_to_all: true }))
+  })
+
+  it('kendi kaydı: `domain` gelince listedeki kaydın çekmecesi açılır (yeniden yükleme yok)', async () => {
+    render(<LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 5, name: 'Takım A' }]} /></LangProvider>)
+    await screen.findByText('own-a.example.com')
+    const calls = api.admin.getInventory.mock.calls.length
+    tabParams({ domain: 'own-a.example.com' })
+    expect(await screen.findByRole('dialog', { name: 'own-a.example.com' })).toBeInTheDocument()
+    expect(api.admin.getInventory.mock.calls.length).toBe(calls)
+  })
+
+  it('başka takımın kaydı + i_scope=all: kapsam "tüm takımlar"a geçer, o liste gelince çekmece açılır (eski liste bağlantıyı düşürmez)', async () => {
+    render(<LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 5, name: 'Takım A' }]} /></LangProvider>)
+    await screen.findByText('own-a.example.com')
+    tabParams({ domain: 'foreign.example.com', i_scope: 'all' })
+    await waitFor(() => expect(api.admin.getInventory).toHaveBeenLastCalledWith(true, 'all'))
+    expect(await screen.findByRole('dialog', { name: 'foreign.example.com' })).toBeInTheDocument()
+  })
+
+  it('domain taşımayan olay (başka bir sayfa paramı) hiçbir şey açmaz', async () => {
+    render(<LangProvider><InventoryManager systemRole="ADMIN" teams={[{ id: 5, name: 'Takım A' }]} /></LangProvider>)
+    await screen.findByText('own-a.example.com')
+    tabParams({ sec: 'releases' })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

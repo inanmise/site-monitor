@@ -3,22 +3,26 @@ import {
   Activity, BellOff, BellRing, Calendar, ChevronDown, CircleCheck, Download, ExternalLink, Inbox, Siren, TriangleAlert,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
+import { formatRatePercent } from '../../i18n/dateLocale.js'
 import { api, formatDateSec, formatDateOnly } from '../../api/client'
 import { localDayKey } from '../../utils/localDay.js'
 import { navigateTo } from '../../utils/navigate.js'
+import { alertNavParams } from '../admin/alerts/alertHistoryModel.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
+import { useElementWidth } from '../weekly/useElementWidth.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
 import DensityStrip from './DensityStrip.jsx'
 import OutageTimeline, { formatDuration, ms, summarizeOutages } from './OutageTimeline.jsx'
 import { isOutageAlert } from '../../utils/alertKinds.js'
-import useCheckHistory from './useCheckHistory.js'
+import useCheckHistory, { toUtcIso } from './useCheckHistory.js'
 import useUrlQuerySync from '../../hooks/useUrlQuerySync.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import HistTile from './HistTile.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
@@ -36,14 +40,6 @@ const ALERT_ROW = {
   resolved: 'border-success/40 bg-success/[0.07] text-success',
 }
 const LEVEL_VARIANT = { CRITICAL: 'destructive', HIGH: 'warning', WARNING: 'warning' }
-
-// Kutucuk tonları — MonitorStatsBar sözlüğünün aynısı (ton = değer/ikon rengi + hafif zemin, şerit yok).
-const TILE_TONE = {
-  total:   { text: 'text-foreground', bg: 'bg-muted/40' },
-  success: { text: 'text-success', bg: 'bg-success/10 dark:bg-success/15' },
-  warning: { text: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-500/10' },
-  danger:  { text: 'text-red-600 dark:text-red-400', bg: 'bg-red-500/[0.08]' },
-}
 
 const TH = 'h-8 px-2.5 text-[11px] font-bold tracking-[.04em] text-muted-foreground uppercase'
 // `[&>*]:max-w-full`: hücre içeriği (ör. HTTP'nin uzun hata metinli "ayrıntı" düğmesi — shadcn Button nowrap) kabını
@@ -65,32 +61,6 @@ function cellsOf(node) {
   if (Array.isArray(node)) return node
   if (isValidElement(node) && node.type === Fragment) return Children.toArray(node.props.children)
   return [node]
-}
-
-/** Özet kutucuğu — süzgeç olanı shadcn Button (aria-pressed), diğerleri salt gösterim. */
-function HistTile({ icon: Icon, label, value, sub, tone = 'total', pressed, onClick, hint }) {
-  const tn = TILE_TONE[tone] ?? TILE_TONE.total
-  const body = (<>
-    <Icon aria-hidden="true" className={cn('size-4 shrink-0', tn.text)} />
-    <span className="flex min-w-0 flex-1 flex-col items-start gap-px text-left">
-      <span data-slot="hist-tile-value" className={cn('text-lg leading-none font-extrabold tracking-[-.02em] tabular-nums', tn.text)}>{value}</span>
-      <span className="text-[11px] leading-tight font-semibold text-muted-foreground">{label}</span>
-      {sub && <span data-slot="hist-tile-sub" className="text-[10.5px] leading-tight text-muted-foreground">{sub}</span>}
-    </span>
-  </>)
-  const cls = cn('flex min-h-14 min-w-0 items-center gap-2.5 rounded-lg border px-2.5 py-2', tn.bg)
-  if (!onClick) {
-    const el = <div data-slot="hist-tile" data-tone={tone} className={cls}>{body}</div>
-    return hint ? <SimpleTooltip content={hint}>{el}</SimpleTooltip> : el
-  }
-  return (
-    <Button type="button" variant="ghost" data-slot="hist-tile" data-tone={tone} aria-pressed={pressed} title={hint}
-      onClick={onClick}
-      className={cn(cls, 'h-auto justify-start whitespace-normal hover:bg-accent/60 dark:hover:bg-accent/40',
-        pressed && 'border-primary ring-2 ring-primary/40')}>
-      {body}
-    </Button>
-  )
 }
 
 /** Alarm olayı kartı — açılış/çözüm/uyarı. Seviye rozeti, süre, ileti (görünür metin — dokunmatikte ipucu yok). */
@@ -120,7 +90,7 @@ function AlertEventCard({ t, type, alert: a, ts }) {
         <SimpleTooltip content={t('hist.openAlert')}>
           <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-current hover:bg-black/5 hover:text-current pointer-coarse:size-9 dark:hover:bg-white/10"
             aria-label={t('a11y.rowAction', `${title} · ${a.alert_type}`, t('hist.openAlert'))}
-            onClick={() => navigateTo('alerthistory', { incident: a.id })}>
+            onClick={() => navigateTo('alerthistory', alertNavParams(a))}>
             <ExternalLink aria-hidden="true" />
           </Button>
         </SimpleTooltip>
@@ -169,6 +139,23 @@ function CheckCard({ cells, columns }) {
  * Card listesi (`useIsMobile` — TEK varyant çizilir; jsdom medya sorgusu uygulamaz). Tip-özel olan yalnız üç şey
  * dışarıdan gelir: kolon başlıkları (columns), satır hücreleri (renderRow — Fragment içinde sıralı hücreler) ve
  * geriye uyum için `gridClass` (artık yalnız `data-grid` kancası; yerleşimi Table verir).
+ *
+ * <p>2026-09-28 (sertifika geçmişi yeniden tasarımı) — İSTEĞE BAĞLI yuvalar; verilmezse çıktı bit düzeyinde aynı:
+ * `renderSummary(ctx)` özet kutucuklarının, `renderCard(item, rowCtx)` telefon kartının, `renderEmpty(ctx)` boş aralık
+ * bloğunun YERİNE çizilir. `ctx` = sekmenin sorgu durumu (aralık, özel uçlar, süzgeç, sayaçlar, sayfa, satırlar) +
+ * eylemler (`setPreset`, `setCustomRange`, `setStatus`) — tür-özel özet kendi verisini aynı aralıkla çekebilsin.
+ * `renderAbove` da aynı `ctx`'i alır (eski `{ preset, range }` alanları yerinde). `renderRow`'un ikinci argümanı
+ * `{ index, older, items, filtered }` oldu: `older` = aynı sayfada bir önceki (daha ESKİ) kontrol, `filtered` = durum
+ * süzgeci açık (komşular ardışık değil) — eski çağıranlar yalnız `index` okur.
+ *
+ * <p>2026-09-28 (sertifika geçmişi çekmece + Uptime'da) — yine İSTEĞE BAĞLI, verilmezse çıktı aynı:
+ * - `cardsBelow` (px): kart/tablo seçimi GÖRÜNÜM ALANINA değil KABA göre — kap bu genişliğin altındaysa kart listesi
+ *   (Uptime detayında iki geçmiş yan yana ~430 px; beş sütunlu sertifika tablosu orada sıkışıyordu). Ölçüm yoksa
+ *   (jsdom, ilk boyama) `useIsMobile()` kuralı.
+ * - Kontrollü aralıkta (`range` + `onRangeChange`) `ctx.fixedRange` = `{ from, to }` (Date) ve yuva eylemleri üst
+ *   bileşenin aralığını sürer (yoğunluk şeridiyle aynı kural): `setCustomRange(f, to)` → `onRangeChange(f, to)`,
+ *   `setPreset(n)` → `onRangeChange(şimdi − n gün, şimdi)`. Önceden kontrollü aralıkta bu eylemler iç ön ayarı
+ *   değiştiriyor ama istek sabit aralıkla gittiği için HİÇBİR ŞEY olmuyordu.
  */
 export default function CheckHistoryTab({
   kind, monitorId, listKey,
@@ -181,7 +168,11 @@ export default function CheckHistoryTab({
   onCounts = null,                           // modal başlık özeti için {total, fail} bildirimi
   range = null, onRangeChange = null,        // kontrollü aralık (Uptime: tek picker iki kolonu sürer)
   timeline = true,                            // kesinti zaman çizelgesi (alan adı: kapalı — kesinti değil süre izlenir; 2026-09-22)
-  renderAbove = null,                         // aralık değişince yeniden çizilen özel blok, ör. kalan-gün trendi (h.preset/h.range verilir)
+  renderAbove = null,                         // aralık değişince yeniden çizilen özel blok, ör. kalan-gün trendi (ctx verilir: preset/range/…)
+  renderSummary = null,                       // (ctx) => node — varsayılan özet kutucuklarının YERİNE (sertifika: tür-özel kutucuk + eğilim)
+  renderCard = null,                          // (item, rowCtx) => node — telefonda sütun etiketli kartın YERİNE
+  renderEmpty = null,                         // (ctx) => node — "kayıt yok" bloğunun YERİNE (ör. aralığı genişlet eylemi)
+  cardsBelow = null,                          // px — kap bu genişliğin altındaysa kart listesi (ölçüm yoksa useIsMobile)
   // ── Ardışık aynı sonuçları tek satırda topla (OPT-IN, varsayılan KAPALI) ──
   // Sürekli aynı hatayı veren bir monitörde geçmiş, aynı satırın yüzlerce kopyasına dönüşüyor
   // (gerçek vaka: 291 kaydın 291'i aynı k6 sözdizimi hatası). Varsayılanı kapalı tutmak şart:
@@ -191,6 +182,9 @@ export default function CheckHistoryTab({
 }) {
   const t = useT()
   const isMobile = useIsMobile()
+  // Kap genişliği (yalnız `cardsBelow` verildiyse ölçülür; 0 = ölçüm yok → görünüm alanı kuralı).
+  const [boxWidth, setBoxEl] = useElementWidth()
+  const asCards = cardsBelow && boxWidth > 0 ? boxWidth < cardsBelow : isMobile
   const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams,
     live: range ? false : live, fixed: range, reloadSignal })
   const [showPicker, setShowPicker] = useState(false)
@@ -233,18 +227,25 @@ export default function CheckHistoryTab({
   }, [])
 
   // ── Retention/clamp bildirimi: istenen from, dönen range.from'dan gerideyse kırpılmıştır ──
+  // Kontrollü aralıkta (Uptime: tek seçici iki geçmişi sürer) istek ön ayarla DEĞİL sabit uçla gider → istenen uç O uçtur.
+  // Eskiden iç ön ayardan (şimdi − N gün) türetiliyordu: pencere her açılışta "bugün 00:00 → şimdi" olduğu için SSL
+  // sütununda (ön ayar 7) her seferinde, HTTP sütununda (ön ayar 1) 22:00'ye dek SAHTE "saklama süresi nedeniyle kırpıldı"
+  // bandı çıkıyordu — hiçbir şey kırpılmamışken (E1, 2026-09-28e).
+  const fixedFromIso = fixedMode && range?.from ? toUtcIso(range.from) : null
   const clampedFrom = useMemo(() => {
     if (!h.range?.from) return null
     let requested
-    if (h.preset === 'custom' && h.customFrom) requested = h.customFrom.toISOString().slice(0, 19)
+    if (fixedMode) requested = fixedFromIso
+    else if (h.preset === 'custom' && h.customFrom) requested = h.customFrom.toISOString().slice(0, 19)
     else if (typeof h.preset === 'number') {
       requested = new Date(Date.now() - h.preset * 86400000).toISOString().slice(0, 19)
-    } else return null
+    }
+    if (!requested) return null
     // 2 saatlik tolerans — saat farkları/istek gecikmesi sahte uyarı üretmesin
     return (h.range.from.localeCompare(requested) > 0
         && (new Date(h.range.from + 'Z') - new Date(requested + 'Z')) > 2 * 3600000)
       ? h.range.from : null
-  }, [h.range, h.preset, h.customFrom])
+  }, [h.range, h.preset, h.customFrom, fixedMode, fixedFromIso])
 
   // ── Sayfa satırları: gün ayırıcıları + alarm işaret satırları serpiştirilmiş ──
   const rows = useMemo(() => {
@@ -317,7 +318,7 @@ export default function CheckHistoryTab({
         pressed={filterable ? statusValue === 'fail' : undefined}
         onClick={filterable ? () => h.setStatus(filterMode) : undefined} hint={filterable ? t('hist.filterFailHint', failLabel) : undefined} />
       <HistTile icon={CircleCheck} label={t('hist.tileAvailability')}
-        value={availability == null ? '—' : `${availability >= 99.995 ? '100' : availability.toFixed(2)}%`}
+        value={formatRatePercent(availability)}
         tone={availability == null ? 'total' : availability >= 99.9 ? 'success' : availability >= 99 ? 'warning' : 'danger'}
         hint={t(changedMode ? 'hist.tileAvailabilityTimeHint' : 'hist.tileAvailabilityHint')} />
       <HistTile icon={Siren} label={t('hist.tileOutages')} value={outage ? String(outage.segs.length) : '—'}
@@ -326,8 +327,38 @@ export default function CheckHistoryTab({
     </div>
   )
 
+  // Yuvalara verilen sorgu bağlamı (renderSummary / renderAbove / renderEmpty). Eylemler seçici paneliyle tutarlı:
+  // ön ayar "Özel" ise seçici açılır, özel aralık uygulanınca kapanır (araç çubuğu ve yoğunluk şeridiyle aynı kural).
+  // Kontrollü aralıkta (Uptime: tek seçici iki geçmişi sürer) eylemler üst bileşenin aralığını değiştirir.
+  const ctx = {
+    preset: h.preset, range: h.range, customFrom: h.customFrom, customTo: h.customTo,
+    status: h.status, filterMode, counts: h.counts, items: h.items, page: h.page, total: h.total,
+    alerts: h.alerts, buckets: h.buckets, loading: h.loading, error: h.error, presets, defaultPreset, fixedMode,
+    fixedRange: fixedMode ? { from: range.from, to: range.to } : null,
+    setStatus: h.setStatus,
+    setPreset: (p) => {
+      if (fixedMode) {
+        const d = Number(p)
+        const now = Date.now()
+        if (Number.isFinite(d) && d > 0) onRangeChange?.(new Date(now - d * 86400000), new Date(now))
+        return
+      }
+      h.setPreset(p); setShowPicker(p === 'custom')
+    },
+    setCustomRange: (f, to) => {
+      if (fixedMode) { onRangeChange?.(f, to); return }
+      h.setCustomRange(f, to); setShowPicker(false)
+    },
+  }
+  const summary = renderSummary ? renderSummary(ctx) : tiles
+
   const n = Math.max(1, columns.length)
-  const cellsRow = (item, index) => cellsOf(renderRow(item, { index }))
+  /** Satır bağlamı: sayfadaki komşu (bir önceki = daha eski kontrol) — tür-özel "önceki kontrole göre değişim" için. */
+  const rowCtx = (index) => ({ index, older: h.items[index + 1] ?? null, items: h.items, filtered: h.status !== 'all' })
+  const cellsRow = (item, index) => cellsOf(renderRow(item, rowCtx(index)))
+  /** Telefon kartı — çağıran kendi kartını verdiyse o, yoksa sütun etiketli genel kart. */
+  const cardOf = (item, index) => (renderCard ? renderCard(item, rowCtx(index))
+    : <CheckCard cells={cellsRow(item, index)} columns={columns} />)
   /** Bir kontrolün tablo satırı (+ sütun sayısını aşan hücreler varsa altında tam genişlik ek satır). */
   const itemRows = (key, item, index, cls) => {
     const [main, extra] = splitCells(cellsRow(item, index), columns)
@@ -397,24 +428,26 @@ export default function CheckHistoryTab({
       const [first, ...rest] = r.rows
       return (
         <li key={r.key} className="flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted/40 p-1.5">
-          <CheckCard cells={cellsRow(first.item, first.index)} columns={columns} />
+          {cardOf(first.item, first.index)}
           {groupToggle(r, open)}
-          {open && rest.map(row => <CheckCard key={row.key} cells={cellsRow(row.item, row.index)} columns={columns} />)}
+          {open && rest.map(row => <Fragment key={row.key}>{cardOf(row.item, row.index)}</Fragment>)}
         </li>
       )
     }
-    return <li key={r.key} className="min-w-0"><CheckCard cells={cellsRow(r.item, r.index)} columns={columns} /></li>
+    return <li key={r.key} className="min-w-0">{cardOf(r.item, r.index)}</li>
   })
 
   return (
     // `@container/hist`: kutucuk ızgarası görünüm alanına değil KABA göre (Uptime'da iki geçmiş yan yana ~450 px)
-    <div data-slot="check-history" data-grid={gridClass || undefined} className="@container/hist flex min-w-0 flex-col gap-3">
+    <div ref={cardsBelow ? setBoxEl : undefined} data-slot="check-history" data-grid={gridClass || undefined}
+      className="@container/hist flex min-w-0 flex-col gap-3">
       {/* Araç çubuğu: aralık ön ayarları (telefonda kendi kabında kayar) · sağda canlı rozeti + CSV */}
       <div data-slot="hist-toolbar" className="flex min-w-0 flex-wrap items-center gap-2">
         {!fixedMode && (
           // Bitişik 5 düğmelik aralık seçici sarmaz (w-fit): telefonda (≈310 px) sağa taşıyordu → kendi kabında yatay kayar.
           <div data-slot="hist-range-scroll" className="max-w-full min-w-0 overflow-x-auto overscroll-x-contain rounded-lg [scrollbar-width:thin]">
-            <SegmentedControl ariaLabel={t('hist.rangeLabel')} options={presetOptions} className="w-max flex-nowrap"
+            {/* Dokunmatikte (pointer: coarse) ön ayar düğmeleri 40 px (RESPONSIVE.md §4; 28 px ölçüldü, 2026-09-28) — yalnız görünüm. */}
+            <SegmentedControl ariaLabel={t('hist.rangeLabel')} options={presetOptions} className="w-max flex-nowrap pointer-coarse:*:h-10"
               value={h.preset} onChange={(v) => { h.setPreset(v); setShowPicker(v === 'custom') }} />
           </div>
         )}
@@ -454,7 +487,7 @@ export default function CheckHistoryTab({
           onApply={(f, to) => { h.setCustomRange(f, to); setShowPicker(false) }} />
       )}
 
-      {tiles}
+      {summary}
 
       {clampedFrom && (
         <AlertBanner tone="warning" className="my-0 py-2 text-xs">{t('hist.clampedNotice', formatDateSec(clampedFrom))}</AlertBanner>
@@ -470,7 +503,7 @@ export default function CheckHistoryTab({
       )}
 
       {/* Kesinti zaman çizelgesi (2026-09-12, #12): alarm açılış→çözüm segmentleri, süre + Alarm Geçmişi bağlantısı */}
-      {renderAbove && renderAbove({ preset: h.preset, range: h.range })}
+      {renderAbove && renderAbove(ctx)}
       {timeline && <OutageTimeline alerts={h.alerts} range={h.range} />}
       <DensityStrip buckets={h.buckets} zoomed={!fixedMode && h.preset === 'custom'}
         onZoom={(fromIso, toIso) => {
@@ -491,16 +524,17 @@ export default function CheckHistoryTab({
              ve "Yeniden dene"ye basınca ekranda HİÇBİR ŞEY değişmiyordu (spinner yok, hata bandı
              aynı) — kullanıcı düğmenin bozuk olduğunu sanıp basmaya devam ediyor, her basış
              gerçek bir istek atıyordu. */
-          actions={<Button variant="secondary" size="sm" onClick={() => h.reload()}>{t('hist.retry')}</Button>}>
+          actions={<Button variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => h.reload()}>{t('hist.retry')}</Button>}>
           {String(h.error)}
         </AlertBanner>
       ) : h.items.length === 0 ? (
         /* LoadingBlock DEĞİL: o koşulsuz spinner + role="status" basıyor, yani gerçekten
            veri olmayan monitörde ekranda SONSUZA KADAR dönen bir spinner + "Kayıt yok" duruyordu. */
-        <StatusBlock tone="neutral" icon={Inbox} title={t('hist.noData')} className="rounded-lg border border-dashed" />
+        renderEmpty ? renderEmpty(ctx)
+          : <StatusBlock tone="neutral" icon={Inbox} title={t('hist.noData')} className="rounded-lg border border-dashed" />
       ) : (
         <div data-slot="hist-list" className="flex min-w-0 flex-col gap-2">
-          {isMobile ? (
+          {asCards ? (
             <ul data-slot="hist-rows" data-view="cards" className="m-0 flex list-none flex-col gap-2 p-0">{cardBody}</ul>
           ) : (
             <div data-slot="hist-rows" data-view="table" className="overflow-hidden rounded-lg border bg-card">

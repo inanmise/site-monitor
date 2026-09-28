@@ -126,4 +126,69 @@ class TeamAdminServiceTest {
         assertThatThrownBy(() -> service.moveAll(7L, 7L)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.moveAll(7L, 123L)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    /**
+     * Y1 (2026-09-28): "Taşı ve sil" açık alarmların damgasını taşımıyordu; damga yeniden uyarı / eskalasyon / çözümde
+     * envanterden ÖNCE okunduğundan açık alarm silinen takıma — hiçbir adrese ve kişiye — gidiyordu (sessiz susma).
+     */
+    @Test
+    @DisplayName("Y1: açık alarm bağlı kayıttır (empty=false); moveAll AÇIK alarmın damgasını taşır, KAPANMIŞ olayın geçmiş damgasına dokunmaz")
+    void openAlerts_blockDeleteAndMove() {
+        // setUp'taki takım 7'nin tek bağı açık alarm olsun
+        when(inventoryRepo.findByTeamIdOrderByDomainAsc(8L)).thenReturn(List.of());
+        AlertEvent open8 = new AlertEvent(); open8.setId(1L); open8.setTeamId(8L); open8.setResolved(false);
+        AlertEvent otherTeam = new AlertEvent(); otherTeam.setId(2L); otherTeam.setTeamId(7L); otherTeam.setResolved(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(open8, otherTeam));
+        assertThat(service.impact(8L)).containsEntry("open_alerts", 1L).containsEntry("empty", false);
+
+        AlertEvent closed8 = new AlertEvent(); closed8.setId(3L); closed8.setTeamId(8L); closed8.setResolved(true);
+        Map<String, Integer> moved = service.moveAll(8L, 9L);
+        assertThat(moved).containsEntry("open_alerts", 1);
+        assertThat(open8.getTeamId()).isEqualTo(9L);
+        assertThat(otherTeam.getTeamId()).isEqualTo(7L);
+        assertThat(closed8.getTeamId()).isEqualTo(8L);   // kapanmış olay sorguya hiç gelmez; geçmiş damga korunur
+        verify(alertEventRepo).save(open8);
+        verify(alertEventRepo, never()).save(otherTeam);
+
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(otherTeam));
+        assertThat(service.impact(8L)).containsEntry("empty", true);   // taşındıktan sonra silinebilir
+    }
+
+    /**
+     * 2026-09-28: UG bağı da takım bütünlüğünün parçası. Eskiden impact UG kayıtlarını saymıyor ("boş" diyip silmeye
+     * izin veriyor), moveAll da taşımıyordu → takım silinince kaydın UG'si silinmiş takımı gösteriyor, yalnız UG'li
+     * kayıt sahipsiz kalıyordu (alarmı kimseye gitmez).
+     */
+    @Test
+    @DisplayName("UG bağı: impact UG olarak bağlı kayıtları sayar (yalnız UG'li takım boş sayılmaz); moveAll UG'yi de taşır")
+    @SuppressWarnings("unchecked")
+    void ugLinks_countedAndMoved() {
+        CertificateInventory ugOnly = inv("ug.example.com", 9L); ugOnly.setUgTeamId(8L);    // SY 9, UG 8
+        CertificateInventory both = inv("both.example.com", 8L); both.setUgTeamId(8L);    // SY = UG = 8
+        CertificateInventory toTarget = inv("hedef.example.com", 9L); toTarget.setUgTeamId(8L);
+        when(inventoryRepo.findByUgTeamIdOrderByDomainAsc(8L)).thenReturn(List.of(ugOnly, both, toTarget));
+        when(inventoryRepo.findByTeamIdOrderByDomainAsc(8L)).thenReturn(List.of(both));
+
+        Map<String, Object> r = service.impact(8L);
+        assertThat(((Map<String, Object>) r.get("ug_domains")).get("count")).isEqualTo(3);
+        assertThat(r.get("empty")).isEqualTo(false);
+        // YALNIZ UG olarak bağlı takım (SY kaydı, izlemesi, üyesi yok) da "boş" sayılmaz — silinirse kayıt UG'siz kalır.
+        CertificateInventory ug6 = inv("alti.example.com", 9L); ug6.setUgTeamId(6L);
+        when(inventoryRepo.findByUgTeamIdOrderByDomainAsc(6L)).thenReturn(List.of(ug6));
+        assertThat(service.impact(6L).get("empty")).isEqualTo(false);
+
+        Map<String, Integer> moved = service.moveAll(8L, 9L);
+        assertThat(both.getTeamId()).isEqualTo(9L);
+        assertThat(both.getUgTeamId()).isNull();                 // SY=UG birlikte taşındı; hedef SY → UG boşa düşer
+        assertThat(ugOnly.getUgTeamId()).isNull();               // hedef zaten SY → UG'ye gerek yok
+        assertThat(toTarget.getUgTeamId()).isNull();
+        assertThat(moved).containsEntry("domains", 1).containsEntry("ug_domains", 2);
+
+        CertificateInventory other = inv("baska.example.com", 7L); other.setUgTeamId(8L);
+        when(inventoryRepo.findByUgTeamIdOrderByDomainAsc(8L)).thenReturn(List.of(other));
+        when(inventoryRepo.findByTeamIdOrderByDomainAsc(8L)).thenReturn(List.of());
+        service.moveAll(8L, 9L);
+        assertThat(other.getTeamId()).isEqualTo(7L);
+        assertThat(other.getUgTeamId()).isEqualTo(9L);           // SY farklı → UG hedefe geçer
+    }
 }

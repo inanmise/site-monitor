@@ -30,3 +30,29 @@ export function localDayKey(iso) {
     return String(iso).slice(0, 10)
   }
 }
+
+const DAY_MS = 86_400_000
+
+/**
+ * Bir tarihe kalan gün (geçmiş negatif; bozuk / boş → null) — Ek 3/1 (2026-09-28).
+ *
+ * <p><b>Yalnız tarih</b> ("YYYY-MM-DD": yenileme planı, WHOIS bitişi) = YEREL TAKVİM GÜNÜ farkı: bugüne planlanan 0, yarın
+ * 1, dün −1 — günün saatinden bağımsız. Eskiden UTC gece yarısına çevrilip `floor((tarih − şimdi) / gün)` alınıyordu:
+ * öğlen bugünün tarihi "1 gün önce", yarınınki "bugün", bitiş günü kırmızı "1 gün önce doldu" oluyor, ≤ 30 gün eşiği de
+ * bir gün kayıyordu. İki uç da UTC takvimiyle (`Date.UTC`) çıkarılır → yaz saati geçişinde 23/25 saatlik gün kaydırmaz.
+ * <p><b>Zaman damgası</b> (UTC, ofsetsiz → `Z`) eskisi gibi kalan TAM gün (`floor`).
+ */
+export function daysFromToday(iso, now = Date.now()) {
+  if (!iso) return null
+  const s = String(iso).trim()
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (ymd) {
+    const y = Number(ymd[1]), m = Number(ymd[2]), d = Number(ymd[3])
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null
+    const today = new Date(now)
+    if (Number.isNaN(today.getTime())) return null
+    return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())) / DAY_MS)
+  }
+  const at = new Date(toUtc(s)).getTime()
+  return Number.isNaN(at) ? null : Math.floor((at - now) / DAY_MS)
+}

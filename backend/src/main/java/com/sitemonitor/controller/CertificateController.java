@@ -201,11 +201,19 @@ public class CertificateController {
         throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
     }
 
+    /**
+     * Sertifika penceresinin kart geçmişi. Zarf ayrıca kaydın GÜNCEL 7/24 alanlarını taşır ({@code noc_notify},
+     * {@code noc_group_ids} — 2026-09-28, pencere başlığındaki 7/24 göstergesi): geçmiş satırları kontrol kaydıdır
+     * (envanter birleşimi yok), kayıt durumu ise yetki kapısının ZATEN okuduğu envanter satırından gelir — ek sorgu yok.
+     * Biçim listelerle aynı ({@code CertificateService.applyNoc}): null kolon = kapalı, boş liste = varsayılan gruplar.
+     */
     @GetMapping("/history/{domain}")
     public ResponseEntity<Map<String, Object>> getHistory(@PathVariable String domain, HttpSession session) {
-        requireReadableDomain(session, domain);
+        CertificateInventory inv = requireReadableDomain(session, domain);
         List<CertificateDto> history = certService.getHistory(domain, 30);
-        return ok(Map.of("success", true, "domain", domain, "data", history, "timestamp", now()));
+        return ok(Map.of("success", true, "domain", domain, "data", history, "timestamp", now(),
+                "noc_notify", Boolean.TRUE.equals(inv.getNocNotify()),
+                "noc_group_ids", com.sitemonitor.service.noc.NocGroupIds.parse(inv.getNocGroupIds())));
     }
 
     @GetMapping("/history/{domain}/alerts")

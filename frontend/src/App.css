@@ -155,7 +155,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 /* ── Controls ─────────────────────────────────────────
    (.controls satırı 2026-09-27'de kaldırıldı — Şimdi Kontrol Et / SSL Checker sayfa başlıklarında) */
-.sort-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 
 /* ── Stats section ─────────────────────────────────── */
 .stats-section { margin-bottom: 4px; }
@@ -196,8 +195,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 
 
-.dashboard-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-.dashboard-header h2 { margin-bottom: 0; }
 .stats-filter-bar { display: flex; align-items: center; gap: 12px; background: #e8f4ff; border: 1px solid #b3d4f5; border-radius: 6px; padding: 7px 14px; font-size: .9em; }
 
 /* ── Content / Tabs ─────────────────────────────────── */
@@ -957,7 +954,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   .controls { flex-direction: column; }
   .cards-container { grid-template-columns: 1fr; }
   .certificates-table th, .certificates-table td { padding: 8px 6px; font-size: .82em; }
-  .sort-controls { flex-wrap: wrap; gap: 6px; }
 }
 
 /* ── Dashboard Pagination ──────────────────────────────── */
@@ -1172,15 +1168,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* Gerekce tam genislikte alt satira duser — dar modalde sayiyi sikistirmasin. */
 
 .filter-group .ss-wrap { width: auto; min-width: 140px; }
-.sort-bar .ss-wrap { width: auto; min-width: 130px; }
-/* Etiket + kutu birlikte sarsın (2026-09-18): "Etiket:" satır sonunda tek başına kalıyordu */
-.sort-bar-field { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
 
-/* Kompakt / Zengin segmenti — "Genel Bakış" başlığının yanında (2026-09-19) */
-/* flex: 1 1 100% — başlık satırı .dashboard-header (flex) içinde içerik genişliğine büzülüyordu (1920'de 944 px);
-   SSL Checker alanı "en sağa" (ml-auto) satırın değil SAYFANIN sağına dayansın (2026-09-26). */
-.dashboard-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; flex: 1 1 100%; }
-.dashboard-title-row h2 { margin: 0; }
+/* Genel Bakış süzgeç satırı (.sort-controls / .sort-bar* / .dashboard-header / .dashboard-title-row) 2026-09-28'de
+   components/dashboard/DashboardFilters.jsx'e (shadcn) taşındı — kuralları silindi. */
 /* "Domain Ekle" artık ui/PageHeader eylem çubuğunda (2026-09-27) — eski .controls-add-domain kuralı silindi. */
 
 /* Sistem Sağlığı EKG (.hb-ecg-* ve .hb-terminal-* aileleri) ve SMTP akış (.smtp-stream-*) süsleri 2026-09-27'de kaldırıldı —

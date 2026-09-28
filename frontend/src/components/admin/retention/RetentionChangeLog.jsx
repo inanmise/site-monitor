@@ -2,6 +2,7 @@ import { ArrowRight } from 'lucide-react'
 import { formatDateSec } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
+import MaskedValue from '../../ui/MaskedValue.jsx'
 
 /**
  * "Kim, ne zaman, hangi politikayı, hangi değerden hangi değere çekti."
@@ -31,7 +32,7 @@ export default function RetentionChangeLog({ rows, compact }) {
           ) : (
             <span className="ret-change-detail">{r.detail}</span>
           )}
-          {!compact && r.ip && <span className="ret-change-ip">{r.ip}</span>}
+          {!compact && (r.identity_masked === true ? <MaskedValue /> : r.ip && <span className="ret-change-ip">{r.ip}</span>)}
         </li>
       ))}
     </ul>

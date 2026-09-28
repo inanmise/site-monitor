@@ -17,7 +17,7 @@
  *   <li>`blocked` — 7/24 açık ama iletilmiyor: `TYPE_DISABLED` (tür Ayarlar'dan kapalı) | `NO_ACTIVE_GROUP`;</li>
  *   <li>`off`     — 7/24 kapalı.</li>
  * </ul>
- * `noc_notify` boolean DEĞİLSE (alanı taşımayan yanıt — ör. Uyarılar'ın ham sertifika satırı) sonuç `null`: gösterge
+ * `noc_notify` boolean DEĞİLSE (alanı taşımayan yanıt — ör. sertifika önizlemesi, eski sunucu) sonuç `null`: gösterge
  * çizilmez. "Bilinmiyor" hiçbir zaman "kapalı" gösterilmez.
  *
  * <p>Duraklatılmış izleme durumu DEĞİŞTİRMEZ (kartın kendi "Duraklatıldı" rozeti var; 7/24 Kapsamı da duraklatılmışı
@@ -90,7 +90,8 @@ export function nocStatusOf({ notify, type, groupIds, active } = {}, noc = null)
   // Tür listesi ya da grup hükmü bilinmiyorsa "etkin" de iddia edilmez (doğrulanamadı)
   const verified = s.disabledTypes != null && s.hasActiveGroup === true
   // Alıcı gruplar yalnız satır `noc_group_ids` TAŞIYORSA (izleme listeleri hep taşır; `[]` = varsayılan gruplar).
-  // Taşımayan satırda (sertifika kartı) varsayılanları yazmak, açık seçimi olan kayıtta yanlış olurdu → satır yok.
+  // Taşımayan satırda varsayılanları yazmak, açık seçimi olan kayıtta yanlış olurdu → satır yok. (Sertifika satırları
+  // 2026-09-28'den beri taşır: Genel Bakış, Uyarılar ve sertifika penceresi gerçek alıcı grupları yazar.)
   const groups = verified && groupIds !== undefined ? targetGroupNames(groupIds, s.groups) : []
   return { ...base, state: NOC_STATUS.ON, verified, minLevel, groups }
 }

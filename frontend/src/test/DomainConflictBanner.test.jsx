@@ -157,22 +157,24 @@ describe('DomainConflictBanner', () => {
     expect(btn('Restore from the bin')).toBeNull()
   })
 
-  it('çöp kutusu + BAŞKA takım: yetkisize talep; global yöneticiye "Geri yükle ve aktar" (transfer → restore sırası)', async () => {
+  /*
+   * Ek 3/5 (2026-09-28): sunucu çöp kutusundaki kayda DÜZ aktarımı 409 ile reddeder — "Geri yükle ve aktar" TEK istek
+   * (`restore: true`): eskiden aktar → ayrı /restore; ikinci adım düşerse kayıt yeni takımın çöpünde kalıyordu.
+   */
+  it('çöp kutusu + BAŞKA takım: yetkisize talep; global yöneticiye "Geri yükle ve aktar" TEK istekte (restore: true)', async () => {
     const gone = { ...FOREIGN, deleted: true, deleted_at: '2026-09-01T00:00:00', can_view: false }
     const { unmount } = render(<DomainConflictBanner conflict={{ message: MSG, existing: gone }} targetTeam={TARGET} onResolved={() => {}} />)
     expect(btn('Request a transfer')).toBeInTheDocument()
     expect(btn('Restore from the bin')).toBeNull()
     unmount()
 
-    api.admin.transferCertSy.mockResolvedValue({ success: true, data: { id: 2 } })
-    api.admin.restoreInventory.mockResolvedValue({ success: true, data: { id: 2, deleted_at: null } })
+    api.admin.transferCertSy.mockResolvedValue({ success: true, data: { id: 2, deleted_at: null, team_id: 5 } })
     const { onResolved } = show({ ...gone, can_transfer: true, can_restore: true })
     fireEvent.click(btn("Restore and move to 'Takım A'"))
-    await waitFor(() => expect(api.admin.restoreInventory).toHaveBeenCalledWith(2))
-    expect(api.admin.transferCertSy).toHaveBeenCalledWith(2, 5)
-    expect(api.admin.transferCertSy.mock.invocationCallOrder[0]).toBeLessThan(api.admin.restoreInventory.mock.invocationCallOrder[0])
+    await waitFor(() => expect(api.admin.transferCertSy).toHaveBeenCalledWith(2, 5, { restore: true }))
+    expect(api.admin.restoreInventory).not.toHaveBeenCalled()   // ikinci adım YOK
     expect(confirmMock.mock.calls[0][0].message).toMatch(/restored from the bin and moved from 'Takım B' to 'Takım A'/)
-    await waitFor(() => expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'transferred', record: { id: 2, deleted_at: null } })))
+    await waitFor(() => expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'transferred', record: { id: 2, deleted_at: null, team_id: 5 } })))
   })
 
   it('AYNI takım (kayıt var): düzenleme yönlendirmesi; aktar/talep yok', () => {

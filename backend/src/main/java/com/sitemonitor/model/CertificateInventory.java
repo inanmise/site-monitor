@@ -181,6 +181,15 @@ public class CertificateInventory implements NocTarget {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean canManage;
 
+    // ── Bildirim grubunun ADI (2026-09-28) — yalnız okuma uçları (listInventory / by-domain) doldurur; DB'de tutulmaz.
+    // Yalnız grup GERÇEKTEN uygulanıyorsa (aktif + kaydın takımına ait — NotificationGroupService.overrideFor ile aynı
+    // koşul) VE çağıran grubu okuyabiliyorsa (notification.groups/view + takım görüş kapsamı — grup ucunun kapısı) yazılır.
+    // Aksi hâlde null → hiç yazılmaz; arayüz kimliği "bulunamadı" açıklamasıyla gösterir (grup ucunun 404 deseni:
+    // başka takımın grubunun VAR OLDUĞU bile söylenmez). İstek gövdesinden gelen değer hiçbir yerde okunmaz.
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String notificationGroupName;
+
     // ── Kimlik künyesi ────────────────────────────────────────────────────────────────────
     // "Bu izlemeyi kim kurdu?" sorusu geçmiş tablosuna gitmeden de cevaplanabilsin (kart künyesi
     // bunu okur). monitor_change_log'dan BAĞIMSIZ: biri retention ile temizlense de diğeri kalır.

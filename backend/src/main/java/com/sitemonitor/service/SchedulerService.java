@@ -1025,6 +1025,10 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_hc_monitor_checked ON http_checks(monitor_id, checked_at)");
         // HTTP hata tanısı (2026-09-22): yalnız başarısız satırda dolu; ddl-auto da ekler, açık patch proje geleneği.
         patch("ALTER TABLE http_checks ADD COLUMN error_detail TEXT");
+        // İstek Gezgini durum kodu dağılımı (2026-09-28): dolu tabloya SONRADAN eklenen NULL'lanabilir kolon. ddl-auto
+        // normalde ekler ama ona güvenilmez — ALTER düşerse her dakikanın saveAll'u kolonsuz tabloya yazmaya çalışır,
+        // flushPending istisnayı yutar ve İstek Gezgini / top_endpoints KALICI boş kalırdı (2026-09-28c, B3).
+        patch("ALTER TABLE http_metric_minute ADD COLUMN status_codes TEXT");
         // remember_me_tokens: saatlik expired-token temizliği (DELETE WHERE expires_at < ?).
         patch("CREATE INDEX IF NOT EXISTS idx_rmt_expires ON remember_me_tokens(expires_at)");
         // Genel Ayarlar (runtime config override'ları) — tablo ddl-auto ile oluşur; unique key güvenlik ağı.
@@ -2860,7 +2864,7 @@ public class SchedulerService {
                 slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
                 slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
                 slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-                if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+                if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);
                 if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
                 int slowTh = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
                 slowCtx.put("threshold_ms", slowTh);
@@ -3106,7 +3110,7 @@ public class SchedulerService {
         Map<String, Object> failCtx = new LinkedHashMap<>();
         failCtx.put("record_type", m.getRecordType());
         failCtx.put("monitor_id", m.getId());   // e-posta CTA deep-link (?tab=dns&monitor=<id>)
-        if (m.getTeamId() != null) failCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) failCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) failCtx.put("standalone", true);   // standalone → alarm takıma
         if (m.getNotificationGroupId() != null) failCtx.put("notification_group_id", m.getNotificationGroupId());
         return new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_DNS_FAILURE, m.getDomain(), m.getRecordType(),
@@ -3301,7 +3305,7 @@ public class SchedulerService {
         ctx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
         ctx.put("monitor_recovery_checks", m.getRecoveryChecks());
         ctx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
-        if (m.getTeamId() != null) ctx.put("team_id", m.getTeamId());
+        if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) ctx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) ctx.put("standalone", true);
         if (m.getNotificationGroupId() != null) ctx.put("notification_group_id", m.getNotificationGroupId());
         return new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PORT_DOWN, m.getHost(),
@@ -4595,6 +4599,18 @@ public class SchedulerService {
                 sslDomainCtx(m), SchedulerService::upStatus);
     }
 
+    /**
+     * Port/DNS alarm bağlamının takım damgası (ürün kararı 2026-09-28, "envanter gibi UG'ye de gitsin"): YALNIZ bağımsız
+     * (kullanıcının eklediği, {@code standalone=true}) satırda takım damgalanır. Envanter türevli satır takımını
+     * envanterden kopyalasa da DAMGALANMAZ — damga alarmı "bağımsız izleme" yapar ({@code EscalationService.isStandalone}):
+     * UG takımı düşer, UYARI yalnız takıma gider. Damgasız türev alarmda takım + UG, sertifika alarmındaki gibi alan adı →
+     * envanterden CANLI çözülür (kopyalanmış sütun bayatlasa bile). Kanonik ayırt edici {@code standalone} bayrağı —
+     * 7/24 dizini ({@code NocMonitorDirectory}) de aynı bayrağa bakar.
+     */
+    static Long alarmTeamOf(Boolean standalone, Long teamId) {
+        return Boolean.TRUE.equals(standalone) ? teamId : null;
+    }
+
     private static Map<String, Object> upStatus() {
         Map<String, Object> u = new LinkedHashMap<>();
         u.put("status", "up");
@@ -5312,7 +5328,7 @@ public class SchedulerService {
                     slowCtx.put("slow_threshold_ms", effSlow);
                     slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
                     slowCtx.put("monitor_confirm_interval_ms", (long) slowConfirmIntervalMs);
-                    if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) slowCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) slowCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
                     if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
                     slowSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_SLOW, m.getDomain(), m.getRecordType(),
@@ -5328,7 +5344,7 @@ public class SchedulerService {
                     unexpCtx.put("record_type", m.getRecordType());
                     unexpCtx.put("unexpected_values", unexpected);
                     unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
-                    if (m.getTeamId() != null) unexpCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) unexpCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) unexpCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
                     if (m.getNotificationGroupId() != null) unexpCtx.put("notification_group_id", m.getNotificationGroupId());
                     unexpectedSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_UNEXPECTED, m.getDomain(), m.getRecordType(),
@@ -5348,10 +5364,11 @@ public class SchedulerService {
                         // DNS_CHANGED artık 3× teyitli: değişiklik ardışık kontrollerde kalıcıysa alarmlanır
                         // (geçici/rotasyon baseline'a dönerse iptal). Baseline = değişiklik öncesi bilinen-iyi değer.
                         changes.add(new MonitoringOutageService.DnsChange(
-                                m.getDomain(), m.getRecordType(), prevValue, valueStr, now, m.getTeamId(),
+                                m.getDomain(), m.getRecordType(), prevValue, valueStr, now, alarmTeamOf(m.getStandalone(), m.getTeamId()),
                                 m.getNotificationGroupId(),
                                 () -> recheckDnsChanged(m, prevValue),
-                                m.getNotifyEmail(), m.getNotifyWebhook()));   // kanal bayrakları diğer 8 kalemle parite
+                                m.getNotifyEmail(), m.getNotifyWebhook(),   // kanal bayrakları diğer 8 kalemle parite
+                                Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null));   // O1: bağımsız işareti
                     } else {
                         log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
                                 m.getRecordType(), m.getDomain(),
@@ -5375,7 +5392,7 @@ public class SchedulerService {
                     Map<String, Object> incCtx = new LinkedHashMap<>();
                     incCtx.put("record_type", m.getRecordType());
                     incCtx.put("resolver_detail", detail);
-                    if (m.getTeamId() != null) incCtx.put("team_id", m.getTeamId());   // standalone → alarm takıma
+                    if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) incCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) incCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
                     if (m.getNotificationGroupId() != null) incCtx.put("notification_group_id", m.getNotificationGroupId());
                     inconsistentSweep.add(new MonitoringOutageService.SweepItem(
                             EscalationService.TYPE_DNS_INCONSISTENT, m.getDomain(), m.getRecordType(),

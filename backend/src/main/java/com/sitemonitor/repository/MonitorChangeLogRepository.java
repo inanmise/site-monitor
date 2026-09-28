@@ -286,15 +286,34 @@ public interface MonitorChangeLogRepository extends JpaRepository<MonitorChangeL
                              Pageable pageable);
 
     /**
-     * Verilen kimliklerden SİLİNMİŞ olanlar — {@code [tür, id]}. Liste satırının izlemesi sonradan silindiyse
+     * Verilen kaynaklardan ŞU AN SİLİNMİŞ olanlar — {@code [tür, id]}. Liste satırının izlemesi sonradan silindiyse
      * bağlantı boş sayfaya gitmesin ("silinmiş" rozeti). Kimlikler tür başına ayrı tablodan geldiği için çağıran
-     * türle eşler. Bir sayfalık kimlik (≤ 200) — idx_mchg_resource.
+     * türle eşler ({@code kinds} × {@code ids} çapraz kümesi gelebilir; çağıran yalnız kendi "TÜR:id" anahtarına bakar).
+     * Bir sayfalık kaynak (≤ 200) — {@code kinds} da verildiği için idx_mchg_resource (tür, id) iki sütunuyla kullanılır.
+     *
+     * <p><b>Hüküm: kaynağın EN SON geçmiş satırı {@code DELETE} ise silinmiştir</b> (2026-09-28, regresyon B1).
+     * Eskiden geçmişte HERHANGİ bir DELETE yetiyordu: çöp kutusundan geri yüklenen envanter kaydı ({@code RESTORE}),
+     * aynı kimlikle canlandırılan standalone DNS ({@code CREATE}) ya da "silinip" (duraklatılıp) sonradan sürdürülen
+     * envanter-türevi Port/DNS ({@code UPDATE}) canlıyken zaman çizelgesinde, "en çok değişen izlemeler" kartında ve
+     * CSV'de "silinmiş" görünüyordu. DELETE'ten SONRA gelen her satır kaynağın yaşadığını kanıtlar (bu tabloya
+     * yalnız canlı kayda yapılan yazımlar düşer), bu yüzden alt sorgu olay tipine bakmaz; iki DELETE arasında
+     * geri yükleme varsa son DELETE'in kendisi alt sorgudan geçer.
+     *
+     * <p>"Sonra" = {@code (createdAt, id)} sırası — tablonun kesin sırası
+     * ({@link #findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc} ile aynı). Yalnız
+     * {@code id}'ye bakılmaz: geri doldurma ({@code AUDIT_BACKFILL}) eski denetim satırlarını ESKİ zamanıyla ama YENİ
+     * kimlikle yazar; kimlik sırası ona "en yeni" derdi. Aynı saniyedeki iki satırı {@code id} ayırır.
      */
     @Query("""
            SELECT DISTINCT c.resourceKind, c.resourceId FROM MonitorChangeLog c
-           WHERE c.eventType = 'DELETE' AND c.resourceId IN :ids
+           WHERE c.eventType = 'DELETE'
+             AND c.resourceKind IN :kinds AND c.resourceId IN :ids
+             AND NOT EXISTS (
+                 SELECT n.id FROM MonitorChangeLog n
+                 WHERE n.resourceKind = c.resourceKind AND n.resourceId = c.resourceId
+                   AND (n.createdAt > c.createdAt OR (n.createdAt = c.createdAt AND n.id > c.id)))
            """)
-    List<Object[]> findDeletedAmong(@Param("ids") Collection<Long> ids);
+    List<Object[]> findDeletedAmong(@Param("kinds") Collection<String> kinds, @Param("ids") Collection<Long> ids);
 
     /**
      * "Ne zamandır duraklatılmış" (2026-09-23, bugün paneli): verilen kaynakların {@code active} alanının

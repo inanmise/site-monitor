@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BookOpen, Layers, Link2, MoreHorizontal, Plus, RefreshCw, Timer } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -8,6 +8,7 @@ import CopyLinkButton, { useCopyLink } from '../ui/CopyLinkButton.jsx'
 import MonitorGuideButton, { MonitorGuideDialog, hasMonitorGuide } from '../ui/MonitorGuideButton.jsx'
 import { TAB_META } from '../palette/paletteModel.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
+import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import {
@@ -38,6 +39,10 @@ import { cn } from '@/lib/utils'
  *  - count: listelenen izleme sayısı (yüklenirken null → çip yok); countUnit 'monitors' | 'sites'
  *  - down: arızalı sayısı (0/null → çip yok)
  *  - refreshIn: otomatik yenilemeye kalan saniye (null → çip yok)
+ *  - refreshEvery + refreshResetKey (isteğe bağlı, `refreshIn` yerine — Ek 3/10, 2026-09-28): geri sayımı ÇİPİN KENDİSİ
+ *    sayar (saniyelik state yalnız çipte); `refreshResetKey` her başarılı yüklemede değişir → sayaç sıfırlanır; gizli
+ *    sekmede durur. Sayfanın `secondsSince` state'i sayfayı — ve açık detay penceresinin geçmiş/recharts ağacını — her
+ *    saniye yeniden çiziyordu (Uptime).
  *  - onRefresh, refreshing
  *  - check: { count, running, done, total, onOpen } → CheckAllButton (count 0 → düğme yok)
  *  - canWrite + onNew + newLabel → birincil "Yeni Monitör" (`data-tour="mon-new"`)
@@ -46,9 +51,26 @@ import { cn } from '@/lib/utils'
  *  - children: başlığın altına tam genişlik (ör. görünüm anahtarı)
  * Test kancaları: PageHeader'ınkiler + data-slot="monitor-header-tools|monitor-count|monitor-down|monitor-refresh".
  */
+/**
+ * Kendi sayan yenileme çipi (Ek 3/10): saniyelik state YALNIZ burada — başlık ve sayfa her saniye çizilmez. Görünüm
+ * `refreshIn` çipiyle birebir aynı (data-slot="monitor-refresh").
+ */
+function RefreshCountdown({ every, resetKey }) {
+  const t = useT()
+  const [since, setSince] = useState(0)
+  useEffect(() => { setSince(0) }, [resetKey])
+  useVisibleInterval(() => setSince((s) => s + 1), 1000, false)
+  return (
+    <Badge variant="outline" data-slot="monitor-refresh" aria-live="off"
+      className="gap-1 font-normal text-muted-foreground tabular-nums">
+      <Timer aria-hidden="true" />{t('mon.hdr.refreshIn', Math.max(0, every - since))}
+    </Badge>
+  )
+}
+
 export default function MonitorPageHeader({
   type, icon, title, subtitle,
-  count = null, countUnit = 'monitors', down = null, refreshIn = null,
+  count = null, countUnit = 'monitors', down = null, refreshIn = null, refreshEvery = null, refreshResetKey,
   onRefresh, refreshing = false,
   check = null,
   canWrite = false, onNew, newLabel,
@@ -70,7 +92,7 @@ export default function MonitorPageHeader({
       ? (count === 1 ? t('mon.hdr.sitesOne') : t('mon.hdr.sites', count))
       : (count === 1 ? t('mon.hdr.countOne') : t('mon.hdr.count', count))
 
-  const meta = showActions && (countText || down > 0 || refreshIn != null) ? (
+  const meta = showActions && (countText || down > 0 || refreshIn != null || refreshEvery != null) ? (
     <>
       {countText && (
         <Badge variant="outline" data-slot="monitor-count" className="gap-1 font-normal tabular-nums">
@@ -83,6 +105,7 @@ export default function MonitorPageHeader({
           <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" />{t('mon.hdr.down', down)}
         </Badge>
       )}
+      {refreshIn == null && refreshEvery != null && <RefreshCountdown every={refreshEvery} resetKey={refreshResetKey} />}
       {refreshIn != null && (
         <Badge variant="outline" data-slot="monitor-refresh" aria-live="off"
           className="gap-1 font-normal text-muted-foreground tabular-nums">

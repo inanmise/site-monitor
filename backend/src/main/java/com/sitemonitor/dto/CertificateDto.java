@@ -109,6 +109,48 @@ public class CertificateDto {
     @JsonProperty("tls_mode_used")
     private String tlsModeUsed;
 
+    /**
+     * Kontrolün el sıkışmasındaki TLS sürümü ve şifre takımı (2026-09-28, sertifika penceresi → Sertifika Detayları).
+     * Veritabanında vardı ({@code certificate_checks.tls_version/cipher_suite}), yanıta hiç girmiyordu.
+     *
+     * <p><b>YALNIZ /history yolunda dolar</b> ({@link #applyTls} — {@code CertificateService.toDtoFromCheck}); {@link #from}
+     * doldurmaz. Pano / Tüm Sertifikalar / Uyarılar listeleri bu alanları kullanmıyor; {@code NON_NULL} sayesinde o
+     * yanıtlara tek bayt eklenmez (1000 satırlık listede aksi hâlde ~60 KB).
+     */
+    @JsonProperty("tls_version")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String tlsVersion;
+
+    @JsonProperty("cipher_suite")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String cipherSuite;
+
+    /**
+     * Protokol / şifre hükmü — {@code check-preview}'ın {@code assessment} alanıyla AYNI anahtarlar ve değerler
+     * ({@code protocol}, {@code protocol_latest}, {@code cipher}; {@code OK|WARN|FAIL|UNKNOWN}). Kural TEK yerde:
+     * {@link com.sitemonitor.service.CertificateHealthRules} (Sağlık sekmesi ve Zayıf Algoritma Raporu ile aynı). Arayüz
+     * zayıf protokol / şifre rozetini buradan okur, ikinci bir kural yazmaz. İki değer de boşsa null → yazılmaz.
+     */
+    @JsonProperty("tls_assessment")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private java.util.Map<String, Object> tlsAssessment;
+
+    /** TLS sürümü + şifre takımı + hükmü yazar (yalnız /history yolu). Boş değer null kalır. */
+    public CertificateDto applyTls(String version, String cipher) {
+        this.tlsVersion = version == null || version.isBlank() ? null : version.trim();
+        this.cipherSuite = cipher == null || cipher.isBlank() ? null : cipher.trim();
+        if (this.tlsVersion == null && this.cipherSuite == null) {
+            this.tlsAssessment = null;
+            return this;
+        }
+        java.util.Map<String, Object> a = new java.util.LinkedHashMap<>();
+        a.put("protocol", com.sitemonitor.service.CertificateHealthRules.protocolStatus(this.tlsVersion).name());
+        a.put("protocol_latest", com.sitemonitor.service.CertificateHealthRules.isLatestProtocol(this.tlsVersion));
+        a.put("cipher", com.sitemonitor.service.CertificateHealthRules.cipherStatus(this.cipherSuite).name());
+        this.tlsAssessment = a;
+        return this;
+    }
+
     /** Criticality tier from inventory (1–4, null = unclassified) */
     private Integer tier;
 
@@ -140,14 +182,24 @@ public class CertificateDto {
     private Integer checkIntervalHours;
 
     /**
-     * Envanter kaydının "7/24 izleme ekibine bildir" anahtarı (2026-09-28) — Genel Bakış sertifika kartındaki 7/24
-     * göstergesi (açık / açık · iletilmiyor / kapalı). Envanter birleşimi olan listeler ({@code getAllLatest}: Pano +
-     * Tüm Sertifikalar) doldurur; envanter birleşimi OLMAYAN ham satırda (Uyarılar {@code getWarnings}) null →
-     * YAZILMAZ: arayüz "bilinmiyor"u "kapalı" sanmasın (alan yoksa gösterge çizilmez).
+     * Envanter kaydının "7/24 izleme ekibine bildir" anahtarı (2026-09-28) — Genel Bakış / Uyarılar sertifika satırındaki
+     * 7/24 göstergesi (açık / açık · iletilmiyor / kapalı). Envanter satırını zaten okuyan listeler doldurur
+     * ({@code getAllLatest}: Pano + Tüm Sertifikalar; {@code getWarnings}: Uyarılar — aynı tek envanter okumasından).
+     * Envanter birleşimi OLMAYAN satırda (kontrol geçmişi {@code getHistory}, önizleme) null → YAZILMAZ: arayüz
+     * "bilinmiyor"u "kapalı" sanmasın (alan yoksa gösterge çizilmez).
      */
     @JsonProperty("noc_notify")
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean nocNotify;
+
+    /**
+     * Kaydın seçtiği 7/24 grup kimlikleri (2026-09-28, gösterge açıklamasındaki "Alıcı gruplar") — izleme listelerinin
+     * {@code noc_group_ids} biçimiyle AYNI: boş liste = varsayılan gruplar ({@code NocGroupIds.parse}). {@link #nocNotify}
+     * ile aynı yerde ve aynı envanter okumasından dolar; null → yazılmaz (satır taşımıyor → arayüz alıcı grup yazmaz).
+     */
+    @JsonProperty("noc_group_ids")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private List<Long> nocGroupIds;
 
     /**
      * Org geneli görünürlük (2026-09-26): çağıran bu satırın kaydını DEĞİŞTİREBİLİR mi

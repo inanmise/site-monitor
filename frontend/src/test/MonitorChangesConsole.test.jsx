@@ -53,6 +53,8 @@ const DELETED = {
   ...ROW, kind: 'PORT', resource_id: 7, resource_name: 'Eski port', seq: 9,
   event_type: 'DELETE', changes: null, note: null, at: '2026-08-22T15:00:00', actor: null, actor_name: null,
   ip_address: null, user_agent: null,   // zamanlanmış/geri doldurma satırı: oturum yok → IP yok
+  // Gerçek tel biçimi: izleme hâlâ silinmişse sunucu silme satırında da true döner (son geçmiş olayı DELETE)
+  resource_deleted: true,
 }
 const CREATED = {
   ...ROW, kind: 'HTTP', resource_id: 31, resource_name: 'Yeni HTTP izlemesi', seq: 0,
@@ -200,6 +202,29 @@ describe('MonitorChangesConsole — zaman çizelgesi', () => {
     const dlg = await screen.findByRole('dialog')
     expect(within(dlg).queryByRole('link', { name: /Go to monitor/ })).toBeNull()
     expect(dlg.querySelector('[data-slot="chg-deleted"]')).toBeInTheDocument()
+  })
+
+  // 2026-09-28 regresyon B1: silinip GERİ YÜKLENEN izleme — sunucu `resource_deleted: false` der (son olayı geri yükleme).
+  it('silinip geri yüklenen izleme: silme satırı bile bağlantı taşır, "deleted" rozeti yok; CSV "Deleted" yalnız hâlâ silinmişte', async () => {
+    const restoredDelete = { ...DELETED, resource_deleted: false }
+    const restored = { ...DELETED, resource_name: 'Geri gelen port', seq: 10, event_type: 'RESTORE', at: '2026-08-22T16:00:00', resource_deleted: false }
+    const stillGone = { ...DELETED, resource_id: 8, resource_name: 'Kapalı port', seq: 4, event_type: 'UPDATE', at: '2026-08-22T13:00:00', resource_deleted: true }
+    api.monitoring.getRecentChanges.mockResolvedValue(reply([restored, restoredDelete, stillGone]))
+    render(<MonitorChangesConsole />)
+    expect(await screen.findByRole('link', { name: 'Eski port' })).toHaveAttribute('href', '?tab=port&monitor=7&mtab=changes')
+    expect(screen.getByRole('link', { name: 'Geri gelen port' })).toBeInTheDocument()
+    expect(rowOf('Eski port').querySelector('[data-slot="chg-deleted"]')).toBeNull()
+    expect(rowOf('Geri gelen port').querySelector('[data-slot="chg-deleted"]')).toBeNull()
+    // Kontrol grubu: hâlâ silinmiş izlemenin satırı rozetli ve bağlantısız
+    expect(rowOf('Kapalı port').querySelector('[data-slot="chg-deleted"]')).toHaveTextContent('deleted')
+    expect(screen.queryByRole('link', { name: 'Kapalı port' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download as CSV' }))
+    await waitFor(() => expect(dl.downloadCsv).toHaveBeenCalledTimes(1))
+    const [, csv] = dl.downloadCsv.mock.calls[0]
+    const yes = csv.split('\r\n').filter(l => /(^|,)"?Yes"?(,|$)/.test(l))
+    expect(yes).toHaveLength(1)
+    expect(yes[0]).toContain('Kapalı port')
   })
 
   it('duraklatma / sürdürme: active alanını çeviren satır ek rozet taşır', async () => {
@@ -568,6 +593,30 @@ describe('MonitorChangesConsole — süzgeçler, rozetler ve URL', () => {
     expect(api.monitoring.getChangeDetail).toHaveBeenCalledTimes(1)
     fireEvent.click(within(dlg).getAllByRole('button', { name: 'Close' }).at(-1))
     await waitFor(() => expect(params().get('ch_id')).toBeNull())
+  })
+
+  // 2026-09-28 regresyon B1 (b): ayrıntı ucu artık `resource_deleted` taşır — derin bağlantıyla açılan GÜNCELLEME
+  // satırının izlemesi sonradan silindiyse panel "deleted" rozeti gösterir, ölü "Go to monitor" bağlantısı çizmez.
+  it('URL: ch_id ile açılan ayrıntı, izlemesi sonradan silinmişse "deleted" rozeti taşır ve izlemeye bağlantı vermez', async () => {
+    api.monitoring.getChangeDetail.mockResolvedValue({ success: true, data: { ...ROW, resource_deleted: true, snapshot: JSON.stringify({ name: 'Yeni ad' }) } })
+    window.history.replaceState(null, '', '/?tab=monitorchanges&ch_id=scripted:12:3')
+    render(<MonitorChangesConsole />)
+    const dlg = await screen.findByRole('dialog')
+    expect(within(dlg).getByRole('heading', { name: /Ödeme akışı/ })).toBeInTheDocument()
+    expect(dlg.querySelector('[data-slot="chg-deleted"]')).toHaveTextContent('deleted')
+    expect(within(dlg).queryByRole('link', { name: /Go to monitor/ })).toBeNull()
+    // "Only this monitor" süzgeci silinmiş izlemede de çalışır (geçmişi listelenir)
+    expect(within(dlg).getByRole('button', { name: /Only this monitor/ })).toBeInTheDocument()
+  })
+
+  it('URL: ch_id ile açılan SİLME olayı, izleme geri yüklendiyse (resource_deleted=false) izlemeye bağlantı verir, rozetsiz', async () => {
+    api.monitoring.getChangeDetail.mockResolvedValue({ success: true, data: { ...DELETED, resource_deleted: false, snapshot: JSON.stringify({ name: 'Eski port' }) } })
+    window.history.replaceState(null, '', '/?tab=monitorchanges&ch_id=port:7:9')
+    render(<MonitorChangesConsole />)
+    const dlg = await screen.findByRole('dialog')
+    expect(api.monitoring.getChangeDetail).toHaveBeenCalledWith('port', 7, 9)
+    expect(within(dlg).getByRole('link', { name: /Go to monitor/ })).toHaveAttribute('href', '?tab=port&monitor=7&mtab=changes')
+    expect(dlg.querySelector('[data-slot="chg-deleted"]')).toBeNull()
   })
 
   it('serbest arama istek parametresine yansır (debounce)', async () => {

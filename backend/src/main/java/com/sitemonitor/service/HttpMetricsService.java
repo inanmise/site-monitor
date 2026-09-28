@@ -13,6 +13,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 @Service
 public class HttpMetricsService {
@@ -42,8 +43,18 @@ public class HttpMetricsService {
         return HISTOGRAM_BOUNDS.length; // overflow
     }
 
+    /** Durum kodu anahtarı: 100–599 olduğu gibi, dışı (0, 999 …) tek {@code 0} kovasına — kardinalite sınırlı. */
+    static int statusKey(int status) { return status >= 100 && status <= 599 ? status : 0; }
+
     private volatile MinuteBucket current = new MinuteBucket(minuteKey());
     private final Deque<Map<String, Object>> history = new ArrayDeque<>(MAX_BUCKETS + 1);
+    /**
+     * {@link #history} ile HİZALI dakika histogramları + 24 saatlik kayan toplamları (2026-09-28): özet kartının
+     * p95/p99'u her istekte 1440 diziyi yeniden toplamasın diye {@code hist24} dakika kapanırken eklenir, pencereden
+     * düşen dakika çıkarılır. Bellek: 1440 × 20 long ≈ 230 KB (sabit, büyümez).
+     */
+    private final Deque<long[]> histHistory = new ArrayDeque<>(MAX_BUCKETS + 1);
+    private final long[] hist24 = new long[HIST_LEN];
 
     // ── Endpoint bazlı kalıcı zaman serisi (yeni) ────────────────────────────────
     /** Repo opsiyonel: birim testte (manuel new) null kalır → kalıcılık atlanır, bellek-içi davranış sürer. */
@@ -109,10 +120,22 @@ public class HttpMetricsService {
                 }
                 if (!rows.isEmpty()) metricRepo.saveAll(rows);
             } catch (Exception ex) {
-                // bu dakikayı atla — metrik yazımı uygulamayı etkilemesin
+                // bu dakikayı atla — metrik yazımı uygulamayı etkilemesin. Ama SESSİZ kalmasın (2026-09-28c, B3):
+                // kalıcı bir yazım hatası (ör. eksik kolon) İstek Gezgini'ni sinyalsiz boş bırakıyordu → saatte en çok bir WARN.
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastFlushWarnMs >= FLUSH_WARN_INTERVAL_MS) {
+                    lastFlushWarnMs = nowMs;
+                    org.slf4j.LoggerFactory.getLogger(HttpMetricsService.class).warn(
+                            "[HTTP-METRICS] minute rows could not be saved (skipped; next warning in 1 h): {}",
+                            ex.getClass().getSimpleName() + ": " + ex.getMessage());
+                }
             }
         }
     }
+
+    /** Yutulan yazım hatası için WARN aralığı (log taşmasın). */
+    private static final long FLUSH_WARN_INTERVAL_MS = 3_600_000L;
+    private volatile long lastFlushWarnMs = Long.MIN_VALUE / 2;
 
     // ── Queries (toplam, bellek-içi — mini-grafikler) ───────────────────────────
 
@@ -129,6 +152,12 @@ public class HttpMetricsService {
         long totalErrors = all.stream().mapToLong(b -> num(b, "errors")).sum();
         long totalMs     = all.stream().mapToLong(b -> num(b, "sum_ms")).sum();
         long maxMs       = all.stream().mapToLong(b -> num(b, "max_ms")).max().orElse(0);
+        long peak        = all.stream().mapToLong(b -> num(b, "count")).max().orElse(0);
+
+        // 24 saatlik birleşik histogram = kapanmış dakikaların kayan toplamı + süren dakika.
+        long[] merged = hist24.clone();
+        long[] cur = current.histCopy();
+        for (int i = 0; i < merged.length; i++) merged[i] += cur[i];
 
         Map<String, Object> s = new LinkedHashMap<>();
         s.put("total_requests", totalReqs);
@@ -137,6 +166,13 @@ public class HttpMetricsService {
         s.put("avg_ms",  totalReqs > 0 ? totalMs / totalReqs : 0);
         s.put("max_ms",  maxMs);
         s.put("buckets", all.size());
+        // Ek alanlar (2026-09-28, geriye uyumlu): yüzdelikler histogramdan (sorgu servisiyle AYNI tanım), istek hızı
+        // pencerenin dakika sayısına göre (boş dakikalar da sayılır — "dakikada ortalama"), tepe = en yoğun dakika.
+        s.put("p50_ms",  HttpMetricsQueryService.percentile(merged, 0.50, maxMs));
+        s.put("p95_ms",  HttpMetricsQueryService.percentile(merged, 0.95, maxMs));
+        s.put("p99_ms",  HttpMetricsQueryService.percentile(merged, 0.99, maxMs));
+        s.put("req_per_min", all.isEmpty() ? 0.0 : Math.round(totalReqs * 10.0 / all.size()) / 10.0);
+        s.put("peak_req_per_min", peak);
         return s;
     }
 
@@ -144,7 +180,14 @@ public class HttpMetricsService {
 
     private synchronized void finalize(MinuteBucket b) {
         history.addLast(b.snapshot());
-        while (history.size() > MAX_BUCKETS) history.pollFirst();
+        long[] h = b.histCopy();
+        histHistory.addLast(h);
+        for (int i = 0; i < HIST_LEN; i++) hist24[i] += h[i];
+        while (history.size() > MAX_BUCKETS) {
+            history.pollFirst();
+            long[] old = histHistory.pollFirst();
+            if (old != null) for (int i = 0; i < HIST_LEN; i++) hist24[i] -= old[i];
+        }
     }
 
     private static String minuteKey() {
@@ -166,8 +209,13 @@ public class HttpMetricsService {
         final AtomicLong errors = new AtomicLong();
         final AtomicLong sumMs  = new AtomicLong();
         final AtomicLong maxMs  = new AtomicLong();
+        /** Dakikanın gecikme histogramı (2026-09-28) — dakika p95'i ve 24 saatlik kayan p95/p99 için. */
+        final AtomicLong[] hist = new AtomicLong[HIST_LEN];
 
-        MinuteBucket(String key) { this.key = key; }
+        MinuteBucket(String key) {
+            this.key = key;
+            for (int i = 0; i < HIST_LEN; i++) hist[i] = new AtomicLong();
+        }
 
         void add(int status, long ms) {
             count.incrementAndGet();
@@ -175,6 +223,13 @@ public class HttpMetricsService {
             sumMs.addAndGet(ms);
             long prev;
             do { prev = maxMs.get(); } while (ms > prev && !maxMs.compareAndSet(prev, ms));
+            hist[histIndex(ms)].incrementAndGet();
+        }
+
+        long[] histCopy() {
+            long[] h = new long[HIST_LEN];
+            for (int i = 0; i < HIST_LEN; i++) h[i] = hist[i].get();
+            return h;
         }
 
         Map<String, Object> snapshot() {
@@ -186,6 +241,8 @@ public class HttpMetricsService {
             m.put("sum_ms", sumMs.get());
             m.put("avg_ms", c > 0 ? sumMs.get() / c : 0L);
             m.put("max_ms", maxMs.get());
+            // Ek (2026-09-28, geriye uyumlu): dakikanın p95'i — boş dakikada avg_ms gibi 0.
+            m.put("p95_ms", c > 0 ? HttpMetricsQueryService.percentile(histCopy(), 0.95, maxMs.get()) : 0L);
             return m;
         }
     }
@@ -199,6 +256,8 @@ public class HttpMetricsService {
         final AtomicLong maxMs  = new AtomicLong();
         final AtomicLong minMs  = new AtomicLong(Long.MAX_VALUE);
         final AtomicLong[] hist;
+        /** Durum kodu sayımı (2026-09-28): kod → adet; anahtar {@link #statusKey} ile ≤ 501 ayrı değer, pratikte 1–4. */
+        final ConcurrentHashMap<Integer, LongAdder> codes = new ConcurrentHashMap<>(4);
 
         EndpointBucket() {
             hist = new AtomicLong[HIST_LEN];
@@ -213,6 +272,19 @@ public class HttpMetricsService {
             do { p = maxMs.get(); } while (ms > p && !maxMs.compareAndSet(p, ms));
             do { p = minMs.get(); } while (ms < p && !minMs.compareAndSet(p, ms));
             hist[histIndex(ms)].incrementAndGet();
+            codes.computeIfAbsent(statusKey(status), k -> new LongAdder()).increment();
+        }
+
+        /** "200:118,404:2" — koda göre sıralı (deterministik; aynı dakika iki kez yazılırsa aynı metin). */
+        String codesCsv() {
+            StringBuilder sb = new StringBuilder();
+            for (Integer code : new java.util.TreeSet<>(codes.keySet())) {
+                long n = codes.get(code).sum();
+                if (n <= 0) continue;
+                if (!sb.isEmpty()) sb.append(',');
+                sb.append(code).append(':').append(n);
+            }
+            return sb.toString();
         }
 
         HttpMetricMinute toEntity(String bucketMinute, String endpoint) {
@@ -228,6 +300,8 @@ public class HttpMetricsService {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < HIST_LEN; i++) { if (i > 0) sb.append(','); sb.append(hist[i].get()); }
             m.setHist(sb.toString());
+            String csv = codesCsv();
+            m.setStatusCodes(csv.isEmpty() ? null : csv);
             return m;
         }
     }

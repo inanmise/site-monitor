@@ -11,6 +11,7 @@ import { AlertCircle, CheckCircle, Users, Inbox, FolderOpen } from 'lucide-react
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import CertCheckHistory from './certmodal/CertCheckHistory.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import { matchesTag, tagNamesOf, tagsOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
@@ -33,6 +34,11 @@ import {
 import { MonitorDetailModal, DetailDivider, DetailSummary } from './monitoring/MonitorDetail.jsx'
 
 const REFRESH_INTERVAL = 60
+/**
+ * HTTP geçmişi 4 sütunlu tablosunun sığdığı en dar KAP (px) — altında kart listesi. Playwright ölçümü (2026-09-28): tablonun en
+ * dar hâli 399 px; yan yana sütun 768'de 323 px (kayıyordu), telefonda 278–308 px → kart; 1280'de 427 px → tablo (değişmedi).
+ */
+const HTTP_TABLE_MIN = 420
 /** "Takımlarım | Tüm takımlar" tercihi (org geneli görünürlük, 2026-09-26) — bu tarayıcıda hatırlanır. */
 const SCOPE_KEY = 'uptime-scope'
 function readStoredScope() { try { return localStorage.getItem(SCOPE_KEY) } catch { return null } }
@@ -60,7 +66,9 @@ export default function UptimePage({ systemRole }) {
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [dateFrom, setDateFrom]         = useState(todayStartDate)
   const [dateTo, setDateTo]             = useState(() => new Date())
-  const [secondsSince, setSecondsSince] = useState(0)
+  // Başarılı yükleme sayacı — başlıktaki geri sayımı sıfırlar. Saniyelik sayaç SAYFADA DEĞİL başlıkta yaşar (Ek 3/10):
+  // sayfanın state'indeyken açık detay penceresindeki geçmiş + recharts eğilim ağacı her saniye yeniden çiziliyordu.
+  const [fetchNonce, setFetchNonce] = useState(0)
   const lastFetched = useRef(null)
 
   // Diger 8 izleme sayfasinda hata dali VARDI, burada ve ScriptedMonitorPage'de HIC yoktu:
@@ -83,7 +91,7 @@ export default function UptimePage({ systemRole }) {
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (res.scope && normalizeScope(res.scope) !== scope) setScopeRaw(normalizeScope(res.scope))
         lastFetched.current = Date.now()
-        setSecondsSince(0)
+        setFetchNonce((n) => n + 1)
         setLoadError(null)
       } else setLoadError(res?.error || 'load failed')
     } catch (e) {
@@ -101,7 +109,6 @@ export default function UptimePage({ systemRole }) {
     setLoading(true)
     fetchOverview()
   }, [fetchOverview])
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   function openModal(item) {
     setSelected(item)
@@ -269,7 +276,7 @@ export default function UptimePage({ systemRole }) {
       <MonitorPageHeader type="uptime" title={t('uptime.title')} subtitle={t('uptime.subtitle')}
         count={loading ? null : items.length} countUnit="sites"
         down={loading ? null : items.filter((i) => i.status === 'down').length}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={fetchOverview} refreshing={loading} />
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={fetchNonce} onRefresh={fetchOverview} refreshing={loading} />
 
       {!loading && (items.length > 0 || visibleToAll) && (
         <div className="upt-toolbar">
@@ -431,10 +438,12 @@ export default function UptimePage({ systemRole }) {
           <div data-slot="uptime-history-cols" className="flex flex-col gap-6 md:flex-row md:items-start md:gap-0">
             <div className="min-w-0 flex-1">
               <h3 className="mb-2.5 text-[11px] font-bold tracking-[.07em] text-muted-foreground uppercase">{t('uptime.httpHistory')}</h3>
+              {/* Dar kapta (yan yana sütun: 768'de 323 px) 4 sütunlu tablo kabında yatay kayıyordu → kart listesi (aynı
+                  hücreler, sütun etiketli; bilgi kaybı yok). Eşik = tablonun ölçülen en dar hâli (HTTP_TABLE_MIN). */}
               <CheckHistoryTab kind="uptime-http" monitorId={selected.domain} listKey="uptime-http-history"
                 extraParams={{ port: selected.port || 443 }}
                 range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
-                urlSync={false} gridClass="upt-uptime-rt-grid"
+                urlSync={false} gridClass="upt-uptime-rt-grid" cardsBelow={HTTP_TABLE_MIN}
                 columns={[t('uptime.dateFrom'), t('dns.status'), 'ms', '']}
                 renderRow={(c) => (<>
                   <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
@@ -450,18 +459,13 @@ export default function UptimePage({ systemRole }) {
 
             <div className="min-w-0 flex-1">
               <h3 className="mb-2.5 text-[11px] font-bold tracking-[.07em] text-muted-foreground uppercase">{t('uptime.sslHistory')}</h3>
-              <CheckHistoryTab kind="uptime-ssl" monitorId={selected.domain} listKey="uptime-ssl-history"
+              {/* Sertifika penceresinin zengin geçmişi (2026-09-28): kutucuklar + kalan gün eğilimi + satır ayrıntısı. Eski
+                  satırın her bilgisi (zaman, durum, kalan gün, hata) yerinde; yanıt süresi ayrıntıda. Aralık KONTROLLÜ —
+                  üstteki tek seçici iki geçmişi sürer, pencere her açılışta bugüne döner (openModal). Yan yana dar sütunda
+                  (~430 px) tablo yerine kart listesi (CertCheckHistory `cardsBelow`). */}
+              <CertCheckHistory domain={selected.domain} listKey="uptime-ssl-history"
                 range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
-                urlSync={false} gridClass="upt-uptime-rt-grid"
-                columns={[t('uptime.dateFrom'), t('dns.status'), 'SSL', '']}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                  <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
-                    {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                  </span>
-                  <span className="upt-rt-ms">{c.days_remaining != null ? t('uptime.sslDays').replace('{0}', c.days_remaining) : '—'}</span>
-                  {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
-                </>)} />
+                urlSync={false} runInHeader={false} />
             </div>
           </div>
         </MonitorDetailModal>

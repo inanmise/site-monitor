@@ -139,7 +139,7 @@ function NocStatusDetail({ view, type, label, rowLabel, ...action }) {
 
 export default function NocStatus(props) {
   // Satır `noc_notify` taşımıyorsa ("bilinmiyor") hiçbir şey çizilmez — ve paylaşılan duruma ABONE de olunmaz:
-  // alanı taşımayan listeler (Uyarılar'ın ham sertifika satırı) 7/24 isteği tetiklemesin.
+  // alanı taşımayan satırlar (sertifika önizlemesi, eski sunucu yanıtı) 7/24 isteği tetiklemesin.
   if (typeof props.monitor?.noc_notify !== 'boolean') return null
   return <NocStatusIndicator {...props} />
 }

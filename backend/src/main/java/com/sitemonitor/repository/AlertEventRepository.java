@@ -132,6 +132,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT DISTINCT e.domain FROM AlertEvent e WHERE e.resolved = false AND NOT EXISTS (SELECT n FROM NotificationLog n WHERE n.alertEventId = e.id AND n.emailStatus = 'SENT')")
     List<String> findDomainsWithUnnotifiedOpenAlerts();
 
+    /**
+     * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
+     * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
+     * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.
+     * Çağıran bu kipte {@code since}'ı (açılış alt sınırı) null geçer. Yüklem haftalık kesinti raporunun üç sorgulu
+     * birleşimiyle ({@code WeeklyOutageReportService.loadWeekAlarms}) aynı kümeyi verir (açık = {@code resolved=false}).
+     * İndeks: {@code idx_ae_resolved} + {@code idx_ae_resolved_at} (BitmapOr). Karşılaştırma yalnız — fonksiyon yok,
+     * null parametre CAST gerektirmez (RepositoryNullableParamCastTest).
+     */
     @Query("""
             SELECT e FROM AlertEvent e
             WHERE (:resolved IS NULL OR e.resolved = :resolved)
@@ -139,6 +148,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:until IS NULL OR e.createdAt <= :until)
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
               AND (:typeScoped = FALSE OR e.alertType IN :types)
@@ -160,6 +170,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("until") String until,
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
             @Param("typeScoped") boolean typeScoped,
@@ -172,7 +183,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("scope") List<Long> scope,
             Pageable pageable);
 
-    /** Tip filtre pill'lerinin canlı sayıları — findFiltered ile aynı filtreler,
+    /** Tip filtre pill'lerinin canlı sayıları — findFiltered ile aynı filtreler (aralıkta-aktif kipi dahil),
      *  alertType HARİÇ (sayılar her zaman tüm tipleri gösterir). */
     @Query("""
             SELECT e.alertType, COUNT(e) FROM AlertEvent e
@@ -181,6 +192,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:until IS NULL OR e.createdAt <= :until)
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:typeScoped = FALSE OR e.alertType IN :types)
               AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
@@ -202,6 +214,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("until") String until,
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
             @Param("domain") String domain,
             @Param("typeScoped") boolean typeScoped,
             @Param("types") java.util.Collection<String> types,
@@ -345,7 +358,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             String resolvedSince, String resolvedUntil, String domain, String alertType,
             String q, String level, Boolean acknowledged, Long teamId,
             boolean scoped, List<Long> scope, Pageable pageable) {
-        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, null, domain, alertType,
                 false, NO_TYPE_SCOPE, q, level, acknowledged, teamId, scoped, scope, pageable);
     }
 
@@ -353,14 +366,14 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             String resolvedSince, String resolvedUntil, String domain,
             String q, String level, Boolean acknowledged, Long teamId,
             boolean scoped, List<Long> scope) {
-        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, domain,
+        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, null, domain,
                 false, NO_TYPE_SCOPE, q, level, acknowledged, teamId, scoped, scope);
     }
 
     default List<Object[]> countFacets(Boolean resolved, String since, String until,
             String resolvedSince, String resolvedUntil, String domain, String alertType,
             String q, Long teamId, boolean scoped, List<Long> scope) {
-        return countFacets(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+        return countFacets(resolved, since, until, resolvedSince, resolvedUntil, null, domain, alertType,
                 false, NO_TYPE_SCOPE, q, teamId, scoped, scope);
     }
 
@@ -385,7 +398,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             String resolvedSince, String resolvedUntil, String domain, String alertType,
             boolean scoped, List<Long> scope, Pageable pageable) {
         // typeScoped=false → tip kapsamı UYGULANMAZ (bu çağıranlar tek tip ya da tümünü ister).
-        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, domain, alertType,
+        return findFiltered(resolved, since, until, resolvedSince, resolvedUntil, null, domain, alertType,
                 false, NO_TYPE_SCOPE, null, null, null, null, scoped, scope, pageable);
     }
 
@@ -393,7 +406,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     default List<Object[]> countFilteredByType(Boolean resolved, String since, String until,
             String resolvedSince, String resolvedUntil, String domain,
             boolean scoped, List<Long> scope) {
-        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, domain,
+        return countFilteredByType(resolved, since, until, resolvedSince, resolvedUntil, null, domain,
                 false, NO_TYPE_SCOPE, null, null, null, null, scoped, scope);
     }
 
@@ -414,6 +427,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
               AND (:until IS NULL OR e.createdAt <= :until)
               AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
               AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
               AND (:domain IS NULL OR e.domain = :domain)
               AND (:alertType IS NULL OR e.alertType = :alertType)
               AND (:typeScoped = FALSE OR e.alertType IN :types)
@@ -434,6 +448,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("until") String until,
             @Param("resolvedSince") String resolvedSince,
             @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
             @Param("domain") String domain,
             @Param("alertType") String alertType,
             @Param("typeScoped") boolean typeScoped,

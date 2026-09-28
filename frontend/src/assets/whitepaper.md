@@ -628,15 +628,15 @@ Günlük bildirim durur                ESCALATION bildirimi gönderilir
 | HIGH | ≤ 15 gün | PO + TECH + MANAGER | Acil yenileme gerekiyor |
 | CRITICAL | ≤ 7 gün | Tüm kişiler (+ C-LEVEL) | Derhal müdahale |
 
-Eskalasyon kişileri takım bazında tanımlanır; takımın kişisi yoksa global kişilere düşülür.
+Eskalasyon kişileri takım bazında tanımlanır ve yalnız kendi takımlarının alarmlarını alır. Takımda seviyeye uyan kişi yoksa eskalasyon kişisi eklenmez; alarm yalnız takımın kendi alıcılarına (takım adresi, bildirim grubu, push) gider — başka takımın müdürü ya da kişisi hiçbir zaman eklenmez. Takımı olmayan (sahipsiz) kayıtların alarmı hiçbir kanaldan bildirim üretmez.
 
 ### 8.4 Alıcı Yönlendirme Kuralları
 
 Bildirimin kime gideceği alarmın kaynağına göre belirlenir ve üç yol (ilk alarm, çözülme, manuel yeniden bildirim) tutarlı çalışır:
 
-- Bağımsız izleme alarmları (keyword, ping, HTTP, alan adı, `DOMAINMON_*`) takımı `AlertEvent.teamId` alanından çözer — alarm oluşurken damgalanır. Bu monitörler sertifika envanterinde olmadığı için envanterden takım aramak sessizce global kişilere düşerdi; üç yol da bu yüzden aynı alandan okur.
-- Müdür/eskalasyon kontakları yalnız KRİTİK alan adı vade alarmına eklenir; WARNING seviyesindeki alan adı alarmları ve tüm keyword/ping/HTTP alarmları takım kişileriyle sınırlı kalır. Bu bilinçli bir ürün politikasıdır: müdür yalnız bir domain kritik biçimde vadeye yaklaştığında çağrılır.
-- Sertifika alarmları envanterdeki takımı kullanır ve seviyeye göre eskalasyon kişilerini ekler.
+- Bağımsız izleme alarmları (keyword, ping, HTTP, sayfa, senaryo, sayfa hızı, alan adı ve kullanıcının eklediği Port/DNS) takımı alarm oluşurken damgalanan `AlertEvent.teamId` alanından çözer; açılış, günlük yeniden uyarı, eskalasyon, çözüm, tekrar bildir ve fırtına postası yalnız izlemenin KENDİ takımına gider. Takım envanterden hiçbir koşulda alınmaz.
+- Sertifika alarmları, erişilebilirlik ve envanterden türeyen Port/DNS izlemeleri envanterin SY ve UG takımına gider; SY ve UG'nin her biri yalnız KENDİ eskalasyon kişilerini ekler (aynı adrese tek e-posta).
+- Seviye kuralı tüm türlerde aynıdır: UYARI'da bağımsız izleme yalnız takıma gider; YÜKSEK ve KRİTİK'te eskalasyon kişileri kendi asgari seviyelerine göre eklenir. Başka takımın kişisi hiçbir yolda eklenmez; takımı olmayan (sahipsiz) kaydın alarmı bildirim üretmez.
 
 ### 8.5 Bildirim Tetikleyici Tipleri
 

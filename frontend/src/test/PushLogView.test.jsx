@@ -101,7 +101,7 @@ describe('PushLogView', () => {
     expect(within(dlg).getByText('{"error":"boom"}')).toBeInTheDocument()
     expect(within(dlg).getByText(/Aynı toplu isteğin alıcıları \(2\)|Recipients in the same batch \(2\)/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: /Alarmı aç|Open alert/ }))
-    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 10 } })
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: '10' } })   // E2: Alarm Geçmişi `alert` okur
     window.removeEventListener('sm:navigate', nav)
   })
 

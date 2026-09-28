@@ -25,7 +25,7 @@ function inDays(n) { const d = new Date(); d.setDate(d.getDate() + n); return d.
 const w = (domain, days, extra = {}) => ({
   domain, days_remaining: days, status: days == null ? 'error' : 'warning', warning: true, error: null,
   not_after: days == null ? null : inDays(days), checked_at: '2026-09-27T09:00:00', issuer_cn: 'Example CA',
-  chain_status: 'VALID', deployment_status: 'OK', revocation_status: 'GOOD', trust_status: 'TRUSTED', security_flags: [], ...extra,
+  chain_status: 'VALID', deployment_status: 'OK', revocation_status: 'VALID', trust_status: 'TRUSTED', security_flags: [], ...extra,
 })
 // /api/warnings ham satırları — takım/tier TAŞIMAZ (sunucu zenginleştirmiyor)
 const WARNINGS = [

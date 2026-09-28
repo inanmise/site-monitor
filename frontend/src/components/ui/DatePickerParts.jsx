@@ -42,12 +42,17 @@ export function useCalendarProps() {
  * Tetik: shadcn Button (outline) — ikon, isteğe bağlı küçük alan etiketi (Başlangıç / Bitiş), değer ya da
  * yer tutucu, açılır ok. `reserveEnd`: okun yerinde boş yer (kardeş temizleme düğmesi oraya oturur, değer
  * metni onun altına kaymaz). Ref alır (PopoverTrigger asChild). Test kancası `data-slot="date-picker-trigger"`.
+ *
+ * DOKUNMATİK (2026-09-28): görsel yükseklik 36 px kalır (kardeş Input / Button'larla aynı hiza); `pointer: coarse`'da
+ * görünmez `::after` katmanı dikeyde ORTALANMIŞ 40 px'lik vuruş alanı verir (`TOUCH_HIT`) — çağıran yüksekliği değiştirse de
+ * alan ≥ 40 px. Kardeş temizleme düğmesi (DateTimeField ×) DOM'da tetikten SONRA ve konumlu → onun üstünde kalır.
  */
+export const TOUCH_HIT = 'relative pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:top-1/2 pointer-coarse:after:h-10 pointer-coarse:after:-translate-y-1/2'
 export const DateTrigger = forwardRef(function DateTrigger(
   { label, text, placeholder, reserveEnd = false, icon: Icon = CalendarIcon, className, ...rest }, ref) {
   return (
     <Button ref={ref} type="button" variant="outline"
-      className={cn('group/dp h-9 w-full min-w-0 justify-start gap-2 px-3 font-normal has-[>svg]:px-3', className)}
+      className={cn('group/dp h-9 w-full min-w-0 justify-start gap-2 px-3 font-normal has-[>svg]:px-3', TOUCH_HIT, className)}
       {...rest} data-slot="date-picker-trigger">
       <Icon aria-hidden="true" className="text-muted-foreground" />
       {label && <span className="shrink-0 text-[10px] font-bold tracking-[.06em] text-muted-foreground uppercase">{label}</span>}
@@ -85,7 +90,7 @@ export function TimeField({ value, onChange, step = 300, disabled, label }) {
         <Clock aria-hidden="true" className="size-3.5" />{label ?? t('dp.time')}
       </Label>
       <Input id={id} type="time" step={step} value={value} disabled={disabled}
-        onChange={(e) => onChange(e.target.value)} className="h-9 w-[7.5rem]" />
+        onChange={(e) => onChange(e.target.value)} className="h-9 w-[7.5rem] pointer-coarse:h-10" />
     </div>
   )
 }
@@ -153,7 +158,7 @@ export function DateTimePopover({
           {withTime && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2">
               <TimeField value={value ? format(value, 'HH:mm') : ''} onChange={pickTime} step={timeStep} />
-              <Button type="button" size="sm" onClick={() => setOpen(false)}>{t('dp.done')}</Button>
+              <Button type="button" size="sm" className="pointer-coarse:h-10" onClick={() => setOpen(false)}>{t('dp.done')}</Button>
             </div>
           )}
         </DatePopoverContent>

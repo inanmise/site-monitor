@@ -12,6 +12,7 @@ import { Card } from '@/components/shadcn/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import MaskedValue from '../ui/MaskedValue.jsx'
 import { CharCounter } from './report/ReportParts.jsx'
 import { fmtDate, prettyJson, mailBodyWithImages, mailStatusInfo, mailTypeLabel, NOTE_MAX } from './issuesModel.js'
 
@@ -123,12 +124,14 @@ export function IssueTechDetails({ detail }) {
       <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
         <Fact label={t('loginIssues.reporterLabel')}>{detail.username ? <UserBadge username={detail.username} size="sm" /> : '—'}</Fact>
         <Fact label={t('loginIssues.colEmail')}>{detail.reporterEmail || '—'}</Fact>
-        <Fact label={t('loginIssues.colIp')}><span className="font-mono text-xs">{detail.ipAddress || '—'}</span></Fact>
+        <Fact label={t('loginIssues.colIp')}>{detail.identity_masked === true && !detail.ipAddress ? <MaskedValue /> : <span className="font-mono text-xs">{detail.ipAddress || '—'}</span>}</Fact>
         {detail.appVersion && <Fact label={t('issue.autoVersion')}>v{detail.appVersion}</Fact>}
         {detail.tabKey && <Fact label={t('loginIssues.tabKey')}>{detail.tabKey}</Fact>}
         {detail.screenSize && <Fact label={t('issue.autoScreen')}>{detail.screenSize}</Fact>}
         {detail.linkedReference && <Fact label={t('loginIssues.linkedRef')}><span className="font-mono text-xs">{detail.linkedReference}</span></Fact>}
-        {detail.userAgent && <Fact label={t('loginIssues.userAgent')} className="sm:col-span-2"><span className="text-xs text-muted-foreground">{detail.userAgent}</span></Fact>}
+        {detail.userAgent
+          ? <Fact label={t('loginIssues.userAgent')} className="sm:col-span-2"><span className="text-xs text-muted-foreground">{detail.userAgent}</span></Fact>
+          : detail.identity_masked === true && <Fact label={t('loginIssues.userAgent')} className="sm:col-span-2"><MaskedValue /></Fact>}
         {detail.autoContextJson && (
           <Fact label={t('loginIssues.autoContext')} className="sm:col-span-2">
             <pre className="m-0 max-h-56 overflow-auto rounded-md border bg-muted/40 px-2.5 py-2 font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{prettyJson(detail.autoContextJson)}</pre>

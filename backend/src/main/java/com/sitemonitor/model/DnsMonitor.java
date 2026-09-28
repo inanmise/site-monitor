@@ -34,8 +34,9 @@ public class DnsMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarget
     @Column(name = "standalone")
     private Boolean standalone = false;
 
-    /** Standalone monitörün sorumlu takımı (alarm yönlendirme + liste kapsamı için).
-     *  Envanter-türevi monitörlerde null — takım domain→envanter eşlemesinden gelir. */
+    /** Standalone monitörün sorumlu takımı (alarm yönlendirme + liste kapsamı için). Envanter-türevi monitörde
+     *  envanterden KOPYA (ekran/yetki içindir; eski satırlarda null olabilir) — alarm yönlendirmesi bu kopyayı
+     *  KULLANMAZ: takım + UG alan adı → envanterden canlı çözülür ({@code SchedulerService.alarmTeamOf}, 2026-09-28). */
     @Column(name = "team_id")
     private Long teamId;
 

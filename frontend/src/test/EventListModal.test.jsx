@@ -49,6 +49,24 @@ describe('EventListModal', () => {
     expect(onUser).toHaveBeenCalledWith(expect.objectContaining({ username: 'carol', team_name: 'Takim A' }))
   })
 
+  it('kimlik izi maskesi (2026-09-28c): IP / tarayıcı hücreleri "Gizli", tekil IP çipi yok, açıklama bandı; CSV o sütunları hiç yazmaz', () => {
+    // Sunucunun maskeli satırı: ip / city / country / org / user_agent anahtarları HİÇ yok (null değil)
+    const masked = ROWS.map(({ ip, city, country, org, user_agent, ...rest }) => rest)   // eslint-disable-line no-unused-vars
+    const first = render(<EventListModal kind="logins" title="Login" rows={masked} byName={BY_NAME} winLabel="son 24 saat" identityMasked onClose={() => {}} />)
+    const dlg = screen.getByRole('dialog')
+    const rows = within(within(dlg).getByTestId('evl-table')).getAllByRole('row').slice(1)
+    for (const r of rows) expect(r.querySelectorAll('[data-slot="id-masked"]')).toHaveLength(2)   // IP + tarayıcı
+    expect(within(dlg).getByTestId('evl-stats').textContent).not.toMatch(/Tekil IP|Unique IPs/)
+    expect(within(dlg).getByText(/yalnız global yöneticilere ve denetçilere|only to global admins and auditors/)).toBeInTheDocument()
+    const head = eventsCsv(masked, (k) => k, { masked: true }).split('\r\n').filter(Boolean)[0]
+    expect(head).not.toContain('uact.colIp'); expect(head).not.toContain('uact.colBrowser'); expect(head).toContain('uact.colOutcome')
+    // pozitif kontrol: maskesiz satırlarda "Gizli" yok, tekil IP çipi var
+    first.unmount()
+    render(<EventListModal kind="logins" title="L2" rows={ROWS} winLabel="x" onClose={() => {}} />)
+    expect(document.querySelectorAll('[data-slot="id-masked"]')).toHaveLength(0)
+    expect(within(screen.getByRole('dialog')).getByTestId('evl-stats').textContent).toMatch(/Tekil IP|Unique IPs/)
+  })
+
   it('anomali türünde sonuç süzgeci ve Başarısız çipi yok; 30 satırda sayfalama', () => {
     const many = Array.from({ length: 30 }, (_, i) => ({ id: i, time: '2026-09-19T09:00:00', actor: `u${i}`, ip: `10.0.0.${i}`, outcome: 'SUCCESS', flags: 'UNUSUAL_IP' }))
     render(<EventListModal kind="anomalies" title="Anomali" rows={many} onClose={() => {}} />)

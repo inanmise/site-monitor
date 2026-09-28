@@ -169,6 +169,10 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   const [showItem,    setShowItem]    = useState(null)   // çekmece (#8)
   // `domain` derin bağlantısı (2026-09-27): liste gelene kadar bekler, sonra o kaydın çekmecesini açar.
   const [pendingDomain, setPendingDomain] = useState(() => readUrlParam('domain', null))
+  // Aynı sekmede gelen bağlantının istediği kapsam (`i_scope=all`) ve son BAŞARILI listenin kapsamı: istenen kapsamın
+  // listesi gelmeden karar verilmez — yoksa eski ("takımlarım") liste kaydı bulamayıp bağlantıyı düşürürdü (Ek 3/4).
+  const pendingScopeRef = useRef(null)
+  const loadedScopeRef = useRef(null)
   const [importOpen,  setImportOpen]  = useState(false)  // CSV içe aktarma (#6)
   const [hygiene,     setHygiene]     = useState(null)   // /inventory/hygiene (#2)
   const [notifGroups, setNotifGroups] = useState([])
@@ -266,6 +270,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         setVisibleToAll(!!res.visible_to_all)
         setLastSync(new Date())
         setLoadState('ready')
+        loadedScopeRef.current = scope
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (res.scope && normalizeScope(res.scope) !== scope) setScopeRaw(normalizeScope(res.scope))
         return res.data ?? []
@@ -322,6 +327,27 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Yabancı (salt okunur) satır toplu işleme SEÇİLEMEZ — sayaçlar ve "tümünü seç" onları atlar.
   const selectableItems = useMemo(() => visibleItems.filter(i => !i.deleted_at && rowManageable(i)), [visibleItems, rowManageable])
   const setScope = (v) => { const n = normalizeScope(v); setScopeRaw(n); writeView({ scope: n }); setSelected(new Set()) }
+  // Sekme ZATEN açıkken gelen derin bağlantı (Ek 3/4, 2026-09-28): App aynı sekmede paramları adrese yazıp `sm:tab-params`
+  // yayar (sekme yeniden bağlanmaz). `domain` yalnız mount'ta okunuyordu → mükerrer alan adı bandının penceresindeki
+  // "Envanterde aç" yalnız pencereyi kapatıyordu, kayıt açılmıyordu. Başka takımın salt okunur kaydı yalnız "tüm
+  // takımlar"da listelenir → `i_scope` da uygulanır; liste o kapsamla gelince aşağıdaki etki çekmeceyi açar.
+  const scopeNowRef = useRef(scope)
+  scopeNowRef.current = scope
+  const setScopeRef = useRef(setScope)
+  setScopeRef.current = setScope
+  useEffect(() => {
+    const on = (e) => {
+      const p = e?.detail || {}
+      if (p.domain == null || p.domain === '') return
+      const want = p.i_scope != null && p.i_scope !== '' ? normalizeScope(p.i_scope) : null
+      if (want && want !== scopeNowRef.current) { pendingScopeRef.current = want; setScopeRef.current(want) }
+      else pendingScopeRef.current = null
+      setShowItem(null)
+      setPendingDomain(String(p.domain))
+    }
+    window.addEventListener('sm:tab-params', on)
+    return () => window.removeEventListener('sm:tab-params', on)
+  }, [])
 
   // Sayfalama yalnız RENDER'ı böler; "tümünü seç" filtrelenmiş tüm liste (selectableItems) üzerinde kalır.
   const filterKey = JSON.stringify(filters)
@@ -345,6 +371,8 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Derin bağlantı: liste ilk kez geldiğinde `domain` kaydını bul, çekmeceyi aç (bir kez); bulunamazsa bekleyen düşer.
   useEffect(() => {
     if (!pendingDomain || loadState !== 'ready') return
+    if (pendingScopeRef.current && loadedScopeRef.current !== pendingScopeRef.current) return   // istenen kapsamın listesi yolda
+    pendingScopeRef.current = null
     const want = pendingDomain.toLowerCase()
     const hit = items.find(i => (i.domain || '').toLowerCase() === want)
     if (hit) {

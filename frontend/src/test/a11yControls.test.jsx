@@ -107,6 +107,17 @@ describe('DateTimeField — temizleme düğmesi (R14)', () => {
     render(<DateTimeField dateOnly clearable disabled value="2026-09-01" onChange={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
   })
+
+  // 2026-09-28: görsel 24 px düğme dokunmatikte küçük kalıyordu (RESPONSIVE.md §4: hedef ≥ 40 px). jsdom yerleşim yapmaz →
+  // burada SINIF sözleşmesi pinlenir (masaüstü görünümü aynı, dokunmatikte görünmez ::after 40×40); gerçek ölçüm
+  // Playwright'ta (hasTouch + isMobile, matchMedia('(pointer: coarse)') doğrulanarak).
+  it('dokunmatik hedef: görsel boyut icon-xs (24 px) kalır, pointer-coarse ::after katmanı vuruş alanını 40 px yapar', () => {
+    render(<DateTimeField dateOnly clearable value="2026-09-01" onChange={() => {}} />)
+    const clear = screen.getByRole('button', { name: 'Clear' })
+    expect(clear).toHaveAttribute('data-size', 'icon-xs')
+    expect(clear).toHaveClass('pointer-coarse:after:absolute', 'pointer-coarse:after:-inset-2')
+    expect(clear).not.toHaveClass('pointer-coarse:size-10')   // görsel büyümez: tetiğin ayrılmış boşluğuna sığar
+  })
 })
 
 describe('Sparkline — ad (R16)', () => {

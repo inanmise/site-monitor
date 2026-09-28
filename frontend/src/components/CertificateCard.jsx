@@ -101,7 +101,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           )}
           {/* Sağ grup: 7/24 göstergesi (izleme kartlarıyla AYNI yer — sağ grubun başı; Zengin = hap, Kompakt = ikon + nokta)
               + katman. Gösterge örtünün üstünde (CARD_LAYER, tıklaması pencereyi açmaz); satır `noc_notify` taşımıyorsa
-              (Uyarılar'ın ham satırı) çizilmez. Düzenleme = kartın kendi Düzenle işleyicisi, form 7/24 alanına kaydırılmış. */}
+              (eski sunucu yanıtı) çizilmez. Düzenleme = kartın kendi Düzenle işleyicisi, form 7/24 alanına kaydırılmış. */}
           {(typeof cert.noc_notify === 'boolean' || cert.tier) && (
             <span className="ml-auto flex shrink-0 items-center gap-1.5">
               <NocStatus type="SSL" monitor={cert} rowLabel={domain} canEdit={!!onEdit} onEdit={onEdit} compact={!extra} triggerClassName={CARD_LAYER} />

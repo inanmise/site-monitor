@@ -190,7 +190,8 @@ describe('izleme listesi kart standardı', () => {
    * (eski yalnız-Zengin NocBadge'i böyle kaymıştı: dört kartta meta satırında, beşinde Kompakt'ta hiç). Sayfa kartı
    * `canEdit={canManageRow(m)}` ile çizer (düzenleme bağlantısı kart eylemleriyle AYNI kapı) ve detay penceresi aynı
    * göstergeyi taşır (`noc={{ type: '<TÜR>', … }}`) — kart ile pencere ayrışmaz. Genel Bakış sertifika kartı da aynı
-   * bileşeni sağ grubun başında çizer (tür SSL). Çizim sözleşmesi (iki yoğunluk, üç durum, detay açmaz) nocStatus.cards.test.jsx.
+   * bileşeni sağ grubun başında çizer (tür SSL); Uyarılar listesi meta satırında, sertifika penceresi başlığında (2026-09-28).
+   * Çizim sözleşmesi (iki yoğunluk, üç durum, detay açmaz) nocStatus.cards.test.jsx + warningsNocStatus.test.jsx.
    */
   it('dokuz kart + sertifika kartı 7/24 göstergesini paylaşılan yerden çizer; sayfa canEdit, detay penceresi noc verir', () => {
     const TYPE = {
@@ -218,6 +219,13 @@ describe('izleme listesi kart standardı', () => {
       if (/\bnocNotify=\{/.test(detail)) missing.push(`${p} → eski nocNotify rozeti`)
     }
     if (!/<NocStatus type="SSL" monitor=\{cert\}/.test(read('CertificateCard'))) missing.push('CertificateCard → <NocStatus type="SSL" monitor={cert} …>')
+    // 2026-09-28: Uyarılar listesi (tablo + dikkat kartı, meta satırı) ve sertifika penceresinin başlığı da AYNI göstergeyi çizer
+    const attention = read('../pages/warnings/AttentionList')
+    if (!/function MetaLine\b[\s\S]*?<NocStatus type="SSL" monitor=\{row\}/.test(attention)) missing.push('pages/warnings/AttentionList → MetaLine <NocStatus type="SSL" monitor={row} …>')
+    const certModal = read('CertificateModal')
+    if (!/<NocStatus type="SSL" monitor=\{noc\}/.test(certModal) || !/headerExtra=\{<>\{nocIndicator\}/.test(certModal)) {
+      missing.push('CertificateModal → başlıkta <NocStatus type="SSL" monitor={noc} …> (headerExtra, eylemlerin solunda)')
+    }
     expect(Object.keys(TYPE).sort(), 'tür eşlemesi dokuz sayfanın tamamı').toEqual([...MONITOR_PAGES].sort())
     expect(fs.existsSync(path.join(COMPONENTS, 'noc/forms/NocBadge.jsx')), 'eski yalnız-Zengin rozeti geri geldi').toBe(false)
     expect(missing).toEqual([])

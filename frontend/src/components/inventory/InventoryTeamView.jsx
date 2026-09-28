@@ -13,6 +13,7 @@ import { Card } from '@/components/shadcn/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import { daysShortText, expiredAgoText } from '../../utils/dayPhrases.js'
 
 /** Grup başlığı sayaç rozeti (eski .invtv-stat). */
 const STAT = 'text-[.84em] font-normal'
@@ -44,7 +45,7 @@ function DaysText({ d, t }) {
   if (d == null) return <span className="text-muted-foreground">—</span>
   return (
     <span className={cn('font-semibold tabular-nums', d < 0 ? 'text-destructive' : d <= 30 && 'text-amber-700 dark:text-amber-400')}>
-      {d < 0 ? t('inv.expiredAgo', -d) : t('inv.daysShort', d)}
+      {d < 0 ? expiredAgoText(t, -d) : daysShortText(t, d)}
     </span>
   )
 }

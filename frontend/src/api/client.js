@@ -840,8 +840,10 @@ export const api = {
       request(`/admin/system/weekly-availability/history?limit=${limit}&includeTest=${includeTest}`),
     getWeeklyAvailHistoryItem: (id) =>
       request(`/admin/system/weekly-availability/history/${encodeURIComponent(id)}`),
-    transferCertSy: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
-      method: 'POST', body: JSON.stringify({ team_id: teamId }),
+    // `restore: true` (Ek 3/5, 2026-09-28): çöp kutusundaki kaydı TEK adımda geri yükleyip aktarır (mükerrer alan adı
+    // bandı). Sunucu silinmiş kayda DÜZ aktarımı 409 ile reddeder.
+    transferCertSy: (id, teamId, opts = {}) => request(`/admin/inventory/${id}/transfer`, {
+      method: 'POST', body: JSON.stringify({ team_id: teamId, ...(opts.restore ? { restore: true } : {}) }),
     }),
     transferCertUg: (id, ugTeamId) => request(`/admin/inventory/${id}/transfer-ug`, {
       method: 'POST', body: JSON.stringify({ ug_team_id: ugTeamId }),
@@ -851,9 +853,11 @@ export const api = {
     getThresholds: () => request('/admin/thresholds'),
     updateThreshold: (id, data) => request(`/admin/thresholds/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     // "Kim bilgilendirilir?" simülatörü + eskalasyon webhook testi / son teslimat (2026-09-20)
-    simulateRecipients: ({ teamId, level = 'HIGH', kind = 'CERT', groupId = null }) => {
+    simulateRecipients: ({ teamId, level = 'HIGH', kind = 'CERT', groupId = null, ugTeamId = null }) => {
       const qs = new URLSearchParams({ teamId: String(teamId), level, kind })
       if (groupId != null) qs.set('groupId', String(groupId))
+      // Sertifika senaryosunda envanterin UG takımı (2026-09-28): UG adresi + UG'nin KENDİ eskalasyon kişileri.
+      if (ugTeamId != null) qs.set('ugTeamId', String(ugTeamId))
       return request(`/admin/recipients/simulate?${qs.toString()}`)
     },
     testContactWebhook: (id) => request(`/admin/contacts/${id}/webhook-test`, { method: 'POST' }),
@@ -1076,6 +1080,15 @@ export const api = {
       if (endpoint) q.set('endpoint', endpoint)
       if (granularity) q.set('granularity', granularity)
       return request(`/admin/system/http-metrics/series?${q.toString()}`)
+    },
+    // İstek Gezgini (2026-09-28): tek çağrıda uç tablosu + süzülmüş seri/özet/durum kodları.
+    // { from, to, endpoint?, methods?: string[], granularity? } — boşlar atılır.
+    getHttpMetricsOverview: ({ from, to, endpoint, methods, granularity } = {}) => {
+      const q = new URLSearchParams({ from, to })
+      if (endpoint) q.set('endpoint', endpoint)
+      if (Array.isArray(methods) && methods.length) q.set('method', methods.join(','))
+      if (granularity) q.set('granularity', granularity)
+      return request(`/admin/system/http-metrics/overview?${q.toString()}`)
     },
     getDbStats: () => request('/admin/system/db-stats'),
     getDbAnalytics: (days = 7) => request(`/admin/system/db-analytics?days=${days}`),

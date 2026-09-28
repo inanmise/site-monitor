@@ -9,6 +9,7 @@ import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { navigateTo } from '../../utils/navigate.js'
+import { alertNavParams } from './alerts/alertHistoryModel.js'
 import { csvRows } from '../../utils/csv.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
@@ -395,7 +396,7 @@ export default function PushLogView({ onBack, initial }) {
       {detailId && (
         <ModalShell open onClose={() => setDetailId(null)} title={t('pl.detail')} icon={Webhook} size="xl" scrollBody
           footer={<>
-            {detail?.alert_event_id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert_event_id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
+            {detail?.alert_event_id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', alertNavParams({ id: detail.alert_event_id })) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
             {canRequeue && detail && retryable(detail) && <Button type="button" disabled={busy} onClick={() => requeue(detail)}><RotateCcw size={13} /> {t('pl.requeue')}</Button>}
             <Button type="button" variant="secondary" onClick={() => setDetailId(null)}>{t('app.close')}</Button>
           </>}>

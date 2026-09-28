@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { BarChart3, AlertOctagon, X, Inbox, CalendarDays, Plus, Loader2, Search, Layers, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
+import { BarChart3, AlertOctagon, Inbox, CalendarDays, Plus, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
 
@@ -13,8 +13,7 @@ import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
-import SearchableSelect from './components/ui/SearchableSelect.jsx'
-import FacetedFilter from './components/ui/FacetedFilter.jsx'
+import DashboardFilters from './components/dashboard/DashboardFilters.jsx'   // Genel Bakış kart araç çubuğu (2026-09-28)
 import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
 import { claimPersonalStorage, clearPersonalStorage } from './utils/personalStorage.js'
@@ -90,7 +89,6 @@ import TourPageChip from './components/tour/TourPageChip.jsx'
 import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
-import { Input } from '@/components/shadcn/input'
 import AlertBanner from './components/ui/AlertBanner.jsx'
 import NocCoverageBanner from './components/noc/NocCoverageBanner.jsx'   // Genel Bakış 7/24 kapsam şeridi (2026-09-27)
 const WeeklyReportsPage = lazy(() => import('./components/WeeklyReportsPage'))
@@ -356,10 +354,12 @@ export default function App() {
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
         const dl = initialTabFromUrl()
         if (dl) setTab(dl)
-        // Olay satırına tıklama (cert alarmı): ?domain=<d> → panoyu o domaine filtrele
+        // Olay satırına tıklama (cert alarmı): ?domain=<d> → panoyu o domaine filtrele. YALNIZ Pano hedefinde (Ek 3/4):
+        // `?tab=domains&domain=` (Envanter çekmecesi) / `?tab=all&domain=` (Tüm Sertifikalar) kendi sayfasının anahtarı —
+        // Pano araması da süzülüyor, kullanıcı Genel Bakış'a dönünce tek karta süzülmüş listeyle karşılaşıyordu.
         try {
           const fd = new URLSearchParams(window.location.search).get('domain')
-          if (fd && !readUrlParam('q', null)) setSearch(fd)   // yeni ?q= paramı varsa o kazanır
+          if (fd && (dl || 'dashboard') === 'dashboard' && !readUrlParam('q', null)) setSearch(fd)   // yeni ?q= paramı varsa o kazanır
         } catch { /* yoksay */ }
       }
       setAuthChecked(true)
@@ -374,9 +374,10 @@ export default function App() {
       try {
         const p = new URLSearchParams(window.location.search)
         const nextTab = p.get('tab')
-        setTab(nextTab && VALID_TABS.has(nextTab) ? nextTab : 'dashboard')
+        const target = nextTab && VALID_TABS.has(nextTab) ? nextTab : 'dashboard'
+        setTab(target)
         const d = p.get('domain')
-        if (d) setSearch(d)
+        if (d && target === 'dashboard') setSearch(d)   // başka sekmenin `domain`'i Pano aramasına sızmaz (Ek 3/4)
       } catch { /* yoksay */ }
     }
     window.addEventListener('popstate', onPop)
@@ -392,10 +393,15 @@ export default function App() {
       const tab = e?.detail?.tab
       if (!tab || !VALID_TABS.has(tab)) return
       tabChangeRef.current?.(tab, e.detail.params)
-      // Palet/bildirim sonuçları: ?domain= dashboard aramasına, ?team= takım süzgecine düşer.
+      // Palet/bildirim sonuçları: ?domain= dashboard aramasına, ?team= takım süzgecine düşer — YALNIZ hedef Pano ise
+      // (Ek 3/4, 2026-09-28): "Envanterde aç" (`domains` + domain), Envanter çekmecesinin "Sertifikayı aç"ı (`all` + domain)
+      // ve Takım Yönetimi'nin "Alarmlar"ı (`alerthistory` + team) kendi sayfalarının anahtarını taşır; Pano araması / takım
+      // süzgeci de süzülüyor, kullanıcı Genel Bakış'a dönünce kendisinin kurmadığı bir süzgeçle karşılaşıyordu.
       const p = e.detail.params || {}
-      if (p.domain) setSearch(String(p.domain))
-      if (p.team) setTeamFilter(String(p.team))
+      if (tab === 'dashboard') {
+        if (p.domain) setSearch(String(p.domain))
+        if (p.team) setTeamFilter(String(p.team))
+      }
     }
     window.addEventListener(NAVIGATE_EVENT, onNav)
     return () => window.removeEventListener(NAVIGATE_EVENT, onNav)
@@ -982,9 +988,7 @@ export default function App() {
     return opts
   }, [certs, t])
   const hasTagOptions = tagOptions.length > 1
-  // "Filtreleri temizle" (2026-09-18): herhangi bir daraltma varken görünür; hepsini varsayılana döndürür.
-  const dashFiltersActive = !!search || sortOrder !== 'default' || statusFilter !== 'all' || expiryFilter !== 'all'
-    || teamFilter !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || !!statsFilter || platformFilter.length > 0
+  // "Filtreleri temizle" (2026-09-18): hepsini varsayılana döndürür — DashboardFilters çip satırında, çip varken görünür.
   const clearDashFilters = () => {
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all')
     setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([])
@@ -1019,20 +1023,7 @@ export default function App() {
   // Katalog boş + hiçbir kartta platform yoksa süzgeç gizli (tek seçenek "Belirtilmemiş" olurdu); URL'den gelen seçim
   // varsa HER ZAMAN görünür — kaldırılabilsin.
   const showPlatformFilter = platformFilter.length > 0 || platformOptions.some((o) => o.value !== PLATFORM_NONE)
-  // "SSL Checker" alanı (domain kutusu + düğme TEK birim: Enter da düğme de handleAddDomain) — Genel Bakış kart
-  // listesinin başlık satırının EN SONUNDA, EN SAĞA yaslı (2026-09-26, kullanıcı isteği); kalan yeri doldurur (en az
-  // 22rem, en çok 34rem), sığmazsa alt satıra tek parça sarılır. Tüm Sertifikalar'da `sslCheckerHeader` (sayfa başlığı).
-  const sslCheckerField = () => (
-    <div className="flex w-full gap-2 sm:ml-auto sm:w-auto sm:min-w-[22rem] sm:max-w-[34rem] sm:flex-1" data-tour="add-domain">
-      <Input type="text" placeholder={t('app.newDomainPlaceholder')} aria-label={t('app.newDomainPlaceholder')}
-        className="h-8 min-w-0 flex-1"
-        value={newDomain} onChange={(e) => setNewDomain(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && handleAddDomain()} />
-      <Button variant="success" size="sm" onClick={handleAddDomain} disabled={checkLoading}>
-        {checkLoading ? t('app.checkingDomain') : t('app.checkBtn')}
-      </Button>
-    </div>
-  )
+  // Genel Bakış'taki "SSL Checker" alanı artık DashboardFilters'ta (başlık satırının en sağı; telefonda araç çubuğunun sonu).
   // Tüm Sertifikalar BAŞLIĞINDAKİ SSL Checker (2026-09-27): eskiden sayfanın üstünde ayrı bir kontrol satırındaydı (iki başlık
   // üst üste). shadcn InputGroup — alan + düğme tek kutu; telefonda başlığın altında tam genişlik (48 px kutu, 40 px düğme —
   // dokunma hedefi), geniş ekranda 22rem ve Pano boyu (36 px).
@@ -1253,154 +1244,43 @@ export default function App() {
             {tab === 'dashboard' && (
               <div className="tab-content active">
                 {/* "Sizin için — bugün" paneli artık yukarıda, İstatistikler'in altında (stats-section içinde). */}
-                <div className="sort-controls sort-bar" data-tour="dash-filters">
-                  {/* Arama kutusu 2026-09-19'da üst kontrol satırına ("Domain Ekle"nin yanına) taşındı; burada yalnız sıralama/süzgeçler. */}
-                  {/* htmlFor ↔ id: seçici tetiği role="combobox" ve adını İÇERİKTEN almaz; bağsız
-                      etiket ekran okuyucuya adsız bir liste bırakıyordu (2026-09-25, R17). */}
-                  <label htmlFor="dash-f-sort">{t('app.sortLabel')}</label>
-                  <SearchableSelect
-                    id="dash-f-sort"
-                    value={sortOrder}
-                    onChange={v => { setSortOrder(v) }}
-                    options={[
-                      { value: 'default', label: t('app.sortDefault') },
-                      { value: 'asc',     label: t('app.sortAsc') },
-                      { value: 'desc',    label: t('app.sortDesc') },
-                    ]}
-                  />
-                  <label htmlFor="dash-f-status">{t('app.statusLabel')}</label>
-                  <SearchableSelect
-                    id="dash-f-status"
-                    value={statusFilter}
-                    onChange={v => { setStatusFilter(v) }}
-                    options={[
-                      { value: 'all',     label: t('app.all') },
-                      { value: 'valid',   label: t('app.valid') },
-                      { value: 'warning', label: t('app.warning') },
-                      { value: 'error',   label: t('app.error') },
-                    ]}
-                  />
-                  <label htmlFor="dash-f-expiry">{t('app.expiryLabel')}</label>
-                  <SearchableSelect
-                    id="dash-f-expiry"
-                    value={expiryFilter}
-                    onChange={v => { setExpiryFilter(v) }}
-                    options={[
-                      { value: 'all',     label: t('app.all') },
-                      { value: 'expired', label: t('app.expired') },
-                      { value: 'days7',   label: t('app.days7') },
-                      { value: 'days30',  label: t('app.days30') },
-                      { value: 'days90',  label: t('app.days90') },
-                    ]}
-                  />
-                  {hasTeamOptions && (
-                    <span className="sort-bar-field">
-                      <label htmlFor="dash-f-team">{t('app.teamLabel')}</label>
-                      <SearchableSelect
-                        id="dash-f-team"
-                        value={teamFilter}
-                        onChange={v => { setTeamFilter(v) }}
-                        options={teamOptions}
-                      />
-                    </span>
-                  )}
-                  {hasGroupOptions && (
-                    <span className="sort-bar-field">
-                      <label htmlFor="dash-f-group">{t('app.groupLabel')}</label>
-                      <SearchableSelect
-                        id="dash-f-group"
-                        value={groupFilter}
-                        onChange={v => { setGroupFilter(v) }}
-                        options={groupOptions} searchThreshold={2}
-                      />
-                    </span>
-                  )}
-                  {hasTagOptions && (
-                    <span className="sort-bar-field">
-                      <label htmlFor="dash-f-tag">{t('app.tagLabel')}</label>
-                      <SearchableSelect
-                        id="dash-f-tag"
-                        value={tagFilter}
-                        onChange={v => { setTagFilter(v) }}
-                        options={tagOptions} searchThreshold={2}
-                      />
-                    </span>
-                  )}
-                  {dashFiltersActive && (
-                    <Button type="button" variant="secondary" size="sm" onClick={clearDashFilters}>
-                      {t('app.clearFilters')}
-                    </Button>
-                  )}
-                </div>
                 {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur */}
                 <OnboardingChecklist />
-                <div className="dashboard-header">
-                  <div className="dashboard-title-row">
-                    {/* Sayfa başlığı artık üstteki PageHeader'da; bu satır kart listesinin araç çubuğu (2026-09-27). */}
-                    <h2>{t('app.cardsTitle')}</h2>
-                    {/* Kart görünümü — ortak ui/CardDensityToggle (izleme sayfalarıyla aynı bileşen, 2026-09-27) */}
-                    <CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} />
-                    {/* Domain ara — kart görünümü seçicisinin yanında (2026-09-25, kullanıcı isteği; eskiden üst
-                        kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. Genişlik 2026-09-28
-                        (kullanıcı: "domain ara alanını biraz genişletelim"): telefonda tam satır (40 px dokunma), tablette
-                        20rem, geniş ekranda 26rem — uzun alan adları kırpılmadan yazılır. */}
-                    <InputGroup data-slot="dashboard-domain-search" className="h-8 w-full max-w-full max-sm:h-10 sm:w-80 lg:w-[26rem]">
-                      <InputGroupAddon><Search /></InputGroupAddon>
-                      <InputGroupInput
-                        type="text"
-                        placeholder={t('app.searchPlaceholder')}
-                        aria-label={t('app.searchPlaceholder')}
-                        value={search}
-                        onChange={(e) => { setSearch(e.target.value) }}
-                      />
-                      {search && (
-                        <InputGroupAddon align="inline-end">
-                          <InputGroupButton size="icon-xs" onClick={() => { setSearch('') }}
-                            title={t('app.clearFilter')} aria-label={t('app.clearFilter')}>
-                            <X />
-                          </InputGroupButton>
-                        </InputGroupAddon>
-                      )}
-                    </InputGroup>
-                    {/* Platform süzgeci (2026-09-25, kullanıcı isteği) — shadcn faset süzgeci; aramanın yanında, diğer
-                        süzgeçlerle VE. Seçenekler katalog + verideki kodlar + Belirtilmemiş, sayılar o anki süzgeçlerle. */}
-                    {showPlatformFilter && (
-                      <FacetedFilter
-                        title={t('app.platformFilter')}
-                        icon={Layers}
-                        tooltip={t('app.platformFilterTip')}
-                        searchPlaceholder={t('app.platformSearch')}
-                        options={platformOptions}
-                        value={platformFilter}
-                        onChange={(next) => { setPlatformFilter(next) }}
-                      />
-                    )}
-                    {sslCheckerField()}
+                {/* Kart listesinin araç çubuğu (2026-09-28 yeniden tasarım): başlık + sonuç sayısı + SSL Checker, kart görünümü
+                    (ortak ui/CardDensityToggle — kapı cardDensityStandard App.jsx'i okur), arama, süzgeç hapları (telefonda
+                    "Süzgeçler (N)" alt Sheet'i), etkin süzgeç çipleri. Durum ve anlam BURADA kalır (boru hattı, URL q/platform,
+                    sayfalama sıfırlama); bileşen yalnız değer + ayarlayıcı alır. */}
+                <DashboardFilters
+                  values={{ search, sort: sortOrder, status: statusFilter, expiry: expiryFilter, team: teamFilter, group: groupFilter, tag: tagFilter, platform: platformFilter }}
+                  setters={{ search: setSearch, sort: setSortOrder, status: setStatusFilter, expiry: setExpiryFilter, team: setTeamFilter, group: setGroupFilter, tag: setTagFilter, platform: setPlatformFilter }}
+                  options={{ team: hasTeamOptions ? teamOptions : null, group: hasGroupOptions ? groupOptions : null, tag: hasTagOptions ? tagOptions : null, platform: showPlatformFilter ? platformOptions : null }}
+                  onClearAll={clearDashFilters} shown={sorted.length} total={certs.length}
+                  densityToggle={<CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} hideLabelsOnPhone />}
+                  sslChecker={{ value: newDomain, onChange: setNewDomain, onSubmit: handleAddDomain, busy: checkLoading }} />
+                {/* İstatistik kartı süzgeci şeridi (davranış aynı; eskiden .dashboard-header içindeydi) */}
+                {statsFilter && (
+                  <div className="stats-filter-bar mb-4">
+                    <span>
+                      {t('app.filterPrefix')} <strong>{STAT_FILTER_LABEL[statsFilter]}</strong>
+                      {t('app.filterCerts', filtered.length)}
+                    </span>
+                    <Button type="button" variant="outline" size="xs"
+                      className="shrink-0 border-primary/50 font-semibold text-primary hover:bg-primary hover:text-primary-foreground max-md:h-10 pointer-coarse:h-10"
+                      onClick={() => {
+                        setStatsFilter(null)
+                        setStatusFilter('all')
+                        setExpiryFilter('all')
+                        setGroupFilter('all')
+                        setTagFilter('all')
+                        setPlatformFilter([])
+                        setSearch('')
+                        setSortOrder('default')
+                      }}
+                    >
+                      {t('app.clearFilter')}
+                    </Button>
                   </div>
-                  {statsFilter && (
-                    <div className="stats-filter-bar">
-                      <span>
-                        {t('app.filterPrefix')} <strong>{STAT_FILTER_LABEL[statsFilter]}</strong>
-                        {t('app.filterCerts', filtered.length)}
-                      </span>
-                      <Button type="button" variant="outline" size="xs"
-                        className="border-primary/50 font-semibold text-primary hover:bg-primary hover:text-primary-foreground"
-                        onClick={() => {
-                          setStatsFilter(null)
-                          setStatusFilter('all')
-                          setExpiryFilter('all')
-                          setGroupFilter('all')
-                          setTagFilter('all')
-                          setPlatformFilter([])
-                          setSearch('')
-                          setSortOrder('default')
-                        }}
-                      >
-                        {t('app.clearFilter')}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                )}
                 {sorted.length === 0 && lastUpdate == null ? (
                   /* İlk veri gelene kadar "Sertifika bulunamadı" DEĞİL yükleniyor (kullanıcı bildirimi 2026-09-21, QA ISSUE-006):
                      certs [] ile başlar, getCertificates yanıtı gecikince boş durum sahte "sertifika yok" algısı veriyordu.

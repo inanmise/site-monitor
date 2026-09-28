@@ -61,6 +61,9 @@ describe('formatValue', () => {
   it('takım kimliği ADA çevrilir; ad yoksa ham değer kalır', () => {
     expect(formatValue('teamId', 5, ctx)).toBe('Kanal')
     expect(formatValue('teamId', 99, ctx)).toBe('99')
+    // UG takımı (2026-09-28) diğer takım alanıyla AYNI biçimde: ad, yoksa ham kimlik
+    expect(formatValue('ugTeamId', 5, ctx)).toBe('Kanal')
+    expect(formatValue('ugTeamId', 99, ctx)).toBe('99')
   })
 
   it('süre alanları ad KALIBINDAN tanınır', () => {

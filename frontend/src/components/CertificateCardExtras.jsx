@@ -5,6 +5,7 @@ import { formatDate } from '../api/client'
 import Sparkline from './ui/Sparkline.jsx'
 import HintPopover from './ui/HintPopover.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { alertNavParams } from './admin/alerts/alertHistoryModel.js'
 import { CARD_LAYER } from './monitoring/MonitorCard.jsx'
 import { CHIP, CHIP_HOVER, CHIP_TONE, TOUCH_CHIP } from './certcard/CertCardParts.jsx'
 import { FINDING_REASON } from './certcard/certCardModel.js'
@@ -160,7 +161,7 @@ function CertificateCardExtras({ cert, extra, reasons = [], onOpenHealth, onConf
             )}
             value={alertCount}
             sub={alertCount ? (alerts.all_acked ? t('certcard.x.acked') : t('certcard.x.unacked')) : t('certcard.x.noAlerts')}
-            onClick={alertCount ? () => navigateTo('alerthistory', alerts.first_id ? { incident: alerts.first_id } : undefined) : undefined}
+            onClick={alertCount ? () => navigateTo('alerthistory', alerts.first_id ? alertNavParams({ id: alerts.first_id }) : undefined) : undefined}
             name={alertCount ? named(`${t('ccx.openAlerts', alertCount)} · ${alertLevel}`) : undefined} />
         </div>
       )}

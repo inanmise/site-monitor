@@ -4,7 +4,8 @@ import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Popover, PopoverTrigger } from '@/components/shadcn/popover'
-import { DatePopoverContent, DateTimePopover } from './DatePickerParts.jsx'
+import { DatePopoverContent, DateTimePopover, TOUCH_HIT } from './DatePickerParts.jsx'
+import { cn } from '@/lib/utils'
 
 /** Hızlı aralıklar — dk cinsinden (Grafana benzeri). */
 export const QUICK_RANGES = [
@@ -44,7 +45,10 @@ export default function TimeRangePicker({ value, onChange }) {
     : t('range.' + (value?.key || '1h'))
 
   const pickQuick = (r) => { onChange({ type: 'rel', minutes: r.minutes, key: r.key }); setOpen(false) }
-  const applyAbs = () => { if (from && to) { onChange({ type: 'abs', from, to }); setOpen(false) } }
+  // Yerel "yyyy-MM-ddTHH:mm" dizeleri sözlük sırasıyla kronolojik → başlangıç bitişten sonraysa Uygula kapalı + ileti
+  // (2026-09-28c ek-4: eskiden istek gidip sunucunun 400'ü genel hata + işe yaramaz "Tekrar dene" olarak görünüyordu).
+  const orderError = !!from && !!to && from > to
+  const applyAbs = () => { if (from && to && !orderError) { onChange({ type: 'abs', from, to }); setOpen(false) } }
 
   const filtered = QUICK_RANGES.filter(r =>
     t('range.' + r.key).toLowerCase().includes(search.trim().toLowerCase()))
@@ -52,8 +56,9 @@ export default function TimeRangePicker({ value, onChange }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {/* Dokunmatikte görsel 36 px kalır, ortalanmış 40 px vuruş alanı (DatePickerParts `TOUCH_HIT`) — tarih tetiğiyle aynı kural. */}
         <Button type="button" variant="outline" data-slot="time-range-trigger"
-          className="group/trp h-9 max-w-full min-w-0 gap-2 px-3 font-normal has-[>svg]:px-3">
+          className={cn('group/trp h-9 max-w-full min-w-0 gap-2 px-3 font-normal has-[>svg]:px-3', TOUCH_HIT)}>
           <Clock aria-hidden="true" />
           <span className="min-w-0 truncate font-semibold">{label}</span>
           <ChevronDown aria-hidden="true"
@@ -67,19 +72,21 @@ export default function TimeRangePicker({ value, onChange }) {
             {/* Alan etiketi tetiğin İÇİNDE (erişilebilir ad "Başlangıç 26.09.2026 10:00" olur). */}
             <DateTimePopover label={t('range.from')} value={fromLocalInput(from)} onChange={(d) => setFrom(toLocalInput(d))} />
             <DateTimePopover label={t('range.to')} value={fromLocalInput(to)} onChange={(d) => setTo(toLocalInput(d))} />
-            <Button type="button" size="sm" className="mt-0.5 w-full" onClick={applyAbs}>
+            {/* Açılır içerik dokunmatikte 40 px (Uygula, arama, hızlı aralıklar) — fare görünümü aynı (2026-09-28). */}
+            {orderError && <p role="alert" className="m-0 text-xs text-destructive">{t('range.orderError')}</p>}
+            <Button type="button" size="sm" className="mt-0.5 w-full pointer-coarse:h-10" onClick={applyAbs} disabled={orderError}>
               {t('range.apply')}
             </Button>
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-2 p-3.5">
             <Input placeholder={t('range.search')} aria-label={t('range.search')} value={search}
-              onChange={e => setSearch(e.target.value)} />
+              onChange={e => setSearch(e.target.value)} className="pointer-coarse:h-10" />
             <div className="flex max-h-[270px] flex-col gap-0.5 overflow-y-auto">
               {filtered.map(r => {
                 const active = value?.type === 'rel' && value.key === r.key
                 return (
                   <Button key={r.key} type="button" size="sm" variant={active ? 'default' : 'ghost'}
-                    aria-pressed={active} className="justify-start font-normal data-[variant=default]:font-semibold"
+                    aria-pressed={active} className="justify-start font-normal data-[variant=default]:font-semibold pointer-coarse:h-10"
                     onClick={() => pickQuick(r)}>{t('range.' + r.key)}</Button>
                 )
               })}

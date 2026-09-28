@@ -51,12 +51,15 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  overlayClassName,
   ...props
 }) {
   const t = useT()
   return (
     <SheetPortal>
-      <SheetOverlay />
+      {/* overlayClassName (2026-09-28, isteğe bağlı): Sheet bir ModalShell'in ÜSTÜNDE açıldığında örtünün katmanı da
+          yükselmeli (varsayılan z-50 pencerenin altında kalır; Kullanıcı Dizini ayrıntı / süzgeç panelleri). */}
+      <SheetOverlay className={overlayClassName} />
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(

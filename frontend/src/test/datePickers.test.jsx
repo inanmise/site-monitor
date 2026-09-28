@@ -4,6 +4,7 @@ import { render, screen, fireEvent, within, waitFor } from './test-utils.jsx'
 import DateTimeField from '../components/ui/DateTimeField.jsx'
 import DateTimeRangePicker from '../components/ui/DateTimeRangePicker.jsx'
 import TimeRangePicker from '../components/ui/TimeRangePicker.jsx'
+import WeekDatePicker from '../components/ui/WeekDatePicker.jsx'
 
 /**
  * Tarih seçicilerin shadcn'e (Popover + Calendar + Input type=time) geçişi — 2026-09-26, D1 dalgası.
@@ -127,5 +128,92 @@ describe('TimeRangePicker', () => {
     expect(arg.type).toBe('abs')
     expect(arg.from).toMatch(/^\d{4}-\d{2}-\d{2}T08:15$/)
     expect(arg.to).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
+  })
+})
+
+/**
+ * DOKUNMATİK (2026-09-28): tarih / zaman aralığı tetikleri 36 px (h-9) — kardeş Input / Button ile aynı hiza. Görsel yükseklik
+ * DEĞİŞMEZ; `pointer: coarse`'da görünmez `::after` dikeyde ortalanmış 40 px vuruş alanı verir. jsdom medya sorgusu ve
+ * sözde öğe çizmez → sözleşme sınıf düzeyinde; gerçek ölçüm Playwright'ta (elementFromPoint, hasTouch + isMobile).
+ */
+describe('tarih seçici tetikleri — dokunmatik vuruş alanı', () => {
+  const TOUCH = ['relative', 'pointer-coarse:after:absolute', 'pointer-coarse:after:inset-x-0', 'pointer-coarse:after:top-1/2',
+    'pointer-coarse:after:h-10', 'pointer-coarse:after:-translate-y-1/2']
+
+  it('DateTimeField / DateTimeRangePicker tetikleri: görsel h-9 aynı, dokunmatikte 40 px ::after alanı; × kendi alanını korur', () => {
+    const { unmount } = render(<DateTimeField dateOnly clearable value="2026-09-01" onChange={() => {}} placeholder="From" />)
+    const trigger = document.querySelector('[data-slot="date-picker-trigger"]')
+    expect(trigger).toHaveClass('h-9', ...TOUCH)
+    expect(trigger).not.toHaveClass('pointer-coarse:h-10')          // görsel yükseklik (hiza) değişmez
+    // Temizleme × düğmesi tetiğin kardeşi ve DOM'da SONRA (konumlu → üstte); kendi 40 px alanı yerinde
+    const clear = screen.getByRole('button', { name: /clear|temizle/i })
+    expect(clear.className).toContain('pointer-coarse:after:-inset-2')
+    expect(trigger.compareDocumentPosition(clear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    unmount()
+    render(<DateTimeRangePicker from={new Date(2026, 8, 1, 10, 0)} to={new Date(2026, 8, 2, 10, 0)} onApply={() => {}} />)
+    const triggers = document.querySelectorAll('[data-slot="date-picker-trigger"]')
+    expect(triggers).toHaveLength(2)
+    for (const tr of triggers) expect(tr).toHaveClass('h-9', ...TOUCH)
+  })
+
+  it('TimeRangePicker tetiği aynı kural', () => {
+    render(<TimeRangePicker value={{ type: 'rel', minutes: 60, key: '1h' }} onChange={() => {}} />)
+    const trigger = document.querySelector('[data-slot="time-range-trigger"]')
+    expect(trigger).toHaveClass('h-9', ...TOUCH)
+  })
+})
+
+/**
+ * Tarih penceresinin İÇİ (2026-09-28, 2. tur): dokunmatikte takvim hücreleri (gün, ay gezinme, hafta no.) 40 px — `--cell-size`
+ * `pointer-coarse:` ile 32 → 40, iç boşluk 12 → 8 px (7 × 40 + 16 = 296; hafta numaralı 8 × 40 + 16 = 336 px → 360 px telefonda
+ * `calc(100vw-1rem)` = 344 içine sığar — Playwright ölçümü). Saat alanı, Tamam, Uygula, arama, hızlı aralıklar, kısayol hapları
+ * 40 px. Fare görünümü (boyut sınıfları) DEĞİŞMEZ. jsdom medya sorgusu uygulamaz → sınıf sözleşmesi.
+ */
+describe('tarih penceresi içi — dokunmatik 40 px', () => {
+  it('DateTimeField penceresi: takvim hücresi 40 / iç boşluk 8 (fare 32 / 12 aynı), saat alanı ve Tamam 40', async () => {
+    render(<DateTimeField value={utcIso(new Date(2026, 8, 10, 14, 30))} onChange={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /10\.09\.2026 14:30/ }))
+    const cal = await waitFor(() => { const c = document.querySelector('[data-slot="calendar"]'); expect(c).not.toBeNull(); return c })
+    expect(cal).toHaveClass('p-3', '[--cell-size:--spacing(8)]', 'pointer-coarse:p-2', 'pointer-coarse:[--cell-size:--spacing(10)]')
+    // Gün ve ay gezinme düğmeleri boyutunu --cell-size'dan alır (tek kaynak)
+    expect(within(grid()).getAllByRole('button')[0].className).toContain('min-w-(--cell-size)')
+    for (const nav of document.querySelectorAll('[data-slot="calendar-nav-button"]')) expect(nav.className).toContain('size-(--cell-size)')
+    expect(screen.getByLabelText('Time')).toHaveClass('h-9', 'pointer-coarse:h-10')
+    const done = screen.getByRole('button', { name: /^(Done|Tamam)$/ })
+    expect(done).toHaveAttribute('data-size', 'sm')
+    expect(done).toHaveClass('pointer-coarse:h-10')
+  })
+
+  it('DateTimeRangePicker: kısayol hapları dokunmatikte 40 (fare xs), Uygula 36 hiza + 40 vuruş alanı', () => {
+    render(<DateTimeRangePicker from={new Date(2026, 8, 1, 10, 0)} to={new Date(2026, 8, 2, 10, 0)} onApply={() => {}} />)
+    const picker = document.querySelector('[data-slot="date-range-picker"]')
+    const pills = [...picker.querySelectorAll('button[data-size="xs"]')]
+    expect(pills.length).toBeGreaterThanOrEqual(3)
+    for (const p of pills) expect(p).toHaveClass('pointer-coarse:h-10')
+    const apply = screen.getByRole('button', { name: /^(Apply|Uygula)$/ })
+    expect(apply).toHaveClass('relative', 'pointer-coarse:after:h-10', 'pointer-coarse:after:-translate-y-1/2')
+  })
+
+  it('TimeRangePicker penceresi: Uygula, arama ve hızlı aralıklar dokunmatikte 40', async () => {
+    render(<TimeRangePicker value={{ type: 'rel', minutes: 60, key: '1h' }} onChange={() => {}} />)
+    fireEvent.click(document.querySelector('[data-slot="time-range-trigger"]'))
+    const pressed = await screen.findAllByRole('button', { pressed: false })
+    const quick = [...pressed, ...screen.getAllByRole('button', { pressed: true })]
+    expect(quick.length).toBeGreaterThanOrEqual(10)
+    for (const b of quick) expect(b).toHaveClass('pointer-coarse:h-10')
+    expect(screen.getByRole('button', { name: /^(Apply|Uygula)$/ })).toHaveClass('pointer-coarse:h-10')
+    expect(screen.getByRole('textbox', { name: /search|ara/i })).toHaveClass('pointer-coarse:h-10')
+  })
+
+  it('WeekDatePicker penceresi: hafta numaralı takvim aynı hücre kuralı; Temizle / Bugün dokunmatikte 40', async () => {
+    render(<WeekDatePicker value="2026-09-10" onChange={() => {}} placeholder="Week" />)
+    fireEvent.click(document.querySelector('[data-slot="date-picker-trigger"]'))
+    const cal = await waitFor(() => { const c = document.querySelector('[data-slot="calendar"]'); expect(c).not.toBeNull(); return c })
+    expect(cal).toHaveClass('pointer-coarse:[--cell-size:--spacing(10)]', 'pointer-coarse:p-2')
+    for (const name of [/^(Clear|Temizle)$/, /^(Today|Bugün)$/]) {
+      const b = screen.getByRole('button', { name })
+      expect(b).toHaveAttribute('data-size', 'sm')
+      expect(b).toHaveClass('pointer-coarse:h-10')
+    }
   })
 })

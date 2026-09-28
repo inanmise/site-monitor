@@ -112,4 +112,17 @@ describe('NotificationGroupHistory', () => {
     expect(screen.getByText('boom')).toBeTruthy()
     expect(document.querySelector('[data-slot="ng-hist-list"]')).toBeNull()
   })
+  it('kimlik izi (2026-09-28c): IP sunucuda düşürülen satırda "Gizli"; IP’li satırda adres; IP’siz ve işaretsiz satırda hiçbir şey', () => {
+    const masked = row({ id: 2, action: 'UPDATE', changes: null, identity_masked: true })
+    delete masked.ip
+    const plain = row({ id: 3, action: 'UPDATE', changes: null })
+    const noIp = row({ id: 4, action: 'UPDATE', changes: null, ip: null })
+    renderList([masked, plain, noIp])
+    const items = [...document.querySelectorAll('[data-slot="ng-hist-list"] > li')]
+    expect(items).toHaveLength(3)
+    expect(items[0].querySelector('[data-slot="id-masked"]')).not.toBeNull()
+    expect(items[1].textContent).toContain('10.0.0.1')
+    expect(items[1].querySelector('[data-slot="id-masked"]')).toBeNull()
+    expect(items[2].querySelector('[data-slot="id-masked"]')).toBeNull()
+  })
 })

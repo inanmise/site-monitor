@@ -386,7 +386,8 @@ public class RetentionAdminController {
             m.put("to", fromTo == null ? null : fromTo[1]);
             out.add(m);
         }
-        return ok(Map.of("data", out));
+        // Görüntüleme kapsamlı müdüre açık (salt okunur) → eylemi yapanın IP'si yalnız global admin + AUDIT'e (2026-09-28c).
+        return ok(IdentityMask.forSession(Map.of("data", out), session));
     }
 
     /** {@code {"days":{"from":90,"to":365}}} → [90, 365]; ayrıştırılamazsa null. */

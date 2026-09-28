@@ -165,4 +165,19 @@ describe('AdminChangeHistory — Data Table görünümü + telefon kartları', (
     expect(await within(card).findByText('b@example.com', { selector: '[data-diff="to"]' })).toBeInTheDocument()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
   })
+  it('kimlik izi (2026-09-28c): sunucu IP’yi düşürüp satırı işaretlediyse "Gizli"; işaretsiz satırda IP / "—"', async () => {
+    api.admin.history.mockResolvedValue({ ...RES, identity_masked: true, items: [
+      { ...ITEMS[0], identity_masked: true },                    // başkasının satırı: ip anahtarı YOK
+      { ...ITEMS[1], id: 5, ip: '192.0.2.21' },                  // kendi satırı: ip var
+      { ...ITEMS[2], ip: null },                                  // IP kaydı yok → "—" (gizli DEĞİL)
+    ] })
+    render(<AdminChangeHistory resource="TEAM" />)
+    fireEvent.click(screen.getByRole('button', { name: /Geçmişi göster|Show history/i }))
+    const table = await screen.findByRole('table')
+    const cells = [...table.querySelectorAll('td[data-col="ip"]')]
+    expect(cells).toHaveLength(3)
+    expect(cells[0].querySelector('[data-slot="id-masked"]')).not.toBeNull()
+    expect(cells[1].textContent).toBe('192.0.2.21')
+    expect(cells[2].textContent).toBe('—')
+  })
 })

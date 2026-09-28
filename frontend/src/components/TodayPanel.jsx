@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { navigateTo } from '../utils/navigate.js'
+import { alertNavParams } from './admin/alerts/alertHistoryModel.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import TodayListModal from './TodayListModal.jsx'
 import { MonitorRowBody, NotificationRowBody, HealthRowBody, QuietRowBody, MONITOR_SECTION_TAB, MONITOR_TAB, monitorRowKey, openMonitor, openNotification, openQuiet } from './todayMonitorRows.jsx'
@@ -156,12 +157,12 @@ export default function TodayPanel({ onOpenDomain }) {
 
           <Card icon={Siren} tone={alerts.critical > 0 ? 'bad' : alerts.count > 0 ? 'warn' : 'ok'} title={t('today.alerts')} count={alerts.count || 0} prev={alerts.prev}
             sub={alerts.critical > 0 ? t('today.alertsCritical', alerts.critical) : t('today.alertsSub')}
-            onGo={alerts.count ? () => navigateTo('warnings') : null} section="alerts" onOpenItem={(a) => navigateTo('alerthistory', { incident: a.id })}>
+            onGo={alerts.count ? () => navigateTo('warnings') : null} section="alerts" onOpenItem={(a) => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}>
             <ul className="today-list">
               {(alerts.items || []).map((a) => (
                 <li key={a.id}>
                   <span className={`today-level today-level--${(a.level || '').toLowerCase()}`}>{a.level}</span>
-                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', { incident: a.id })}><span className="truncate">{a.domain || a.type}</span></Button>
+                  <Button type="button" variant="link" className="h-auto min-w-0 max-w-full justify-start p-0 font-semibold" onClick={() => navigateTo('alerthistory', alertNavParams({ id: a.id, alert_type: a.type, domain: a.domain }))}><span className="truncate">{a.domain || a.type}</span></Button>
                   <span className="today-muted">{a.type}{a.acknowledged ? ` · ${t('today.acked')}` : ''}</span>
                 </li>
               ))}

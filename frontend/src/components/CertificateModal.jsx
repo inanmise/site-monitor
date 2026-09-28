@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, useRef, lazy, Suspense } from 'react'
-import { api, formatDate } from '../api/client'
+import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
@@ -16,10 +16,11 @@ import { InventoryTab } from './inventory/InventoryDetails.jsx'
 import ReadOnlyBadge from './ui/ReadOnlyBadge.jsx'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import { CheckRunningStrip, MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
-import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import CertCheckHistory from './certmodal/CertCheckHistory.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import ModalShell from './ui/ModalShell.jsx'
-import AlertBanner from './ui/AlertBanner.jsx'
+import NocStatus from './noc/NocStatus.jsx'
+import CertDetailsPanel from './certmodal/CertDetailsPanel.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -47,7 +48,8 @@ function useMediaQuery(query) {
 /*
  * Sertifika DETAY penceresi — ui/ModalShell (shadcn Dialog) + Tabs + Card/Badge (eski elle kurulu `.modal.show`,
  * `.modal-tabs`, `.modal-field`, `.alert-history-card`+`.ahc-stripe` ailesinin yerine). Test kancaları: sekmeler
- * role="tab" (data-state="active"), başlık durum rozeti `data-slot="cert-modal-status"`, notlar `data-slot="cert-note"`.
+ * role="tab" (data-state="active"), başlık durum rozeti `data-slot="cert-modal-status"`, notlar `data-slot="cert-note"`,
+ * başlıktaki 7/24 göstergesi `data-slot="noc-status"` (noc/NocStatus — kartlarla aynı).
  * SSL Kontrol sekmesi: SslCheckerPanel (+ certmodal/Ssl*); Notlar sekmesi: certmodal/CertNotesTab (2026-09-28).
  */
 
@@ -69,12 +71,18 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Org geneli görünürlük (2026-09-26): başka takımın kaydı — kontrol/düzenle/tanıla/sil/not ekle YOK, alarm sekmesi YOK,
   // başlıkta salt okunur rozet + sahibi takım (`readOnlyTeam: { id, name }`). Okuma sekmeleri (SSL, sağlık, geçmiş, envanter, notlar) açık.
   readOnly = false, readOnlyTeam = null,
-                                          onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab }) {
+                                          onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
+  // "Envanterde aç" (Envanter Bilgileri sekmesi) pencereden AYRILIR: varsayılan pencereyi kapatır. Pencereyi açan bir
+  // form ise (mükerrer alan adı bandı) formu da kapatan işleyici verir — yoksa hedef kayıt formun arkasında açılırdı (Ek 3/4).
+  onLeave }) {
   const t = useT()
   // Escape: ModalShell (Radix katman yığını) — önizleme modunda kapalı (dismissOnEscape); eski useEscapeKey gereksiz.
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [certData, setCertData]       = useState(null)
+  // 7/24 göstergesi (2026-09-28): kaydın GÜNCEL `{ noc_notify, noc_group_ids }`'i — /history zarfından (uç envanter satırını
+  // yetki kapısında zaten okuyor; ek istek yok). null = bilinmiyor (önizleme / eski sunucu / henüz gelmedi) → gösterge yok.
+  const [noc, setNoc]                 = useState(null)
   // O3/D12: modal kalıcı mount'lu, yalnız domain prop'u değişiyor — uçuşan yanıt guard'ları
   // "istek anındaki domain hâlâ ekranda mı" sorusunu bu ref'ten okur (her render'da tazelenir).
   const domainRef = useRef(null)
@@ -153,6 +161,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     if (!silent) setRefreshing(false)
     // D12 guard: A'nın geç dönen yanıtı B'nin modalını doldurmasın.
     if (reqDomain !== domainRef.current) return
+    // 7/24 durumu kaydın kendisinden (geçmiş boş olsa da); başarısız tazelemede eski (gerçek) değer kalır. Envanter
+    // formunda 7/24 değişince refreshSignal → bu yol → başlık hemen güncel.
+    if (res?.success && typeof res.noc_notify === 'boolean') {
+      setNoc({ noc_notify: res.noc_notify, noc_group_ids: Array.isArray(res.noc_group_ids) ? res.noc_group_ids : undefined })
+    }
     const latest = res?.success && Array.isArray(res.data) && res.data.length > 0 ? res.data[0] : null
     let isNew = false
     if (latest) {
@@ -187,6 +200,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     setSslError(null)
     setRefreshing(false)
     lastCheckedRef.current = null   // yeni domain = yeni damga çizgisi; ilk yükleme "yeni kontrol" sayılmaz
+    setNoc(null)   // önceki alanın 7/24 durumu yeni alanın başlığında görünmesin (kapanış dâhil)
     if (!domain) return
     setCertData(null)
     setSslData(null)
@@ -290,6 +304,14 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // aynı dil; yıkıcı "Sil" en sonda kırmızı vurgulu; kapatma X'i ince bir ayraçla kendi bölmesinde.
   // Dokunmatikte 40 px (pointer-coarse). Telefonda grup başlığın altına kendi satırına iner.
   const act = (tone) => cn(MON_ACT, MON_ACT_TONE[tone], 'pointer-coarse:size-10')
+  // 7/24 göstergesi (2026-09-28) — izleme detay pencereleriyle (MonitorDetailModal `noc`) AYNI bileşen ve AYNI yer: başlığın
+  // hemen ardında, eylem grubunun solunda; pencere adına (DialogTitle) KARIŞMAZ. Düzenleme eylemi başlıktaki Düzenle ile
+  // aynı işleyici (Genel Bakış kartının yolu: envanter formu, 7/24 alanına kaydırılmış); salt okunurda / Düzenle yetkisi
+  // yoksa "7/24 Kapsamı'nda gör". Önizlemede (envanterde olmayan alan) ve alan bilinmezken çizilmez.
+  const nocEdit = !previewMode && !readOnly && onEdit ? onEdit : undefined
+  const nocIndicator = !previewMode && noc
+    ? <NocStatus type="SSL" monitor={noc} rowLabel={domain} canEdit={!!nocEdit} onEdit={nocEdit} />
+    : null
   const headerActions = (
     <div data-slot="cert-modal-actions" className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
       {/* "Kontrol ediliyor… N sn" şeridi — kartlardakiyle AYNI bileşen. */}
@@ -340,6 +362,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         Başlık telefonda YIĞILIR (DialogTitle tek satırlık flex): 1) alan adı + durum rozetleri, 2) salt okunur rozeti +
         sahibi takım kendi satırında tam genişlik (sm+ tek satır, eski düzen) — 390'da hiçbir şey kırpılmaz. */}
     <ModalShell open={!!domain} onClose={() => onClose()} size="lg" hideClose dismissOnEscape={!previewMode}
+      // Ek 3/2 (2026-09-28): pencere App düzeyinde yaşar (sekmeden bağımsız) — içindeki bir bağlantı (7/24 göstergesinin
+      // "7/24 Kapsamı'nda gör"ü, kesinti çizelgesi / dokunmatik listesi, alarm olay kartı, takım üyeleri penceresi) sekmeyi
+      // pencerenin ARKASINDA değiştiriyor, pencere yeni ekranın üstünde açık kalıyordu. İçeriden gezinmede kapanır; dışarıdan
+      // gelen gezinme (derin bağlantı useCertDeepLink, palet, Geri) ona dokunmaz (ModalShell `closeOnNavigate`).
+      closeOnNavigate
       icon={Globe}
       // Genişlik (2026-09-27, kullanıcı: "sekmeler ikinci satıra düşüyor"): 8 sekme (ikon + etiket + sayaç, TR daha uzun)
       // md+'da TEK satırda dursun diye pencere 96vw / 1200px'e çıktı.
@@ -370,7 +397,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         </span>
         {readOnly && <ReadOnlyBadge className="w-full text-sm font-normal sm:w-auto" teamId={readOnlyTeam?.id} teamName={readOnlyTeam?.name} />}
       </span>}
-      headerExtra={headerActions}>
+      headerExtra={<>{nocIndicator}{headerActions}</>}>
 
       {/*
         Sekme çubuğu (2026-09-26 yeniden tasarım — kullanıcı: "menüler sığmıyor, kaydırmak gerekiyor"): YATAY KAYDIRMA YOK.
@@ -438,132 +465,24 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           )}
         </TabsContent>
 
+        {/* Sertifika Detayları (2026-09-28 shadcn + mobil web yeniden tasarım) — certmodal/CertDetailsPanel: hata bandı
+            tepede, özet (durum + kalan gün + geçerlilik zaman çizelgesi), hızlı bakış karoları, Kimlik · Geçerlilik ·
+            Anahtar · Güvenlik · Altyapı · SAN bölümleri. `d` yokken panel kendi iskeletini çizer; ton başlık rozetiyle aynı. */}
         <TabsContent value="details">
-          {!d ? (
-            <LoadingBlock label={t('modal.loading')} fullWidth />
-          ) : (
-            <div data-slot="cert-details">
-
-              {/* ── Identity ── */}
-              <SectionTitle>{t('modal.secIdentity')}</SectionTitle>
-              <Row label={t('modal.domain')}   value={d.domain}
-                   label2={t('modal.status')}  value2={statusLabel(statusK, t)} />
-              <Row label={t('modal.subject')}  value={d.subject}
-                   label2={t('modal.issuer')}  value2={d.issuer_cn || d.issuer} />
-              {d.subject_dn && <FullRow label={t('modal.subjectDn')} value={d.subject_dn} mono />}
-              {d.issuer_dn  && <FullRow label={t('modal.issuerDn')}  value={d.issuer_dn}  mono />}
-
-              {/* ── Validity ── */}
-              <SectionTitle>{t('modal.secValidity')}</SectionTitle>
-              <Row label={t('modal.notBefore')}  value={formatDate(d.not_before)}
-                   label2={t('modal.notAfter')}  value2={formatDate(d.not_after)} />
-              <Row label={t('modal.daysRemain')} value={d.days_remaining ?? 'N/A'}
-                   label2={t('modal.lastCheck')} value2={formatDate(d.checked_at)} />
-              {d.serial_number && (
-                <FullRow label={t('modal.serialNumber')} value={d.serial_number} mono />
-              )}
-
-              {/* ── Key Information ── */}
-              <SectionTitle>{t('modal.secKey')}</SectionTitle>
-              <Row
-                label={t('modal.pubKeyAlgo')}
-                value={d.public_key_algorithm
-                  ? `${d.public_key_algorithm}${d.public_key_size ? ' / ' + d.public_key_size + ' bit' : ''}`
-                  : 'N/A'}
-                label2={t('modal.sigAlgo')}
-                value2={d.signature_algorithm || 'N/A'}
-              />
-              <Row
-                label={t('modal.isCA')}
-                value={d.is_ca == null ? 'N/A' : d.is_ca ? t('modal.yes') : t('modal.no')}
-                label2=""
-                value2=""
-              />
-              {d.key_usage?.length > 0 && (
-                <FullRow label={t('modal.keyUsage')} value={d.key_usage.join(' · ')} />
-              )}
-              {d.ext_key_usage?.length > 0 && (
-                <FullRow label={t('modal.extKeyUsage')} value={d.ext_key_usage.join(' · ')} />
-              )}
-
-              {/* ── Security ── */}
-              <SectionTitle>{t('modal.secSecurity')}</SectionTitle>
-              {d.fingerprint && (
-                <FullRow label={t('modal.fingerprint')} value={d.fingerprint} mono />
-              )}
-              {(d.chain_status || d.revocation_status || d.deployment_status) && (
-                <Row
-                  label={t('modal.chainStatus')}      value={d.chain_status || 'N/A'}
-                  label2={t('modal.revocationStatus')} value2={d.revocation_status || 'N/A'}
-                />
-              )}
-              {d.deployment_status && (
-                <Row
-                  label={t('modal.deploymentStatus')} value={d.deployment_status || 'N/A'}
-                  label2={d.trust_status ? t('modal.trustStatus') : ''}
-                  value2={d.trust_status || ''}
-                />
-              )}
-              {!d.deployment_status && d.trust_status && (
-                <Row
-                  label={t('modal.trustStatus')} value={d.trust_status}
-                  label2="" value2=""
-                />
-              )}
-
-              {/* ── Infrastructure ── */}
-              {(d.ocsp_url || d.crl_url) && (
-                <>
-                  <SectionTitle>{t('modal.secInfra')}</SectionTitle>
-                  {d.ocsp_url && <FullRow label={t('modal.ocspUrl')} value={d.ocsp_url} />}
-                  {d.crl_url  && <FullRow label={t('modal.crlUrl')}  value={d.crl_url}  />}
-                </>
-              )}
-
-              {/* ── SAN ── */}
-              {d.san?.length > 0 && (
-                <>
-                  <SectionTitle>{t('modal.san')}</SectionTitle>
-                  <div data-slot="cert-san-list" className="mb-2.5 flex flex-wrap gap-1.5">
-                    {d.san.map((s, i) => <Badge key={i} variant="outline" className="font-mono font-normal">{s}</Badge>)}
-                  </div>
-                </>
-              )}
-
-              {/* ── Error ── (ui/AlertBanner — eski satır içi sol kırmızı şerit YOK) */}
-              {d.error && (
-                <AlertBanner tone="danger" title={t('modal.errorMsg')} className="mt-2">{d.error}</AlertBanner>
-              )}
-            </div>
-          )}
+          <CertDetailsPanel d={d} tone={statusK} />
         </TabsContent>
 
         {!previewMode && (
           <TabsContent value="history">
-            {/* Paylaşılan Kontrol Geçmişi v2 — kind "uptime-ssl" certificate_checks üstünde çalışır
-                ve diğer türlerle birebir aynı zarfı döndürür. monitorId = DOMAIN (cert domain-anahtarlı). */}
-            <CheckHistoryTab
-              kind="uptime-ssl"
-              monitorId={domain}
-              /* Başlıktaki "Çalıştır"/"Yenile" ve yeni kontrol yakalayan yoklama burayı da
-                 tazeler. `key` YERİNE sinyal: remount kullanıcının seçtiği aralığı, sayfayı ve
-                 filtreyi sıfırlardı. */
-              reloadSignal={reloadKey}
-              listKey="cert-ssl-history"
-              presets={[1, 7, 30, 90]}
-              defaultPreset={7}
-              gridClass="upt-uptime-rt-grid"
-              columns={[t('uptime.dateFrom'), t('dns.status'), t('modal.daysRemain'), '']}
-              renderRow={(c) => (<>
-                <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>
-                  {c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                </span>
-                <span className="upt-rt-ms">
-                  {c.days_remaining != null ? t('uptime.sslDays').replace('{0}', c.days_remaining) : '—'}
-                </span>
-                {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
-              </>)} />
+            {/* Kontrol Geçmişi (2026-09-28 shadcn + mobil web yeniden tasarım) — certmodal/CertCheckHistory: paylaşılan
+                CheckHistoryTab kabuğu (kind "uptime-ssl", monitorId = DOMAIN) + SSL özet kutucukları, kalan gün eğilimi
+                (yenileme anları), shadcn satırlar / telefon kartları ve açılır ayrıntı. Başlıktaki "Çalıştır"/"Yenile" ve
+                yeni kontrol yakalayan yoklama burayı da tazeler: `key` YERİNE sinyal — remount seçili aralığı, sayfayı ve
+                süzgeci sıfırlardı. */}
+            {/* runInHeader: boş aralık açıklaması "başlıktaki Çalıştır"ı YALNIZ o düğme gerçekten varsa anar — salt okunur
+                pencerede / Çalıştır işleyicisi verilmeyen açılışta (mükerrer alan adı bandı) var olmayan düğmeye yönlendirmesin
+                (Ek 3/3). Düğmenin koşuluyla AYNI: !previewMode && !readOnly && onCheckNow (geçmiş sekmesi önizlemede yok). */}
+            <CertCheckHistory domain={domain} reloadSignal={reloadKey} runInHeader={!readOnly && !!onCheckNow} />
           </TabsContent>
         )}
 
@@ -583,7 +502,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {!previewMode && canViewInventory && (
           <TabsContent value="inventory">
-            <InventoryTab key={reloadKey} domain={domain} />
+            {/* Envanter Bilgileri (2026-09-28 yeniden tasarım): "Kaydı düzenle" başlıktaki Düzenle ile AYNI işleyici (salt
+                okunurda yok); "Envanterde aç" pencereyi kapatıp Envanter ekranında kaydın panelini açar. */}
+            <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
           </TabsContent>
         )}
 
@@ -600,42 +521,6 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       <DiagnosticsModal domain={domain} port={d?.port || 443} onClose={() => setShowDiag(false)} />
     )}
     </>
-  )
-}
-
-/** Bölüm başlığı (eski .modal-section-title). */
-function SectionTitle({ children }) {
-  return (
-    <h3 className="mt-5 mb-3 border-b pb-1.5 text-[11px] font-extrabold tracking-[.12em] text-muted-foreground uppercase first:mt-0">{children}</h3>
-  )
-}
-
-/** Ad/değer kutusu (eski .modal-field) — telefonda tek, geniş ekranda iki sütun (Row). */
-function DetailField({ label, value, mono = false }) {
-  return (
-    <div data-slot="cert-detail-field" className="min-w-0 rounded-[10px] border bg-muted/40 px-3.5 py-2.5">
-      <div className="mb-0.5 text-[11px] font-bold tracking-[.05em] text-muted-foreground uppercase">{label}</div>
-      <div className={cn('text-[.93em] font-semibold break-all text-foreground', mono && 'font-mono text-[.88em] font-medium')}>{value}</div>
-    </div>
-  )
-}
-
-function Row({ label, value, label2, value2 }) {
-  return (
-    <div className="mb-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-      <DetailField label={label} value={value || (value === 0 ? 0 : 'N/A')} />
-      {label2
-        ? <DetailField label={label2} value={value2 || (value2 === 0 ? 0 : 'N/A')} />
-        : <div className="max-sm:hidden" />}
-    </div>
-  )
-}
-
-function FullRow({ label, value, mono = false }) {
-  return (
-    <div className="mb-2.5">
-      <DetailField label={label} value={value || 'N/A'} mono={mono} />
-    </div>
   )
 }
 
@@ -656,7 +541,8 @@ function statusLabel(key, t) {
     high:     () => t('card.high'),
     critical: () => t('card.critical'),
     error:    () => t('card.error'),
-    expired:  () => t('modal.statusError'),
+    // Süresi dolmuş sertifika başlıkta "Hata" yazıyordu (Detaylar paneli "Süresi doldu" derken) — 2026-09-28.
+    expired:  () => t('tbl.statusExpired'),
   }
   return (map[key] ?? map.valid)()
 }

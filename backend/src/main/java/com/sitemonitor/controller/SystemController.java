@@ -106,7 +106,36 @@ public class SystemController {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("summary", httpMetricsService.getSummary());
         data.put("history", httpMetricsService.getHistory());
+        // 2026-09-28 (ek, geriye uyumlu): son 24 saatin en yavaş / en çok hata veren uçları — kalıcı seriden,
+        // dakikada en çok bir kez hesaplanır. Veritabanı sorunu bellek-içi özeti DÜŞÜRMESİN: alan null döner,
+        // bölüm listeleri gizler (özet kartları ve grafikler yine çizilir).
+        Object top = null;
+        try {
+            top = httpMetricsQueryService.topEndpoints();
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(SystemController.class)
+                    .warn("[HTTP-METRICS] top endpoints unavailable: {}", e.getClass().getSimpleName());
+        }
+        data.put("top_endpoints", top);
         return ok(Map.of("data", data));
+    }
+
+    /**
+     * İstek Gezgini (2026-09-28): aralıktaki TÜM uçların tablosu (uç başına p50/p95/p99, durum sınıfları, son
+     * görülme) + endpoint/method süzgecine uyan istekler için zaman serisi, özet ve durum kodu dağılımı — tek akış
+     * taramasıyla. from/to UTC ISO (Z'siz); aralık en çok 31 güne kırpılır ({@code clamped}). Uç adları yöntem +
+     * yol ŞABLONUdur (sorgu dizesi, kimlik, belirteç taşımaz — HttpMetricsAggregate.safeEndpoint). Kapı diğer
+     * HTTP metrik uçlarıyla aynı: {@code system_health.read} (Sistem Sağlığı her kademeye açık, 2026-09-19).
+     */
+    @GetMapping("/http-metrics/overview")
+    public ResponseEntity<Map<String, Object>> httpMetricOverview(
+            @RequestParam String from, @RequestParam String to,
+            @RequestParam(required = false) String endpoint,
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) String granularity,
+            HttpSession session) {
+        permissionService.require(session, "system_health.read", "view");
+        return ok(Map.of("data", httpMetricsQueryService.overview(from, to, endpoint, method, granularity)));
     }
 
     /** Kalıcı HTTP metrikleri — aralıktaki endpoint listesi (seçici + özet). from/to UTC ISO. */
@@ -183,31 +212,17 @@ public class SystemController {
      * kalır, kimlik izi payload'da hiç olmaz.
      */
     static boolean identityVisible(HttpSession session) {
-        return SessionScope.isGlobalAdmin(session) || "AUDIT".equals(session.getAttribute("systemRole"));
+        return IdentityMask.visibleTo(session);   // tek kaynak (değişiklik geçmişi uçları da oradan okur)
     }
 
-    /** Kimlik izi taşıyan alanları listelerden düşürür. {@code selfUsername} doluysa o kişinin
-     *  kendi satırı korunur (kullanıcı kendi giriş geçmişini görebilir). */
-    @SuppressWarnings("unchecked")
+    /** Kimlik izi taşıyan alanları payload'ın HER derinliğinden düşürür (liste / Map / iç içe); {@code top_sources}
+     *  gibi IP anahtarlı listeler tümüyle düşer. {@code selfUsername} doluysa o kişinin kendi satırı korunur
+     *  (kullanıcı kendi giriş geçmişini görebilir). Alan listesi ve gerekçe: {@link IdentityMask} (tek kaynak).
+     *  2026-09-28c (B1): eski sürüm yalnız dört üst düzey LİSTEYİ geziyordu — top_sources, details.*, heatmaps[].cells
+     *  ve Map olan anomalies.recent her kademeye açık gidiyordu. */
     static Map<String, Object> maskIdentity(Map<String, Object> payload, boolean visible, String selfUsername) {
-        if (visible || payload == null) return payload;
-        Map<String, Object> copy = new LinkedHashMap<>(payload);
-        for (String key : new String[]{"active_users", "login_status", "events", "anomalies"}) {
-            if (!(payload.get(key) instanceof List<?> rows)) continue;
-            List<Object> masked = new java.util.ArrayList<>(rows.size());
-            for (Object r : rows) {
-                if (!(r instanceof Map<?, ?> m)) { masked.add(r); continue; }
-                Map<String, Object> c = new LinkedHashMap<>((Map<String, Object>) m);
-                boolean self = selfUsername != null && selfUsername.equalsIgnoreCase(String.valueOf(c.get("username")));
-                if (!self) for (String f : IDENTITY_FIELDS) c.remove(f);
-                masked.add(c);
-            }
-            copy.put(key, masked);
-        }
-        return copy;
+        return IdentityMask.apply(payload, visible, selfUsername);
     }
-
-    private static final String[] IDENTITY_FIELDS = {"ip", "country", "city", "org", "user_agent"};
 
     /**
      * Sicil numarası yalnız GLOBAL admin'e döner (TeamBadge/üye listesi beyaz listesiyle aynı ilke: sicil ASLA
@@ -237,8 +252,10 @@ public class SystemController {
     public ResponseEntity<Map<String, Object>> dbAnalytics(
             @RequestParam(defaultValue = "7") int days, HttpSession session) {
         permissionService.require(session, "system_health.read", "view");   // 2026-09-19: her kademe (salt-okuma)
+        // 2026-09-28c (B2): SQL metni / hata iletisi / çalıştıran kullanıcı adı yalnız global admin + AUDIT'e. Maske
+        // paylaşılan 60 sn önbellekten SONRA, çağıran oturuma göre kopya üzerinde (sonuç yerinde değiştirilmez).
         return ok(Map.of(
-                "data", dbAnalyticsService.getOverview(days)));
+                "data", DbAnalyticsService.maskSqlText(dbAnalyticsService.getOverview(days), identityVisible(session))));
     }
 
     /** Esnek login serisi — grafik aralık seçimi (1g/7g/30g), gün-navigasyonu ve zoom için.
@@ -264,6 +281,8 @@ public class SystemController {
         // AuditController.userDeviceLogins'in requireAuditAccess ile koruduğu veriyi. Kapsam ürün
         // kararı gereği açık kalıyor, alanlar düşürülüyor. Kendi kaydını herkes tam görür.
         boolean self = username != null && username.equalsIgnoreCase((String) session.getAttribute("username"));
+        // Aynı kapı (IdentityMask): başkasının zaman çizelgesinde olay satırları (events / anomalies) HER derinlikte
+        // süzülür; yanıt identity_masked bayrağını taşır → arayüz "gizli" durumunu çizer.
         return ok(Map.of("data", maskIdentity(
                 userActivityService.userTimeline(username, Math.min(100, Math.max(1, limit))),
                 self || identityVisible(session), null)));

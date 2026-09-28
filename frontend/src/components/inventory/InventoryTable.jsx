@@ -23,8 +23,9 @@ import { Avatar, AvatarFallback, AvatarGroup } from '@/components/shadcn/avatar'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import { expiredAgoText, expiresInText } from '../../utils/dayPhrases.js'
 
-const FLAG_ICON = {
+export const FLAG_ICON = {
   netscaler: Server, waf_enabled: Shield, openshift: Cloud, ssl_pinning: Lock, jks_keystore: Key, ev_certificate: BadgeCheck,
   internal_cert: Building, external_vendor: Handshake, in_use: CircleCheck, use_proxy: Route, action_required: AlertTriangle,
   server_update: RefreshCw, transferred_to_sy: ArrowRightLeft,
@@ -109,7 +110,7 @@ export function ExpiryCell({ r, t, showDate = true, withStatus = false, classNam
     return <span data-slot="inv-expiry" data-tone="none" className={cn('text-muted-foreground', className)}>{r.cert_status ? '—' : t('inv.certNever')}</span>
   }
   const tone = d < 0 ? 'err' : d <= 30 ? 'warn' : 'ok'
-  const text = d < 0 ? t('inv.expiredAgo', -d) : d === 0 ? t('inv.expiresToday') : t('inv.expiresIn', d)
+  const text = d < 0 ? expiredAgoText(t, -d) : d === 0 ? t('inv.expiresToday') : expiresInText(t, d)
   return (
     <span data-slot="inv-expiry" data-tone={tone} data-days={d} className={cn('inline-flex min-w-0 flex-col gap-0.5 leading-tight', className)}>
       <span className="inline-flex flex-wrap items-center gap-1.5">

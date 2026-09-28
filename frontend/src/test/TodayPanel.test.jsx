@@ -159,9 +159,9 @@ describe('TodayPanel', () => {
     expect(screen.getByText(/^Eski TLS$|^Outdated TLS$/)).not.toHaveAttribute('data-bad')
     expect(screen.getByText(/^Eski TLS$|^Outdated TLS$/)).toHaveAttribute('title', expect.stringMatching(/TLSv1/))
     expect(screen.getByText(/^istisnalı$|^exception$/)).toBeInTheDocument()
-    // bildirim satırı → Alarm Geçmişi + incident; olaysız push → yalnız sekme
+    // bildirim satırı → Alarm Geçmişi + `alert` (E2: `incident` Alarm Geçmişi'nin anahtarı değil); olaysız push → yalnız sekme
     fireEvent.click(screen.getByRole('button', { name: 'a.example.com' }))
-    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 41 } })
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: '41' } })
     fireEvent.click(screen.getByRole('button', { name: 'api' }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: undefined })
     // sağlık satırı → sertifika detayı (onOpenDomain)

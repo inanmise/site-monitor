@@ -74,6 +74,12 @@ public class InventoryImportService {
     /** 7/24 grup adı → kimlik (2026-09-27). Alan enjeksiyonu: kurucu (ve @InjectMocks testleri) değişmesin; yokken sütun yok sayılır. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.NocNotificationGroupRepository nocGroupRepo;
+    /**
+     * Envanter türevli DNS/Port izlemelerinin takımını eşitler (2026-09-28). Alan enjeksiyonu: kurucu ve @InjectMocks
+     * testleri değişmesin; yokken (null) eşitleme atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DerivedMonitorTeamSync derivedMonitorTeamSync;
 
     /**
      * Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu.
@@ -148,6 +154,11 @@ public class InventoryImportService {
                 out.add(new RowResult(line, domain, "error", "unknown_team", List.of())); errors++; continue;
             }
             Long ugTeamId = resolveTeam(r.get("ug_team"), teamByName, teamIds);
+            // D9 (2026-09-28): bilinmeyen UG adı da satır hatasıdır — eskiden sessizce yok sayılıyor, satır "create/update"
+            // raporlanıyordu; kullanıcı UG'nin atandığını sanıyordu (UG alıcıları hiç eklenmiyordu).
+            if (r.containsKey("ug_team") && !isBlank(r.get("ug_team")) && ugTeamId == null) {
+                out.add(new RowResult(line, domain, "error", "unknown_ug_team", List.of())); errors++; continue;
+            }
             Integer port = intOrNull(r.get("port"));
             if (port != null && (port < 1 || port > 65535)) { out.add(new RowResult(line, domain, "error", "invalid_port", List.of())); errors++; continue; }
             Integer tier = intOrNull(r.get("tier"));
@@ -193,6 +204,12 @@ public class InventoryImportService {
                     inventoryRepo.save(ex);
                     monitorHistory.record(MonitorHistoryService.INVENTORY, ex.getId(), ex.getDomain(), ex.getTeamId(),
                             MonitorHistoryService.UPDATE, before, AuditDiff.snapshot(ex, HISTORY_FIELDS), "import", session);
+                    // Takım değiştiyse türev Port/DNS izlemeleri de yeni takıma geçer — düzenleme, toplu set-team ve
+                    // transfer yolları bunu yapıyordu, içe aktarma yapmıyordu: zamanlayıcı alarm takımını türev satırın
+                    // sütunundan okuduğu için kesinti alarmları ESKİ takıma (başka takıma) gidiyordu (2026-09-28).
+                    if (changes.contains("team") && derivedMonitorTeamSync != null) {
+                        derivedMonitorTeamSync.syncTeam(ex.getDomain(), ex.getTeamId());
+                    }
                     updatedDomains.add(domain);
                 }
                 out.add(new RowResult(line, domain, "update", null, changes)); updated++;

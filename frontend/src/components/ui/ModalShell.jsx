@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from 'react'
+import { createContext, useContext, useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/shadcn/button'
@@ -42,6 +42,14 @@ import { useT } from '../../i18n/index.jsx'
  * `dismissOnBackdrop={false}` scrim tıklamasını TAMAMEN kapatır (Escape ve X açık kalır).
  * İçinde uzun emek biriken formlar için: yanlışlıkla kenara tıklamak yazılanların hepsini
  * götürüyordu ve geri alma yolu yok. Varsayılan `true` — mevcut modalların davranışı değişmesin.
+ *
+ * `closeOnNavigate` (isteğe bağlı, varsayılan KAPALI — 2026-09-28, Ek 3/2): App düzeyinde yaşayan (sekmeden bağımsız)
+ * bir pencerenin İÇİNDEN başlayan uygulama içi gezinme (`navigateTo` → `sm:navigate`: 7/24 göstergesinin "7/24
+ * Kapsamı'nda gör"ü, kesinti çizelgesi, alarm olay kartı, takım üyeleri penceresinin kapsam bağlantısı…) pencereyi
+ * kapatır — yoksa sekme pencerenin ARKASINDA değişir, pencere yeni ekranın üstünde açık kalırdı. "İçeriden" = gezinme,
+ * kabuğun REACT ağacındaki bir tıklamanın işlenişi sırasında yayıldı (portal'lı açılır pencereler / iç içe kabuklar
+ * dâhil — React olayı ağaç boyunca kabarcıklanır). Dışarıdan gelen gezinme (derin bağlantı, palet, Geri) pencereye
+ * DOKUNMAZ. Sayfayla birlikte sökülen pencerelere (izleme detayları) gerekmez: sekme değişince zaten kapanırlar.
  *
  * `scrollBody` uzun formlar içindir: kutuya yükseklik tavanı koyar, YALNIZ gövdeyi kaydırır ve
  * `footer`'ı daima görünür tutar. Düğmeler bu modda `footer` ile verilmeli — gövdenin içine
@@ -103,10 +111,27 @@ export default function ModalShell({
   open, onClose, title, icon: Icon, size = 'md', busy = false,
   dismissOnBackdrop = true, dismissOnEscape = true, scrollBody = false,
   closeLabel, footer, children, className = '',
-  headerExtra = null, hideClose = false, bodyRef,
+  headerExtra = null, hideClose = false, bodyRef, closeOnNavigate = false,
 }) {
   const t = useT()
   const parentDepth = useContext(DepthCtx)
+
+  // İçeriden gezinmede kapan (`closeOnNavigate`). Bayrak tıklamanın YAKALAMA evresinde kalkar ve olay turu bitince
+  // (setTimeout 0) iner: tıklama işleyicisindeki eşzamanlı `navigateTo` onu görür, sonraki dış gezinme görmez.
+  // Mikro görev YETMEZ — React yakalama ve kabarcık evrelerini ayrı kök dinleyicilerinde koşar, arada mikro görevler boşalır.
+  const navFromInside = useRef(false)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useEffect(() => {
+    if (!open || !closeOnNavigate) return undefined
+    const onNav = () => { if (navFromInside.current) onCloseRef.current?.() }
+    window.addEventListener('sm:navigate', onNav)
+    return () => window.removeEventListener('sm:navigate', onNav)
+  }, [open, closeOnNavigate])
+  const markInside = closeOnNavigate ? () => {
+    navFromInside.current = true
+    setTimeout(() => { navFromInside.current = false }, 0)
+  } : undefined
 
   // Odak iadesi: kapanışta tetikleyiciye. Radix yalnız kendi DialogTrigger'ına döner (burada
   // tetik yok), bu yüzden iade kabukta; açılıştaki odağı Radix FocusScope verir.
@@ -168,6 +193,7 @@ export default function ModalShell({
           onEscapeKeyDown={(e) => { if (busy || !dismissOnEscape) e.preventDefault() }}
           // Radix tetiksiz kapanışta odağı hiçbir yere vermez; iade yukarıdaki effect'te.
           onCloseAutoFocus={(e) => e.preventDefault()}
+          onClickCapture={markInside}
         >
           <DialogHeader className="shrink-0 flex-row items-center justify-between gap-3 text-left">
             <DialogTitle className="flex min-w-0 items-center gap-2 leading-snug">

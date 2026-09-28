@@ -21,11 +21,14 @@ function Calendar({
 }) {
   const defaultClassNames = getDefaultClassNames()
 
+  // Proje eki (2026-09-28): dokunmatikte (pointer: coarse) hücre 40 px (gün, ay gezinme, hafta no. — hepsi --cell-size'dan)
+  // ve iç boşluk 8 px: 7 × 40 + 16 = 296 px, hafta numaralı (WeekDatePicker) 8 × 40 + 16 = 336 px → 360 px telefonda
+  // `max-w-[calc(100vw-1rem)]` (344 px) içine sığar. Fare görünümü (32 px, p-3) DEĞİŞMEZ.
   return (
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn(
-        "group/calendar bg-background p-3 [--cell-size:--spacing(8)] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",
+        "group/calendar bg-background p-3 [--cell-size:--spacing(8)] pointer-coarse:p-2 pointer-coarse:[--cell-size:--spacing(10)] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
         String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
         className

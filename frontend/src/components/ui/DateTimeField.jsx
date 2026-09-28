@@ -80,8 +80,11 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
       triggerProps={invalid || describedBy ? { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } : undefined}
       endSlot={clearShown && (
         <SimpleTooltip content={clearLabel}>
+          {/* Görsel 24 px (masaüstü yerleşimi aynı); dokunmatikte (pointer: coarse) görünmez ::after katmanı vuruş alanını
+              40×40'a büyütür (-inset-2 = her yönde 8 px) — kart çiplerinin TOUCH deseni. Alan tetiğin sağındaki ayrılmış
+              boşluğun (px-3 + ayrılmış 20 px + gap-2 = 40 px) İÇİNDE kalır: değer metnine taşmaz. */}
           <Button type="button" variant="ghost" size="icon-xs"
-            className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-destructive"
+            className="absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-destructive pointer-coarse:after:absolute pointer-coarse:after:-inset-2"
             aria-label={clearLabel}
             onClick={() => onChange('')}>
             <X aria-hidden="true" />

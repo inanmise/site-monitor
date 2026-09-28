@@ -6,6 +6,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import DiffTable from './audit/DiffTable.jsx'
 import { EventBadge } from './ToneBadge.jsx'
+import MaskedValue from '../ui/MaskedValue.jsx'
 import { Button } from '@/components/shadcn/button'
 
 /**
@@ -150,7 +151,9 @@ export default function NotificationGroupHistory({
                   “{nameOf(r)}”
                   {r.team_name && <span className="inline-flex items-center gap-1 text-muted-foreground">· <TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} /></span>}
                 </span>
-                {r.ip && <span className="font-mono text-xs text-muted-foreground sm:ml-auto">{r.ip}</span>}
+                {r.identity_masked === true
+                  ? <MaskedValue className="sm:ml-auto" />
+                  : r.ip && <span className="font-mono text-xs text-muted-foreground sm:ml-auto">{r.ip}</span>}
               </div>
               <Detail row={r} fieldPrefix={fieldPrefix} />
             </li>

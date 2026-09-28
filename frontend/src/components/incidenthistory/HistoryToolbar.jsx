@@ -100,7 +100,7 @@ export default function HistoryToolbar({
               {active.length > 0 ? t('inc.filtersN', active.length) : t('inc.filters')}
             </Button>
             {/* z-[1001]: yüzen yardım düğmesinin (.help-fab 900) üstünde — "Sonuçları göster" örtülmesin */}
-            <SheetContent side="bottom" showCloseButton={false} data-slot="ih-filters-sheet"
+            <SheetContent overlayClassName="z-[1000]" side="bottom" showCloseButton={false} data-slot="ih-filters-sheet"
               className="z-[1001] max-h-[92dvh] gap-0 overflow-y-auto rounded-t-2xl pb-[env(safe-area-inset-bottom)]">
               <SheetHeader className="flex-row items-center justify-between">
                 <div>

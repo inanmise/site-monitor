@@ -87,7 +87,10 @@ public class AdminController {
         "actionRequired", "openshift", "sslPinning", "internalCert", "jksKeystore", "serverUpdate",
         "netscaler", "wafEnabled", "inUse", "evCertificate", "transferredToSy", "useProxy",
         "tlsMode", "purchasedBy", "platform", "platformDetail", "changeDescription", "expectedFingerprint", "expectedSubject",
-        "teamId", "groupName", "deletedAt", "notificationGroupId", "nocNotify", "nocGroupIds",
+        // ugTeamId (2026-09-28): UG takımı aktarımı (transfer-ug) ve PUT'taki temizleme geçmişte görünsün; içe aktarma
+        // (InventoryImportService.HISTORY_FIELDS) bu alanı zaten yazıyordu. Envanter geri döndürülemez (findRestorable
+        // INVENTORY taşımaz) — alan yalnız fark/anlık görüntüye girer, snapshot'tan geri YAZILMAZ (BO9 kapısı korunur).
+        "teamId", "ugTeamId", "groupName", "deletedAt", "notificationGroupId", "nocNotify", "nocGroupIds",
         "svcMgmtContact", "appDevContact", "iisAdminContact", "wafAdminContact",
         "timeoutSeconds", "checkIntervalHours"
     };
@@ -187,6 +190,36 @@ public class AdminController {
      */
     private static void redactForForeignReader(CertificateInventory inv) {
         inv.setCreatedIp(null);
+    }
+
+    /**
+     * Bildirim grubu ADLARI (2026-09-28, envanter detayı "Bildirim grubu" satırı): kayıtların grup kimliklerini TEK sorguda
+     * çözer — liste 1000+ satır olabilir, satır başına sorgu yok (tek pod). Ad YALNIZ iki koşulda yazılır:
+     * <ul>
+     *   <li>grup kayıt için gerçekten UYGULANIYOR — aktif ve kaydın takımına ait ({@code NotificationGroupService.overrideFor}
+     *       yabancı / pasif grubu yok sayar; adı göstermek "alarmlar bu gruba gidiyor" diye yanlış söylerdi);</li>
+     *   <li>çağıran grubu OKUYABİLİYOR — {@code notification.groups/view} + grubun takımı görüş kapsamında
+     *       ({@code NotificationGroupController.list} kapısı). Org geneli okumada başka takımın grubu bu yüzden adsız kalır.</li>
+     * </ul>
+     * Aksi hâlde alan null → yazılmaz; arayüz kimliği "bulunamadı" açıklamasıyla gösterir (grup ucunun 404 deseni).
+     */
+    private void applyNotificationGroupNames(HttpSession session, List<CertificateInventory> items) {
+        if (items == null || items.isEmpty()) return;
+        if (!permissionService.allows(session, "notification.groups", "view")) return;
+        Set<Long> ids = new HashSet<>();
+        for (CertificateInventory it : items) if (it.getNotificationGroupId() != null) ids.add(it.getNotificationGroupId());
+        if (ids.isEmpty()) return;   // grup seçilmemiş kayıtlar (takım varsayılanı) → sorgu YOK
+        Map<Long, com.sitemonitor.model.NotificationGroup> groups = new HashMap<>();
+        for (com.sitemonitor.model.NotificationGroup g : inventoryGroupRepo.findAllById(ids)) {
+            if (g != null && g.getId() != null) groups.put(g.getId(), g);
+        }
+        for (CertificateInventory it : items) {
+            com.sitemonitor.model.NotificationGroup g = it.getNotificationGroupId() == null ? null : groups.get(it.getNotificationGroupId());
+            if (g == null || !Boolean.TRUE.equals(g.getActive())) continue;
+            if (it.getTeamId() == null || !it.getTeamId().equals(g.getTeamId())) continue;
+            if (!SessionScope.canView(session, g.getTeamId())) continue;
+            it.setNotificationGroupName(g.getName());
+        }
     }
 
     /**
@@ -316,6 +349,7 @@ public class AdminController {
             it.setCanManage(writable.test(it.getTeamId()));
             if (orgWide && !SessionScope.canView(session, it.getTeamId())) redactForForeignReader(it);
         }
+        applyNotificationGroupNames(session, items);   // çekmecenin "Bildirim grubu" satırı — TEK sorgu, satır başına değil
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", items);
         body.put("scope", orgWide || isAdminOrAudit(session) && "all".equalsIgnoreCase(scope.trim()) ? "all" : "mine");
@@ -353,6 +387,7 @@ public class AdminController {
             if (rec.getTeamId() != null)   rec.setTeamName(teamNames.get(rec.getTeamId()));
             if (rec.getUgTeamId() != null) rec.setUgTeamName(teamNames.get(rec.getUgTeamId()));
             rec.setCanManage(SessionScope.canWriteInventory(session, rec.getTeamId()));
+            applyNotificationGroupNames(session, List.of(rec));   // grup kimliği varsa tek ek sorgu
             if (foreign) redactForForeignReader(rec);
         }
         Map<String, Object> body = new HashMap<>();
@@ -375,6 +410,7 @@ public class AdminController {
         // Seçilen takım çağıranın YAZMA kapsamında olmalı: global admin her takım; yönetici/PO yönettiği
         // takımlar; USER ÜYESİ olduğu takım(lar) (2026-09-18: "Domain Ekle" her kullanıcı seviyesinde).
         requireInventoryWriter(session, item.getTeamId());
+        requireExistingTeam(item.getTeamId());   // O3: olmayan takıma yazılan kayıt hiçbir alıcıya ulaşmaz (2026-09-28)
         // Devralma YOK (2026-09-26, org geneli görünürlük): alan adı envanterde zaten varsa — başka takımın
         // kaydı ya da çöp kutusundaki bir kayıt dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün
         // olmamalı. DB UNIQUE kısıtı bunu zaten reddederdi ama harf farkında (Example.com) kısıt kör kalıyor,
@@ -514,6 +550,7 @@ public class AdminController {
         if (item.getTeamId() != null) {
             // Takım buradan da değişebiliyor (global admin) — transferInventory ile AYNI senkron.
             boolean teamChanged = !java.util.Objects.equals(existing.getTeamId(), item.getTeamId());
+            if (teamChanged) requireExistingTeam(item.getTeamId());   // O3 (2026-09-28): olmayan takıma taşıma 400
             existing.setTeamId(item.getTeamId());
             if (teamChanged) derivedMonitorTeamSync.syncTeam(existing.getDomain(), item.getTeamId());
         }
@@ -1032,6 +1069,35 @@ public class AdminController {
         return v.isEmpty() ? null : v;
     }
 
+    /** Toplu envanter işleminin geçmiş notu — NocController'ın "toplu 7/24 işlemi" deseni: satır toplu yoldan geldiğini söyler. */
+    private static final Map<String, String> BULK_HISTORY_NOTE = Map.of(
+            "activate", "toplu etkinleştirme",
+            "deactivate", "toplu pasife alma",
+            "delete", "toplu silme",
+            "set-contacts", "toplu sorumlu ekip ataması",
+            "set-tier", "toplu kademe ataması",
+            "set-team", "toplu takım aktarımı");
+
+    /**
+     * Toplu envanter işleminin ürün geçmişi satırı (2026-09-28): tekil uçlarla AYNI tür/kimlik/ad/takım/aktör/alan listesi —
+     * silme {@code DELETE} ({@link #deleteInventory}), diğer eylemler {@code UPDATE} ({@link #updateInventory}: aktiflik,
+     * sorumlular, kademe, takım aynı PUT'tan geçer). Eskiden toplu yol hiç yazmıyordu: toplu silinen kayıt İzleme
+     * Değişiklikleri'nde görünmüyor ve "silinmiş" rozetini alamıyordu ({@code findDeletedAmong} = son olay DELETE).
+     *
+     * <p>Değişmeyen kayıt (zaten aktif olanı etkinleştir, aynı kademe) için satır YAZILMAZ: {@code record} not taşıyan
+     * UPDATE'i değişiklik olmasa da yazdığı için bu kontrol burada. Çağıran {@code @Transactional}: satır silmeyle aynı
+     * işlemde — geri alınan toplu işlem geçmişte "silindi" izi bırakmaz.
+     */
+    private void recordBulkInventoryHistory(CertificateInventory inv, String action,
+                                            Map<String, Object> before, HttpSession session) {
+        Map<String, Object> after = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
+        boolean delete = "delete".equals(action);
+        if (!delete && AuditDiff.diff(before, after) == null) return;
+        monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                delete ? MonitorHistoryService.DELETE : MonitorHistoryService.UPDATE, before, after,
+                BULK_HISTORY_NOTE.get(action), session);
+    }
+
     @PostMapping("/inventory/bulk")
     @Transactional
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
@@ -1070,6 +1136,7 @@ public class AdminController {
             requirePerm(session, "inventory.transfer", "execute");
             newTeamId = toLong(body.get("team_id"));
             if (newTeamId == null) throw new IllegalArgumentException("team_id is required");
+            requireExistingTeam(newTeamId);   // olmayan takıma yazılan kayıt sahipsiz kalırdı (2026-09-28)
         }
 
         int processed = 0, skipped = 0, alertsClosed = 0;
@@ -1078,6 +1145,9 @@ public class AdminController {
             CertificateInventory inv = inventoryRepo.findById(id).orElse(null);
             if (inv == null || !canManageTeamResource(session, inv.getTeamId())) { skipped++; continue; }
             boolean deleted = inv.getDeletedAt() != null;
+            // Ürün geçmişi (İzleme Değişiklikleri) için işlem ÖNCESİ durum — tekil uçlarla aynı alan listesi.
+            Map<String, Object> histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
+            int processedBefore = processed;
             switch (action) {
                 case "activate" -> {
                     if (deleted) { skipped++; }            // silinmiş kayıt → "geri yükle" akışı kullanılmalı
@@ -1119,12 +1189,15 @@ public class AdminController {
                     if (deleted) { skipped++; }            // zaten silinmiş → no-op
                     else {
                         inv.setDeletedAt(ts); inv.setActive(false); inv.setUpdatedAt(ts);
+                        monitorHistory.stampUpdated(inv, session);   // "kim sildi" çöp kutusunda görünsün — tekil silmeyle aynı
                         inventoryRepo.save(inv);
                         alertsClosed += escalationService.closeAlertsOnInventoryDelete(inv.getDomain());
                         processed++;
                     }
                 }
             }
+            // YALNIZ gerçekten işlenen kayıt için (atlanan / kapsam dışı / zaten silinmiş → satır YOK).
+            if (processed > processedBefore) recordBulkInventoryHistory(inv, action, histBefore, session);
         }
         // Her eylemin KENDI denetim adi olmali. Eskiden default -> DOMAIN_BULK_DELETE'ti; yeni bir
         // eylem eklenince (set-contacts) denetim kaydi "N domain SILINDI" diye yaziliyordu. Denetim
@@ -1310,20 +1383,55 @@ public class AdminController {
         requireAdmin(session);
         requirePerm(session, "inventory.transfer", "execute");
         Long newTeamId = toLong(body.get("team_id"));
+        // Takım ZORUNLU (2026-09-28): gövdesiz/boş istek kaydı ve türev Port/DNS izlemelerini takımsız (sahipsiz)
+        // bırakıyordu — sahipsiz alarm hiçbir bildirim üretmez. Arayüz boş seçimde istek atmıyor; sunucu da reddeder.
+        if (newTeamId == null) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Aktarım için bir takım seçin.", "Choose a team to transfer to."));
+        }
+        requireExistingTeam(newTeamId);
         CertificateInventory inv = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        // Çöp kutusundaki kayıt (Ek 3/5, 2026-09-28): DÜZ aktarım 409. Silinmiş kayda yazılan UPDATE satırı ürün geçmişinde
+        // onu "canlı"ya çeviriyordu (findDeletedAmong = son olay DELETE; o tabloya yalnız canlı kayda yazım düşer). Mükerrer
+        // alan adı bandının "geri yükle + aktar"ı `restore: true` ile TEK adımda gelir: takım + geri yükleme tek kayıt, tek
+        // RESTORE satırı (eskiden aktar → ayrı /restore; ikinci adım düşerse kayıt yeni takımın çöpünde kalıyordu).
+        // Geri yükleme kapısı /restore ile AYNI (inventory.crud/edit; takım kapsamını global admin zaten geçer).
+        boolean deleted = inv.getDeletedAt() != null;
+        boolean restore = deleted && Boolean.TRUE.equals(body.get("restore"));
+        if (deleted && !restore) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Bu kayıt çöp kutusunda — aktarmadan önce geri yükleyin.",
+                    "This record is in the bin — restore it before transferring it."));
+        }
+        if (restore) requirePerm(session, "inventory.crud", "edit");
         Long oldTeamId = inv.getTeamId();
+        Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
         inv.setTeamId(newTeamId);
+        if (restore) {
+            inv.setDeletedAt(null);
+            inv.setActive(true);
+        }
         inv.setUpdatedAt(now());
         inventoryRepo.save(inv);
+        // Ürün geçmişi (2026-09-28): takım değişikliği düzenleme (PUT) ve toplu set-team yolunda UPDATE olarak yazılıyor,
+        // bu uçta yazılmıyordu — aynı olay hangi düğmeden yapıldığına göre İzleme Değişiklikleri'nde var/yok oluyordu.
+        monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                restore ? MonitorHistoryService.RESTORE : MonitorHistoryService.UPDATE,
+                _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
         // Türev izlemelerin takımı da tazelenir: aksi hâlde yeni takım kendi kaydını
         // düzenleyemez, ESKİ takım listede göremediği satırı yönetmeye devam eder ve kesinti
         // alarmları eski takıma gider (zamanlayıcı oturumsuz çalışır, sütunu okur).
         int synced = derivedMonitorTeamSync.syncTeam(inv.getDomain(), newTeamId);
         auditService.recordAction("DOMAIN_TRANSFER_SY", session, request,
                 "CERTIFICATE", inv.getDomain(),
-                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + ",\"derivedMonitorsSynced\":" + synced + "}");
-        return ok(Map.of("data", inv, "message", "Transferred"));
+                "{\"from\":" + oldTeamId + ",\"to\":" + newTeamId + ",\"derivedMonitorsSynced\":" + synced
+                        + (restore ? ",\"restored\":true" : "") + "}");
+        if (restore) {
+            auditService.recordAction("DOMAIN_RESTORE", session, request,
+                    "CERTIFICATE", inv.getDomain(), "{\"teamId\":" + newTeamId + "}");
+        }
+        return ok(Map.of("data", inv, "message", restore ? "Restored and transferred" : "Transferred"));
     }
 
     @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
@@ -1334,12 +1442,26 @@ public class AdminController {
         requireAdmin(session);
         requirePerm(session, "inventory.transfer", "execute");
         Long newUgTeamId = toLong(body.get("ug_team_id"));
+        // Ek 3/5 (2026-09-28): olmayan takıma UG aktarımı 400 (SY aktarımıyla aynı kapı; null = UG takımını kaldır, izinli) —
+        // uydurma kimlik kaydı hiçbir takımın görmediği bir UG'ye bağlıyordu.
+        requireExistingTeam(newUgTeamId);
         CertificateInventory inv = inventoryRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Inventory item not found: " + id));
+        // Çöp kutusundaki kayda UG aktarımı 409 — silinmiş kayda yazılan UPDATE satırı onu ürün geçmişinde "canlı"ya çeviriyordu.
+        if (inv.getDeletedAt() != null) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Bu kayıt çöp kutusunda — UG takımını değiştirmeden önce geri yükleyin.",
+                    "This record is in the bin — restore it before changing its UG team."));
+        }
         Long oldUgTeamId = inv.getUgTeamId();
+        Map<String, Object> _histBefore = AuditDiff.snapshot(inv, INVENTORY_FIELDS);
         inv.setUgTeamId(newUgTeamId);
         inv.setUpdatedAt(now());
         inventoryRepo.save(inv);
+        // Ürün geçmişi (2026-09-28): UG takımı değişikliği İzleme Değişiklikleri'ne hiç düşmüyordu (tekil /transfer ile
+        // aynı desen). Aynı değere aktarım fark üretmez → record satır yazmaz.
+        monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                MonitorHistoryService.UPDATE, _histBefore, AuditDiff.snapshot(inv, INVENTORY_FIELDS), null, session);
         auditService.recordAction("DOMAIN_TRANSFER_UG", session, request,
                 "CERTIFICATE", inv.getDomain(),
                 "{\"from\":" + oldUgTeamId + ",\"to\":" + newUgTeamId + "}");
@@ -1418,7 +1540,9 @@ public class AdminController {
         out.put("truncated", h.truncated());
         out.put("hidden", h.hidden());
         out.put("types", com.sitemonitor.service.AdminHistoryService.eventTypesFor(resource));
-        return ok(out);
+        // Eylemi yapanın IP'si kimlik izidir (2026-09-28c): yalnız global admin + AUDIT'e ve kişinin kendi satırında.
+        // TEAM / ESCALATION_CONTACT kolları kapsamlı müdüre ve takım yöneticisine açık → alan düşer, satır işaretlenir.
+        return ok(IdentityMask.forSession(out, session));
     }
 
     /**
@@ -1595,14 +1719,20 @@ public class AdminController {
             @RequestParam(defaultValue = "HIGH") String level,
             @RequestParam(defaultValue = "CERT") String kind,
             @RequestParam(required = false) Long groupId,
+            @RequestParam(required = false) Long ugTeamId,
             HttpSession session) {
         requirePerm(session, "contacts.list", "view");
         if (!SessionScope.isGlobalViewer(session)) {
             List<Long> scope = SessionScope.viewTeamIds(session);
             if (scope == null || !scope.contains(teamId)) throw new NoSuchElementException("Team not found: " + teamId);
+            // UG takımı da görüş kapsamında olmalı: yoksa kapsamlı kullanıcı başka takımın kişilerini görürdü.
+            if (ugTeamId != null && !scope.contains(ugTeamId)) throw new NoSuchElementException("Team not found: " + ugTeamId);
         }
         boolean standalone = "MONITOR".equalsIgnoreCase(kind);
-        Map<String, Object> out = new LinkedHashMap<>(escalationService.simulateRecipients(teamId, level, standalone, groupId));
+        // "Her sahip takım kendi kişisi" (2026-09-28): UG verilirse UG adresi + UG'nin KENDİ kişileri de gösterilir.
+        Map<String, Object> out = new LinkedHashMap<>(ugTeamId == null
+                ? escalationService.simulateRecipients(teamId, level, standalone, groupId)
+                : escalationService.simulateRecipients(teamId, level, standalone, groupId, ugTeamId));
         out.put("team_name", teamRepo.findById(teamId).map(Team::getName).orElse(null));
         // Push ayağı (2026-09-28) — kişi kararları opt-out/org rolü taşır, görünürlük PushDecisionAccess'te: global
         // yönetici her takım, takımı YÖNETEN tüm üyeler, üye yalnız kendi satırı, diğerleri yalnız kanal durumu.
@@ -1714,9 +1844,14 @@ public class AdminController {
             // webhook) alfabetik İLK takıma yazılıyordu — o takımın eskalasyonunu alıyor, müdür göremiyor/silemiyordu.
             if (contact.getTeamId() == null) contact.setTeamId(SessionScope.primaryTeamId(session));
             requireTeamScopedAdmin(session, contact.getTeamId());
-        } else if (contact.getTeamId() == null) {
-            // "İlk takıma düş" yalnız global admin'de kalır (takımsız istek — eski davranış).
-            userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
+        }
+        // Takım ZORUNLU (ürün kararı 2026-09-28): eskalasyon kişisi yalnız KENDİ takımının alarmlarını alır; takımsız
+        // kişi hiçbir bildirim almaz. Eskiden global yönetici takımsız isteği alfabetik İLK takıma yazıyordu — kişi o
+        // takımın alarmlarını alıyordu (yanlış takımın müdürü). Artık 400; takım bilinçli seçilir.
+        if (contact.getTeamId() == null) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Eskalasyon kişisi için takım seçin — takımsız kişi hiçbir bildirim almaz.",
+                    "Choose a team for the escalation contact — a contact with no team receives no notifications."));
         }
         EscalationContact saved = contactRepo.save(contact);
         auditService.recordAction("CONTACT_CREATE", session, "ESCALATION_CONTACT", String.valueOf(saved.getId()), saved.getName(), null);
@@ -1769,6 +1904,7 @@ public class AdminController {
         Long teamId = toLong(body.get("team_id"));
         if (teamId != null && !teamId.equals(c.getTeamId())) {
             if (isAdmin(session)) {
+                requireExistingTeam(teamId);   // olmayan takım → kişi hiçbir alarmı almaz (2026-09-28)
                 c.setTeamId(teamId);
             } else if (!isTeamAdmin(session)) {
                 requireTeamScopedAdmin(session, teamId);
@@ -1808,9 +1944,11 @@ public class AdminController {
             @RequestParam(required = false) String level,
             @RequestParam(required = false) Boolean acknowledged,
             @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String range,
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
+        AlertRange win = AlertRange.of(range, since);   // varsayılan "aralıkta açılan"; range=active → aralıkta aktif
         // KAPALI DÜŞER: kapsam, parametrenin VERİLİP VERİLMEDİĞİNE bakar — doğrulamadan kaç tanesinin
         // sağ çıktığına DEĞİL. Aksi halde geçersiz bir tip adı (yeniden adlandırma, yazım hatası)
         // süzgeci sessizce DÜŞÜRÜR ve modal yine kendi üretmediği alarmları gösterir; yani kullanıcının
@@ -1846,7 +1984,7 @@ public class AdminController {
         }
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
         Page<AlertEvent> result = alertEventRepo.findFiltered(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
                 typeScoped, typesParam,
                 qEffective, levelEffective, acknowledged, teamId,
                 scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
@@ -1855,7 +1993,7 @@ public class AdminController {
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : alertEventRepo.countFilteredByType(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain,
+                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain,
                 typeScoped, typesParam,
                 qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
@@ -1866,7 +2004,7 @@ public class AdminController {
         Map<String, Long> levelCounts = new LinkedHashMap<>();
         long unackedTotal = 0L;
         for (Object[] row : alertEventRepo.countFacets(
-                resolvedEffective, since, until, resolvedSince, resolvedUntil, domain, alertTypeEffective,
+                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
                 typeScoped, typesParam,
                 qEffective, teamId, scoped, scopeList)) {
             String lvl = String.valueOf(row[0]);
@@ -1950,9 +2088,11 @@ public class AdminController {
             @RequestParam(required = false) String level,
             @RequestParam(required = false) Boolean acknowledged,
             @RequestParam(required = false) Long teamId,
+            @RequestParam(required = false) String range,
             HttpSession session,
             jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         requirePerm(session, "alerts.read", "view");
+        AlertRange win = AlertRange.of(range, since);   // ekranla AYNI tarih kipi (aralıkta açılan / aktif)
 
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
         // CSV, ekranla AYNI filtreleri kullanmak zorunda: tip kapsamı burada da uygulanmazsa
@@ -1991,8 +2131,8 @@ public class AdminController {
         int rows = 0;
         if (!(scoped && scope.isEmpty())) {          // kapsamsız kullanıcı → yalnız başlık satırı
             for (int page = 0; rows < ALERT_CSV_MAX_ROWS; page++) {
-                var chunk = alertEventRepo.findFiltered(resolved, since, until, resolvedSince, resolvedUntil,
-                        domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
+                var chunk = alertEventRepo.findFiltered(resolved, win.openedSince(), until, resolvedSince, resolvedUntil,
+                        win.activeFrom(), domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
                         qEffective, levelEffective, acknowledged, teamId,
                         scoped, scopeList,
                         PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt")))
@@ -2754,6 +2894,16 @@ public class AdminController {
                 .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
                 .orElseGet(java.util.LinkedHashMap::new);
         before.put("member_count", userRepo.findByTeamIdOrderByUsernameAsc(id).size());
+        // Bağlı kaydı olan takım SİLİNMEZ (2026-09-28): UserService.deleteTeam yalnız aktif envanter / kullanıcı / aktif
+        // kişiye bakıyordu; dokuz izleme türü, pasif kişi ve bildirim grupları silinmiş takımın kimliğini göstermeye
+        // devam ediyor, alarmları sahipsiz kalıyordu. Arayüz zaten "önce taşı" diyor (etki önizlemesi boş olmalı);
+        // sunucu da aynı ölçütü uygular — doğrudan API çağrısı onu atlayamaz.
+        Map<String, Object> impact = teamAdminService.impact(id);
+        if (impact != null && !impact.isEmpty() && !Boolean.TRUE.equals(impact.get("empty"))) {
+            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                    "Bu takıma bağlı alan adı, izleme, kişi ya da bildirim grubu var — önce başka bir takıma taşıyın.",
+                    "This team still has domains, monitors, people or notification groups — move them to another team first."));
+        }
         userService.deleteTeam(id);
         auditService.recordAction("TEAM_DELETE", session, request, "TEAM", id.toString(),
                 AuditDiff.snapshotJson(before));
@@ -3398,6 +3548,21 @@ public class AdminController {
         return out;
     }
 
+    /**
+     * Alarm listesinin tarih aralığı kipi (2026-09-28, regresyon B3). Varsayılan: aralıkta AÇILANLAR — {@code since}
+     * açılış alt sınırıdır (eski davranış, birebir). {@code range=active}: aralıkta AKTİF olanlar — açılış ≤
+     * {@code until} VE (hâlâ açık YA DA çözüm ≥ {@code since}); yani önceden açılıp aralığa DEVREDEN alarmlar da
+     * girer. Haftalık erişilebilirlik e-postası "Haftanın alarmları" sayısını böyle sayar ve bağlantısı bu kipi açar.
+     * Kip yalnız tarih yüklemini değiştirir; takım kapsamı / 7/24 görünürlüğü / diğer süzgeçler aynı yoldan geçer.
+     */
+    record AlertRange(String openedSince, String activeFrom) {
+        static AlertRange of(String range, String since) {
+            boolean active = range != null && "active".equalsIgnoreCase(range.trim());
+            if (!active) return new AlertRange(since, null);
+            return new AlertRange(null, since == null || since.isBlank() ? null : since);
+        }
+    }
+
     private void requirePerm(HttpSession session, String key, String action) {
         permissionService.require(session, key, action);
     }
@@ -3411,6 +3576,17 @@ public class AdminController {
     private boolean canManageTeamResource(HttpSession session, Long resourceTeamId) {
         if (isAdmin(session)) return true;                 // global admin
         return SessionScope.canManage(session, resourceTeamId);
+    }
+
+    /**
+     * Takım kimliği gerçekten var mı (2026-09-28): silinmiş/uydurma takıma yazılan kayıt (envanter aktarımı, toplu
+     * takım, kişi) hiçbir alıcıya ulaşmaz — takım adresi de kişisi de yoktur → 400.
+     */
+    private void requireExistingTeam(Long teamId) {
+        if (teamId != null && !teamRepo.existsById(teamId)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Seçilen takım bulunamadı — geçerli bir takım seçin.", "The selected team doesn't exist — choose a valid team."));
+        }
     }
 
     private void requireTeamScopedAdmin(HttpSession session, Long resourceTeamId) {

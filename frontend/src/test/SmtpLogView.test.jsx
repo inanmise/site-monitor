@@ -4,8 +4,11 @@ import { render, screen, fireEvent, waitFor, within, act } from './test-utils.js
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
 }))
-vi.mock('../contexts/TeamDirectoryProvider.jsx', () => ({
-  useTeamDirectory: () => ({ byId: {}, open: () => {} }),
+// Boş takım dizini (API çağrısı yok). Yol GERÇEK modül — eskiden var olmayan contexts/TeamDirectoryProvider.jsx
+// taklit ediliyordu, yani taklit hiç uygulanmıyordu (2026-09-28c C3; kapı viMockPaths.test.js). Şekil gerçek bağlamla aynı (Map).
+vi.mock('../components/ui/TeamDirectory.jsx', () => ({
+  TeamDirectoryProvider: ({ children }) => children,
+  useTeamDirectory: () => ({ byId: new Map(), byName: new Map(), ready: true }),
 }))
 // recharts: jsdom'da ResponsiveContainer 0×0 ölçer, grafik çizilmez; sarmalayıcıyı geçirip veriyi DOM'a düşür.
 vi.mock('recharts', () => ({
@@ -133,7 +136,8 @@ describe('SmtpLogView', () => {
     fireEvent.click(within(dlg).getAllByRole('button').find((b) => b.hasAttribute('data-chain-id') && !b.disabled))
     await waitFor(() => expect(smtpLog.detail).toHaveBeenLastCalledWith(1))
     fireEvent.click(within(dlg).getByRole('button', { name: /Alarmı aç|Open alert/ }))
-    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 10 } })
+    // E2: Alarm Geçmişi `alert` okur; tür + alan adı süzgeci (kayıt ilk sayfada), açık alarm → view YOK
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: '10', type: 'HTTP_DOWN', q: 'a.example.com' } })
     window.removeEventListener('sm:navigate', nav)
   })
 

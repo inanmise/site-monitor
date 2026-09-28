@@ -385,7 +385,8 @@ public class NotificationGroupController {
         // Takımı çözülemeyen satır sayısı: eksik bir geçmişi tam sanmak, geçmişin kendisinden
         // daha kötüdür.
         out.put("hidden", h.hidden());
-        return ok(out);
+        // Eylemi yapanın IP'si kimlik izidir (2026-09-28c): yalnız global admin + AUDIT ve kişinin kendi satırı.
+        return ok(IdentityMask.forSession(out, session));
     }
 
     private static Map<String, Object> historyItem(NotificationGroupHistoryService.Entry e,
