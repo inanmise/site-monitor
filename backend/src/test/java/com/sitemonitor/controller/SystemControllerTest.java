@@ -170,6 +170,152 @@ class SystemControllerTest {
     }
 
     @Test
+    @DisplayName("user-activity: giriş damgası IP'leri (son / önceki / başarısız) yalnız global ADMIN'e ve kişinin KENDİ satırında döner")
+    void userActivity_masksLoginStampIpsForNonGlobalAdmin() throws Exception {
+        Map<String, Object> other = new java.util.HashMap<>(Map.of("username", "u1", "last_login_ip", "192.0.2.10",
+                "prev_login_ip", "192.0.2.11", "last_failed_ip", "198.51.100.7", "last_login_method", "LDAP"));
+        Map<String, Object> self = new java.util.HashMap<>(Map.of("username", "regularuser", "last_login_ip", "203.0.113.5",
+                "prev_login_ip", "203.0.113.6", "last_failed_ip", "203.0.113.7"));
+        when(userActivityService.getOverview()).thenReturn(Map.of("summary", Map.of("active_count", 1),
+                "active_users", List.of(other),
+                "login_status", List.of(other, self)));
+        mvc.perform(get("/api/admin/system/user-activity").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.login_status[0].last_login_method").value("LDAP"))
+                .andExpect(jsonPath("$.data.login_status[0].last_login_ip").doesNotExist())
+                .andExpect(jsonPath("$.data.login_status[0].prev_login_ip").doesNotExist())
+                .andExpect(jsonPath("$.data.login_status[0].last_failed_ip").doesNotExist())
+                .andExpect(jsonPath("$.data.active_users[0].last_login_ip").doesNotExist())
+                // kişinin kendi satırı tam kalır
+                .andExpect(jsonPath("$.data.login_status[1].last_login_ip").value("203.0.113.5"))
+                .andExpect(jsonPath("$.data.login_status[1].last_failed_ip").value("203.0.113.7"));
+        mvc.perform(get("/api/admin/system/user-activity").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.login_status[0].last_login_ip").value("192.0.2.10"))
+                .andExpect(jsonPath("$.data.login_status[0].prev_login_ip").value("192.0.2.11"))
+                .andExpect(jsonPath("$.data.login_status[0].last_failed_ip").value("198.51.100.7"));
+    }
+
+    /** Önceki maskenin kaçırdığı yapıların tamamı (2026-09-28c, B1): top_sources, details.*, Map olan anomalies,
+     *  heatmaps[].cells — tel biçiminde (snake_case), RFC 5737 belgeleme IP'leriyle. */
+    private static Map<String, Object> nestedTraceOverview() {
+        Map<String, Object> ev = Map.of("time", "2026-09-28T08:00:00", "actor", "u1", "ip", "198.51.100.21",
+                "city", "Kent A", "country", "TR", "org", "Example ISP", "user_agent", "Mozilla/5.0 GateBrowser/1.0",
+                "outcome", "SUCCESS");
+        return Map.of(
+                "summary", Map.of("active_count", 1, "logins_24h", 1),
+                "top_sources", List.of(Map.of("ip", "198.51.100.21", "reverse_dns", "host-a.example.com",
+                        "org", "Example ISP", "users", List.of("u1", "u2"), "total", 3)),
+                "details", Map.of("logins", List.of(ev), "failed", List.of(ev), "anomalies", List.of(ev)),
+                "anomalies", Map.of("counts", Map.of("UNUSUAL_IP", 1), "total", 1,
+                        "recent", List.of(Map.of("id", 7, "actor", "u1", "ip", "198.51.100.21", "city", "Kent A"))),
+                "heatmaps", List.of(Map.of("matrix", List.of(List.of(1)),
+                        "cells", Map.of("0-8", List.of(Map.of("actor", "u1", "ip", "198.51.100.21", "city", "Kent A"))))));
+    }
+
+    @Test
+    @DisplayName("user-activity: USER / kapsamlı müdür — top_sources, details.*, anomalies.recent, heatmaps.cells'te kimlik izi YOK; sayılar kalır")
+    void userActivity_masksEveryNestedTraceForNonGlobal() throws Exception {
+        when(userActivityService.getOverview()).thenReturn(nestedTraceOverview());
+        for (MockHttpSession s : List.of(userSession(), scopedAdminSession(), teamAdminSession())) {
+            String body = mvc.perform(get("/api/admin/system/user-activity").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.identity_masked").value(true))
+                    .andExpect(jsonPath("$.data.top_sources").doesNotExist())
+                    .andExpect(jsonPath("$.data.details.logins[0].ip").doesNotExist())
+                    .andExpect(jsonPath("$.data.details.logins[0].user_agent").doesNotExist())
+                    .andExpect(jsonPath("$.data.details.failed[0].org").doesNotExist())
+                    .andExpect(jsonPath("$.data.details.anomalies[0].city").doesNotExist())
+                    .andExpect(jsonPath("$.data.details.logins[0].actor").value("u1"))
+                    .andExpect(jsonPath("$.data.anomalies.recent[0].ip").doesNotExist())
+                    .andExpect(jsonPath("$.data.anomalies.recent[0].id").value(7))
+                    .andExpect(jsonPath("$.data.anomalies.counts.UNUSUAL_IP").value(1))
+                    .andExpect(jsonPath("$.data.heatmaps[0].cells['0-8'][0].ip").doesNotExist())
+                    .andExpect(jsonPath("$.data.heatmaps[0].matrix[0][0]").value(1))
+                    .andReturn().getResponse().getContentAsString();
+            org.assertj.core.api.Assertions.assertThat(body)
+                    .doesNotContain("198.51.100.21").doesNotContain("host-a.example.com").doesNotContain("GateBrowser");
+        }
+        for (MockHttpSession s : List.of(adminSession(), auditSession())) {
+            mvc.perform(get("/api/admin/system/user-activity").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.identity_masked").value(false))
+                    .andExpect(jsonPath("$.data.top_sources[0].reverse_dns").value("host-a.example.com"))
+                    .andExpect(jsonPath("$.data.details.logins[0].ip").value("198.51.100.21"))
+                    .andExpect(jsonPath("$.data.anomalies.recent[0].ip").value("198.51.100.21"))
+                    .andExpect(jsonPath("$.data.heatmaps[0].cells['0-8'][0].city").value("Kent A"));
+        }
+    }
+
+    @Test
+    @DisplayName("user-activity/user/{u}: başkasının zaman çizelgesi USER'a izsiz; kişi kendi çizelgesini tam görür")
+    void userTimeline_masksOthersButNotSelf() throws Exception {
+        Map<String, Object> tl = Map.of("username", "bob", "logins", 2L, "distinct_ips", 1L,
+                "events", List.of(Map.of("id", 1, "ip", "192.0.2.40", "user_agent", "GateBrowser/2.0", "outcome", "SUCCESS")),
+                "anomalies", List.of(Map.of("id", 1, "ip", "192.0.2.40", "flags", "UNUSUAL_IP")));
+        when(userActivityService.userTimeline(eq("bob"), anyInt())).thenReturn(tl);
+        when(userActivityService.userTimeline(eq("regularuser"), anyInt())).thenReturn(tl);
+        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.identity_masked").value(true))
+                .andExpect(jsonPath("$.data.events[0].ip").doesNotExist())
+                .andExpect(jsonPath("$.data.events[0].user_agent").doesNotExist())
+                .andExpect(jsonPath("$.data.anomalies[0].ip").doesNotExist())
+                .andExpect(jsonPath("$.data.logins").value(2));
+        mvc.perform(get("/api/admin/system/user-activity/user/regularuser").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.identity_masked").value(false))
+                .andExpect(jsonPath("$.data.events[0].ip").value("192.0.2.40"));
+        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(scopedAdminSession()))
+                .andExpect(jsonPath("$.data.events[0].ip").doesNotExist());
+        mvc.perform(get("/api/admin/system/user-activity/user/bob").session(auditSession()))
+                .andExpect(jsonPath("$.data.events[0].ip").value("192.0.2.40"));
+    }
+
+    @Test
+    @DisplayName("db-analytics: SQL metni / hata iletisi / kullanıcı adı USER ve kapsamlı müdüre gitmez; sayılar + hata sınıfı kalır; admin/AUDIT tam görür")
+    void dbAnalytics_masksSqlTextForNonGlobal() throws Exception {
+        Map<String, Object> overview = Map.of(
+                "summary", Map.of("queries", 3, "user_count", 2),
+                "recent_queries", List.of(Map.of("time", "2026-09-28T08:00:00", "username", "db.kisi.a",
+                        "sql", "SELECT * FROM app_users WHERE email = 'kisi.a@example.com'", "duration_ms", 12, "success", true)),
+                "failed", List.of(Map.of("time", "2026-09-28T08:01:00", "username", "db.kisi.a",
+                        "sql", "SELECT secret_col FROM t", "error", "ERROR: permission denied for table t [SQLSTATE: 42501]")),
+                "top_sql", List.of(Map.of("sql", "SELECT $1 FROM app_users", "calls", 9, "avg_ms", 1.5)),
+                "slowest_sql", List.of(Map.of("sql", "SELECT pg_sleep_free()", "duration_ms", 900, "username", "db.kisi.a")),
+                "top_users", List.of(Map.of("username", "db.kisi.a", "queries", 3, "failed", 1)));
+        when(dbAnalyticsService.getOverview(anyInt())).thenReturn(overview);
+        for (MockHttpSession s : List.of(userSession(), scopedAdminSession(), teamAdminSession())) {
+            String body = mvc.perform(get("/api/admin/system/db-analytics?days=7").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.sql_masked").value(true))
+                    .andExpect(jsonPath("$.data.recent_queries[0].sql").doesNotExist())
+                    .andExpect(jsonPath("$.data.recent_queries[0].username").doesNotExist())
+                    .andExpect(jsonPath("$.data.recent_queries[0].duration_ms").value(12))
+                    .andExpect(jsonPath("$.data.failed[0].error").doesNotExist())
+                    .andExpect(jsonPath("$.data.failed[0].error_kind").value("denied"))
+                    .andExpect(jsonPath("$.data.failed[0].sql_state").value("42501"))
+                    .andExpect(jsonPath("$.data.top_sql[0].sql").doesNotExist())
+                    .andExpect(jsonPath("$.data.top_sql[0].calls").value(9))
+                    .andExpect(jsonPath("$.data.slowest_sql[0].username").doesNotExist())
+                    .andExpect(jsonPath("$.data.top_users[0].username").doesNotExist())
+                    .andExpect(jsonPath("$.data.top_users[0].queries").value(3))
+                    .andExpect(jsonPath("$.data.summary.user_count").value(2))
+                    .andReturn().getResponse().getContentAsString();
+            org.assertj.core.api.Assertions.assertThat(body)
+                    .doesNotContain("db.kisi.a").doesNotContain("kisi.a@example.com").doesNotContain("permission denied");
+        }
+        for (MockHttpSession s : List.of(adminSession(), auditSession())) {
+            mvc.perform(get("/api/admin/system/db-analytics?days=7").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.sql_masked").value(false))
+                    .andExpect(jsonPath("$.data.recent_queries[0].username").value("db.kisi.a"))
+                    .andExpect(jsonPath("$.data.failed[0].error").value("ERROR: permission denied for table t [SQLSTATE: 42501]"))
+                    .andExpect(jsonPath("$.data.top_sql[0].sql").value("SELECT $1 FROM app_users"));
+        }
+    }
+
+    @Test
     @DisplayName("POST anomaly ack as USER returns 403 (yazma: admin/AUDIT'te kalır)")
     void ackAnomaly_asUser_returns403() throws Exception {
         mvc.perform(post("/api/admin/system/user-activity/anomalies/7/ack").session(userSession())
@@ -430,6 +576,63 @@ class SystemControllerTest {
         mvc.perform(get("/api/admin/system/http-metrics").session(userSession()))
                 .andExpect(status().isForbidden());
         verify(httpMetricsService, never()).getSummary();
+    }
+
+    // ── İstek Gezgini (2026-09-28): /http-metrics/overview + /http-metrics top_endpoints ─────────
+
+    @Test
+    @DisplayName("GET /http-metrics/overview: system_health.read reddedilirse 403 — servis HIC cagrilmaz")
+    void httpOverview_permissionDenied_returns403() throws Exception {
+        denySystemHealthRead();
+        mvc.perform(get("/api/admin/system/http-metrics/overview")
+                        .param("from", "2026-06-18T09:00:00").param("to", "2026-06-18T10:00:00")
+                        .session(userSession()))
+                .andExpect(status().isForbidden());
+        verify(httpMetricsQueryService, never()).overview(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("GET /http-metrics/overview: izinli USER 200; parametreler servise aynen gider, yanit snake_case")
+    void httpOverview_withPermission_passesParams() throws Exception {
+        when(httpMetricsQueryService.overview("2026-06-18T09:00:00", "2026-06-18T10:00:00", "GET /api/x", "GET,POST", null))
+                .thenReturn(Map.of("endpoints_total", 1, "status_codes", List.of(Map.of("code", 200, "count", 3))));
+        mvc.perform(get("/api/admin/system/http-metrics/overview")
+                        .param("from", "2026-06-18T09:00:00").param("to", "2026-06-18T10:00:00")
+                        .param("endpoint", "GET /api/x").param("method", "GET,POST")
+                        .session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.endpoints_total").value(1))
+                .andExpect(jsonPath("$.data.status_codes[0].code").value(200));
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+    }
+
+    @Test
+    @DisplayName("GET /http-metrics/overview: gecersiz aralik (IllegalArgument) 400 doner, 500 degil")
+    void httpOverview_badRange_returns400() throws Exception {
+        when(httpMetricsQueryService.overview(any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("Invalid date"));
+        mvc.perform(get("/api/admin/system/http-metrics/overview")
+                        .param("from", "yesterday").param("to", "2026-06-18T10:00:00")
+                        .session(adminSession()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("GET /http-metrics: top_endpoints eklenir; sorgu servisi COKERSE ozet yine 200 (alan null)")
+    void httpMetrics_topEndpoints_optional() throws Exception {
+        when(httpMetricsService.getSummary()).thenReturn(Map.of("total_requests", 5));
+        when(httpMetricsService.getHistory()).thenReturn(List.of());
+        when(httpMetricsQueryService.topEndpoints()).thenReturn(Map.of("window_hours", 24, "slowest", List.of(), "errors", List.of()));
+        mvc.perform(get("/api/admin/system/http-metrics").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.top_endpoints.window_hours").value(24))
+                .andExpect(jsonPath("$.data.summary.total_requests").value(5));
+
+        when(httpMetricsQueryService.topEndpoints()).thenThrow(new RuntimeException("db down"));
+        mvc.perform(get("/api/admin/system/http-metrics").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.total_requests").value(5))
+                .andExpect(jsonPath("$.data.top_endpoints").doesNotExist());
     }
 
     // Regresyon: Sistem Sagligi sekmesi TUM rollere acik (Nav `show: true`) ve

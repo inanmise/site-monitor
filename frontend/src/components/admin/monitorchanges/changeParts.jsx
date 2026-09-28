@@ -12,6 +12,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import HintPopover from '../../ui/HintPopover.jsx'
+import MaskedValue from '../../ui/MaskedValue.jsx'
 import { clockOf, eventLabel } from './changeModel.js'
 
 export { eventLabel }
@@ -153,12 +154,14 @@ export function MonitorName({ r, link, wrap = false, className }) {
 
 /**
  * IP adresi + kopyala düğmesi (shadcn ghost Button). Kopyalanınca ikon 2 sn onaya döner (Toast yok — yerinde geri
- * bildirim). Satır tıklamasına SIZMAZ. Erişilebilir ad IP'yi taşır (satırlar ayırt edilir).
+ * bildirim). Satır tıklamasına SIZMAZ. Erişilebilir ad IP'yi taşır (satırlar ayırt edilir). `masked`: IP sunucuda
+ * bu görüntüleyici için düşürüldü (satır `identity_masked`, 2026-09-28c) → "—" (kayıt yok) DEĞİL, "Gizli".
  */
-export function IpCopy({ ip, t, className }) {
+export function IpCopy({ ip, t, className, masked = false }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef(null)
   useEffect(() => () => clearTimeout(timer.current), [])
+  if (masked && !ip) return <MaskedValue className={className} />
   if (!ip) return <span className="text-muted-foreground">—</span>
   const onCopy = async (e) => {
     e.stopPropagation()

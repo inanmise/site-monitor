@@ -512,9 +512,15 @@ Alert levels are driven by how many days remain:
 
 Thresholds are configurable from the **Admin Panel**.
 
+Escalation contacts are set up per team, and each contact only receives alerts for its own team. If none of a team’s contacts matches the level, no escalation contact is added and the alert goes only to the team’s own recipients (team address, notification group, push) — another team’s manager or contacts are never added. Records with no team (unowned) send no notifications on any channel.
+
 ### 8.4 Recipient Routing
 
-Who receives an alert depends on the alert type as well as its level. Availability-style alerts — keyword, ping, HTTP, page, synthetic — stay with the owning team. Management contacts are pulled in only for critically urgent expiry alerts. This is a deliberate product decision: your head of department should be paged when a domain is about to lapse, not every time a test service blips.
+Who receives an alert depends on where it comes from as well as its level, and every path — the opening alert, daily reminders, escalation, resolution, manual resends and storm digests — follows the same rules:
+
+- Standalone monitors (keyword, ping, HTTP, page, synthetic, page speed, domain, and Port/DNS monitors added by hand) belong to the team stamped on the alert when it opened. Every notification goes to that team only; the team is never taken from the certificate inventory.
+- Certificate alerts, availability alerts and Port/DNS monitors derived from the inventory go to the inventory’s SY and UG teams, and each of the two brings only its own escalation contacts (one email per address).
+- The level rule is the same everywhere: at WARNING a standalone monitor notifies only its team; at HIGH and CRITICAL escalation contacts are added according to their own minimum level. Another team’s contacts are never added, and an unowned record sends nothing.
 
 ### 8.5 Notification Triggers
 

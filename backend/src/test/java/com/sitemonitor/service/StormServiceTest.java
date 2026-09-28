@@ -426,6 +426,98 @@ class StormServiceTest {
         assertThat(EscalationService.teamOnlyRecipients(EscalationService.TYPE_ACCESSIBILITY, "WARNING")).isFalse();
     }
 
+    /**
+     * 2026-09-28 prod hatası: fırtına postasının kontak kopyası da takımda kontak yoksa takım süzgeçsiz sorguya
+     * düşüyor, toplu kesinti e-postasına TÜM takımların müdürlerini ekliyordu. Depo VERİTABANI GİBİ cevaplar
+     * (süzgeçsiz sorgu herkesi döndürür) — eski kod burada B'nin müdürünü ve takımsız kişiyi ekler → kırmızı.
+     */
+    @Test
+    @DisplayName("Fırtına: kontaksız A takımının KRİTİK üyesi → A'nın dağıtımında B'nin müdürü / takımsız kişi / webhook YOK; sahipsiz üye dağıtıma girmez")
+    @SuppressWarnings("unchecked")
+    void storm_teamWithoutContacts_neverBorrowsOtherTeamsContacts() {
+        teamWithEmail(1L);
+        com.sitemonitor.model.EscalationContact bManager = new com.sitemonitor.model.EscalationContact();
+        bManager.setId(10L); bManager.setTeamId(2L); bManager.setEmail("mudur-b@example.com"); bManager.setRole("MANAGER");
+        bManager.setMinAlertLevel("HIGH"); bManager.setActive(true);
+        bManager.setWebhookUrl("https://hooks.example.com/services/T1/B2/takim-b"); bManager.setWebhookType("TEAMS");
+        com.sitemonitor.model.EscalationContact global = new com.sitemonitor.model.EscalationContact();
+        global.setId(11L); global.setTeamId(null); global.setEmail("global@example.com"); global.setRole("CLEVEL");
+        global.setMinAlertLevel("WARNING"); global.setActive(true);
+        java.util.List<com.sitemonitor.model.EscalationContact> db = java.util.List.of(bManager, global);
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(db);
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(any()))
+                .thenAnswer(i -> db.stream().filter(c -> java.util.Objects.equals(c.getTeamId(), i.getArgument(0))).toList());
+        when(inventoryRepo.findByDomain(anyString())).thenReturn(java.util.Optional.empty());
+
+        AlertEvent a = down(1, EscalationService.TYPE_ACCESSIBILITY, 1L);    // A takımı, envanter türevli, KRİTİK
+        AlertEvent orphan = down(2, EscalationService.TYPE_ACCESSIBILITY, null);   // sahipsiz (envanter de yok)
+        java.util.List<?> dispatches = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "resolveDispatches", java.util.List.of(a, orphan));
+
+        assertThat(dispatches).hasSize(1);   // sahipsiz üye hiçbir takımın dağıtımına girmez
+        Object d = dispatches.get(0);
+        assertThat((Long) org.springframework.test.util.ReflectionTestUtils.invokeMethod(d, "teamId")).isEqualTo(1L);
+        assertThat((java.util.List<String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(d, "emails"))
+                .containsExactly("takim@example.com");
+        assertThat((java.util.Map<String, String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(d, "webhooks"))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("Fırtına, her sahip kendi kişisi (2026-09-28): SY A (kontaksız) + UG B → A dağıtımında kişi YOK, B dağıtımında YALNIZ B'nin müdürü + webhook'u")
+    @SuppressWarnings("unchecked")
+    void storm_syAndUg_eachDispatchGetsOnlyOwnContacts() {
+        teamWithEmail(1L);
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(2L); b.setName("Takım B"); b.setEmail("takim-b@example.com");
+        when(teamRepo.findById(2L)).thenReturn(java.util.Optional.of(b));
+        com.sitemonitor.model.EscalationContact bManager = new com.sitemonitor.model.EscalationContact();
+        bManager.setId(10L); bManager.setTeamId(2L); bManager.setEmail("mudur-b@example.com"); bManager.setRole("MANAGER");
+        bManager.setMinAlertLevel("HIGH"); bManager.setActive(true);
+        bManager.setWebhookUrl("https://hooks.example.com/services/T1/B2/takim-b"); bManager.setWebhookType("TEAMS");
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(any()))
+                .thenAnswer(i -> java.util.Objects.equals(i.getArgument(0), 2L) ? List.of(bManager) : List.of());
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain("host1.example.com"); inv.setTeamId(1L); inv.setUgTeamId(2L);
+        when(inventoryRepo.findByDomain("host1.example.com")).thenReturn(java.util.Optional.of(inv));
+
+        AlertEvent a = down(1, EscalationService.TYPE_ACCESSIBILITY, 1L);   // envanter türevli (damgasız)
+        List<?> dispatches = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "resolveDispatches", List.of(a));
+
+        assertThat(dispatches).hasSize(2);
+        Object da = dispatches.get(0), db = dispatches.get(1);
+        assertThat((Long) org.springframework.test.util.ReflectionTestUtils.invokeMethod(da, "teamId")).isEqualTo(1L);
+        assertThat((List<String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(da, "emails"))
+                .containsExactly("takim@example.com");
+        assertThat((java.util.Map<String, String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(da, "webhooks")).isEmpty();
+        assertThat((Long) org.springframework.test.util.ReflectionTestUtils.invokeMethod(db, "teamId")).isEqualTo(2L);
+        assertThat((List<String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(db, "emails"))
+                .containsExactly("takim-b@example.com", "mudur-b@example.com");
+        assertThat((java.util.Map<String, String>) org.springframework.test.util.ReflectionTestUtils.invokeMethod(db, "webhooks"))
+                .containsOnlyKeys("https://hooks.example.com/services/T1/B2/takim-b");
+    }
+
+    @Test
+    @DisplayName("Fırtına (2026-09-28): bağımsız üye (tür ya da açılış damgası) envanterden takım/UG ALMAZ — host başka takımın envanterinde olsa da")
+    @SuppressWarnings("unchecked")
+    void storm_standaloneMember_neverUsesInventory() {
+        teamWithEmail(1L);
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setTeamId(5L); inv.setUgTeamId(6L);
+        when(inventoryRepo.findByDomain(anyString())).thenReturn(java.util.Optional.of(inv));
+
+        AlertEvent http = down(1, EscalationService.TYPE_HTTP_DOWN, null);        // bağımsız TÜR, takımı boş
+        AlertEvent port = down(2, EscalationService.TYPE_PORT_DOWN, 1L);           // bağımsız Port (açılış damgası)
+        port.setContextJson("{\"team_id\":1,\"standalone\":true,\"port\":8443}");
+        List<?> dispatches = org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "resolveDispatches", List.of(http, port));
+
+        assertThat(dispatches).hasSize(1);   // yalnız port'un kendi takımı (1); 5 ve 6 (envanter) YOK
+        assertThat((Long) org.springframework.test.util.ReflectionTestUtils.invokeMethod(dispatches.get(0), "teamId")).isEqualTo(1L);
+        verify(inventoryRepo, never()).findByDomain(anyString());
+    }
+
     @Test
     @DisplayName("Y4: WARNING seviyeli SCRIPTED_FAIL üyeli storm'da eskalasyon kontakları SORGULANMAZ (varsayılan seviye takım-özel)")
     void storm_scriptedMember_doesNotQueryManagerContacts() {

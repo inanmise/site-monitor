@@ -159,6 +159,95 @@ class HttpMetricsServiceTest {
         assertThat(m.getHist()).contains(",");   // histogram CSV dolu
     }
 
+    // ── 2026-09-28 ekleri: yüzdelikler, istek hızı, durum kodları ─────────────────────────────────
+
+    @Test
+    @DisplayName("getSummary: p50/p95/p99 histogramdan, req_per_min + peak; history noktasında p95_ms")
+    void getSummary_percentilesAndRate() {
+        for (int i = 0; i < 95; i++) service.record(200, 10);
+        for (int i = 0; i < 5; i++) service.record(200, 2000);
+        Map<String, Object> s = service.getSummary();
+        assertThat((Long) s.get("p50_ms")).isLessThanOrEqualTo(10L);
+        assertThat((Long) s.get("p99_ms")).isGreaterThanOrEqualTo(1500L);
+        assertThat((Long) s.get("p95_ms")).isLessThanOrEqualTo((Long) s.get("p99_ms"));
+        // Kova SINIRI tuzağı (test-fixed-date-time-bomb): 100 kayıt dakika sınırına denk gelirse iki kovaya bölünür →
+        // hız = toplam / kova sayısı; iddia bu bağıntıyı sınar, "tek kova" varsaymaz.
+        int buckets = (Integer) s.get("buckets");
+        assertThat((Double) s.get("req_per_min") * buckets).isCloseTo(100.0, within(0.5));
+        assertThat((Long) s.get("peak_req_per_min")).isBetween(50L, 100L);
+        assertThat(service.getHistory().get(0)).containsKey("p95_ms");
+    }
+
+    @Test
+    @DisplayName("24 saatlik kayan p95: pencereden düşen dakikanın histogramı ÇIKARILIR (eski yavaş dakika p95'i kirletmez)")
+    void rollingHistogram_evictsOldMinutes() throws Exception {
+        var ctor = Class.forName("com.sitemonitor.service.HttpMetricsService$MinuteBucket")
+                .getDeclaredConstructor(String.class);
+        ctor.setAccessible(true);
+        var add = ctor.getDeclaringClass().getDeclaredMethod("add", int.class, long.class);
+        add.setAccessible(true);
+        var fin = HttpMetricsService.class.getDeclaredMethod("finalize", ctor.getDeclaringClass());
+        fin.setAccessible(true);
+
+        Object slow = ctor.newInstance("2000-01-01T00:00:00");
+        for (int i = 0; i < 1000; i++) add.invoke(slow, 200, 9000L);
+        fin.invoke(service, slow);
+        assertThat((Long) service.getSummary().get("p95_ms")).isGreaterThan(5000L);
+
+        // 1440 hızlı dakika daha → yavaş dakika pencereden düşer
+        for (int m = 1; m <= 1440; m++) {
+            Object fast = ctor.newInstance("2000-01-02T00:00:00");
+            add.invoke(fast, 200, 5L);
+            fin.invoke(service, fast);
+        }
+        assertThat((Long) service.getSummary().get("p95_ms")).isLessThanOrEqualTo(5L);
+        assertThat(service.getHistory()).hasSize(1440);
+    }
+
+    @Test
+    @DisplayName("rotation: uç kovası durum kodlarını 'kod:adet' olarak yazar; 100–599 dışı kod 0'a katlanır")
+    @SuppressWarnings("unchecked")
+    void rotation_persistsStatusCodes() throws Exception {
+        HttpMetricsRepoHolder h = new HttpMetricsRepoHolder(service);
+        service.record("GET /api/x", 200, 5);
+        service.record("GET /api/x", 200, 5);
+        service.record("GET /api/x", 404, 5);
+        service.record("GET /api/x", 999, 5);
+        h.forceRotate();
+
+        HttpMetricMinute m = h.onlyRow();
+        assertThat(m.getStatusCodes()).isEqualTo("0:1,200:2,404:1");
+        assertThat(HttpMetricsService.statusKey(700)).isZero();
+        assertThat(HttpMetricsService.statusKey(503)).isEqualTo(503);
+    }
+
+    /** Dakikayı zorla çevirip DB'ye yazılan satırı yakalar (rotation_persistsEndpointBuckets ile aynı yöntem). */
+    private static final class HttpMetricsRepoHolder {
+        final HttpMetricsService service;
+        final HttpMetricMinuteRepository repo = mock(HttpMetricMinuteRepository.class);
+
+        HttpMetricsRepoHolder(HttpMetricsService service) {
+            this.service = service;
+            ReflectionTestUtils.setField(service, "metricRepo", repo);
+        }
+
+        void forceRotate() throws Exception {
+            var ctor = Class.forName("com.sitemonitor.service.HttpMetricsService$MinuteBucket")
+                    .getDeclaredConstructor(String.class);
+            ctor.setAccessible(true);
+            ReflectionTestUtils.setField(service, "current", ctor.newInstance("2000-01-01T00:00:00"));
+            service.rotate();
+        }
+
+        @SuppressWarnings("unchecked")
+        HttpMetricMinute onlyRow() {
+            ArgumentCaptor<List<HttpMetricMinute>> cap = ArgumentCaptor.forClass(List.class);
+            verify(repo).saveAll(cap.capture());
+            assertThat(cap.getValue()).hasSize(1);
+            return cap.getValue().get(0);
+        }
+    }
+
     /**
      * Kardinalite tavanı (2026-08-20 bellek denetimi). Endpoint anahtarı yüksek kardinaliteli bir
      * kaynaktan beslenirse hem bellek-içi harita hem {@code http_metric_minute} tablosu sınırsız

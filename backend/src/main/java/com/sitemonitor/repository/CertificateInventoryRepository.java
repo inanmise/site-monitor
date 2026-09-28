@@ -16,6 +16,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
     List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
+    /** Takımın UG olarak bağlı olduğu TÜM kayıtlar (pasif/silinmiş dahil) — takım taşıma/silme etkisi (2026-09-28). */
+    List<CertificateInventory> findByUgTeamIdOrderByDomainAsc(Long ugTeamId);
     Optional<CertificateInventory> findByDomain(String domain);
     boolean existsByDomain(String domain);
     /** Rename çakışması: DB UNIQUE büyük/küçük harfe duyarlı, envanter ise küçük harf saklar. */

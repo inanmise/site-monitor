@@ -218,7 +218,8 @@ class UserActivityServiceEnrichmentTest {
         u.setLastSeenAt("2026-09-19T08:00:00"); u.setTeamIds(new LinkedHashSet<>(List.of(5L, 9L))); u.setPermanentLock(true);
         u.setTitle("Uzman"); u.setDepartment("BT"); u.setAuthSource("LDAP");
         u.setTourState("{\"status\":\"completed\",\"updated_at\":\"2026-02-01T09:00:00\"}");
-        AppUser v = user(4, "dave", 9L, true, null);   // tur durumu yok → "none"
+        u.setPhotoBase64("AAAA");
+        AppUser v = user(4, "dave", 9L, true, null);   // tur durumu yok → "none"; fotoğraf yok
         when(userRepo.findAll()).thenReturn(List.of(u, v));
         Map<String, Object> o = service.getOverview();
         @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) o.get("login_status");
@@ -238,6 +239,10 @@ class UserActivityServiceEnrichmentTest {
         assertThat(dave.get("tour_status")).isEqualTo("none");
         assertThat(dave.get("team_ids")).isEqualTo(List.of());
         assertThat(dave.get("permanent_lock")).isEqualTo(false);
+        // has_photo (2026-09-28): dizin fotoğrafı olmayan için /photo isteği atmasın; fotoğrafın kendisi ASLA satırda değil
+        assertThat(carol.get("has_photo")).isEqualTo(true);
+        assertThat(dave.get("has_photo")).isEqualTo(false);
+        assertThat(carol).doesNotContainKey("photo_base64");
     }
 
     @Test

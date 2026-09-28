@@ -15,7 +15,6 @@ import PushLogView from './PushLogView.jsx'   // Webhook Push Gönderim Logu —
 import UserActivityPanel from './useractivity/UserActivityPanel.jsx'   // Kullanıcı / Oturum paneli
 import DbAnalyticsPanel from './DbAnalyticsPanel.jsx'   // Veritabanı Analitiği (2026-09-26 yeniden tasarım)
 import { LoadingBlock } from '../ui/Progress.jsx'
-import ModalShell from '../ui/ModalShell.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
 import { SECTION_KEYS, deriveOverall, deriveKpis, sectionLevels, executorStats, poolStats, relTime, formatDurationShort } from './health/healthModel.js'
@@ -27,8 +26,8 @@ import IntegrationsSection from './health/IntegrationsSection.jsx'
 import HeartbeatSection from './health/HeartbeatSection.jsx'
 import HttpSection from './health/HttpSection.jsx'
 import WeeklyAvailLogsModal from './health/WeeklyAvailLogsModal.jsx'
+import HttpExplorerModal from './httpmetrics/HttpExplorerModal.jsx'   // İstek Gezgini penceresi (gezgin içeride tembel yüklenir)
 const DeploymentHistoryPanel = lazy(() => import('./DeploymentHistoryPanel.jsx'))   // yalnız bölüm açılınca
-const HttpMetricsExplorer = lazy(() => import('./HttpMetricsExplorer.jsx'))          // recharts → tembel yükle
 
 /**
  * Sistem Sağlığı (2026-09-27 yeniden tasarım — operasyon durum konsolu).
@@ -102,7 +101,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
   const watchdogRef = useRef(null)   // id ref'te: iptal edilebilir, unmount'ta temizlenir, kuşak kontrolü
   const seenRunning = useRef(false)
   const [modalChart, setModalChart] = useState(null)
-  const [httpExpOpen, setHttpExpOpen] = useState(false)
+  const [httpExp, setHttpExp] = useState(null)   // İstek Gezgini: null = kapalı | { endpoint? } (bölümden bir uçla açılış)
   const [waLogsModal, setWaLogsModal] = useState(false)
 
   // SMTP / Push tam sayfa alt görünümleri (`?view=smtp|push`, süzgeçler `m_*` / `p_*`).
@@ -381,7 +380,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
         triggering={triggering} onForceRun={handleForceRun} releasing={releasing} onForceRelease={handleForceRelease} />
     ),
     db: () => (
-      <DbAnalyticsPanel data={dbData} loading={dbLoading} error={dbError} days={dbDays} onDaysChange={setDbDays} onRefresh={loadDbAnalytics} updatedAt={dbUpdatedAt} />
+      <DbAnalyticsPanel data={dbData} loading={dbLoading} error={dbError} days={dbDays} onDaysChange={setDbDays} onRefresh={loadDbAnalytics} updatedAt={dbUpdatedAt}
+        appPool={health?.pool} />
     ),
     integrations: () => (
       <IntegrationsSection t={t} health={health} pushKpi={pushKpi} configChecks={configChecks} globalAdmin={!!globalAdmin}
@@ -391,7 +391,8 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
     heartbeat: () => (
       <HeartbeatSection t={t} heartbeat={health?.heartbeat} isAdmin={isAdmin} refreshing={hbRefreshing} onRefresh={refreshHeartbeat} onOpenHistory={() => setHbModalOpen(true)} />
     ),
-    http: () => <HttpSection t={t} httpMetrics={httpMetrics} error={loadErrors.http} onRetry={refreshNow} onOpenExplorer={() => setHttpExpOpen(true)} />,
+    http: () => <HttpSection t={t} httpMetrics={httpMetrics} error={loadErrors.http} onRetry={refreshNow}
+      onOpenExplorer={(focus) => setHttpExp(focus && typeof focus === 'object' && !('nativeEvent' in focus) ? focus : {})} />,
     users: () => (
       <UserActivityPanel data={userActivity} error={loadErrors.users} refreshing={uactRefreshing} onRefresh={refreshUserActivity}
         isAdmin={isAdmin} globalAdmin={!!globalAdmin} canAck={canActUserActivity} username={username} onTerminated={refreshUserActivity} />
@@ -427,11 +428,7 @@ export default function SystemHealth({ systemRole, globalAdmin = false, username
 
       <ChartModal chart={modalChart} onClose={() => setModalChart(null)} />
 
-      {httpExpOpen && (
-        <ModalShell open onClose={() => setHttpExpOpen(false)} title={t('http.exp.title')} icon={Globe} size="xl" scrollBody>
-          <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}><HttpMetricsExplorer /></Suspense>
-        </ModalShell>
-      )}
+      {httpExp && <HttpExplorerModal t={t} focus={httpExp} onClose={() => setHttpExp(null)} />}
 
       {hbModalOpen && <HeartbeatHistoryModal onClose={() => setHbModalOpen(false)} />}
 

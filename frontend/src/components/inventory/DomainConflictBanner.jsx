@@ -36,7 +36,9 @@ const BANNER_GRID = 'mb-0 grid-cols-[0_minmax(0,1fr)_auto] has-[>svg]:grid-cols-
  *   <li>Kaydı görüntüle — salt okunur sertifika penceresi (org geneli görünürlükteki yabancı satır görünümüyle aynı),
  *       formun ÜSTÜNDE açılır; kapatınca form ve bant yerinde.</li>
  *   <li>'X' ekibine aktar — global yönetici + aktarım izni: iki takımı adıyla söyleyen onay → mevcut
- *       `POST /inventory/{id}/transfer` (çöp kutusundaysa ardından geri yükleme). Başarıda `onResolved`.</li>
+ *       `POST /inventory/{id}/transfer`; çöp kutusundaysa `restore: true` ile geri yükleme AYNI istekte (Ek 3/5 — sunucu
+ *       silinmiş kayda düz aktarımı reddeder; eskiden aktar + ayrı geri yükle, ikinci adım düşerse kayıt yeni takımın
+ *       çöpünde kalıyordu). Başarıda `onResolved`.</li>
  *   <li>Çöp kutusundan geri yükle — geri yükleme kapısı olan: mevcut `POST /inventory/{id}/restore`.</li>
  *   <li>Aktarım talebi oluştur — aktaramayan: "Sorun Bildir" penceresi aktarım kipinde (tür DOMAIN_TRANSFER,
  *       alan adı + mevcut / istenen ekip önceden dolu, gerekçe zorunlu) → global yöneticilerin Sorun Bildirimleri'ne.</li>
@@ -46,8 +48,11 @@ const BANNER_GRID = 'mb-0 grid-cols-[0_minmax(0,1fr)_auto] has-[>svg]:grid-cols-
  * @param {{id:number|string, name:string}|null} targetTeam  formda seçili ekip
  * @param {(outcome:{kind:'transferred'|'restored', domain:string, record:object|null}) => void} onResolved
  * @param {() => void} [onDismiss]
+ * @param {() => void} [onLeave]  kaydın penceresindeki "Envanterde aç" formdan AYRILIR: pencereyle birlikte formu da kapatır
+ *   (Ek 3/4, 2026-09-28 — form açık kalınca Envanter'de açılan kayıt formun ARKASINDA kalıyor, "hiçbir şey olmadı" gibi görünüyordu).
+ *   Verilmezse yalnız pencere kapanır (eski davranış).
  */
-export default function DomainConflictBanner({ conflict, targetTeam, onResolved, onDismiss }) {
+export default function DomainConflictBanner({ conflict, targetTeam, onResolved, onDismiss, onLeave }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -76,15 +81,12 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
     if (!ok) return
     setBusy('transfer')
     try {
-      const res = await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id))
+      // Çöp kutusundaki kayıt: geri yükleme + aktarım TEK istek (`restore: true`) — yarım kalan iki adım yok.
+      const res = a.deleted
+        ? await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id), { restore: true })
+        : await api.admin.transferCertSy(ex.inventory_id, Number(targetTeam.id))
       if (!res?.success) { toast.error(res?.error || t('dupx.transferError')); return }
-      let record = res.data ?? null
-      if (a.deleted) {
-        // Çöp kutusundaki kayıt: aktarım silinmişliği kaldırmaz — ikinci adım geri yükleme (aynı yönetici kapısı).
-        const back = await api.admin.restoreInventory(ex.inventory_id)
-        if (!back?.success) toast.error(back?.error || t('dupx.restoreError'))
-        else record = back.data ?? record
-      }
+      const record = res.data ?? null
       toast.success(t('dupx.transferred', ex.domain, targetTeam.name))
       onResolved?.({ kind: 'transferred', domain: ex.domain, record })
     } catch (e) {
@@ -167,7 +169,7 @@ export default function DomainConflictBanner({ conflict, targetTeam, onResolved,
       {viewing && (
         <Suspense fallback={null}>
           <CertificateModal domain={ex.domain} readOnly readOnlyTeam={{ id: ex.team_id, name: owner }}
-            onClose={() => setViewing(false)} />
+            onClose={() => setViewing(false)} onLeave={onLeave ? () => { setViewing(false); onLeave() } : undefined} />
         </Suspense>
       )}
       {requesting && (

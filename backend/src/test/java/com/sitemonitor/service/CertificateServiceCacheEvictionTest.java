@@ -49,6 +49,28 @@ class CertificateServiceCacheEvictionTest {
     }
 
     /**
+     * 7/24 göstergesi (2026-09-28): Uyarılar satırı artık {@code noc_notify} + {@code noc_group_ids} taşıyor
+     * ({@link CertificateService#getWarnings} → {@code cert-warnings}). 7/24 Kapsamı'ndaki aç/kapa ve toplu işlem
+     * (NocController, SSL türü) yalnız {@link CertificateService#evictAllCaches()} çağırır (NocControllerTest bunu pinler)
+     * — bu yüzden {@code cert-warnings} o listede AÇIKÇA bulunmalı; yoksa Uyarılar göstergesi 300 sn eski durumu gösterir.
+     * Yukarıdaki kural aynı şeyi {@code ThresholdPreviewService.DERIVED_CACHES} üzerinden dolaylı söylüyor; bu test
+     * listenin kendisinden bağımsız.
+     */
+    @Test
+    @DisplayName("evictAllCaches cert-warnings'i ve cert-latest'i boşaltır (7/24 aç/kapa → Uyarılar + Genel Bakış göstergesi)")
+    void evictAllCachesCoversWarningsForNocToggles() throws Exception {
+        Caching caching = CertificateService.class.getMethod("evictAllCaches").getAnnotation(Caching.class);
+        Set<String> evicted = new HashSet<>();
+        for (CacheEvict e : caching.evict()) {
+            if (!e.allEntries()) continue;
+            evicted.addAll(Arrays.asList(e.value()));
+            evicted.addAll(Arrays.asList(e.cacheNames()));
+        }
+        assertThat(evicted).as("7/24 aç/kapa sonrası Uyarılar ve Genel Bakış satırları tazelenmeli")
+                .contains("cert-warnings", "cert-latest");
+    }
+
+    /**
      * Sınıf kapısı (2026-09-28, kullanıcı: "yeni eklenen alan adının kartında sağlık/açık alarm/sorumlu kişi bir süre
      * boş kalıyor"): envanter uçları ({@code AdminController} ekle/güncelle/sil/geri yükle, içgörü, otomatik boşaltma)
      * kendi sabit {@code @CacheEvict} listelerini taşıyordu ve HİÇBİRİ {@code card-extras}'ı içermiyordu. Kural: kaynakta
@@ -65,6 +87,9 @@ class CertificateServiceCacheEvictionTest {
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("@CacheEvict\\(value = \\{([^}]*)\\}");
         List<String> offenders = new java.util.ArrayList<>();
         List<String> teamNameOffenders = new java.util.ArrayList<>();
+        // 7/24 (2026-09-28): Uyarılar satırı envanterden noc_notify/noc_group_ids taşıyor → envanter yazan her liste
+        // cert-warnings'i de boşaltmalı (bugün hepsi boşaltıyor; bu satır kaymayı yakalar)
+        List<String> warningsOffenders = new java.util.ArrayList<>();
         int seen = 0;
         try (var files = java.nio.file.Files.walk(root)) {
             for (java.nio.file.Path f : (Iterable<java.nio.file.Path>) files.filter(x -> x.toString().endsWith(".java"))::iterator) {
@@ -75,12 +100,15 @@ class CertificateServiceCacheEvictionTest {
                     seen++;
                     if (!m.group(1).contains("\"card-extras\"")) offenders.add(f.getFileName() + ": " + m.group(0));
                     if (!m.group(1).contains("\"domain-team-names\"")) teamNameOffenders.add(f.getFileName() + ": " + m.group(0));
+                    if (!m.group(1).contains("\"cert-warnings\"")) warningsOffenders.add(f.getFileName() + ": " + m.group(0));
                 }
             }
         }
         assertThat(seen).as("tarama hiçbir @CacheEvict bulmadı — desen bozuk").isGreaterThan(3);
         assertThat(offenders).as("card-extras eksik — Genel Bakış kart ekleri 60 sn eski kalır").isEmpty();
         assertThat(teamNameOffenders).as("domain-team-names eksik — izleme ekranlarında SY takım adı 300 sn eski kalır")
+                .isEmpty();
+        assertThat(warningsOffenders).as("cert-warnings eksik — Uyarılar satırının 7/24 durumu 300 sn eski kalır")
                 .isEmpty();
     }
 
@@ -111,7 +139,7 @@ class CertificateServiceCacheEvictionTest {
                 CacheEvict ce = m.getAnnotation(CacheEvict.class);
                 Set<String> names = ce == null ? Set.of() : new HashSet<>(Arrays.asList(ce.value()));
                 if (ce == null || !ce.allEntries()
-                        || !names.containsAll(List.of("cert-latest", "card-extras", "domain-team-names"))) {
+                        || !names.containsAll(List.of("cert-latest", "cert-warnings", "card-extras", "domain-team-names"))) {
                     offenders.add(e.getKey());
                 }
             }

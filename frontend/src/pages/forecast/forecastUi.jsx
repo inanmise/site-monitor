@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarCheck, CheckCircle2, ShieldOff } from 'lucide-re
 import { formatDateOnly } from '../../api/client'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
+import { expiredAgoText } from '../../utils/dayPhrases.js'
 import { classify, windowState, expiryKey, dayDiff, addDays } from '../forecastModel.js'
 
 /**
@@ -69,9 +70,9 @@ export function PlanBadge({ row, t, className }) {
 /** "12 gün içinde" / "bugün doluyor" / "3 gün önce doldu" / "—". */
 export function relativeDays(days, t) {
   if (days == null) return '—'
-  if (days < 0) return t('inv.expiredAgo', -days)
+  if (days < 0) return expiredAgoText(t, -days)
   if (days === 0) return t('forecast.dueToday')
-  return t('forecast.inDays', days)
+  return days === 1 ? t('inv.expiresInOne') : t('forecast.inDays', days)
 }
 
 /** KPI kutucukları — süzgeç anahtarları (URL `f_urg`). */

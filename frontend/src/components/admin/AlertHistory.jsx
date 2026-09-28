@@ -53,7 +53,8 @@ const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'ac
  * Sözleşmeler (değişmedi): süzme/sayfalama SUNUCUDA (istemcide süzmek yalnız açık sayfayı süzerdi); sahiplenme ve
  * çözüm GEREKÇE ister (AlertActionNote — tekli ve toplu yolda); yetki sunucuda (`alerts.actions`, 403 → toast);
  * URL anahtarları uygulamanın PAGE_STATE_PARAMS'ı (`view` — `tab` DEĞİL, ISSUE-002; `type q level team ack from to
- * alert page ps`); bildirim kutusu derin bağlantısı `?alert=<id>` (sm:navigate ile açıkken de).
+ * range alert page ps`; `range=active` = "Tümü"nde aralıkta AKTİF olanlar, haftalık e-postanın alarm bağlantısı);
+ * bildirim kutusu derin bağlantısı `?alert=<id>` (sm:navigate ile açıkken de).
  *
  * @param domain  GÖMÜLÜ kullanım (izleme/sertifika penceresinin "Alarm Geçmişi" sekmesi): yalnız bu hedef.
  * @param types   GÖMÜLÜ kullanım: yalnız bu alarm tipleri (sunucuda süzülür).
@@ -96,6 +97,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   // Bildirim kutusundan derin bağlantı (2026-09-16): ?alert=<id> — kart vurgulanır, detay açılır, param tüketilir.
   const [linkedAlertId, setLinkedAlertId] = useState(() => (urlSync ? readUrlParam('alert', null) : null))
   const linkOpenedRef = useRef(null)
+  const linkFetchedRef = useRef(null)   // listede olmayan bağlantı için tekil uç BİR kez sorulur (aşağıdaki derin bağlantı etkisi)
   // 7/24 arama kaydı (2026-09-27): yazma kapısı SUNUCUDAN (`noc_can_write` — kapsamlı müdür matriste ADMIN görünür ama
   // yazamaz); derin bağlantı `&n_call=1` (7/24 e-postasındaki "Arama kaydı ekle") uyarıyı form odakta açar ve tüketilir.
   const [nocCanWrite, setNocCanWrite] = useState(false)
@@ -225,6 +227,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       setFilters({ ...FILTER_DEFAULTS, type: p.type ? String(p.type) : '', q: p.q ? String(p.q) : '' })
       resetPage()
       linkOpenedRef.current = null
+      linkFetchedRef.current = null
       // Önceki bağlantının tekil-uç isteği hâlâ sürüyor olabilir: sıra ilerler → geç gelen yanıtı YENİ bağlantının
       // detayını ezmez (onPop da buradan geçer — geri/ileri de aynı koruma).
       linkFetchSeq.current++
@@ -258,7 +261,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }, [])
 
   // Derin bağlantı: liste gelince kartı bul → detayı aç + görünüme kaydır; param URL'den silinir (sekme dönüşünde
-  // tekrar vurgulamasın). Bulunamazsa (başka sayfa/süzgeç) yalnız param tüketilir.
+  // tekrar vurgulamasın). Bulunamazsa (başka sayfa/süzgeç/görünüm) tekil uçtan açılır; o da yoksa yalnız param tüketilir.
   useEffect(() => {
     if (!linkedAlertId || !loaded) return undefined
     const hit = alerts.find((a) => String(a.id) === String(linkedAlertId))
@@ -267,16 +270,21 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (linkedNocCall && nocCanWrite) logCall(hit)
       else setDetail(hit)
       setLinkedNocCall(false)
-    } else if (!hit && linkedNocCall && linkOpenedRef.current !== linkedAlertId) {
-      // 7/24 derin bağlantısı: uyarı bu sayfada/süzgeçte değilse (fırtına, kapalı uyarı) tekil uçtan açılır. Sıra
-      // numaralı: arada başka bir bağlantı gelirse bayat yanıt uygulanmaz.
-      linkOpenedRef.current = linkedAlertId
-      setLinkedNocCall(false)
+    } else if (!hit && linkOpenedRef.current !== linkedAlertId && linkFetchedRef.current !== linkedAlertId) {
+      // Uyarı bu sayfada/süzgeçte değilse (fırtına, kapalı uyarı, eski olay — 7/24 bağlantısı, Kontrol Geçmişi'nin kesinti
+      // çizelgesi, bildirim satırı; E2 2026-09-28e: eskiden yalnız 7/24 bağlantısı açılıyordu) tekil uçtan açılır. Liste
+      // kaydı sonradan getirirse üstteki dal açar — hangisi önce gelirse pencere BİR kez açılır. Sıra numaralı: arada başka
+      // bir bağlantı gelirse bayat yanıt uygulanmaz.
+      linkFetchedRef.current = linkedAlertId
       const my = ++linkFetchSeq.current
       const wanted = linkedAlertId
+      const wantCall = linkedNocCall
       Promise.resolve().then(() => api.admin.getAlert(wanted)).catch(() => null).then((res) => {
-        if (my !== linkFetchSeq.current || !res?.success || !res.data) return
-        if (res.noc_can_write === true) { setNocCanWrite(true); logCall(res.data) } else setDetail(res.data)
+        const one = res?.success && res.data && !Array.isArray(res.data) && String(res.data.id) === String(wanted) ? res.data : null
+        if (my !== linkFetchSeq.current || !one || linkOpenedRef.current === wanted) return
+        linkOpenedRef.current = wanted
+        setLinkedNocCall(false)
+        if (wantCall && res.noc_can_write === true) { setNocCanWrite(true); logCall(one) } else setDetail(one)
       })
     }
     const id = setTimeout(() => {

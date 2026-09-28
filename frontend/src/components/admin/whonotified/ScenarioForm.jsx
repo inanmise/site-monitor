@@ -24,9 +24,16 @@ const SEGMENT_TOUCH = 'w-full sm:w-fit [&>[data-slot=toggle-group-item]]:h-10 [&
 export default function ScenarioForm({
   teams, teamId, onTeamChange, level, onLevelChange, kind, onKindChange,
   groups, groupsLoaded, groupId, onGroupChange, onRun, running,
+  ugTeamId = '', onUgTeamChange,
 }) {
   const t = useT()
   const teamOptions = teams.map((tm) => ({ value: String(tm.id), label: tm.name }))
+  // UG takımı (2026-09-28, "her sahip takım kendi kişisi"): yalnız sertifika / envanter türevli senaryoda; SY'den farklı.
+  const ugOptions = [
+    { value: '', label: t('wn.ugNone') },
+    ...teams.filter((tm) => String(tm.id) !== String(teamId)).map((tm) => ({ value: String(tm.id), label: tm.name })),
+  ]
+  const showUg = kind !== 'MONITOR' && !!onUgTeamChange
   const groupOptions = [
     { value: '', label: t('sim.groupDefault') },
     ...groups.map((g) => ({ value: String(g.id), label: g.is_default ? t('wn.groupDefaultMark', g.name) : g.name })),
@@ -77,6 +84,14 @@ export default function ScenarioForm({
             className={SEGMENT_TOUCH} />
           <FieldDescription className="text-xs">{kind === 'MONITOR' ? t('wn.kindMonitorHint') : t('wn.kindCertHint')}</FieldDescription>
         </ShadcnField>
+        {showUg && (
+          <Field label={t('wn.ugTeam')} className={cn('mb-0 min-w-0', SELECT_TOUCH)} hint={t('wn.ugTeamHint')}>
+            {({ id }) => (
+              <SearchableSelect id={id} value={ugTeamId} onChange={onUgTeamChange} placeholder={t('wn.ugNone')}
+                disabled={!teamId} searchThreshold={6} options={ugOptions} />
+            )}
+          </Field>
+        )}
       </CardContent>
       <CardFooter className="flex flex-col items-stretch gap-3 border-t px-4 pt-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 [.border-t]:pt-4">
         <p className="text-xs text-muted-foreground">{t('wn.autoRun')}</p>

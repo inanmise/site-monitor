@@ -16,7 +16,8 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetTitle } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 
 const ChangeHistoryTab = lazy(() => import('../history/ChangeHistoryTab.jsx'))
-const CheckHistoryTab = lazy(() => import('../history/CheckHistoryTab.jsx'))
+// Kontroller sekmesi = sertifika penceresinin zengin Kontrol Geçmişi (2026-09-28; eski düz 4 sütunlu upt-rt-* satırlar kalktı).
+const CertCheckHistory = lazy(() => import('../certmodal/CertCheckHistory.jsx'))
 
 /**
  * "Sertifika" sekmesi: kayıttaki son kontrol özeti (durum, kalan gün, bitiş, veren, son kontrol, hata, beklenen parmak
@@ -36,8 +37,8 @@ function CertificateSummary({ record, readOnly, onCheckNow, platformNames }) {
     )
   }
   return (
-    <div data-slot="inv-cert-summary" className="flex min-w-0 flex-col gap-5">
-      <DetailSection title={t('inv.drawerCert')}>
+    <div data-slot="inv-cert-summary" className="flex min-w-0 flex-col gap-3">
+      <DetailSection id="cert" icon={ShieldCheck} title={t('inv.drawerCert')}>
         <FactGrid>
           <Fact label={t('inv.certStatus')} value={<CertCell r={record} t={t} />} />
           <Fact label={t('inv.certDaysLeft')} value={<ExpiryCell r={record} t={t} showDate={false} />} />
@@ -132,7 +133,7 @@ export default function InventoryDrawer({
             <TabsTrigger value="checks" className="flex-none pointer-coarse:h-10">{t('inv.drawerChecks')}</TabsTrigger>
           </TabsList>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6 text-[.92em] sm:px-5">
-            <TabsContent value="details"><InventoryDetails record={record} teamMap={teamMap} /></TabsContent>
+            <TabsContent value="details"><InventoryDetails record={record} teamMap={teamMap} platformNames={platformNames} compact /></TabsContent>
             <TabsContent value="cert"><CertificateSummary record={record} readOnly={readOnly} onCheckNow={onCheckNow} platformNames={platformNames} /></TabsContent>
             {!readOnly && (
               <TabsContent value="changes">
@@ -143,15 +144,8 @@ export default function InventoryDrawer({
             )}
             <TabsContent value="checks">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
-                <CheckHistoryTab kind="uptime-ssl" monitorId={record.domain} listKey="inventory-checks" urlSync={false} live={false}
-                  presets={[1, 7, 30, 90]} defaultPreset={7} gridClass="upt-uptime-rt-grid"
-                  columns={[t('uptime.dateFrom'), t('dns.status'), t('modal.daysRemain'), '']}
-                  renderRow={(c) => (<>
-                    <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                    <span className={c.status !== 'error' ? 'upt-rt-up' : 'upt-rt-down'}>{c.status !== 'error' ? t('uptime.statusUp') : t('uptime.statusDown')}</span>
-                    <span className="upt-rt-ms">{c.days_remaining != null ? t('uptime.sslDays').replace('{0}', c.days_remaining) : '—'}</span>
-                    {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
-                  </>)} />
+                {/* Çekmece URL'ye yazmaz (tablo sayfasının kendi parametreleri var) ve canlı yenileme yapmaz — eski davranış. */}
+                <CertCheckHistory domain={record.domain} listKey="inventory-checks" urlSync={false} live={false} runInHeader={false} />
               </Suspense>
             </TabsContent>
           </div>

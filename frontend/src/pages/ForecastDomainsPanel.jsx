@@ -10,6 +10,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import { expiredAgoText } from '../utils/dayPhrases.js'
 
 /**
  * Vade Takvimi → "Alan adı bitişleri" paneli (2026-09-22, alan adı denetimi madde F; 2026-09-27 shadcn Card + Table).
@@ -61,7 +62,7 @@ export default function ForecastDomainsPanel({ domains = [], t, heading = true }
   const cls = (d) => d.days_remaining == null ? 'later' : d.days_remaining < 0 ? 'overdue'
     : d.days_remaining <= (d.critical_days ?? 7) ? 'critical' : d.days_remaining <= (d.warning_days ?? 30) ? 'warning' : 'later'
   // "3 gün önce doldu" / "Expired 3 days ago" — eski `dom.expiredAgo` + sayı "days ago (expired) 3" okunuyordu
-  const remaining = (d) => d.days_remaining == null ? '—' : d.days_remaining < 0 ? t('inv.expiredAgo', Math.abs(d.days_remaining)) : d.days_remaining + ' ' + t('card.daysUnit')
+  const remaining = (d) => d.days_remaining == null ? '—' : d.days_remaining < 0 ? expiredAgoText(t, Math.abs(d.days_remaining)) : d.days_remaining + ' ' + t('card.daysUnit')
   const count = <Badge variant="secondary" className="font-normal tabular-nums">{t('forecast.domCount', domains.length)}</Badge>
 
   return (

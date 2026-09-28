@@ -284,6 +284,44 @@ class LoginIssueControllerTest {
 
     // ── Kalici silme (AYRI + hassas yetki) ───────────────────────────────────
 
+    @Test
+    @DisplayName("Kimlik izi (2026-09-28c): matrisle izin verilen başka rol bildirenin IP / tarayıcısını GÖRMEZ (satır işaretli); global admin / AUDIT görür")
+    void reporterIdentityTrace_maskedForNonGlobal() throws Exception {
+        com.sitemonitor.model.LoginIssueReport r = report(7L);
+        r.setIpAddress("198.51.100.90"); r.setUserAgent("Mozilla/5.0 GateBrowser/4.0");
+        // Otomatik bağlam JSON METNİ de aynı izi taşır (IssueReportController.buildAutoContext)
+        r.setAutoContextJson("{\"url\":\"/app\",\"tab\":\"domains\",\"ip\":\"198.51.100.90\",\"userAgent\":\"Mozilla/5.0 GateBrowser/4.0\"}");
+        when(loginIssueService.get(7L)).thenReturn(Optional.of(r));
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
+        when(loginIssueService.counts(any(), any())).thenReturn(Map.of());
+        MockHttpSession teamAdmin = authed();
+        teamAdmin.setAttribute("systemRole", "TEAM_ADMIN");
+        teamAdmin.setAttribute("viewTeamIds", List.of(2L));
+        teamAdmin.setAttribute("manageTeamIds", List.of(2L));
+        String list = mvc.perform(get("/api/admin/login-issues").session(teamAdmin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].ipAddress").doesNotExist())
+                .andExpect(jsonPath("$.data[0].identity_masked").value(true))
+                .andReturn().getResponse().getContentAsString();
+        String detail = mvc.perform(get("/api/admin/login-issues/7").session(teamAdmin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ipAddress").doesNotExist())
+                .andExpect(jsonPath("$.data.userAgent").doesNotExist())
+                .andExpect(jsonPath("$.data.identity_masked").value(true))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(list + detail).doesNotContain("198.51.100.90").doesNotContain("GateBrowser")
+                .contains("domains");   // bağlamın izsiz kısmı kalır
+        for (String role : List.of("ADMIN", "AUDIT")) {
+            MockHttpSession g = authed();
+            g.setAttribute("systemRole", role);
+            mvc.perform(get("/api/admin/login-issues/7").session(g))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.ipAddress").value("198.51.100.90"))
+                    .andExpect(jsonPath("$.data.userAgent").value("Mozilla/5.0 GateBrowser/4.0"));
+        }
+    }
+
     private com.sitemonitor.model.LoginIssueReport report(long id) {
         com.sitemonitor.model.LoginIssueReport r = new com.sitemonitor.model.LoginIssueReport();
         r.setId(id);

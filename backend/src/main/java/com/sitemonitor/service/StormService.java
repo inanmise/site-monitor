@@ -654,19 +654,15 @@ public class StormService {
             boolean teamOnly = EscalationService.teamOnlyRecipients(m);
             Long teamId = m.getTeamId();
             Long ugTeamId = null;
-            List<EscalationContact> contacts = List.of();
-            if (!teamOnly) {
+            // Bağımsız izleme (tür ya da açılış bağlamındaki damga) envanterden takım/UG ALMAZ (2026-09-28): host başka
+            // takımın envanterindeyse toplu posta o takıma gidiyordu. Takım yalnız olayın kendi damgasından.
+            if (!teamOnly && !EscalationService.isStandaloneEvent(m)) {
                 var inv = invCache.computeIfAbsent(String.valueOf(m.getDomain()),
                         k -> inventoryRepo.findByDomain(m.getDomain()));
                 if (inv.isPresent()) {
                     if (teamId == null) teamId = inv.get().getTeamId();
                     if (!stamped) ugTeamId = inv.get().getUgTeamId();
                 }
-                // Önbellek anahtarı ÇÖZÜLMÜŞ takımı taşır (envanterden doldurulmuş olabilir);
-                // lambda da aynı değeri kullanmalı — final kopya şart.
-                final Long resolvedTeam = teamId;
-                contacts = contactCache.computeIfAbsent(m.getAlertLevel() + "|" + resolvedTeam,
-                        k -> contactsForLevel(m.getAlertLevel(), resolvedTeam));
             }
             boolean mailOff = mailDisabled(m);
             for (Long tid : new Long[]{teamId, ugTeamId}) {
@@ -679,6 +675,11 @@ public class StormService {
                 });
                 d.members.add(m);
                 if (!mailOff) d.anyMailEligible = true;
+                // "Her sahip takım kendi kişisi" (2026-09-28): takımın dağıtımına YALNIZ o takımın kişileri girer.
+                // Eskiden SY takımının kişileri UG takımının postasına da ekleniyordu (UG'nin kendi kişileri hiç).
+                List<EscalationContact> contacts = teamOnly ? List.of()
+                        : contactCache.computeIfAbsent(m.getAlertLevel() + "|" + tid,
+                                k -> contactsForLevel(m.getAlertLevel(), tid));
                 for (EscalationContact c : contacts) {
                     if (c.getEmail() != null && !c.getEmail().isBlank()) d.contactEmails.add(c.getEmail().trim());
                     if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank())
@@ -758,20 +759,14 @@ public class StormService {
         return e.isBlank() ? List.of() : List.of(e);
     }
 
+    /**
+     * Bireysel yolla AYNI kapsam ({@link EscalationContactScope}, 2026-09-28): YALNIZ verilen takımın kontakları;
+     * takım yoksa kimse (takımsız kontak hiçbir yolda alıcı değil). Çağıran her dağıtım takımı (SY ve UG) için ayrı
+     * sorar — "her sahip takım kendi kişisi". Eskiden buradaki kopya da takımda kontak yoksa takım
+     * süzgeçsiz sorgulara düşüyor, toplu kesinti postasına TÜM takımların müdürlerini ekliyordu.
+     */
     private List<EscalationContact> contactsForLevel(String level, Long teamId) {
-        if (teamId != null) {
-            List<EscalationContact> teamContacts = switch (level != null ? level : "") {
-                case "CRITICAL" -> contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId);
-                case "HIGH"     -> contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(teamId, List.of("WARNING", "HIGH"));
-                default         -> contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(teamId, "WARNING");
-            };
-            if (!teamContacts.isEmpty()) return teamContacts;
-        }
-        return switch (level != null ? level : "") {
-            case "CRITICAL" -> contactRepo.findByActiveTrueOrderByRoleAsc();
-            case "HIGH"     -> contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH"));
-            default         -> contactRepo.findByMinAlertLevelAndActiveTrue("WARNING");
-        };
+        return EscalationContactScope.forLevel(contactRepo, level, teamId);
     }
 
     // isTeamOnly kaldırıldı (Y4): EscalationService.teamOnlyRecipients tek doğruluk kaynağı.

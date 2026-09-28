@@ -57,8 +57,10 @@ describe('SSL derin bağlantısı (App)', () => {
     window.history.replaceState({}, '', '/?tab=dashboard&domain=shop-b.example.com&open=cert&platform=IIS')
     render(<App />)
     await waitFor(() => expect(certDialog('shop-b.example.com')).not.toBeNull(), { timeout: 5000 })
-    // kart panoda GÖRÜNMÜYOR (arama shop-b + platform IIS) — pencere yine de açık
-    expect(screen.queryAllByText('shop-b.example.com').filter((el) => !el.closest('[role="dialog"]'))).toHaveLength(0)
+    // kart panoda GÖRÜNMÜYOR (arama shop-b + platform IIS) — pencere yine de açık. (Alan adı süzgeç araç çubuğunda
+    // "Arama: shop-b…" çipi olarak durur — 2026-09-28; ölçülen yer KART ızgarası.)
+    expect(screen.queryAllByText('shop-b.example.com').filter((el) => !el.closest('[role="dialog"]') && !el.closest('[data-slot="dashboard-filters"]'))).toHaveLength(0)
+    expect(screen.getByRole('button', { name: 'Remove filter: Search: shop-b.example.com', hidden: true })).toBeInTheDocument()   // pencere açıkken arka plan aria-hidden
     expect(param('open')).toBeNull()
     expect(param('domain')).toBe('shop-b.example.com')
     expect(fx.history).toHaveBeenCalledWith('shop-b.example.com')   // pencerenin kendi verisi (liste yedeği değil)
@@ -114,5 +116,27 @@ describe('SSL derin bağlantısı (App)', () => {
     nav('noc')
     await screen.findByRole('heading', { name: /24\/7 Coverage|7\/24 Kapsamı/ }, { timeout: 5000 })
     expect(certDialog('shop-b.example.com')).not.toBeNull()   // elle açılan pencere sessizce kapanmadı
+  })
+
+  /*
+   * Ek 3/4 (2026-09-28): `domain` (ve `team`) YALNIZ Pano hedefinde Pano aramasına / takım süzgecine düşer. "Envanterde aç"
+   * (`domains` + domain) ve Envanter çekmecesinin "Sertifikayı aç"ı (`all` + domain) kendi sayfalarının anahtarını taşır —
+   * eskiden Pano da süzülüyor, kullanıcı Genel Bakış'a dönünce tek karta süzülmüş listeyle karşılaşıyordu.
+   */
+  it('başka sekmeye giden `domain` Pano aramasına SIZMAZ; Pano hedefindeki `domain` süzer', async () => {
+    window.history.replaceState({}, '', '/?tab=dashboard')
+    render(<App />)
+    await screen.findByRole('button', { name: /^shop-a\.example\.com — (open certificate details|sertifika detayını aç)$/ }, { timeout: 5000 })
+    const chip = (d) => screen.queryByRole('button', { name: `Remove filter: Search: ${d}`, hidden: true })
+    nav('domains', { domain: 'shop-a.example.com' })
+    await waitFor(() => expect(param('tab')).toBe('domains'))
+    nav('all', { domain: 'shop-b.example.com' })
+    await waitFor(() => expect(param('tab')).toBe('all'))
+    nav('dashboard')
+    await screen.findByRole('button', { name: /^shop-a\.example\.com — (open certificate details|sertifika detayını aç)$/ }, { timeout: 5000 })
+    expect(chip('shop-a.example.com')).toBeNull()
+    expect(chip('shop-b.example.com')).toBeNull()
+    nav('dashboard', { domain: 'shop-b.example.com' })
+    await waitFor(() => expect(chip('shop-b.example.com')).not.toBeNull())
   })
 })

@@ -10,7 +10,9 @@ import SearchableSelect from '../../ui/SearchableSelect.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
 import { toCsv, downloadCsv, stampedName } from '../../../utils/csvExport.js'
-import { splitFlags, FLAG_KEYS } from './uactModel.js'
+import { splitFlags, FLAG_KEYS, idHidden } from './uactModel.js'
+import { MaskedValue } from './DirectoryParts.jsx'
+import AlertBanner from '../../ui/AlertBanner.jsx'
 import { ToolbarSearch, FilterField } from '../ListToolbar.jsx'
 import { TH, TD, MUTED_SM, DataTable, LinkButton, StatChip, AuthSourceBadge, FlagBadge } from '../HealthUi.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -59,12 +61,15 @@ export function eventMatches(r, f) {
   return true
 }
 
-export function eventsCsv(rows, t) {
-  const head = [t('uact.colTime'), t('uact.colUser'), t('uact.detailDisplayName'), t('uact.colRole'), t('uact.colTeam'), t('uact.colAuthSource'), t('uact.colIp'), t('uact.colLocation'), t('uact.detailOrg'), t('uact.colBrowser'), t('uact.colOutcome'), t('uact.colReason'), t('uact.colFlags')]
-  return toCsv(head, rows.map((r) => [r.time, r.actor, r.display_name, r.system_role, r.team_name, r.auth_source, r.ip, loc(r), r.org, r.user_agent ? `${shortUa(r.user_agent)} ${osOf(r.user_agent)}`.trim() : '', r.outcome, r.reason, r.flags]))
+/** `masked`: kimlik izi (IP / konum / kuruluş / tarayıcı) bu görüntüleyiciye gelmediyse o sütunlar hiç yazılmaz (boş sütun değil). */
+export function eventsCsv(rows, t, { masked = false } = {}) {
+  const head = [t('uact.colTime'), t('uact.colUser'), t('uact.detailDisplayName'), t('uact.colRole'), t('uact.colTeam'), t('uact.colAuthSource'),
+    ...(masked ? [] : [t('uact.colIp'), t('uact.colLocation'), t('uact.detailOrg'), t('uact.colBrowser')]), t('uact.colOutcome'), t('uact.colReason'), t('uact.colFlags')]
+  return toCsv(head, rows.map((r) => [r.time, r.actor, r.display_name, r.system_role, r.team_name, r.auth_source,
+    ...(masked ? [] : [r.ip, loc(r), r.org, r.user_agent ? `${shortUa(r.user_agent)} ${osOf(r.user_agent)}`.trim() : '']), r.outcome, r.reason, r.flags]))
 }
 
-export default function EventListModal({ kind, title, rows: rowsIn, byName = new Map(), winLabel, onClose, onUser }) {
+export default function EventListModal({ kind, title, rows: rowsIn, byName = new Map(), winLabel, identityMasked = false, onClose, onUser }) {
   const t = useT()
   const isAnom = kind === 'anomalies', isFailed = kind === 'failed'
   const [f, setF] = useState({ q: '', team: '', outcome: '', flag: '' })
@@ -93,14 +98,16 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
   return (
     <ModalShell open onClose={onClose} title={`${title} · ${rows.length}${rows.length !== all.length ? ' / ' + all.length : ''}`} icon={Icon} size="xl" scrollBody
       footer={<>
-        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t))}><Download size={14} /> {t('uact.exportEvents')}</Button>
+        <Button type="button" variant="secondary" onClick={() => downloadCsv(stampedName(kind), eventsCsv(rows, t, { masked: identityMasked }))}><Download size={14} /> {t('uact.exportEvents')}</Button>
         <Button type="button" onClick={onClose}>{t('app.dismiss')}</Button>
       </>}>
       <p className={cn(MUTED_SM, 'mb-2')}>{winLabel}{all.length >= 500 ? ` · ${t('uact.eventsCapped', 500)}` : ''}</p>
+      {/* 2026-09-28c: kimlik izi yalnız global yönetici + denetçiye — sütunlar "Gizli" yazar, tekil IP sayısı gösterilmez */}
+      {identityMasked && <AlertBanner tone="info" className="mb-2.5">{t('udir.connMasked')}</AlertBanner>}
       <div className="mb-2.5 flex flex-wrap gap-1.5" data-testid="evl-stats">
         {chip('all', stats.total, t('uact.dirAll'), !f.outcome && !f.flag, () => patch({ outcome: '', flag: '' }))}
         {chip('users', stats.users, t('uact.uniqueUsers'), false, null)}
-        {chip('ips', stats.ips, t('uact.uniqueIps'), false, null)}
+        {!identityMasked && chip('ips', stats.ips, t('uact.uniqueIps'), false, null)}
         {chip('teams', stats.teams, t('uact.colTeam'), false, null)}
         {chip('ldap', stats.ldap, 'LDAP', false, null)}
         {!isAnom && chip('failed', stats.failed, t('uact.failed'), f.outcome === 'FAILURE', () => patch({ outcome: f.outcome === 'FAILURE' ? '' : 'FAILURE' }), stats.failed > 0 ? 'danger' : undefined)}
@@ -138,8 +145,8 @@ export default function EventListModal({ kind, title, rows: rowsIn, byName = new
                 <TableCell data-label={t('uact.colUser')} className={cell}>{r.actor ? <LinkButton className="ml-0 no-underline" onClick={() => onUser?.({ username: r.actor, ...r })}><UserBadge username={r.actor} userId={r.user_id} displayName={r.display_name} inline nameOnly size="sm" /></LinkButton> : '—'}{/* yalnız ad soyad (2026-09-21 kullanıcı bildirimi) — rol/olay türü hücreyi kalabalıklaştırıyordu */}</TableCell>
                 <TableCell data-label={t('uact.colTeam')} className={cn(cell, 'hidden md:table-cell')}>{r.team_name ? <TeamBadge teamId={r.team_id} teamName={r.team_name} /> : <span className="text-muted-foreground">—</span>}</TableCell>
                 <TableCell data-label={t('uact.colAuthSource')} className={cn(cell, 'hidden lg:table-cell')}>{r.auth_source ? <AuthSourceBadge source={r.auth_source} localLabel={t('usr.authLocal')} /> : '—'}</TableCell>
-                <TableCell data-label={t('uact.colIp')} className={cn(cell, 'text-xs')}><span className="font-mono">{r.ip || '—'}</span>{(loc(r) || r.org) && <span className={sub}><MapPin size={10} aria-hidden="true" className="inline" /> {[loc(r), r.org].filter(Boolean).join(' · ')}</span>}</TableCell>
-                <TableCell data-label={t('uact.colBrowser')} className={cn(cell, 'hidden text-xs lg:table-cell')} title={r.user_agent || ''}>{r.user_agent ? <><Globe size={11} aria-hidden="true" className="inline" /> {shortUa(r.user_agent)}{osOf(r.user_agent) ? <span className="text-muted-foreground"> · {osOf(r.user_agent)}</span> : null}</> : '—'}</TableCell>
+                <TableCell data-label={t('uact.colIp')} className={cn(cell, 'text-xs')}>{idHidden(r, 'ip', identityMasked) ? <MaskedValue /> : <><span className="font-mono">{r.ip || '—'}</span>{(loc(r) || r.org) && <span className={sub}><MapPin size={10} aria-hidden="true" className="inline" /> {[loc(r), r.org].filter(Boolean).join(' · ')}</span>}</>}</TableCell>
+                <TableCell data-label={t('uact.colBrowser')} className={cn(cell, 'hidden text-xs lg:table-cell')} title={r.user_agent || ''}>{idHidden(r, 'user_agent', identityMasked) ? <MaskedValue /> : r.user_agent ? <><Globe size={11} aria-hidden="true" className="inline" /> {shortUa(r.user_agent)}{osOf(r.user_agent) ? <span className="text-muted-foreground"> · {osOf(r.user_agent)}</span> : null}</> : '—'}</TableCell>
                 <TableCell data-label={t('uact.colOutcome')} className={cn(cell, 'text-xs')}>{r.outcome ? <span className={ok ? 'text-success' : 'text-destructive'}>{ok ? t('uact.success') : r.outcome}</span> : '—'}{r.reason ? <span className={sub}>{r.reason}</span> : null}</TableCell>
                 <TableCell data-label={t('uact.colFlags')} className={cell}>{splitFlags(r.flags).length ? splitFlags(r.flags).map((k) => <FlagBadge key={k} flag={k} title={t(`uact.flagHelp.${k}`)}>{t(`uact.anom_${k}`)}</FlagBadge>) : <span className="text-muted-foreground">—</span>}</TableCell>
               </TableRow>

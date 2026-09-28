@@ -401,6 +401,9 @@ public class UserActivityService {
             m.put("permanent_lock", Boolean.TRUE.equals(u.getPermanentLock()));
             m.put("title",        u.getTitle());
             m.put("department",   u.getDepartment());
+            // Fotoğrafın kendisi değil, VAR MI bayrağı (2026-09-28; TeamDirectory ile aynı): dizin fotoğrafı olmayan
+            // her avatar için boşuna /api/users/{id}/photo (204) isteği atıyordu. photo_base64 findAll ile zaten yüklü.
+            m.put("has_photo",    u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
             Map<String, Object> ts = TourStateService.parse(u.getTourState());
             String tourStatus = ts == null ? null : String.valueOf(ts.get("status"));
             m.put("tour_status",  tourStatus == null || "null".equals(tourStatus) ? "none" : tourStatus);

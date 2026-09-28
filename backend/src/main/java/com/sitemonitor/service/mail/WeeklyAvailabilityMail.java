@@ -48,8 +48,14 @@ public final class WeeklyAvailabilityMail {
     public static final String KICKER = "Haftalık Erişilebilirlik";
     /** Gövdedeki domain listesinin tavanı — tamamı ekteki PDF'te. */
     public static final int TOP_DOMAINS = 10;
-    /** Haftanın alarmları listesinin tavanı — tamamı Alarm Geçmişi'nde. */
+    /** Haftanın alarmları listesinin tavanı — tamamı ekteki PDF'te ve Alarm Geçmişi'nin "aralıkta aktif" görünümünde. */
     public static final int TOP_INCIDENTS = 8;
+    /**
+     * Alarm Geçmişi bağlantısının tarih kipi: hafta içinde AKTİF olanlar (açılış ≤ Pazar VE (açık YA DA çözüm ≥
+     * Pazartesi)). "Haftanın alarmları" sayısı önceki haftadan devredenleri de içerir; varsayılan kip ("hafta içinde
+     * açılanlar") onları göstermediği için bağlantı sayıyı tutmuyordu (regresyon B3, 2026-09-28).
+     */
+    static final String ALARMS_RANGE = "active";
     /** Yaklaşan sertifika listesinin tavanı. */
     public static final int TOP_CERTS = 8;
     /** Yaklaşan sertifika penceresi (gün) — ekteki PDF'in "Süresi Yaklaşan Sertifikalar (≤ 60 gün)" bölümüyle aynı. */
@@ -152,7 +158,7 @@ public final class WeeklyAvailabilityMail {
         domains(d, rows, s, base, in.attachment() != null);
 
         // ── Haftanın alarmları
-        if (alarms != null) incidents(d, alarms, ins, base);
+        if (alarms != null) incidents(d, alarms, ins, base, in.attachment() != null);
 
         // ── Yaklaşan sertifika bitişleri (≤ 60 gün)
         certExpiries(d, rows, base);
@@ -390,7 +396,7 @@ public final class WeeklyAvailabilityMail {
 
     // ── Haftanın alarmları ──────────────────────────────────────────────────
 
-    private static void incidents(MailDoc d, Alarms a, Insights ins, String base) {
+    private static void incidents(MailDoc d, Alarms a, Insights ins, String base, boolean hasPdf) {
         if (a.total() == 0) {
             d.alert(Tone.SUCCESS, "Bu hafta alarm yok", "Takımın izlemelerinde bu hafta açık olan alarm olmadı.");
             return;
@@ -420,10 +426,23 @@ public final class WeeklyAvailabilityMail {
         int hidden = a.total() - shown.size();
         if (hidden > 0) {
             String url = base.isEmpty() || ins == null ? "" : alarmsUrl(base, ins);
-            d.noteHtml("+" + hidden + " alarm daha — tamamı ekteki PDF'te ve Alarm Geçmişi'nde."
-                            + (url.isEmpty() ? "" : " " + MailKit.link(url, "Alarm Geçmişi'ni aç")),
-                    "+" + hidden + " alarm daha — tamamı ekteki PDF'te ve Alarm Geçmişi'nde." + (url.isEmpty() ? "" : " Alarm Geçmişi: " + url));
+            String note = moreAlarmsNote(hidden, a.total(), a.carriedOver(), hasPdf, !url.isEmpty());
+            d.noteHtml(MailKit.esc(note) + (url.isEmpty() ? "" : " " + MailKit.link(url, "Alarm Geçmişi'ni aç")),
+                    note + (url.isEmpty() ? "" : " Alarm Geçmişi: " + url));
         }
+    }
+
+    /**
+     * "+N alarm daha" notu — yalnız DOĞRU olanı söyler (regresyon B3, 2026-09-28): tam liste ekteki PDF'te (ek varsa)
+     * ve Alarm Geçmişi'nde (bağlantı varsa; bağlantı "aralıkta aktif" kipinde açılır, önceki haftadan devredenler de
+     * listededir). Eskiden not ek ya da bağlantı olmasa da ikisini birden vaat ediyordu ve bağlantı devredenleri
+     * göstermiyordu. Devreden varsa sayısı yazılır: listede hafta öncesine ait açılış tarihleri şaşırtmasın.
+     */
+    static String moreAlarmsNote(int hidden, int total, int carriedOver, boolean hasPdf, boolean hasLink) {
+        if (!hasPdf && !hasLink) return "+" + hidden + " alarm daha.";
+        String carried = carriedOver > 0 ? "önceki haftadan devreden " + carriedOver + " alarm dahil " : "";
+        String where = hasPdf && hasLink ? "ekteki PDF'te ve Alarm Geçmişi'nde" : hasPdf ? "ekteki PDF'te" : "Alarm Geçmişi'nde";
+        return "+" + hidden + " alarm daha — " + carried + "haftanın " + total + " alarmının tamamı " + where + ".";
     }
 
     // ── Yaklaşan sertifika bitişleri ────────────────────────────────────────
@@ -591,10 +610,13 @@ public final class WeeklyAvailabilityMail {
                 + (ins.teamId() == null ? "" : "&w_team=" + ins.teamId());
     }
 
-    /** Alarm Geçmişi "tümü" görünümü, haftanın günleriyle (açılış anına göre) + takım süzgeci. */
+    /**
+     * Alarm Geçmişi "tümü" görünümü: haftanın günleri + takım süzgeci, {@link #ALARMS_RANGE} kipinde (hafta içinde
+     * AKTİF olanlar — önceki haftadan devredenler dahil; e-postanın "Haftanın alarmları" sayısıyla aynı küme).
+     */
     static String alarmsUrl(String base, Insights ins) {
         return base + "/?tab=alerthistory&view=all&from=" + nz(ins.weekStartDay()) + "&to=" + nz(ins.weekEndDay())
-                + (ins.teamId() == null ? "" : "&team=" + ins.teamId());
+                + "&range=" + ALARMS_RANGE + (ins.teamId() == null ? "" : "&team=" + ins.teamId());
     }
 
     private static String trimBase(String base) {

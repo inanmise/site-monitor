@@ -67,3 +67,28 @@ for (const vp of VIEWPORTS) {
     if (phone) expect(last.height, 'telefonda neredeyse tam ekran').toBeGreaterThanOrEqual(vp.height - 40)
   })
 }
+
+// Ek 3/9 (2026-09-28): /api/history mock'u GERÇEK geçmiş satırı döner (envanter alanları yok, `tls_version` +
+// `cipher_suite` + `tls_assessment` var) — Detaylar'ın zayıf protokol / şifre rozetleri sunucu hükmünden (tls_assessment)
+// çizilir. Mock eskiden liste satırı dönüyordu; bu yol e2e'de hiç sınanmıyordu.
+test('sertifika penceresi Detaylar: zayıf protokol + şifre rozeti geçmiş satırının tls_assessment hükmünden', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mockApi(page, { perms: PERMS })
+  await mockCertApi(page)
+  const box = page.locator('[data-slot="dialog-content"]').first()
+  const details = async (domain) => {
+    await page.goto('/?tab=dashboard')
+    await page.locator(`[data-slot="card"][data-domain="${domain}"] [data-cert-open]`).first().click({ timeout: 20_000 })
+    await expect(box).toBeVisible()
+    await box.locator('[role="tablist"]').first().locator('[role="tab"]').filter({ hasText: /Details|Detaylar/ }).click()
+    await expect(box.locator('[data-slot="cert-details"]')).toBeVisible({ timeout: 10_000 })
+  }
+  await details(CERT_DOMAINS.problem)
+  await expect(box.locator('[data-slot="cert-weak-protocol"]')).toBeVisible()
+  await expect(box.locator('[data-slot="cert-weak-cipher"]')).toBeVisible()
+  await expect(box.locator('[data-slot="cert-details"]')).toContainText('TLS_RSA_WITH_3DES_EDE_CBC_SHA')
+  await details(CERT_DOMAINS.healthy)
+  await expect(box.locator('[data-slot="cert-details"]')).toContainText('TLS_AES_256_GCM_SHA384')
+  await expect(box.locator('[data-slot="cert-weak-protocol"]')).toHaveCount(0)
+  await expect(box.locator('[data-slot="cert-weak-cipher"]')).toHaveCount(0)
+})

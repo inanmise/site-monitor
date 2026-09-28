@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { LangProvider } from '../i18n/index.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
@@ -168,6 +168,42 @@ describe('EscalationContacts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Test who gets notified' }))
     expect(onOpenSimulator).toHaveBeenCalledWith(undefined)
     window.history.replaceState(null, '', '/')
+  })
+
+  // 2026-09-28 prod hatası: kontaksız takımın alarmı başka takımların müdürlerine gidiyordu. Kural: eskalasyon kişisi
+  // yalnız KENDİ takımının alarmını alır → takımsız kişi hiçbir bildirim almaz; ekran bunu söyler.
+  it('takımsız (eski veri) kişi "bildirim almaz" rozetiyle görünür; takımlı kişide rozet yok', async () => {
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [...CONTACTS,
+      { id: 3, user_id: 8, name: 'Eski Kisi', email: 'eski@example.com', role: 'MANAGER', min_alert_level: 'HIGH', active: true, team_id: null }] })
+    render(<LangProvider><EscalationContacts systemRole="ADMIN" teams={[{ id: 5, name: 'SY-A' }]} /></LangProvider>)
+    const row = (await screen.findByText('Eski Kisi')).closest('tr')
+    const badges = within(row).getAllByText(/^(No team — gets no notifications|Takıma atanmamış — bildirim almaz)$/)
+    expect(badges.length).toBeGreaterThan(0)   // takım sütunu + telefonda ad hücresi
+    const aliRow = screen.getByText('Ali V').closest('tr')
+    expect(within(aliRow).queryByText(/^(No team — gets no notifications|Takıma atanmamış — bildirim almaz)$/)).toBeNull()
+    expect(within(aliRow).getByText('SY-A')).toBeInTheDocument()
+  })
+
+  it('yönetici yeni kişi eklerken takım ÖNCEDEN seçilmez; takım seçilmeden Kaydet kapalı, seçilince doğru takım gider', async () => {
+    const TEAMS = [{ id: 5, name: 'SY-A' }, { id: 6, name: 'SY-B' }]
+    render(<LangProvider><EscalationContacts systemRole="ADMIN" teams={TEAMS} /></LangProvider>)
+    await screen.findByText('Ali V')
+    fireEvent.click(screen.getByRole('button', { name: /^(Add Contact|Kişi Ekle)$/ }))
+    const userBox = await screen.findByRole('combobox', { name: /^(User|Kullanıcı)/ })
+    fireEvent.mouseDown(userBox)
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /Ali V/ }))
+    await waitFor(() => expect(userBox).toHaveTextContent('Ali V'))
+    const teamBox = screen.getByRole('combobox', { name: /^(Team|Takım)/ })
+    expect(teamBox).toHaveTextContent(/Choose a team|Takım seçin/)   // önceden seçili takım YOK
+    const save = screen.getByRole('button', { name: /^(Save|Kaydet)$/ })
+    expect(save).toBeDisabled()   // takım seçilmedi → ilk takıma sessizce yazılmaz
+    fireEvent.mouseDown(teamBox)
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'SY-B' }))
+    await waitFor(() => expect(teamBox).toHaveTextContent('SY-B'))
+    expect(save).toBeEnabled()
+    fireEvent.click(save)
+    await waitFor(() => expect(api.admin.addContact).toHaveBeenCalled())
+    expect(api.admin.addContact.mock.calls[0][0]).toMatchObject({ user_id: 7, team_id: 6 })
   })
 
   it('boş liste çökmez (API data:null döndürse bile)', async () => {

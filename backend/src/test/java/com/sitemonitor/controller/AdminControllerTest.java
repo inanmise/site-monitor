@@ -162,6 +162,8 @@ class AdminControllerTest {
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
+        // Takım varlık denetimi (2026-09-28, O3): varsayılan 'takım var'; olmayan takım testleri kendi stub'ını verir.
+        when(teamRepo.existsById(anyLong())).thenReturn(true);
         // Default stub: any user lookup returns a generic AppUser with id=arg and team=1.
         // ADMIN session bypasses team scoping; individual tests can override as needed.
         when(userRepo.findById(anyLong())).thenAnswer(inv -> {
@@ -1184,6 +1186,7 @@ class AdminControllerTest {
     @Test
     @DisplayName("bulk set-team: GLOBAL admin takımı yazar ve türev izlemeleri senkronlar; TEAM_ADMIN → 403; team_id yoksa 400")
     void bulk_setTeam_globalAdminOnly_syncsDerived() throws Exception {
+        Team t9 = new Team(); t9.setId(9L); when(teamRepo.findById(9L)).thenReturn(Optional.of(t9));   // takım var (2026-09-28)
         CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L);
         when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
         when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -1253,6 +1256,276 @@ class AdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"deactivate\",\"ids\":[1]}"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── Toplu envanter işlemi → İzleme Değişiklikleri (2026-09-28) ─────────────────────────────
+    // Eskiden toplu yol ürün geçmişine HİÇ yazmıyordu: toplu silinen kayıt İzleme Değişiklikleri'nde görünmüyor,
+    // "silinmiş" rozetini (findDeletedAmong = kaynağın son olayı DELETE) alamıyordu.
+
+    @Test
+    @DisplayName("bulk delete: işlenen HER kayıt için tekil silmeyle aynı DELETE satırı (tür/kimlik/ad/takım + not); zaten silinmiş, kapsam dışı ve bilinmeyen kimlik için satır YOK")
+    @SuppressWarnings("unchecked")
+    void bulkDelete_writesDeleteHistoryForEachProcessedRecord() throws Exception {
+        CertificateInventory a = inventory("d1.example.com"); a.setId(1L); a.setTeamId(2L);
+        CertificateInventory b = inventory("d2.example.com"); b.setId(2L); b.setTeamId(2L);
+        CertificateInventory gone = inventory("gone.example.com"); gone.setId(3L); gone.setTeamId(2L);
+        gone.setDeletedAt("2026-06-01T00:00:00"); gone.setActive(false);
+        CertificateInventory other = inventory("other.example.com"); other.setId(4L); other.setTeamId(7L);   // kapsam dışı (IDOR)
+        for (CertificateInventory r : List.of(a, b, gone, other)) when(inventoryRepo.findById(r.getId())).thenReturn(Optional.of(r));
+        when(inventoryRepo.findById(99L)).thenReturn(Optional.empty());
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"delete\",\"ids\":[1,2,3,4,99]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(2))
+                .andExpect(jsonPath("$.data.skipped").value(3));
+
+        ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+        verify(monitorHistory).record(eq("INVENTORY"), eq(1L), eq("d1.example.com"), eq(2L), eq("DELETE"),
+                before.capture(), after.capture(), eq("toplu silme"), any(jakarta.servlet.http.HttpSession.class));
+        // Tekil silmeyle aynı snapshot: önce canlı, sonra silinmiş + pasif
+        assertThat(before.getValue()).containsEntry("deletedAt", null).containsEntry("active", true);
+        assertThat(after.getValue().get("deletedAt")).isNotNull();
+        assertThat(after.getValue()).containsEntry("active", false);
+        verify(monitorHistory).record(eq("INVENTORY"), eq(2L), eq("d2.example.com"), eq(2L), eq("DELETE"),
+                any(), any(), eq("toplu silme"), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory, org.mockito.Mockito.times(2)).record(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // "Kim sildi" damgası tekil silmedeki gibi YALNIZ silinen kayıtlara
+        verify(monitorHistory).stampUpdated(eq(a), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory).stampUpdated(eq(b), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory, never()).stampUpdated(eq(gone), any());
+        verify(monitorHistory, never()).stampUpdated(eq(other), any());
+    }
+
+    @Test
+    @DisplayName("bulk activate/set-tier/set-contacts: tekil düzenlemeyle aynı UPDATE satırı yalnız DEĞİŞEN kayda (değişmeyen kayıt boş satır üretmez)")
+    void bulkUpdateActions_writeUpdateHistoryOnlyWhenChanged() throws Exception {
+        CertificateInventory live = inventory("live.example.com"); live.setId(1L); live.setTeamId(1L); live.setTier(2);
+        CertificateInventory paused = inventory("paused.example.com"); paused.setId(2L); paused.setTeamId(1L); paused.setActive(false);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(live));
+        when(inventoryRepo.findById(2L)).thenReturn(Optional.of(paused));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"activate\",\"ids\":[1,2]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(2));
+        verify(monitorHistory).record(eq("INVENTORY"), eq(2L), eq("paused.example.com"), eq(1L), eq("UPDATE"),
+                any(), any(), eq("toplu etkinleştirme"), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory, never()).record(any(), eq(1L), any(), any(), any(), any(), any(), any(), any());   // zaten aktifti
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"ids\":[1],\"tier\":1}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq("INVENTORY"), eq(1L), eq("live.example.com"), eq(1L), eq("UPDATE"),
+                any(), any(), eq("toplu kademe ataması"), any(jakarta.servlet.http.HttpSession.class));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-contacts\",\"ids\":[2],\"svc_mgmt_contact\":\"Ad Soyad - ad.soyad@example.com\"}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq("INVENTORY"), eq(2L), eq("paused.example.com"), eq(1L), eq("UPDATE"),
+                any(), any(), eq("toplu sorumlu ekip ataması"), any(jakarta.servlet.http.HttpSession.class));
+    }
+
+    @Test
+    @DisplayName("bulk set-team + tekil transfer: takım değişikliği UPDATE satırı yeni takımla yazılır (PUT düzenlemesiyle aynı olay)")
+    void teamChange_writesUpdateHistory_bulkAndSingleTransfer() throws Exception {
+        Team t9 = new Team(); t9.setId(9L); when(teamRepo.findById(9L)).thenReturn(Optional.of(t9));   // takım var (2026-09-28)
+        CertificateInventory a = inventory("a.example.com"); a.setId(11L); a.setTeamId(1L);
+        CertificateInventory b = inventory("b.example.com"); b.setId(12L); b.setTeamId(1L);
+        when(inventoryRepo.findById(11L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.findById(12L)).thenReturn(Optional.of(b));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-team\",\"ids\":[11],\"team_id\":9}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq("INVENTORY"), eq(11L), eq("a.example.com"), eq(9L), eq("UPDATE"),
+                any(), any(), eq("toplu takım aktarımı"), any(jakarta.servlet.http.HttpSession.class));
+
+        mvc.perform(post("/api/admin/inventory/12/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":9}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq("INVENTORY"), eq(12L), eq("b.example.com"), eq(9L), eq("UPDATE"),
+                any(), any(), isNull(), any(jakarta.servlet.http.HttpSession.class));
+    }
+
+    @Test
+    @DisplayName("2026-09-28: OLMAYAN takıma aktarım / toplu takım / kişi / envanter ekleme + PUT takım değişimi 400 — kayıt sahipsiz kalmaz")
+    void nonexistentTeam_rejectedEverywhere() throws Exception {
+        CertificateInventory b = inventory("b.example.com"); b.setId(12L); b.setTeamId(1L);
+        when(inventoryRepo.findById(12L)).thenReturn(Optional.of(b));
+        when(teamRepo.existsById(77L)).thenReturn(false);
+        mvc.perform(post("/api/admin/inventory/12/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":77}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-team\",\"ids\":[12],\"team_id\":77}"))
+                .andExpect(status().isBadRequest());
+        assertThat(b.getTeamId()).isEqualTo(1L);
+        verify(inventoryRepo, never()).save(any());
+
+        EscalationContact existing = contact("po@example.com", "PO"); existing.setId(5L); existing.setTeamId(1L);
+        when(contactRepo.findById(5L)).thenReturn(Optional.of(existing));
+        mvc.perform(put("/api/admin/contacts/5").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"PO\",\"team_id\":77}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/contacts").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Kişi\",\"role\":\"TECH\",\"team_id\":77}"))
+                .andExpect(status().isBadRequest());
+        verify(contactRepo, never()).save(any());
+
+        // O3: envanter EKLEME ve PUT ile takım değişimi de olmayan takıma yazamaz
+        mvc.perform(post("/api/admin/inventory").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"yeni.example.com\",\"port\":443,\"team_id\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("takım bulunamadı")));
+        mvc.perform(put("/api/admin/inventory/12").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"b.example.com\",\"port\":443,\"active\":true,\"team_id\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("takım bulunamadı")));
+        assertThat(b.getTeamId()).isEqualTo(1L);
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("2026-09-28: SY aktarımı takımsız istenirse 400 — kayıt ve türev izlemeler sahipsiz kalmaz")
+    void transfer_withoutTeam_returns400_nothingChanges() throws Exception {
+        CertificateInventory b = inventory("b.example.com"); b.setId(12L); b.setTeamId(1L);
+        when(inventoryRepo.findById(12L)).thenReturn(Optional.of(b));
+        mvc.perform(post("/api/admin/inventory/12/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+        assertThat(b.getTeamId()).isEqualTo(1L);
+        verify(inventoryRepo, never()).save(any());
+        verify(derivedMonitorTeamSync, never()).syncTeam(any(), any());
+    }
+
+    @Test
+    @DisplayName("transfer-ug: UG takımı değişikliği UPDATE satırı (fark YALNIZ ugTeamId); aynı değere aktarımda record fark almaz")
+    @SuppressWarnings("unchecked")
+    void transferUg_writesUpdateHistoryWithUgTeamDiff() throws Exception {
+        CertificateInventory a = inventory("ug.example.com"); a.setId(21L); a.setTeamId(1L); a.setUgTeamId(3L);
+        when(inventoryRepo.findById(21L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/21/transfer-ug").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ug_team_id\":8}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+        verify(monitorHistory).record(eq("INVENTORY"), eq(21L), eq("ug.example.com"), eq(1L), eq("UPDATE"),
+                before.capture(), after.capture(), isNull(), any(jakarta.servlet.http.HttpSession.class));
+        assertThat(before.getValue()).containsEntry("ugTeamId", 3L);
+        assertThat(after.getValue()).containsEntry("ugTeamId", 8L);
+        assertThat(com.sitemonitor.service.MonitorHistoryService.changedFields(
+                com.sitemonitor.service.AuditDiff.diff(before.getValue(), after.getValue()))).containsExactly("ugTeamId");
+    }
+
+    @Test
+    @DisplayName("Ek 3/5: transfer-ug OLMAYAN takıma 400 (kayıt değişmez); null = UG takımını kaldır, izinli")
+    void transferUg_nonexistentTeam_400_nullClears() throws Exception {
+        CertificateInventory a = inventory("ug3.example.com"); a.setId(23L); a.setTeamId(1L); a.setUgTeamId(3L);
+        when(inventoryRepo.findById(23L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(teamRepo.existsById(77L)).thenReturn(false);   // takım yok (varsayılan: var — setUp)
+        mvc.perform(post("/api/admin/inventory/23/transfer-ug").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ug_team_id\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+        assertThat(a.getUgTeamId()).isEqualTo(3L);
+        verify(inventoryRepo, never()).save(any());
+        verify(monitorHistory, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any(jakarta.servlet.http.HttpSession.class));
+
+        mvc.perform(post("/api/admin/inventory/23/transfer-ug").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ug_team_id\":null}"))
+                .andExpect(status().isOk());
+        assertThat(a.getUgTeamId()).isNull();
+    }
+
+    @Test
+    @DisplayName("Ek 3/5: çöp kutusundaki kayda DÜZ SY / UG aktarımı 409 — UPDATE satırı kaydı ürün geçmişinde 'canlı'ya çevirmez")
+    void transfer_deletedRecord_409_nothingChanges() throws Exception {
+        CertificateInventory d = inventory("gone.example.com"); d.setId(31L); d.setTeamId(1L); d.setUgTeamId(3L);
+        d.setDeletedAt("2026-09-20T10:00:00"); d.setActive(false);
+        when(inventoryRepo.findById(31L)).thenReturn(Optional.of(d));
+        mvc.perform(post("/api/admin/inventory/31/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":9}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").isNotEmpty());
+        mvc.perform(post("/api/admin/inventory/31/transfer-ug").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"ug_team_id\":9}"))
+                .andExpect(status().isConflict());
+        assertThat(d.getTeamId()).isEqualTo(1L);
+        assertThat(d.getUgTeamId()).isEqualTo(3L);
+        assertThat(d.getDeletedAt()).isNotNull();
+        verify(inventoryRepo, never()).save(any());
+        verify(derivedMonitorTeamSync, never()).syncTeam(any(), any());
+        verify(monitorHistory, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any(jakarta.servlet.http.HttpSession.class));
+    }
+
+    @Test
+    @DisplayName("Ek 3/5: restore:true — çöp kutusundaki kayıt TEK adımda geri yüklenip aktarılır; tek RESTORE satırı; geri yükleme kapısı")
+    void transfer_deletedRecord_restoreTrue_restoresAndTransfers() throws Exception {
+        CertificateInventory d = inventory("back.example.com"); d.setId(32L); d.setTeamId(1L);
+        d.setDeletedAt("2026-09-20T10:00:00"); d.setActive(false);
+        when(inventoryRepo.findById(32L)).thenReturn(Optional.of(d));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc.perform(post("/api/admin/inventory/32/transfer").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"team_id\":9,\"restore\":true}"))
+                .andExpect(status().isOk());
+        assertThat(d.getTeamId()).isEqualTo(9L);
+        assertThat(d.getDeletedAt()).isNull();
+        assertThat(d.getActive()).isTrue();
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("inventory.crud"), eq("edit"));
+        verify(monitorHistory).record(eq("INVENTORY"), eq(32L), eq("back.example.com"), eq(9L), eq("RESTORE"),
+                any(), any(), isNull(), any(jakarta.servlet.http.HttpSession.class));
+        verify(monitorHistory, never()).record(any(), any(), any(), any(), eq("UPDATE"), any(), any(), any(), any(jakarta.servlet.http.HttpSession.class));
+        verify(derivedMonitorTeamSync).syncTeam("back.example.com", 9L);
+    }
+
+    @Test
+    @DisplayName("ugTeamId anlık görüntüde: UG takımına DOKUNMAYAN toplu işlemde sahte 'UG takımı değişti' farkı YOK")
+    @SuppressWarnings("unchecked")
+    void bulkTier_withUgTeam_noSpuriousUgDiff() throws Exception {
+        CertificateInventory a = inventory("ug2.example.com"); a.setId(22L); a.setTeamId(1L); a.setUgTeamId(3L); a.setTier(2);
+        when(inventoryRepo.findById(22L)).thenReturn(Optional.of(a));
+        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(post("/api/admin/inventory/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set-tier\",\"ids\":[22],\"tier\":1}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+        verify(monitorHistory).record(eq("INVENTORY"), eq(22L), any(), any(), eq("UPDATE"),
+                before.capture(), after.capture(), any(), any(jakarta.servlet.http.HttpSession.class));
+        assertThat(before.getValue()).containsEntry("ugTeamId", 3L);
+        assertThat(after.getValue()).containsEntry("ugTeamId", 3L);
+        assertThat(com.sitemonitor.service.MonitorHistoryService.changedFields(
+                com.sitemonitor.service.AuditDiff.diff(before.getValue(), after.getValue()))).containsExactly("tier");
+    }
+
+    @Test
+    @DisplayName("bulk: geçmiş satırı silmeyle AYNI işlemde — uç @Transactional (geri alınan toplu işlem 'silindi' izi bırakmaz)")
+    void bulkInventoryAction_isTransactional() throws Exception {
+        java.lang.reflect.Method m = AdminController.class.getMethod("bulkInventoryAction",
+                Map.class, jakarta.servlet.http.HttpSession.class, jakarta.servlet.http.HttpServletRequest.class);
+        assertThat(m.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class)).isTrue();
     }
 
     // ── Thresholds ────────────────────────────────────────────────────────────
@@ -1328,6 +1601,21 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("2026-09-28: bağlı kaydı olan takım silinmez (409, izlemeler sahipsiz kalmaz); etki boşsa silinir")
+    void deleteTeam_withLinkedRecords_returns409() throws Exception {
+        when(teamAdminService.impact(7L)).thenReturn(Map.of("monitors_by_type", Map.of("http", 1), "empty", false));
+        mvc.perform(delete("/api/admin/teams/7").session(authSession()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false));
+        verify(userService, never()).deleteTeam(7L);
+
+        when(teamAdminService.impact(8L)).thenReturn(Map.of("empty", true));
+        mvc.perform(delete("/api/admin/teams/8").session(authSession()))
+                .andExpect(status().isOk());
+        verify(userService).deleteTeam(8L);
+    }
+
+    @Test
     @DisplayName("POST/DELETE /teams/{id}/members: üyelik kümesi updateUser ile yazılır; son takım çıkarılamaz (409)")
     void teamMembers() throws Exception {
         AppUser u = new AppUser(); u.setId(42L); u.setUsername("ali"); u.setSystemRole("USER"); u.setTeamId(9L);
@@ -1368,6 +1656,23 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.team_name").value("Takım A"))
                 .andExpect(jsonPath("$.data.push").isArray());
+    }
+
+    @Test
+    @DisplayName("GET /recipients/simulate?ugTeamId: UG servise geçer; kapsamlı kullanıcı görüş alanı dışındaki UG'yi soramaz (404)")
+    void simulateRecipients_ugTeam_scoped() throws Exception {
+        when(escalationService.simulateRecipients(2L, "HIGH", false, null, 5L))
+                .thenReturn(new java.util.LinkedHashMap<>(Map.of("level", "HIGH", "email_total", 3L)));
+        when(userPushRecipientResolver.explain(2L, "HIGH")).thenReturn(List.of());
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").param("ugTeamId", "5").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.email_total").value(3));
+        verify(escalationService).simulateRecipients(2L, "HIGH", false, null, 5L);
+
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").param("ugTeamId", "5")
+                        .session(scopedAdminSession()))
+                .andExpect(status().isNotFound());   // UG = başka takım → kişileri sızmasın
+        verify(escalationService, org.mockito.Mockito.times(1)).simulateRecipients(anyLong(), org.mockito.ArgumentMatchers.anyString(), anyBoolean(), any(), anyLong());
     }
 
     /** Push ayağı (2026-09-28): kişi satırları görünürlüğe göre; tel biçimi snake_case, telefon/adres yok. */
@@ -1559,6 +1864,19 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("2026-09-28: global yönetici takımsız kişi ekleyemez → 400 gerekçeli, kayıt yok (alfabetik ilk takıma DÜŞMEZ)")
+    void addContact_globalAdmin_noTeam_returns400() throws Exception {
+        stubFirstTeamIsForeign();
+        mvc.perform(post("/api/admin/contacts").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"MANAGER\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("takım")));
+        verify(contactRepo, never()).save(any());
+    }
+
+    @Test
     @DisplayName("F1: kapsamlı müdür kişiyi YÖNETMEDİĞİ takıma taşıyamaz (403, kayıt yok); yönettiği takıma taşır")
     void updateContact_scopedAdmin_moveRespectsManageScope() throws Exception {
         EscalationContact existing = contact("po@example.com", "PO"); existing.setId(9L); existing.setTeamId(2L);
@@ -1646,6 +1964,35 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.total_pages").value(1))
                 .andExpect(jsonPath("$.types[0]").value("TEAM_CREATE"))
                 .andExpect(jsonPath("$.truncated").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /history (2026-09-28c): eylemi yapanın IP'si kimlik izi — kapsamlı müdür / USER'da düşer (satır işaretli); global admin / AUDIT görür")
+    void adminHistory_masksActorIpForNonGlobal() throws Exception {
+        com.sitemonitor.model.AuditLog row = new com.sitemonitor.model.AuditLog();
+        row.setId(12L); row.setEventType("TEAM_UPDATE"); row.setEventTime("2026-09-20T10:00:00");
+        row.setActor("baskasi"); row.setResourceType("TEAM"); row.setResourceId("2"); row.setDetail("Takım A");
+        row.setIpAddress("203.0.113.88");
+        when(adminHistoryService.history(eq("TEAM"), isNull(), isNull(), any(), eq(0), eq(25)))
+                .thenReturn(new com.sitemonitor.service.AdminHistoryService.History(
+                        List.of(new com.sitemonitor.service.AdminHistoryService.Entry(row, 2L)), 1, 0, 25, false, 0));
+        for (MockHttpSession s : List.of(scopedAdminSession(), userSession())) {
+            String body = mvc.perform(get("/api/admin/history").param("resource", "TEAM").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items[0].ip").doesNotExist())
+                    .andExpect(jsonPath("$.items[0].identity_masked").value(true))
+                    .andExpect(jsonPath("$.items[0].actor").value("baskasi"))
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(body).doesNotContain("203.0.113.88");
+        }
+        MockHttpSession audit = authSession();
+        audit.setAttribute("systemRole", "AUDIT");
+        for (MockHttpSession s : List.of(authSession(), audit)) {
+            mvc.perform(get("/api/admin/history").param("resource", "TEAM").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items[0].ip").value("203.0.113.88"))
+                    .andExpect(jsonPath("$.identity_masked").value(false));
+        }
     }
 
     @Test
@@ -1778,6 +2125,7 @@ class AdminControllerTest {
     @Test
     @DisplayName("POST /api/admin/contacts creates new contact")
     void addContact_authenticated_returns200() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); when(teamRepo.findById(1L)).thenReturn(Optional.of(t1));   // takım var (2026-09-28)
         EscalationContact saved = contact("new@test.com", "TECH");
         saved.setId(1L);
         when(contactRepo.save(any())).thenReturn(saved);
@@ -1785,7 +2133,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/contacts")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\":\"Test User\",\"email\":\"new@test.com\",\"role\":\"TECH\",\"minAlertLevel\":\"WARNING\"}"))
+                        .content("{\"name\":\"Test User\",\"email\":\"new@test.com\",\"role\":\"TECH\",\"minAlertLevel\":\"WARNING\",\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
@@ -1824,7 +2172,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts returns paginated alerts by default")
     void listAlerts_allAlerts_returns200() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
@@ -1838,9 +2186,9 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts?alertType=ACCESSIBILITY filters by type and returns type_counts")
     void listAlerts_alertTypeFilter_passedToQueryWithCounts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
                 eq("ACCESSIBILITY"), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(empty);
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(List.of(
                         new Object[]{"EXPIRY", 8L},
                         new Object[]{"ACCESSIBILITY", 2L}));
@@ -1851,7 +2199,7 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.type_counts.EXPIRY").value(8))
                 .andExpect(jsonPath("$.type_counts.ACCESSIBILITY").value(2));
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
                 eq("ACCESSIBILITY"), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1866,19 +2214,19 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts?alertTypes=A,B → sorguya TIP KAPSAMI gecer")
     void listAlerts_alertTypes_scopesQuery() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts?alertTypes=PAGESPEED_DOWN,PAGESPEED_SLOW").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(List.of("PAGESPEED_DOWN", "PAGESPEED_SLOW")),
                 any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
         // Tip cipleri de AYNI kapsamda sayilmali; aksi halde ekranda gorunmeyen bir tip icin
         // "SSL Sertifika Sorunu: 1" cipi cikardi.
-        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(List.of("PAGESPEED_DOWN", "PAGESPEED_SLOW")),
                 any(), any(), any(), any(), anyBoolean(), any());
     }
@@ -1887,13 +2235,13 @@ class AdminControllerTest {
     @DisplayName("alertTypes VERILMEZSE tip kapsami UYGULANMAZ (bagimsiz Alarm Gecmisi ekrani)")
     void listAlerts_noAlertTypes_noTypeScope() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession())).andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 eq(false), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1901,7 +2249,7 @@ class AdminControllerTest {
     @DisplayName("alertTypes SERBEST METIN degil: gecersiz jetonlar elenir, gecerliler kalir")
     void listAlerts_alertTypes_sanitised() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
@@ -1911,7 +2259,7 @@ class AdminControllerTest {
                 .andExpect(status().isOk());
 
         // Tekrar eden PAGE_DOWN bir kez; "DROP;TABLE" elendi.
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(List.of("PAGE_DOWN")),
                 any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
@@ -1925,7 +2273,7 @@ class AdminControllerTest {
         // kullanicinin bildirdigi hata geri gelir. Gorunur bir bos liste, sessiz bir sizintidan
         // iyidir.
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
@@ -1933,7 +2281,7 @@ class AdminControllerTest {
                 .andExpect(status().isOk());
 
         // typeScoped=TRUE + hicbir seye uymayan sentinel liste → sorgu bos doner.
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(),
                 eq(true), eq(List.of("-")),
                 any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
@@ -1942,7 +2290,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts without alertType passes null to query")
     void listAlerts_noAlertType_passesNull() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts").session(authSession()))
@@ -1950,7 +2298,7 @@ class AdminControllerTest {
 
         // alertType + dort YENI filtre (q/level/acknowledged/teamId) verilmediginde hepsi NULL
         // gitmeli: bos string ya da "" gecerse sorgu her seyi eler ve ekran bos gorunur.
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(),
                 isNull(), anyBoolean(), any(), isNull(), isNull(), isNull(), isNull(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -1958,7 +2306,7 @@ class AdminControllerTest {
     @DisplayName("GET /api/admin/alerts?onlyOpen=true returns only open alerts")
     void listAlerts_onlyOpen_returnsOpenAlerts() throws Exception {
         Page<AlertEvent> empty = new PageImpl<>(Collections.emptyList());
-        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(eq(Boolean.FALSE), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(empty);
 
         mvc.perform(get("/api/admin/alerts?onlyOpen=true").session(authSession()))
@@ -1985,7 +2333,7 @@ class AdminControllerTest {
         Team sy = new Team(); sy.setId(7L); sy.setName("SY-Team-A");
         Team ug = new Team(); ug.setId(8L); ug.setName("UG-Team-B");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(List.of(inv));
         when(teamRepo.findAllById(any())).thenReturn(List.of(sy, ug));
@@ -2010,7 +2358,7 @@ class AdminControllerTest {
         ev.setAlertType("EXPIRY");
         ev.setAlertLevel("WARNING");
 
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(ev)));
         when(inventoryRepo.findByDomainIn(any())).thenReturn(Collections.emptyList());
         when(notificationLogRepo.countByAlertIds(any())).thenReturn(Collections.emptyList());
@@ -2441,6 +2789,7 @@ class AdminControllerTest {
     @Test
     @DisplayName("POST /api/admin/contacts with user_id populates name/email from user")
     void addContact_withUserId_populatesNameEmailFromUser() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); when(teamRepo.findById(1L)).thenReturn(Optional.of(t1));   // takım var (2026-09-28)
         AppUser linkedUser = new AppUser();
         linkedUser.setId(10L);
         linkedUser.setUsername("dana");
@@ -2460,7 +2809,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/contacts")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"user_id\":10,\"role\":\"TECH\",\"min_alert_level\":\"WARNING\"}"))
+                        .content("{\"user_id\":10,\"role\":\"TECH\",\"min_alert_level\":\"WARNING\",\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
@@ -2470,6 +2819,7 @@ class AdminControllerTest {
     @Test
     @DisplayName("POST /api/admin/contacts with unknown user_id still saves contact")
     void addContact_withUnknownUserId_stillSaves() throws Exception {
+        Team t1 = new Team(); t1.setId(1L); when(teamRepo.findById(1L)).thenReturn(Optional.of(t1));   // takım var (2026-09-28)
         when(userRepo.findById(999L)).thenReturn(Optional.empty());
 
         EscalationContact saved = new EscalationContact();
@@ -2482,7 +2832,7 @@ class AdminControllerTest {
         mvc.perform(post("/api/admin/contacts")
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"user_id\":999,\"role\":\"PO\",\"min_alert_level\":\"HIGH\"}"))
+                        .content("{\"user_id\":999,\"role\":\"PO\",\"min_alert_level\":\"HIGH\",\"team_id\":1}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
     }
@@ -2524,15 +2874,15 @@ class AdminControllerTest {
     @Test
     @DisplayName("GET /api/admin/alerts as USER → sorguya takım kapsamı (scoped=true, scope=[2]) geçer")
     void listAlerts_asUser_passesScope() throws Exception {
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(Collections.emptyList()));
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Collections.emptyList());
 
         mvc.perform(get("/api/admin/alerts").session(userSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 eq(true), eq(java.util.List.of(2L)), any(Pageable.class));
     }
 
@@ -3274,7 +3624,7 @@ class AdminControllerTest {
     // süzer, sayfalamayla "3 sonuç" derken aslında 90 sonuç olur — yanıltıcı.
 
     private void stubEmptyAlerts() {
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(Collections.emptyList()));
     }
 
@@ -3286,7 +3636,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?q=Example").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%example%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -3299,7 +3649,7 @@ class AdminControllerTest {
                 .andExpect(status().isOk());
 
         // '%' ve '_' kullanıcı verisidir, joker DEĞİL: kaçışlanmazsa "%" araması TÜM kayıtları getirir
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%!%!_a%"), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -3311,7 +3661,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts").param("q", "   ").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 isNull(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -3323,7 +3673,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?level=critical").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 any(), eq("CRITICAL"), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -3335,7 +3685,7 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/alerts?acknowledged=false&teamId=7").session(authSession()))
                 .andExpect(status().isOk());
 
-        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 any(), any(), eq(Boolean.FALSE), eq(7L), anyBoolean(), any(), any(Pageable.class));
     }
 
@@ -3343,7 +3693,7 @@ class AdminControllerTest {
     @DisplayName("Tip SAYAÇLARI yeni filtreleri dikkate alır ama tip filtresinden BAĞIMSIZ kalır")
     void listAlerts_typeCountsHonourNewFiltersButNotType() throws Exception {
         stubEmptyAlerts();
-        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
+        when(alertEventRepo.countFilteredByType(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(),
                 anyBoolean(), any())).thenReturn(List.<Object[]>of(new Object[]{"EXPIRY", 3L}));
 
         mvc.perform(get("/api/admin/alerts?alertType=EXPIRY&q=ak&level=HIGH").session(authSession()))
@@ -3352,8 +3702,77 @@ class AdminControllerTest {
 
         // Sayaç sorgusunda alertType YOK (imzada zaten yok) ama q/level VAR:
         // aksi halde arama yapınca rozet sayıları toplamla çelişirdi.
-        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
+        org.mockito.Mockito.verify(alertEventRepo).countFilteredByType(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(),
                 eq("%ak%"), eq("HIGH"), any(), any(), anyBoolean(), any());
+    }
+
+    // ── "Aralıkta aktif olanlar" kipi (2026-09-28, regresyon B3) ──────────────
+    //
+    // Haftalık e-posta "Haftanın alarmları"nı hafta içinde AÇIK olan tüm alarmlar olarak sayar (önceki haftadan
+    // devredenler dahil) ve Alarm Geçmişi'ni range=active ile açar. Kip YALNIZ tarih yüklemini değiştirir: since
+    // açılış alt sınırı olmaktan çıkar, aktiflik alt sınırı (activeFrom) olur; until açılış üst sınırı kalır. Yüklemin
+    // kendisi gerçek SQL'de AlertActiveRangeQueryTest'te sınanır.
+
+    private static final String WEEK_FROM = "2026-09-20T21:00:00", WEEK_TO = "2026-09-27T20:59:59";
+
+    @Test
+    @DisplayName("range=active: since → aktiflik sınırı (açılış süzgeci null), until açılışta kalır; liste + tip + faset sayaçları aynı kipte")
+    void listAlerts_rangeActive_usesOverlapWindow() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts").param("since", WEEK_FROM).param("until", WEEK_TO).param("range", "active")
+                        .session(authSession()))
+                .andExpect(status().isOk());
+
+        verify(alertEventRepo).findFiltered(any(), isNull(), eq(WEEK_TO), any(), any(), eq(WEEK_FROM), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+        verify(alertEventRepo).countFilteredByType(any(), isNull(), eq(WEEK_TO), any(), any(), eq(WEEK_FROM), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any());
+        verify(alertEventRepo).countFacets(any(), isNull(), eq(WEEK_TO), any(), any(), eq(WEEK_FROM), any(), any(),
+                anyBoolean(), any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("range YOK / tanınmayan değer: eski davranış birebir — since açılış alt sınırı, aktiflik süzgeci null")
+    void listAlerts_defaultRange_isOpenedInRange() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts").param("since", WEEK_FROM).param("until", WEEK_TO).session(authSession()))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/admin/alerts").param("since", WEEK_FROM).param("until", WEEK_TO).param("range", "opened")
+                        .session(authSession()))
+                .andExpect(status().isOk());
+
+        verify(alertEventRepo, org.mockito.Mockito.times(2)).findFiltered(any(), eq(WEEK_FROM), eq(WEEK_TO), any(), any(), isNull(),
+                any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+        verify(alertEventRepo, never()).findFiltered(any(), any(), any(), any(), any(), eq(WEEK_FROM),
+                any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("range=active kapsamı GEVŞETMEZ: kapsamlı müdür (ADMIN + viewTeamIds=[2]) yine yalnız takım 2 ile sorgular; e-postanın team= süzgeci kapsamı genişletmez")
+    void listAlerts_rangeActive_keepsScopedAdminScope() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts").param("since", WEEK_FROM).param("until", WEEK_TO).param("range", "active")
+                        .param("teamId", "7").session(scopedAdminSession()))
+                .andExpect(status().isOk());
+
+        verify(alertEventRepo).findFiltered(any(), isNull(), eq(WEEK_TO), any(), any(), eq(WEEK_FROM), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), eq(7L), eq(true), eq(List.of(2L)), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("CSV dışa aktarım ekranla AYNI kipte: range=active → aktiflik sınırı, açılış süzgeci null")
+    void exportAlerts_rangeActive_sameWindowAsList() throws Exception {
+        stubEmptyAlerts();
+
+        mvc.perform(get("/api/admin/alerts/export").param("since", WEEK_FROM).param("until", WEEK_TO).param("range", "active")
+                        .session(authSession()))
+                .andExpect(status().isOk());
+
+        verify(alertEventRepo).findFiltered(any(), isNull(), eq(WEEK_TO), any(), any(), eq(WEEK_FROM), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class));
     }
 
 
@@ -3489,7 +3908,7 @@ class AdminControllerTest {
         com.sitemonitor.model.LatestCheck la = new com.sitemonitor.model.LatestCheck(); la.setDomain("a.example.com"); la.setNotAfter("2026-12-31T23:59:59");
         com.sitemonitor.model.LatestCheck lb = new com.sitemonitor.model.LatestCheck(); lb.setDomain("b.example.com"); lb.setNotAfter("2026-10-05T10:00:00");
         when(latestCheckRepo.findByDomainIn(any())).thenReturn(java.util.List.of(la, lb));
-        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(org.springframework.data.domain.Pageable.class)))
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(org.springframework.data.domain.Pageable.class)))
                 .thenReturn(new PageImpl<>(java.util.List.of(stamped, legacy)));
 
         mvc.perform(get("/api/admin/alerts?resolved=true").session(authSession()))

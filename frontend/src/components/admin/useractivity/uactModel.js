@@ -148,18 +148,31 @@ export function sortRows(rows, col, dir) {
   return arr
 }
 
-/** CSV'ler — hücre kaçışı utils/csv.js'te (csvRows). BOM'u çağıran ekler. */
-export function sessionsCsv(rows, t) {
-  const head = [t('uact.colUser'), t('uact.colRole'), t('uact.colTeam'), t('uact.colLoginAt'), t('uact.colDuration'), t('uact.colIdle'), t('uact.colLastTab'), t('uact.colIp'), t('uact.colLocation'), t('uact.colBrowser')]
-  return csvRows([head, ...(rows || []).map((u) => [u.username, u.system_role, u.team_name, u.login_at, u.duration_min, u.idle_sec, u.last_tab, u.ip, [u.city, u.country].filter(Boolean).join(', '), u.user_agent])])
+/**
+ * Kimlik izi (IP / konum / kuruluş / ters DNS / tarayıcı) bu görüntüleyici için sunucuda DÜŞÜRÜLDÜ mü (2026-09-28c)?
+ * Sunucu `identity_masked: true` gönderir ve alanları HİÇ göndermez (null değil) — kişinin kendi satırı hariç. Satır
+ * anahtarı taşıyorsa (kendi satırı / global görüntüleyici) değer çizilir; taşımıyorsa "Gizli" — boş / "—" DEĞİL
+ * ("kayıt yok" ile "görme yetkin yok" aynı ekrana düşmesin).
+ */
+export function idHidden(row, key, masked) {
+  return !!masked && (row == null || typeof row !== 'object' || !(key in row))
+}
+
+/** CSV'ler — hücre kaçışı utils/csv.js'te (csvRows). BOM'u çağıran ekler. `masked`: kimlik izi sütunları hiç yazılmaz. */
+export function sessionsCsv(rows, t, { masked = false } = {}) {
+  const head = [t('uact.colUser'), t('uact.colRole'), t('uact.colTeam'), t('uact.colLoginAt'), t('uact.colDuration'), t('uact.colIdle'), t('uact.colLastTab'),
+    ...(masked ? [] : [t('uact.colIp'), t('uact.colLocation'), t('uact.colBrowser')])]
+  return csvRows([head, ...(rows || []).map((u) => [u.username, u.system_role, u.team_name, u.login_at, u.duration_min, u.idle_sec, u.last_tab,
+    ...(masked ? [] : [u.ip, [u.city, u.country].filter(Boolean).join(', '), u.user_agent])])])
 }
 export function loginStatusCsv(rows, t) {
   const head = [t('uact.colUser'), t('uact.colRole'), t('uact.colTeam'), t('uact.colLastLogin'), t('uact.colPrevLogin'), t('uact.colLastFailed'), t('uact.colFailedCount'), t('uact.detailLoginMethod')]
   return csvRows([head, ...(rows || []).map((r) => [r.username, r.system_role, r.team_name, r.last_login_at, r.prev_login_at, r.last_failed_at, r.failed_since_login ?? 0, r.last_login_method])])
 }
-export function anomaliesCsv(rows, t) {
-  const head = [t('uact.colTime'), t('uact.colUser'), t('uact.colIp'), t('uact.colLocation'), t('uact.colFlags'), t('uact.colOutcome'), t('uact.colReason'), t('uact.ackCol')]
-  return csvRows([head, ...(rows || []).map((r) => [r.time, r.actor, r.ip, [r.city, r.country].filter(Boolean).join(', '), r.flags, r.outcome, r.reason, r.ack ? `${r.ack.by} ${r.ack.at}` : ''])])
+export function anomaliesCsv(rows, t, { masked = false } = {}) {
+  const head = [t('uact.colTime'), t('uact.colUser'), ...(masked ? [] : [t('uact.colIp'), t('uact.colLocation')]), t('uact.colFlags'), t('uact.colOutcome'), t('uact.colReason'), t('uact.ackCol')]
+  return csvRows([head, ...(rows || []).map((r) => [r.time, r.actor, ...(masked ? [] : [r.ip, [r.city, r.country].filter(Boolean).join(', ')]),
+    r.flags, r.outcome, r.reason, r.ack ? `${r.ack.by} ${r.ack.at}` : ''])])
 }
 export function usageCsv(pages, t) {
   const head = [t('uact.colPage'), t('uact.colMinutes'), t('uact.colUsers'), t('uact.colShare'), t('uact.colLastSeen')]

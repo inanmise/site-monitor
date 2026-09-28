@@ -448,8 +448,56 @@ class HistoryQueryGrammarTest {
                 .containsExactly("N23456=3", "N22222=2");
 
         // Silinmiş kimlikler: yalnız DELETE satırı olan (PORT 2); DNS 1 aynı kimlik ama silinmemiş.
-        assertThat(changeRepo.findDeletedAmong(List.of(1L, 2L)))
+        assertThat(changeRepo.findDeletedAmong(List.of("PORT", "DNS"), List.of(1L, 2L)))
                 .extracting(r -> r[0] + ":" + r[1]).containsExactly("PORT:2");
+    }
+
+    /**
+     * 2026-09-28 regresyon B1: "silinmiş" = kaynağın EN SON geçmiş satırı DELETE. Eskiden herhangi bir DELETE yetiyordu —
+     * çöp kutusundan geri yüklenen envanter kaydı canlıyken "silinmiş" rozeti taşıyordu. Sıra {@code (createdAt, id)}:
+     * geri doldurmanın ESKİ zamanlı ama YENİ kimlikli satırı "en yeni" sayılmaz; aynı saniyede {@code id} ayırır.
+     */
+    @Test
+    @DisplayName("silinmiş hükmü: sil → geri yükle CANLI, yalnız sil / geri yükle → sil SİLİNMİŞ, başka türün aynı kimliği karışmaz")
+    void deletedAmong_latestLifecycleEventDecides() {
+        // saveAll sırası = kimlik sırası (IDENTITY) — aşağıdaki "aynı saniye" ve "geri doldurma" vakaları buna dayanır.
+        changeRepo.saveAll(List.of(
+                // INVENTORY 1: oluştur → sil → geri yükle ⇒ CANLI
+                chg("INVENTORY", 1L, "a.example.com", "CREATE", 5L, "N10001", "2026-08-01T09:00:00"),
+                chg("INVENTORY", 1L, "a.example.com", "DELETE", 5L, "N10001", "2026-08-02T09:00:00"),
+                chg("INVENTORY", 1L, "a.example.com", "RESTORE", 5L, "N10001", "2026-08-03T09:00:00"),
+                // INVENTORY 2: yalnız sil ⇒ SİLİNMİŞ
+                chg("INVENTORY", 2L, "b.example.com", "CREATE", 5L, "N10001", "2026-08-01T09:00:00"),
+                chg("INVENTORY", 2L, "b.example.com", "DELETE", 5L, "N10001", "2026-08-02T09:00:00"),
+                // INVENTORY 3: sil → geri yükle → yeniden sil ⇒ SİLİNMİŞ
+                chg("INVENTORY", 3L, "c.example.com", "DELETE", 5L, "N10001", "2026-08-02T09:00:00"),
+                chg("INVENTORY", 3L, "c.example.com", "RESTORE", 5L, "N10001", "2026-08-03T09:00:00"),
+                chg("INVENTORY", 3L, "c.example.com", "DELETE", 5L, "N10001", "2026-08-04T09:00:00"),
+                // PORT 1 — INVENTORY 1 ile AYNI kimlik, başka tür; silmesi INVENTORY 1'in geri yüklemesinden ÖNCE.
+                // Alt sorgu türü eşlemeseydi INVENTORY 1'in RESTORE'u PORT 1'i "canlı" gösterirdi ⇒ SİLİNMİŞ kalmalı.
+                chg("PORT", 1L, "Port A", "DELETE", 5L, "N10001", "2026-08-02T10:00:00"),
+                // PORT 2: envanter-türevi "silme" (duraklatma) → sürdürme güncellemesi ⇒ CANLI
+                chg("PORT", 2L, "Port B", "DELETE", 5L, "N10001", "2026-08-02T09:00:00"),
+                chg("PORT", 2L, "Port B", "UPDATE", 5L, "N10001", "2026-08-05T09:00:00"),
+                // DNS 4: sil → AYNI saniyede aynı kimlikle yeniden oluştur (standalone canlandırma) ⇒ CANLI (id ayırır)
+                chg("DNS", 4L, "d.example.com", "DELETE", 5L, "N10001", "2026-08-06T09:00:00"),
+                chg("DNS", 4L, "d.example.com", "CREATE", 5L, "N10001", "2026-08-06T09:00:00"),
+                // PAGESPEED 6: canlı DELETE önce yazıldı, geri doldurma ESKİ bir güncellemeyi SONRA (yüksek kimlikle)
+                // taşıdı ⇒ yalnız kimliğe bakan bir hüküm onu "canlı" sanırdı; SİLİNMİŞ kalmalı.
+                chg("PAGESPEED", 6L, "Hız ölçümü", "DELETE", 5L, "N10001", "2026-08-06T09:00:00"),
+                chg("PAGESPEED", 6L, "Hız ölçümü", "UPDATE", 5L, "N10001", "2026-07-15T09:00:00")));
+
+        List<String> kinds = List.of("INVENTORY", "PORT", "DNS", "PAGESPEED");
+        assertThat(changeRepo.findDeletedAmong(kinds, List.of(1L, 2L, 3L, 4L, 6L)))
+                .extracting(r -> r[0] + ":" + r[1])
+                .containsExactlyInAnyOrder("INVENTORY:2", "INVENTORY:3", "PORT:1", "PAGESPEED:6");
+
+        // Tür listesi de süzer: yalnız envanter sorulunca aynı kimlikli PORT 1 dönmez.
+        assertThat(changeRepo.findDeletedAmong(List.of("INVENTORY"), List.of(1L, 2L)))
+                .extracting(r -> r[0] + ":" + r[1]).containsExactly("INVENTORY:2");
+        // Sorulmayan kimlik dönmez; hiç geçmişi olmayan kimlik silinmiş sayılmaz.
+        assertThat(changeRepo.findDeletedAmong(kinds, List.of(1L, 99L)))
+                .extracting(r -> r[0] + ":" + r[1]).containsExactly("PORT:1");
     }
 
     /** Ekip üyesinin (kimlik 41) BAŞKA takımın (9) izlemesinde yaptığı değişiklik — R1: takım 5'e görünmez. */

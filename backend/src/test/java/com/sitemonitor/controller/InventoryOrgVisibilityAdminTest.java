@@ -201,6 +201,7 @@ class InventoryOrgVisibilityAdminTest {
 
     @BeforeEach
     void setUp() {
+        when(teamRepo.existsById(anyLong())).thenReturn(true);   // O3 varlık denetimi: varsayılan 'takım var'
         own = inv(1L, "own.example.com", OWN_TEAM);
         own.setCreatedIp("10.0.0.1");
         foreign = inv(2L, "foreign.example.com", FOREIGN_TEAM);
@@ -364,6 +365,85 @@ class InventoryOrgVisibilityAdminTest {
         mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "foreign.example.com").session(user()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.domain").doesNotExist());
+    }
+
+    // ══ OKUMA: bildirim grubunun ADI (2026-09-28) ═══════════════════════════════════════════════
+    // Envanter detayı eskiden yalnız notification_group_id alıyordu. Ad YALNIZ grup kayıt için gerçekten uygulanıyorsa
+    // (aktif + kaydın takımına ait) ve çağıran onu okuyabiliyorsa (notification.groups/view + takım görüş kapsamı) yazılır.
+
+    private static NotificationGroup group(long id, long teamId, String name, boolean active) {
+        NotificationGroup g = new NotificationGroup();
+        g.setId(id); g.setTeamId(teamId); g.setName(name); g.setActive(active);
+        return g;
+    }
+
+    private void groupsReadable(boolean allowed, NotificationGroup... groups) {
+        when(permissionService.allows(any(HttpSession.class), eq("notification.groups"), eq("view"))).thenReturn(allowed);
+        when(notificationGroupRepo.findAllById(any())).thenReturn(List.of(groups));
+    }
+
+    @Test
+    @DisplayName("by-domain: kendi kaydının grubu ADIYLA döner; org geneli okunan başka takımın grubu adsız (kimlik kalır) — global görücü ikisini de görür")
+    void byDomain_notificationGroupName_onlyForReadableGroups() throws Exception {
+        own.setNotificationGroupId(21L);
+        foreign.setNotificationGroupId(22L);
+        groupsReadable(true, group(21L, OWN_TEAM, "Nöbet A", true), group(22L, FOREIGN_TEAM, "Nöbet B", true));
+
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "own.example.com").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notification_group_id").value(21))
+                .andExpect(jsonPath("$.data.notification_group_name").value("Nöbet A"));
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "foreign.example.com").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notification_group_id").value(22))
+                .andExpect(jsonPath("$.data.notification_group_name").doesNotExist());
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "foreign.example.com").session(globalAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.notification_group_name").value("Nöbet B"));
+    }
+
+    @Test
+    @DisplayName("by-domain: pasif grup, kaydın takımına AİT OLMAYAN grup ve izin yokluğu → ad yazılmaz (izin yoksa grup sorgusu da yok)")
+    void byDomain_notificationGroupName_hiddenWhenNotApplied() throws Exception {
+        own.setNotificationGroupId(21L);
+        groupsReadable(true, group(21L, OWN_TEAM, "Nöbet A", false));
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "own.example.com").session(globalAdmin()))
+                .andExpect(jsonPath("$.data.notification_group_name").doesNotExist());
+
+        groupsReadable(true, group(21L, FOREIGN_TEAM, "Nöbet B", true));   // takım aktarımından kalan yabancı grup
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "own.example.com").session(globalAdmin()))
+                .andExpect(jsonPath("$.data.notification_group_name").doesNotExist());
+
+        org.mockito.Mockito.clearInvocations(notificationGroupRepo);
+        groupsReadable(false, group(21L, OWN_TEAM, "Nöbet A", true));
+        mvc.perform(get("/api/admin/inventory/by-domain").param("domain", "own.example.com").session(user()))
+                .andExpect(jsonPath("$.data.notification_group_id").value(21))
+                .andExpect(jsonPath("$.data.notification_group_name").doesNotExist());
+        verify(notificationGroupRepo, never()).findAllById(any());
+    }
+
+    @Test
+    @DisplayName("liste: grup adları TEK sorguda çözülür (satır başına sorgu yok); grup seçilmemiş listede sorgu hiç yok")
+    void list_notificationGroupNames_singleQuery() throws Exception {
+        own.setNotificationGroupId(21L);
+        foreign.setNotificationGroupId(22L);
+        groupsReadable(true, group(21L, OWN_TEAM, "Nöbet A", true), group(22L, FOREIGN_TEAM, "Nöbet B", true));
+
+        mvc.perform(get("/api/admin/inventory").param("scope", "all").session(user()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].domain").value("foreign.example.com"))
+                .andExpect(jsonPath("$.data[0].notification_group_name").doesNotExist())
+                .andExpect(jsonPath("$.data[1].domain").value("own.example.com"))
+                .andExpect(jsonPath("$.data[1].notification_group_name").value("Nöbet A"));
+        verify(notificationGroupRepo, times(1)).findAllById(any());
+        verify(notificationGroupRepo, never()).findById(any());
+
+        own.setNotificationGroupId(null);
+        foreign.setNotificationGroupId(null);
+        org.mockito.Mockito.clearInvocations(notificationGroupRepo);
+        mvc.perform(get("/api/admin/inventory").param("scope", "all").session(user()))
+                .andExpect(status().isOk());
+        verify(notificationGroupRepo, never()).findAllById(any());
     }
 
     // ══ YAZMA: her yol başka takımın kaydını reddeder (ayar AÇIK iken) ════════════════════════════
@@ -700,6 +780,8 @@ class InventoryOrgVisibilityAdminTest {
     @Test
     @DisplayName("aktarım ucu kapısı DEĞİŞMEDİ: USER 403; global admin (+izin) aktarır — mükerrer akışının 'Ekibime aktar' düğmesi bu uca gider")
     void transferEndpoint_permissionsUnchanged() throws Exception {
+        com.sitemonitor.model.Team own = new com.sitemonitor.model.Team(); own.setId(OWN_TEAM);
+        when(teamRepo.findById(OWN_TEAM)).thenReturn(Optional.of(own));   // takım var (2026-09-28)
         mvc.perform(post("/api/admin/inventory/2/transfer").session(user()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"team_id\":5}"))
                 .andExpect(status().isForbidden());

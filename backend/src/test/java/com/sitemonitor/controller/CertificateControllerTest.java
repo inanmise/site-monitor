@@ -154,6 +154,25 @@ class CertificateControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/warnings: satır 7/24 alanlarını GERÇEK tel biçiminde taşır (noc_notify, noc_group_ids — snake_case)")
+    void getWarnings_rowsCarryNocFieldsOnTheWire() throws Exception {
+        CertificateDto on = new CertificateDto();
+        on.setDomain("on.example.com"); on.setNocNotify(true); on.setNocGroupIds(List.of(3L, 7L));
+        CertificateDto off = new CertificateDto();
+        off.setDomain("off.example.com"); off.setNocNotify(false); off.setNocGroupIds(List.of());
+        when(certService.getWarningsForTeams(null)).thenReturn(List.of(on, off));
+
+        mvc.perform(get("/api/warnings").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].noc_notify").value(true))
+                .andExpect(jsonPath("$.data[0].noc_group_ids[0]").value(3))
+                .andExpect(jsonPath("$.data[0].noc_group_ids[1]").value(7))
+                .andExpect(jsonPath("$.data[1].noc_notify").value(false))
+                .andExpect(jsonPath("$.data[1].noc_group_ids").isEmpty())
+                .andExpect(jsonPath("$.data[0].nocNotify").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/stats returns 200 with stats map")
     void getStats_authenticated_returns200() throws Exception {
         when(certService.getStatsForTeams(null)).thenReturn(Map.of("total_certificates", 5));
@@ -243,6 +262,32 @@ class CertificateControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.domain").value("example.com"))
                 .andExpect(jsonPath("$.data").isArray());
+    }
+
+    @Test
+    @DisplayName("GET /api/history/{domain}: zarf kaydın GÜNCEL 7/24 alanlarını taşır — yetki kapısının okuduğu envanter satırından, ek sorgu YOK")
+    void getHistory_envelopeCarriesNocFromTheGateRead() throws Exception {
+        var inv = invOf("example.com", null);
+        inv.setNocNotify(true);
+        inv.setNocGroupIds("4,9");
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(java.util.Optional.of(inv));
+        when(certService.getHistory("example.com", 30)).thenReturn(Collections.emptyList());
+
+        mvc.perform(get("/api/history/example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_notify").value(true))
+                .andExpect(jsonPath("$.noc_group_ids[0]").value(4))
+                .andExpect(jsonPath("$.noc_group_ids[1]").value(9));
+        verify(inventoryRepo, times(1)).findByDomain("example.com");
+        org.mockito.Mockito.verifyNoMoreInteractions(inventoryRepo);
+
+        // Eski satır (iki kolon null): kapalı + varsayılan gruplar — "bilinmiyor" değil, kaydın gerçek durumu
+        when(inventoryRepo.findByDomain("old.example.com")).thenReturn(java.util.Optional.of(invOf("old.example.com", null)));
+        when(certService.getHistory("old.example.com", 30)).thenReturn(Collections.emptyList());
+        mvc.perform(get("/api/history/old.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_notify").value(false))
+                .andExpect(jsonPath("$.noc_group_ids").isEmpty());
     }
 
     // NOT: eski /api/activity (yalnız sertifika) testleri kaldırıldı — endpoint yeni birleşik

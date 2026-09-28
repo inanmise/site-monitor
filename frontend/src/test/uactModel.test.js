@@ -4,7 +4,7 @@ import path from 'node:path'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, hasActiveFilter, rowMatches, TAB_LABEL_KEYS, tabLabel, unusedTabs, idleBand,
   loginStatus, relTime, splitDuration, failedTone, failedRatio, sparkFrom, deltaVsAvg, isOffHourCell, splitFlags, sortRows,
-  sessionsCsv, anomaliesCsv, usageCsv, teamBars,
+  sessionsCsv, anomaliesCsv, usageCsv, teamBars, idHidden,
 } from '../components/admin/useractivity/uactModel.js'
 
 /** Kullanıcı / Oturum paneli saf modeli (2026-09-13) — React'siz. */
@@ -104,5 +104,22 @@ describe('CSV ve çubuklar', () => {
   it('teamBars: en büyük 100, diğerleri orantılı; boş liste güvenli', () => {
     expect(teamBars([{ count: 10 }, { count: 5 }]).map((r) => r.pct)).toEqual([100, 50])
     expect(teamBars([])).toEqual([])
+  })
+})
+
+describe('kimlik izi maskesi (2026-09-28c)', () => {
+  it('idHidden: yalnız maskeli yükte ve anahtar YOKSA gizli; anahtar null olsa da (kayıt yok) gizli DEĞİL', () => {
+    expect(idHidden({ username: 'bob' }, 'ip', true)).toBe(true)
+    expect(idHidden({ username: 'me', ip: '192.0.2.1' }, 'ip', true)).toBe(false)   // kendi satırı
+    expect(idHidden({ ip: null }, 'ip', true)).toBe(false)                          // anahtar var, değer yok → "—"
+    expect(idHidden({ username: 'bob' }, 'ip', false)).toBe(false)                  // global görüntüleyici
+    expect(idHidden(null, 'ip', true)).toBe(true)
+  })
+  it('CSV: maskeliyken IP / konum / tarayıcı sütunları HİÇ yazılmaz (boş sütun değil); maskesizde yazılır', () => {
+    const rows = [{ username: 'bob', ip: '192.0.2.9', city: 'Kent A', user_agent: 'UA/1', time: 'x', actor: 'bob', flags: 'OFF_HOURS' }]
+    expect(sessionsCsv(rows, t, { masked: true })).not.toMatch(/uact\.colIp|192\.0\.2\.9|UA\/1/)
+    expect(sessionsCsv(rows, t)).toMatch(/uact\.colIp[\s\S]*192\.0\.2\.9/)
+    expect(anomaliesCsv(rows, t, { masked: true })).not.toMatch(/uact\.colIp|192\.0\.2\.9|Kent A/)
+    expect(anomaliesCsv(rows, t)).toContain('192.0.2.9')
   })
 })

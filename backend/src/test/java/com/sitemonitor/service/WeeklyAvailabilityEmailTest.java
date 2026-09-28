@@ -182,8 +182,8 @@ class WeeklyAvailabilityEmailTest {
         String html = WeeklyAvailabilitySamples.large().html(svc);
         String t = text(html);
         assertThat(t).contains("+50 domain daha (4 kesintili · 3 ölçümsüz · 43 sorunsuz). Tam liste ekteki PDF'te. Pano: " + BASE + "/?tab=dashboard")
-                .contains("+32 alarm daha — tamamı ekteki PDF'te ve Alarm Geçmişi'nde. Alarm Geçmişi: " + BASE
-                        + "/?tab=alerthistory&view=all&from=2026-09-21&to=2026-09-27&team=7")
+                .contains("+32 alarm daha — haftanın 40 alarmının tamamı ekteki PDF'te ve Alarm Geçmişi'nde. Alarm Geçmişi: " + BASE
+                        + "/?tab=alerthistory&view=all&from=2026-09-21&to=2026-09-27&range=active&team=7")
                 .contains("+2 sertifika daha. Dikkat gerektiren sertifikalar: " + BASE + "/?tab=warnings");
         assertThat(sectionLines(t, "HAFTANIN ALARMLARI — EN UZUN 8")).hasSize(WeeklyAvailabilityMail.TOP_INCIDENTS);
         assertThat(sectionLines(t, "YAKLAŞAN SERTİFİKA BİTİŞLERİ")).hasSize(WeeklyAvailabilityMail.TOP_CERTS);
@@ -219,7 +219,7 @@ class WeeklyAvailabilityEmailTest {
                 .contains("href=\"" + BASE + "/?tab=dashboard&amp;domain=www.example.com&amp;open=cert\"")
                 .contains("href=\"" + MailKit.esc(MailCta.incidentDetailsUrl(BASE, 4101L)) + "\"")
                 .contains("href=\"" + BASE + "/?tab=weeklyreports&amp;w_year=2026&amp;w_week=39&amp;w_team=7\"")
-                .contains("href=\"" + BASE + "/?tab=alerthistory&amp;view=all&amp;from=2026-09-21&amp;to=2026-09-27&amp;team=7\"")
+                .contains("href=\"" + BASE + "/?tab=alerthistory&amp;view=all&amp;from=2026-09-21&amp;to=2026-09-27&amp;range=active&amp;team=7\"")
                 .contains("href=\"" + BASE + "/?tab=admin&amp;g_tab=teams\"")
                 .contains("Raporu uygulamada aç").contains("Haftanın alarmlarını aç")
                 .doesNotContain("static-fallback.example.com").doesNotContain(BASE + "//?");
@@ -233,6 +233,67 @@ class WeeklyAvailabilityEmailTest {
         String none = WeeklyAvailabilitySamples.typical().html(svc);
         assertThat(none).doesNotContain("href=\"/?tab").doesNotContain("Raporu uygulamada aç").doesNotContain("Takım ayarları")
                 .contains("www.example.com");
+    }
+
+    /**
+     * Regresyon B3 (2026-09-28): "Haftanın alarmları" sayısı önceki haftadan DEVREDENLERİ de içerir; Alarm Geçmişi
+     * bağlantısı varsayılan kipte (hafta içinde AÇILANLAR) onları göstermiyordu ve not "tamamı Alarm Geçmişi'nde"
+     * diyordu. Bağlantı artık "aralıkta aktif" kipini (range=active) taşır; not yalnız gerçekten olanı söyler.
+     */
+    @Test
+    @DisplayName("B3: her Alarm Geçmişi bağlantısı 'aralıkta aktif' kipinde (range=active) + aynı hafta + takım; HTML ve düz metin")
+    void alarmHistoryLinksUseActiveRange() {
+        String want = BASE + "/?tab=alerthistory&view=all&from=2026-09-21&to=2026-09-27&range=active&team=7";
+        for (WeeklyAvailabilitySamples.Case c : WeeklyAvailabilitySamples.all()) {
+            String html = c.html(svc);
+            // Her href (Outlook'un VML düğmesi dahil) aynı adres; SAYI yalnız <a> bağlantılarından (düğme VML + <a> çifti).
+            Matcher m = Pattern.compile("(<a [^>]*?)?href=\"([^\"]*tab=alerthistory[^\"]*)\"").matcher(html);
+            int n = 0;
+            while (m.find()) {
+                assertThat(m.group(2).replace("&amp;", "&")).as(c.slug()).isEqualTo(want);
+                if (m.group(1) != null) n++;
+            }
+            boolean alarmsShown = c.insights() != null && c.insights().alarms() != null && c.insights().alarms().total() > 0;
+            assertThat(n).as(c.slug() + ": düğme (+ '+N' notu)").isEqualTo(alarmsShown ? (c.insights().alarms().total() > WeeklyAvailabilityMail.TOP_INCIDENTS ? 2 : 1) : 0);
+            if (alarmsShown) assertThat(text(html)).as(c.slug()).contains("Haftanın alarmlarını aç: " + want);
+        }
+    }
+
+    @Test
+    @DisplayName("B3: '+N alarm daha' notu doğru: devreden sayısı yazılır; ek yoksa PDF, bağlantı yoksa Alarm Geçmişi vaat edilmez")
+    void moreAlarmsNoteIsAccurate() {
+        WeeklyAvailabilitySamples.Case c = WeeklyAvailabilitySamples.typical();   // 14 alarm, 1'i devreden, 8'i gövdede
+        String link = BASE + "/?tab=alerthistory&view=all&from=2026-09-21&to=2026-09-27&range=active&team=7";
+        String full = c.html(svc);
+        assertThat(text(full)).contains("+6 alarm daha — önceki haftadan devreden 1 alarm dahil haftanın 14 alarmının tamamı "
+                + "ekteki PDF'te ve Alarm Geçmişi'nde. Alarm Geçmişi: " + link);
+        assertThat(full).contains("+6 alarm daha — önceki haftadan devreden 1 alarm dahil haftanın 14 alarmının tamamı ekteki PDF&#39;te "
+                + "ve Alarm Geçmişi&#39;nde. <a href=\"" + link.replace("&", "&amp;") + "\"");
+        assertThat(text(full)).doesNotContain("alarm daha — tamamı");   // eski, koşulsuz vaat eden cümle yok
+
+        // Ek (PDF) yoksa: yalnız Alarm Geçmişi
+        String noPdf = svc.buildWeeklyAvailabilityHtml("Takım A", WeeklyAvailabilitySamples.WEEK, c.rows(), c.summary(), null,
+                c.ps(), c.dep(), c.weak(), c.dom(), c.insights());
+        assertThat(text(noPdf)).contains("+6 alarm daha — önceki haftadan devreden 1 alarm dahil haftanın 14 alarmının tamamı "
+                + "Alarm Geçmişi'nde. Alarm Geçmişi: " + link).doesNotContain("ekteki PDF'te ve Alarm");
+
+        // Taban adres yoksa: bağlantı yok → yalnız PDF
+        liveBase.set("");
+        ReflectionTestUtils.setField(svc, "appBaseUrl", "");
+        String noLink = c.html(svc);
+        assertThat(text(noLink)).contains("+6 alarm daha — önceki haftadan devreden 1 alarm dahil haftanın 14 alarmının tamamı ekteki PDF'te.")
+                .doesNotContain("Alarm Geçmişi'nde").doesNotContain("tab=alerthistory");
+
+        // İkisi de yoksa: yalnız sayı (vaat yok)
+        String bare = svc.buildWeeklyAvailabilityHtml("Takım A", WeeklyAvailabilitySamples.WEEK, c.rows(), c.summary(), null,
+                c.ps(), c.dep(), c.weak(), c.dom(), c.insights());
+        assertThat(text(bare)).contains("+6 alarm daha.").doesNotContain("alarmının tamamı");
+
+        // Devreden yoksa "dahil" kısmı yazılmaz (büyük örnek: 40 alarm, devreden 0)
+        liveBase.set(BASE + "/");
+        assertThat(text(WeeklyAvailabilitySamples.large().html(svc)))
+                .contains("+32 alarm daha — haftanın 40 alarmının tamamı ekteki PDF'te ve Alarm Geçmişi'nde.")
+                .doesNotContain("devreden 0");
     }
 
     @Test

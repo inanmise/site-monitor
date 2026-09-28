@@ -463,10 +463,10 @@ class CertificateServiceTest {
     }
 
     @Test
-    @DisplayName("getAllLatest: noc_notify envanterden (null kolon = kapalı), TEK envanter okumasıyla (N+1 yok); ham DTO'da alan YAZILMAZ")
+    @DisplayName("getAllLatest: noc_notify + noc_group_ids envanterden (null kolon = kapalı / varsayılan gruplar), TEK envanter okumasıyla (N+1 yok); ham DTO'da alan YAZILMAZ")
     void getAllLatest_carriesNocNotifyFromInventory() throws Exception {
         CertificateInventory on = new CertificateInventory();
-        on.setDomain("on.example.com"); on.setActive(true); on.setNocNotify(true);
+        on.setDomain("on.example.com"); on.setActive(true); on.setNocNotify(true); on.setNocGroupIds("3,7");
         CertificateInventory off = new CertificateInventory();
         off.setDomain("off.example.com"); off.setActive(true); off.setNocNotify(false);
         CertificateInventory unset = new CertificateInventory();
@@ -484,16 +484,60 @@ class CertificateServiceTest {
         assertThat(byDomain).containsEntry("on.example.com", true)
                 .containsEntry("off.example.com", false)
                 .containsEntry("unset.example.com", false);
+        Map<String, List<Long>> groups = new HashMap<>();
+        for (CertificateDto d : result) groups.put(d.getDomain(), d.getNocGroupIds());
+        assertThat(groups).containsEntry("on.example.com", List.of(3L, 7L))
+                .containsEntry("unset.example.com", List.of());   // null kolon = varsayılan gruplar (izleme listeleriyle aynı)
         // Maliyet: tek envanter okuması; satır başına envanter sorgusu YOK
         verify(inventoryRepo, times(1)).findByActiveTrueOrderByDomainAsc();
         verify(inventoryRepo, never()).findByDomain(anyString());
-        // Tel biçimi snake_case; envanter birleşimi olmayan ham DTO'da (Uyarılar) anahtar hiç yazılmaz — "bilinmiyor" ≠ "kapalı"
+        // Tel biçimi snake_case; envanter birleşimi olmayan ham DTO'da (kontrol geçmişi) anahtarlar hiç yazılmaz — "bilinmiyor" ≠ "kapalı"
         ObjectMapper om = new ObjectMapper();
         CertificateDto onDto = result.stream().filter(d -> "on.example.com".equals(d.getDomain())).findFirst().orElseThrow();
-        assertThat(om.writeValueAsString(onDto)).contains("\"noc_notify\":true");
+        assertThat(om.writeValueAsString(onDto)).contains("\"noc_notify\":true").contains("\"noc_group_ids\":[3,7]");
         CertificateDto raw = new CertificateDto();
         raw.setDomain("raw.example.com");
-        assertThat(om.writeValueAsString(raw)).doesNotContain("noc_notify");
+        assertThat(om.writeValueAsString(raw)).doesNotContain("noc_notify").doesNotContain("noc_group_ids");
+    }
+
+    @Test
+    @DisplayName("getWarnings: noc_notify + noc_group_ids aktif süzgecin TEK envanter okumasından (ek sorgu YOK); aktif olmayan satır düşer")
+    void getWarnings_carriesNocFromTheSameInventoryRead() throws Exception {
+        CertificateInventory on = new CertificateInventory();
+        on.setDomain("on.example.com"); on.setActive(true); on.setNocNotify(true); on.setNocGroupIds("7, 3,x");
+        CertificateInventory off = new CertificateInventory();
+        off.setDomain("off.example.com"); off.setActive(true); off.setNocNotify(false); off.setNocGroupIds("5");
+        CertificateInventory unset = new CertificateInventory();
+        unset.setDomain("unset.example.com"); unset.setActive(true);   // eski satır: iki kolon da null
+        // doReturn: setUp'taki thenAnswer stub'ı `when(...)` ile yeniden stub'lanırken ÇALIŞIR ve latestRepo'ya dokunur —
+        // aşağıdaki "ek sorgu yok" doğrulamasını kirletirdi
+        doReturn(List.of(on, off, unset)).when(inventoryRepo).findByActiveTrueOrderByDomainAsc();
+        doReturn(List.of(
+                latestCheck("on.example.com", "valid", true, 12, "VALID", "OK"),
+                latestCheck("off.example.com", "error", true, null, "UNKNOWN", "UNKNOWN"),
+                latestCheck("unset.example.com", "valid", true, 20, "VALID", "OK"),
+                latestCheck("stale.example.com", "valid", true, 3, "VALID", "OK")))   // envanterden çıkmış
+                .when(latestRepo).findByWarningTrueOrStatus("error");
+
+        List<CertificateDto> result = service.getWarnings();
+
+        Map<String, CertificateDto> byDomain = new HashMap<>();
+        for (CertificateDto d : result) byDomain.put(d.getDomain(), d);
+        assertThat(byDomain).containsOnlyKeys("on.example.com", "off.example.com", "unset.example.com");
+        assertThat(byDomain.get("on.example.com").getNocNotify()).isTrue();
+        assertThat(byDomain.get("on.example.com").getNocGroupIds()).containsExactly(7L, 3L);   // NocGroupIds.parse: sıra korunur, bozuk parça atlanır
+        assertThat(byDomain.get("off.example.com").getNocNotify()).isFalse();
+        assertThat(byDomain.get("off.example.com").getNocGroupIds()).containsExactly(5L);
+        assertThat(byDomain.get("unset.example.com").getNocNotify()).isFalse();   // null kolon = kapalı
+        assertThat(byDomain.get("unset.example.com").getNocGroupIds()).isEmpty();  // null = varsayılan gruplar
+        // Maliyet: aktif süzgecin ZATEN yaptığı tek envanter okuması + tek uyarı sorgusu; satır başına sorgu YOK
+        verify(inventoryRepo, times(1)).findByActiveTrueOrderByDomainAsc();
+        verifyNoMoreInteractions(inventoryRepo);
+        verify(latestRepo, times(1)).findByWarningTrueOrStatus("error");
+        verifyNoMoreInteractions(latestRepo);
+        // Tel biçimi (global SNAKE_CASE'e güvenmeden alanın kendi adı): uyarı satırı iki anahtarı da taşır
+        String json = new ObjectMapper().writeValueAsString(byDomain.get("on.example.com"));
+        assertThat(json).contains("\"noc_notify\":true").contains("\"noc_group_ids\":[7,3]");
     }
 
     // ── getHistory ────────────────────────────────────────────────────────────
@@ -507,6 +551,64 @@ class CertificateServiceTest {
         service.getHistory("example.com", 30);
 
         verify(checkRepo).findTopByDomainOrderByCheckedAtDesc("example.com", 30);
+    }
+
+    @Test
+    @DisplayName("getHistory: kontrol satırının güven durumu DTO'ya taşınır ve UNTRUSTED_CA bayrağını üretir")
+    void getHistory_carriesTrustStatusAndFlag() {
+        CertificateCheck untrusted = check("r1", "example.com", "valid");
+        untrusted.setTrustStatus("UNTRUSTED");
+        CertificateCheck trusted = check("r2", "example.com", "valid");
+        trusted.setTrustStatus("TRUSTED");
+        when(checkRepo.findTopByDomainOrderByCheckedAtDesc("example.com", 2)).thenReturn(List.of(untrusted, trusted));
+
+        List<CertificateDto> rows = service.getHistory("example.com", 2);
+
+        assertThat(rows.get(0).getTrustStatus()).isEqualTo("UNTRUSTED");
+        assertThat(rows.get(0).getSecurityFlags()).contains(CertificateHealthRules.FLAG_UNTRUSTED_CA);
+        assertThat(rows.get(1).getTrustStatus()).isEqualTo("TRUSTED");
+        assertThat(rows.get(1).getSecurityFlags()).doesNotContain(CertificateHealthRules.FLAG_UNTRUSTED_CA);
+    }
+
+    @Test
+    @DisplayName("getHistory: TLS sürümü + şifre takımı + hüküm (CertificateHealthRules) snake_case taşınır; el sıkışması yoksa üç alan da YAZILMAZ")
+    void getHistory_carriesTlsVersionCipherAndAssessment() throws Exception {
+        CertificateCheck modern = check("r1", "example.com", "valid");
+        modern.setTlsVersion("TLSv1.3");
+        modern.setCipherSuite("TLS_AES_256_GCM_SHA384");
+        CertificateCheck legacy = check("r2", "example.com", "valid");
+        legacy.setTlsVersion("TLSv1");   // Java'nın TLS 1.0 adı
+        legacy.setCipherSuite("TLS_RSA_WITH_3DES_EDE_CBC_SHA");
+        CertificateCheck failed = check("r3", "example.com", "error");   // el sıkışması olmadı
+        when(checkRepo.findTopByDomainOrderByCheckedAtDesc("example.com", 3)).thenReturn(List.of(modern, legacy, failed));
+
+        List<CertificateDto> rows = service.getHistory("example.com", 3);
+
+        assertThat(rows.get(0).getTlsVersion()).isEqualTo("TLSv1.3");
+        assertThat(rows.get(0).getCipherSuite()).isEqualTo("TLS_AES_256_GCM_SHA384");
+        assertThat(rows.get(0).getTlsAssessment())
+                .containsEntry("protocol", "OK").containsEntry("protocol_latest", true).containsEntry("cipher", "OK");
+        assertThat(rows.get(1).getTlsAssessment())
+                .containsEntry("protocol", "FAIL").containsEntry("protocol_latest", false).containsEntry("cipher", "FAIL");
+        assertThat(rows.get(2).getTlsVersion()).isNull();
+        assertThat(rows.get(2).getTlsAssessment()).isNull();
+
+        String json = new ObjectMapper().writeValueAsString(rows.get(1));
+        assertThat(json).contains("\"tls_version\":\"TLSv1\"")
+                .contains("\"cipher_suite\":\"TLS_RSA_WITH_3DES_EDE_CBC_SHA\"")
+                .contains("\"tls_assessment\":{\"protocol\":\"FAIL\",\"protocol_latest\":false,\"cipher\":\"FAIL\"}");
+        assertThat(new ObjectMapper().writeValueAsString(rows.get(2)))
+                .doesNotContain("tls_version").doesNotContain("cipher_suite").doesNotContain("tls_assessment");
+    }
+
+    @Test
+    @DisplayName("liste DTO'su (from LatestCheck): satırda TLS verisi olsa da yanıta GİRMEZ — /api/certificates yükü şişmez")
+    void listDto_doesNotCarryTlsFields() throws Exception {
+        LatestCheck lc = latestCheck("example.com", "valid", false, 90, "VALID", "OK");
+        lc.setTlsVersion("TLSv1.3");
+        lc.setCipherSuite("TLS_AES_128_GCM_SHA256");
+        String json = new ObjectMapper().writeValueAsString(CertificateDto.from(lc, List.of("example.com"), List.of(), List.of()));
+        assertThat(json).doesNotContain("tls_version").doesNotContain("cipher_suite").doesNotContain("tls_assessment");
     }
 
     // (getActivityLog testi kaldırıldı — metot ölü koddu, silindi.)

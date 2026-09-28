@@ -441,6 +441,36 @@ class NotificationGroupControllerTest {
         verify(historyService).page(any(), eq(GROUP_A), eq(1), eq(10));
     }
 
+    @Test
+    @DisplayName("Geçmiş (2026-09-28c): eylemi yapanın IP'si kimlik izi — başka kullanıcıya düşer ve satır işaretlenir; kendi satırı ve global admin / AUDIT tam görür")
+    void history_masksActorIpForNonGlobal() throws Exception {
+        com.sitemonitor.model.AuditLog row = auditRow(1L, "NOTIFICATION_GROUP_UPDATE", "10");
+        row.setIpAddress("198.51.100.44");
+        when(historyService.page(any(), any(), anyInt(), anyInt())).thenReturn(
+                new com.sitemonitor.service.NotificationGroupHistoryService.HistoryPage(
+                        List.of(new com.sitemonitor.service.NotificationGroupHistoryService.Entry(row, TEAM_A)), 1, 0, 25, false, 0));
+        String body = mvc.perform(get("/api/notification-groups/history").session(userOfB))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].ip").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].identity_masked").value(true))
+                .andExpect(jsonPath("$.data.items[0].actor").value("ayse"))
+                .andExpect(jsonPath("$.data.identity_masked").value(true))
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContain("198.51.100.44");
+        mvc.perform(get("/api/notification-groups/history").session(userOfA))   // ayse: kendi satırı
+                .andExpect(jsonPath("$.data.items[0].ip").value("198.51.100.44"));
+        for (String role : List.of("ADMIN", "AUDIT")) {
+            MockHttpSession g = new MockHttpSession();
+            g.setAttribute("authenticated", Boolean.TRUE);
+            g.setAttribute("username", "global");
+            g.setAttribute("systemRole", role);
+            mvc.perform(get("/api/notification-groups/history").session(g))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[0].ip").value("198.51.100.44"))
+                    .andExpect(jsonPath("$.data.identity_masked").value(false));
+        }
+    }
+
     /**
      * OLUŞTURMA kaydı anlık görüntü taşımalı: "neyi ekledi" sorusunun cevabı başka hiçbir yerde
      * kalmıyor — ayrıca grup sonradan silinince kimlik→takım eşlemesi bu kayıttan kuruluyor.

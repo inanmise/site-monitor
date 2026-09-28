@@ -1,4 +1,4 @@
-import { MASK, fieldLabel, formatValue, isDurationField, parseChanges } from '../../history/changeFields.js'
+import { MASK, fieldLabel, formatValue, isDurationField, isTeamField, parseChanges } from '../../history/changeFields.js'
 import { localDayKey, toUtc } from '../../../utils/localDay.js'
 import { toApiTime, startOfLocalDay, startOfLastNDays } from '../../../utils/apiTime.js'
 import { readUrlParam } from '../../../hooks/useUrlQuerySync.js'
@@ -59,9 +59,10 @@ export function parseRes(v) {
 }
 
 /**
- * Satırın izlemesine giden bağlantı — izleme türü değilse, olay SİLME ise ya da izleme SONRADAN silindiyse
- * (`resource_deleted`, sunucu) yok: silinmiş izlemenin sayfası açılmaz, kullanıcıyı boş sayfaya götürmek yerine
- * ad düz metin + "silinmiş" rozeti. `monitor` + `mtab=changes`: izlemenin detayı Değişiklikler sekmesinde açılır.
+ * Satırın izlemesine giden bağlantı — izleme türü değilse ya da izleme ŞU AN silinmişse (`isDeleted`) yok: silinmiş
+ * izlemenin sayfası açılmaz, kullanıcıyı boş sayfaya götürmek yerine ad düz metin + "silinmiş" rozeti. Silinip geri
+ * yüklenen izlemenin silme satırı da bağlantı taşır (izleme yaşıyor). `monitor` + `mtab=changes`: izlemenin detayı
+ * Değişiklikler sekmesinde açılır.
  */
 export function linkFor(r) {
   if (!r || r.resource_id == null || isDeleted(r)) return null
@@ -74,8 +75,18 @@ export function linkFor(r) {
   }
 }
 
-/** Satırın izlemesi artık yok mu (bu olay silme, ya da sunucu sonradan silindiğini bildirdi). */
-export const isDeleted = (r) => !!r && (r.event_type === 'DELETE' || r.resource_deleted === true || r.deleted === true)
+/**
+ * Satırın izlemesi ŞU AN yok mu. Hüküm SUNUCUNUN (`resource_deleted` — liste satırı ve tekil ayrıntı; `deleted` — özet
+ * kartı öğesi): kaynağın EN SON geçmiş olayı silme mi (2026-09-28, regresyon B1). Sunucu alanı taşıyorsa ona uyulur —
+ * silinip geri yüklenen izlemenin SİLME satırı da "silinmiş" değildir (zaman çizelgesi bağlantısı, CSV "Silinmiş"
+ * sütunu). Alan yoksa (eski yanıt) yedek: olay silme ise silinmiş say — ölü bağlantı çizmektense bağlantısız kalsın.
+ */
+export function isDeleted(r) {
+  if (!r) return false
+  if (typeof r.resource_deleted === 'boolean') return r.resource_deleted
+  if (typeof r.deleted === 'boolean') return r.deleted
+  return r.event_type === 'DELETE'
+}
 
 // ── Duraklatma / sürdürme ──────────────────────────────────────────────────────────────────────────
 
@@ -260,7 +271,7 @@ export function valueKind(key, v) {
   if (v === null || v === undefined || v === '') return 'empty'
   if (v === MASK) return 'masked'
   if (typeof v === 'boolean' || v === 'true' || v === 'false') return 'boolean'
-  if (key === 'teamId' && /^\d+$/.test(String(v))) return 'team'
+  if (isTeamField(key) && /^\d+$/.test(String(v))) return 'team'   // teamId + ugTeamId → takım rozeti
   if (isDurationField(key) && Number.isFinite(Number(v)) && Number(v) > 0) return 'duration'
   if (Array.isArray(v)) return 'list'
   if (typeof v === 'object') {
@@ -336,7 +347,9 @@ export function changesCsv(rows, t, fmtTime) {
       fmtTime(r.at), r.at ? toUtc(r.at) : '', eventLabel(t, r.event_type), toggle ? eventLabel(t, toggle) : '',
       t('chg.kind.' + kindKey(r.kind)), resourceName(r), r.resource_id ?? '', isDeleted(r) ? t('chg.csvYes') : '',
       r.team_name || '', !r.actor || r.actor === 'system' ? t('audit.systemActor') : (r.actor_name || r.actor),
-      r.actor || '', diff, r.note || '', r.ip_address || '', r.user_agent || '', r.seq ?? '',
+      // gizlenen iz (2026-09-28c) boş hücre değil "Gizli" — CSV'de de "kayıt yok" ile karışmasın
+      r.actor || '', diff, r.note || '', r.identity_masked === true ? t('uact.idMasked') : (r.ip_address || ''),
+      r.identity_masked === true ? t('uact.idMasked') : (r.user_agent || ''), r.seq ?? '',
     ]
   })
   return toCsv(headers, body)

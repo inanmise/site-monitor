@@ -1,4 +1,5 @@
 import { navigateTo } from '../utils/navigate.js'
+import { alertNavParams } from './admin/alerts/alertHistoryModel.js'
 import { toUtc } from '../utils/localDay.js'
 import { dateLocale } from '../i18n/dateLocale.js'
 import TeamBadge from './ui/TeamBadge.jsx'
@@ -51,7 +52,7 @@ export const MONITOR_SECTION_TAB = { flapping: 'incidents', slow: 'activity', st
 
 /** Bildirim satırı tıklaması: alarmı varsa Alarm Geçmişi'nde o olayı açar; yoksa günlüğe gider. */
 export function openNotification(item) {
-  navigateTo('alerthistory', item?.alert_event_id ? { incident: item.alert_event_id } : undefined)
+  navigateTo('alerthistory', item?.alert_event_id ? alertNavParams({ id: item.alert_event_id }) : undefined)
 }
 
 /** Yaş metni: kontrol varsa "X dk/sa önce"; yoksa pencerede yaratılmışsa "hiç kontrol edilmedi", daha eskiyse "7+ gündür kontrol yok". */

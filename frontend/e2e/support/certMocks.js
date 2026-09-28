@@ -1,6 +1,8 @@
 // Sertifika detay penceresi (Genel Bakış kartı → CertificateModal) için API mock'u — `mockApi(page)`'in ÜSTÜNE kaydedilir:
 // Playwright'ta son kaydedilen rota önce koşar, eşleşmeyen istek `route.fallback()` ile mockApi'ye düşer. Tel biçimi
-// GERÇEK (snake_case; zaman UTC ve `Z`siz): /api/certificates (CertificateDto), /api/history/{d}, /api/check-preview/{d}
+// GERÇEK (snake_case; zaman UTC ve `Z`siz): /api/certificates (CertificateDto — envanter birleşimli liste satırı),
+// /api/history/{d} (GEÇMİŞ satırı — `historyRow`: envanter alanları yok, TLS üçlüsü var; zarfta 7/24 alanları),
+// /api/noc/groups/options, /api/check-preview/{d}
 // (CertificateCheckerService + CertificateController.putPreviewAssessment), /api/admin/notes/{d} (CertificateNote).
 // Gerçek kişi/kurum adı YOK (example.com, Kişi A, Takım A).
 
@@ -28,9 +30,17 @@ function certRow(domain, i, over = {}) {
     serial_number: `0A1B2C3D${i}`, signature_algorithm: 'SHA256withRSA', public_key_algorithm: 'RSA', public_key_size: 2048,
     subject_dn: `CN=${domain},O=Example Ltd,C=GB`, issuer_dn: 'CN=Example TLS RSA CA 2026,O=Example Trust Ltd,C=GB',
     chain_status: 'VALID', revocation_status: 'VALID', trust_status: 'TRUSTED', fingerprint: 'AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12CD34EF56AB12',
-    security_flags: [], secure: true, tls_version: 'TLSv1.3',
+    security_flags: [], secure: true,
+    // 7/24 (2026-09-28): envanterden — CertificateDto `noc_notify` + `noc_group_ids` (boş = varsayılan gruplar)
+    noc_notify: i % 2 === 0, noc_group_ids: [],
     ...over,
   }
+}
+
+/** `/api/noc/groups/options` (NocController.groupOptions) — e-posta YOK; göstergenin "etkin" hükmü + alıcı grup adları. */
+export const NOC_OPTIONS = {
+  groups: [{ id: 1, name: 'NOC Ana', is_default: true, active: true }, { id: 2, name: 'NOC Gece', is_default: false, active: true }],
+  disabled_types: [], has_active_group: true, min_level: 'CRITICAL',
 }
 
 export const CERTS = [
@@ -38,10 +48,41 @@ export const CERTS = [
     san: ['www.example.com', 'example.com', 'api.example.com', 'cdn.example.com', 'static.example.com', 'odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com'],
   }),
   certRow(CERT_DOMAINS.problem, 1, { days_remaining: -6, not_after: inDays(-6), status: 'warning', warning: true, alert_level: 'critical',
-    trust_status: 'UNTRUSTED', security_flags: ['HOSTNAME_MISMATCH', 'UNTRUSTED_CA'], secure: false, tls_version: 'TLSv1' }),
+    trust_status: 'UNTRUSTED', security_flags: ['HOSTNAME_MISMATCH', 'UNTRUSTED_CA'], secure: false }),
   certRow(CERT_DOMAINS.down, 2, { status: 'error', days_remaining: null, error: 'Connection timeout after 10s' }),
   certRow(CERT_DOMAINS.quiet, 3),
 ]
+
+/**
+ * Kontrolün TLS üçlüsü — `tls_assessment` sunucuda CertificateHealthRules'tan (protocolStatus / isLatestProtocol /
+ * cipherStatus): TLSv1 → FAIL, 3DES → WEAK = FAIL; TLS 1.3 + AEAD → OK. Başarısız kontrolde (bağlantı hatası) TLS yok.
+ */
+const TLS = {
+  [CERT_DOMAINS.healthy]: { tls_version: 'TLSv1.3', cipher_suite: 'TLS_AES_256_GCM_SHA384', tls_assessment: { protocol: 'OK', protocol_latest: true, cipher: 'OK' } },
+  [CERT_DOMAINS.problem]: { tls_version: 'TLSv1', cipher_suite: 'TLS_RSA_WITH_3DES_EDE_CBC_SHA', tls_assessment: { protocol: 'FAIL', protocol_latest: false, cipher: 'FAIL' } },
+  [CERT_DOMAINS.quiet]: { tls_version: 'TLSv1.3', cipher_suite: 'TLS_AES_256_GCM_SHA384', tls_assessment: { protocol: 'OK', protocol_latest: true, cipher: 'OK' } },
+}
+
+/**
+ * `/api/history/{d}` satırı — GERÇEK geçmiş biçimi (CertificateService.toDtoFromCheck → CertificateDto.from + applyTls).
+ * Liste satırından farkı (Ek 3/9, 2026-09-28 — mock eskiden LİSTE satırını dönüyordu, zayıf protokol rozeti ve durumun
+ * `statusKey` düşüş yolu e2e'de hiç sınanmıyordu):
+ * - envanter birleşimi YOK: `alert_level`, `tier`, `port`, `team_id`, `team_name`, `group_name`, `tags`, platform alanları
+ *   `null` (sınıf düzeyinde NON_NULL yok → null yazılır); `noc_notify` / `noc_group_ids` / `can_manage` NON_NULL → HİÇ yazılmaz;
+ * - `via` / `tls_mode_used` kontrolden kopyalanmaz (null);
+ * - TLS üçlüsü (`tls_version`, `cipher_suite`, `tls_assessment`) YALNIZ burada (liste satırı taşımaz — NON_NULL).
+ */
+export function historyRow(row) {
+  const out = { ...row }
+  delete out.noc_notify
+  delete out.noc_group_ids
+  return {
+    ...out,
+    alert_level: null, tier: null, port: null, team_id: null, team_name: null, group_name: null, tags: null,
+    platform: null, platformDetail: null, platformName: null, check_interval_hours: null, via: null, tls_mode_used: null,
+    ...(row.status === 'error' ? {} : (TLS[row.domain] ?? {})),
+  }
+}
 
 const CHAIN = (leafDomain) => [
   { position: 0, subject: `CN=${leafDomain},O=Example Ltd,L=London,C=GB`, issuer: 'CN=Example TLS RSA CA 2026,O=Example Trust Ltd,C=GB',
@@ -131,9 +172,12 @@ export async function mockCertApi(page, opts = {}) {
     else if (p === '/api/certificates/card-extras') body = { success: true, data: {} }
     else if (p === '/api/stats') body = { success: true, data: { total: CERTS.length, valid: 2, warning: 0, critical: 1, error: 1, expired: 1 } }
     else if ((m = p.match(/^\/api\/history\/([^/]+)\/alerts$/))) body = { success: true, data: [] }
+    else if (p === '/api/noc/groups/options') body = { success: true, data: NOC_OPTIONS }
     else if ((m = p.match(/^\/api\/history\/([^/]+)$/))) {
       const d = decodeURIComponent(m[1])
-      body = { success: true, data: [CERTS.find((c) => c.domain === d) || certRow(d, 0)] }
+      const row = CERTS.find((c) => c.domain === d) || certRow(d, 0)
+      // Zarf kaydın GÜNCEL 7/24 alanlarını taşır (CertificateController.getHistory, 2026-09-28) — pencere başlığındaki gösterge
+      body = { success: true, domain: d, data: [historyRow(row)], timestamp: iso(0), noc_notify: row.noc_notify, noc_group_ids: row.noc_group_ids }
     } else if ((m = p.match(/^\/api\/check-preview\/([^/]+)$/))) {
       body = { success: true, data: previewFor(decodeURIComponent(m[1])), timestamp: iso(0) }
     } else if ((m = p.match(/^\/api\/certificates\/([^/]+)\/health$/))) {

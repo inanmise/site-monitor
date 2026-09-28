@@ -45,7 +45,7 @@ export function parseTeamSource(source) {
 /**
  * @param {object} data simülasyon yanıtının `data` alanı
  * @returns {{
- *   emails: Array<{key:string,email:string,name:string,source:'group'|'team'|'contact'|'globalContact',groupName?:string,role?:string,minLevel?:string,also:Array<{id:any,name:string}>}>,
+ *   emails: Array<{key:string,email:string,name:string,source:'group'|'team'|'contact',groupName?:string,role?:string,minLevel?:string,also:Array<{id:any,name:string}>}>,
  *   webhooks: Array<{key:string,name:string,type:string,target:string}>,
  *   push: {available:boolean, access:'FULL'|'SELF'|'NONE', accessReason:string|null, settings:'FULL'|'LIMITED'|'NONE',
  *          error:string|null, channel:object|null, rows:Array<object>, recipients:Array<object>,
@@ -54,7 +54,8 @@ export function parseTeamSource(source) {
  *   counts: {email:number, push:number, pushNot:number, webhook:number, excluded:number},
  *   nobody: boolean,
  *   managersIncluded: boolean,
- *   fallbackGlobal: boolean,
+ *   teamContacts: 'ok'|'none'|'noneAtLevel',
+ *   owners: Array<{teamId:any, role:'SY'|'UG', teamName:string, state:'ok'|'none'|'noneAtLevel'}>,
  * }}
  */
 export function buildView(data) {
@@ -62,7 +63,20 @@ export function buildView(data) {
   const contacts = Array.isArray(data?.contacts) ? data.contacts : []
   const rawWebhooks = Array.isArray(data?.webhooks) ? data.webhooks : []
   const push = Array.isArray(data?.push) ? data.push : null
-  const fallbackGlobal = !!data?.contacts_fallback_global
+  // Eskalasyon kişileri YALNIZ takımın kendi kişileridir (sunucu kuralı 2026-09-28, EscalationContactScope): takımda
+  // seviyeye uyan kişi yoksa kimse eklenmez — başka takımın ya da takımsız kişiye düşülmez. 'none' = takımda hiç etkin
+  // kişi yok; 'noneAtLevel' = var ama hiçbiri bu seviyeyi almıyor. Eski "contacts_fallback_global" bayrağı kalktı.
+  const teamContacts = data?.team_contacts_missing === true
+    ? (data?.team_contacts_defined === true ? 'noneAtLevel' : 'none')
+    : 'ok'
+  // "Her sahip takım kendi kişisi" (2026-09-28): sertifika senaryosunda SY + UG — her takımın KENDİ kişi durumu
+  // (sunucunun `owners` listesi). Eski sunucu (alan yok) → yalnız SY, yukarıdaki bayraklardan.
+  const ownerState = (o) => (o?.contacts_missing === true ? (o?.contacts_defined === true ? 'noneAtLevel' : 'none') : 'ok')
+  const owners = Array.isArray(data?.owners) && data.owners.length > 0
+    ? data.owners.map((o) => ({
+      teamId: o?.team_id ?? null, role: o?.role === 'UG' ? 'UG' : 'SY', teamName: o?.team_name || '', state: ownerState(o),
+    }))
+    : [{ teamId: data?.team_id ?? null, role: 'SY', teamName: data?.team_name || '', state: teamContacts }]
 
   const emails = []
   const byAddress = new Map()
@@ -93,7 +107,7 @@ export function buildView(data) {
     }
     const row = {
       key: `contact:${c.id}`, email: String(c.email).trim(), name: c.name || String(c.email).trim(),
-      source: fallbackGlobal ? 'globalContact' : 'contact', role: c.role || null, minLevel: c.min_level || null, also: [],
+      source: 'contact', role: c.role || null, minLevel: c.min_level || null, also: [],
     }
     emails.push(row)
     byAddress.set(address, row)
@@ -140,7 +154,7 @@ export function buildView(data) {
     webhook: webhooks.length, excluded: excluded.length,
   }
   return {
-    emails, webhooks, excluded, counts, fallbackGlobal,
+    emails, webhooks, excluded, counts, teamContacts, owners,
     push: {
       available: push != null && access !== 'NONE',
       access,

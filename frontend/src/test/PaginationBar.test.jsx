@@ -148,6 +148,30 @@ describe('PaginationBar', () => {
     expect(screen.getByText('5 / 42').closest('li')).not.toHaveClass('sm:hidden')
   })
 
+  /* 2026-09-28: 40 px kuralı GİRİŞ TÜRÜNE bağlı — 768 px tablette (dokunmatik) compact oklar 24 px, normal kipte « ‹ › »
+     32 px, Git kutusu 28/32 px kalıyordu (`max-sm:` yalnız telefonu kapsar). Fare görünümü (data-size) değişmez; gerçek
+     ölçüm Playwright'ta (hasTouch + isMobile, matchMedia('(pointer: coarse)') doğrulanarak). */
+  it('dokunmatikte (pointer-coarse) HER genişlikte 40 px: compact ve normal gezinme düğmeleri + Git kutusu; fare boyutu aynı', () => {
+    const { unmount } = render(<PaginationBar {...base} compact />)
+    for (const name of ['Previous', 'Next']) {
+      const b = screen.getByRole('button', { name })
+      expect(b).toHaveAttribute('data-size', 'icon-xs')          // fare: 24 px (değişmedi)
+      expect(b).toHaveClass('pointer-coarse:size-10')
+    }
+    expect(screen.getByLabelText('Go to page')).toHaveClass('h-7', 'pointer-coarse:h-10')
+    unmount()
+    render(<PaginationBar {...base} />)
+    for (const name of ['First page', 'Previous', 'Next', 'Last page']) {
+      const b = screen.getByRole('button', { name })
+      expect(b).toHaveAttribute('data-size', 'icon-sm')          // fare: 32 px (değişmedi)
+      expect(b).toHaveClass('pointer-coarse:size-10')
+    }
+    // Sayfa numaraları ve boyut seçicisi zaten dokunmatik kurallı (kapsam dışı kalmasın diye pinlenir)
+    expect(screen.getByRole('button', { name: 'Page 4' })).toHaveClass('pointer-coarse:h-10', 'pointer-coarse:min-w-10')
+    expect(screen.getByRole('combobox', { name: 'Per page' }).className).toContain('pointer-coarse:data-[size=sm]:h-10')
+    expect(screen.getByLabelText('Go to page')).toHaveClass('h-8', 'pointer-coarse:h-10')
+  })
+
   it('sayfa değişince liste başı görünüm alanının üstündeyse oraya kaydırır; görünüyorsa kaydırmaz', () => {
     const onPage = vi.fn()
     const { container } = render(

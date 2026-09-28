@@ -39,8 +39,9 @@ public class PortMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarge
     @Column(nullable = false)
     private Boolean active = true;
 
-    // Takım kapsamı (ping/keyword gibi) — null: sertifika envanterinden otomatik üretilen kayıtlar
-    // (takım, domain→takım haritasından türetilir). Manuel eklenenlerde set edilir.
+    // Takım kapsamı. Bağımsız (standalone=true) satırda sahibi takım: alarm bağlamına damgalanır. Envanter türevi
+    // satırda envanterden KOPYA (lazy-provision + DerivedMonitorTeamSync; ekran/yetki içindir) — alarm yönlendirmesi
+    // bu kopyayı KULLANMAZ: takım + UG alan adı → envanterden canlı çözülür (SchedulerService.alarmTeamOf, 2026-09-28).
     @Column(name = "team_id")
     private Long teamId;
 

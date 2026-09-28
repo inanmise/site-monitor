@@ -60,6 +60,19 @@ class EscalationServiceTest {
     /** Güven alarm anahtarları CANLI okunuyor; stub'sizken varsayılan (arg1) döndürülür. */
     @org.mockito.Mock AppSettingsService appSettings;
 
+    /** Varsayılan sahip takım — sahipsiz alarm bildirim üretmediği için (2026-09-28) fikstürler sahipli kurulur. */
+    static final Long OWNER = 42L;
+
+    static java.util.List<com.sitemonitor.model.CertificateInventory> ownedInventory(Object domains) {
+        java.util.List<com.sitemonitor.model.CertificateInventory> out = new java.util.ArrayList<>();
+        for (Object d : (java.util.Collection<?>) domains) {
+            com.sitemonitor.model.CertificateInventory i = new com.sitemonitor.model.CertificateInventory();
+            i.setDomain(String.valueOf(d));
+            i.setTeamId(OWNER);
+            out.add(i);
+        }
+        return out;
+    }
     private EscalationService service;
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -98,8 +111,13 @@ class EscalationServiceTest {
         // çalışsın. Bu testlerin "yok" senaryosu = boş list bekleniyor.
         when(alertEventRepo.findOpenByDomainIn(anyCollection()))
                 .thenReturn(java.util.List.of());
+        // 2026-09-28: sahipsiz kayıt (SY/UG takımı yok) HİÇ bildirim üretmez. Bu dosyanın çoğu testi takımsız alan
+        // adıyla yazılmıştı (eski "global kontak" yedeği) — varsayılan envanter artık her alan adını OWNER takımına
+        // bağlar; testin kendi stub'ı bunu ezer. Sahipsiz ve takımlar arası davranış EscalationContactLeakTest'te; burada D8 pin testi (foreignInventoryDefault_*).
         when(inventoryRepo.findByDomainIn(anyCollection()))
-                .thenReturn(java.util.List.of());
+                .thenAnswer(inv -> ownedInventory(inv.getArgument(0)));
+        when(inventoryRepo.findByDomain(anyString()))
+                .thenAnswer(inv -> java.util.Optional.of(ownedInventory(java.util.List.of((String) inv.getArgument(0))).get(0)));
     }
 
     // ── processResults: new alert ─────────────────────────────────────────────
@@ -108,7 +126,7 @@ class EscalationServiceTest {
     @DisplayName("New EXPIRY WARNING alert creates event and sends email")
     void processResults_newExpiryWarning_createsEventAndSends() {
         String domain = "expiring.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -135,7 +153,7 @@ class EscalationServiceTest {
     @DisplayName("user-push tetiği İSTİSNA atsa da mail gönderilir — kanal bağımsızlığı")
     void userPushFailure_doesNotAffectMail() {
         String domain = "expiring.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         org.mockito.Mockito.doThrow(new RuntimeException("push kanalı çöktü"))
@@ -151,7 +169,7 @@ class EscalationServiceTest {
     @DisplayName("Mail hunisi user-push tetiğini de çağırır (K8: mail neyi gönderiyorsa webhook da)")
     void mailFunnel_triggersUserPush() {
         String domain = "expiring.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -172,7 +190,7 @@ class EscalationServiceTest {
                 contact("manager@test.com", "MANAGER", "HIGH"),
                 contact("ceo@test.com", "CLEVEL", "CRITICAL")
         );
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(allContacts);
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(allContacts);
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -186,7 +204,7 @@ class EscalationServiceTest {
     @DisplayName("REVOKED cert always fires CRITICAL alert")
     void processResults_revokedCert_criticalAlert() {
         String domain = "revoked.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("sec@test.com", "TECH", "WARNING")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("sec@test.com", "TECH", "WARNING")));
         when(alertEventRepo.findOpenAlert(domain, "REVOKED")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -209,7 +227,7 @@ class EscalationServiceTest {
     @DisplayName("DEPLOYMENT_INCOMPLETE fires CRITICAL MISMATCH alert")
     void processResults_deploymentMismatch_criticalMismatchAlert() {
         String domain = "mismatch.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("dev@test.com", "TECH", "WARNING")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("dev@test.com", "TECH", "WARNING")));
         when(alertEventRepo.findOpenAlert(domain, "MISMATCH")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -230,7 +248,7 @@ class EscalationServiceTest {
     @DisplayName("CHAIN_BROKEN fires CRITICAL alert")
     void processResults_chainBroken_criticalAlert() {
         String domain = "chain-broken.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of());
         when(alertEventRepo.findOpenAlert(domain, "CHAIN_BROKEN")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -255,7 +273,7 @@ class EscalationServiceTest {
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(OWNER, List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
 
         // Now only 10 days left → HIGH
@@ -279,7 +297,7 @@ class EscalationServiceTest {
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(OWNER, List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
         java.util.concurrent.atomic.AtomicReference<String> levelAtPush = new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicBoolean savedBeforePush = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -312,7 +330,7 @@ class EscalationServiceTest {
         existing.setLastReAlertAt(pastInterval);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
@@ -461,7 +479,7 @@ class EscalationServiceTest {
         event.setId(3L);
         when(alertEventRepo.findById(3L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(latestCheckRepo.findById("notify.example.com")).thenReturn(Optional.empty());
 
@@ -665,7 +683,7 @@ class EscalationServiceTest {
         AlertEvent existing = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
         when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection())).thenReturn(List.of(existing));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
 
@@ -685,7 +703,7 @@ class EscalationServiceTest {
         EscalationContact c = contact("dev@test.com", "TECH", "WARNING");
         c.setWebhookUrl("https://teams.example.com/webhook");
         c.setWebhookType("TEAMS");
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(c));
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -706,7 +724,7 @@ class EscalationServiceTest {
         EscalationContact c = contact("dev@test.com", "TECH", "WARNING");
         c.setWebhookUrl("https://teams.example.com/webhook");
         c.setWebhookType("TEAMS");
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(c));
         when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         doThrow(new WebhookService.WebhookDeliveryException("HTTP 404: no_service"))
@@ -731,9 +749,9 @@ class EscalationServiceTest {
     // izlemelerinin WARNING alarmı, takımda kontak yoksa GLOBAL eskalasyon kontaklarına gidiyordu.
 
     private void assertNoContactLookup() {
-        verify(contactRepo, never()).findByMinAlertLevelAndActiveTrue(anyString());
         verify(contactRepo, never()).findByTeamIdAndMinAlertLevelAndActiveTrue(any(), anyString());
-        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+        verify(contactRepo, never()).findByTeamIdAndMinAlertLevelAndActiveTrue(any(), anyString());
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(any());
     }
 
     @Test
@@ -825,7 +843,7 @@ class EscalationServiceTest {
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         EscalationContact c = contact("dev@example.com", "TECH", "WARNING");
         c.setWebhookUrl("https://teams.example.com/webhook"); c.setWebhookType("TEAMS");
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(c));
         when(latestCheckRepo.findById(domain)).thenReturn(Optional.empty());
 
         service.processResults(List.of(okResult(domain)));
@@ -847,7 +865,7 @@ class EscalationServiceTest {
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         EscalationContact c = contact(null, "TECH", "WARNING");   // yalnız webhook'u olan kontak (Teams kanalı)
         c.setWebhookUrl("https://teams.example.com/only"); c.setWebhookType("TEAMS");
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(c));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(c));
 
         service.processResults(List.of(okResult(domain)));
 
@@ -865,7 +883,7 @@ class EscalationServiceTest {
         event.setId(101L);
         when(alertEventRepo.findById(101L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(latestCheckRepo.findById("queued.example.com")).thenReturn(Optional.empty());
 
@@ -929,7 +947,7 @@ class EscalationServiceTest {
         event.setDaysRemaining(10);
         when(alertEventRepo.findById(103L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(OWNER, List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("mgr@test.com", "MANAGER", "HIGH")));
 
         Map<String, Object> result = service.reNotify(103L);
@@ -947,7 +965,7 @@ class EscalationServiceTest {
         event.setId(104L);
         when(alertEventRepo.findById(104L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of());
 
         Map<String, Object> result = service.reNotify(104L);
 
@@ -964,10 +982,11 @@ class EscalationServiceTest {
     @DisplayName("reNotify: no contacts but team email present — recipients_queued reflects team emails")
     void reNotify_noContactsButTeamEmail_countsRecipients() {
         AlertEvent event = existingOpenAlert("teamonly.example.com", "EXPIRY", "WARNING", false);
+        event.setTeamId(null);   // damgasız eski olay → takım envanterden (7) çözülür
         event.setId(105L);
         when(alertEventRepo.findById(105L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of());
 
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setTeamId(7L);
@@ -1006,7 +1025,7 @@ class EscalationServiceTest {
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team));
 
         // GLOBAL müdür kontağı MEVCUT — eski hatalı davranışta buna düşerdi; teamOnly ile ARTIK eklenmemeli.
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("mudur@example.com", "MANAGER", "WARNING")));
 
         // İçerik bağlamı — EN GÜNCEL DomainCheck (registrar/bitiş/EPP → zengin mail)
@@ -1165,6 +1184,7 @@ class EscalationServiceTest {
     @DisplayName("reNotify DNS_CHANGED: son changed kayıttan eski/yeni değerler mesaja ve ctx'e taşınır (boş kutu bug'ı)")
     void reNotify_dnsChanged_reconstructsCtx() {
         AlertEvent event = existingOpenAlert("www.iyigelecegeyatirim.com", EscalationService.TYPE_DNS_CHANGED, "HIGH", false);
+        event.setTeamId(null);   // damgasız eski olay → takım envanterden (7) çözülür
         event.setId(305L);
         when(alertEventRepo.findById(305L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1197,6 +1217,7 @@ class EscalationServiceTest {
     @DisplayName("reNotify DNS_CHANGED: changed kaydı yoksa generic mesaja düşer (çökmez)")
     void reNotify_dnsChanged_noRecord_fallsBackGeneric() {
         AlertEvent event = existingOpenAlert("nohist.example.com", EscalationService.TYPE_DNS_CHANGED, "HIGH", false);
+        event.setTeamId(null);   // damgasız eski olay → takım envanterden (7) çözülür
         event.setId(306L);
         when(alertEventRepo.findById(306L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1233,10 +1254,10 @@ class EscalationServiceTest {
     @DisplayName("NETWORK erişilemezlik → UYARI seviyesi + müdür (KRİTİK kontak) sorgulanmaz/hariç")
     void networkUnreachable_isWarning_managerExcluded() {
         String domain = "unreachable.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
         // Müdür var ama yalnız KRİTİK dalda dönmeli — UYARI'da çağrılmamalı:
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING"),
                                     contact("mudur@test.com", "MANAGER", "CRITICAL")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1250,7 +1271,7 @@ class EscalationServiceTest {
         assertThat(saved.getAlertType()).isEqualTo("EXPIRY");
 
         // Müdürü getirecek KRİTİK kontak sorgusu HİÇ çağrılmadı
-        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(any());
 
         // Mail yalnız takım/UYARI alıcısına; müdür alıcı listesinde yok, seviye UYARI
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
@@ -1264,7 +1285,7 @@ class EscalationServiceTest {
     @DisplayName("NETWORK erişilemezlik mesajı: 'erişilemediği için ... alınamadı (ağ/firewall ...)'")
     void networkUnreachable_messageMentionsReachability() {
         String domain = "unreachable2.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -1280,7 +1301,7 @@ class EscalationServiceTest {
     @DisplayName("DNS çözümleme hatası → UYARI seviyesi (ulaşılabilirlik)")
     void dnsUnreachable_isWarning() {
         String domain = "dnsfail.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING"))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING"))
                 .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -1289,14 +1310,14 @@ class EscalationServiceTest {
         ArgumentCaptor<AlertEvent> captor = ArgumentCaptor.forClass(AlertEvent.class);
         verify(alertEventRepo, atLeast(1)).save(captor.capture());
         assertThat(captor.getAllValues().get(0).getAlertLevel()).isEqualTo("WARNING");
-        verify(contactRepo, never()).findByActiveTrueOrderByRoleAsc();
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(any());
     }
 
     @Test
     @DisplayName("SSL handshake hatası → KRİTİK korunur (olası gerçek TLS/sertifika kusuru) + müdür dahil")
     void sslError_staysCritical_managerIncluded() {
         String domain = "sslfail.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("takim@test.com", "TECH", "WARNING"),
                                     contact("mudur@test.com", "MANAGER", "CRITICAL")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -1317,7 +1338,7 @@ class EscalationServiceTest {
     @DisplayName("UNKNOWN hata sınıfı → KRİTİK korunur")
     void unknownError_staysCritical() {
         String domain = "weird.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.processResults(List.of(errorResult(domain, "UNKNOWN")));
@@ -1331,7 +1352,7 @@ class EscalationServiceTest {
     @DisplayName("status=error fakat error_class yok → KRİTİK korunur (defansif)")
     void errorWithoutClass_staysCritical() {
         String domain = "noclass.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.processResults(List.of(errorResult(domain, null)));
@@ -1347,7 +1368,7 @@ class EscalationServiceTest {
     @DisplayName("determineAlertType: REVOKED+MISMATCH+CHAIN_BROKEN hepsi set → REVOKED önceliği (+CRITICAL)")
     void determineAlertType_allDefectsSet_revokedTakesPriority() {
         String domain = "multi-defect.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         Map<String, Object> result = new LinkedHashMap<>(Map.of(
                 "domain", domain, "status", "valid", "warning", false, "days_remaining", 90,
@@ -1365,7 +1386,7 @@ class EscalationServiceTest {
     @DisplayName("determineAlertType: revoke YOK, MISMATCH+CHAIN_BROKEN set → MISMATCH önceliği (chain'in üstünde)")
     void determineAlertType_mismatchAndChainBroken_mismatchTakesPriority() {
         String domain = "mismatch-over-chain.example.com";
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of());
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         Map<String, Object> result = new LinkedHashMap<>(Map.of(
                 "domain", domain, "status", "valid", "warning", false, "days_remaining", 90,
@@ -1672,10 +1693,10 @@ class EscalationServiceTest {
     @DisplayName("processConfirmedOutage creates CRITICAL ACCESSIBILITY alert with Erişim Kesintisi subject")
     void processConfirmedOutage_newOutage_createsCriticalAlert() {
         String domain = "down.example.com";
-        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.of(ownedInventory(List.of(domain)).get(0)));   // sahipli (2026-09-28)
         when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
@@ -1715,7 +1736,7 @@ class EscalationServiceTest {
         when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
         when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
@@ -1740,7 +1761,7 @@ class EscalationServiceTest {
         when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
         when(alertEventRepo.findOpenAlert(domain, "ACCESSIBILITY")).thenReturn(Optional.of(open));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         service.processConfirmedOutage(domain, "ACCESSIBILITY", "CRITICAL", outageCtx());
@@ -1809,10 +1830,10 @@ class EscalationServiceTest {
     @DisplayName("processConfirmedOutage PORT_DOWN → CRITICAL, subject 'Port Kesintisi', mesajda port/protokol")
     void processConfirmedOutage_portDown_critical() {
         String domain = "down.example.com";
-        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.of(ownedInventory(List.of(domain)).get(0)));   // sahipli (2026-09-28)
         when(alertEventRepo.findOpenAlert(domain, "PORT_DOWN")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         Map<String, Object> ctx = new LinkedHashMap<>();
@@ -1834,10 +1855,10 @@ class EscalationServiceTest {
     @DisplayName("processConfirmedOutage DNS_FAILURE → CRITICAL, subject 'DNS Çözümleme Hatası'")
     void processConfirmedOutage_dnsFailure_critical() {
         String domain = "down.example.com";
-        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.of(ownedInventory(List.of(domain)).get(0)));   // sahipli (2026-09-28)
         when(alertEventRepo.findOpenAlert(domain, "DNS_FAILURE")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         service.processConfirmedOutage(domain, "DNS_FAILURE", "CRITICAL",
@@ -1851,10 +1872,10 @@ class EscalationServiceTest {
     @DisplayName("processConfirmedOutage DNS_CHANGED → HIGH, mesajda eski/yeni değerler")
     void processConfirmedOutage_dnsChanged_highWithValues() {
         String domain = "changed.example.com";
-        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.empty());
+        when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.of(ownedInventory(List.of(domain)).get(0)));   // sahipli (2026-09-28)
         when(alertEventRepo.findOpenAlert(domain, "DNS_CHANGED")).thenReturn(Optional.empty());
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(OWNER, List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("team@test.com", "TECH", "WARNING")));
 
         Map<String, Object> ctx = new LinkedHashMap<>();
@@ -1949,7 +1970,7 @@ class EscalationServiceTest {
         when(alertEventRepo.findById(900L)).thenReturn(Optional.of(event));
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         // Global kontak: envanter kaydı OLMADIĞI senaryoda da alıcı kalsın (takım envanterden geliyor).
-        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString()))
                 .thenReturn(List.of(contact("ops@example.com", "MANAGER", "WARNING")));
         when(inventoryRepo.findByDomain(domain)).thenReturn(Optional.ofNullable(inv));
 
@@ -2013,6 +2034,7 @@ class EscalationServiceTest {
         e.setResolved(false);
         e.setCreatedAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
         e.setLastReAlertAt(ISO.format(Instant.now().minus(2, ChronoUnit.DAYS)));
+        e.setTeamId(OWNER);   // açık olay açılışta sahip takımla damgalanır (sahipsiz olay bildirim üretmez, 2026-09-28)
         return e;
     }
 
@@ -2050,7 +2072,7 @@ class EscalationServiceTest {
         // Webhook-only / yeni açılmış kontak: e-posta ve ad NULL (kolonlar nullable, yalnız role NOT NULL).
         EscalationContact broken = contact(null, "PO", "WARNING");
         broken.setName(null);
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(broken, contact("po@x.com", "MANAGER", "WARNING")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(broken, contact("po@x.com", "MANAGER", "WARNING")));
 
         service.processResults(List.of(expiryResult(domain, 5, true)));
 
@@ -2130,7 +2152,7 @@ class EscalationServiceTest {
     void pushDisabled_stillSendsMail() {
         String domain = "http://push-off.example.com/";
         outageFixture(domain);
-        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString()))
                 .thenReturn(List.of(contact("po@example.com", "PO", "CRITICAL")));
 
         service.processConfirmedOutage(domain, "HTTP_DOWN", "CRITICAL", monCtx(false, true));
@@ -2144,7 +2166,7 @@ class EscalationServiceTest {
     void bothEnabled_bothChannels() {
         String domain = "http://both-on.example.com/";
         outageFixture(domain);
-        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString()))
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString()))
                 .thenReturn(List.of(contact("po@example.com", "PO", "CRITICAL")));
 
         service.processConfirmedOutage(domain, "HTTP_DOWN", "CRITICAL", monCtx(false, false));
@@ -2409,10 +2431,46 @@ class EscalationServiceTest {
         assertThat(subject.getAllValues().get(0)).doesNotContain("GÜN KALDI").contains("KRİTİK");
     }
 
+    // ── D8 (2026-09-28): varsayılan OWNER envanteri takımlar arası regresyonu gizlemesin ─────────────────────
+
+    /**
+     * Bu sınıfın varsayılan envanteri her alan adını OWNER'a bağlar; OWNER'ın adresi/kişisi olmadığından "bağımsız yol
+     * envanteri okudu" türü takımlar arası sızıntı burada görünmez kalırdı. Bu pin testi envanteri BAŞKA bir takıma
+     * (adresi + müdürü DOLU) bağlar: bağımsız izleme alarmı yalnız kendi takımına gider, takımı boşsa hiç gitmez.
+     */
+    @Test
+    @DisplayName("D8: envanter BAŞKA takımın (adres + müdür dolu) — bağımsız HTTP alarmı yalnız kendi takımına; takımsızsa hiç; yabancı takım ASLA")
+    void foreignInventoryDefault_standaloneNeverRoutesToInventoryTeam() {
+        long foreign = 99L, own = 7L;
+        com.sitemonitor.model.CertificateInventory fi = new com.sitemonitor.model.CertificateInventory();
+        fi.setDomain("x.example.com"); fi.setTeamId(foreign); fi.setUgTeamId(foreign);
+        when(inventoryRepo.findByDomain(anyString())).thenReturn(Optional.of(fi));
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(fi));
+        com.sitemonitor.model.Team ft = new com.sitemonitor.model.Team(); ft.setId(foreign); ft.setEmail("yabanci@example.com");
+        com.sitemonitor.model.Team ot = new com.sitemonitor.model.Team(); ot.setId(own); ot.setEmail("kendi@example.com");
+        when(teamRepo.findById(foreign)).thenReturn(Optional.of(ft));
+        when(teamRepo.findById(own)).thenReturn(Optional.of(ot));
+        EscalationContact fm = contact("yabanci-mudur@example.com", "MANAGER", "WARNING"); fm.setTeamId(foreign);
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(foreign)).thenReturn(List.of(fm));
+        when(alertEventRepo.findOpenAlert(anyString(), anyString())).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.processConfirmedOutage("x.example.com", EscalationService.TYPE_HTTP_DOWN, "CRITICAL",
+                new HashMap<>(Map.of("team_id", own, "url", "https://x.example.com")));
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(to.capture(), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any());
+        assertThat(to.getValue()).containsExactly("kendi@example.com");
+
+        clearInvocations(emailService);
+        service.processConfirmedOutage("x.example.com", EscalationService.TYPE_HTTP_DOWN, "CRITICAL",
+                new HashMap<>(Map.of("url", "https://x.example.com")));   // takımı boş bağımsız: envantere DÜŞMEZ
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+    }
+
     // ── "Kim bilgilendirilir?" simülatörü (2026-09-20) ──────────────────────────
 
     @Test
-    @DisplayName("Simülatör: takım adresi + seviyeye uyan kişiler + webhook; WARNING'de kişi yok; takımda kişi yoksa global'e düşer")
+    @DisplayName("Simülatör: takım adresi + seviyeye uyan kişiler + webhook; WARNING'de kişi yok; takımda kişi yoksa global'e DÜŞMEZ (2026-09-28)")
     @SuppressWarnings("unchecked")
     void simulateRecipients() {
         com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
@@ -2437,20 +2495,25 @@ class EscalationServiceTest {
         List<Map<String, Object>> webhooks = (List<Map<String, Object>>) r.get("webhooks");
         assertThat(webhooks).hasSize(1);
         assertThat(String.valueOf(webhooks.get(0).get("target"))).doesNotContain("secret123");   // maskeli
-        assertThat(r.get("contacts_fallback_global")).isEqualTo(false);
+        assertThat(r).doesNotContainKey("contacts_fallback_global");   // 2026-09-28: global yedek yolu kalktı
+        assertThat(r.get("team_contacts_missing")).isEqualTo(false);
+        assertThat(r.get("team_contacts_defined")).isEqualTo(true);
 
         // WARNING: kişi yok, yalnız takım
         Map<String, Object> w = service.simulateRecipients(7L, "WARNING", true, null);
         assertThat(w.get("managers_included")).isEqualTo(false);
         assertThat((List<?>) w.get("contacts")).isEmpty();
 
-        // CRITICAL + takımda kişi yok → global kişilere düşer, bayrak kalkar
+        // CRITICAL + takımda kişi yok + takımsız (global) kişi VAR → yine de kişi YOK (ürün kararı 2026-09-28):
+        // yalnız takım alıcıları; ekran "eskalasyon kişisi tanımlı değil" der.
         when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L)).thenReturn(List.of());
         EscalationContact global = contact("global@example.com", "CLEVEL", "CRITICAL"); global.setId(9L);
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(global));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(global));
         Map<String, Object> c = service.simulateRecipients(7L, "CRITICAL", false, null);
-        assertThat(c.get("contacts_fallback_global")).isEqualTo(true);
-        assertThat((List<?>) c.get("contacts")).hasSize(1);
+        assertThat((List<?>) c.get("contacts")).isEmpty();
+        assertThat(c.get("team_contacts_missing")).isEqualTo(true);
+        assertThat(c.get("team_contacts_defined")).isEqualTo(false);
+        assertThat(c.get("email_total")).isEqualTo(1L);   // yalnız takım adresi
 
         assertThatThrownBy(() -> service.simulateRecipients(7L, "BOGUS", false, null)).isInstanceOf(IllegalArgumentException.class);
     }
@@ -2558,7 +2621,7 @@ class EscalationServiceTest {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain(domain); inv.setTeamId(4L); inv.setActive(true);
         when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(inv));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv2 -> inv2.getArgument(0));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
@@ -2616,7 +2679,7 @@ class EscalationServiceTest {
     @DisplayName("status=error (zaman aşımı/ağ) açık güvenlik/kusur alarmlarını 'çözmez' — hiçbir şey doğrulanmadı")
     void transientError_doesNotResolveOpenDefectAlarms() {
         String domain = "flaky.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.processResults(List.of(errorResult(domain, "NETWORK")));
@@ -2696,7 +2759,7 @@ class EscalationServiceTest {
     @DisplayName("Yeni EXPIRY alarmı kontrol sonucundaki not_after'ı olaya damgalar")
     void newExpiryEvent_stampsNotAfter() {
         String domain = "stamp.example.com";
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         Map<String, Object> r = expiryResult(domain, 25, true);
         r.put("not_after", "2026-09-22T23:59:59");
@@ -2717,8 +2780,8 @@ class EscalationServiceTest {
         open.setResolved(false); open.setNotAfter("2026-09-22T23:59:59");
         open.setCreatedAt(ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(2))));
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue(anyString())).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString())).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
         when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Map<String, Object> critical = expiryResult(domain, 3, true);   // WARNING → CRITICAL terfi
@@ -2884,8 +2947,8 @@ class EscalationServiceTest {
         String lastReAlert = ISO.format(Instant.now().minus(25, ChronoUnit.HOURS));   // re-alert vakti GELDİ
         open.setLastReAlertAt(lastReAlert);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
 
         service.processResults(List.of(errorResult(domain, "NETWORK")));   // tek seferlik zaman aşımı
 
@@ -2907,9 +2970,9 @@ class EscalationServiceTest {
         open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING"), contact("mudur@test.com", "MANAGER", "CRITICAL")));
-        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(OWNER, List.of("WARNING", "HIGH")))
                 .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
 
         service.processResults(List.of(expiryResult(domain, 10, true)));   // doğrulanmış 10 gün → YÜKSEK
@@ -2930,7 +2993,7 @@ class EscalationServiceTest {
         open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
 
         service.processResults(List.of(errorResult(domain, "NETWORK")));
 
@@ -2949,7 +3012,7 @@ class EscalationServiceTest {
         open.setLastReAlertAt(null);                                              // ...çünkü gönderim hiç tamamlanmadı
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
@@ -2975,7 +3038,7 @@ class EscalationServiceTest {
         open.setCreatedAt(ISO.format(Instant.now()));   // az önce kaydedildi, gönderim hâlâ sürüyor olabilir
         open.setLastReAlertAt(null);
         when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
-        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(OWNER, "WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
 
         service.processResults(List.of(expiryResult(domain, 25, true)));
 
@@ -2997,7 +3060,7 @@ class EscalationServiceTest {
         open.setLastReAlertAt(null);
         when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(open));
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(OWNER)).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
 
         service.catchUpMissedDailyAlerts();
         service.catchUpMissedDailyAlerts();   // ikinci açılış/çağrı: damgalı → sessiz

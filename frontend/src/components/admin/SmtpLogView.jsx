@@ -9,6 +9,7 @@ import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { navigateTo } from '../../utils/navigate.js'
+import { alertNavParams } from './alerts/alertHistoryModel.js'
 import { mailPreviewSrcDoc, mailLogoVariant } from '../../utils/mailPreview.js'
 import { csvRows } from '../../utils/csv.js'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -492,7 +493,7 @@ export default function SmtpLogView({ onBack, initial }) {
       {detailId && (
         <ModalShell open onClose={() => setDetailId(null)} title={t('health.emailDetail')} icon={Mail} size="xl" scrollBody
           footer={<>
-            {detail?.alert?.id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', { incident: detail.alert.id }) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
+            {detail?.alert?.id && <Button type="button" variant="secondary" onClick={() => { setDetailId(null); navigateTo('alerthistory', alertNavParams({ ...detail.alert, alert_type: detail.alert.type })) }}><ExternalLink size={13} /> {t('sml.openAlert')}</Button>}
             {canResend && detail?.kind === 'FAILED' && !detail?.alert?.resolved && <Button type="button" disabled={busy} onClick={() => resend(detail)}><Send size={13} /> {t('sml.resend')}</Button>}
             <Button type="button" variant="secondary" onClick={() => setDetailId(null)}>{t('app.close')}</Button>
           </>}>

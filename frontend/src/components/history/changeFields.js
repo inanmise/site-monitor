@@ -31,6 +31,10 @@ export function humanMillis(v, t) {
   return n % 1000 === 0 ? `${n / 1000} ${unit(t, 'Sec', 'sn')}` : `${n} ms`
 }
 
+/** Değeri TAKIM KİMLİĞİ olan alanlar — ada / takım rozetine çevrilir (ugTeamId: envanterin UG takımı, 2026-09-28). */
+const TEAM_FIELDS = new Set(['teamId', 'ugTeamId'])
+export const isTeamField = (key) => TEAM_FIELDS.has(String(key || ''))
+
 /** Saniye/milisaniye biçimlendirmesi uygulanacak alanlar — ad kalıbından türetilir. */
 const SECONDS_FIELDS = /Seconds$/
 const MILLIS_FIELDS = /(Ms|MillisecondS?)$/i
@@ -56,7 +60,7 @@ export function formatValue(key, value, ctx = {}) {
     return t ? t(on ? 'chg.valueOn' : 'chg.valueOff') : (on ? 'Açık' : 'Kapalı')
   }
   // Takım kimliği tek başına anlamsız bir sayıdır; adı varsa onu göster.
-  if (key === 'teamId' && ctx.teamNames && ctx.teamNames[value]) return ctx.teamNames[value]
+  if (isTeamField(key) && ctx.teamNames && ctx.teamNames[value]) return ctx.teamNames[value]
   if (SECONDS_FIELDS.test(key)) return humanSeconds(value, t)
   if (MILLIS_FIELDS.test(key)) return humanMillis(value, t)
   // Koleksiyon / harita (AuditDiff JSON'u dizi ve nesne yazar): String() "[object Object]" basıyordu, dizide de

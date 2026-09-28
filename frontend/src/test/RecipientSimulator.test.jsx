@@ -19,7 +19,7 @@ const GROUPS = [{ id: 3, name: 'Ops Grubu', team_id: 7, active: true, is_default
 /** Sunucu tel biçimi (snake_case) — EscalationService.simulateRecipients + AdminController push ayağı. */
 const RESULT = {
   team_id: 7, team_name: 'Takım A', level: 'HIGH', standalone_monitor: false, managers_included: true,
-  contacts_fallback_global: false, email_total: 2,
+  team_contacts_missing: false, team_contacts_defined: true, email_total: 2,
   team_emails: [{ email: 'takim-a@example.com', team: 'Takım A', source: 'Grup: Ops Grubu', kind: 'TEAM' }],
   contacts: [
     { id: 1, name: 'Ali PO', email: 'po@example.com', role: 'PO', min_level: 'WARNING', team_id: 7, email_duplicate: false },
@@ -36,7 +36,8 @@ const RESULT = {
   push_channel: { enabled: true, configured: true, team_enabled: true, types: ['cert'], disabled_types: [],
     quiet_start: null, quiet_end: null, quiet_min_level: null, quiet_active: false, quiet_blocks_level: false, block_reason: null },
 }
-const EMPTY = { ...RESULT, team_id: 9, team_name: 'Takım B', team_emails: [], contacts: [], webhooks: [], push: [], email_total: 0 }
+const EMPTY = { ...RESULT, team_id: 9, team_name: 'Takım B', team_emails: [], contacts: [], webhooks: [], push: [], email_total: 0,
+  team_contacts_missing: true, team_contacts_defined: false }
 
 const url = () => new URLSearchParams(window.location.search)
 const channel = (name) => document.querySelector(`[data-slot="wn-channel"][data-channel="${name}"]`)
@@ -69,7 +70,7 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     expect(api.admin.simulateRecipients).not.toHaveBeenCalled()
 
     await pickTeam('Takım A')
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: null }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: null, ugTeamId: null }))
     await waitFor(() => expect(url().get('g_team')).toBe('7'))
     expect(url().get('g_level')).toBeNull()   // varsayılan değer yazılmaz
     expect(await screen.findByRole('heading', { name: 'Result' })).toBeInTheDocument()
@@ -78,7 +79,7 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
   it('deep link restores the whole scenario (g_team, g_level, g_kind, g_group)', async () => {
     window.history.replaceState(null, '', '/?tab=admin&g_tab=whoNotified&g_team=7&g_level=CRITICAL&g_kind=MONITOR&g_group=3')
     render(<RecipientSimulator teams={TEAMS} isAdmin />)
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'CRITICAL', kind: 'MONITOR', groupId: 3 }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'CRITICAL', kind: 'MONITOR', groupId: 3, ugTeamId: null }))
     expect(screen.getByRole('button', { name: 'CRITICAL' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Monitor' })).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Notification group (optional)' })).toHaveTextContent('Ops Grubu'))
@@ -99,10 +100,10 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     render(<RecipientSimulator teams={TEAMS} isAdmin={false} defaultTeamId={7} />)
     await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button', { name: 'WARNING' }))
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'WARNING', kind: 'CERT', groupId: null }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'WARNING', kind: 'CERT', groupId: null, ugTeamId: null }))
     await waitFor(() => expect(url().get('g_level')).toBe('WARNING'))
     fireEvent.click(screen.getByRole('button', { name: 'Monitor' }))
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'WARNING', kind: 'MONITOR', groupId: null }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'WARNING', kind: 'MONITOR', groupId: null, ugTeamId: null }))
     await waitFor(() => expect(url().get('g_kind')).toBe('MONITOR'))
     fireEvent.click(screen.getByRole('button', { name: 'HIGH' }))
     await waitFor(() => expect(url().get('g_level')).toBeNull())   // varsayılana dönünce parametre silinir
@@ -113,14 +114,14 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     const { rerender } = render(<RecipientSimulator teams={TEAMS} isAdmin={false} defaultTeamId="" />)
     expect(screen.getByText('Choose a team to get started')).toBeInTheDocument()
     rerender(<RecipientSimulator teams={TEAMS} isAdmin={false} defaultTeamId={7} />)
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: null }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: null, ugTeamId: null }))
 
     fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Notification group (optional)' }))
     fireEvent.mouseDown(await screen.findByRole('option', { name: 'Ops Grubu' }))
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: 3 }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 7, level: 'HIGH', kind: 'CERT', groupId: 3, ugTeamId: null }))
 
     await pickTeam('Takım B')
-    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 9, level: 'HIGH', kind: 'CERT', groupId: null }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith({ teamId: 9, level: 'HIGH', kind: 'CERT', groupId: null, ugTeamId: null }))
   })
 
   it('first load shows a skeleton status instead of an empty result', async () => {
@@ -212,6 +213,68 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     fireEvent.click(within(banner).getByRole('button', { name: 'Set up a notification group' }))
     expect(onNavigate).toHaveBeenLastCalledWith('notifyGroups', { g_team: '9' })
     expect(tileValue('email')).toBe('0')
+  })
+
+  // 2026-09-28 prod hatası: kontaksız takımın KRİTİK alarmı başka takımların müdürlerine gidiyordu; ekran bunu
+  // "global kişilere düşüldü" diye gösteriyordu. Artık takımın kendi kişisi yoksa yalnız takım alıcıları — ekran söyler.
+  it('team without escalation contacts: says none are set up, only the team is notified, never another team', async () => {
+    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, level: 'CRITICAL',
+      contacts: [], webhooks: [], email_total: 1, team_contacts_missing: true, team_contacts_defined: false } })
+    const onNavigate = vi.fn()
+    render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} onNavigate={onNavigate} />)
+    const banner = (await screen.findByText('No escalation contacts set up')).closest('[data-slot="alert"]')
+    expect(banner).toHaveAttribute('data-tone', 'warning')
+    expect(banner).toHaveTextContent('the alert goes only to the team’s own recipients')
+    expect(banner).toHaveTextContent('Another team’s manager or escalation contacts are never added.')
+    fireEvent.click(within(banner).getByRole('button', { name: 'Add an escalation contact' }))
+    expect(onNavigate).toHaveBeenLastCalledWith('contacts', { g_team: '7' })
+    const rows = within(channel('email')).getAllByRole('listitem')
+    expect(rows).toHaveLength(1)   // yalnız takım/grup adresi
+    expect(screen.queryByText('Global escalation contact')).toBeNull()
+    expect(screen.queryByText(/fell back to team-less/)).toBeNull()
+    expect(screen.queryByText('Nobody would be notified')).toBeNull()
+  })
+
+  // 2026-09-28 "her sahip takım kendi kişisi": sertifika senaryosunda UG takımı seçilebilir; sunucu SY + UG'yi ayrı sayar.
+  it('certificate scenario: picking a UG team sends ugTeamId + writes g_ug; a monitor scenario drops it', async () => {
+    render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} />)
+    await screen.findByRole('heading', { name: 'Result' })
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /UG team/ }))
+    expect(screen.queryByRole('option', { name: 'Takım A' })).toBeNull()   // SY kendisi UG olamaz
+    fireEvent.mouseDown(await screen.findByRole('option', { name: 'Takım B' }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith(
+      { teamId: 7, level: 'HIGH', kind: 'CERT', groupId: null, ugTeamId: 9 }))
+    await waitFor(() => expect(url().get('g_ug')).toBe('9'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Monitor' }))
+    await waitFor(() => expect(api.admin.simulateRecipients).toHaveBeenLastCalledWith(
+      { teamId: 7, level: 'HIGH', kind: 'MONITOR', groupId: null, ugTeamId: null }))
+    expect(screen.queryByRole('combobox', { name: /UG team/ })).toBeNull()
+    await waitFor(() => expect(url().get('g_ug')).toBeNull())
+  })
+
+  it('SY + UG: a per-team banner names the team that has no escalation contacts (the other team is fine)', async () => {
+    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, level: 'CRITICAL',
+      team_contacts_missing: true, team_contacts_defined: false,
+      owners: [
+        { team_id: 7, role: 'SY', team_name: 'Takım A', contacts_missing: true, contacts_defined: false },
+        { team_id: 9, role: 'UG', team_name: 'Takım B', contacts_missing: false, contacts_defined: true },
+      ] } })
+    render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} />)
+    const banner = (await screen.findByText(/No escalation contacts are set up for the SY team \(Takım A\)/)).closest('[data-slot="alert"]')
+    expect(banner).toHaveAttribute('data-tone', 'warning')
+    expect(banner).toHaveTextContent('Another team’s contacts are never added.')
+    expect(screen.queryByText(/the UG team \(Takım B\)/)).toBeNull()
+    expect(screen.getAllByText('No escalation contacts set up')).toHaveLength(1)   // tek takımlı şerit ikinci kez çizilmez
+  })
+
+  it('team contacts exist but none takes this level: an info note, no "not set up" warning', async () => {
+    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, contacts: [], webhooks: [],
+      email_total: 1, team_contacts_missing: true, team_contacts_defined: true } })
+    render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} />)
+    const note = (await screen.findByText(/None of this team’s escalation contacts receives HIGH alerts/)).closest('[data-slot="alert"]')
+    expect(note).toHaveAttribute('data-tone', 'info')
+    expect(screen.queryByText('No escalation contacts set up')).toBeNull()
   })
 
   it('error: a clean failure and a network failure both show an alert; "Try again" re-runs', async () => {

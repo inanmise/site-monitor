@@ -20,6 +20,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
+import MaskedValue from '../ui/MaskedValue.jsx'
 
 /**
  * Bir izlemenin YAPILANDIRMA geçmişi — "kim, ne zaman, hangi IP'den, neyi değiştirdi".
@@ -222,7 +223,7 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
                       {r.note && <span data-slot="chg-row-note" className="line-clamp-2 text-[0.9em] text-muted-foreground italic">{r.note}</span>}
                     </span>
                   </TableCell>
-                  <TableCell className={cn(TD, 'hidden lg:table-cell')}><IpCopy t={t} ip={r.ip_address} /></TableCell>
+                  <TableCell className={cn(TD, 'hidden lg:table-cell')}><IpCopy t={t} ip={r.ip_address} masked={r.identity_masked === true} /></TableCell>
                   <TableCell className="w-10 px-1 align-top">
                     <Button type="button" variant="ghost" size="icon-sm" data-open-detail="" aria-expanded={open} aria-label={rowLabel}
                       className="text-muted-foreground" onClick={(e) => { e.stopPropagation(); toggle(r.seq) }}>
@@ -266,8 +267,10 @@ export default function ChangeHistoryTab({ t, kind, monitorId, teamNames = {}, c
   )
 }
 
-/** IP adresi + kopyala — GERÇEK düğme (satır tıklamasına sızmaz); erişilebilir ad IP'yi taşır. */
-function IpCopy({ t, ip }) {
+/** IP adresi + kopyala — GERÇEK düğme (satır tıklamasına sızmaz); erişilebilir ad IP'yi taşır. `masked`: IP sunucuda
+ *  bu görüntüleyici için düşürüldü (satır `identity_masked`, 2026-09-28c) → "Gizli". */
+function IpCopy({ t, ip, masked = false }) {
+  if (masked && !ip) return <MaskedValue />
   if (!ip) return <span className="text-muted-foreground">—</span>
   return (
     <Button type="button" variant="ghost" size="xs" data-slot="chg-ip" title={t('chg.ipTitle')}
@@ -326,7 +329,7 @@ function ChangePanel({ t, row: r, detail, teamNames, canManage, restoring, onRes
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <span className="font-semibold text-foreground tabular-nums">{t('chg.detailRecord')} #{r.seq}</span>
         <time dateTime={r.at} className="tabular-nums">{formatDateSec(r.at)}</time>
-        {r.ip_address && <IpCopy t={t} ip={r.ip_address} />}
+        {(r.ip_address || r.identity_masked === true) && <IpCopy t={t} ip={r.ip_address} masked={r.identity_masked === true} />}
         {r.user_agent && <span className="truncate" title={r.user_agent}>{shortUserAgent(r.user_agent)}</span>}
         {/* Geri döndürme yalnız YÖNETEBİLENE ve durum kaydı olan olaylarda çıkar —
             düğmenin görünüp 403 vermesi kullanıcıyı boşuna umutlandırırdı. */}

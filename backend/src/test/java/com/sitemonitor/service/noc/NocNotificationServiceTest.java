@@ -318,6 +318,24 @@ class NocNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("2026-09-28: fırtınada SAHİPSİZ üye (olay + izleme takımsız, UG yok) 7/24 postasına girmez; UG'li ve sahipli üye girer")
+    void storm_unownedMemberExcluded() {
+        AlertEvent owned = alert(71, "PORT_DOWN", "CRITICAL", "h71.example.com");
+        monitor(NocType.PORT, 71, true, true, null);
+        AlertEvent orphan = alert(72, "PORT_DOWN", "CRITICAL", "h72.example.com");
+        orphan.setTeamId(null);
+        when(snap.forAlert(eq(NocType.PORT), any(), eq((Object) Long.valueOf(72)))).thenReturn(
+                new NocMonitorDirectory.Row(NocType.PORT, 72, "izleme-72", "h72.example.com", null, null, true, true, null, false));
+        AlertEvent ugOnly = alert(73, "PORT_DOWN", "CRITICAL", "h73.example.com");
+        ugOnly.setTeamId(null);
+        when(snap.forAlert(eq(NocType.PORT), any(), eq((Object) Long.valueOf(73)))).thenReturn(
+                new NocMonitorDirectory.Row(NocType.PORT, 73, "izleme-73", "h73.example.com", null, 20L, true, true, null, false));
+
+        var eligible = svc.eligibleStormMembers(List.of(owned, orphan, ugOnly), config.get());
+        assertThat(eligible).extracting(s -> s.event().getId()).containsExactly(71L, 73L);
+    }
+
+    @Test
     @DisplayName("fırtına çözümü: açılışı NOC'a gitmiş kurtulanlar için TEK ÇÖZÜLDÜ; sonra tek başına ikinci çözüm yok")
     void stormRecovery() {
         AlertEvent a = alert(41, "PING_DOWN", "CRITICAL", "h41.example.com");

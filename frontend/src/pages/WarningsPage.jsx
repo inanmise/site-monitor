@@ -44,10 +44,13 @@ import {
  * boş listeyle "uyarı yok" gösteriyordu — yalancı "her şey yolunda"), hata bandı + yeniden dene. App'in 5 dk'lık
  * tazelemesi ve "Şimdi Kontrol Et" `refreshKey` (Pano'nun son güncelleme damgası) ile listeyi de tazeler. Takım /
  * kritiklik / platform, uyarı ucu taşımadığı için Pano listesinden (`certs`) doldurulur (warningsModel.enrich).
+ * 7/24 durumu (`noc_notify` + `noc_group_ids`, 2026-09-28) ise uyarı satırının KENDİSİNDE: her satırda Genel Bakış
+ * kartıyla aynı gösterge (noc/NocStatus, tür SSL; sayfa başına tek 7/24 isteği — noc/useNocState).
  *
  * App'ten gelen eylemler: kart detayı, sağlık sekmesi, yenileme planı (ortak RenewalPlanModal App'te), kart eylemleri
- * (Şimdi kontrol et / Düzenle / Kopyala / Sil — CertificateCard sözleşmesi DEĞİŞMEDİ), e-posta hatası → Sistem Sağlığı
- * SMTP günlüğü, toplu "Şimdi Kontrol Et" (Pano'nun takım seçici akışı).
+ * (Şimdi kontrol et / Düzenle / Kopyala / Sil — CertificateCard sözleşmesi DEĞİŞMEDİ; Düzenle aynı zamanda 7/24
+ * göstergesinin düzenleme eylemi), e-posta hatası → Sistem Sağlığı SMTP günlüğü, toplu "Şimdi Kontrol Et" (Pano'nun
+ * takım seçici akışı).
  */
 const WARN_PAGE_URL = Object.freeze({ pageKey: 'wa_page', sizeKey: 'wa_ps' })
 const VIEW_KEY = 'sm.warnings.view'
@@ -186,6 +189,9 @@ export default function WarningsPage({
     isChecking: cardActions ? (row) => !!cardActions(row)?.checking : null,
     onInventory: (d) => navigateTo('domains', { i_q: d }),
     onMail: onMailFailure ? (d) => onMailFailure(d) : null,
+    // 7/24 göstergesinin "7/24 ayarını düzenle" eylemi — Genel Bakış sertifika kartıyla AYNI yol ve AYNI kapı: kartın
+    // Düzenle işleyicisi (App cardActions → envanter formu, 7/24 alanına kaydırılmış). Yoksa gösterge Kapsam bağlantısı verir.
+    nocEdit: cardActions ? (row) => cardActions(row)?.onEdit ?? null : null,
   }
   const cardProps = (row) => ({
     hasSilentAlert: has(silentAlertDomains, row.domain),

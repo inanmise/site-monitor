@@ -738,6 +738,9 @@ class SchedulerServiceTest {
         assertThat(changeCaptor.getValue()).hasSize(1);
         assertThat(changeCaptor.getValue().get(0).previousValue()).isEqualTo("5.6.7.8");
         assertThat(changeCaptor.getValue().get(0).newValue()).isEqualTo("1.2.3.4");
+        // Envanter türevi: takım damgası ve bağımsız işareti YOK (takım + UG envanterden; 2026-09-28)
+        assertThat(changeCaptor.getValue().get(0).teamId()).isNull();
+        assertThat(changeCaptor.getValue().get(0).standalone()).isNull();
 
         // 2) Regresyon: başarısız sorgu → DnsChange YOK, kayıt changed=false
         org.mockito.Mockito.reset(monitoringOutageService, dnsRecordRepo);
@@ -787,10 +790,37 @@ class SchedulerServiceTest {
         assertThat(fail.domain()).isEqualTo("standalone.example.com");
         assertThat(fail.up()).isTrue();
         assertThat(fail.ctxExtra().get("team_id")).isEqualTo(9L);
+        assertThat(fail.ctxExtra().get("standalone")).isEqualTo(true);   // üretici sözleşmesi: bağımsız işareti (D8)
     }
 
     @Test
-    @DisplayName("runDnsChecks: beklenmeyen değer (expectedValue kilidi) → DNS_UNEXPECTED sweep down + team_id")
+    @DisplayName("O1/D8: bağımsız DNS monitörünün DEĞİŞİKLİĞİ DnsChange'e standalone işaretiyle çıkar; bağlamda işaret kalır — takımı BOŞ olsa da")
+    void runDnsChecks_standaloneChange_carriesStandaloneMark() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(43L); m.setDomain("s.example.com"); m.setRecordType("A"); m.setStandalone(true); m.setTeamId(null);
+        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        com.sitemonitor.model.DnsRecord prevOk = new com.sitemonitor.model.DnsRecord();
+        prevOk.setValue("5.6.7.8");
+        when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(43L, "")).thenReturn(java.util.Optional.of(prevOk));
+        when(dnsCheckerService.check("s.example.com", "A"))
+                .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4"), "response_ms", 5L));
+
+        scheduler.runDnsChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.DnsChange>> changes = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> fails = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleDnsSweep(fails.capture(), anyList(), changes.capture(), anyList(), anyList());
+        MonitoringOutageService.DnsChange c = changes.getValue().get(0);
+        assertThat(c.standalone()).isTrue();
+        assertThat(c.teamId()).isNull();
+        Map<String, Object> ctx = MonitoringOutageService.changeCtx(c);   // üreticinin gerçekten yazdığı bağlam
+        assertThat(ctx).containsEntry("standalone", true).doesNotContainKey("team_id");
+        assertThat(fails.getValue().get(0).ctxExtra()).containsEntry("standalone", true).doesNotContainKey("team_id");
+    }
+
+    @Test
+    @DisplayName("runDnsChecks: beklenmeyen değer (expectedValue kilidi) → DNS_UNEXPECTED sweep down; envanter TÜREVİ → team_id DAMGASI YOK (2026-09-28)")
     void runDnsChecks_unexpectedValue() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("locked.example.com");
@@ -813,14 +843,16 @@ class SchedulerServiceTest {
         MonitoringOutageService.SweepItem it = unexpCap.getValue().get(0);
         assertThat(it.domain()).isEqualTo("locked.example.com");
         assertThat(it.up()).isFalse();   // beklenmeyen değer çözümleniyor → down
-        assertThat(it.ctxExtra().get("team_id")).isEqualTo(3L);
+        // Envanter türevi (standalone=false) satır takımı envanterden kopyalasa da damgalanmaz: alarm bağımsız sayılmasın,
+        // takım + UG alan adı → envanterden gelsin (SchedulerService.alarmTeamOf, 2026-09-28).
+        assertThat(it.ctxExtra()).doesNotContainKey("team_id");
         @SuppressWarnings("unchecked")
         List<String> unexp = (List<String>) it.ctxExtra().get("unexpected_values");
         assertThat(unexp).containsExactly("9.9.9.9");
     }
 
     @Test
-    @DisplayName("runDnsChecks: propagationCheck açık + resolver'lar tutarsız → DNS_INCONSISTENT sweep down + team_id")
+    @DisplayName("runDnsChecks: propagationCheck açık + resolver'lar tutarsız → DNS_INCONSISTENT sweep down; türevde team_id YOK")
     void runDnsChecks_propagationInconsistent() {
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
         inv.setDomain("prop.example.com");
@@ -846,7 +878,7 @@ class SchedulerServiceTest {
         MonitoringOutageService.SweepItem it = incCap.getValue().get(0);
         assertThat(it.domain()).isEqualTo("prop.example.com");
         assertThat(it.up()).isFalse();   // resolver'lar arası tutarsız → down
-        assertThat(it.ctxExtra().get("team_id")).isEqualTo(2L);
+        assertThat(it.ctxExtra()).doesNotContainKey("team_id");   // envanter türevi → takım + UG envanterden
         assertThat(it.ctxExtra().get("resolver_detail")).asString().contains("8.8.8.8");
     }
 

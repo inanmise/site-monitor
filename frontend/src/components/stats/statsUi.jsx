@@ -2,6 +2,7 @@ import { AlertOctagon, WifiOff } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
+import { expiredAgoText } from '../../utils/dayPhrases.js'
 import { LEVEL_TEXT, bucketOf, levelOfCert } from './statsModel.js'
 
 /**
@@ -95,15 +96,15 @@ export function LevelBadge({ cert, level: forced, className }) {
 /** "12 gün içinde" / "bugün doluyor" / "3 gün önce doldu" / "—". */
 export function relativeDays(days, t) {
   if (days == null) return '—'
-  if (days < 0) return t('inv.expiredAgo', -days)
+  if (days < 0) return expiredAgoText(t, -days)
   if (days === 0) return t('forecast.dueToday')
-  return t('forecast.inDays', days)
+  return days === 1 ? t('inv.expiresInOne') : t('forecast.inDays', days)
 }
 
 /** Kısa birimli metin: "Bugün" / "1 gün" / "12 gün" / "3 gün önce doldu". */
 function unitDays(days, t) {
   if (days == null) return '—'
-  if (days < 0) return t('inv.expiredAgo', -days)
+  if (days < 0) return expiredAgoText(t, -days)
   if (days === 0) return t('stv.today')
   return days === 1 ? t('stv.day1') : t('stv.daysN', days)
 }

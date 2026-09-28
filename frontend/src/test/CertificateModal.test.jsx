@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
@@ -16,6 +16,8 @@ vi.mock('../api/client', () => ({
   // Kontrol Geçmişi sekmesi (paylaşılan CheckHistoryTab) bu iki biçimleyiciyi de import ediyor.
   formatDateSec:  (s) => String(s ?? ''),
   formatDateOnly: (s) => String(s ?? ''),
+  // Sertifika Kontrol Geçmişi satırı saati ayrı yazar (certmodal/CertHistoryRow — gün, ayırıcı satırda).
+  formatTime:     (s) => String(s ?? ''),
   api: withApiFallback({
     getHistory:           vi.fn().mockResolvedValue({ success: true, data: [] }),
     checkDomainPreview:   vi.fn().mockResolvedValue({ success: true, data: null }),
@@ -67,6 +69,9 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
 import { api } from '../api/client'
 import CertificateModal from '../components/CertificateModal.jsx'
 import { healthyPreview } from './helpers/sslPreviewFixture.js'
+import { resetNocStateForTests } from '../components/noc/useNocState.js'
+import { consumeNocFieldFocus } from '../components/noc/forms/nocFieldFocus.js'
+import { EN } from '../i18n/index.jsx'
 
 describe('CertificateModal', () => {
   beforeEach(() => {
@@ -96,6 +101,40 @@ describe('CertificateModal', () => {
     expect(picker.value).toBe('details')
   })
 
+  // ── Sertifika Detayları (2026-09-28 yeniden tasarım): certmodal/CertDetailsPanel — ayrıntılı sınama CertDetailsPanel.test ──
+  it('Detaylar sekmesi yeni paneli çizer: hata bandı EN ÜSTTE, özet tonu başlık rozetiyle aynı, "N/A" yok', async () => {
+    api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'down.example.com', status: 'error', error: 'Connection timeout after 10s',
+      days_remaining: null, san: [], key_usage: [], ext_key_usage: [], security_flags: [], checked_at: '2026-09-28T10:00:00' }] })
+    render(<CertificateModal domain="down.example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" initialTab="details" />)
+    const dlg = await screen.findByRole('dialog')
+    const panel = await waitFor(() => {
+      const el = dlg.querySelector('[data-slot="cert-details"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(panel.firstElementChild).toHaveAttribute('data-slot', 'alert')
+    expect(panel.firstElementChild).toHaveAttribute('data-tone', 'danger')
+    expect(within(panel.firstElementChild).getByText('Connection timeout after 10s')).toBeInTheDocument()
+    const headerStatus = dlg.querySelector('[data-slot="cert-modal-status"]').getAttribute('data-status')
+    expect(within(panel).getByRole('region', { name: /özet|summary/i })).toHaveAttribute('data-tone', headerStatus)
+    expect(within(panel).queryByText('N/A')).toBeNull()
+  })
+
+  it('süresi dolmuş sertifika başlıkta "Süresi doldu" der ("Hata" değil) — Detaylar paneliyle aynı', async () => {
+    api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'old.example.com', status: 'valid', days_remaining: -3,
+      san: [], key_usage: [], ext_key_usage: [], security_flags: [] }] })
+    render(<CertificateModal domain="old.example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    const dlg = await screen.findByRole('dialog')
+    const badge = await waitFor(() => {
+      const el = dlg.querySelector('[data-slot="cert-modal-status"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(badge).toHaveAttribute('data-status', 'expired')
+    expect(badge).toHaveTextContent(/süresi doldu|expired/i)
+    expect(badge).not.toHaveTextContent(/^(hata|error)$/i)
+  })
+
   // ── Org geneli görünürlük (2026-09-26): başka takımın kaydı SALT OKUNUR açılır ──
   it('readOnly: kontrol / düzenle / tanıla / sil yok, Alarmlar sekmesi yok, not formu yok; rozet + sahibi takım var, okuma sekmeleri kalır', async () => {
     api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'foreign.example.com', status: 'valid', days_remaining: 90, not_after: '2027-01-01T00:00:00', team_id: 9, team_name: 'Takım B' }] })
@@ -118,6 +157,54 @@ describe('CertificateModal', () => {
     expect(await within(dlg).findByText('Takım B notu')).toBeInTheDocument()
     expect(dlg.querySelector('[data-slot="cert-note-form"]')).toBeNull()
     expect(within(dlg).queryByRole('button', { name: /düzenle|^edit$/i })).toBeNull()
+  })
+
+  /*
+   * Ek 3/3 (2026-09-28): Kontrol Geçmişi'nin boş aralık açıklaması "başlıktaki Çalıştır"ı YALNIZ o düğme varsa anar —
+   * salt okunur pencerede / Çalıştır işleyicisi olmayan açılışta (mükerrer alan adı bandı) var olmayan düğmeye yönlendirmez.
+   */
+  it('boş Kontrol Geçmişi: Çalıştır düğmesi YOKSA açıklama onu anmaz (salt okunur / işleyicisiz); varsa anar', async () => {
+    const empty = { success: true, data: { items: [], page: 0, size: 50, total: 0, counts: { total: 0, fail: 0 },
+      range: { from: '2026-08-01T00:00:00', to: '2026-08-15T00:00:00' }, retention_days: 180, buckets: [], alerts: [] } }
+    const orig = api.monitoring.getCheckHistory.getMockImplementation()
+    api.monitoring.getCheckHistory.mockResolvedValue(empty)
+    try {
+      api.getHistory.mockResolvedValue({ success: true, data: [{ domain: 'example.com', status: 'valid', days_remaining: 90 }] })
+      const RUN = /use Run at the top|başlıktaki Çalıştır/i
+      const EMPTY = /No certificate checks in this range|sertifika kontrolü yok/i
+      const props = { domain: 'example.com', onClose: () => {}, currentUser: 'admin', currentUserRole: 'ADMIN', initialTab: 'history' }
+      const r1 = render(<CertificateModal {...props} readOnly readOnlyTeam={{ id: 9, name: 'Takım B' }} onCheckNow={vi.fn()} />)
+      expect(await screen.findByText(EMPTY)).toBeInTheDocument()
+      expect(screen.queryByText(RUN)).toBeNull()
+      r1.unmount()
+      const r2 = render(<CertificateModal {...props} />)   // işleyicisiz (mükerrer alan adı bandı gibi)
+      await screen.findByText(EMPTY)
+      expect(screen.queryByText(RUN)).toBeNull()
+      r2.unmount()
+      render(<CertificateModal {...props} onCheckNow={vi.fn()} />)
+      expect(await screen.findByText(RUN)).toBeInTheDocument()
+    } finally {
+      api.monitoring.getCheckHistory.mockImplementation(orig)
+    }
+  })
+
+  /*
+   * Ek 3/4 (2026-09-28): "Envanterde aç" pencereden AYRILIR. Pencereyi bir form açtıysa (mükerrer alan adı bandı) çağıran
+   * formu da kapatan `onLeave` verir — form açık kalınca Envanter'de açılan kayıt formun ARKASINDA kalıyordu. Verilmezse
+   * eskisi gibi yalnız pencere kapanır.
+   */
+  it('"Envanterde aç": onLeave verilmişse O çağrılır (form da kapanır), verilmemişse onClose', async () => {
+    const onClose = vi.fn()
+    const onLeave = vi.fn()
+    const props = { domain: 'example.com', currentUser: 'admin', currentUserRole: 'ADMIN', initialTab: 'inventory' }
+    const r = render(<CertificateModal {...props} onClose={onClose} onLeave={onLeave} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }))
+    expect(onLeave).toHaveBeenCalledTimes(1)
+    r.unmount()
+    render(<CertificateModal {...props} onClose={onClose} />)
+    onClose.mockClear()
+    fireEvent.click(await screen.findByRole('button', { name: /^(Open in inventory|Envanterde aç)$/ }))
+    expect(onClose).toHaveBeenCalled()
   })
 
   it('renders nothing when domain is null', () => {
@@ -196,7 +283,8 @@ describe('CertificateModal — Kontrol Geçmişi + Grafik', () => {
     const [kind, id] = api.monitoring.getCheckHistory.mock.calls[0]
     expect(kind).toBe('uptime-ssl')
     expect(id).toBe('example.com')            // cert domain-anahtarlı: monitorId = domain
-    expect(await screen.findByText(/42/)).toBeDefined()   // days_remaining hücresi
+    // days_remaining hücresi (certmodal/CertCheckHistory satırı; "42" ayrıca "Kalan gün" kutucuğunda da görünür)
+    expect(await screen.findByText('42 days')).toHaveAttribute('data-slot', 'cert-hist-days')
   })
 
   it('Grafik sekmesi sertifika seri ucunu çağırır (keyword fallback\'ine düşmez)', async () => {
@@ -553,5 +641,138 @@ describe('CertificateModal — SSL Kontrol sekmesi ve pencere boyu (2026-09-28)'
     fireEvent.change(within(dlg).getByRole('textbox', { name: 'Note text' }), { target: { value: 'b' } })
     fireEvent.click(within(dlg).getByRole('button', { name: 'Add note' }))
     await within(dlg).findByRole('tab', { name: /notes.*2/i })
+  })
+})
+
+/**
+ * Başlıktaki 7/24 göstergesi (2026-09-28): izleme detay pencereleriyle (MonitorDetailModal `noc`) AYNI bileşen ve yer —
+ * başlığın ardında, eylem grubunun solunda; pencere adına karışmaz. Durum /history zarfından (`noc_notify`,
+ * `noc_group_ids` — uç envanter satırını yetki kapısında zaten okuyor). Düzenleme = başlıktaki Düzenle ile aynı işleyici
+ * (Genel Bakış kartının yolu); salt okunurda Kapsam bağlantısı; önizlemede / alan yokken gösterge yok.
+ */
+describe('CertificateModal — başlıkta 7/24 göstergesi', () => {
+  const G = (id, name, def = false) => ({ id, name, is_default: def, active: true })
+  const history = (extra = {}) => ({
+    success: true, domain: 'example.com', data: [{ domain: 'example.com', status: 'valid', days_remaining: 90 }], ...extra,
+  })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetNocStateForTests()
+    consumeNocFieldFocus('SSL')
+    api.checkDomainPreview = vi.fn().mockResolvedValue({ success: true, data: null })
+    api.noc.groupOptions.mockResolvedValue({ success: true, data: {
+      groups: [G(1, 'NOC Ana', true), G(4, 'NOC Gece')], disabled_types: [], has_active_group: true, min_level: 'CRITICAL' } })
+  })
+  const header = () => document.querySelector('[data-slot="dialog-header"]')
+  const indicator = () => document.querySelector('[data-slot="noc-status"]')
+  const triggerOf = (el) => el.closest('[data-slot="hint-trigger"]')
+
+  it('başlıkta, eylem grubunun solunda Zengin hap; pencere adına karışmaz; alıcı gruplar kaydın seçiminden', async () => {
+    api.getHistory.mockResolvedValue(history({ noc_notify: true, noc_group_ids: [4] }))
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" onEdit={vi.fn()} />)
+    const dlg = await screen.findByRole('dialog')
+    await waitFor(() => expect(indicator()).toHaveAttribute('data-verified', 'true'))
+    const s = indicator()
+    expect(s).toHaveAttribute('data-state', 'on')
+    expect(s).not.toHaveAttribute('data-compact')
+    const trigger = triggerOf(s)
+    expect(trigger.parentElement).toBe(header())                                            // başlık satırında
+    expect(trigger.closest('[data-slot="dialog-title"]')).toBeNull()                         // başlığın İÇİNDE değil
+    expect(trigger.nextElementSibling).toHaveAttribute('data-slot', 'cert-modal-actions')   // eylem grubunun hemen solunda
+    expect(dlg).not.toHaveAccessibleName(/24\/7/)
+    expect(trigger).toHaveAccessibleName(`example.com — ${EN['nocs.label.on']}`)
+    fireEvent.click(trigger)
+    const pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.on']}` })
+    expect(pop.querySelector('[data-slot="noc-status-groups"]')).toHaveTextContent(/NOC Gece$/)
+  })
+
+  it('düzenleyebilen: "7/24 ayarını düzenle" başlıktaki Düzenle işleyicisini çağırır + 7/24 alanına odak ister', async () => {
+    api.getHistory.mockResolvedValue(history({ noc_notify: false, noc_group_ids: [] }))
+    const onEdit = vi.fn()
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" onEdit={onEdit} />)
+    await waitFor(() => expect(indicator()).toHaveAttribute('data-state', 'off'))
+    fireEvent.click(triggerOf(indicator()))
+    const pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.off']}` })
+    expect(within(pop).queryByRole('link', { name: EN['nocs.viewCoverage'] })).toBeNull()
+    fireEvent.click(within(pop).getByRole('button', { name: EN['noc.editNoc'] }))
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    expect(consumeNocFieldFocus('SSL')).toBe(true)
+  })
+
+  it('salt okunur (başka takımın kaydı) ya da Düzenle yetkisi yok: "7/24 Kapsamı\'nda gör" (SSL + alan adı)', async () => {
+    api.getHistory.mockResolvedValue(history({ noc_notify: true, noc_group_ids: [] }))
+    const onEdit = vi.fn()
+    const r = render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN"
+      readOnly readOnlyTeam={{ id: 9, name: 'Takım B' }} onEdit={onEdit} />)
+    await waitFor(() => expect(indicator()).not.toBeNull())
+    fireEvent.click(triggerOf(indicator()))
+    let pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.on']}` })
+    expect(within(pop).queryByRole('button', { name: EN['noc.editNoc'] })).toBeNull()
+    const link = within(pop).getByRole('link', { name: EN['nocs.viewCoverage'] })
+    const href = new URL(link.getAttribute('href'), 'http://localhost')
+    expect([href.searchParams.get('tab'), href.searchParams.get('n_type'), href.searchParams.get('n_q')]).toEqual(['noc', 'SSL', 'example.com'])
+    r.unmount()
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    await waitFor(() => expect(indicator()).not.toBeNull())
+    fireEvent.click(triggerOf(indicator()))
+    pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.on']}` })
+    expect(within(pop).getByRole('link', { name: EN['nocs.viewCoverage'] })).toBeInTheDocument()
+    expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  /*
+   * Ek 3/2 (2026-09-28): pencere App düzeyinde yaşar — "7/24 Kapsamı'nda gör" sekmeyi pencerenin ARKASINDA değiştiriyor,
+   * pencere Kapsam sayfasının üstünde açık kalıyordu. İçeriden gezinmede kapanır; dışarıdan gelen gezinmede KAPANMAZ.
+   */
+  it('salt okunur: "7/24 Kapsamı\'nda gör" pencereyi KAPATIR ve Kapsam\'a gider; dışarıdan gezinme pencereye dokunmaz', async () => {
+    api.getHistory.mockResolvedValue(history({ noc_notify: true, noc_group_ids: [] }))
+    const onClose = vi.fn()
+    const nav = vi.fn()
+    window.addEventListener('sm:navigate', nav)
+    try {
+      render(<CertificateModal domain="example.com" onClose={onClose} currentUser="admin" currentUserRole="ADMIN"
+        readOnly readOnlyTeam={{ id: 9, name: 'Takım B' }} />)
+      await waitFor(() => expect(indicator()).not.toBeNull())
+      act(() => { window.dispatchEvent(new CustomEvent('sm:navigate', { detail: { tab: 'noc' } })) })   // dışarıdan
+      expect(onClose).not.toHaveBeenCalled()
+      fireEvent.click(triggerOf(indicator()))
+      const pop = await screen.findByRole('dialog', { name: `example.com — ${EN['nocs.label.on']}` })
+      fireEvent.click(within(pop).getByRole('link', { name: EN['nocs.viewCoverage'] }))
+      expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'noc', params: { n_type: 'SSL', n_q: 'example.com' } })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('sm:navigate', nav)
+    }
+  })
+
+  it('alan yoksa (eski sunucu) ve önizlemede gösterge YOK, 7/24 isteği atılmaz', async () => {
+    api.getHistory.mockResolvedValue(history())
+    const r = render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    await waitFor(() => expect(api.getHistory).toHaveBeenCalled())
+    await screen.findByRole('dialog')
+    await new Promise((res) => setTimeout(res, 0))
+    expect(indicator()).toBeNull()
+    r.unmount()
+    render(<CertificateModal domain="new.example.com" previewMode initialData={{ domain: 'new.example.com', status: 'valid', _preview: true, noc_notify: true }}
+      onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    await screen.findByRole('dialog')
+    await new Promise((res) => setTimeout(res, 0))
+    expect(indicator()).toBeNull()
+    expect(api.noc.groupOptions).not.toHaveBeenCalled()
+  })
+
+  it('envanter formu kaydedince (refreshSignal) başlık hemen güncel durumu gösterir; başka alana geçince eski durum taşınmaz', async () => {
+    api.getHistory.mockResolvedValue(history({ noc_notify: false, noc_group_ids: [] }))
+    const props = { onClose: () => {}, currentUser: 'admin', currentUserRole: 'ADMIN' }
+    const r = render(<CertificateModal domain="example.com" {...props} refreshSignal={0} />)
+    await waitFor(() => expect(indicator()).toHaveAttribute('data-state', 'off'))
+    api.getHistory.mockResolvedValue(history({ noc_notify: true, noc_group_ids: [1] }))
+    r.rerender(<CertificateModal domain="example.com" {...props} refreshSignal={1} />)
+    await waitFor(() => expect(indicator()).toHaveAttribute('data-state', 'on'))
+    // Başka alan: yanıt gelene dek gösterge YOK (A'nın durumu B'nin başlığında görünmez)
+    api.getHistory.mockReturnValue(new Promise(() => {}))
+    r.rerender(<CertificateModal domain="other.example.com" {...props} refreshSignal={1} />)
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('other.example.com'))
+    expect(indicator()).toBeNull()
   })
 })

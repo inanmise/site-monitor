@@ -130,7 +130,9 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
 
   function openAdd() {
     setMsg(null)
-    setForm({ ...emptyContact, team_id: teams[0]?.id ?? '' })
+    // Takım BİLİNÇLİ seçilir (2026-09-28): eskiden ilk takım önceden seçiliydi — değiştirmeyi unutan yönetici kişiyi
+    // o takıma yazıyor, kişi o takımın alarmlarını alıyordu. Tek takım görünüyorsa belirsizlik yok, o seçilir.
+    setForm({ ...emptyContact, team_id: teams.length === 1 ? teams[0].id : '' })
     setModal('add')
   }
   function openEdit(c) {
@@ -185,7 +187,10 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   }
 
   const selectedUser = form.user_id ? userMap[form.user_id] : null
-  const canSave = !!form.user_id
+  // Takım zorunlu (sunucu da 400 verir): takımsız kişi hiçbir bildirim almaz. Takım seçimi yalnız yöneticide
+  // görünür; diğer yazarlarda sunucu kendi takımını yazar.
+  const teamPickable = isAdmin && teams.length > 0
+  const canSave = !!form.user_id && (!teamPickable || !!form.team_id)
 
   const TH = 'h-9 px-3 text-[0.78em] font-semibold tracking-wide text-muted-foreground uppercase'
   const hint = 'text-xs text-muted-foreground [overflow-wrap:anywhere]'
@@ -273,9 +278,15 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
             )}
             {pagedContacts.map((c) => (
               <TableRow key={c.id}>
-                <TableCell className="max-w-[16rem] whitespace-normal"><UserBadge displayName={c.name} email={c.email} inline size="sm" /></TableCell>
+                <TableCell className="max-w-[16rem] whitespace-normal">
+                  <UserBadge displayName={c.name} email={c.email} inline size="sm" />
+                  {/* Takım sütunu telefonda gizli — takımsız kişinin uyarısı orada da görünsün */}
+                  {c.team_id == null && <NoTeamBadge label={t('ec.noTeamBadge')} className="mt-1 sm:hidden" />}
+                </TableCell>
                 <TableCell className="hidden break-all whitespace-normal lg:table-cell">{c.email}</TableCell>
-                <TableCell className="hidden whitespace-normal sm:table-cell">{teamMap[c.team_id] || '—'}</TableCell>
+                <TableCell className="hidden whitespace-normal sm:table-cell">
+                  {c.team_id == null ? <NoTeamBadge label={t('ec.noTeamBadge')} /> : (teamMap[c.team_id] || '—')}
+                </TableCell>
                 <TableCell><OrgRoleBadge role={c.role}>{roleLabelMap[c.role] || c.role}</OrgRoleBadge></TableCell>
                 <TableCell>
                   <Badge data-level={c.min_alert_level} className={cn('font-bold', LEVEL_CLS[c.min_alert_level] || 'bg-muted-foreground text-white')}>
@@ -343,12 +354,13 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
               />
             )}
           </Field>
-          {isAdmin && teams.length > 0 && (
-            <Field label={t('ec.formTeam')}>
+          {teamPickable && (
+            <Field label={t('ec.formTeam')} required>
               {({ id }) => (
                 <SearchableSelect id={id}
                   value={form.team_id}
                   onChange={v => setForm({ ...form, team_id: v })}
+                  placeholder={t('ec.pickTeam')}
                   searchThreshold={2}
                   options={teams.map(team => ({ value: team.id, label: team.name }))}
                 />
@@ -401,6 +413,14 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       </ModalShell>
     </section>
   )
+}
+
+/**
+ * Takıma atanmamış (team_id NULL, eski veri) kişi — 2026-09-28 kuralı: eskalasyon kişileri yalnız KENDİ takımlarının
+ * alarmlarını alır, takımsız kişi hiçbir bildirim almaz. Düzenle → takım seçilince yeniden devreye girer.
+ */
+function NoTeamBadge({ label, className = '' }) {
+  return <ToneBadge tone="warning" data-slot="ec-no-team" className={cn('whitespace-normal', className)}>{label}</ToneBadge>
 }
 
 /** "Aktif" — shadcn Checkbox + bağlı etiket (form gönderimiyle gider). */

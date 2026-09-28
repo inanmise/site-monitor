@@ -9,7 +9,8 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import UserDetailPanel from '../UserDetailPanel.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { navigateTo } from '../../../utils/navigate.js'
-import { splitFlags, relTime, splitDuration, tabLabel, loginStatus } from './uactModel.js'
+import { splitFlags, relTime, splitDuration, tabLabel, loginStatus, idHidden } from './uactModel.js'
+import { MaskedValue } from './DirectoryParts.jsx'
 import Field from '../../ui/Field.jsx'
 import ToneBadge, { SystemRoleBadge, OrgRoleBadge } from '../ToneBadge.jsx'
 import { TH, TH_NUM, TD, TD_NUM, MUTED_SM, DataTable, Pill, FlagBadge, LinkButton, KvField, KV_GRID, KvSection, AuthSourceBadge } from '../HealthUi.jsx'
@@ -50,7 +51,7 @@ function osOf(ua) {
 }
 
 /** Isı haritası hücresi → o saatteki girişler. */
-export function HeatCellModal({ cell, onClose, onUser }) {
+export function HeatCellModal({ cell, identityMasked = false, onClose, onUser }) {
   const t = useT()
   const labels = t('uact.weekdays').split(',')
   const list = (cell.cells && cell.cells[`${cell.weekday}-${cell.hour}`]) || []
@@ -69,7 +70,7 @@ export function HeatCellModal({ cell, onClose, onUser }) {
             <TableRow key={i}>
               <TableCell className={cn(TD, MONO_SM)}>{r.time ? formatDateSec(r.time) : '—'}</TableCell>
               <TableCell className={TD}>{r.actor ? <LinkButton onClick={() => onUser?.(r.actor)}><UserBadge username={r.actor} inline size="sm" /></LinkButton> : '—'}</TableCell>
-              <TableCell className={cn(TD, MONO_SM)}>{r.ip || '—'} <span className="text-muted-foreground">{loc(r)}</span></TableCell>
+              <TableCell className={cn(TD, MONO_SM)}>{idHidden(r, 'ip', identityMasked) ? <MaskedValue /> : <>{r.ip || '—'} <span className="text-muted-foreground">{loc(r)}</span></>}</TableCell>
               <TableCell className={cn(TD, 'text-xs')}><Outcome value={r.outcome} /></TableCell>
               <TableCell className={cn(TD, 'text-xs')}>{r.reason || '—'}</TableCell>
             </TableRow>
@@ -87,6 +88,7 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
   const rows = kind === 'active' ? (data.active_users || []) : (data.details?.[kind] || [])
   const isUsers = kind === 'unique_users', isDormant = kind === 'dormant', isActive = kind === 'active'
   const isFailed = kind === 'failed', isAnom = kind === 'anomalies'
+  const masked = data.identity_masked === true   // kimlik izi yalnız global yönetici + denetçiye (2026-09-28c)
   const rel = (iso) => { const r = relTime(iso); return r ? t(`uact.rel.${r.unit}`, r.n) : '—' }
   // 2026-09-20: giriş / anomali / tekil kullanıcı satırlarında ad + rol + takım (olay satırı taşımıyorsa login_status'tan)
   const byName = new Map((data.login_status || []).map((u) => [String(u.username || '').toLowerCase(), u]))
@@ -109,7 +111,7 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
                 <TableCell className={TD}>{u.team_name ? <TeamBadge teamId={u.team_id} teamName={u.team_name} /> : '—'}</TableCell>
                 <TableCell className={cn(TD, MONO_SM)}>{u.login_at ? formatDateSec(u.login_at) : '—'}</TableCell>
                 <TableCell className={cn(TD, 'text-xs')}>{u.last_tab ? tabLabel(u.last_tab, t) : '—'}</TableCell>
-                <TableCell className={cn(TD, 'text-xs')}>{u.ip || '—'} <span className="text-muted-foreground">{loc(u)}</span></TableCell>
+                <TableCell className={cn(TD, 'text-xs')}>{idHidden(u, 'ip', masked) ? <MaskedValue /> : <>{u.ip || '—'} <span className="text-muted-foreground">{loc(u)}</span></>}</TableCell>
               </TableRow>
             ))}</TableBody>
           </>) : isDormant ? (<>
@@ -140,8 +142,8 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
                 <TableCell className={cn(TD, MONO_SM)}>{r.time ? formatDateSec(r.time) : '—'}</TableCell>
                 <TableCell className={TD}>{userCell(r.actor, r)}</TableCell>
                 <TableCell className={TD}>{teamCell(r.actor, r)}</TableCell>
-                <TableCell className={cn(TD, MONO_SM)}>{r.ip || '—'} <span className="text-muted-foreground">{loc(r)}</span></TableCell>
-                {!isAnom && <TableCell className={cn(TD, 'text-xs')}>{r.user_agent ? `${shortUa(r.user_agent)}${osOf(r.user_agent) ? ' · ' + osOf(r.user_agent) : ''}` : '—'}</TableCell>}
+                <TableCell className={cn(TD, MONO_SM)}>{idHidden(r, 'ip', masked) ? <MaskedValue /> : <>{r.ip || '—'} <span className="text-muted-foreground">{loc(r)}</span></>}</TableCell>
+                {!isAnom && <TableCell className={cn(TD, 'text-xs')}>{idHidden(r, 'user_agent', masked) ? <MaskedValue /> : r.user_agent ? `${shortUa(r.user_agent)}${osOf(r.user_agent) ? ' · ' + osOf(r.user_agent) : ''}` : '—'}</TableCell>}
                 {isAnom && <TableCell className={TD}>{splitFlags(r.flags).map((f) => <FlagBadge key={f} flag={f}>{t(`uact.anom_${f}`)}</FlagBadge>)}</TableCell>}
                 {(isFailed || isAnom) && <TableCell className={cn(TD, 'text-xs')}><Outcome value={r.outcome} /></TableCell>}
                 {isFailed && <TableCell className={cn(TD, 'text-xs')}>{r.reason || '—'}</TableCell>}
@@ -155,7 +157,7 @@ export function KpiDetailModal({ detail, data, onClose, onUser, winLabel }) {
 }
 
 /** Oturum / kullanıcı detayı: kimlik (gizlilik #14), oturum, giriş geçmişi, kaynak, 30 günlük zaman çizelgesi (#3). */
-export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, activeSet, onClose, onTerminate, onAck, ackBusy, onRefresh, teams = [] }) {
+export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMasked = false, self, activeSet, onClose, onTerminate, onAck, ackBusy, onRefresh, teams = [] }) {
   const t = useT()
   const toast = useToast()
   const u = full || row
@@ -186,6 +188,9 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
   const dur = (sec) => { const d = splitDuration(sec); return d.h > 0 ? `${d.h} ${t('chg.unitHour')} ${String(d.m).padStart(2, '0')} ${t('chg.unitMin')}` : `${d.m} ${t('chg.unitMin')}` }
   const status = loginStatus(u, activeSet || new Set())
   const isLive = status === 'active'
+  // Kimlik izi düşürülmüşse (başkasının kaydı, global olmayan görüntüleyici) değer yerine "Gizli" (2026-09-28c)
+  const hid = (key) => idHidden(u, key, identityMasked)
+  const ipField = (label, key) => field(label, hid(key) ? <MaskedValue /> : u[key], !hid(key))
   return (
     <ModalShell open onClose={onClose} title={u.username} icon={Users} size="lg" scrollBody
       footer={<>
@@ -239,6 +244,7 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
           {field(t('uact.colLastTab'), u.last_tab ? `${tabLabel(u.last_tab, t)}${u.last_tab_at ? ' · ' + rel(u.last_tab_at) : ''}` : '—')}
         </div>
         <KvSection>{t('uact.detailSource')}</KvSection>
+        {hid('ip') && hid('user_agent') ? <AlertBanner tone="info" className="mb-0">{t('udir.connMasked')}</AlertBanner> : (<>
         <div className={KV_GRID}>
           {field(t('uact.colIp'), u.ip, true)}
           {field(t('uact.colLocation'), loc(u))}
@@ -254,6 +260,7 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
               </div>
             )}
         </div>
+        </>)}
       </>)}
 
       <KvSection>{t('uact.detailLoginHistory')}</KvSection>
@@ -261,9 +268,9 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
         {field(t('uact.colLastLogin'), u.last_login_at ? formatDateSec(u.last_login_at) : '—', true)}
         {field(t('uact.detailLoginMethod'), u.last_login_method)}
         {field(t('uact.colPrevLogin'), u.prev_login_at ? formatDateSec(u.prev_login_at) : '—', true)}
-        {field(t('uact.detailPrevIp'), u.prev_login_ip, true)}
+        {ipField(t('uact.detailPrevIp'), 'prev_login_ip')}
         {field(t('uact.colLastFailed'), u.last_failed_at ? formatDateSec(u.last_failed_at) : '—', true)}
-        {field(t('uact.detailFailedIp'), u.last_failed_ip, true)}
+        {ipField(t('uact.detailFailedIp'), 'last_failed_ip')}
         {field(t('uact.colFailedCount'), String(u.failed_since_login ?? 0))}
       </div>
 
@@ -284,7 +291,9 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, self, acti
                   <span className="min-w-0 flex-1">
                     <Outcome value={e.outcome} />
                     {e.reason && <span className="text-muted-foreground"> · {e.reason}</span>}
-                    <span className={MUTED_SM}> · {e.ip || '—'} {loc(e) !== '—' ? `(${loc(e)})` : ''} · {shortUa(e.user_agent)}</span>
+                    {timeline.identity_masked === true && !('ip' in e)
+                      ? <span className={MUTED_SM}> · <MaskedValue /></span>
+                      : <span className={MUTED_SM}> · {e.ip || '—'} {loc(e) !== '—' ? `(${loc(e)})` : ''} · {shortUa(e.user_agent)}</span>}
                     {splitFlags(e.flags).map((f) => <FlagBadge key={f} flag={f} title={t(`uact.flagHelp.${f}`)}>{t(`uact.anom_${f}`)}</FlagBadge>)}
                     {e.flags && (e.ack
                       ? <span className="inline-flex items-center gap-1 text-xs text-success"><Check size={12} /> {e.ack.by} · {rel(e.ack.at)}</span>

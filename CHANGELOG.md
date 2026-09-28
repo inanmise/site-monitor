@@ -15,6 +15,181 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.90.0] — 2026-09-28
+
+### Added
+- **Alarm Geçmişi — tarih aralığı kipi:** "Tümü" görünümünde tarih süzgecine "Aralıkta açılanlar" (varsayılan) ya da
+  "Aralıkta aktif olanlar" (aralığın herhangi bir anında açık olan alarmlar, `range=active`) seçimi eklendi. Etkin kip
+  süzgeç çipiyle görünür, × ile varsayılana döner; tür sayaçları, yüzey sayıları ve CSV dışa aktarımı aynı kipi uygular.
+- **Uyarılar sayfasında 7/24 göstergesi:** her sertifika satırında (tablo, telefon kartı, Kartlar görünümü) Genel Bakış
+  kartıyla aynı gösterge (açık / açık · iletilmiyor / kapalı). Düzenleme yetkisi olan "7/24 ayarını düzenle" ile envanter
+  formunu 7/24 alanında açar; diğerleri 7/24 Kapsamı'na gider.
+- **Sertifika penceresinin başlığında 7/24 göstergesi:** izleme detay pencereleriyle aynı yer ve davranış; kayıt
+  kaydedilince hemen güncellenir. Salt okunur pencerede yalnız Kapsam bağlantısı.
+- Sertifikalarda 7/24 açıklaması artık gerçek alıcı grupları yazar (`noc_group_ids` sertifika listesinde, uyarı
+  satırlarında ve pencerede; ek veritabanı sorgusu yok).
+
+### Changed
+- **Sistem Sağlığı — Veritabanı Analitiği yeniden tasarlandı (shadcn, telefon + tablet):** iki gruplu tıklanır özet
+  kutucukları ("şu an": DB boyutu, bağlantı doluluğu, önbellek isabeti, ölü satır; "pencere": sorgu, başarısız, ort./p95,
+  en yavaş), adet ve süreyi ortak zaman ekseninde gösteren sorgu yükü grafiği (seri aç/kapa, 200 ms eşik, tablo
+  görünümü), "Bağlantılar ve sağlık" kartı (durum dağılımı, uzun süren sorgu / işlem içinde boşta / kilit bekleme
+  uyarıları, uygulama havuzu), tablo ayrıntısı (boyut, tarama, son VACUUM/ANALYZE, bakım önerisi); 1024 px altında kart
+  düzenli listeler. pg_stat_statements kapalıysa etkinleştirme adımları kopyalanabilir komutlarla gösterilir; okunamayan
+  kaynak "Bilinmiyor" yazar (yeşil ya da sıfır değil). "Güncellendi" artık sunucunun veriyi hesapladığı an. Uçtaki
+  veritabanı sorgu sayısı azaldı (pgss yokken 11 → 7), N+1 yok; yenilemede sekme, arama, sıralama ve sayfa korunur.
+- **Sistem Sağlığı — HTTP istekleri yeniden tasarlandı (shadcn, telefon + tablet):** istek hızı, hata oranı, p95/p99
+  ve en yavaş uç kutucukları; eşik rozetli hacim / süre / hata grafikleri; "en çok hata veren" ve "en yavaş (p95)" uç
+  listeleri — uca dokununca İstek Gezgini o uca odaklı açılır.
+- **İstek Gezgini:** yöntem ve durum sınıfı (2xx–5xx) süzgeçleri (telefonda alt panel, etkin süzgeç çipleri), durum
+  kodu dağılımı, ortak zaman eksenli hacim + süre grafiği, sıralanır / aranır / sayfalanır uç tablosu (telefonda kart)
+  ve CSV, uç ayrıntı paneli, canlı yenileme; yenilemede süzgeç, sıralama ve seçim korunur. HTTP metrikleri artık durum
+  kodlarını da kaydeder (`http_metric_minute.status_codes`, boş bırakılabilir kolon — eski satırlar "sınıfsız" sayılır);
+  yeni `/api/admin/system/http-metrics/overview` ucu tek akış taramasıyla çalışır (sabit bellek, 31 gün tavanı); uç
+  adlarında sorgu dizesi, kimlik, belirteç ve e-posta parçaları şablona çevrilir.
+- **Sistem Sağlığı — Kullanıcı Dizini yeniden tasarlandı (shadcn, telefon + tablet):** tıklanabilir özet kutucukları
+  (toplam, çevrimiçi, son 7 gün, kilitli/pasif, LDAP/Yerel, turu tamamlayan), faset süzgeçleri (hesap, rol, takım,
+  kimlik kaynağı, tur, son giriş) ve kaldırılabilir süzgeç çipleri, sıralanabilir tablo; telefonda ve tablette kart
+  listesi ve süzgeç paneli. Yeni kullanıcı ayrıntı paneli: oturum ve zaman aşımı, bağlantı (IP, konum, tarayıcı,
+  cihaz — yetkiye göre), hesap ve giriş geçmişi, yetkiye bağlı yönetici işlemleri. 30 sn'lik yenilemede süzgeç, sayfa
+  ve açık ayrıntı korunur; CSV görünen (süzgeçlenmiş, sıralanmış) listeyi indirir; arama Türkçe harf ve aksan duyarsız.
+- **Sertifika penceresi — "Sertifika Detayları" sekmesi yeniden tasarlandı (shadcn, telefon + tablet):** tepede son
+  kontrol hatası; kalan gün ve geçerlilik zaman çizelgesi özeti (bugün işaretli, kullanılan süre yüzdesi); sertifika
+  otoritesi / anahtar / alternatif adlar / güven ve zincir karoları; Kimlik · Geçerlilik · Anahtar · Güvenlik · Altyapı ·
+  SAN bölümleri. Seri no ve SHA-256 parmak izi okunur gruplarla; DN, seri no, parmak izi ve OCSP/CRL tek dokunuşla
+  kopyalanır (kopya ham değer). Anahtar kullanımları anlaşılır adlarla; OCSP/CRL yalnız http(s) ise bağlantı. "N/A"
+  yerine soluk "—", boş bölümler gizli. Çok adlı sertifikalarda SAN listesi aranabilir (ilk 12 + Tümünü göster / Daralt,
+  tümünü kopyala; alan adıyla eşleşen ad önde ve vurgulu, joker adlar işaretli).
+- Sertifika Detayları'nda **TLS sürümü ve şifre takımı** gösterilir; eski protokol (TLS 1.0/1.1, SSL) ya da zayıf şifrede
+  Zayıf Algoritma Raporu ile aynı kurala dayanan uyarı rozeti. Alanlar yalnız pencerenin geçmiş ucunda (`/api/history`)
+  döner — sertifika listesi yükü değişmedi.
+- **Sertifika penceresi — "Kontrol Geçmişi" sekmesi yeniden tasarlandı (shadcn, telefon + tablet):** SSL özet
+  kutucukları (kontrol, başarısız — süzgeç; başarı oranı, kalan gün, aralıktaki yenileme sayısı, son hata), yenileme
+  anları işaretli kalan gün eğilimi ve "yenileme anına git". Satırlarda durum rozeti, önceki kontrole göre kalan gün
+  değişimi ("Yenilendi +N" / "Yeni sertifika") ve tam hata metni ile o kontrolün sertifika alanlarını açan "Ayrıntı"
+  paneli; telefonda kart, tablette ve masaüstünde tablo. Liste yüklenemezse kutucuklar "aralıkta hata yok" demez.
+- Kontrol Geçmişi (tüm izleme türleri): dokunmatik cihazlarda aralık düğmeleri ve "Yeniden dene" 40 px dokunma hedefinde.
+- Envanter çekmecesindeki "Kontroller" sekmesi ve Uptime detayının SSL geçmişi de sertifika penceresinin zengin Kontrol
+  Geçmişi'ni (kutucuklar, kalan gün eğilimi, satır ayrıntısı) kullanır; dar sütunda kart listesine geçer.
+- **Dokunmatik ekranlarda (tablet dâhil) dokunma hedefleri 40 px:** sayfalama okları ve "Sayfaya git" kutusu (artık
+  ekran genişliğine değil giriş türüne bağlı — tablette 24/32 px'ti), tarih / zaman aralığı seçici tetikleri ve tarih
+  penceresinin içi (takvim günleri, ay okları, hafta numaraları, saat alanı, Tamam / Uygula, kısayollar, hızlı aralıklar —
+  takvim 360 px telefona sığar). Uptime detayındaki HTTP geçmişi dar sütunda yatay kaymak yerine kart listesi. Yoğunluk
+  şeridi ve kesinti çizelgesi dokununca hatalı dilimleri / alarmları 40 px'lik satırlar olarak listeler; başlıktaki uyarı
+  sayısının açıklaması dokununca açılır.
+- **Sertifika penceresi — "Envanter Bilgileri" sekmesi yeniden tasarlandı (shadcn, telefon + tablet):** özet kartı
+  (kritiklik, durum, platform, grup, takım ve UG takımı rozetleri, sorumlu sayısı, son güncelleme, eksik alan uyarısı),
+  bölüm kartları (Uygulama, Sorumlu Ekipler, Altyapı ve izleme, Sertifika ve yenileme, Operasyonel bilgiler, Notlar),
+  e-posta ve alan adı kopyalama, "Envanterde aç" ve (yetki varsa) "Kaydı düzenle". Envanter sayfası çekmecesinin
+  "Genel bakış" sekmesi aynı gövdeyi kullanır; platform adı artık katalogdan gelir.
+- **Genel Bakış süzgeçleri yeniden tasarlandı (shadcn):** geniş ekranda etiketli süzgeç hapları (Platform, Durum, Kalan
+  süre, Takım, Grup, Etiket) ve sağda Sıralama; etkin süzgeçler kaldırılabilir çipler olarak görünür, sonuç sayısı başlıkta
+  canlı güncellenir. Telefonda süzgeçler "Süzgeçler (N)" düğmesiyle alttan açılan pencerede toplanır ("Temizle" /
+  "Uygula (N sertifika)"); arama tam genişlikte, SSL Checker araç çubuğunun sonunda. Süzgeç anlamları ve URL anahtarları
+  değişmedi.
+- Alarm Geçmişi süzgeç çiplerinin dokunmatik ekranlardaki dokunma hedefi büyütüldü (çip 44 px, × 40 px).
+
+### Fixed
+- **Göreli günler bir gün kayıyordu:** envanter ve sertifika ekranlarında yalnız tarih içeren değerler (planlanan yenileme,
+  alan adı bitişi) UTC gece yarısına göre sayılıyordu — bugüne planlı yenileme "1 gün önce", bitiş günü kırmızı "1 gün önce
+  doldu" görünüyor, "≤ N gün" süzgeci ve 30 gün eşiği bir gün kayıyordu. Artık yerel takvim günü sayılır; İngilizcede
+  "1 day" tekil (envanter, istatistik, vade takvimi, alan adları paneli).
+- **Sertifika penceresindeki bağlantılar sayfayı pencerenin ARKASINDA açıyordu:** "7/24 Kapsamı'nda gör", kesinti
+  çizelgesi, alarm olay kartı ve takım üyeleri bağlantıları artık pencereyi kapatıp hedef ekranı açar ("Envanterde aç"
+  formun arkasında da kalmaz). Derin bağlantıyla / elle açılan pencere dış gezinmede kapanmaz (değişmedi).
+- **"Alarm geçmişinde aç" bağlantıları hedef alarmı açmıyordu** (yanlış URL anahtarı; kapalı alarm için görünüm yoktu —
+  2026-09-12'den beri): kesinti çizelgesi, kontrol geçmişi, Bugün paneli, sertifika kartı ve SMTP / Push gönderim
+  günlüklerindeki 9 bağlantı artık doğru alarmı açık / kapalı görünümde seçili açar; listede olmayan kayıt tekil uçtan
+  getirilir.
+- "Envanterde aç" / çekmecenin "Tüm Sertifikalar" bağlantısı / Takım Yönetimi → Alarm Geçmişi, Genel Bakış aramasını ya
+  da takım süzgecini süzülü bırakmaz; Envanter sayfası zaten açıkken de kaydın panelini açar.
+- Uptime detayında sahte "saklama süresi nedeniyle kırpıldı" bandı kalktı; başarı oranları Türkçe biçimde (%97,50);
+  "Özel" aralık seçilip uygulanmadan bırakılınca sonsuz dönen gösterge kalktı; salt okunur pencerede boş geçmiş
+  açıklaması olmayan "Çalıştır" düğmesine yönlendirmez; telefon süzgeç çekmecelerinin örtüsü yardım / tur öğelerini de
+  karartır.
+- Envanter aktarımı: silinmiş kayda düz takım / UG aktarımı reddedilir (409); olmayan UG takımına aktarım 400. Mükerrer
+  bandındaki "Geri yükle ve aktar" tek istekte yapılır (`/transfer` isteğe bağlı `restore: true`).
+- Uptime sayfası ve detay penceresi, saniyelik geri sayım yüzünden geçmiş ve grafik ağacını her saniye yeniden çizmez.
+- ⚠ Davranış — **Eskalasyon: alarmlar başka takımların müdürlerine / eskalasyon kişilerine gidiyordu (takımlar arası
+  sızıntı):** takımın o seviyede eskalasyon kişisi yoksa "takımsız genel kişilere düş" yolu takım süzgeçsiz sorgu
+  kullanıyor ve TÜM takımların etkin kişilerini ekliyordu (ilk bildirim, eskalasyon, günlük yeniden uyarı, çözüm,
+  "Tekrar bildir", fırtına postası ve kişi webhook'ları; v3.0.0'dan beri). Artık eskalasyon kişileri YALNIZ alarmın sahibi
+  takımlarından gelir: SY ve UG takımlarının her biri yalnız KENDİ kişilerini ekler (aynı adrese tek e-posta), yalnız UG'li
+  kayıtta UG'nin kişileri gelir; uygun kişi yoksa alarm yalnız takımın kendi alıcılarına (takım adresi, bildirim grubu,
+  push) gider — genel yedek yok. Fırtına postasında da her takımın dağıtımına yalnız kendi kişileri girer (SY'nin kişileri
+  UG postasına da ekleniyordu). "Kim alır?" SY ve UG'yi ayrı gösterir, kişisi olmayan takımı adıyla belirtir. Kanıt ve
+  etki için prod'da salt okunur tanı rehberi hazırlandı.
+- ⚠ Davranış — **Envanterden türeyen Port/DNS izlemelerinin alarmları** artık sertifika alarmı gibi SY ve UG takımına gider
+  (her takımın kendi kişileriyle; takım alan adı → envanter üzerinden canlı çözülür). Bağımsız eklenen Port/DNS izlemeleri
+  değişmedi. Bu sürümden önce açılmış türev alarmların çözümü yalnız SY'ye gider.
+- ⚠ Davranış — **"Taşı ve sil" açık alarmları da taşır:** takım taşınıp silinirken AÇIK alarmları da hedef takıma geçer;
+  açık alarmı olan takım taşınmadan silinemez. Eskiden taşınıp silinen takımın açık alarmlarının yeniden uyarı, eskalasyon
+  ve çözüm bildirimleri hiçbir alıcıya ulaşmıyordu. Kapanmış alarmların geçmişi değişmez.
+- ⚠ Davranış — Bu sürümden önce açılmış envanter türevli Port/DNS alarmları ilk açılışta yeni yönlendirmeye alınır (SY +
+  UG, her takım kendi kişisi). Takımı boş bağımsız DNS izlemesinin değişiklik alarmı başka takıma gitmez. SY aktarımından
+  sonra UG takımı "ÇÖZÜLDÜ" bildirimini de alır. SY ve UG kişileri aynı Teams/Slack kanalını kullanıyorsa tek mesaj gider.
+- ⚠ Davranış — Olmayan (silinmiş) bir takıma envanter kaydı ekleme, kaydın takımını değiştirme ve izleme oluşturma
+  reddedilir (400). İçe aktarmada tanınmayan UG takım adı satır hatası verir (eskiden sessizce yok sayılıyordu).
+- ⚠ Davranış — **Bağımsız izlemelerin alarmları yalnız kendi takımına:** bağımsız eklenen izlemelerin (HTTP, Keyword,
+  Ping, Sayfa, Senaryo, Sayfa Hızı, Alan Adı ve kullanıcının eklediği Port/DNS) açılış, günlük yeniden uyarı, eskalasyon,
+  çözüm, "Tekrar bildir" ve fırtına bildirimleri takımı artık hiçbir yolda envanterden almaz. Eskiden bağımsız DNS
+  izlemesinin değişiklik alarmının günlük tekrarı, host başka takımın envanterindeyse o takımın UG adresine ve eskalasyon
+  kişilerine de gidebiliyordu.
+- ⚠ Davranış — **Sahipsiz kayıtlar ve takım bütünlüğü:** takımı olmayan kayıtların alarmı hiçbir kanaldan bildirim
+  üretmez (olay kaydı durur, günlüğe WARN). Takımsız eskalasyon kişisi eklenemez (400; ekleme formu takımı artık önceden
+  seçmez — eskiden ilk takıma yazıyordu), mevcutlar "Takıma atanmamış — bildirim almaz" rozetiyle görünür. Takımsız
+  envanter aktarımı reddedilir (400); SY ya da UG olarak bağlı kaydı / izlemesi olan takım silinemez (409 — önce
+  taşıyın; silme etkisi penceresi UG kayıtlarını da listeler) ve takım taşıma UG bağını da taşır (eskiden UG bağı silinen
+  takımda kalıyordu). Olmayan takıma aktarım, toplu takım, izleme taşıma ve kişi yazma reddedilir (400). İçe aktarmada
+  takımı değişen alan adının türev Port/DNS izlemeleri de yeni takıma geçer (alarm eski takıma gidiyordu).
+- **Envanter toplu işlemleri İzleme Değişiklikleri'ne yazmıyordu:** toplu silme ve diğer toplu işlemler (etkinleştir /
+  pasifleştir, sorumlu ekip, kademe, takım) artık tekil işlemle aynı geçmiş satırını "toplu …" notuyla yazar; toplu
+  silinen kayıtlar "silinmiş" rozetini alır. Tekil takım aktarımı ve UG takımı aktarımı da geçmişe düşer; UG takımı
+  değişikliği (içe aktarmayla gelenler dâhil — önceden ham "ugTeamId" + sayı görünüyordu) "UG takımı" etiketi ve takım
+  adıyla gösterilir. (Bu sürümden önceki toplu silmeler / aktarımlar için geriye dönük doldurma yok.)
+- **Envanter Bilgileri bildirim grubunu numarayla gösteriyordu:** artık adıyla (yalnız görme yetkisi olan, kaydın takımına
+  ait etkin grup; tek toplu sorgu). Bulunamazsa numara + açıklama.
+- Tarih alanlarındaki temizle (×) düğmesinin dokunmatik dokunma alanı 40×40 px oldu; masaüstünde görünüm değişmedi.
+- Telefonda kesinti çizelgesinin sağ ucundaki kesinti çubuğun ~1 px dışına taşıyordu; ekranın o kenarına yapılan dokunuş
+  yanlışlıkla Alarm Geçmişi'ni açıyordu.
+- ⚠ Davranış (güvenlik) — **Sistem Sağlığı → Kullanıcı / Oturum: kimlik izi yetkisiz kademelere açıktı:** maske yalnız
+  dört üst düzey listeye bakıyordu; en çok giriş kaynakları (IP, ters DNS, kuruluş, o IP'nin kullanıcıları), KPI
+  ayrıntıları, anomaliler, ısı haritası hücreleri ve zaman çizelgesi ile Kullanıcı Dizini'ndeki son / önceki / başarısız
+  giriş IP'leri süzülmüyordu. Artık yükün TAMAMI özyinelemeli maskelenir: giriş IP'si, konum, kuruluş, ters DNS ve
+  tarayıcı yalnız global yönetici ve denetçiye (AUDIT) — ve kişinin kendi kaydında — döner; diğer kademeler açık bir
+  "Gizli" durumu görür, giriş kaynakları tablosu gönderilmez. Kapı testi gerçek servis yükünde hiçbir IP / tarayıcı izi
+  kalmadığını doğrular.
+- ⚠ Davranış (güvenlik) — **Değişiklik geçmişlerinde eylemi yapanın IP'si ve tarayıcısı** (Yönetim Paneli takım /
+  eskalasyon kişisi geçmişi, bildirim grupları, saklama süreleri, İzleme Değişiklikleri ayrıntı / zaman çizelgesi / CSV)
+  ve giriş sorunu bildirimlerinin teknik ayrıntıları artık yalnız global yönetici ve denetçiye döner (kişinin kendi kaydı
+  hariç); diğer kademeler "Gizli" görür. Denetim Kaydı ekranları 2026-09-25 kullanıcı kararıyla ekip kapsamında tam
+  ayrıntılı kalır (değişmedi).
+- ⚠ Davranış (güvenlik) — **Veritabanı Analitiği: SQL Oyun Alanı sorgu metni, hata iletisi ve çalıştıran kullanıcı adı**
+  (pg_stat_statements metinleri dâhil) her kademeye açıktı (Oyun Alanı'nın kendi geçmişi yalnız global yöneticiye açık);
+  artık yalnız global yönetici ve denetçiye gösterilir. Sayılar, süreler ve hata türü / SQLSTATE herkese açık kalır.
+- Kullanıcı Dizini fotoğrafı olmayan her kişi için boşuna fotoğraf isteği atmaz (`has_photo`).
+- İstek Gezgini: dakikalık görünüm en çok 48 saatle sınırlı (üstü saatlik); uç ayrıntısı ve `/series` 31 güne kırpılan
+  aralığı kullanır; en yavaş / en çok hata veren uç listesi hata anında iş parçacığı biriktirmez (tek pod kesinti riski);
+  "Diğer" durum sınıfı grafikte görünür. `http_metric_minute.status_codes` kolonu açık, idempotent şema yamasıyla eklenir;
+  metrik yazım hatası artık loglanır.
+- Zaman aralığı seçici ters aralığı (başlangıç > bitiş) uygulamaz; HTTP ve Veritabanı Yenile düğmeleri asılı istekte
+  kilitlenmez; Veritabanı ekranlarında yüzdeler yerel ondalıkla ("%99,5"); Kullanıcı Dizini'nde eşzamanlı işlemler
+  birbirinin göstergesini silmez.
+- **Sertifika penceresi — güven durumu hiç görünmüyordu:** pencerenin veri ucu (`/api/history/{domain}`) kontrol
+  satırının güven durumunu (`trust_status`) taşımıyordu; bu yüzden güvenilmeyen CA bayrağı (`UNTRUSTED_CA`) da
+  pencerede hiç çıkmıyordu.
+- **Sertifika penceresi — süresi dolmuş sertifika başlıkta "Hata" yazıyordu:** artık "Süresi doldu".
+- **Envanter Bilgileri — yükleme hatası "kayıt yok" görünüyordu:** artık hata iletisi ve "Tekrar dene" gösterilir.
+  Açıklama ve notlardaki bağlantılar yalnız http(s) ise bağlantıya dönüşür.
+- **Haftalık Erişilebilirlik e-postası — önceki haftadan devreden alarmlar bağlantıda görünmüyordu:** "Alarm Geçmişi"
+  bağlantısı artık "Bu aralıkta aktif olanlar" kipinde açılır; listelenen alarmlar e-postadaki sayıyla birebir
+  örtüşür. "+N alarm daha" notu yalnız gerçekten var olanı (ek PDF / bağlantı) söyler ve devreden alarm sayısını yazar.
+- **İzleme Değişiklikleri — geri yüklenen izleme "silinmiş" görünüyordu:** silinip geri yüklenen (ya da aynı kimlikle
+  yeniden oluşturulan / sürdürülen) izleme zaman çizelgesinde, "En çok değişen izlemeler" kartında ve CSV'de "silinmiş"
+  rozeti taşıyordu. Hüküm artık kaynağın EN SON geçmiş olayına göre verilir (geriye dönük doldurulmuş eski olaylar
+  zamanlarına göre sıralanır). Doğrudan bağlantıyla (`ch_id`) açılan ayrıntı da aynı kuralla "silinmiş" rozetini gösterir
+  ve ölü "İzlemeye git" bağlantısı çizmez.
+
 ## [20.89.0] — 2026-09-28
 
 ### Changed
@@ -1460,7 +1635,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.89.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.90.0...HEAD
+[20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0
 [20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0
 [20.88.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.88.0
 [20.87.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.87.0

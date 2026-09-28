@@ -79,6 +79,18 @@ describe('ChangeHistoryTab', () => {
     expect(screen.getAllByTitle(/Mozilla\/5\.0/)[0]).toBeInTheDocument()
   })
 
+  it('kimlik izi (2026-09-28c): sunucu IP / tarayıcıyı düşürüp satırı işaretlediyse IP hücresi "Gizli" — boş "—" değil', async () => {
+    const strip = ({ ip_address, user_agent, ...rest }) => ({ ...rest, identity_masked: true })   // eslint-disable-line no-unused-vars
+    api.monitoring.getChanges.mockResolvedValue({
+      success: true, data: { changes: [strip(UPDATE_ROW), strip(CREATE_ROW)], total: 2, page: 0, size: 25, identity_masked: true },
+    })
+    draw()
+    expect(await screen.findByText('Güncellendi')).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-slot="id-masked"]').length).toBe(2)
+    expect(screen.queryByText('10.20.30.40')).toBeNull()
+    expect(screen.queryAllByRole('button', { name: /10\.20\.30\.40/ })).toHaveLength(0)
+  })
+
   it('IP kopyala GERÇEK düğme (role="button" span değil), satır seçicisinin dışında; basmak satırı seçmez', async () => {
     draw()
     await screen.findByText('Güncellendi')

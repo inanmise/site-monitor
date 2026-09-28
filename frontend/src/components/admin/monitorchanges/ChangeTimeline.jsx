@@ -86,10 +86,10 @@ function ChangeItem({ r, t, now, onOpen, selected }) {
             {/* Telefonda dokunma alanı görünmez ::after ile ≥ 40 px (satır yüksekliği değişmez) */}
             <span className={LAYER}><TeamBadge teamId={r.team_id} teamName={r.team_name} size={11} className="max-md:after:absolute max-md:after:inset-x-0 max-md:after:-inset-y-3" /></span>
           </>}
-          {r.ip_address && (
+          {(r.ip_address || r.identity_masked === true) && (
             <span className="hidden items-center gap-1 md:inline-flex">
               <span aria-hidden="true">·</span>
-              <span className={LAYER}><IpCopy ip={r.ip_address} t={t} /></span>
+              <span className={LAYER}><IpCopy ip={r.ip_address} t={t} masked={r.identity_masked === true} /></span>
             </span>
           )}
         </div>

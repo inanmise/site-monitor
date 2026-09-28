@@ -82,8 +82,10 @@ export function ReviewSheet({ open, onOpenChange, phone, changes, failures, savi
   const failedCount = changes.filter((c) => failures.has(c.key)).length
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      {/* z-[960]: sağ alttaki yardım düğmesi (z 900) panelin Kaydet düğmesini örtmesin (Playwright 2026-09-27) */}
-      <SheetContent side={phone ? 'bottom' : 'right'} showCloseButton={false} data-slot="perm-review"
+      {/* z-[960]: sağ alttaki yardım düğmesi (z 900) panelin Kaydet düğmesini örtmesin (Playwright 2026-09-27). ÖRTÜ de
+          yükselir (Ek 3/8 kardeşi, kapı filterSheetOverlay.test.js): varsayılan z-50 örtü, arkadaki bekleyen değişiklik çubuğunu
+          (z-950) ve tur çipini (z-890) karartmadan üstte ve tıklanabilir bırakıyordu. */}
+      <SheetContent overlayClassName="z-[955]" side={phone ? 'bottom' : 'right'} showCloseButton={false} data-slot="perm-review"
         className={cn('z-[960] gap-0 p-0', phone ? 'max-h-[88dvh] rounded-t-2xl' : 'w-full sm:max-w-md')}>
         <SheetHeader className="flex-row items-start gap-3 border-b p-4">
           <div className="flex min-w-0 flex-1 flex-col gap-1">

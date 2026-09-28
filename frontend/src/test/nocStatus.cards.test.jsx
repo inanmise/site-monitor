@@ -198,7 +198,7 @@ describe('Genel Bakış sertifika kartı', () => {
     expect(nav).toHaveBeenCalledWith('noc', { n_type: 'SSL', n_q: 'www.example.com' })
   })
 
-  it('satır noc_notify taşımıyorsa (Uyarılar\'ın ham satırı) gösterge YOK ve istek atılmaz; katman yerinde kalır', async () => {
+  it('satır noc_notify taşımıyorsa (eski sunucu yanıtı) gösterge YOK ve istek atılmaz; katman yerinde kalır', async () => {
     const { container } = render(<CertificateCard cert={cert({ noc_notify: undefined })} onClick={() => {}} />)
     await new Promise((res) => setTimeout(res, 0))
     expect(indicators()).toHaveLength(0)

@@ -93,11 +93,11 @@ export default function WeekDatePicker({
           </span>
           <span className="flex-1" />
           {value && (
-            <Button type="button" variant="outline" size="sm" onClick={() => { onChange(''); setOpen(false) }}>
+            <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => { onChange(''); setOpen(false) }}>
               {t('wr.clear')}
             </Button>
           )}
-          <Button type="button" variant="secondary" size="sm" onClick={() => pick(new Date())}>
+          <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => pick(new Date())}>
             {t('wr.today')}
           </Button>
         </div>

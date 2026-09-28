@@ -40,6 +40,17 @@ export function formatPercent(v, dash = '—') {
   return dateLocale() === 'tr-TR' ? `%${v}` : `${v}%`
 }
 
+/**
+ * Oran metni (başarı oranı / erişilebilirlik kutucukları) — 2 ondalık, YEREL ondalık ayırıcı + yerel yüzde sırası:
+ * TR "%97,50", EN "97.50%"; 99,995 ve üstü "100". Sayı değilse tire. (E5, 2026-09-28e: `${r.toFixed(2)}%` TR arayüzde
+ * "97.50%" yazıyordu; HTTP ekranlarının `fmtPct` deseni.)
+ */
+export function formatRatePercent(r, dash = '—') {
+  if (r === null || r === undefined || r === '' || !Number.isFinite(Number(r))) return dash
+  const v = Number(r)
+  return formatPercent(v >= 99.995 ? '100' : v.toLocaleString(dateLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+}
+
 /** Güncel Intl yereli. Ayna yoksa localStorage'a düşer (i18n ile aynı varsayılan: 'en'). */
 export function dateLocale() {
   if (mirrored) return mirrored

@@ -298,7 +298,7 @@ public class EscalationService {
                             .orElse(null));
                     event = alertEventRepo.save(event);
 
-                    List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                    List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                     sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
                             "", event.getId(), "INITIAL", daysRemaining, result);
 
@@ -335,7 +335,7 @@ public class EscalationService {
                         event.setAcknowledgedAt(null);
                         event.setAcknowledgedBy(null);
 
-                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
+                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                         // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
                         // (UserPushService.enqueueAlert) olayı DB'den yeniden yükleyip alıcıyı event.alertLevel ile
                         // çözer; save gönderimden sonra kaldığında eski seviye (WARNING) okunuyor ve ESCALATION
@@ -375,7 +375,7 @@ public class EscalationService {
                         // damgalar; arada süreç ölürse (deploy/restart/OOM) alarm açık görünür ama hiçbir kanal
                         // duyurmamıştır. Eskiden createdAt'e düşülüp bir re-alert aralığı (24 saat) susuluyordu.
                         if (initialNotificationMissing(event, now())) {
-                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId);
+                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId, ugTeamId);
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
                                     sendMessage, "", event.getId(), "INITIAL", daysRemaining, result);
                             event.setNotifiedContacts(serializeContacts(contacts));
@@ -391,7 +391,7 @@ public class EscalationService {
                         String lastAlertTime = event.getLastReAlertAt() != null
                                 ? event.getLastReAlertAt() : event.getCreatedAt();
                         if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
-                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId);
+                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId, ugTeamId);
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
                                     "[RE-ALERT] " + sendMessage, "[RE-ALERT] ",
                                     event.getId(), "DAILY_REALERT", daysRemaining, result);
@@ -449,6 +449,19 @@ public class EscalationService {
     private record ReNotifyTargets(Long domainTeamId, Long ugTeamId, List<EscalationContact> contacts,
                                    Long stampedGroupId) {}
 
+    /**
+     * Sahipsiz alarm (SY/UG takımı yok) için elle bildirim YOK — açılış/çözüm kapısıyla aynı kural (ürün kararı
+     * 2026-09-28). Sessiz "kuyruğa alındı, 0 alıcı" yerine açık 409: önizleme de gönderim de aynı gerekçeyi verir.
+     */
+    private static void requireOwned(AlertEvent event, ReNotifyTargets targets) {
+        if (targets.domainTeamId() != null || targets.ugTeamId() != null) return;
+        log.warn("Sahipsiz kayıt — elle bildirim reddedildi: olay={} alan={} tür={}",
+                event.getId(), event.getDomain(), event.getAlertType());
+        throw new IllegalStateException(com.sitemonitor.util.Msg.t(
+                "Sahipsiz alarm — takımı olmadığı için bildirim gönderilmez.",
+                "This alert has no owning team, so no notification is sent."));
+    }
+
     /** Onay pop-up'ında gösterilen tek alıcı satırı. kind: TEAM | CONTACT. */
     public record ReNotifyRecipient(String email, String name, String role, String kind) {}
 
@@ -462,11 +475,13 @@ public class EscalationService {
         boolean standalone = isStandaloneMon(event.getAlertType());
         if (standalone) {
             List<EscalationContact> contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
-                    ? getContactsForLevel(event.getAlertLevel(), event.getTeamId())
+                    ? getContactsForLevel(event.getAlertLevel(), event.getTeamId(), null)
                     : List.of();
             return new ReNotifyTargets(event.getTeamId(), null, contacts, event.getNotificationGroupId());
         }
-        var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
+        // Bağımsız olay (açılış bağlamında damga) envanterden takım ALMAZ (2026-09-28) — host başka takımın envanterinde olabilir.
+        var inventoryOpt = isStandaloneEvent(event)
+                ? Optional.<com.sitemonitor.model.CertificateInventory>empty() : inventoryRepo.findByDomain(event.getDomain());
         // Çözüm yoluyla AYNI kural: damgalanmış takım önceliklidir (bkz. sendResolutionNotification).
         Long invTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
         Long domainTeamId = event.getTeamId() != null ? event.getTeamId() : invTeamId;
@@ -474,7 +489,7 @@ public class EscalationService {
                 ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                 : null;
         return new ReNotifyTargets(domainTeamId, ugTeamId,
-                contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId),   // O-1: açılışla aynı karar
+                contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId),   // O-1 + her sahip kendi kişisi
                 event.getNotificationGroupId());
     }
 
@@ -499,12 +514,23 @@ public class EscalationService {
      * "Kim bilgilendirilir?" simülatörü (2026-09-20, Yönetim Paneli): takım + seviye (+ izleme grubu) için
      * alarm gitmeden alıcı zinciri. Gerçek gönderimle AYNI kararlar: takım e-postaları
      * ({@code collectTeamRecipients}: izleme grubu → takım varsayılan grubu → takım adresi), eskalasyon
-     * kişileri ({@code includeManagerContacts} + {@code getContactsForLevel}, takımda yoksa global'e düşer)
-     * ve kişi webhook'ları. HİÇBİR yazma yapmaz.
+     * kişileri ({@code includeManagerContacts} + {@link EscalationContactScope} — YALNIZ takımın kendi kişileri,
+     * yoksa hiç; 2026-09-28) ve kişi webhook'ları. HİÇBİR yazma yapmaz.
      *
      * @param standaloneMonitor izleme alarmı mı (HTTP/ping/… — bugün seviye kuralı sertifikayla aynı)
      */
     public Map<String, Object> simulateRecipients(Long teamId, String level, boolean standaloneMonitor, Long groupId) {
+        return simulateRecipients(teamId, level, standaloneMonitor, groupId, null);
+    }
+
+    /**
+     * @param ugTeamId sertifika / envanter türevli alarmda envanterin UG takımı (isteğe bağlı). Gönderimle aynı: UG
+     *                 takımının adresi e-postaya eklenir ve UG YALNIZ KENDİ kişilerini getirir ("her sahip takım
+     *                 kendi kişisi", 2026-09-28). Bağımsız izleme alarmında UG yoktur — yok sayılır.
+     */
+    public Map<String, Object> simulateRecipients(Long teamId, String level, boolean standaloneMonitor, Long groupId,
+                                                  Long ugTeamId) {
+        Long ug = standaloneMonitor || (ugTeamId != null && ugTeamId.equals(teamId)) ? null : ugTeamId;
         String lvl = level == null ? "HIGH" : level.trim().toUpperCase(Locale.ROOT);
         if (!LEVEL_ORDER.containsKey(lvl)) throw new IllegalArgumentException("Bilinmeyen seviye: " + level);
         // Gerçek gönderimle AYNI karar (prod kapısı 2026-09-25, O-1): eskiden kontaklar YALNIZ seviyeye bakılarak
@@ -514,15 +540,36 @@ public class EscalationService {
 
         List<Map<String, Object>> emails = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (String[] team : collectTeamRecipients(teamId, null, groupId)) {
+        for (String[] team : collectTeamRecipients(teamId, ug, groupId)) {
             if (!seen.add(team[0].toLowerCase())) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("email", team[0]); m.put("team", team[1]); m.put("source", team[2]); m.put("kind", "TEAM");
             emails.add(m);
         }
-        List<EscalationContact> contacts = managers ? getContactsForLevel(lvl, teamId) : List.of();
-        boolean fallbackGlobal = managers && teamId != null && !contacts.isEmpty()
-                && contacts.stream().noneMatch(c -> teamId.equals(c.getTeamId()));
+        // Gönderimle AYNI kapsam (EscalationContactScope, 2026-09-28): takımın kendi kontakları; yedek yok. Eski
+        // "contacts_fallback_global" bayrağı kalktı — başka takımın kişilerini "global" diye gösteriyordu.
+        List<EscalationContact> contacts = managers
+                ? EscalationContactScope.forOwners(contactRepo, lvl, teamId, ug) : List.of();
+        // Takım BAŞINA durum: kontak eklenecek seviyede takımda uyan kişi yoksa ekran o takım için "eskalasyon kişisi
+        // tanımlı değil / bu seviyeye uyan yok — yalnız takım alıcılarına gider" der. "Tanımlı" = takımda HERHANGİ
+        // bir etkin kişi var (eşiği yüksek). Birleşim listesinden değil takımın KENDİ sorgusundan hesaplanır: e-posta
+        // tekilleştirmesi bir takımın kişisini diğerinin satırına katlasa bile o takım "tanımlı" sayılır.
+        List<Map<String, Object>> owners = new ArrayList<>();
+        for (Long owner : java.util.Arrays.asList(teamId, ug)) {   // null üye (UG yok) atlanır
+            if (owner == null) continue;
+            List<EscalationContact> own = managers ? EscalationContactScope.forLevel(contactRepo, lvl, owner) : List.of();
+            Map<String, Object> o = new LinkedHashMap<>();
+            o.put("team_id", owner);
+            o.put("role", owner.equals(teamId) ? "SY" : "UG");
+            o.put("team_name", teamRepo.findById(owner).map(com.sitemonitor.model.Team::getName).orElse(null));
+            o.put("contacts_missing", managers && own.isEmpty());
+            o.put("contacts_defined", !own.isEmpty()
+                    || !contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(owner).isEmpty());
+            owners.add(o);
+        }
+        Map<String, Object> sy = owners.isEmpty() ? Map.of() : owners.get(0);
+        boolean teamContactsMissing = Boolean.TRUE.equals(sy.get("contacts_missing"));
+        boolean teamContactsDefined = Boolean.TRUE.equals(sy.get("contacts_defined"));
         List<Map<String, Object>> contactRows = new ArrayList<>();
         List<Map<String, Object>> webhooks = new ArrayList<>();
         for (EscalationContact c : contacts) {
@@ -546,7 +593,10 @@ public class EscalationService {
         out.put("managers_included", managers);
         out.put("team_emails", emails);
         out.put("contacts", contactRows);
-        out.put("contacts_fallback_global", fallbackGlobal);
+        out.put("team_contacts_missing", teamContactsMissing);
+        out.put("team_contacts_defined", teamContactsDefined);
+        out.put("ug_team_id", ug);
+        out.put("owners", owners);
         out.put("webhooks", webhooks);
         out.put("email_total", emails.size() + contactRows.stream().filter(r -> !Boolean.TRUE.equals(r.get("email_duplicate"))
                 && r.get("email") != null && !String.valueOf(r.get("email")).isBlank()).count());
@@ -560,6 +610,7 @@ public class EscalationService {
             throw new IllegalStateException("Alert is already resolved");
         }
         ReNotifyTargets targets = resolveReNotifyTargets(event);
+        requireOwned(event, targets);
         List<ReNotifyRecipient> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (String[] team : collectTeamRecipients(targets.domainTeamId(), targets.ugTeamId(),
@@ -601,6 +652,7 @@ public class EscalationService {
                     .map(e -> e.trim().toLowerCase()).collect(java.util.stream.Collectors.toSet());
 
         ReNotifyTargets targets = resolveReNotifyTargets(event);
+        requireOwned(event, targets);
         Long domainTeamId = targets.domainTeamId(), ugTeamId = targets.ugTeamId();
         // Kontak filtresi serializeContacts + webhook'tan ÖNCE — hariç tutulan kontak hiçbir kanaldan bildirilmez.
         List<EscalationContact> contacts = targets.contacts().stream()
@@ -725,7 +777,7 @@ public class EscalationService {
             Long domainTeamId = event.getTeamId() != null ? event.getTeamId()
                     : inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
+            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId, ugTeamId);
             Map<String, Object> certContext = Optional.ofNullable(latestByDomain.get(event.getDomain()))
                     .map(this::latestToCertContext).orElse(null);
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
@@ -1088,6 +1140,12 @@ public class EscalationService {
         if (ctxTeam instanceof Number teamNum) {
             domainTeamId = teamNum.longValue();
             ugTeamId = null;
+        } else if (isStandalone(alertType, outageContext)) {
+            // Bağımsız izleme (tür listesi ya da bağlamdaki "standalone" işareti) takımını ENVANTERDEN ALMAZ
+            // (2026-09-28): host başka takımın envanterindeyse alarm o takıma (SY/UG + kişileri) gidiyordu. Takım
+            // yalnız izlemenin kendi damgasından; o da yoksa kayıt sahipsizdir (sendCombinedAlert kapısı).
+            domainTeamId = null;
+            ugTeamId = null;
         } else {
             var inventoryOpt = inventoryRepo.findByDomain(domain);
             domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
@@ -1120,7 +1178,7 @@ public class EscalationService {
                 log.info("🌩 İzleme alarmı storm'a eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
                         domain, alertType, event.getStormId());
             } else {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         message, "", event.getId(), "INITIAL", null, outageContext);
 
@@ -1139,6 +1197,14 @@ public class EscalationService {
             // Üç yol da (ilk/re-alert/çözüm) aynı damgayı kullansın; ctx yalnız damga boşken.
             if (event.getTeamId() != null) {
                 domainTeamId = event.getTeamId();
+            }
+            // Bağımsızlık OLAYDAN da okunur (2026-09-28): DNS_CHANGED günlük yeniden uyarısı bağlamı
+            // reconstructChangeCtx'ten kurar ve team_id taşımaz → bağımsız bir DNS izlemesinin alarmı envanter yoluna
+            // düşüp host'un envanterdeki takımının UG'sine ve kişilerine gidiyordu. Açılışta bağımsız olan olay
+            // yeniden uyarı / eskalasyon / telafide de bağımsızdır: UG yok, takım-özel seviye kuralı.
+            if (isStandaloneEvent(event)) {
+                ugTeamId = null;
+                teamOnly = teamOnly(true, alertLevel);
             }
             // NULL-güvenli unbox (O6): acknowledged nullable Boolean — NULL satırda unbox NPE'si
             // sweep'in KALAN domain'lerinin alarm işlemesini de iptal ediyordu.
@@ -1168,7 +1234,7 @@ public class EscalationService {
                 alertEventRepo.save(event);
                 boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
                 if (!stormMember) {
-                    List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                    List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                     sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                             message, "", event.getId(), "ESCALATION", null, outageContext);
                     event.setNotifiedContacts(serializeContacts(contacts));
@@ -1198,7 +1264,7 @@ public class EscalationService {
             // baslatildi; alarm ekranda "acik" gorunuyor ama bildirim gecmisi bos ve sistem
             // "bugun zaten gonderildi" diyordu.
             if (event.getLastReAlertAt() == null) {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         message, "", event.getId(), "INITIAL", null, outageContext);
                 event.setNotifiedContacts(serializeContacts(contacts));
@@ -1211,7 +1277,7 @@ public class EscalationService {
             }
             String lastAlertTime = event.getLastReAlertAt();
             if (reAlertDue(lastAlertTime, now(), reAlertIntervalHours())) {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId);
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         "[RE-ALERT] " + message, "[RE-ALERT] ",
                         event.getId(), "DAILY_REALERT", null, outageContext);
@@ -1582,10 +1648,12 @@ public class EscalationService {
                 domainTeamId = event.getTeamId();
                 ugTeamId = null;
                 contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
-                        ? getContactsForLevel(event.getAlertLevel(), domainTeamId)
+                        ? getContactsForLevel(event.getAlertLevel(), domainTeamId, null)
                         : List.of();
             } else {
-                var inventoryOpt = inventoryRepo.findByDomain(event.getDomain());
+                // Bağımsız olay envanterden takım ALMAZ (2026-09-28; açılış ve tekrar bildir ile aynı kural).
+                var inventoryOpt = isStandaloneEvent(event)
+                        ? Optional.<com.sitemonitor.model.CertificateInventory>empty() : inventoryRepo.findByDomain(event.getDomain());
                 // DAMGALANMIŞ takım önceliklidir. PORT/DNS alarmları isStandaloneMon listesinde
                 // olmadığı için buraya düşüyor; envanterde OLMAYAN bir host'ta (ör. kullanıcı Port
                 // izlemesinin host'unu düzenledi → detachIfIdentityChanged) teamId null kalıyor ve
@@ -1597,13 +1665,20 @@ public class EscalationService {
                         ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                         : null;
                 // Açılışla AYNI kontak kararı (O-1): bağımsız PORT/DNS izlemesinde (bağlamda team_id) WARNING yalnız takım.
-                contacts = contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId);
+                contacts = contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId);
                 // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
                 if (event.getTeamId() == null && invTeamId != null) {
                     event.setTeamId(invTeamId);
                     try { alertEventRepo.save(event); } catch (Exception ignore) { /* damga best-effort */ }
                 }
+            }
+            // Sahipsiz kayıt (2026-09-28): açılışla AYNI kapı — takımı olmayan alarmın çözümü de hiçbir kanaldan gitmez
+            // (e-posta, kontak webhook'u, push). 7/24 çözüm tetiği yukarıda: yalnız açılışı NOC'a gitmiş alarmda gönderir.
+            if (domainTeamId == null && ugTeamId == null) {
+                log.warn("Sahipsiz kayıt — çözüm bildirimi gönderilmedi: olay={} alan={} tür={}",
+                        event.getId(), event.getDomain(), event.getAlertType());
+                return;
             }
 
             // Build combined TO: team emails + contact emails (deduped)
@@ -1855,22 +1930,23 @@ public class EscalationService {
         return null;
     }
 
-    private List<EscalationContact> getContactsForLevel(String level, Long teamId) {
-        if (teamId != null) {
-            List<EscalationContact> teamContacts = switch (level) {
-                case "CRITICAL" -> contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId);
-                case "HIGH"     -> contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(teamId, List.of("WARNING", "HIGH"));
-                default         -> contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(teamId, "WARNING");
-            };
-            if (!teamContacts.isEmpty()) return teamContacts;
-            // Fall back to global contacts (no team assigned) if team has none
-            log.warn("No contacts for teamId={} at level={} — falling back to global contacts", teamId, level);
+    /**
+     * Alarmın eskalasyon kontakları — kural {@link EscalationContactScope} (ürün kararı 2026-09-28): takımlı alarmda
+     * YALNIZ o takımın kontakları; takımsız (team_id IS NULL) kontak hiçbir yolda alıcı değil, takımsız alarm hiç
+     * bildirim üretmez ({@code sendCombinedAlert} sahipsiz kayıt kapısı).
+     *
+     * <p>Eski kusur: takımda kontak yoksa "global"e düşülüyordu ama sorgular team_id'yi süzmüyordu → kontaksız
+     * takımın KRİTİK alarmı (ör. HOSTNAME_MISMATCH) TÜM takımların müdürlerine gidiyordu. Artık yedek YOK: kontaksız
+     * takımın alarmı yalnız takımın kendi alıcılarına (takım adresi / bildirim grubu / push) gider.
+     */
+    private List<EscalationContact> getContactsForLevel(String level, Long teamId, Long ugTeamId) {
+        // Her sahip takım (SY + UG) yalnız KENDİ kişilerini getirir; birleşim, e-postaya göre tekil (2026-09-28).
+        List<EscalationContact> contacts = EscalationContactScope.forOwners(contactRepo, level, teamId, ugTeamId);
+        if (contacts.isEmpty() && (teamId != null || ugTeamId != null)) {
+            log.warn("Takım {} (UG {}) için {} seviyesinde eskalasyon kontağı yok — alarm yalnız takım alıcılarına "
+                    + "gidiyor (başka takımın ya da takımsız kontak EKLENMEZ)", teamId, ugTeamId, level);
         }
-        return switch (level) {
-            case "CRITICAL" -> contactRepo.findByActiveTrueOrderByRoleAsc();
-            case "HIGH"     -> contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH"));
-            default         -> contactRepo.findByMinAlertLevelAndActiveTrue("WARNING");
-        };
+        return contacts;
     }
 
     private List<Map<String, String>> sendCombinedAlert(
@@ -1910,6 +1986,16 @@ public class EscalationService {
                                                           Map<String, Object> certContext,
                                                           Set<String> excludeEmails,
                                                           Set<String> excludeUsernames) {
+        // 0. SAHİPSİZ KAYIT KAPISI (ürün kararı 2026-09-28): tüm sahiplik çözümlemesinden SONRA (çağıran: envanter SY/UG,
+        // izleme damgası, envanter türevli Port/DNS için alan adı → envanter) hiçbir takım yoksa alarm HİÇBİR kanaldan
+        // bildirim üretmez — e-posta, kontak webhook'u, kişi push'u ve 7/24 (NOC) dahil. Takım zorunlu olduğundan bu bir
+        // veri anomalisidir; savunma amaçlı: eskiden bu durumda TÜM takımların kontaklarına gidiliyordu. Olay kaydı ve
+        // çağıranın damgaları (lastReAlertAt / notifiedContacts=[]) aynen sürer — yalnız gönderim yok, sessiz de değil.
+        if (syTeamId == null && ugTeamId == null) {
+            log.warn("Sahipsiz kayıt — bildirim gönderilmedi: olay={} alan={} tür={} seviye={} tetik={} "
+                    + "(SY/UG takımı yok; e-posta, webhook, push ve 7/24 atlandı)", alertEventId, domain, alertType, level, trigger);
+            return List.of();
+        }
         // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
         // re-notify onay pop-up'ında kullanıcının çıkardığı adresler; takım e-postaları burada
         // çözüldüğünden filtre de burada uygulanır (kontaklar reNotify'da zaten filtrelenmiş gelir).
@@ -2093,9 +2179,17 @@ public class EscalationService {
 
         // 5. Webhook — kontaklara ayrı ayrı
         List<Map<String, String>> details = new ArrayList<>();
+        // Aynı webhook adresine TEK mesaj (2026-09-28, D3): SY + UG birleşiminde iki takımın kişisi aynı Teams/Slack
+        // kanalını gösterebilir. Çözüm (sendResolutionWebhooks) ve fırtına zaten adrese göre tekilleştiriyordu; açılış
+        // iki kez gönderiyordu. Tekrar eden adres günlüğe "SKIPPED: aynı webhook" olarak yazılır (denetim izi kalır).
+        Set<String> sentWebhookUrls = new HashSet<>();
         for (EscalationContact c : contacts) {
             String webhookStatus = "SKIPPED";
-            if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
+            if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()
+                    && !sentWebhookUrls.add(c.getWebhookUrl().trim())) {
+                webhookStatus = "SKIPPED: aynı webhook";
+                saveLog(alertEventId, c, subject, htmlBody, "SKIPPED", webhookStatus, trigger);
+            } else if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
                 try {
                     webhookService.send(c.getWebhookType(), c.getWebhookUrl(), subject, message, level);
                     webhookStatus = "SENT";
@@ -2564,7 +2658,7 @@ public class EscalationService {
                                  // (bağımsız izleme takım-özeldir). Damga snapshot'a girmezse çözüm ve
                                  // "tekrar bildir" yolları aynı kararı veremiyor ve envanterin UG
                                  // takımına, alarmı HİÇ görmemiş olmasına rağmen "ÇÖZÜLDÜ" gidiyordu.
-                                 "team_id",
+                                 "team_id", "standalone",
                                  // Sayfa Bütünlüğü (PAGE_DOWN/PAGE_INTEGRITY) — çözüm maili "sorun neydi" bloğu
                                  "page_status", "page_mode", "broken_resources", "timeout_count",
                                  "mixed_content_count", "total_resources",
@@ -2613,14 +2707,15 @@ public class EscalationService {
      * host'u cert envanterinde de bulunan bağımsız bir Port izlemesi düştüğünde alarm yalnız Port
      * takımına gidiyor, "✅ ÇÖZÜLDÜ" maili ise alarmı hiç görmemiş UG takımına DA gidiyordu.
      *
-     * <p>Damga snapshot'ta ({@code team_id}). Damgasız ESKİ olaylar için yedek ölçüt: olayın takımı
-     * envanterin takımından FARKLIYSA damga envanterden gelmemiştir → bağımsız izleme.
+     * <p>Karar YALNIZ açık bağımsız işaretine dayanır ({@code team_id} ya da {@code standalone} — bağlam anlık
+     * görüntüsünde), yeniden uyarı / eskalasyon yolundaki {@code isStandaloneEvent} ile AYNI (2026-09-28, D4). Eski
+     * sezgi ("damga ≠ envanter SY ise bağımsız") SY aktarımından sonra sertifika alarmının UG'sini çözümde düşürüyordu:
+     * UG yeniden uyarıyı alıp "ÇÖZÜLDÜ"yü almıyordu. İşaretsiz ESKİ bağımsız Port/DNS olayları açılışta
+     * {@link DerivedMonitorAlertRouting} tarafından işaretlenir; sezgiye gerek kalmadı.
      */
     private boolean includeInventoryUgTeam(AlertEvent event, Long invTeamId) {
         Map<String, Object> ctx = deserializeContext(event.getContextJson());
-        if (ctx != null && ctx.get("team_id") instanceof Number) return false;
-        Long stamped = event.getTeamId();
-        return stamped == null || stamped.equals(invTeamId);
+        return !standaloneMark(ctx);
     }
 
     private static boolean isStandaloneMon(String alertType) {
@@ -2634,12 +2729,18 @@ public class EscalationService {
 
     /**
      * Bağımsız izleme alarmı mı (prod kapısı 2026-09-25, O-1) — tip listesi VEYA alarm bağlamında {@code team_id}
-     * damgası. PORT ve DNS ÇİFT kaynaklıdır: bağımsız izlemede sweep bağlama takımı damgalar, envanter türevlisinde
-     * damga yoktur; yalnız tip listesine bakmak bağımsız bir Port/DNS izlemesinin WARNING alarmını takımda kontak
-     * yoksa GLOBAL eskalasyon kontaklarına gönderiyordu. {@link #includeInventoryUgTeam} ile aynı ölçüt.
+     * damgası. PORT ve DNS ÇİFT kaynaklıdır: bağımsız izlemede ({@code standalone=true}) sweep bağlama takımı damgalar,
+     * envanter türevlisinde damga YOKTUR — satır takımı envanterden kopyalamış olsa bile ({@code SchedulerService.alarmTeamOf},
+     * 2026-09-28). Türev alarm böylece sertifika alarmıyla aynı yönlenir: SY + UG adresleri, her takımın kendi kişileri,
+     * aynı seviye kapıları. {@link #includeInventoryUgTeam} ile aynı ölçüt.
      */
     public static boolean isStandalone(String alertType, Map<String, Object> ctx) {
-        return isStandaloneMon(alertType) || (ctx != null && ctx.get("team_id") instanceof Number);
+        return isStandaloneMon(alertType) || standaloneMark(ctx);
+    }
+
+    /** Bağlamda bağımsız izleme işareti: {@code team_id} damgası ya da {@code standalone: true} (takımı boş bağımsız satır). */
+    static boolean standaloneMark(Map<String, Object> ctx) {
+        return ctx != null && (ctx.get("team_id") instanceof Number || Boolean.TRUE.equals(ctx.get("standalone")));
     }
 
     private static final ObjectMapper CTX_JSON = new ObjectMapper();
@@ -2656,7 +2757,7 @@ public class EscalationService {
         if (json == null || json.isBlank()) return false;
         try {
             Map<String, Object> ctx = CTX_JSON.readValue(json, Map.class);
-            return ctx != null && ctx.get("team_id") instanceof Number;
+            return standaloneMark(ctx);
         } catch (Exception ignore) {
             return false;   // bozuk bağlam: tip listesine düş
         }
@@ -2664,15 +2765,16 @@ public class EscalationService {
 
     /**
      * TEK alıcı kararı (O-1): bağımsız izlemede WARNING → yalnız takım; aksi hâlde seviye eşikli eskalasyon
-     * kontakları ({@code getContactsForLevel} — takımda yoksa global). Açılış, çözüm, tekrar bildir, fırtına ve
+     * kontakları ({@code getContactsForLevel} → {@link EscalationContactScope}: YALNIZ takımın kendi kontakları,
+     * takımda yoksa hiç — başka takımın/takımsız kontağa düşülmez). Açılış, çözüm, tekrar bildir, fırtına ve
      * "Kim bilgilendirilir?" simülatörü BUNU kullanır.
      */
     static boolean teamOnly(boolean standalone, String level) {
         return standalone && !includeManagerContacts(null, level);
     }
 
-    private List<EscalationContact> contactsFor(boolean standalone, String level, Long teamId) {
-        return teamOnly(standalone, level) ? List.of() : getContactsForLevel(level, teamId);
+    private List<EscalationContact> contactsFor(boolean standalone, String level, Long teamId, Long ugTeamId) {
+        return teamOnly(standalone, level) ? List.of() : getContactsForLevel(level, teamId, ugTeamId);
     }
 
 

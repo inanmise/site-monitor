@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from './test-utils.jsx'
 import CertificateCard from '../components/CertificateCard.jsx'
 
-vi.mock('../contexts/TeamDirectoryProvider.jsx', () => ({ useTeamDirectory: () => ({ byId: {}, open: () => {} }) }))
+// Boş takım dizini (API çağrısı yok). Yol GERÇEK modül — eskiden var olmayan contexts/TeamDirectoryProvider.jsx
+// taklit ediliyordu, yani taklit hiç uygulanmıyordu (2026-09-28c C3; kapı viMockPaths.test.js). Şekil gerçek bağlamla aynı (Map).
+vi.mock('../components/ui/TeamDirectory.jsx', () => ({
+  TeamDirectoryProvider: ({ children }) => children,
+  useTeamDirectory: () => ({ byId: new Map(), byName: new Map(), ready: true }),
+}))
 
 const CERT = { domain: 'a.example.com', days_remaining: 20, status: 'valid', not_before: '2026-08-01T00:00:00', not_after: '2026-10-09T00:00:00', issuer: 'CA' }
 const EXTRA = {
@@ -46,7 +51,7 @@ describe('CertificateCard — zengin görünüm', () => {
     expect(alerts).toHaveAttribute('data-tone', 'bad')
     expect(alerts.textContent).toMatch(/Critical|Kritik/)
     fireEvent.click(alerts)
-    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { incident: 41 } })
+    expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: '41' } })   // E2: Alarm Geçmişi `alert` okur
     expect(screen.getByText('91.7%')).toBeInTheDocument()   // EN render: yüzde sonda (QA ISSUE-004); TR'de '%91.7'
     expect(document.querySelector('[data-slot="cert-extras-spark"] svg')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Onayla$|Confirm$/ }))

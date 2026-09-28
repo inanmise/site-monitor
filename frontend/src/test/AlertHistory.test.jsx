@@ -417,6 +417,65 @@ describe('AlertHistory — üst istatistikler, süzgeçler ve paylaşılabilir b
     await waitFor(() => expect(window.location.search).toContain('view=closed'), { timeout: 2000 })
     expect(window.location.search).toContain('tab=alerthistory')
   })
+
+  // Regresyon B3 (2026-09-28): haftalık e-postanın "Haftanın alarmları" bağlantısı önceki haftadan DEVREDEN alarmları
+  // göstermiyordu (liste açılış anına göre süzülüyordu). Bağlantı artık `range=active` taşır → "aralıkta aktif" kipi.
+  it('B3: e-posta bağlantısı (view=all&from&to&range=active&team) → aralıkta-aktif isteği + çip; × varsayılana döner, tarih kalır', async () => {
+    window.history.replaceState({}, '', '/?tab=alerthistory&view=all&from=2026-09-21&to=2026-09-27&range=active&team=5')
+    render(<AlertHistory urlSync />)
+    await waitFor(() => {
+      const first = listCalls()[0]
+      expect(first.range).toBe('active')
+      expect(first.since).toBeTruthy()
+      expect(first.until).toBeTruthy()
+      expect(first.teamId).toBe('5')
+      expect(first.resolved).toBeUndefined()
+    })
+    const chips = await screen.findByRole('group', { name: /Active filters/ })
+    expect(within(chips).getByText('Active during this range')).toBeInTheDocument()
+    expect(document.querySelector('[data-facet="dates"]')).toHaveTextContent(/Active during/)   // tarih faseti kipi söyler
+
+    fireEvent.click(within(chips).getByRole('button', { name: 'Remove filter: Active during this range' }))
+    await waitFor(() => expect(lastList().range).toBeUndefined())
+    expect(lastList().since).toBeTruthy()                                                      // yalnız kip değişti
+    expect(screen.queryByText('Active during this range')).toBeNull()
+    expect(document.querySelector('[data-facet="dates"]')).toHaveTextContent(/Opened on/)
+    await waitFor(() => expect(window.location.search).not.toContain('range='), { timeout: 2000 })
+    expect(window.location.search).toContain('tab=alerthistory')
+    expect(window.location.search).toContain('from=2026-09-21')
+  })
+
+  it('B3: range=active yalnız "Tümü"nde — kapalı görünümde istek kip taşımaz, çip çıkmaz (gizli süzgeç yok); bozuk değer yok sayılır', async () => {
+    window.history.replaceState({}, '', '/?view=closed&from=2026-09-21&range=active')
+    render(<AlertHistory urlSync />)
+    await waitFor(() => expect(lastList()?.resolvedSince).toBeTruthy())
+    expect(lastList().range).toBeUndefined()
+    expect(screen.queryByText('Active during this range')).toBeNull()
+  })
+
+  it('B3: tarih süzgecindeki kip seçimi (RadioGroup): "Active during the range" → range=active isteği, çip ve URL', async () => {
+    window.history.replaceState({}, '', '/?view=all&from=2026-09-21&to=2026-09-27&range=7')   // başka sayfanın range'i → yok sayılır
+    render(<AlertHistory urlSync />)
+    await waitFor(() => expect(lastList()?.since).toBeTruthy())
+    expect(lastList().range).toBeUndefined()
+    fireEvent.click(document.querySelector('[data-facet="dates"]'))
+    const group = await screen.findByRole('radiogroup', { name: 'Which alarms should the range include?' })
+    expect(within(group).getByRole('radio', { name: /Opened in the range/ })).toHaveAttribute('data-state', 'checked')
+    fireEvent.click(within(group).getByRole('radio', { name: /Active during the range/ }))
+    await waitFor(() => expect(lastList().range).toBe('active'))
+    expect(lastList().since).toBeTruthy()
+    expect(within(screen.getByRole('group', { name: /Active filters/ })).getByText('Active during this range')).toBeInTheDocument()
+    await waitFor(() => expect(window.location.search).toContain('range=active'), { timeout: 2000 })
+  })
+
+  it('B3: kip seçimi yalnız "Tümü"nde çizilir — kapalı görünümün tarih süzgecinde yok', async () => {
+    window.history.replaceState({}, '', '/?view=closed')
+    render(<AlertHistory urlSync />)
+    await waitFor(() => expect(lastList()?.resolved).toBe('true'))
+    fireEvent.click(document.querySelector('[data-facet="dates"]'))
+    await screen.findByText('Last 7 days')
+    expect(screen.queryByRole('radiogroup', { name: 'Which alarms should the range include?' })).toBeNull()
+  })
 })
 
 describe('AlertHistory — telefon (useIsMobile)', () => {
@@ -448,6 +507,17 @@ describe('AlertHistory — telefon (useIsMobile)', () => {
     await waitFor(() => expect(document.querySelector('[data-alert-row]')).not.toBeNull())
     expect(document.querySelector('[data-slot="alert-list"] table')).toBeNull()
     expect(document.querySelector('[data-alert-row]').getAttribute('data-slot')).toBe('card')
+  })
+
+  it('B3: "Tümü"nde alt Sheet\'in tarih bölümünde kip seçimi var; "Active during the range" range=active gönderir', async () => {
+    window.history.replaceState({}, '', '/?view=all&from=2026-09-21')
+    render(<AlertHistory urlSync />)
+    fireEvent.click(await screen.findByRole('button', { name: /Filters/ }))
+    const sheet = await screen.findByRole('dialog')
+    const group = within(sheet).getByRole('radiogroup', { name: 'Which alarms should the range include?' })
+    fireEvent.click(within(group).getByRole('radio', { name: /Active during the range/ }))
+    await waitFor(() => expect(lastList().range).toBe('active'))
+    expect(lastList().since).toBeTruthy()
   })
 })
 

@@ -126,6 +126,8 @@ class MonitoringControllerTest {
 
     @BeforeEach
     void stubTeamMap() {
+        // Takım varlık denetimi (2026-09-28, O3): varsayılan 'takım var'; olmayan takım testleri kendi stub'ını verir.
+        when(teamRepo.existsById(anyLong())).thenReturn(true);
         // Senaryo kaydetme yolu artık kaydetmeden önce script doğrulaması çağırıyor; mock varsayılanı
         // null döner ve NPE'ye yol açar. Zararsız (engellemeyen, uyarısız) bir sonuç stub'la.
         // ÜÇ argümanlı aşırı yükleme: süreç bütçesi (timeoutSeconds) de geçiliyor — ters bütçe
@@ -1307,6 +1309,34 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("2026-09-28: PUT ile OLMAYAN takıma taşıma ve OLUŞTURMA 400 (izleme sahipsiz kalmaz); aynı takım denetlenmez, var olan takıma taşınır")
+    void updateKeyword_nonexistentTeam_rejected() throws Exception {
+        com.sitemonitor.model.KeywordMonitor m = keywordWithGroup();
+        when(teamRepo.existsById(77L)).thenReturn(false);
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType("application/json").content("{\"teamId\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+        assertThat(m.getTeamId()).isEqualTo(5L);
+        verify(keywordMonitorRepo, never()).save(any(com.sitemonitor.model.KeywordMonitor.class));
+
+        com.sitemonitor.model.Team t8 = new com.sitemonitor.model.Team(); t8.setId(8L);
+        when(teamRepo.findById(8L)).thenReturn(Optional.of(t8));
+        mvc.perform(put("/api/monitoring/keyword/7").session(session("ADMIN"))
+                        .contentType("application/json").content("{\"teamId\":8}"))
+                .andExpect(status().isOk());
+        assertThat(m.getTeamId()).isEqualTo(8L);
+
+        // O3: OLUŞTURMA da olmayan takıma yazamaz (global yönetici dalı)
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                        .contentType("application/json")
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://yok.example.com\",\"teamId\":77}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("takım bulunamadı")));
+        verify(httpMonitorRepo, never()).save(any(com.sitemonitor.model.HttpMonitor.class));
+    }
+
+    @Test
     @DisplayName("PUT: BAŞKA takımın grubu HÂLÂ reddedilir (400) — bu bir yönlendirme sızıntısı olurdu")
     void updateKeyword_foreignGroup_stillRejected() throws Exception {
         keywordWithGroup();
@@ -2426,7 +2456,9 @@ class MonitoringControllerTest {
             mvc.perform(get("/api/monitoring/changes/port/7").session(memberOf(5L)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.changes[0].event_type").value("CREATE"))
-                    .andExpect(jsonPath("$.data.changes[0].ip_address").value("10.20.30.40"))
+                    // 2026-09-28c: eylemi yapanın IP'si kimlik izi — ekip arkadaşına (USER) düşer, satır işaretlenir
+                    .andExpect(jsonPath("$.data.changes[0].ip_address").doesNotExist())
+                    .andExpect(jsonPath("$.data.changes[0].identity_masked").value(true))
                     .andExpect(jsonPath("$.data.changes[0].actor_name").value("Ada Lovelace"))
                     // Snapshot yalnız TEK olay ucunda döner — liste yanıtını şişirmez.
                     .andExpect(jsonPath("$.data.changes[0].snapshot").doesNotExist());
@@ -2478,6 +2510,51 @@ class MonitoringControllerTest {
 
             mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(1L)))
                     .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("Kimlik izi (2026-09-28c): liste / tek olay / toplu akışta IP + tarayıcı USER ve kapsamlı müdüre düşer; kendi satırı, global admin ve AUDIT tam görür")
+        void identityTrace_maskedForNonGlobal() throws Exception {
+            com.sitemonitor.model.MonitorChangeLog r = row(5L);
+            r.setIpAddress("192.0.2.77"); r.setUserAgent("Mozilla/5.0 GateBrowser/3.0");
+            when(changeLogRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc("PORT", 7L)).thenReturn(Optional.of(r));
+            when(changeLogRepo.findByResourceKindAndResourceIdOrderByCreatedAtDescIdDesc(eq("PORT"), eq(7L), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0)).thenReturn(Optional.of(r));
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    anyBoolean(), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
+
+            MockHttpSession scoped = sessionWithTeam("ADMIN", 5L);
+            scoped.setAttribute("viewTeamIds", List.of(5L));
+            scoped.setAttribute("manageTeamIds", List.of(5L));
+            for (MockHttpSession s : List.of(memberOf(5L), scoped)) {
+                for (String url : List.of("/api/monitoring/changes/port/7", "/api/monitoring/changes/recent")) {
+                    String body = mvc.perform(get(url).session(s))
+                            .andExpect(status().isOk())
+                            .andExpect(jsonPath("$.data.changes[0].ip_address").doesNotExist())
+                            .andExpect(jsonPath("$.data.changes[0].user_agent").doesNotExist())
+                            .andExpect(jsonPath("$.data.changes[0].identity_masked").value(true))
+                            .andReturn().getResponse().getContentAsString();
+                    org.assertj.core.api.Assertions.assertThat(body).doesNotContain("192.0.2.77").doesNotContain("GateBrowser");
+                }
+                mvc.perform(get("/api/monitoring/changes/port/7/0").session(s))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.ip_address").doesNotExist())
+                        .andExpect(jsonPath("$.data.identity_masked").value(true))
+                        .andExpect(jsonPath("$.data.snapshot").exists());
+            }
+            MockHttpSession self = memberOf(5L);
+            self.setAttribute("username", "n23456");   // satırın aktörü (büyük/küçük harf duyarsız)
+            mvc.perform(get("/api/monitoring/changes/port/7").session(self))
+                    .andExpect(jsonPath("$.data.changes[0].ip_address").value("192.0.2.77"));
+            for (String role : List.of("ADMIN", "AUDIT")) {
+                mvc.perform(get("/api/monitoring/changes/port/7/0").session(session(role)))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.ip_address").value("192.0.2.77"))
+                        .andExpect(jsonPath("$.data.user_agent").value("Mozilla/5.0 GateBrowser/3.0"))
+                        .andExpect(jsonPath("$.data.identity_masked").value(false));
+            }
         }
 
         @Test
@@ -2673,12 +2750,79 @@ class MonitoringControllerTest {
                     eq(true), any(), any(), any(), any()))
                     .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(alive, gone)));
             // 8 hem PORT'ta silinmiş, 7 yalnız DNS'te (başka tür, aynı kimlik) — PORT 7 silinmiş SAYILMAZ
-            when(changeLogRepo.findDeletedAmong(any())).thenReturn(List.of(new Object[]{"PORT", 8L}, new Object[]{"DNS", 7L}));
+            when(changeLogRepo.findDeletedAmong(any(), any())).thenReturn(List.of(new Object[]{"PORT", 8L}, new Object[]{"DNS", 7L}));
 
             mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.changes[0].resource_deleted").value(false))
                     .andExpect(jsonPath("$.data.changes[1].resource_deleted").value(true));
+            // Sayfa başına TEK sorgu; tür de gider (idx_mchg_resource iki sütunuyla)
+            verify(changeLogRepo).findDeletedAmong(eq(java.util.Set.of("PORT")), eq(java.util.Set.of(7L, 8L)));
+        }
+
+        /**
+         * 2026-09-28 regresyon B1: silinip GERİ YÜKLENEN kaynak. Hüküm depoda (en son geçmiş satırı DELETE —
+         * HistoryQueryGrammarTest gerçek veritabanında sınar); burada uçların o hükmü AYNEN taşıdığı sınanır: liste
+         * satırları (CSV aynı satırlardan kurulur — "Silinmiş" sütunu), özet kartı ve silme olayının KENDİ satırı.
+         */
+        @Test
+        @DisplayName("Geri yüklenen kaynak: liste (CSV kaynağı) + özet kartı silinmiş DEMEZ; hâlâ silinmiş olan der")
+        void restoredResource_notDeleted_inListAndSummary() throws Exception {
+            var restoredDelete = row(5L); restoredDelete.setId(3L); restoredDelete.setResourceKind("INVENTORY");
+            restoredDelete.setResourceId(4L); restoredDelete.setResourceName("a.example.com"); restoredDelete.setEventType("DELETE");
+            var stillGone = row(5L); stillGone.setId(4L); stillGone.setResourceKind("INVENTORY");
+            stillGone.setResourceId(6L); stillGone.setResourceName("b.example.com"); stillGone.setEventType("UPDATE");
+            when(changeLogRepo.search(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                    eq(true), any(), any(), any(), any()))
+                    .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(restoredDelete, stillGone)));
+            when(changeLogRepo.topResources(any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any()))
+                    .thenReturn(List.<Object[]>of(new Object[]{"INVENTORY", 4L, 3L, 3L}, new Object[]{"INVENTORY", 6L, 2L, 4L}));
+            when(changeLogRepo.findAllById(List.of(3L, 4L))).thenReturn(List.of(restoredDelete, stillGone));
+            // Depo hükmü: INVENTORY 4 geri yüklendi (son satırı RESTORE) → dönmez; INVENTORY 6'nın son satırı DELETE.
+            when(changeLogRepo.findDeletedAmong(eq(java.util.Set.of("INVENTORY")), eq(java.util.Set.of(4L, 6L))))
+                    .thenReturn(List.<Object[]>of(new Object[]{"INVENTORY", 6L}));
+
+            mvc.perform(get("/api/monitoring/changes/recent").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    // silme olayının kendi satırı bile: kaynak artık yaşıyor
+                    .andExpect(jsonPath("$.data.changes[0].event_type").value("DELETE"))
+                    .andExpect(jsonPath("$.data.changes[0].resource_deleted").value(false))
+                    .andExpect(jsonPath("$.data.changes[1].resource_deleted").value(true));
+
+            mvc.perform(get("/api/monitoring/changes/summary").session(session("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.top_resources[0].resource_id").value(4))
+                    .andExpect(jsonPath("$.data.top_resources[0].deleted").value(false))
+                    .andExpect(jsonPath("$.data.top_resources[1].resource_id").value(6))
+                    .andExpect(jsonPath("$.data.top_resources[1].deleted").value(true));
+        }
+
+        @Test
+        @DisplayName("Tekil ayrıntı (ch_id derin bağlantısı) resource_deleted taşır — tür + kimlikle, listeyle aynı hüküm")
+        void detail_carriesResourceDeleted() throws Exception {
+            when(changeLogRepo.findByResourceKindAndResourceIdAndSeq("PORT", 7L, 0))
+                    .thenReturn(Optional.of(row(5L)));
+            when(changeLogRepo.findDeletedAmong(eq(java.util.Set.of("PORT")), eq(java.util.Set.of(7L))))
+                    .thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L}));
+
+            mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.event_type").value("CREATE"))
+                    .andExpect(jsonPath("$.data.resource_deleted").value(true));
+
+            // Geri yüklendi (depo artık döndürmüyor) → false; alan HER ZAMAN var (arayüz yokluğu "silme olayı mı" diye yorumlar)
+            when(changeLogRepo.findDeletedAmong(eq(java.util.Set.of("PORT")), eq(java.util.Set.of(7L))))
+                    .thenReturn(List.<Object[]>of());
+            mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.resource_deleted").value(false));
+
+            // Aynı kimlik BAŞKA türde silinmiş → bu kaynak silinmiş SAYILMAZ
+            when(changeLogRepo.findDeletedAmong(eq(java.util.Set.of("PORT")), eq(java.util.Set.of(7L))))
+                    .thenReturn(List.<Object[]>of(new Object[]{"DNS", 7L}));
+            mvc.perform(get("/api/monitoring/changes/port/7/0").session(memberOf(5L)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.resource_deleted").value(false));
         }
 
         @Test
@@ -2723,7 +2867,7 @@ class MonitoringControllerTest {
             when(changeLogRepo.topResources(any(), any(), any(), any(), any(), eq(true), any(), any(), any(), any()))
                     .thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L, 9L, 42L}));
             when(changeLogRepo.findAllById(List.of(42L))).thenReturn(List.of(latest));
-            when(changeLogRepo.findDeletedAmong(any())).thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L}));
+            when(changeLogRepo.findDeletedAmong(any(), any())).thenReturn(List.<Object[]>of(new Object[]{"PORT", 7L}));
 
             mvc.perform(get("/api/monitoring/changes/summary").session(session("ADMIN")))
                     .andExpect(status().isOk())

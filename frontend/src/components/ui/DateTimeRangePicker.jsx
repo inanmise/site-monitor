@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
-import { DateTimePopover } from './DatePickerParts.jsx'
+import { DateTimePopover, TOUCH_HIT } from './DatePickerParts.jsx'
 
 const SHORTCUTS = (t) => [
   {
@@ -73,11 +73,11 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
 
   return (
     <div data-slot="date-range-picker" className="flex min-w-0 flex-col gap-2.5">
-      {/* Hızlı kısayollar */}
+      {/* Hızlı kısayollar — dokunmatikte 40 px hap (fare: 24 px, değişmedi; 2026-09-28) */}
       <div className="flex flex-wrap gap-1.5">
         {SHORTCUTS(t).map(sc => (
           <Button key={sc.label} type="button" variant="outline" size="xs"
-            className="rounded-full px-3 text-muted-foreground hover:border-primary hover:text-primary"
+            className="rounded-full px-3 text-muted-foreground hover:border-primary hover:text-primary pointer-coarse:h-10"
             onClick={() => applyShortcut(sc)}>
             {sc.label}
           </Button>
@@ -93,7 +93,8 @@ export default function DateTimeRangePicker({ from, to, onApply }) {
         <DateTimePopover value={localTo} onChange={handleTo} timeStep={1800}
           minDate={localFrom} maxDate={new Date()} modifiers={marks} label={t('uptime.dateTo')}
           className="sm:w-auto" triggerClassName="sm:w-auto" />
-        <Button type="button" className="sm:w-auto" onClick={() => onApply(localFrom, localTo)}>
+        {/* Uygula: tetiklerle aynı 36 px hiza; dokunmatikte ortalanmış 40 px vuruş alanı (TOUCH_HIT) */}
+        <Button type="button" className={`sm:w-auto ${TOUCH_HIT}`} onClick={() => onApply(localFrom, localTo)}>
           {t('uptime.apply')}
         </Button>
       </div>
