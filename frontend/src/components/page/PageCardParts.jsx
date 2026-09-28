@@ -8,7 +8,7 @@ import { Badge } from '@/components/shadcn/badge'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
-import { MonitorCardMetrics, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
+import { MonitorCardMetrics, MonitorPendingText, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
 import { cn } from '@/lib/utils'
 import { intervalText } from '../ping/pingCardModel.js'
 import { exclusionCount, httpTone, humanizeMs, integrityResult, pageFailure, urlParts } from './pageCardModel.js'
@@ -109,7 +109,7 @@ export function PageIntegrityResult({ monitor: m }) {
     return (
       <div data-slot="page-integrity" data-tone="none"
         className={cn('mb-2.5 rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground', PANEL.none)}>
-        {t('page.card.awaitingFirstCheck')}
+        <MonitorPendingText idle={t('page.card.awaitingFirstCheck')} icon={null} />
       </div>
     )
   }
@@ -194,7 +194,7 @@ export function PageCompactSummary({ monitor: m }) {
   if (!failure && (!result || !m.checked_at)) {
     return (
       <div data-slot="page-compact" data-tone="none" className={cn(box, 'border-dashed text-xs text-muted-foreground', PANEL.none)}>
-        {t('page.card.awaitingFirstCheck')}
+        <MonitorPendingText idle={t('page.card.awaitingFirstCheck')} icon={null} />
       </div>
     )
   }

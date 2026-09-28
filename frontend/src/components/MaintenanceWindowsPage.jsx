@@ -64,7 +64,7 @@ const TILES = [
  * istemcide (`maintenance/maintenanceSchedule.js`), 30 sn'de bir kalan süre tazelenir (sekme görünürken).
  * URL: `view` (list dışı görünüm). Test kancası: kök `data-slot="maintenance-page"`.
  */
-export default function MaintenanceWindowsPage({ systemRole, teamId, teamName }) {
+export default function MaintenanceWindowsPage({ systemRole, teamId, teamName, globalAdmin = false }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const toast = useToast()
@@ -276,8 +276,9 @@ export default function MaintenanceWindowsPage({ systemRole, teamId, teamName })
       </>)}
 
       <MaintenanceEditor open={!!modal && modal.kind !== 'quick'} mode={modal?.kind === 'edit' ? 'edit' : 'new'} initial={editorInitial}
-        monitorOptions={monitorOptions} saving={saving} onSave={saveWindow} onClose={close} />
-      <MaintenanceQuickModal open={modal?.kind === 'quick'} monitorOptions={monitorOptions} saving={saving} onStart={startQuick} onClose={close} />
+        monitorOptions={monitorOptions} saving={saving} onSave={saveWindow} onClose={close} canAllMonitors={globalAdmin} />
+      <MaintenanceQuickModal open={modal?.kind === 'quick'} monitorOptions={monitorOptions} saving={saving} onStart={startQuick} onClose={close}
+        canAllMonitors={globalAdmin} />
 
       {/* Değişiklik geçmişi — ayrı ve SALT-OKUNUR bir kabuk (formun içine sekme olarak konsaydı yanlışlıkla kayıt riski doğardı). */}
       <ModalShell open={!!historyItem} onClose={() => setHistoryItem(null)}

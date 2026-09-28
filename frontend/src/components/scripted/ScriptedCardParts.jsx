@@ -9,7 +9,7 @@ import CopyButton from '../ui/CopyButton.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
-import { MonitorCardMetrics, CARD_LAYER, CARD_COPY } from '../monitoring/MonitorCard.jsx'
+import { MonitorCardMetrics, MonitorPendingText, CARD_LAYER, CARD_COPY } from '../monitoring/MonitorCard.jsx'
 import { cn } from '@/lib/utils'
 import { exitLabel, stuckLabel } from '../scriptedExitCodes.js'
 import { intervalText } from '../ping/pingCardModel.js'
@@ -168,7 +168,7 @@ export function ScriptedRunResult({ monitor: m, status }) {
     return (
       <div data-slot="scripted-result" data-tone="none"
         className={cn('mb-2.5 rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground', PANEL.none)}>
-        {t('scripted.card.awaitingFirstRun')}
+        <MonitorPendingText idle={t('scripted.card.awaitingFirstRun')} icon={null} />
       </div>
     )
   }
@@ -243,7 +243,7 @@ export function ScriptedCompactRun({ monitor: m, status }) {
   if (neverRun) {
     return (
       <p data-slot="scripted-compact-run" data-tone="none" className="mb-2.5 text-xs text-muted-foreground">
-        {t('scripted.card.awaitingFirstRun')}
+        <MonitorPendingText idle={t('scripted.card.awaitingFirstRun')} icon={null} />
       </p>
     )
   }

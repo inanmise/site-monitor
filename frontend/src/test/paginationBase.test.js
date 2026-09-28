@@ -55,6 +55,7 @@ const DISCLOSURES = {
   'components/CertHealthPanel.jsx': '"Yalnız sorunlar / Tümünü göster" süzgeç düğmesi — liste açılımı değil',
   'components/ScriptedMonitorPage.jsx': 'k6 çıktısının son satırları (kırpılmış metin, sunucu tavanlı) — liste değil',
   'components/admin/DeploymentHistoryPanel.jsx': 'sürüm × ortam matrisi `all=true` — sunucu tavanlı tablo, satır listesi değil',
+  'components/incidents/ActionNoteDialog.jsx': 'onay penceresinde TEK alarm iletisinin kırpılmış metnini aç/kapa ("Tamamı") — liste değil',
 }
 
 function walk(dir, out = []) {

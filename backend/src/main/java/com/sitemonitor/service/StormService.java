@@ -505,11 +505,11 @@ public class StormService {
                     anyEmail = true;
                 }
 
-                // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz.
-                enqueueStormPush(d.teamId(), "STORM", "CRITICAL",
+                // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz. Kanal kapıları
+                // (takım/tür/izleme bayrağı/sessiz saat/tekrar ayarı) ve günlük tekrar anahtarı UserPushService'te.
+                enqueueStormPush(storm, d, trigger,
                         downMembers.size() + " monitör birden erişilemez — " + scopeLabel
-                                + " · kök-neden: " + rootCauseLabel,
-                        "storm:" + storm.getId() + ":" + trigger);
+                                + " · kök-neden: " + rootCauseLabel);
 
                 // Webhook (Teams/Slack) — URL bazında dedup: aynı kanal iki kez mesaj almasın.
                 for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
@@ -540,13 +540,28 @@ public class StormService {
         }
     }
 
-    /** Fırtına push'u — teslim hatası bildirimin geri kalanını ASLA düşürmesin. */
-    private void enqueueStormPush(Long teamId, String trigger, String level, String message, String dedupeKey) {
-        if (userPushService == null || teamId == null) return;
+    /**
+     * Fırtına push seviyesi — açılış, tekrar ve ÇÖZÜM aynı seviyede (2026-09-28). Çözüm eskiden "INFO" gidiyordu;
+     * push alıcıları seviyeyle çözüldüğünden asgari seviyesi INFO'nun üstündeki gruplar "N monitör düştü"yü alıp
+     * "düzeldi"yi hiç almıyordu (çözüm alıcıları artık açılışı alanlardır — UserPushService.enqueueStormNotice).
+     */
+    static final String STORM_PUSH_LEVEL = "CRITICAL";
+
+    /**
+     * Fırtına push'u — teslim hatası bildirimin geri kalanını ASLA düşürmesin.
+     *
+     * <p>Yalnız SY takımına (takımın SY olduğu üyelerle): bireysel push da yalnız SY takımına gider — push
+     * çözümleyicisi SY takım-kapsamlıdır (EscalationService.resolveTeamFallback). Eskiden fırtına push'u UG
+     * takımına da gidiyordu; bireysel alarmda push almayan UG üyeleri toplu alarmda alıyordu. E-posta/webhook UG'ye
+     * gitmeye devam eder (bireysel e-posta da gider).
+     */
+    private void enqueueStormPush(AlertStorm storm, TeamDispatch d, String stormTrigger, String message) {
+        if (userPushService == null || d.teamId() == null || d.pushMembers().isEmpty()) return;
         try {
-            userPushService.enqueueTeamNotice(teamId, trigger, level, "STORM", "Alarm fırtınası", message, dedupeKey);
+            userPushService.enqueueStormNotice(storm.getId(), d.teamId(), stormTrigger, STORM_PUSH_LEVEL,
+                    d.pushMembers(), message);
         } catch (Exception e) {
-            log.warn("Storm push'u gönderilemedi (takım {}): {}", teamId, e.toString());
+            log.warn("Storm push'u gönderilemedi (takım {}): {}", d.teamId(), e.toString());
         }
     }
 
@@ -592,10 +607,9 @@ public class StormService {
                     emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                 }
 
-                enqueueStormPush(d.teamId(), "STORM_RESOLVED", "INFO",
+                enqueueStormPush(storm, d, "RESOLVE",
                         recovered.size() + " monitör kurtarıldı — " + scopeLabel
-                                + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()),
-                        "storm-resolved:" + storm.getId());
+                                + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()));
 
                 // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
                 // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
@@ -671,6 +685,8 @@ public class StormService {
                         d.webhooks.putIfAbsent(c.getWebhookUrl(), c.getWebhookType());
                 }
             }
+            // Push yalnız SY takımına (bkz. enqueueStormPush) — üye, SY takımının push listesine girer.
+            if (teamId != null) byTeam.get(teamId).pushMembers.add(m);
         }
 
         List<TeamDispatch> out = new ArrayList<>();
@@ -682,7 +698,7 @@ public class StormService {
                 for (String e : d.contactEmails) if (seenEmail.add(e.toLowerCase())) emails.add(e);
             }
             String name = d.info.name() != null && !d.info.name().isBlank() ? d.info.name().trim() : null;
-            out.add(new TeamDispatch(d.teamId, name, emails, d.webhooks, d.members));
+            out.add(new TeamDispatch(d.teamId, name, emails, d.webhooks, d.members, d.pushMembers));
         }
         return out;
     }
@@ -703,6 +719,8 @@ public class StormService {
     private static final class Dispatch {
         final Long teamId; final TeamInfo info;
         final List<AlertEvent> members = new ArrayList<>();
+        /** Takımın SY takımı olduğu üyeler — push yalnız bunlar için (UG üyeliği push üretmez). */
+        final List<AlertEvent> pushMembers = new ArrayList<>();
         final Set<String> contactEmails = new LinkedHashSet<>();
         final Map<String, String> webhooks = new LinkedHashMap<>();
         boolean anyMailEligible = false;
@@ -808,9 +826,10 @@ public class StormService {
 
     // ── Küçük yardımcılar ─────────────────────────────────────────────────────────
 
-    /** Bir takıma yapılacak fırtına bildirimi: adresler, webhook'lar ve O TAKIMA ait üyeler. */
+    /** Bir takıma yapılacak fırtına bildirimi: adresler, webhook'lar, O TAKIMA ait üyeler ve SY olduğu üyeler (push). */
     private record TeamDispatch(Long teamId, String teamName, List<String> emails,
-                                Map<String, String> webhooks, List<AlertEvent> members) {}
+                                Map<String, String> webhooks, List<AlertEvent> members,
+                                List<AlertEvent> pushMembers) {}
     private record TeamInfo(List<String> emails, String name) {
         static final TeamInfo EMPTY = new TeamInfo(List.of(), null);
     }

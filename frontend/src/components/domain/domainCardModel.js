@@ -139,7 +139,9 @@ export function dnssecOf(m) {
 export function blacklistOf(m) {
   const s = String(m?.blacklist_status || '').toUpperCase()
   if (!s || s === 'SKIPPED') return null
-  const lists = String(m?.blacklist_detail || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean)
+  // Sunucu kanıtı `;` ile ayırır ("zen.spamhaus.org=192.0.2.1 → 127.0.0.2; bl.spamcop.net=…" — DnsblCheckerService);
+  // yalnız satır sonuyla bölmek üç listeyi "1 liste" sayıyordu (2026-09-28, detay penceresinde görüldü). Satır sonu da ayraç.
+  const lists = String(m?.blacklist_detail || '').split(/;|\r?\n/).map((x) => x.trim()).filter(Boolean)
   if (s === 'LISTED') return { status: s, tone: 'bad', lists }
   if (s === 'CLEAN') return { status: s, tone: 'ok', lists: [] }
   return { status: 'UNKNOWN', tone: 'muted', lists: [] }

@@ -177,4 +177,21 @@ describe('RetentionSettings', () => {
     expect(screen.getByTestId('ret-hold-banner').closest('[data-slot="alert"]')).toHaveAttribute('data-tone', 'danger')
     expect(screen.getByRole('button', { name: /purge now|şimdi temizle/i })).toBeDisabled()
   })
+
+  it('salt okunur (kapsamlı müdür, 2026-09-28): not görünür; dry-run/temizle yok; süre, yasal saklama, onay ve çöp kutusu kilitli', async () => {
+    render(<RetentionSettings readOnly />)
+    await screen.findByText('Personal Data')
+
+    expect(screen.getByTestId('retention-settings')).toHaveAttribute('data-readonly', 'true')
+    expect(screen.getByTestId('ret-readonly')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /dry-run/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /purge now|şimdi temizle/i })).toBeNull()
+    expect(screen.getByRole('switch')).toBeDisabled()
+
+    await openClass('Personal Data')
+    expect(await screen.findByRole('button', { name: '730' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'activity_log' }))
+    expect(document.querySelector('[data-approved="false"]')).toBeDisabled()
+    expect(api.admin.saveRetentionSettings).not.toHaveBeenCalled()
+  })
 })

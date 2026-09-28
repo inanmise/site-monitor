@@ -46,6 +46,7 @@ import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
 import { formatBytes } from '../utils/formatBytes.js'
@@ -290,7 +291,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.pagespeed) })
   }, [])
 
-  useMonitorDeepLink(monitors, openDetail)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'PAGESPEED',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   // Kirilim istekleri YARISABILIR: modal 30 sn'de bir kendini tazeliyor ve kullanici bu sirada
   // baska bir anlik goruntuye ya da baska bir izlemeye gecebiliyor. Yanitlar gonderim sirasiyla
@@ -441,6 +445,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('pspd.saved')); closeEdit()
+      // İlk / taze ölçüm (2026-09-28): yeni kart boş kalmasın, hedefi/bütçesi değişen kart eski ölçümü göstermesin. Gizli
+      // parola/başlık satırda geri okunamaz → yazıldıysa ayrıca bildirilir. Sessiz: bekleme süresi (429) ya da hata
+      // kayıt başarısının yanında ikinci bir hata bildirimi olmasın; kart "İlk kontrol bekleniyor"da kalır.
+      if (shouldCheckAfterSave('pagespeed', { isNew: modal === 'new', before: modal, after: res.data,
+        extraChanged: payload.basicAuthPass !== undefined || payload.customHeaders !== undefined })) startCheckAfterSave(checkNow, res.data, { silent: true })
     } finally {
       setSaving(false)
     }
@@ -990,7 +999,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           {pager.pageItems.map(m => (
             /* Kart: pagespeed/PageSpeedMonitorCard (shadcn Card + "stretched button" + bütçe ölçerleri). Yetki
                kapıları ve olay işleyicileri SAYFADA kalır: seçim kutusu, meta ve eylemler kart yuvalarına geçer. */
-            <PageSpeedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density}
+            <PageSpeedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)}
               onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               week7={week7.data[String(m.id)]} week14={week14.data[String(m.id)]}

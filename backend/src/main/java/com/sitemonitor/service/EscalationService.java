@@ -312,6 +312,13 @@ public class EscalationService {
                         event.setTeamId(domainTeamId);          // eski (damgasız) açık olayları tek seferlik geri doldur
                         alertEventRepo.save(event);
                     }
+                    // E10: alarm AÇIKKEN envanter başka takıma devredilirse ESCALATION / RE-ALERT e-postası,
+                    // kontaklar ve 7/24 arama listesi CANLI envanter takımına (Takım B) gidiyor, push ve çözüm
+                    // ise damgaya (Takım A) — aynı alarmın bildirimleri iki takıma bölünüyordu. İzleme yolu (O5),
+                    // çözüm ve tekrar-bildir ile aynı kural: damga doluysa takım damgadan okunur.
+                    if (event.getTeamId() != null) {
+                        domainTeamId = event.getTeamId();
+                    }
                     boolean escalated = levelValue(alertLevel) > levelValue(event.getAlertLevel());
 
                     if (escalated) {
@@ -342,22 +349,61 @@ public class EscalationService {
                                 "", event.getId(), "ESCALATION", daysRemaining, result);
 
                     } else if (!Boolean.TRUE.equals(event.getAcknowledged())) {   // NULL-güvenli (O6)
+                        // E11: status=error (zaman aşımı/ağ) turu DOĞRULANMIŞ bir alarm hakkında hiçbir şey
+                        // söylemez. KRİTİK (5 gün) alarmın re-alert vakti geçici bir timeout'a denk gelince
+                        // seviye UYARI'ya iniyor, mail yalnız UYARI alıcılarına gidiyordu (müdür yok, gün yok);
+                        // olay UYARI mesajı + daysRemaining=null ile kaydediliyor, lastReAlertAt sıfırlandığı
+                        // için DOĞRU re-alert 24 saat daha kayıyordu (push ise KRİTİK'ten çözülüyordu).
+                        // Kapanış korumasıyla (yukarıdaki unverified) aynı ilke: böyle bir tur bildirim
+                        // ÜRETMEZ ve olayın hiçbir alanına DOKUNMAZ; ilk doğrulanmış turda gider. Alarmın
+                        // kendisi bir "erişilemedi" alarmıysa (gün yok, seviye düşmüyor) bu tur onu zaten
+                        // doğrular → günlük hatırlatma eskisi gibi sürer.
+                        if (unverified && (event.getDaysRemaining() != null
+                                || levelValue(alertLevel) < levelValue(event.getAlertLevel()))) {
+                            log.debug("Doğrulanmamış tur (status=error) — açık alarm bildirimi ertelendi: {} [{}]",
+                                    domain, alertType);
+                            continue;
+                        }
+                        // E11: alıcı seviyesi olayın seviyesinin ALTINA inmez (push ve çözüm olay seviyesinden
+                        // çözülür; mail daha düşük seviyeyle giderse müdür düşer).
+                        String sendLevel = levelValue(alertLevel) < levelValue(event.getAlertLevel())
+                                ? event.getAlertLevel() : alertLevel;
+                        String sendMessage = sendLevel.equals(alertLevel) ? message
+                                : buildMessage(domain, alertType, sendLevel, daysRemaining) + securityEvidence(alertType, result);
+                        // E9: İLK bildirim hiç tamamlanmadıysa onu ŞİMDİ gönder (izleme yolunun 2026-08-24
+                        // aynası). INITIAL dalı olayı kaydedip gönderir, lastReAlertAt'i gönderimden SONRA
+                        // damgalar; arada süreç ölürse (deploy/restart/OOM) alarm açık görünür ama hiçbir kanal
+                        // duyurmamıştır. Eskiden createdAt'e düşülüp bir re-alert aralığı (24 saat) susuluyordu.
+                        if (initialNotificationMissing(event, now())) {
+                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId);
+                            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
+                                    sendMessage, "", event.getId(), "INITIAL", daysRemaining, result);
+                            event.setNotifiedContacts(serializeContacts(contacts));
+                            event.setLastReAlertAt(now());
+                            event.setDaysRemaining(daysRemaining);
+                            if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
+                            event.setMessage(sendMessage);
+                            alertEventRepo.save(event);
+                            log.warn("🔴 Yarıda kalmış ilk sertifika bildirimi tamamlandı: {} [{}] — alarm {} tarihinde açılmıştı",
+                                    domain, alertType, event.getCreatedAt());
+                            continue;
+                        }
                         String lastAlertTime = event.getLastReAlertAt() != null
                                 ? event.getLastReAlertAt() : event.getCreatedAt();
                         if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
-                            List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId);
-                            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
-                                    "[RE-ALERT] " + message, "[RE-ALERT] ",
+                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId);
+                            sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
+                                    "[RE-ALERT] " + sendMessage, "[RE-ALERT] ",
                                     event.getId(), "DAILY_REALERT", daysRemaining, result);
 
                             event.setLastReAlertAt(now());
                             event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
                             event.setDaysRemaining(daysRemaining);
                             if (notAfterOf(result) != null) event.setNotAfter(notAfterOf(result));
-                            event.setMessage(message);
+                            event.setMessage(sendMessage);
                             alertEventRepo.save(event);
                             log.info("Re-alert sent: {} [{}] — previous day: {}",
-                                    domain, alertLevel, lastAlertTime.substring(0, 10));
+                                    domain, sendLevel, lastAlertTime.substring(0, 10));
                         } else {
                             log.debug("Alert already sent today, skipping: {} [{}] — last: {}",
                                     domain, alertLevel, lastAlertTime.substring(0, 10));
@@ -665,14 +711,19 @@ public class EscalationService {
             // İzleme tiplerinin kadansının sahibi ilgili sweep'lerdir; restart
             // sonrası ilk sweep doğrulamadan bayat re-alert atılmasın.
             if (MONITORING_ALERT_TYPES.contains(event.getAlertType())) continue;
+            // E9: ilk bildirimi yarıda kalmış alarm (processResults'taki kurtarmanın açılış eşleniği) —
+            // aralık beklenmez, INITIAL olarak BİR kez gider (damga aşağıda atılır).
+            boolean initialMissing = initialNotificationMissing(event, now());
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
-            if (!reAlertDue(lastAlertTime, now(), reAlertIv)) {
+            if (!initialMissing && !reAlertDue(lastAlertTime, now(), reAlertIv)) {
                 log.debug("Catch-up: {} re-alert interval not elapsed, skipping", event.getDomain());
                 continue;
             }
             var inventoryOpt  = Optional.ofNullable(invByDomain.get(event.getDomain()));
-            Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+            // E10: damgalanmış takım önceliklidir (processResults, çözüm ve tekrar-bildir ile aynı kural).
+            Long domainTeamId = event.getTeamId() != null ? event.getTeamId()
+                    : inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
             List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId);
             Map<String, Object> certContext = Optional.ofNullable(latestByDomain.get(event.getDomain()))
@@ -681,17 +732,24 @@ public class EscalationService {
             Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
             String  freshMessage  = buildMessage(event.getDomain(), event.getAlertType(),
                                                  event.getAlertLevel(), effectiveDays);
-            sendCombinedAlert(domainTeamId, ugTeamId, contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
-                    "[RE-ALERT] " + freshMessage, "[RE-ALERT] ",
-                    event.getId(), "DAILY_REALERT", effectiveDays, certContext);
+            if (initialMissing) {
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
+                        freshMessage, "", event.getId(), "INITIAL", effectiveDays, certContext);
+                event.setNotifiedContacts(serializeContacts(contacts));
+            } else {
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, event.getDomain(), event.getAlertLevel(), event.getAlertType(),
+                        "[RE-ALERT] " + freshMessage, "[RE-ALERT] ",
+                        event.getId(), "DAILY_REALERT", effectiveDays, certContext);
+                event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
+            }
             event.setLastReAlertAt(now());
-            event.setRealertCount((event.getRealertCount() == null ? 0 : event.getRealertCount()) + 1);
             event.setDaysRemaining(effectiveDays);
             if (notAfterOf(certContext) != null) event.setNotAfter(notAfterOf(certContext));
             alertEventRepo.save(event);
             sent++;
-            log.info("Startup catch-up: alert sent for {} [{}] — last was: {}",
-                    event.getDomain(), event.getAlertLevel(), lastAlertTime.substring(0, 10));
+            log.info("Startup catch-up: {} sent for {} [{}] — last was: {}",
+                    initialMissing ? "interrupted INITIAL" : "alert", event.getDomain(), event.getAlertLevel(),
+                    lastAlertTime != null && lastAlertTime.length() >= 10 ? lastAlertTime.substring(0, 10) : "-");
             // Pace between domain batches to avoid flooding the SMTP gateway
             try { Thread.sleep(interDomainDelayMs()); } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
@@ -2724,6 +2782,32 @@ public class EscalationService {
             return !now.isBefore(last.plusHours(iv));
         } catch (Exception e) {
             return true;   // ayrıştırılamazsa re-alert'e izin ver (bayat alarmın süresiz susmasını önle)
+        }
+    }
+
+    /**
+     * E9: İLK bildirimin yarıda kaldığına ancak olay bu kadar eskiyse hükmedilir. INITIAL gönderimi
+     * (SMTP bağlan/oku/yaz + kontak webhook zaman aşımları) sürerken paralel bir yol — açılış catch-up'ı,
+     * yeni envanterin anında kontrolü, rolling deploy'da hâlâ çalışan eski pod — aynı olayı damgasız
+     * görüp İKİNCİ bir INITIAL göndermesin.
+     */
+    static final java.time.Duration INITIAL_SEND_GRACE = java.time.Duration.ofMinutes(5);
+
+    /**
+     * E9 (saf/test edilebilir): açık sertifika alarmının İLK bildirimi hiç tamamlanmadı mı?
+     * {@code lastReAlertAt} INITIAL / ESCALATION / DAILY_REALERT / manuel gönderimin HEPSİNDE damgalanır;
+     * null olması "olay kaydedildi ama hiçbir kanal duyurmadı" demektir (izleme yolu, 2026-08-24).
+     * Olay {@link #INITIAL_SEND_GRACE}'ten gençse gönderim hâlâ sürüyor olabilir → false.
+     */
+    static boolean initialNotificationMissing(AlertEvent e, String nowIso) {
+        if (e.getLastReAlertAt() != null) return false;
+        if (e.getCreatedAt() == null) return true;
+        try {
+            LocalDateTime created = LocalDateTime.parse(e.getCreatedAt(), LDT);
+            LocalDateTime now     = LocalDateTime.parse(nowIso, LDT);
+            return !now.isBefore(created.plus(INITIAL_SEND_GRACE));
+        } catch (Exception ex) {
+            return true;   // ayrıştırılamazsa gönder (reAlertDue ile aynı tercih: süresiz susma yok)
         }
     }
 

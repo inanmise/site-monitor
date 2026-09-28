@@ -43,6 +43,7 @@ import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
@@ -224,8 +225,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.port) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili port monitörünün detayını aç (bir kez), paramı temizle.
-  useMonitorDeepLink(monitors, openModal)
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, 7/24 Kapsamı): TAM listeden açar; yoksa uyarır (hooks/useMonitorDeepLink)
+  useMonitorDeepLink(monitors, openModal, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'PORT',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   // Modal her açıldığında önceki kaydetme hatası + test sonucunu temizle.
   useEffect(() => { setSaveError(null); setTestResult(null) }, [modal])
@@ -311,6 +315,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
       if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
       await load(); closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi değişen kart eski sonucu göstermesin. Liste
+      // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('port', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -751,7 +758,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı parçalar BURADA kurulur ve yuva olarak
                geçer — toplu seçim kutusu, meta, kart eylemleri (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü
                detay penceresiyle ortak (cardStatus / statusBadge / alarmLabel). */
-            <PortMonitorCard key={m.id} monitor={m} density={density} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
+            <PortMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
               onOpen={() => openModal(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (

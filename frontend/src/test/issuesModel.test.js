@@ -143,3 +143,39 @@ describe('issuesModel — zaman ve sebep metinleri', () => {
     expect(imagesFromClipboard({})).toEqual([])
   })
 })
+
+describe('issuesModel — alan adı aktarım talebi türü (2026-09-28)', () => {
+  it('DOMAIN_TRANSFER süzgeç seçeneği: CATEGORIES içinde, etiketi var, URL gidiş-dönüşü ve sunucu parametresi korunur', async () => {
+    const { CATEGORIES, categoryLabel } = await import('../components/issues/issuesModel.js')
+    expect(CATEGORIES).toContain('DOMAIN_TRANSFER')
+    expect(categoryLabel('DOMAIN_TRANSFER', t)).toBe('issue.catDomainTransfer')
+    const read = (k) => ({ ir_cat: 'DOMAIN_TRANSFER' })[k] ?? null
+    expect(filtersFromUrl(read).category).toBe('DOMAIN_TRANSFER')
+    expect(serverParams({ ...FILTER_DEFAULTS, category: 'DOMAIN_TRANSFER' }).category).toBe('DOMAIN_TRANSFER')
+    const rows = [{ id: 1, category: 'DOMAIN_TRANSFER' }, { id: 2, category: 'BLOCKER' }]
+    expect(rows.filter((r) => matchesFilters(r, { ...FILTER_DEFAULTS, category: 'DOMAIN_TRANSFER' })).map((r) => r.id)).toEqual([1])
+  })
+})
+
+describe('issuesModel — çoklu etki (2026-09-28)', () => {
+  it('etki süzgeci: ir_imp URL gidiş-dönüşü, geçersiz kod yok sayılır, sunucu parametresi, istemci süzgeci, çip', async () => {
+    const { IMPACTS, impactLabel, impactsOf, URL_KEYS } = await import('../components/issues/issuesModel.js')
+    expect(IMPACTS).toHaveLength(12)
+    expect(URL_KEYS.impact).toBe('ir_imp')
+    expect(filtersFromUrl((k) => ({ ir_imp: 'SLOW' })[k] ?? null).impact).toBe('SLOW')
+    expect(filtersFromUrl((k) => ({ ir_imp: 'HACK' })[k] ?? null).impact).toBe('')
+    expect(filtersToUrl({ ...FILTER_DEFAULTS, impact: 'SLOW' }).ir_imp).toBe('SLOW')
+    expect(filtersToUrl(FILTER_DEFAULTS).ir_imp).toBeNull()
+    expect(serverParams({ ...FILTER_DEFAULTS, impact: 'SLOW' }).impact).toBe('SLOW')
+    expect(serverParams(FILTER_DEFAULTS).impact).toBeUndefined()
+    const rows = [{ id: 1, impacts: ['LOGIN', 'SLOW'] }, { id: 2, impacts: ['SLOW'] }, { id: 3 }]   // 3: eski kayıt
+    expect(rows.filter((r) => matchesFilters(r, { ...FILTER_DEFAULTS, impact: 'LOGIN' })).map((r) => r.id)).toEqual([1])
+    expect(rows.filter((r) => matchesFilters(r, FILTER_DEFAULTS)).map((r) => r.id)).toEqual([1, 2, 3])
+    expect(activeFilters({ ...FILTER_DEFAULTS, impact: 'SLOW' })).toEqual([{ key: 'impact', value: 'SLOW', patch: { impact: '' } }])
+    expect(impactLabel('SLOW', t)).toBe('issue.impact.SLOW')
+    expect(impactLabel('SLOW', t, true)).toBe('issue.impactShort.SLOW')
+    expect(impactLabel('BOGUS', t)).toBe('')
+    expect(impactsOf({ impacts: ['SLOW', 'BOGUS', 'LOGIN'] })).toEqual(['LOGIN', 'SLOW'])   // kanonik sıra, bilinmeyen düşer
+    expect(detailToRow({ id: 5, message: 'm', impacts: ['OTHER'] }).impacts).toEqual(['OTHER'])
+  })
+})

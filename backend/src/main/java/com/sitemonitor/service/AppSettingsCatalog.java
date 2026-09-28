@@ -58,6 +58,11 @@ public final class AppSettingsCatalog {
         // Durum İzleme "Tüm takımlar" ile başka takımların kayıtlarını SALT OKUNUR gösterir; yazma kendi takımında
         // kalır. Varsayılan AÇIK; InventoryVisibility canlı okur. GLOBAL_ONLY (aşağıda).
         new Setting("site.monitor.inventory.visible-to-all",     "general",    Type.BOOL),
+        // Org geneli Olaylar görünürlüğü (2026-09-28, kullanıcı kararı) — Alarmlar → Olaylar'da "Diğer ekiplerin olayları"
+        // ve "Tümü": başka takımların olayları SALT OKUNUR (liste, detay, yorumlar); onay/çözüm/yorum/silme kendi
+        // kapsamında kalır. Envanter anahtarından AYRI: olay içeriği (mesaj, yorumlar) alan adı-takım eşlemesinden daha
+        // hassas; kurum birini açıp diğerini kapatabilmeli. Varsayılan AÇIK; IncidentsController canlı okur. GLOBAL_ONLY.
+        new Setting("site.monitor.incidents.visible-to-all",     "general",    Type.BOOL),
         // Hareketsizlik oturum kapatma. Eskiden YALNIZ derleme zamani (VITE_INACTIVITY_MS)
         // ayarlanabiliyordu: degistirmek icin yeniden derleyip dagitmak gerekiyordu.
         // k6 REST API adresi. Varsayilan 127.0.0.1:0 = efemer port (cakisma imkansiz).
@@ -413,18 +418,24 @@ public final class AppSettingsCatalog {
      *   <li>Log seviyeleri: TRACE mail logu içerik/başlık sızdırır.</li>
      *   <li>Org geneli envanter görünürlüğü: TÜM takımların alan adı, sorumlu kişi ve sertifika verisinin
      *       kime açık olduğunu belirleyen kurum politikası — takım kapsamlı bir müdür diğer takımlar adına
-     *       karar veremez (2026-09-26).</li>
+     *       karar veremez (2026-09-26). Kardeşi {@code incidents.visible-to-all} (TÜM takımların olay kayıtları ve
+     *       yorumları, 2026-09-28) aynı sınıf.</li>
      *   <li>LDAP müdür/üyelik eşlemesi ({@code ldap.manager-attributes}, {@code ldap.prune-unsupported-teams},
      *       {@code ldap.manager-refresh-hours}): müdür bağı bir YETKİLENDİRME girdisidir (managerId → görüş/yönetim
      *       kapsamı) ve budama kimin hangi takımda kalacağını belirler. Müdür sicilinin okunduğu AD niteliğini
      *       değiştiren takım kapsamlı bir müdür kapsamı dolaylı genişletebilirdi (BO6, bug regresyon 2026-09-27;
      *       kardeşi {@code inventory.visible-to-all} ile aynı sınıf).</li>
+     *   <li>Veri saklama ({@link #retentionKeys}, 2026-09-28 regresyon taraması): saklama süreleri, yasal saklama
+     *       (legal hold), temizlik parti boyutu, uyum onayları ve envanter çöp kutusu otomatik boşaltma BÜTÜN takımların
+     *       verisini siler/korur — sistem geneli ayar. Müdür eskiden yasal saklamayı kapatıp süreleri tabana çekerek
+     *       her takımın geçmişini kalıcı sildirebiliyordu. Liste {@code RetentionCatalog}'dan TÜRETİLİR: yeni politika
+     *       eklenince kapı kendiliğinden kapsar.</li>
      * </ul>
      * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
      * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
      * Kapı: {@code SettingsScopedAdminGateTest}.
      */
-    public static final java.util.Set<String> GLOBAL_ONLY = java.util.Set.of(
+    public static final java.util.Set<String> GLOBAL_ONLY = withRetentionKeys(java.util.Set.of(
         "site.monitor.monitoring.allow-internal-targets",
         "site.monitor.monitoring.allow-loopback-targets",
         "site.monitor.dns.resolvers",
@@ -442,10 +453,34 @@ public final class AppSettingsCatalog {
         "logging.level.com.sitemonitor",
         "logging.level.com.sitemonitor.mail",
         "site.monitor.inventory.visible-to-all",
+        "site.monitor.incidents.visible-to-all",
         "site.monitor.ldap.manager-attributes",
         "site.monitor.ldap.prune-unsupported-teams",
         "site.monitor.ldap.manager-refresh-hours"
-    );
+    ));
+
+    /**
+     * Veri saklama anahtarları — {@code RetentionCatalog}'daki her politikanın süre anahtarı + uyum onayı anahtarı,
+     * yasal saklama, parti boyutu ve envanter çöp kutusu otomatik boşaltma. Elle liste DEĞİL (yeni politika sessizce
+     * dışarıda kalmasın).
+     */
+    public static java.util.Set<String> retentionKeys() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        out.add(RetentionCatalog.HOLD_KEY);
+        out.add(RetentionCatalog.BATCH_KEY);
+        out.add(InventoryAutoPurgeService.KEY);
+        for (var p : RetentionCatalog.ALL) {
+            if (p.settingKey() != null) out.add(p.settingKey());
+            out.add(RETENTION_APPROVAL_PREFIX + p.id());
+        }
+        return out;
+    }
+
+    private static java.util.Set<String> withRetentionKeys(java.util.Set<String> base) {
+        java.util.Set<String> all = new java.util.HashSet<>(base);
+        all.addAll(retentionKeys());
+        return java.util.Set.copyOf(all);
+    }
 
     public static boolean isGlobalOnly(String key) {
         return key != null && GLOBAL_ONLY.contains(key);

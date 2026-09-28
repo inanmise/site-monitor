@@ -234,7 +234,12 @@ public class PermissionService {
                   + "yazma release_history.edit'te kalır"),
             new PolicyUpgrade("TEAM_ADMIN", "release_history.read", List.of("view"),
                     "Sistem Sağlığı'ndaki her bölüm her kademeye açık (2026-09-19): Sürüm & Dağıtım okunur, "
-                  + "yazma release_history.edit'te kalır")
+                  + "yazma release_history.edit'te kalır"),
+            // v20.87.0 bu satırı AUDIT için allowed=false (updated_by='system') tohumladı; katalog varsayılanı artık true
+            // (PermissionCatalog.AUDIT_WRITE_GRANTS). Yönetici satırı elle değiştirdiyse (açıp kapattıysa bile) dokunulmaz.
+            new PolicyUpgrade("AUDIT", "noc_calls.write", List.of("edit"),
+                    "7/24 izleme ekibi üyeleri AUDIT rolünde ve arama kaydı girebilmeli (2026-09-28); onay/çözüm "
+                  + "alerts.actions'ta kalır (AUDIT'te kapalı), NocCallLogService.canWrite kapsamlı müdürü yine dışlar")
     );
 
     /** Update single grant. ADMIN row'ları her zaman true; bypass yok. */

@@ -73,7 +73,7 @@ public class InventoryInsightController {
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/import")
     @SuppressWarnings("unchecked")
     public ResponseEntity<Map<String, Object>> importRows(@RequestBody Map<String, Object> body,

@@ -3,7 +3,7 @@ import {
   ShieldCheck, ShieldOff, ShieldQuestion,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
-import { CARD_LAYER, MonitorCardTag } from '../monitoring/MonitorCard.jsx'
+import { CARD_LAYER, MonitorCardTag, MonitorPendingText, useMonitorCard } from '../monitoring/MonitorCard.jsx'
 import { CHIP, CHIP_HOVER, CHIP_TONE, TOUCH_CHIP } from '../certcard/CertCardParts.jsx'
 import { dateOnly } from '../certcard/certCardModel.js'
 import HintPopover from '../ui/HintPopover.jsx'
@@ -25,8 +25,6 @@ import {
  * örtünün üstünde (`CARD_LAYER`), dokunmatik işaretçide `::after` ile 40 px yüksekliğe genişler ({@link CHIP_TOUCH}).
  */
 
-/** Detay penceresindeki EPP listesi (sayfada) — mor ton: alan adı serisinin rengi (Vade Takvimi ile aynı). */
-export const EPP_BADGE = 'border-violet-600/30 bg-violet-600/10 px-[7px] py-px text-[10.5px] font-semibold text-violet-700 dark:text-violet-300'
 
 /** Küçük çip (20 px) — koruma ve EPP satırları; ton `CHIP_TONE` (sertifika kartının çip ailesi). */
 const CHIP_SM = "h-5 min-w-0 max-w-full gap-1 rounded-md border px-1.5 py-0 text-[10.5px] font-semibold whitespace-nowrap shadow-none pointer-coarse:min-w-10 [&_svg:not([class*='size-'])]:size-3"
@@ -126,21 +124,29 @@ function daysLabel(tone, days, t) {
 /** Bitişi bilinmeyen kartın başlığı + nedeni (hiç kontrol yok / sorgu hatası / kaynak tarih döndürmedi); Kompakt'ta tek satır. */
 function UnknownBody({ monitor: m, compact }) {
   const t = useT()
+  const { running } = useMonitorCard()
   const r = unknownReasonOf(m)
-  const why = r.kind === 'never' ? t('domcard.unknownNever')
+  // Hiç kontrol yok + ilk sorgu ŞU AN koşuyor: başlık "İlk kontrol yapılıyor…" (dönen gösterge); "Henüz kontrol
+  // edilmedi" nedeni o sırada yanlış olur → yazılmaz (2026-09-28).
+  const firstRunning = r.kind === 'never' && running
+  const why = firstRunning ? null
+    : r.kind === 'never' ? t('domcard.unknownNever')
     : r.kind === 'error' ? t('domcard.unknownError', r.detail)
       : r.source ? t('domcard.unknownNoData', r.source) : t('domcard.unknownNoSource')
   return (
     <div data-slot="domain-unknown" data-reason={r.kind} className="min-w-0">
       <p className="flex min-w-0 items-center gap-1.5 text-sm leading-tight font-bold text-muted-foreground">
-        <CircleHelp aria-hidden="true" className="size-4 shrink-0" />
-        <span className="min-w-0">{t('domcard.unknownTitle')}</span>
+        {r.kind === 'never'
+          ? <MonitorPendingText idle={<span className="min-w-0">{t('domcard.unknownTitle')}</span>} icon={CircleHelp} iconClassName="size-4 shrink-0" spinnerSize={16} />
+          : <><CircleHelp aria-hidden="true" className="size-4 shrink-0" /><span className="min-w-0">{t('domcard.unknownTitle')}</span></>}
       </p>
-      <p data-slot="domain-unknown-why" title={compact ? why : undefined}
-        className={cn('mt-0.5 min-w-0 pl-[22px] text-xs leading-snug [overflow-wrap:anywhere]', compact ? 'truncate' : 'line-clamp-2',
-          r.kind === 'error' ? 'font-medium text-foreground/80' : 'text-muted-foreground')}>
-        {why}
-      </p>
+      {why && (
+        <p data-slot="domain-unknown-why" title={compact ? why : undefined}
+          className={cn('mt-0.5 min-w-0 pl-[22px] text-xs leading-snug [overflow-wrap:anywhere]', compact ? 'truncate' : 'line-clamp-2',
+            r.kind === 'error' ? 'font-medium text-foreground/80' : 'text-muted-foreground')}>
+          {why}
+        </p>
+      )}
     </div>
   )
 }

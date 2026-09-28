@@ -29,6 +29,15 @@ import java.util.stream.Collectors;
  * Olay = teyitli hatada AÇILAN / recovery'de KAPANAN alarm; yaşam döngüsü EscalationService+MonitoringOutageService'te.
  * Bu controller yalnız SUNUM + yorum dizisi + (admin) silme sağlar; alarm üretimi/çözümü buraya AİT DEĞİLDİR.
  * Yetki: görüntüleme alerts.read, yorum alerts.actions, incident silme yalnız global ADMIN. Takım-kapsamı (IDOR) uygulanır.
+ *
+ * <p><b>Org geneli salt okunur görünürlük (2026-09-28, kullanıcı kararı):</b> "Olaylar sayfası tüm kullanıcılara açık;
+ * bir kullanıcı başka takımlara açılan olayları görebilir ama müdahale edemez." Yalnız OKUMA genişler — liste
+ * ({@code scope=mine|others|all}), tekil olay ve yorum dizisi. Ayar {@value #VISIBLE_TO_ALL_KEY} (varsayılan AÇIK,
+ * yalnız global yönetici değiştirir) kapalıyken her şey bugünkü gibi takım kapsamlıdır. YAZMA kapıları
+ * ({@link #requireIncidentScope}, {@link #canManageIncident}, global-admin silme) bu ayarı HİÇ okumaz; alarm eylemleri
+ * (onay/çözüm/yeniden bildirim) AdminController'da kendi takım kapısıyla kalır. Bildirim alıcıları, teslimat günlüğü
+ * ve 7/24 arama kayıtları ayrı uçlardadır ve takım kapsamlı kalır (başka ekibin olayında sunulmaz); listede yalnız
+ * KENDİ satır özet sayıları + mevcut sahibi taşır ({@link #ownerFacts}).
  */
 @Slf4j
 @RestController
@@ -55,10 +64,41 @@ public class IncidentsController {
     private final com.sitemonitor.repository.TeamRepository teamRepo;   // takım sütunu (2026-09-18)
     private final PermissionService permissionService;
     private final AuditService auditService;
+    private final com.sitemonitor.service.AppSettingsService appSettings;   // org geneli okuma anahtarı (2026-09-28)
+
+    /**
+     * Sahiplen/Çöz penceresinin bağlam kartı (2026-09-28): e-posta/push teslim sayıları + 7/24 arama sayısı — Alarm
+     * Geçmişi'nin ({@code AdminController.listAlerts}) AYNI toplu sorguları, yalnız KENDİ satırlar için
+     * ({@link #deliveryFor}). İsteğe bağlı ({@code AdminController.nocCallLog} deseni): dilimli test bağlamında yokken
+     * sayı alanları yazılmaz, liste yine döner.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private NotificationLogRepository notificationLogRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPushDeliveryRepository userPushDeliveryRepo;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /** Org geneli salt okunur Olaylar anahtarı — {@code AppSettingsCatalog} + i18n etiket/yardım metinleriyle aynı. */
+    public static final String VISIBLE_TO_ALL_KEY = "site.monitor.incidents.visible-to-all";
+    /** Liste {@code scope} değerleri — bilinmeyen/boş değer {@link #SCOPE_MINE} sayılır. */
+    public static final String SCOPE_MINE = "mine";
+    public static final String SCOPE_OTHERS = "others";
+    public static final String SCOPE_ALL = "all";
+    /** Kapsamsız sorguda IN listesi boş olamaz — scoped=false kısa devre yaptığı için değeri önemsiz. */
+    private static final List<Long> NO_SCOPE = List.of(-1L);
+
     // ── Liste ──────────────────────────────────────────────────────────────────
+    /**
+     * Olay listesi. {@code scope}: {@code mine} (varsayılan — BUGÜNKÜ görünüm: görüş kapsamındaki takımların olayları;
+     * global görüntüleyici için tümü) | {@code others} (kapsam dışı olaylar, salt okunur) | {@code all}. {@code others}
+     * ve {@code all} yalnız ayar açıkken ve çağıran global görüntüleyici DEĞİLKEN uygulanır; aksi halde sessizce
+     * {@code mine}'a düşer (yanıttaki {@code scope} gerçekte uygulananı söyler). Satır başına {@code can_manage}
+     * (olay çağıranın kendi kapsamında mı), {@code can_act} (+ {@code alerts.actions}) ve {@code can_delete} (global
+     * yönetici). {@code scope_counts} yalnız anahtar anlamlıyken döner ve sayfa sorgusuna TEK sayım sorgusu ekler.
+     */
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String status,      // all | ongoing | resolved
@@ -70,6 +110,7 @@ public class IncidentsController {
             @RequestParam(defaultValue = "desc") String dir,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = SCOPE_MINE) String scope,   // mine | others | all (2026-09-28)
             HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
@@ -78,33 +119,128 @@ public class IncidentsController {
         String type = (rootCause != null && !rootCause.isBlank()) ? rootCause.trim() : null;
         String qEff = (q != null && !q.isBlank()) ? q.trim() : null;
 
-        // Takım kapsamı (IDOR): global viewer tümünü; aksi halde yalnız kapsamdaki takımlar
-        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
-        boolean scoped = scope != null;
-        if (scoped && scope.isEmpty())
-            return ok(Map.of("data", List.of(), "total", 0L, "page", 0, "size", sz, "type_counts", Map.of()));
-        List<Long> scopeList = scoped ? scope : List.of(-1L);
+        // Takım kapsamı (IDOR): "kendi" kapsam = görüş kapsamı (global görüntüleyicide null = tümü). Org geneli okuma
+        // ayrı bir karar: yalnız anahtar açıkken others/all uygulanır.
+        List<Long> own = ownScope(session);
+        boolean orgWide = orgWideReader(session);
+        String eff = orgWide ? normalizeScope(scope) : SCOPE_MINE;
+        ScopeQuery sq = scopeQuery(eff, own);
 
-        Page<AlertEvent> result = alertEventRepo.findIncidents(
-                resolved, since, until, type, qEff, scoped, scopeList,
-                PageRequest.of(Math.max(0, page), sz, sortFor(sort, dir)));
+        Page<AlertEvent> result = sq == null
+                ? Page.empty(PageRequest.of(0, sz))   // kapsamsız kullanıcının "Takımımın olayları": hiçbir olay
+                : alertEventRepo.findIncidents(resolved, since, until, type, qEff, sq.scoped(), sq.outside(), sq.ids(),
+                        PageRequest.of(Math.max(0, page), sz, sortFor(sort, dir)));
         List<AlertEvent> events = result.getContent();
 
         Map<Long, Map<String, Object>> monitors = resolveMonitors(events);
         Map<Long, Long> commentCounts = commentCounts(events);
-        TeamInfo teams = resolveTeams(events);
-        List<Map<String, Object>> data = events.stream().map(e -> toDto(e, monitors, commentCounts, teams)).toList();
+        Map<String, List<com.sitemonitor.model.CertificateInventory>> inv = inventoryFor(events, own);
+        TeamInfo teams = resolveTeams(events, inv);
+        Set<Long> owned = ownedIds(events, own, inv);
+        Access access = accessFor(session);
+        Delivery delivery = deliveryFor(events, e -> owned.contains(e.getId()));
+        List<Map<String, Object>> data = events.stream()
+                .map(e -> toDto(e, monitors, commentCounts, teams, access.forRow(owned.contains(e.getId())), delivery)).toList();
 
         Map<String, Long> typeCounts = new LinkedHashMap<>();
-        for (Object[] row : alertEventRepo.countIncidentsByType(resolved, since, until, qEff, scoped, scopeList))
-            typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
+        if (sq != null)
+            for (Object[] row : alertEventRepo.countIncidentsByType(resolved, since, until, qEff, sq.scoped(), sq.outside(), sq.ids()))
+                typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
 
-        return ok(Map.of(
-                "data",        data,
-                "total",       result.getTotalElements(),
-                "page",        result.getNumber(),
-                "size",        result.getSize(),
-                "type_counts", typeCounts));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("data",        data);
+        body.put("total",       result.getTotalElements());
+        body.put("page",        result.getNumber());
+        body.put("size",        result.getSize());
+        body.put("type_counts", typeCounts);
+        body.put("scope",       eff);
+        body.put("visible_to_all", visibleToAll());
+        if (orgWide) body.put("scope_counts",
+                scopeCounts(eff, result.getTotalElements(), own, resolved, since, until, type, qEff));
+        return ok(body);
+    }
+
+    /**
+     * "Takımımın olayları / Diğer ekiplerin olayları / Tümü" çip sayıları — sayfa süzgeçleriyle (durum, kök neden, arama,
+     * tarih) aynı. İki küme ayrık ve birleşimleri tümü olduğundan sayfanın toplamına TEK sayım eklemek yeter.
+     */
+    private Map<String, Long> scopeCounts(String eff, long pageTotal, List<Long> own, Boolean resolved,
+                                          String since, String until, String type, String q) {
+        long mine;
+        long all;
+        switch (eff) {
+            case SCOPE_MINE -> {
+                mine = pageTotal;
+                all = alertEventRepo.countIncidents(resolved, since, until, type, q, false, false, NO_SCOPE);
+            }
+            case SCOPE_ALL -> {
+                all = pageTotal;
+                mine = own.isEmpty() ? 0L : alertEventRepo.countIncidents(resolved, since, until, type, q, true, false, own);
+            }
+            default -> {   // others
+                mine = own.isEmpty() ? 0L : alertEventRepo.countIncidents(resolved, since, until, type, q, true, false, own);
+                all = mine + pageTotal;
+            }
+        }
+        Map<String, Long> m = new LinkedHashMap<>();
+        m.put(SCOPE_MINE, mine);
+        m.put(SCOPE_OTHERS, Math.max(0L, all - mine));
+        m.put(SCOPE_ALL, all);
+        return m;
+    }
+
+    /** Sorgu kapsamı: {@code null} = boş küme (görüş kapsamı boş kullanıcının "Takımımın olayları"). */
+    private record ScopeQuery(boolean scoped, boolean outside, List<Long> ids) {}
+
+    private static ScopeQuery scopeQuery(String eff, List<Long> own) {
+        if (own == null || SCOPE_ALL.equals(eff)) return new ScopeQuery(false, false, NO_SCOPE);   // global görüntüleyici / tümü
+        if (own.isEmpty()) return SCOPE_OTHERS.equals(eff) ? new ScopeQuery(false, false, NO_SCOPE) : null;
+        return new ScopeQuery(true, SCOPE_OTHERS.equals(eff), own);
+    }
+
+    private static String normalizeScope(String scope) {
+        String s = scope == null ? "" : scope.trim().toLowerCase(Locale.ROOT);
+        return SCOPE_OTHERS.equals(s) || SCOPE_ALL.equals(s) ? s : SCOPE_MINE;
+    }
+
+    /**
+     * Çağıranın KENDİ kapsamı: global görüntüleyici (admin/AUDIT) → {@code null} (her olay "kendi"); diğerleri görüş
+     * kapsamı. Oturumda görüş kapsamı yoksa BOŞ liste — kapalı düşer (eski kod null'ı "kapsamsız sorgu" sayıyordu).
+     */
+    private static List<Long> ownScope(HttpSession session) {
+        if (SessionScope.isGlobalViewer(session)) return null;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        return v == null ? List.of() : v;
+    }
+
+    /** Ayar açık mı — her çağrıda canlı okunur (kaydedince yeniden başlatma gerekmez). Varsayılan AÇIK. */
+    private boolean visibleToAll() {
+        return appSettings.getBoolean("site.monitor.incidents.visible-to-all", true);
+    }
+
+    /**
+     * Bu oturum kendi kapsamı DIŞINDAKİ olayları (salt okunur) okuyabilir mi: ayar açık ve çağıran global görüntüleyici
+     * değil (o zaten her şeyi kendi kapsamında görür — anahtar ona anlamsız). {@code alerts.read} her okuma ucunda
+     * ayrıca istenir. YAZMA kapılarında KULLANILMAZ.
+     */
+    private boolean orgWideReader(HttpSession session) {
+        return session != null && !SessionScope.isGlobalViewer(session) && visibleToAll();
+    }
+
+    /** İstek başına bir kez kurulan eylem hakları (satır başına oturum/izin okunmaz). */
+    private record Access(boolean actions, boolean globalAdmin) {
+        RowAccess forRow(boolean owned) {
+            return new RowAccess(owned, owned && actions, owned && actions && globalAdmin);
+        }
+    }
+
+    /** {@code can_manage} = olay kendi kapsamında (yazma kapılarının sorduğu kapsam); {@code can_act} = + alerts.actions;
+     *  {@code can_delete} = + global yönetici (silme ucunun kuralı). Arayüz yalnız bunlara göre eylem çizer; sunucu her
+     *  yazma ucunda yine kendi kapısını uygular. */
+    private record RowAccess(boolean owned, boolean canAct, boolean canDelete) {}
+
+    private Access accessFor(HttpSession session) {
+        return new Access(permissionService.allows(session, "alerts.actions", "execute"), SessionScope.isGlobalAdmin(session));
     }
 
     /** Sıralama: varsayılan ongoing-first + en yeni; kolon seçilirse o alan + createdAt tie-breaker. */
@@ -123,22 +259,35 @@ public class IncidentsController {
     /** Olay → takım (2026-09-18): damgalı teamId önce; yoksa domain → envanter SY takımı (UG yedeği). Tek toplu sorgu. */
     private record TeamInfo(Map<Long, Long> teamByEvent, Map<Long, String> names) {}
 
-    private TeamInfo resolveTeams(List<AlertEvent> events) {
-        Map<Long, Long> byEvent = new HashMap<>();
-        Set<String> needDomain = new HashSet<>();
+    /**
+     * Sayfanın ihtiyaç duyduğu envanter satırları — TEK toplu sorgu, iki soruya birden: takım sütunu (damgasız olay →
+     * SY/UG) ve sahiplik (damgalı takımı kapsam dışı olan olay, envanterin SY/UG takımı üzerinden yine "kendi" olabilir —
+     * {@link #incidentTeamInScope} ile aynı kural). Global görüntüleyicide sahiplik sorusu yoktur.
+     */
+    private Map<String, List<com.sitemonitor.model.CertificateInventory>> inventoryFor(List<AlertEvent> events, List<Long> own) {
+        Set<String> need = new HashSet<>();
         for (AlertEvent e : events) {
-            if (e.getTeamId() != null) byEvent.put(e.getId(), e.getTeamId());
-            else if (e.getDomain() != null) needDomain.add(e.getDomain());
+            if (e.getDomain() == null) continue;
+            boolean teamless = e.getTeamId() == null;
+            boolean ownershipOpen = own != null && !own.isEmpty() && (teamless || !own.contains(e.getTeamId()));
+            if (teamless || ownershipOpen) need.add(e.getDomain());
         }
-        if (!needDomain.isEmpty()) {
-            Map<String, Long> byDomain = new HashMap<>();
-            for (com.sitemonitor.model.CertificateInventory inv : inventoryRepo.findByDomainIn(needDomain)) {
-                Long tid = inv.getTeamId() != null ? inv.getTeamId() : inv.getUgTeamId();
-                if (tid != null) byDomain.putIfAbsent(inv.getDomain(), tid);
+        Map<String, List<com.sitemonitor.model.CertificateInventory>> byDomain = new HashMap<>();
+        if (need.isEmpty()) return byDomain;
+        for (com.sitemonitor.model.CertificateInventory inv : inventoryRepo.findByDomainIn(need))
+            if (inv.getDomain() != null) byDomain.computeIfAbsent(inv.getDomain(), k -> new ArrayList<>()).add(inv);
+        return byDomain;
+    }
+
+    private TeamInfo resolveTeams(List<AlertEvent> events, Map<String, List<com.sitemonitor.model.CertificateInventory>> inv) {
+        Map<Long, Long> byEvent = new HashMap<>();
+        for (AlertEvent e : events) {
+            if (e.getTeamId() != null) { byEvent.put(e.getId(), e.getTeamId()); continue; }
+            if (e.getDomain() == null) continue;
+            for (com.sitemonitor.model.CertificateInventory i : inv.getOrDefault(e.getDomain(), List.of())) {
+                Long tid = i.getTeamId() != null ? i.getTeamId() : i.getUgTeamId();
+                if (tid != null) { byEvent.put(e.getId(), tid); break; }
             }
-            for (AlertEvent e : events)
-                if (e.getTeamId() == null && e.getDomain() != null && byDomain.containsKey(e.getDomain()))
-                    byEvent.put(e.getId(), byDomain.get(e.getDomain()));
         }
         Set<Long> ids = new HashSet<>(byEvent.values());
         Map<Long, String> names = ids.isEmpty() ? Map.of() : teamRepo.findAllById(ids).stream()
@@ -147,7 +296,28 @@ public class IncidentsController {
         return new TeamInfo(byEvent, names);
     }
 
-    private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts, TeamInfo teams) {
+    /**
+     * Sayfadaki hangi olaylar çağıranın KENDİ kapsamında — {@link #incidentTeamInScope}'un toplu hâli (satır başına
+     * sorgu yok). {@code own == null} (global görüntüleyici) → hepsi.
+     */
+    private static Set<Long> ownedIds(List<AlertEvent> events, List<Long> own,
+                                      Map<String, List<com.sitemonitor.model.CertificateInventory>> inv) {
+        Set<Long> out = new HashSet<>();
+        if (own == null) { for (AlertEvent e : events) out.add(e.getId()); return out; }
+        Set<Long> scope = new HashSet<>(own);
+        for (AlertEvent e : events) {
+            if (e.getTeamId() != null && scope.contains(e.getTeamId())) { out.add(e.getId()); continue; }
+            if (e.getDomain() == null) continue;
+            for (com.sitemonitor.model.CertificateInventory i : inv.getOrDefault(e.getDomain(), List.of())) {
+                if ((i.getTeamId() != null && scope.contains(i.getTeamId()))
+                        || (i.getUgTeamId() != null && scope.contains(i.getUgTeamId()))) { out.add(e.getId()); break; }
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> toDto(AlertEvent e, Map<Long, Map<String, Object>> monitors, Map<Long, Long> counts,
+                                      TeamInfo teams, RowAccess access, Delivery delivery) {
         Map<String, Object> ctx = deserialize(e.getContextJson());
         Map<String, Object> dto = new LinkedHashMap<>();
         dto.put("id",            e.getId());
@@ -174,11 +344,101 @@ public class IncidentsController {
         // alarm otomatik çözülüyor ({@code inventory_delete}) ama bu ekran sebebi HİÇ
         // döndürmüyordu: kullanıcı kaydı "Çözüldü" görüyor, kimin/neyin kapattığını
         // bilmiyordu. Değer bir SİCİL ya da SİSTEM JETONU olabilir — ayrımı arayüz yapar.
-        dto.put("resolved_by",   e.getResolvedBy());
+        // Başka ekibin olayında çözen KİŞİ verilmez (sahiplenen gibi o ekibin iç bilgisi — regresyon taraması
+        // 2026-09-28); sistem jetonu / "Sistem (…)" kalır ki "neden kapandı?" yine cevaplanabilsin.
+        dto.put("resolved_by",   resolvedByFor(e.getResolvedBy(), access.owned()));
         dto.put("acknowledged",  e.getAcknowledged());
         dto.put("domain",        e.getDomain());
         dto.put("message",       e.getMessage());
+        // Org geneli görünürlük (2026-09-28): satırın sahipliği + eylem hakları. Başka ekibin olayında izlemenin iç
+        // kimliği verilmez (o izleme sayfası takım kapsamlı — bağlantı çıkmaz sokak olurdu); bildirim alıcıları,
+        // teslimat günlüğü ve arama kayıtları zaten ayrı, takım kapsamlı uçlarda.
+        dto.put("can_manage",    access.owned());
+        dto.put("can_act",       access.canAct());
+        dto.put("can_delete",    access.canDelete());
+        if (!access.owned() && monitor.containsKey("monitor_id")) {
+            Map<String, Object> slim = new LinkedHashMap<>(monitor);
+            slim.put("monitor_id", null);
+            dto.put("monitor", slim);
+        }
+        if (access.owned()) ownerFacts(dto, e, delivery);
         return dto;
+    }
+
+    /**
+     * Sahiplen/Çöz penceresinin bağlam kartı (2026-09-28): mevcut sahip + e-posta/push teslim + 7/24 arama sayısı —
+     * Alarm Geçmişi satırıyla AYNI snake_case adlar ({@code acknowledged_by/_at}, {@code email_sent_count},
+     * {@code email_failed_count}, {@code noc_call_count}; push Alarm Geçmişi'nde sayfanın {@code push_summary[id]}'si,
+     * burada satırın {@code push_summary}'si). YALNIZ kendi satırda: başka ekibin olayında kimin sahiplendiği, kaç
+     * kişiye bildirim gittiği ve 7/24 aramaları o ekibin iç bilgisidir (teslimat günlüğü / arama kaydı uçları gibi).
+     * Sayı yalnız sorgu döndüyse yazılır — sorgu düşerse alan YOK (uydurma sıfır yok; pencere o satırı çizmez).
+     */
+    /** Sahiplenmediği satırda yalnız sistem kapanışı görünür (system / inventory_* / "Sistem (…)"); kişi adı ya da sicil null. */
+    static String resolvedByFor(String by, boolean owned) {
+        if (owned || by == null) return by;
+        String t = by.trim();
+        return "system".equals(t) || t.startsWith("inventory_") || t.startsWith("Sistem") ? by : null;
+    }
+
+    private static void ownerFacts(Map<String, Object> dto, AlertEvent e, Delivery d) {
+        dto.put("acknowledged_by", e.getAcknowledgedBy());
+        dto.put("acknowledged_at", e.getAcknowledgedAt());
+        if (d == null) return;
+        if (d.mail() != null) {
+            long[] m = d.mail().getOrDefault(e.getId(), new long[]{ 0, 0 });
+            dto.put("email_sent_count",   m[0]);
+            dto.put("email_failed_count", m[1]);
+        }
+        if (d.push() != null && d.push().containsKey(e.getId())) dto.put("push_summary", d.push().get(e.getId()));
+        if (e.getNocCallCount() != null) dto.put("noc_call_count", e.getNocCallCount());
+    }
+
+    /** Kendi satırların teslim özeti: e-posta {@code [sent, failed]} ve push {@code {sent, failed, skipped, other}}; null = sorgu yok/düştü. */
+    private record Delivery(Map<Long, long[]> mail, Map<Long, Map<String, Long>> push) {}
+
+    /**
+     * Teslim + 7/24 özeti — Alarm Geçmişi'yle AYNI toplu sorgular ({@code NotificationLogRepository.countByAlertIds},
+     * {@code UserPushDeliveryRepository.countByAlertEventIdInGroupByStatus}, {@code NocCallLogService.decorate}):
+     * sayfa başına kaynak başına TEK sorgu (en çok 3), satır başına sorgu YOK. Yalnız KENDİ satırlar sorguya girer —
+     * başka ekibin olayı sorgulanmaz bile; sayfada kendi satır yoksa hiç sorgu atılmaz ({@code null}). Özet sorgusu
+     * düşerse liste yine döner (o alan yazılmaz).
+     */
+    private Delivery deliveryFor(List<AlertEvent> events, java.util.function.Predicate<AlertEvent> owned) {
+        List<AlertEvent> mine = events.stream().filter(e -> e.getId() != null && owned.test(e)).toList();
+        if (mine.isEmpty()) return null;
+        List<Long> ids = mine.stream().map(AlertEvent::getId).toList();
+        Map<Long, long[]> mail = null;
+        if (notificationLogRepo != null) {
+            try {
+                Map<Long, long[]> m = new HashMap<>();
+                for (Object[] row : notificationLogRepo.countByAlertIds(ids)) {
+                    long sent   = row[1] == null ? 0 : ((Number) row[1]).longValue();
+                    long failed = row[2] == null ? 0 : ((Number) row[2]).longValue();
+                    m.put(((Number) row[0]).longValue(), new long[]{ sent, failed });
+                }
+                mail = m;
+            } catch (Exception ex) {
+                log.debug("Olay listesi e-posta özeti alınamadı: {}", ex.toString());
+            }
+        }
+        Map<Long, Map<String, Long>> push = null;
+        if (userPushDeliveryRepo != null) {
+            try {
+                Map<Long, Map<String, Long>> p = new HashMap<>();
+                for (Object[] row : userPushDeliveryRepo.countByAlertEventIdInGroupByStatus(ids)) {
+                    String st = String.valueOf(row[1]);
+                    String key = "SENT".equals(st) ? "sent" : "FAILED".equals(st) ? "failed" : st.startsWith("SKIPPED") ? "skipped" : "other";
+                    p.computeIfAbsent(((Number) row[0]).longValue(),
+                                    k -> new LinkedHashMap<>(Map.of("sent", 0L, "failed", 0L, "skipped", 0L, "other", 0L)))
+                            .merge(key, ((Number) row[2]).longValue(), Long::sum);
+                }
+                push = p;
+            } catch (Exception ex) {
+                log.debug("Olay listesi push özeti alınamadı: {}", ex.toString());
+            }
+        }
+        if (nocCallLog != null) nocCallLog.decorate(mine);   // noc_call_count — tek sorgu; düşerse alan boş kalır
+        return new Delivery(mail, push);
     }
 
     // ── Root-cause türetimi (kod + kategori; etiket/renk frontend'de i18n'lenir) ──
@@ -303,22 +563,26 @@ public class IncidentsController {
     /**
      * Tek olay — e-postadaki "Olay detayını görüntüle / Olaya yorum yap" derin linkleri için.
      * Sayfalı listede olay 1. sayfada olmayabilir; bu uç doğrudan getirir. Yetki + takım
-     * izolasyonu listeyle aynı ({@code alerts.read} + {@code requireIncidentScope}).
+     * izolasyonu listeyle aynı ({@code alerts.read} + {@link #requireIncidentReadable}: kendi kapsamı ya da org geneli
+     * salt okunur okuma). Satır bayrakları listeyle aynı.
      */
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
         AlertEvent ev = requireAlert(id);
-        requireIncidentScope(session, ev);
+        boolean owned = requireIncidentReadable(session, ev);
         List<AlertEvent> one = List.of(ev);
-        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one), resolveTeams(one))));
+        TeamInfo teams = resolveTeams(one, inventoryFor(one, null));
+        return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one), teams,
+                accessFor(session).forRow(owned), deliveryFor(one, e -> owned))));
     }
 
     // ── Yorumlar ─────────────────────────────────────────────────────────────────
+    /** Yorum dizisi — tekil olayla aynı okuma kapısı (başka ekibin olayında da okunur; yazma kapıları ayrı). */
     @GetMapping("/{id}/comments")
     public ResponseEntity<Map<String, Object>> listComments(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
-        requireIncidentScope(session, requireAlert(id));
+        requireIncidentReadable(session, requireAlert(id));
         return ok(Map.of("data", commentRepo.findByAlertEventIdAndDeletedAtIsNullOrderByCreatedAtAsc(id)));
     }
 
@@ -405,11 +669,30 @@ public class IncidentsController {
                 .orElseThrow(() -> new NoSuchElementException("Incident bulunamadı: " + id));
     }
 
-    /** Takım kapsamı (IDOR): global viewer serbest; aksi halde alarmın takımı (teamId veya domain→envanter SY/UG) kapsamda olmalı. */
+    /**
+     * YAZMA kapısının takım kapsamı (IDOR): global viewer serbest; aksi halde alarmın takımı (teamId veya domain→envanter
+     * SY/UG) görüş kapsamında olmalı. Org geneli okuma ayarını BİLEREK sormaz — başka ekibin olayını okuyabilmek ona
+     * yorum yazma/silme hakkı vermez (2026-09-28).
+     */
     private void requireIncidentScope(HttpSession session, AlertEvent ev) {
-        if (SessionScope.isGlobalViewer(session)) return;
-        if (!incidentTeamInScope(ev, SessionScope.viewTeamIds(session)))
+        if (!inOwnScope(session, ev))
             throw new SecurityException("Bu incident üzerinde yetkiniz yok");
+    }
+
+    /** Olay çağıranın KENDİ kapsamında mı (global görüntüleyici → her olay). Liste bayrağı {@code can_manage} ile aynı kural. */
+    private boolean inOwnScope(HttpSession session, AlertEvent ev) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        return incidentTeamInScope(ev, SessionScope.viewTeamIds(session));
+    }
+
+    /**
+     * OKUMA kapısı (tekil olay + yorum dizisi): kendi kapsamı YA DA org geneli salt okunur okuma (ayar açık). Aksi halde
+     * bugünkü gibi 403. Dönüş: olay KENDİ kapsamında mı (satır bayrakları için).
+     */
+    private boolean requireIncidentReadable(HttpSession session, AlertEvent ev) {
+        if (inOwnScope(session, ev)) return true;
+        if (orgWideReader(session)) return false;
+        throw new SecurityException("Bu incident üzerinde yetkiniz yok");
     }
 
     /**

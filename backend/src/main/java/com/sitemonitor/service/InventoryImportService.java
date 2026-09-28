@@ -28,7 +28,10 @@ import java.util.function.Predicate;
  *       yazılır — boş hücre "dokunma" demektir (toplu sorumlu atamayla aynı sözleşme).</li>
  *   <li>Kapsam SATIR BAŞINA: hedef takım (yeni kayıtta gelen, mevcutta kayıttaki ve varsa yeni)
  *       çağıranın yönetim kapsamında değilse satır {@code skip:scope}; batch durmaz.</li>
- *   <li>Yumuşak silinmiş kayıt: {@code skip:deleted} — sessizce diriltilmez, kullanıcı "Geri yükle" der.</li>
+ *   <li>Alan adı BAŞKA takımın (yönetim kapsamı dışı) kaydıysa {@code skip:duplicate_other_team} + sahibi
+ *       takım ({@code team_id}/{@code team_name}, 2026-09-28) — mükerrer kayıt yok, aktarım gerekir.</li>
+ *   <li>Yumuşak silinmiş kayıt: {@code skip:deleted} (+ sahibi takım) — sessizce diriltilmez, kullanıcı "Geri yükle" der.</li>
+ *   <li>Eşleşme harf duyarsız (eski karışık harfli satırlar dâhil) — ekleme ucuyla aynı kural.</li>
  *   <li>Aynı domain dosyada iki kez: ikinci {@code skip:duplicate_row}.</li>
  * </ul>
  * Denetim: tek {@code DOMAIN_IMPORT} kaydı (sayımlar + domainler); geçmiş: satır başına
@@ -72,8 +75,19 @@ public class InventoryImportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.NocNotificationGroupRepository nocGroupRepo;
 
-    /** Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu. */
-    public record RowResult(int line, String domain, String action, String reason, List<String> changes) {}
+    /**
+     * Satır sonucu: {@code action} = create | update | skip | error; {@code reason} makine kodu.
+     * {@code teamId}/{@code teamName} (2026-09-28): satır MEVCUT bir kayda çarptığında o kaydın sahibi takım
+     * ({@code duplicate_other_team}, {@code deleted}) — içe aktarma penceresi "hangi ekipte kayıtlı" bilgisini
+     * rozetle gösterir. Diğer satırlarda null ve JSON'a hiç yazılmaz.
+     */
+    public record RowResult(int line, String domain, String action, String reason, List<String> changes,
+                            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) Long teamId,
+                            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) String teamName) {
+        public RowResult(int line, String domain, String action, String reason, List<String> changes) {
+            this(line, domain, action, reason, changes, null, null);
+        }
+    }
 
     public record Result(boolean dryRun, int created, int updated, int skipped, int errors, List<RowResult> rows) {}
 
@@ -102,10 +116,12 @@ public class InventoryImportService {
     private Result execute(List<Map<String, Object>> rows, boolean dryRun, Predicate<Long> canManage,
                            String actor, HttpSession session) {
         Map<String, Long> teamByName = new HashMap<>();
+        Map<Long, String> teamNameById = new HashMap<>();   // mevcut kaydın sahibi takımı satır sonucunda adıyla (2026-09-28)
         Set<Long> teamIds = new HashSet<>();
         for (Team tm : teamRepo.findAll()) {
             if (tm.getId() == null) continue;
             teamIds.add(tm.getId());
+            teamNameById.put(tm.getId(), tm.getName());
             if (tm.getName() != null) teamByName.put(tm.getName().trim().toLowerCase(Locale.ROOT), tm.getId());
         }
         Set<String> seen = new HashSet<>();
@@ -153,10 +169,19 @@ public class InventoryImportService {
             catch (IllegalArgumentException e) { out.add(new RowResult(line, domain, "error", "unknown_noc_group", List.of())); errors++; continue; }
             if (nocGroups != null) r = withNocGroups(r, nocGroups);
             Optional<CertificateInventory> existingOpt = inventoryRepo.findByDomain(domain);
+            // Harf duyarsız eşleşme (2026-09-28, ekleme ucuyla aynı kural): eski satır "Example.com" olarak kalmışsa
+            // tam eşleşme kaçırır ve DB'nin harf-duyarlı UNIQUE'i ikinci (mükerrer) satırı kabul ederdi.
+            if (existingOpt.isEmpty()) existingOpt = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(domain);
             if (existingOpt.isPresent()) {
                 CertificateInventory ex = existingOpt.get();
-                if (ex.getDeletedAt() != null) { out.add(new RowResult(line, domain, "skip", "deleted", List.of())); skipped++; continue; }
-                if (!canManage.test(ex.getTeamId()) || (teamId != null && !canManage.test(teamId))
+                String owner = ex.getTeamId() != null ? teamNameById.get(ex.getTeamId()) : null;
+                if (ex.getDeletedAt() != null) { out.add(new RowResult(line, domain, "skip", "deleted", List.of(), ex.getTeamId(), owner)); skipped++; continue; }
+                // Başka takımın kaydı (2026-09-28): eskiden genel "scope" nedeniyle düşüyordu — kullanıcı alan adının
+                // HANGİ ekipte kayıtlı olduğunu göremiyordu. Kayıt yine YAZILMAZ; satır sahibi takımı taşır.
+                if (!canManage.test(ex.getTeamId())) {
+                    out.add(new RowResult(line, domain, "skip", "duplicate_other_team", List.of(), ex.getTeamId(), owner)); skipped++; continue;
+                }
+                if ((teamId != null && !canManage.test(teamId))
                         || (!ugChangeAllowed && ugTeamId != null && !Objects.equals(ugTeamId, ex.getUgTeamId()))) {
                     out.add(new RowResult(line, domain, "skip", "scope", List.of())); skipped++; continue;
                 }

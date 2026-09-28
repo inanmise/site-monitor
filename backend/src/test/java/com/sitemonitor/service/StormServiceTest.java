@@ -471,8 +471,9 @@ class StormServiceTest {
 
         // StormService'in bağımlılık listesinde UserPushService HİÇ yoktu: ürünün en ciddi
         // olayında (12 monitör birden düştü) yalnız kişi-push'u kullanan kişi susuyordu.
-        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM"), eq("CRITICAL"),
-                eq("STORM"), any(), any(), any());
+        // 2026-09-28: kanal kapıları için ÜYELER de gider (tür/izleme bayrağı kararı UserPushService'te).
+        verify(push, times(1)).enqueueStormNotice(eq(299L), eq(7L), eq("INITIAL"), eq("CRITICAL"),
+                argThat(ms -> ms != null && ms.size() == 2), anyString());
     }
 
     @Test
@@ -487,8 +488,9 @@ class StormServiceTest {
                 storm, "sendStormRecovery", storm(298L),
                 java.util.List.of(recovered), java.util.List.<AlertEvent>of());
 
-        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM_RESOLVED"), eq("INFO"),
-                eq("STORM"), any(), any(), any());
+        // P13 (2026-09-28): çözüm AÇILIŞ seviyesinde — "INFO" ile yeniden çözümlenince asgari seviyesi INFO'nun
+        // üstündeki gruplar (yöneticiler) "N monitör düştü"yü alıp "düzeldi"yi hiç almıyordu.
+        verify(push, times(1)).enqueueStormNotice(eq(298L), eq(7L), eq("RESOLVE"), eq("CRITICAL"), any(), anyString());
     }
 
     @Test
@@ -531,7 +533,48 @@ class StormServiceTest {
         verify(emailService, org.mockito.Mockito.never())
                 .buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
         // Kanal bağımsızlığı: mail bastırması push'u SUSTURMAZ.
-        verify(push, times(1)).enqueueTeamNotice(eq(7L), eq("STORM"), any(), any(), any(), any(), any());
+        verify(push, times(1)).enqueueStormNotice(eq(301L), eq(7L), eq("INITIAL"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("P12 (2026-09-28): fırtına push'u yalnız SY takımına — UG takımı e-postayı alır, push'u ALMAZ (bireysel push ile aynı)")
+    void storm_pushGoesToSyTeamOnly_notUg() {
+        wireObjectMapper();
+        UserPushService push = wirePush();
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
+        a.setId(7L); a.setName("Takım A"); a.setEmail("a@example.com");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(8L); b.setName("Takım B"); b.setEmail("b@example.com");
+        when(teamRepo.findById(7L)).thenReturn(java.util.Optional.of(a));
+        when(teamRepo.findById(8L)).thenReturn(java.util.Optional.of(b));
+        // Envanter kaynaklı alarm: SY = Takım A, UG = Takım B.
+        AlertEvent m = down(1, EscalationService.TYPE_ACCESSIBILITY, null);
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain(m.getDomain()); inv.setTeamId(7L); inv.setUgTeamId(8L);
+        when(inventoryRepo.findByDomain(m.getDomain())).thenReturn(java.util.Optional.of(inv));
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(320L), java.util.List.of(m), "INITIAL");
+
+        // E-posta iki takıma da gider (bireysel e-posta da UG'ye gider) …
+        verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), any(), anyInt());
+        // … push yalnız SY takımına: push çözümleyicisi SY takım-kapsamlıdır, bireysel push UG'ye hiç gitmez.
+        verify(push, times(1)).enqueueStormNotice(eq(320L), eq(7L), eq("INITIAL"), any(), any(), anyString());
+        verify(push, never()).enqueueStormNotice(anyLong(), eq(8L), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("P13c (2026-09-28): günlük toplu tekrar push'u tetiğini taşır — anahtara GÜN UserPushService'te eklenir")
+    void storm_dailyRealert_passesTriggerToPush() {
+        wireObjectMapper();
+        teamWithEmail(7L);
+        UserPushService push = wirePush();
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                storm, "sendStormAlert", storm(321L),
+                java.util.List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L)), "DAILY_REALERT");
+
+        verify(push, times(1)).enqueueStormNotice(eq(321L), eq(7L), eq("DAILY_REALERT"), eq("CRITICAL"), any(), anyString());
     }
 
     @Test

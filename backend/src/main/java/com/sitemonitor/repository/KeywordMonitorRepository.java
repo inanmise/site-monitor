@@ -13,6 +13,8 @@ public interface KeywordMonitorRepository extends JpaRepository<KeywordMonitor, 
     List<KeywordMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<KeywordMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
+    List<KeywordMonitor> findByUrl(String url);
     Optional<KeywordMonitor> findFirstByUrlAndKeywordOrderByIdAsc(String url, String keyword);
 
     /** Aynı URL + anahtar kelime (case-insensitive) + takım için (kendisi hariç) başka bir keyword monitörü var mı.

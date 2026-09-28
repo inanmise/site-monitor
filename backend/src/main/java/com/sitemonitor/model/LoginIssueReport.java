@@ -76,7 +76,8 @@ public class LoginIssueReport {
     @Column(length = 20)
     private String source = "LOGIN";
 
-    /** Kullanıcının önem algısı (USER_REPORT): BLOCKER | ANNOYANCE | SUGGESTION — opsiyonel. */
+    /** Kullanıcının önem algısı (USER_REPORT): BLOCKER | ANNOYANCE | SUGGESTION — opsiyonel; ya da talep türü
+     *  DOMAIN_TRANSFER (alan adı aktarım talebi, 2026-09-28). */
     @Column(length = 30)
     private String category;
 
@@ -99,6 +100,18 @@ public class LoginIssueReport {
     /** ErrorBoundary otomatik kaydının referansı (LIR-...) — kullanıcı aynı çökmeye bağlam eklediğinde bağ kurar. */
     @Column(length = 30)
     private String linkedReference;
+
+    /**
+     * "Ne yaşıyorsunuz?" (2026-09-28): kullanıcının seçtiği ETKİ kodları — izin listesinden
+     * ({@code LoginIssueService.IMPACTS}), tekilleştirilmiş, kanonik sırada, virgülle ayrılmış ("LOGIN,SLOW").
+     * Önemden ({@link #category}) ayrı ve ÇOKLU. Eski kayıtlarda null.
+     */
+    @Column(columnDefinition = "TEXT")
+    private String impacts;
+
+    /** "Diğer" etkisi seçildiyse kısa serbest metin (≤200, kontrol/biçim karakterleri ayıklanmış); aksi hâlde null. */
+    @Column(columnDefinition = "TEXT")
+    private String impactOther;
 
     // ── Konuşma dizisi (2026-09-26) — IssueReportComment ile birlikte ─────────────────────────
 

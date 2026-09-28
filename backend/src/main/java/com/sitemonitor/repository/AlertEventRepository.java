@@ -273,18 +273,32 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                                    @Param("newName") String newName, @Param("alertTypes") java.util.Collection<String> alertTypes);
 
     // ── Incidents Overview ekranı — findFiltered'dan AYRI: q, domain üzerinde LIKE (monitör adı/host araması) ──
-    @Query("""
-            SELECT e FROM AlertEvent e
-             WHERE (:resolved IS NULL OR e.resolved = :resolved)
+    //
+    // Takım kapsamı (2026-09-28, org geneli salt okunur Olaylar): `scoped=false` → tümü; `scoped=true, outside=false`
+    // → kapsamdaki takım(lar)ın olayları ("Takımımın olayları": damgalı teamId YA DA domain→envanter SY/UG takımı —
+    // IncidentsController.incidentTeamInScope ile aynı kural); `scoped=true, outside=true` → TAMAMLAYICI küme ("Diğer
+    // ekiplerin olayları"). İki küme ayrık ve birleşimleri tümüdür. Tamamlayıcıda NULL teamId AÇIKÇA ele alınır:
+    // `NOT (e.teamId IN :scope)` NULL için BİLİNMEYEN döner ve takımsız olayı iki kümeden de sessizce düşürürdü.
+    // Üç sorgu aynı süzgeç gövdesini paylaşır (sayfa, sayfa-dışı toplam, kök neden sayaçları) — ayrışamasınlar.
+    String INCIDENTS_FILTER = """
+             (:resolved IS NULL OR e.resolved = :resolved)
                AND (:since IS NULL OR e.createdAt >= :since)
                AND (:until IS NULL OR e.createdAt <= :until)
-               AND (:alertType IS NULL OR e.alertType = :alertType)
                AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
-                       SELECT 1 FROM CertificateInventory i
-                        WHERE i.domain = e.domain
-                          AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            """)
+               AND (:scoped = FALSE
+                    OR (:outside = FALSE AND (e.teamId IN :scope OR EXISTS (
+                           SELECT 1 FROM CertificateInventory i
+                            WHERE i.domain = e.domain
+                              AND (i.teamId IN :scope OR i.ugTeamId IN :scope))))
+                    OR (:outside = TRUE
+                        AND (e.teamId IS NULL OR e.teamId NOT IN :scope)
+                        AND NOT EXISTS (
+                           SELECT 1 FROM CertificateInventory i2
+                            WHERE i2.domain = e.domain
+                              AND (i2.teamId IN :scope OR i2.ugTeamId IN :scope))))
+            """;
+
+    @Query("SELECT e FROM AlertEvent e WHERE (:alertType IS NULL OR e.alertType = :alertType) AND " + INCIDENTS_FILTER)
     Page<AlertEvent> findIncidents(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
@@ -292,28 +306,31 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
             @Param("alertType") String alertType,
             @Param("q") String q,
             @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
             @Param("scope") List<Long> scope,
             Pageable pageable);
 
+    /** Sayfanın DIŞINDAKİ bir kapsamın toplamı ("Takımımın / Diğer ekiplerin / Tümü" çip sayıları) — findIncidents'la aynı süzgeç. */
+    @Query("SELECT COUNT(e) FROM AlertEvent e WHERE (:alertType IS NULL OR e.alertType = :alertType) AND " + INCIDENTS_FILTER)
+    long countIncidents(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("alertType") String alertType,
+            @Param("q") String q,
+            @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
+            @Param("scope") List<Long> scope);
+
     /** Root-cause (alertType) pill sayaçları — alertType HARİÇ aynı incident filtreleri. */
-    @Query("""
-            SELECT e.alertType, COUNT(e) FROM AlertEvent e
-             WHERE (:resolved IS NULL OR e.resolved = :resolved)
-               AND (:since IS NULL OR e.createdAt >= :since)
-               AND (:until IS NULL OR e.createdAt <= :until)
-               AND (:q IS NULL OR LOWER(e.domain) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
-               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
-                       SELECT 1 FROM CertificateInventory i
-                        WHERE i.domain = e.domain
-                          AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            GROUP BY e.alertType
-            """)
+    @Query("SELECT e.alertType, COUNT(e) FROM AlertEvent e WHERE " + INCIDENTS_FILTER + " GROUP BY e.alertType")
     List<Object[]> countIncidentsByType(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
             @Param("until") String until,
             @Param("q") String q,
             @Param("scoped") boolean scoped,
+            @Param("outside") boolean outside,
             @Param("scope") List<Long> scope);
 
 

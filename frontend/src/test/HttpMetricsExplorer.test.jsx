@@ -101,6 +101,19 @@ describe('HttpMetricsExplorer', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="hme-pills"]')).not.toBeNull())
   })
 
+  it('saklama anahtarı read_only gelirse (kapsamlı müdür, GLOBAL_ONLY — 2026-09-28) değer görünür, girdi kilitli, kaydet YOK', async () => {
+    api.admin.getGeneralSettings.mockResolvedValue({
+      success: true,
+      data: { settings: [{ key: 'site.monitor.metrics.http.retention-days', value: '14', default: '7', read_only: true }] },
+    })
+    const { container } = render(<HttpMetricsExplorer />)
+    await waitFor(() => expect(container.querySelector('[data-testid="hme-retention"]')).not.toBeNull())
+    const box = within(container.querySelector('[data-testid="hme-retention"]'))
+    expect(box.getByRole('spinbutton', { name: /Saklama|Retention|Tut/i })).toBeDisabled()
+    expect(box.getByRole('spinbutton', { name: /Saklama|Retention|Tut/i })).toHaveValue(14)
+    expect(box.queryByRole('button')).toBeNull()
+  })
+
   it('GEÇERSİZ saklama günü kaydedilmez (backend çöp değer almaz)', async () => {
     const { container } = render(<HttpMetricsExplorer />)
     await waitFor(() => expect(container.querySelector('[data-testid="hme-retention"]')).not.toBeNull())

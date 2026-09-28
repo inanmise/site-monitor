@@ -24,7 +24,8 @@ vi.mock('../components/admin/NocSettings.jsx', () => ({ default: ({ readOnly }) 
 vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: () => <div data-testid="sec-loginanomaly" /> }))
 vi.mock('../components/admin/LdapSettings', () => ({ default: () => <div data-testid="sec-ldap" /> }))
 vi.mock('../components/admin/DomainDiagnostics', () => ({ default: () => <div data-testid="sec-domaindiag" /> }))
-vi.mock('../components/admin/RetentionSettings', () => ({ default: () => <div data-testid="sec-retention" /> }))
+// Veri Saklama (2026-09-28): readOnly prop'u stub'a yazılır — kapsamlı müdürde salt okunur geçtiği sınanır
+vi.mock('../components/admin/RetentionSettings', () => ({ default: ({ readOnly }) => <div data-testid="sec-retention" data-readonly={String(!!readOnly)} /> }))
 vi.mock('../components/admin/DatabaseInfo', () => ({ default: () => <div data-testid="sec-database" /> }))
 vi.mock('../components/admin/SecretTools', () => ({ default: () => <div data-testid="sec-secrets" /> }))
 // Emniyet kemeri: bir stub kaçarsa gerçek fetch yerine mock'a düşsün. Yapılandırma sağlığı ucu
@@ -276,7 +277,18 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     }
   })
 
-  it('müdür: operasyonel bölümler (Genel, Storm, Data Retention) normal çizilir', () => {
+  it('Veri Saklama müdüre KİLİTLİ değil ama salt okunur (sistem geneli, 2026-09-28); global admine yazılabilir', () => {
+    const r1 = render(<AdminSettings globalAdmin={false} />)
+    clickTab(/Data Retention|Veri Saklama/)
+    expect(screen.getByTestId('sec-retention')).toHaveAttribute('data-readonly', 'true')
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+    r1.unmount()
+    render(<AdminSettings />)
+    clickTab(/Data Retention|Veri Saklama/)
+    expect(screen.getByTestId('sec-retention')).toHaveAttribute('data-readonly', 'false')
+  })
+
+  it('müdür: operasyonel bölümler (Genel, Storm) normal çizilir', () => {
     render(<AdminSettings globalAdmin={false} />)
     expect(screen.getByTestId('sec-general')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-global-only')).toBeNull()

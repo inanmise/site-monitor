@@ -33,6 +33,7 @@ import { isBrowserScript, scenarioTarget } from './scriptedCardModel.js'
  * @param {object} monitor  GET /monitoring/scripted satırı (snake_case)
  * @param {object} spark    useSparklines('scripted')[id] — 24 sa saatlik süre kovaları
  * @param {object} sla      useSla('scripted').data[id]
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  * @param {'compact'|'rich'} density kart yoğunluğu (2026-09-27, sayfanın `useCardDensity('scripted')`'i). Zengin (varsayılan)
  *   = yukarıdaki tam kart. Kompakt = durum satırı (koşucu etiketi yok) + TEK satır ad + hedef + yalnız UYARI rozetleri
@@ -41,7 +42,7 @@ import { isBrowserScript, scenarioTarget } from './scriptedCardModel.js'
  *   grup ve etiketler yalnız Zengin'de (MonitorCardRich — Kompakt'ta DOM'a girmez).
  */
 export default function ScriptedMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich',
+  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
 }) {
   const t = useT()
   const target = useMemo(() => scenarioTarget(m), [m])
@@ -52,7 +53,7 @@ export default function ScriptedMonitorCard({
   const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length || m.noc_notify)
   const alarmLabel = `${t('scripted.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
-    <MonitorCard status={status} density={density} alarm={alarm} inactive={paused}
+    <MonitorCard status={status} density={density} running={running} alarm={alarm} inactive={paused}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60', compact && 'pt-3 sm:pt-3.5')}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={<>

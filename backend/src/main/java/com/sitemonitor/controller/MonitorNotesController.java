@@ -59,6 +59,8 @@ public class MonitorNotesController {
     private final MonitorNoteRepository noteRepo;
     private final PermissionService permissionService;
     private final AuditService auditService;
+    /** Rehber hedef yetkisi (2026-09-28): rehber takım kolonu taşımaz → hedefi izleyen izlemelerin takımından türetilir. */
+    private final com.sitemonitor.service.MonitorTargetTeams targetTeams;
 
     /** Rehber + notlar (hedefe göre). */
     @GetMapping
@@ -68,6 +70,13 @@ public class MonitorNotesController {
         permissionService.require(session, "monitoring.read", "view");
         String t = normType(type);
         String tg = reqTarget(target);
+        // Hedef görünürlüğü (2026-09-28 regresyon taraması): rehber (tip, hedef) başına TEK satırdır ve takımsızdır —
+        // eskiden hedef adını bilen HERKES başka takımın rehberini okuyabiliyordu. Artık hedefi izleyen izlemelerden
+        // birini görebilmek şart (DNS/Port envanter-türevi satırda envanterin SY/UG takımı).
+        if (!targetTeams.canView(session, t, tg)) {
+            throw new SecurityException(com.sitemonitor.util.Msg.t("Bu izlemenin rehber ve notlarını görme yetkiniz yok",
+                    "You don't have permission to see this monitor's guide and notes"));
+        }
         MonitorGuide guide = guideRepo.findByMonitorTypeAndTarget(t, tg).orElse(null);
         // TAKIM İZOLASYONU: not içeriği operasyoneldir ("Sorun / Yapılan işlem / Kök neden /
         // Bakılacak yerler") — başka bir takımın iç altyapı bilgisi. Kayıt oluşturulurken takım
@@ -89,6 +98,13 @@ public class MonitorNotesController {
         permissionService.require(session, "monitoring.crud", "edit");
         String t = normType(body.get("type"));
         String tg = reqTarget(body.get("target"));
+        // Hedef yazma yetkisi (2026-09-28 regresyon taraması): monitoring.crud tek başına yetiyordu → bir takımın
+        // kullanıcısı başka takımın rehberinin (alarmda ne yapılacağı) ÜZERİNE yazabiliyordu. Artık hedefi izleyen
+        // izlemelerden birini çalıştırabilmek şart — izleme güncelleme kapısıyla aynı kural (canOperateTeam).
+        if (!targetTeams.canOperate(session, t, tg)) {
+            throw new SecurityException(com.sitemonitor.util.Msg.t("Bu izlemenin rehberini düzenleme yetkiniz yok",
+                    "You don't have permission to edit this monitor's guide"));
+        }
         String text = body.getOrDefault("guide", "");
         if (text != null && text.length() > MAX * 4)
             throw new IllegalArgumentException("Rehber çok uzun");

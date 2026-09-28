@@ -18,7 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
-  RepeatBadge, SendFailedBadge, WhyOpenChips,
+  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote,
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
 import { NocCallIndicator } from './NocCallLog.jsx'
@@ -63,8 +63,9 @@ export function ListSkeleton({ variant = 'cards' }) {
  * başlık (tür simgesi + hedef) kartın gerçek düğmesi, detay panelini açar (stretched button — kartın her yeri tıklanır,
  * klavye tek durakta). Altta hızlı eylemler: Sahiplen · Çöz (ikisi de gerekçe ister) · Tekrar bildir · İzlemeyi aç · menü.
  * Sol renk şeridi YOK: seviye rozetle; kritik alarm kartın TAMAMINI çerçeveler; seçili/derin-bağlantılı kart birincil çerçeve.
- * `actBlocked`: 7/24 operatörü başka takımın uyarısını görür ama sahiplenemez/çözemez/yeniden bildiremez (sunucu 403 —
- * alertHistoryModel.outsideActScope) → o üç düğme ve seçim kutusu YOK, yerine neden notu; "Arama kaydet" kalır.
+ * `actBlocked` (neden anahtarı ya da boş — alertHistoryModel.actBlockReason): 7/24 operatörü başka takımın uyarısını görür
+ * ama sahiplenemez/çözemez/yeniden bildiremez (sunucu 403), ya da rolün `alerts.actions` izni yok (AUDIT, 2026-09-28) →
+ * o üç düğme ve seçim kutusu YOK, yerine neden notu (ActBlockedNote); "Arama kaydet" kalır.
  * Test kancaları: `data-alert-card`, `data-level`, `data-linked`, `data-alert-open`, `data-alert-actions`, `data-audit-note`,
  * `data-slot="alert-act-blocked"`.
  */
@@ -152,7 +153,7 @@ export function OpenAlertCard({
 
       <div data-alert-actions="" className={cn(LAYER, 'mt-3 flex flex-wrap items-center gap-2 border-t bg-muted/20 px-3 py-2.5 sm:px-4')}>
         {actBlocked ? (
-          <p data-slot="alert-act-blocked" className="basis-full text-xs text-muted-foreground">{t('alh.actOtherTeam')}</p>
+          <ActBlockedNote reason={actBlocked === true ? 'team' : actBlocked} />
         ) : (
           <>
             {!a.acknowledged && (

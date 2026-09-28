@@ -41,10 +41,11 @@ import { failureReason, metaRow, proxyMode, verdictOf } from './keywordCardModel
  * @param {object} spark    useSparklines('keyword')[id] — 24 sa saatlik süre kovaları
  * @param {object} sla      useSla('keyword').data[id]
  * @param {'rich'|'compact'} density  kart yoğunluğu (sayfa: useCardDensity('keyword'))
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function KeywordMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich',
+  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
 }) {
   const t = useT()
   const alarm = !!m.active_alarm
@@ -57,7 +58,7 @@ export default function KeywordMonitorCard({
   const hasMeta = !!(m.team_name || m.group_name || metaRow(m).proxy_effective || proxyMode(m) || tagsOf(m).length || m.noc_notify)
   const alarmLabel = `${t('keyword.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
-    <MonitorCard density={density} status={status} alarm={alarm} inactive={paused} data-result={verdict.kind}
+    <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused} data-result={verdict.kind}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={

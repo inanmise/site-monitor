@@ -15,7 +15,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter,
-  MonitorCardRich, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
+  MonitorCardRich, MonitorCardPending, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
 import { breachWeek, metersFor, overBudgetMeters, partsText, urlParts } from './pageSpeedCardModel.js'
 
@@ -47,12 +47,15 @@ import { breachWeek, metersFor, overBudgetMeters, partsText, urlParts } from './
  * + yalnız takım rozeti + alt çubuk. Dört ölçer, mini trend/SLA, haftalık çip ve grup/vekil rozetleri yalnız Zengin'de
  * (MonitorCardRich — Kompakt'ta DOM'a girmez). Kompakt kancaları: `data-slot="pspd-primary"` (+ `data-tone`),
  * `pspd-primary-value`, `pspd-primary-budget`, neden `pspd-reason` (+ `data-reason` error|budget).
+ *
+ * <p><b>Hiç ölçüm yoksa (2026-09-28)</b> iki yoğunlukta da bekleme satırı `pspd-pending` (ölçerlerin "—" değerleri tek başına
+ * boş bir kart gibi okunuyordu); `running` (sayfanın isRunning(id)) doluyken "İlk kontrol yapılıyor…" + dönen gösterge.
  */
 export default function PageSpeedMonitorCard({
   monitor: m, status = 'unknown', badge, onOpen,
   selection, meta, actions,
   spark, sla, slaTarget, slaDays, week7, week14,
-  density = 'rich',
+  density = 'rich', running = false,
 }) {
   const t = useT()
   const meters = metersFor(m)
@@ -61,7 +64,7 @@ export default function PageSpeedMonitorCard({
   const alarmLabel = `${t('pspd.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   const rel = m.last_check ? relativeTime(m.last_check, t) : null
   return (
-    <MonitorCard status={status} density={density} alarm={!!m.active_alarm} inactive={!m.active}
+    <MonitorCard status={status} density={density} running={running} alarm={!!m.active_alarm} inactive={!m.active}
       // Kesinti (alarm henüz açılmamış olsa da): TÜM kenar kırmızı tonda — sol şerit değil (kalıcı kural).
       // Kompakt: dikey ritim bir kademe sıkı (dokunma alanları değişmez).
       className={cn(down && !m.active_alarm && m.active && 'border-destructive/45', compact && 'pt-3 sm:pt-3.5')}>
@@ -95,6 +98,7 @@ export default function PageSpeedMonitorCard({
               <span className="line-clamp-2 min-w-0 break-words">{m.error}</span>
             </p>
           )}
+          {!m.last_check && <MonitorCardPending slot="pspd-pending" />}
           <div className="@container mb-2.5">
             <div data-slot="pspd-meters" role="group" aria-label={t('pspd.card.meters')}
               className="grid grid-cols-2 gap-2 @xl:grid-cols-4">
@@ -156,7 +160,7 @@ function CompactSummary({ monitor: m, meters, down }) {
   }
   return (
     <>
-      <PrimaryMeter meter={meters[0]} />
+      {m.last_check ? <PrimaryMeter meter={meters[0]} /> : <MonitorCardPending slot="pspd-pending" compact className="mt-0 mb-2.5" />}
       {reason && <CompactReason reason={reason} />}
       {m.team_name && (
         <div className={cn(CARD_LAYER, 'mb-2')}>

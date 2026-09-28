@@ -42,6 +42,7 @@ import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
@@ -218,8 +219,11 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.keyword) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
-  useMonitorDeepLink(monitors, openDetail)
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, 7/24 Kapsamı): TAM listeden açar; yoksa uyarır (hooks/useMonitorDeepLink)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'KEYWORD',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
@@ -313,6 +317,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('keyword.saved')); closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi/kuralı değişen kart eski sonucu göstermesin. Gizli
+      // başlıklar satırda geri okunamaz → yazıldıysa ayrıca bildirilir (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('keyword', { isNew: modal === 'new', before: modal, after: res.data, extraChanged: payload.customHeaders !== undefined })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -802,7 +809,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
             /* Kart sunumu keyword/KeywordMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
                yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada), meta (zorlanmış vekil kipinde yol rozeti kip
                çipine bırakılır — metaRow) ve eylemler (yetki + işleyiciler burada). */
-            <KeywordMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+            <KeywordMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />

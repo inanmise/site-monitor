@@ -36,8 +36,12 @@ const CLASSES = [
  * Ayarlar → Veri Saklama. Politikalar veri sınıfına göre akordiyonlarda (varsayılan HEPSİ KAPALI);
  * her satır açılabilir; değişiklikler yapışkan bir çubukta toplanır ve kaydetmeden ÖNCE
  * "ne değişecek" özeti gösterilir. Değişiklikler politika bazında denetim kaydına yazılır.
+ *
+ * `readOnly` (kapsamlı müdür, globalAdmin=false; 2026-09-28): saklama BÜTÜN takımların verisini siler → sistem geneli.
+ * Sunucu yazma/çalıştırma uçlarını ve saklama anahtarlarını (GLOBAL_ONLY) müdüre 403'ler; ekran her şeyi gösterir ama
+ * eylemleri çizmez, girdileri kilitler (NocSettings deseni).
  */
-export default function RetentionSettings() {
+export default function RetentionSettings({ readOnly = false }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm, showPrompt } = useDialog()
@@ -231,7 +235,7 @@ export default function RetentionSettings() {
   )
 
   return (
-    <div className={cn(SETTINGS_STACK, 'gap-4 pb-2')} data-testid="retention-settings">
+    <div className={cn(SETTINGS_STACK, 'gap-4 pb-2')} data-testid="retention-settings" data-readonly={readOnly ? 'true' : 'false'}>
       {/* ── Başlık (SettingsHeader): amaç + canlı ipucu; sayılar meta çipleri. Saat dilimi de gösteriliyor:
              zone'suz bir "03:00" pod'un GMT'sinde 06:00 İstanbul demekti. ── */}
       <SettingsHeader icon={Archive} title={t('ret.title')} description={t('ret.desc')}
@@ -249,6 +253,12 @@ export default function RetentionSettings() {
         </AlertBanner>
       )}
 
+      {readOnly && (
+        <AlertBanner tone="info" icon={Lock} title={t('ret.readOnlyTitle')} className="mb-0">
+          <span data-testid="ret-readonly">{t('ret.readOnlyBody')}</span>
+        </AlertBanner>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard kpiKey="rows" icon={Database} value={fmtNum(totals.rows)} label={t('ret.kpiRows')} sub={t('ret.kpiTables', totals.tables ?? 0)} mini />
         <KpiCard kpiKey="size" icon={HardDrive} value={fmtBytes(totals.bytes)} label={t('ret.kpiSize')} mini />
@@ -259,8 +269,8 @@ export default function RetentionSettings() {
           tone={data.last_run?.failed_count > 0 ? 'danger' : 'ok'} mini />
       </div>
 
-      {/* ── Aksiyonlar ── */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* ── Aksiyonlar ── (salt okunurda çizilmez: sunucu müdüre 403'ler) */}
+      {!readOnly && <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" onClick={dryRun} disabled={busy != null} aria-busy={busy === 'dry' || undefined}>
           {busy === 'dry' ? <Spinner size={15} inline decorative /> : <PlayCircle size={15} />}
           {t('ret.dryRun')}
@@ -280,7 +290,7 @@ export default function RetentionSettings() {
             </Button>
           </span>
         </SimpleTooltip>
-      </div>
+      </div>}
 
       {lastRun && (
         <AlertBanner tone={lastRun.failed_count > 0 ? 'danger' : 'success'} className="mb-0">
@@ -316,7 +326,7 @@ export default function RetentionSettings() {
                     expanded={openRows.has(p.id)} onToggle={() => toggleRow(p.id)}
                     onChange={(v) => setEdited(e => ({ ...e, [p.setting_key]: v }))}
                     approval={data.approvals?.[p.id]} onApprove={() => approve(p)}
-                    disabled={saving} />
+                    disabled={saving || readOnly} />
                 ))}
               </div>
             ),
@@ -347,9 +357,9 @@ export default function RetentionSettings() {
           {({ id, describedBy }) => (
             <div className="flex items-center gap-2">
               <Input id={id} aria-describedby={describedBy} type="number" min={0} max={3650} className="w-28"
-                value={invPurge} onChange={e => setInvPurge(e.target.value)} />
+                value={invPurge} disabled={readOnly} onChange={e => setInvPurge(e.target.value)} />
               <Button type="button" size="sm" onClick={saveInvPurge}
-                disabled={String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)}>
+                disabled={readOnly || String(data.inventory_auto_purge_days ?? 0) === String(parseInt(invPurge, 10) || 0)}>
                 {t('ret.invPurgeApply')}
               </Button>
             </div>
@@ -360,7 +370,7 @@ export default function RetentionSettings() {
       {/* ── Legal hold ── */}
       <SettingsSection title={<span className="inline-flex items-center gap-2"><ShieldAlert size={15} aria-hidden="true" /> {t('ret.holdTitle')}</span>}
         description={t('ret.holdDesc')} contentClassName="flex flex-col gap-2">
-        <ToggleRow major checked={holdOn} onChange={toggleHold} label={t('ret.holdToggle')}
+        <ToggleRow major checked={holdOn} onChange={toggleHold} label={t('ret.holdToggle')} disabled={readOnly}
           helpKey="help.set.site.monitor.retention.hold-enabled" />
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><FileText size={12} aria-hidden="true" /> {t('ret.docHint')}</p>
       </SettingsSection>

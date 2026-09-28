@@ -276,7 +276,12 @@ public class CertificateService {
         @CacheEvict(value = "cert-warnings",  allEntries = true),
         @CacheEvict(value = "renewal-advice", allEntries = true),
         // domain→takım haritası da envanterden türüyor: takım/domain değişince bayat kalmasın.
-        @CacheEvict(value = "domain-team-names", allEntries = true)
+        @CacheEvict(value = "domain-team-names", allEntries = true),
+        // Genel Bakış kart ekleri (yenileme planı çipi, sağlık, açık alarm; 60 sn). Eksikti (2026-09-27, kullanıcı:
+        // "yenileme planladım, başarılı dedi ama kart hâlâ 'Yenilemeyi planla' yazıyor"): plan/onay/envanter
+        // değişikliğinden hemen sonraki yeniden çekme 60 sn'ye kadar ESKİ veriyi alıyordu. Kapı:
+        // CertificateServiceCacheEvictionTest (türetilmiş her sertifika önbelleği burada boşalmalı).
+        @CacheEvict(value = "card-extras", allEntries = true)
     })
     public void evictAllCaches() {
         // metod gövdesi boş — annotation'lar Spring AOP'a iş yaptırır

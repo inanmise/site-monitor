@@ -44,10 +44,12 @@ const CLOSED = { ...OPEN, id: 60, domain: 'c.example.com', resolved: true, resol
 const setUrl = (qs) => window.history.replaceState({}, '', `/?${qs}`)
 const listCalls = () => api.admin.getAlerts.mock.calls.map(([p]) => p).filter((p) => p?.size !== 1)
 
-function stubList({ canWrite, data = [OPEN, QUIET] }) {
+function stubList({ canWrite, data = [OPEN, QUIET], canAct }) {
+  // can_act (2026-09-28): verilmezse yanıtta YOK — eski sunucu/mocks davranışı (eylemler açık) korunur
+  const act = canAct === undefined ? {} : { can_act: canAct }
   api.admin.getAlerts.mockImplementation(async (p) => {
-    if (p?.size === 1) return { success: true, data: [], total: 0, level_counts: {}, noc_can_write: canWrite }
-    return { success: true, data, total: data.length, page: 0, size: 20, noc_can_write: canWrite }
+    if (p?.size === 1) return { success: true, data: [], total: 0, level_counts: {}, noc_can_write: canWrite, ...act }
+    return { success: true, data, total: data.length, page: 0, size: 20, noc_can_write: canWrite, ...act }
   })
 }
 
@@ -233,5 +235,40 @@ describe('7/24 operatörü — başka takımın uyarısında yazma eylemleri', (
     await waitFor(() => expect(card(52)).not.toBeNull())
     expect(within(actions(52)).getByRole('button', { name: /Resolve/ })).toBeInTheDocument()
     expect(card(52).querySelector('[data-slot="alert-act-blocked"]')).toBeNull()
+  })
+
+  it('AUDIT + noc_calls.write (2026-09-28): "Log a call" VAR; Sahiplen/Çöz/Tekrar bildir ve seçim YOK (can_act=false) — kart, menü ve detay', async () => {
+    // 7/24 ekibi AUDIT rolünde: global görüntüleyici, arama kaydı girer ama alerts.actions izni yok (sunucu can_act=false)
+    stubList({ canWrite: true, canAct: false, data: [OPEN, OTHER] })
+    render(<AlertHistory urlSync globalViewer myTeamIds={[]} />)
+    await waitFor(() => expect(card(52)).not.toBeNull())
+    for (const id of [50, 52]) {
+      expect(within(actions(id)).queryByRole('button', { name: /Resolve|Acknowledge|Re-Notify/ })).toBeNull()
+      expect(within(actions(id)).getByRole('button', { name: /Log a call/ })).toBeInTheDocument()
+      const note = card(id).querySelector('[data-slot="alert-act-blocked"]')
+      expect(note.getAttribute('data-reason')).toBe('permNoc')
+      expect(note.textContent).toMatch(/permission|yetkiniz yok/)
+      expect(within(card(id)).queryByRole('checkbox')).toBeNull()
+    }
+    fireEvent.click(card(50).querySelector('[data-alert-open]'))
+    const detail = await waitFor(() => {
+      const el = document.querySelector('[data-slot="alert-detail"][data-alert-id="50"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    const acts = detail.querySelector('[data-slot="alert-detail-actions"]')
+    expect(within(acts).queryByRole('button', { name: /^(Resolve|Acknowledge|Re-Notify)$/ })).toBeNull()
+    expect(within(acts).getByRole('button', { name: /Log a call/ })).toBeInTheDocument()
+    expect(acts.querySelector('[data-slot="alert-act-blocked"]').getAttribute('data-reason')).toBe('permNoc')
+  })
+
+  it('AUDIT (arama izni de yok): eylem düğmesi yok, not "yetkiniz yok" (arama kaydından söz etmez)', async () => {
+    stubList({ canWrite: false, canAct: false, data: [OPEN] })
+    render(<AlertHistory urlSync globalViewer myTeamIds={[]} />)
+    await waitFor(() => expect(card(50)).not.toBeNull())
+    expect(within(actions(50)).queryByRole('button', { name: /Resolve|Acknowledge|Re-Notify|Log a call/ })).toBeNull()
+    const note = card(50).querySelector('[data-slot="alert-act-blocked"]')
+    expect(note.getAttribute('data-reason')).toBe('perm')
+    expect(note.textContent).not.toMatch(/log calls|arama kaydı/)
   })
 })

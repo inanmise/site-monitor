@@ -483,4 +483,52 @@ class EmailTemplateBuilderTest {
         assertThat(EmailTemplateBuilder.formatHuman("2026-08-06T12:37:46Z")).contains("6 Ağustos 2026 15:37").contains("(GMT+3)");
         assertThat(EmailTemplateBuilder.formatShort("2026-08-06T12:37:46Z")).contains("6").contains("Ağu");
     }
+
+    @Test
+    @DisplayName("Sertifika uyarısı bağlantısı sertifika penceresini açar (open=cert); diğer türler yalnız süzer")
+    void certAlertLinkOpensCertificateWindow() {
+        assertThat(EmailTemplateBuilder.alertQuery("CHAIN_BROKEN", "www.example.com"))
+                .isEqualTo("/?tab=dashboard&domain=www.example.com&open=cert");
+        assertThat(EmailTemplateBuilder.alertQuery("DOMAINMON_EXPIRY", "example.com")).isEqualTo("/?tab=domain&domain=example.com");
+        assertThat(EmailTemplateBuilder.alertQuery("ACCESSIBILITY", "example.com")).isEqualTo("/?tab=status&domain=example.com");
+        assertThat(EmailTemplateBuilder.alertQuery(null, null)).isEqualTo("/?tab=dashboard");
+
+        var cert = new EmailTemplateBuilder.AlertMail("CHAIN_BROKEN", "HIGH", "www.example.com",
+                "Zincir eksik.", 30, new LinkedHashMap<>(), "Takım A");
+        String href = "http://cm.local/?tab=dashboard&amp;domain=www.example.com&amp;open=cert";
+        String text = "http://cm.local/?tab=dashboard&domain=www.example.com&open=cert";
+        assertThat(b.buildHtml(cert)).satisfiesAnyOf(h -> assertThat(h).contains(href), h -> assertThat(h).contains(text));
+        assertThat(b.buildText(cert)).contains(text);
+        assertThat(b.buildResolvedHtml("www.example.com", "CHAIN_BROKEN", "Kişi A", "2026-09-28T10:00:00"))
+                .satisfiesAnyOf(h -> assertThat(h).contains(href), h -> assertThat(h).contains(text));
+        // alan adı süresi e-postası sertifika penceresini açmaz (Alan Adı sekmesi)
+        assertThat(b.buildHtml(domainMail("HIGH", 20))).doesNotContain("open=cert");
+    }
+
+    @Test
+    @DisplayName("HTTP uyarısı bağlantısı HTTP sekmesinde izlemenin kendisini açar — panoyu URL ile süzmez, open=cert yok")
+    void httpAlertLinkOpensHttpMonitor() {
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("monitor_id", 12);
+        assertThat(EmailTemplateBuilder.alertQuery("HTTP_DOWN", "https://api.example.com/health", ctx)).isEqualTo("/?tab=http&monitor=12");
+        assertThat(EmailTemplateBuilder.alertQuery("HTTP_SSL", "https://api.example.com/", Map.<String, Object>of("monitor_id", "7")))
+                .isEqualTo("/?tab=http&monitor=7");
+        assertThat(EmailTemplateBuilder.alertQuery("HTTP_DOWN", "https://api.example.com/", null)).isEqualTo("/?tab=http");
+        var m = new EmailTemplateBuilder.AlertMail("HTTP_DOWN", "HIGH", "https://api.example.com/health",
+                "HTTP 503", null, ctx, "Takım A");
+        assertThat(b.buildText(m)).contains("http://cm.local/?tab=http&monitor=12").doesNotContain("open=cert");
+    }
+
+    @Test
+    @DisplayName("Düz metin bağlantısı HTML ile aynı tabanı kullanır (sondaki / kırpılır); çözüm metninde görüntüleme bağlantısı var")
+    void textLinksUseLiveBaseUrl() {
+        when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenReturn("https://sm.example.com/");
+        var cert = new EmailTemplateBuilder.AlertMail("CHAIN_BROKEN", "HIGH", "www.example.com",
+                "Zincir eksik.", 30, new LinkedHashMap<>(), "Takım A");
+        assertThat(b.buildText(cert))
+                .contains("https://sm.example.com/?tab=dashboard&domain=www.example.com&open=cert")
+                .doesNotContain("com//?tab");
+        assertThat(b.buildResolvedText("www.example.com", "CHAIN_BROKEN", "Kişi A", "2026-09-28T10:00:00"))
+                .contains("Site Monitor'de Görüntüle: https://sm.example.com/?tab=dashboard&domain=www.example.com&open=cert");
+    }
 }

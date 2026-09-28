@@ -886,9 +886,19 @@ public class EmailNotificationService {
                                        String category, String message, String errorText, String linkedReference,
                                        String tabKey, String appVersion, List<InlineImage> images,
                                        String clientIp, String userAgent, String reportedAt, boolean force) {
+        return sendUserIssueReport(to, refCode, username, reporterEmail, category, message, errorText, linkedReference,
+                tabKey, appVersion, images, clientIp, userAgent, reportedAt, force, null, null);
+    }
+
+    /** Çoklu etkili imza (2026-09-28) — {@code impacts} kanonik CSV, {@code impactOther} yalnız OTHER'da. */
+    public LoginIssueMailResult sendUserIssueReport(String to, String refCode, String username, String reporterEmail,
+                                       String category, String message, String errorText, String linkedReference,
+                                       String tabKey, String appVersion, List<InlineImage> images,
+                                       String clientIp, String userAgent, String reportedAt, boolean force,
+                                       String impacts, String impactOther) {
         List<InlineImage> inline = images != null ? images : List.of();
         String html = buildUserIssueHtml(refCode, username, reporterEmail, category, message, errorText, linkedReference,
-                tabKey, appVersion, inline, clientIp, userAgent, reportedAt);
+                tabKey, appVersion, inline, clientIp, userAgent, reportedAt, impacts, impactOther);
         String subject = "[Site Monitor] 📝 Sorun Bildirimi — " + refCode +
                 (username != null && !username.isBlank() ? " · " + username : "");
         String status = sendHtml(new String[]{ to }, null, subject, html, inline, force);
@@ -898,6 +908,14 @@ public class EmailNotificationService {
     String buildUserIssueHtml(String refCode, String username, String reporterEmail, String category, String message,
                               String errorText, String linkedReference, String tabKey, String appVersion,
                               List<InlineImage> inline, String clientIp, String userAgent, String reportedAt) {
+        return buildUserIssueHtml(refCode, username, reporterEmail, category, message, errorText, linkedReference,
+                tabKey, appVersion, inline, clientIp, userAgent, reportedAt, null, null);
+    }
+
+    String buildUserIssueHtml(String refCode, String username, String reporterEmail, String category, String message,
+                              String errorText, String linkedReference, String tabKey, String appVersion,
+                              List<InlineImage> inline, String clientIp, String userAgent, String reportedAt,
+                              String impacts, String impactOther) {
         MailDoc d = MailDoc.create("[Site Monitor] Sorun bildirimi — " + nzs(refCode))
                 .preheader("Bir kullanıcı uygulama içinden sorun bildirdi — " + nzs(refCode))
                 .kicker("Sorun Bildirimi");
@@ -908,7 +926,11 @@ public class EmailNotificationService {
         rows.add(new Row("Referans Numarası", MailKit.strong(refCode, null), nzs(refCode)));
         rows.add(new Row("Kullanıcı", MailKit.strong(username, null), nzs(username)));
         if (reporterEmail != null && !reporterEmail.isBlank()) rows.add(Row.of("E-posta", reporterEmail));
-        if (category != null && !category.isBlank()) rows.add(Row.of("Önem", labelForCategory(category)));
+        if (category != null && !category.isBlank())
+            rows.add(Row.of("DOMAIN_TRANSFER".equals(category) ? "Talep Türü" : "Önem", labelForCategory(category)));
+        // Çoklu etki (2026-09-28): okunur Türkçe etiketler; "Diğer" metni etiketle birlikte (Row.of kaçışlar).
+        String impactText = impactLabels(impacts, impactOther);
+        if (impactText != null) rows.add(Row.of("Yaşanan Sorunlar", impactText));
         if (tabKey != null && !tabKey.isBlank()) rows.add(Row.of("Ekran/Sekme", tabKey));
         if (appVersion != null && !appVersion.isBlank()) rows.add(Row.of("Uygulama Sürümü", appVersion));
         if (linkedReference != null && !linkedReference.isBlank()) rows.add(Row.of("Bağlı Çökme Kaydı", linkedReference));
@@ -924,11 +946,41 @@ public class EmailNotificationService {
         return d.html();
     }
 
+    /** Etki CSV'si → "Giriş yapamıyor / oturumu düşüyor · Uygulama yavaş · Diğer: …" (bilinmeyen kod düşer); boş → null. */
+    static String impactLabels(String impacts, String impactOther) {
+        List<String> out = new ArrayList<>();
+        for (String code : com.sitemonitor.service.LoginIssueService.impactList(impacts)) {
+            String label = labelForImpact(code);
+            if ("OTHER".equals(code) && impactOther != null && !impactOther.isBlank()) label = label + ": " + impactOther;
+            out.add(label);
+        }
+        return out.isEmpty() ? null : String.join(" · ", out);
+    }
+
+    private static String labelForImpact(String code) {
+        return switch (code) {
+            case "LOGIN"            -> "Giriş yapamıyor / oturumu düşüyor";
+            case "PAGE_NOT_LOADING" -> "Sayfa açılmıyor ya da yüklenmiyor";
+            case "SLOW"             -> "Uygulama yavaş";
+            case "WRONG_DATA"       -> "Veriler yanlış ya da eksik";
+            case "SAVE_ERROR"       -> "Kaydedemiyor / hata mesajı alıyor";
+            case "NO_ALERTS"        -> "Alarm e-postası ya da bildirim gelmiyor";
+            case "FALSE_ALERTS"     -> "Gereksiz ya da yanlış alarm";
+            case "ACCESS"           -> "Yetki / ekrana erişim sorunu";
+            case "MOBILE"           -> "Telefonda / tablette düzgün görünmüyor";
+            case "REPORT_EXPORT"    -> "Rapor ya da dışa aktarma sorunu";
+            case "FEATURE_REQUEST"  -> "Yeni özellik isteği";
+            case "OTHER"            -> "Diğer";
+            default                 -> code;
+        };
+    }
+
     private static String labelForCategory(String category) {
         return switch (category) {
             case "BLOCKER"    -> "Engelliyor";
             case "ANNOYANCE"  -> "Rahatsız ediyor";
             case "SUGGESTION" -> "Öneri";
+            case "DOMAIN_TRANSFER" -> "Alan adı aktarımı";   // 2026-09-28: envanter mükerrer kaydı → aktarım talebi
             default           -> category;
         };
     }

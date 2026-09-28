@@ -190,6 +190,73 @@ public class AdminController {
     }
 
     /**
+     * Mükerrer alan adı 409'u (2026-09-28, kullanıcı isteği): ileti kaydın HANGİ ekipte olduğunu söyler, yapısal
+     * {@code existing} arayüze aktarım / geri yükleme / aktarım talebi yolunu açar. Ekleme ve yeniden adlandırma
+     * AYNI yardımcıyı kullanır.
+     *
+     * <p>{@code existing} BEYAZ LİSTEDİR — kimlik, ad, durum ve ÇAĞIRANIN bu kayıttaki eylem bayrakları:
+     * {@code domain, inventory_id, team_id, team_name, ug_team_id, ug_team_name, deleted, deleted_at, same_team,
+     * can_view, can_restore, can_transfer}. Sorumlu kişiler, açıklama, notlar, IP, platform ASLA taşınmaz. Takım
+     * ADI org geneli görünürlük kapalıyken de söylenir (ürün kuralı 2026-09-26: hangi alan adının hangi takıma
+     * kayıtlı olduğunu herkes bilebilir; aksi hâlde kullanıcı kime başvuracağını bilemez).
+     *
+     * <p>Bayraklar ilgili uçların kapılarının AYNASI — asıl kapı yine her uçta:
+     * {@code can_view} = silinmemiş + okunabilir (by-domain kuralı); {@code can_restore} = çöp kutusunda + restore
+     * kapısı (takım yönetimi + {@code inventory.crud/edit}); {@code can_transfer} = transfer kapısı (GLOBAL admin +
+     * {@code inventory.transfer/execute} — kapsamlı müdür rol dizesinden global sayılmaz).
+     */
+    private com.sitemonitor.config.GlobalExceptionHandler.DomainExistsException domainExists(
+            CertificateInventory clash, Long targetTeamId, HttpSession session) {
+        Map<Long, String> names = new HashMap<>();
+        for (Team tm : userService.listTeams()) if (tm.getId() != null) names.put(tm.getId(), tm.getName());
+        String team = clash.getTeamId() != null ? names.get(clash.getTeamId()) : null;
+        boolean deleted = clash.getDeletedAt() != null;
+        boolean sameTeam = targetTeamId != null && targetTeamId.equals(clash.getTeamId());
+        Map<String, Object> ex = new LinkedHashMap<>();   // null değer taşır (Map.of almaz)
+        ex.put("domain", clash.getDomain());
+        ex.put("inventory_id", clash.getId());
+        ex.put("team_id", clash.getTeamId());
+        ex.put("team_name", team);
+        ex.put("ug_team_id", clash.getUgTeamId());
+        ex.put("ug_team_name", clash.getUgTeamId() != null ? names.get(clash.getUgTeamId()) : null);
+        ex.put("deleted", deleted);
+        ex.put("deleted_at", clash.getDeletedAt());
+        ex.put("same_team", sameTeam);
+        ex.put("can_view", !deleted && (inventoryVisibility != null
+                ? inventoryVisibility.canRead(session, clash) : SessionScope.canView(session, clash.getTeamId())));
+        ex.put("can_restore", deleted && canManageTeamResource(session, clash.getTeamId())
+                && permissionService.allows(session, "inventory.crud", "edit"));
+        ex.put("can_transfer", isAdmin(session) && permissionService.allows(session, "inventory.transfer", "execute"));
+        String msg;
+        if (team == null) {
+            msg = deleted
+                    ? com.sitemonitor.util.Msg.t(
+                        "Bu alan adı çöp kutusunda (hiçbir ekibe atanmamış bir kayıt). Mükerrer kayıt oluşturulamaz; kaydın geri yüklenmesi ya da ekibinize aktarılması gerekir.",
+                        "This domain is in the bin (a record that isn't assigned to any team). A duplicate record can't be created; the record needs to be restored or transferred to your team.")
+                    : com.sitemonitor.util.Msg.t(
+                        "Bu alan adı envanterde, hiçbir ekibe atanmamış bir kayıt olarak zaten kayıtlı. Mükerrer kayıt oluşturulamaz; kaydın ekibinize aktarılması (transfer) gerekir.",
+                        "This domain is already in the inventory as a record that isn't assigned to any team. A duplicate record can't be created; the record needs to be transferred to your team.");
+        } else if (sameTeam) {
+            msg = deleted
+                    ? com.sitemonitor.util.Msg.t(
+                        "Bu alan adı, seçtiğiniz '" + team + "' ekibinin çöp kutusunda. Mükerrer kayıt oluşturulamaz; kaydı çöp kutusundan geri yükleyin.",
+                        "This domain is in the bin of the team you selected, '" + team + "'. A duplicate record can't be created; restore the record from the bin instead.")
+                    : com.sitemonitor.util.Msg.t(
+                        "Bu alan adı, seçtiğiniz '" + team + "' ekibinin envanterinde zaten kayıtlı. Mükerrer kayıt oluşturulamaz; mevcut kaydı açıp düzenleyin.",
+                        "This domain is already registered in the inventory of the team you selected, '" + team + "'. A duplicate record can't be created; open the existing record and edit it instead.");
+        } else {
+            msg = deleted
+                    ? com.sitemonitor.util.Msg.t(
+                        "Bu alan adı çöp kutusunda ('" + team + "' ekibinin kaydı). Mükerrer kayıt oluşturulamaz; kaydın geri yüklenmesi ya da ekibinize aktarılması gerekir.",
+                        "This domain is in the bin (a record belonging to the '" + team + "' team). A duplicate record can't be created; the record needs to be restored or transferred to your team.")
+                    : com.sitemonitor.util.Msg.t(
+                        "Bu alan adı zaten '" + team + "' ekibinin envanterinde kayıtlı. Mükerrer kayıt oluşturulamaz; alan adının sizin ekibinizde olması gerekiyorsa kaydın ekibinize aktarılması (transfer) gerekir.",
+                        "This domain is already registered in the '" + team + "' team's inventory. A duplicate record can't be created; if the domain should belong to your team, the record needs to be transferred to it.");
+        }
+        return new com.sitemonitor.config.GlobalExceptionHandler.DomainExistsException(msg, ex);
+    }
+
+    /**
      * Envanter listesi.
      *
      * <p>{@code scope}: {@code mine} (varsayılan — bugünkü davranış: global görüntüleyici hepsini, diğerleri
@@ -293,7 +360,7 @@ public class AdminController {
         return ok(body);
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/inventory")
     public ResponseEntity<Map<String, Object>> addInventory(
             @Valid @RequestBody CertificateInventory item, HttpSession session, HttpServletRequest request) {
@@ -312,11 +379,9 @@ public class AdminController {
         // kaydı ya da çöp kutusundaki bir kayıt dâhil — "yeniden ekleyerek" sahipliği ele geçirmek mümkün
         // olmamalı. DB UNIQUE kısıtı bunu zaten reddederdi ama harf farkında (Example.com) kısıt kör kalıyor,
         // ileti de kaydın var olduğunu söylemiyordu. Açık 409; mevcut kayda dokunulmaz.
-        if (inventoryRepo.existsByDomainIgnoreCase(item.getDomain())) {
-            throw new IllegalStateException(com.sitemonitor.util.Msg.t(
-                    "Bu alan adı envanterde zaten kayıtlı. Başka bir takımın kaydı devralınamaz; kayıt silinmişse çöp kutusundan geri yükleyin.",
-                    "This domain is already in the inventory. Another team's record cannot be taken over; if it was deleted, restore it from the bin."));
-        }
+        // 2026-09-28: 409 kaydın SAHİBİ takımı adıyla söyler + yapısal `existing` (aktarım/geri yükleme yolu).
+        CertificateInventory clash = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(item.getDomain()).orElse(null);
+        if (clash != null) throw domainExists(clash, item.getTeamId(), session);
         String now = now();
         item.setId(null);
         item.setCreatedAt(now);
@@ -367,7 +432,7 @@ public class AdminController {
         return ok(Map.of("data", saved, "message", "Domain added to inventory"));
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PutMapping("/inventory/{id}")
     @Transactional
     public ResponseEntity<Map<String, Object>> updateInventory(
@@ -423,10 +488,11 @@ public class AdminController {
         boolean renamed = newDomain != null && oldDomain != null
                 && !newDomain.equalsIgnoreCase(oldDomain);
         if (renamed) {
-            if (inventoryRepo.existsByDomainIgnoreCase(newDomain)) {
-                throw new IllegalStateException(
-                        "Bu domain (\"" + newDomain + "\") envanterde zaten var. "
-                        + "Önce diğer kaydı silmelisin veya farklı bir isim seç.");
+            // Ekleme ucuyla AYNI 409 (2026-09-28): çakışan kaydın sahibi takım + yapısal `existing`. Hedef takım
+            // kaydın (düzenlemeyle taşınıyorsa yeni) takımı — "aynı takım" iletisi ona göre seçilir.
+            CertificateInventory clash = inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(newDomain).orElse(null);
+            if (clash != null && !java.util.Objects.equals(clash.getId(), existing.getId())) {
+                throw domainExists(clash, item.getTeamId() != null ? item.getTeamId() : existing.getTeamId(), session);
             }
             int lc = latestCheckRepo.renameDomain(oldDomain, newDomain);
             int cc = certificateCheckRepo.renameDomain(oldDomain, newDomain);
@@ -912,7 +978,7 @@ public class AdminController {
         return clientIpResolver.resolve(request);
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @DeleteMapping("/inventory/{id}")
     public ResponseEntity<Map<String, Object>> deleteInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
@@ -968,7 +1034,7 @@ public class AdminController {
 
     @PostMapping("/inventory/bulk")
     @Transactional
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     public ResponseEntity<Map<String, Object>> bulkInventoryAction(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdminOrTeamAdmin(session);
@@ -1083,7 +1149,7 @@ public class AdminController {
         return ok(Map.of("data", data, "message", "Bulk " + action + " complete"));
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @DeleteMapping("/certificates/{domain}")
     public ResponseEntity<Map<String, Object>> deleteCertificateCheck(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
@@ -1107,6 +1173,9 @@ public class AdminController {
         return ok(Map.of("message", "Deleted"));
     }
 
+    // F3 (2026-09-28): geri yükleme de envanteri değiştirir — eksikti; 409 DOMAIN_EXISTS "çöp kutusundan geri yükle"
+    // akışından sonra alan adı Genel Bakış'ta cert-latest TTL'i (300 sn) boyunca görünmüyordu.
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/inventory/{id}/restore")
     public ResponseEntity<Map<String, Object>> restoreInventory(
             @PathVariable Long id, HttpSession session, HttpServletRequest request) {
@@ -1141,7 +1210,7 @@ public class AdminController {
      * kaydını soft-delete EDEMEZKEN ({@code deleteInventory} → {@code requireTeamScopedAdmin})
      * aynı kaydı KALICI silebiliyordu — geri alınamaz olan yol, kapsamsız olan yoldu.
      */
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @DeleteMapping("/inventory/{id}/permanent")
     @Transactional
     public ResponseEntity<Map<String, Object>> purgeInventory(
@@ -1176,7 +1245,7 @@ public class AdminController {
      *
      * <p>Silinen domain listesi denetime YAZILIR: geri dönüş yok, forensics'in tek dayanağı bu.
      */
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/inventory/purge-deleted")
     @Transactional
     public ResponseEntity<Map<String, Object>> purgeAllDeleted(
@@ -1232,6 +1301,8 @@ public class AdminController {
         return ok(Map.of("message", "Tour reset"));
     }
 
+    // F3 (2026-09-28): SY/UG aktarımı kartların takım adını ve görünürlüğünü değiştirir — eviction eksikti.
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/inventory/{id}/transfer")
     public ResponseEntity<Map<String, Object>> transferInventory(
             @PathVariable Long id, @RequestBody Map<String, Object> body,
@@ -1255,6 +1326,7 @@ public class AdminController {
         return ok(Map.of("data", inv, "message", "Transferred"));
     }
 
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/inventory/{id}/transfer-ug")
     public ResponseEntity<Map<String, Object>> transferInventoryUg(
             @PathVariable Long id, @RequestBody Map<String, Object> body,
@@ -1532,14 +1604,10 @@ public class AdminController {
         boolean standalone = "MONITOR".equalsIgnoreCase(kind);
         Map<String, Object> out = new LinkedHashMap<>(escalationService.simulateRecipients(teamId, level, standalone, groupId));
         out.put("team_name", teamRepo.findById(teamId).map(Team::getName).orElse(null));
-        // Push ayağı — kişisel opt-out/unvan verisi taşır: yalnız global yönetici görür.
-        if (SessionScope.isGlobalAdmin(session)) {
-            try {
-                out.put("push", userPushRecipientResolver.explain(teamId, String.valueOf(out.get("level"))));
-            } catch (RuntimeException e) {
-                out.put("push_error", e.getMessage());
-            }
-        }
+        // Push ayağı (2026-09-28) — kişi kararları opt-out/org rolü taşır, görünürlük PushDecisionAccess'te: global
+        // yönetici her takım, takımı YÖNETEN tüm üyeler, üye yalnız kendi satırı, diğerleri yalnız kanal durumu.
+        out.putAll(PushDecisionAccess.pushLeg(session, teamId, String.valueOf(out.get("level")), standalone,
+                userPushRecipientResolver, userPushService));
         return ok(Map.of("data", out));
     }
 
@@ -1552,12 +1620,9 @@ public class AdminController {
         requirePerm(session, "contacts.crud", "edit");
         EscalationContact c = contactRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
-        if (!SessionScope.isGlobalViewer(session)) {
-            List<Long> scope = SessionScope.viewTeamIds(session);
-            if (c.getTeamId() == null || scope == null || !scope.contains(c.getTeamId())) {
-                throw new NoSuchElementException("Contact not found: " + id);
-            }
-        }
+        // F8 (2026-09-28): kardeşleri (kişi güncelle/sil) gibi YÖNETİM kapsamı — görüş kapsamı yetmez. Test gerçek bir
+        // webhook'a mesaj atar ve teslimat günlüğüne yazar; kişiyi yalnız GÖREN (USER/AUDIT) bunu tetiklememeli.
+        requireTeamScopedAdmin(session, c.getTeamId());
         if (c.getWebhookUrl() == null || c.getWebhookUrl().isBlank()) {
             throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Bu kişide webhook adresi yok.", "This contact has no webhook URL."));
         }
@@ -1603,9 +1668,23 @@ public class AdminController {
     @GetMapping("/contacts/webhook-status")
     public ResponseEntity<Map<String, Object>> contactWebhookStatus(HttpSession session) {
         requirePerm(session, "contacts.list", "view");
+        // F2 (bug regresyon 2026-09-28): kapsamlı görüntüleyici yalnız GÖRDÜĞÜ kişilerin adreslerini alır — /contacts/all
+        // ile aynı kapsam. Eskiden süzgeç yoktu: her USER/TEAM_ADMIN/müdür tüm takımların webhook alıcı e-postalarını,
+        // son durumunu ve FAILED ayrıntısını görüyordu. (null = global görüntüleyici, süzgeç yok.)
+        java.util.Set<String> visible = null;
+        if (!isAdminOrAudit(session)) {
+            List<Long> scope = viewScope(session);
+            visible = new java.util.HashSet<>();
+            if (scope != null && !scope.isEmpty()) {
+                for (EscalationContact c : contactRepo.findByTeamIdInOrderByRoleAsc(scope)) {
+                    if (c.getEmail() != null) visible.add(c.getEmail().trim().toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         for (NotificationLog n : notificationLogRepo.findLatestWebhookPerRecipient()) {
             if (n.getRecipientEmail() == null) continue;
+            if (visible != null && !visible.contains(n.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT))) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("at", n.getSentAt());
             String ws = n.getWebhookStatus() == null ? "" : n.getWebhookStatus();
@@ -1628,10 +1707,15 @@ public class AdminController {
         contact.setCreatedAt(now());
         if (contact.getActive() == null) contact.setActive(true);
         if (contact.getMinAlertLevel() == null) contact.setMinAlertLevel("WARNING");
-        if (isTeamAdmin(session)) {
-            contact.setTeamId(teamId(session));
-        }
-        if (contact.getTeamId() == null) {
+        if (!isAdmin(session)) {
+            // F1 (bug regresyon 2026-09-28): global OLMAYAN her yazar — gövdede takım yoksa (TEAM_ADMIN'de hep)
+            // birincil takım; hedef YÖNETİM kapsamında olmalı (403). Eskiden dal isTeamAdmin() ile kapılıydı: AD
+            // müdürü (rol ADMIN, viewTeamIds dolu) oradan geçmiyor, team_id'si yok sayılıyor ve kişi (e-posta +
+            // webhook) alfabetik İLK takıma yazılıyordu — o takımın eskalasyonunu alıyor, müdür göremiyor/silemiyordu.
+            if (contact.getTeamId() == null) contact.setTeamId(SessionScope.primaryTeamId(session));
+            requireTeamScopedAdmin(session, contact.getTeamId());
+        } else if (contact.getTeamId() == null) {
+            // "İlk takıma düş" yalnız global admin'de kalır (takımsız istek — eski davranış).
             userService.listTeams().stream().findFirst().ifPresent(t -> contact.setTeamId(t.getId()));
         }
         EscalationContact saved = contactRepo.save(contact);
@@ -1679,9 +1763,17 @@ public class AdminController {
         c.setWebhookType((String) body.get("webhook_type"));
         Object active = body.get("active");
         c.setActive(active instanceof Boolean ? (Boolean) active : (c.getActive() != null ? c.getActive() : true));
-        if (isAdmin(session)) {
-            Long teamId = toLong(body.get("team_id"));
-            if (teamId != null) c.setTeamId(teamId);
+        // Takım (F1, 2026-09-28): global admin serbest. Kapsamlı müdür kişiyi yalnız YÖNETTİĞİ takıma açar/taşır —
+        // kapsam dışı hedef 403 (eskiden team_id'si sessizce yok sayılıyordu). TEAM_ADMIN'in takımı gövdeden
+        // değişmez (createUser/updateUser ile aynı: kendi takımı zorlanır).
+        Long teamId = toLong(body.get("team_id"));
+        if (teamId != null && !teamId.equals(c.getTeamId())) {
+            if (isAdmin(session)) {
+                c.setTeamId(teamId);
+            } else if (!isTeamAdmin(session)) {
+                requireTeamScopedAdmin(session, teamId);
+                c.setTeamId(teamId);
+            }
         }
     }
 
@@ -1824,6 +1916,9 @@ public class AdminController {
         // Arayüzün "Arama kaydı ekle" kapısı SUNUCUDAN (2026-09-27): matris anlık görüntüsü kapsamlı müdürde ADMIN
         // satırını gösterir; asıl kural (global yönetici evet, kapsamlı müdür hayır) NocCallLogService.canWrite'ta.
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
+        // Sahiplen/çöz/yeniden bildir kapısı (alerts.actions) arayüze SUNUCUDAN (2026-09-28): 7/24 operatörü AUDIT
+        // rolünde arama kaydı girer ama bu eylemlerin izni yoktur — düğmeler 403'e giden ölü düğme olarak çizilmesin.
+        body.put("can_act", permissionService.allows(session, "alerts.actions", "execute"));
         return ok(body);
     }
 
@@ -2262,6 +2357,7 @@ public class AdminController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", ev);
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
+        body.put("can_act", permissionService.allows(session, "alerts.actions", "execute"));
         return ok(body);
     }
 
@@ -2581,7 +2677,11 @@ public class AdminController {
         return ok(Map.of("data", teamAdminService.impact(id)));
     }
 
-    /** Bağlı varlıkları hedef takıma taşı (bildirim grubundaki "409 → taşı" deseni). Silme ayrı çağrıdır. */
+    /**
+     * Bağlı varlıkları hedef takıma taşı (bildirim grubundaki "409 → taşı" deseni). Silme ayrı çağrıdır.
+     * F3 (2026-09-28): {@code TeamAdminService.moveAll} envanterin teamId'sini yeniden yazar → sertifika önbellekleri de boşalır.
+     */
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @PostMapping("/teams/{id}/move")
     public ResponseEntity<Map<String, Object>> teamMove(@PathVariable Long id, @RequestBody Map<String, Object> body,
                                                         HttpSession session, HttpServletRequest request) {

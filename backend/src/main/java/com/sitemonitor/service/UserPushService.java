@@ -90,6 +90,11 @@ public class UserPushService {
     /** Yanit govdesinden okunacak BAYT tavani (bkz. sendBatch) — notificationId birkac bayt,
      *  gunluge yazilan onizleme MAX_RAW_RESPONSE karakter; fazlasi bellekte tutulmaz. */
     private static final int MAX_RESPONSE_BYTES = 64 * 1024;
+    /** {@code notification_id} kolon uzunluğu — API daha uzun kimlik dönerse satır kaydı düşmesin diye kırpılır. */
+    private static final int MAX_NOTIFICATION_ID = 60;
+    /** Outbox turu başına en çok bu kadar satır (yaş sırasıyla). */
+    private static final org.springframework.data.domain.PageRequest OUTBOX_PAGE =
+            org.springframework.data.domain.PageRequest.of(0, 50);
 
     /** Katman/karar satırlarında kullanılan sistem-sicili: kapsam reddi kişiye değil olaya aittir. */
     static final String SYSTEM_USER = "-";
@@ -334,8 +339,8 @@ public class UserPushService {
      */
     private String channelBlockReason(AlertEvent event, String trigger, Long teamId,
                                       String family, Map<String, Object> ctx) {
-        if (!scopeEnabled("TYPE", family)) return "SKIPPED_TYPE_OFF";
-        if (teamId != null && !scopeEnabled("TEAM", String.valueOf(teamId))) return "SKIPPED_TEAM_OFF";
+        String scope = scopeBlockReason(teamId, family);
+        if (scope != null) return scope;
         if (ctx != null && Boolean.TRUE.equals(ctx.get("push_disabled"))) return "SKIPPED_MONITOR_OFF";
         // İzleme bayrağı kararı KALICIDIR: OPEN'da yazılan SKIPPED_MONITOR_OFF satırı sonraki
         // fazları da bağlar. Gerekli çünkü bayrak ctx ile taşınır ve her yol taşımaz — örn.
@@ -349,6 +354,64 @@ public class UserPushService {
         // kapanmalı; aksi halde kullanıcı sabaha kadar "düştü" ekranına bakıyordu (karar 2026-09-10).
         if (!"RESOLVE".equals(trigger) && quietHoursBlock(event.getAlertLevel())) return "SKIPPED_QUIET_HOURS";
         return null;
+    }
+
+    /**
+     * Katman matrisi kararı (tür + takım) — gerçek gönderim ({@link #channelBlockReason}) ile "Kim bilgilendirilir?"
+     * senaryosu ({@link #scenarioChannel}) AYNI kodu kullanır. {@code family}/{@code teamId} null ise o eksen sorulmaz.
+     */
+    private String scopeBlockReason(Long teamId, String family) {
+        if (!scopeEnabled("TYPE", family)) return "SKIPPED_TYPE_OFF";
+        if (teamId != null && !scopeEnabled("TEAM", String.valueOf(teamId))) return "SKIPPED_TEAM_OFF";
+        return null;
+    }
+
+    /**
+     * "Kim bilgilendirilir?" senaryosu için push KANAL durumu (2026-09-28) — HİÇBİR yazma yapmaz, alarm olayı yoktur.
+     *
+     * <p>Kişi kararları {@link UserPushRecipientResolver#explain} ile verilir; burada yalnız herkesi aynı anda etkileyen
+     * kanal düzeyi kapılar döner. Kararlar gerçek gönderimin kodundan gelir: global anahtar ({@link #enabled()}),
+     * adres ({@code url} boşsa gönderim "URL ayarlanmamış" ile FAILED düşer), katman matrisi
+     * ({@link #scopeBlockReason}) ve sessiz saat ({@link #quietWindow}; ŞU ANKİ saate göre — gönderim de öyle karar
+     * verir). İzleme başına "push kapalı" bayrağı senaryoda bilinmez (izleme seçilmiyor) — çağıran bunu metinle söyler.
+     *
+     * <p>Adres/başlık/şablon gibi ayar DEĞERLERİ dönmez; yalnız var/yok ve açık/kapalı bilgisi.
+     *
+     * @param standaloneMonitor izleme alarmı (sertifika dışındaki dokuz tür) mı; değilse yalnız {@code cert} türü sorulur
+     */
+    public Map<String, Object> scenarioChannel(Long teamId, String level, boolean standaloneMonitor) {
+        boolean on = enabled();
+        boolean configured = !url().isBlank();
+        List<String> families = standaloneMonitor
+                ? MonitorTypeCatalog.ORDER.stream().filter(f -> !"cert".equals(f)).toList()
+                : List.of("cert");
+        List<String> typeOff = families.stream().filter(f -> scopeBlockReason(null, f) != null).toList();
+        boolean teamOn = teamId == null || scopeBlockReason(teamId, null) == null;
+        QuietWindow quiet = quietWindow();
+        boolean quietActive = quiet != null && quiet.contains(LocalTime.now(ZONE));
+        boolean quietBlocksLevel = quiet != null && quiet.blocks(level);
+
+        String block;
+        if (!on) block = "CHANNEL_DISABLED";
+        else if (!configured) block = "NOT_CONFIGURED";
+        else if (!families.isEmpty() && typeOff.size() == families.size()) block = "SKIPPED_TYPE_OFF";   // gönderimle aynı sıra: önce tür
+        else if (!teamOn) block = "SKIPPED_TEAM_OFF";
+        else if (quietActive && quietBlocksLevel) block = "SKIPPED_QUIET_HOURS";
+        else block = null;
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("enabled", on);
+        out.put("configured", configured);
+        out.put("team_enabled", teamOn);
+        out.put("types", families);
+        out.put("disabled_types", typeOff);
+        out.put("quiet_start", quiet == null ? null : quiet.start().toString());
+        out.put("quiet_end", quiet == null ? null : quiet.end().toString());
+        out.put("quiet_min_level", quiet == null ? null : quiet.minLevel());
+        out.put("quiet_active", quietActive);
+        out.put("quiet_blocks_level", quietBlocksLevel);
+        out.put("block_reason", block);
+        return out;
     }
 
     /** Bu olay için daha önce SENT olmuş tekil kullanıcı adları (sistem satırı '-' hariç), ilk gönderim sırasıyla. */
@@ -481,6 +544,15 @@ public class UserPushService {
         if (teamId == null) { out.put("reason", "SKIPPED_NO_TEAM"); return out; }
         List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, alertLevel);
         if (recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
+        return writeTeamRows(out, teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey,
+                recipients, excluded, false);
+    }
+
+    /** Olaysız takım satırlarını yazar — takım bildirimi ve fırtına push'u ortak (dedupe, opt-out, saat tavanı). */
+    private Map<String, Object> writeTeamRows(Map<String, Object> out, Long teamId, String trigger, String alertLevel,
+                                              String monitorType, String monitorName, String message, String dedupeKey,
+                                              List<UserPushRecipientResolver.Recipient> recipients,
+                                              java.util.Set<String> excluded, boolean capExempt) {
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
@@ -491,7 +563,7 @@ public class UserPushService {
             if (r.username() != null && excluded.contains(r.username().trim().toUpperCase(java.util.Locale.ROOT))) { skipped++; continue; }
             String status;
             if (r.skipReason() != null) status = r.skipReason();
-            else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             if (dedupeKey != null && deliveryRepo.existsByDedupeKeyAndUsername(dedupeKey, r.username())) { skipped++; continue; }
             UserPushDelivery d = new UserPushDelivery();
@@ -515,6 +587,131 @@ public class UserPushService {
         if (queued > 0) worker.execute(this::drainOutbox);
         out.put("queued", queued); out.put("skipped", skipped); out.put("recipients", names); out.put("batch_id", batchId);
         return out;
+    }
+
+    // ── Fırtına push'u (2026-09-28) ────────────────────────────────────────────────────────
+
+    /** Fırtına satırlarının teslimat günlüğündeki türü ve adı (e-postanın "Alarm fırtınası" başlığıyla aynı). */
+    static final String STORM_MONITOR_TYPE = "STORM";
+    static final String STORM_MONITOR_NAME = "Alarm fırtınası";
+
+    /**
+     * Fırtına push'u — bireysel alarm push'unun KANAL kapılarıyla (2026-09-28).
+     *
+     * <p>Eskiden {@link #enqueueTeamNotice} kullanılıyordu ve o yol hiçbir kanal kapısına bakmıyordu: yönetici
+     * Takım A'nın push'unu kapatsa da Takım A HTTP izlemelerinin fırtınası takımın tüm üyelerine gidiyordu. Karar
+     * artık {@link #stormBlockReason}'da, bireysel yolun sırasıyla; ret {@code SKIPPED_*} karar satırı olarak
+     * yazılır (teslimat günlüğü nedenini söyler).
+     *
+     * <p><b>Çözüm</b> bireysel RESOLVE'un aynası: alıcılar bu fırtınanın BU takıma giden açılış/tekrar push'unu
+     * gerçekten ALANLAR ({@code resolvePrior}); sessiz saat ve saat tavanından muaf; önce SENT yoksa
+     * {@code SKIPPED_NO_PRIOR}. Eskiden çözüm "INFO" seviyesiyle yeniden çözümleniyordu: asgari seviyesi INFO'nun
+     * üstünde olan gruplar (ör. yöneticiler) "N monitör düştü"yü alıp "düzeldi"yi hiç almıyordu.
+     *
+     * @param stormTrigger {@code INITIAL} / {@code DAILY_REALERT} / {@code RESOLVE} (fırtına e-postasının tetiği)
+     * @param members      bu takımın SY takımı olduğu fırtına üyeleri — tür ve izleme bayrağı kararı bunlardan
+     */
+    public Map<String, Object> enqueueStormNotice(Long stormId, Long teamId, String stormTrigger, String alertLevel,
+                                                  List<AlertEvent> members, String message) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
+        try {
+            if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
+            if (stormId == null || teamId == null) { out.put("reason", "SKIPPED_NO_TEAM"); return out; }
+            boolean resolve = "RESOLVE".equals(stormTrigger);
+            String trigger = resolve ? "STORM_RESOLVED" : "STORM";
+            String dedupeKey = stormDedupeKey(stormId, stormTrigger);
+            List<String> prior = resolve ? priorStormRecipients(stormId, teamId) : List.of();
+            String block = resolve && prior.isEmpty() ? "SKIPPED_NO_PRIOR"
+                    : stormBlockReason(stormTrigger, teamId, alertLevel, members);
+            if (block == null) {
+                List<UserPushRecipientResolver.Recipient> recipients =
+                        resolve ? resolver.resolvePrior(prior) : resolver.resolve(teamId, alertLevel);
+                if (!recipients.isEmpty())
+                    return writeTeamRows(out, teamId, trigger, alertLevel, STORM_MONITOR_TYPE, STORM_MONITOR_NAME,
+                            message, dedupeKey, recipients, java.util.Set.of(), resolve);   // çözüm tavandan muaf
+                block = "SKIPPED_NO_RECIPIENTS";
+            }
+            stormSkipRow(teamId, trigger, alertLevel, dedupeKey, block);
+            out.put("reason", block);
+        } catch (Exception e) {
+            log.warn("user-push fırtına bildirimi atlandı (fırtına e-postası etkilenmedi): {}", e.toString());
+        }
+        return out;
+    }
+
+    /**
+     * Fırtına push'unun KANAL kararı — {@link #channelBlockReason}'ın üye listesi üzerinden eşleniği, AYNI sıra:
+     * günlük tekrar ayarı → tür → takım → izleme bayrağı → sessiz saat (aynı seviye muafiyeti; çözümde yok).
+     * Tür ve izleme bayrağı üye başınadır: fırtına ancak HİÇBİR üyesi push'a açık değilse susar — açık kalan tek
+     * üye bile bireysel yolda push üretirdi.
+     */
+    private String stormBlockReason(String stormTrigger, Long teamId, String level, List<AlertEvent> members) {
+        if ("DAILY_REALERT".equals(stormTrigger)
+                && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) return "SKIPPED_REALERT_OFF";
+        List<AlertEvent> list = members == null ? List.of() : members;
+        List<AlertEvent> typeOn = list.stream()
+                .filter(m -> scopeBlockReason(null, MonitorTypeCatalog.typeOfAlert(m.getAlertType())) == null).toList();
+        if (!list.isEmpty() && typeOn.isEmpty()) return "SKIPPED_TYPE_OFF";
+        String team = scopeBlockReason(teamId, null);
+        if (team != null) return team;
+        if (!list.isEmpty() && typeOn.stream().allMatch(UserPushService::pushDisabled)) return "SKIPPED_MONITOR_OFF";
+        if (!"RESOLVE".equals(stormTrigger) && quietHoursBlock(level)) return "SKIPPED_QUIET_HOURS";
+        return null;
+    }
+
+    /** İzlemenin push bayrağı KAPALI mı — olayın alarm-anı bağlamındaki {@code push_disabled} damgası. */
+    private static boolean pushDisabled(AlertEvent m) {
+        String json = m == null ? null : m.getContextJson();
+        if (json == null || json.isBlank()) return false;
+        try {
+            return MAPPER.readTree(json).path("push_disabled").booleanValue();
+        } catch (Exception e) {
+            return false;   // bozuk bağlam bastırma SAYILMAZ (StormService.mailDisabled ile aynı karar)
+        }
+    }
+
+    /**
+     * Fırtına push dedupe anahtarı. Günlük tekrar GÜNÜ taşır: eskiden {@code storm:<id>:DAILY_REALERT} her gün
+     * aynıydı ve 1. günden sonraki her tekrar "zaten kayıtlı" diye sessizce atlanıyordu — bireysel
+     * {@code RE_ALERT:<gün>} ile aynı kural (kurum saatiyle gün).
+     */
+    static String stormDedupeKey(Long stormId, String stormTrigger) {
+        if ("RESOLVE".equals(stormTrigger)) return "storm-resolved:" + stormId;
+        if ("DAILY_REALERT".equals(stormTrigger))
+            return "storm:" + stormId + ":DAILY_REALERT:" + Instant.now().atZone(ZONE).toLocalDate();
+        return "storm:" + stormId + ":" + stormTrigger;
+    }
+
+    /** Bu fırtınanın bu takıma giden açılış/tekrar push'unu gerçekten ALMIŞ tekil kullanıcılar (ilk gönderim sırası). */
+    private List<String> priorStormRecipients(Long stormId, Long teamId) {
+        List<String> out = new ArrayList<>();
+        for (UserPushDelivery d : deliveryRepo.findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc(
+                "storm:" + stormId + ":", teamId, "SENT")) {
+            if (d.getUsername() == null || SYSTEM_USER.equals(d.getUsername()) || out.contains(d.getUsername())) continue;
+            out.add(d.getUsername());
+        }
+        return out;
+    }
+
+    /** Fırtına karar satırı (sistem sicili) — bireysel {@link #skipRow}'un olaysız eşleniği, takım başına bir kez. */
+    private void stormSkipRow(Long teamId, String trigger, String level, String dedupeKey, String reason) {
+        try {
+            if (deliveryRepo.existsByDedupeKeyAndUsernameAndTeamId(dedupeKey, SYSTEM_USER, teamId)) return;
+            UserPushDelivery d = new UserPushDelivery();
+            d.setTrigger(trigger);
+            d.setDedupeKey(dedupeKey);
+            d.setMonitorType(STORM_MONITOR_TYPE);
+            d.setMonitorName(STORM_MONITOR_NAME);
+            d.setTeamId(teamId);
+            d.setAlertLevel(level);
+            d.setUsername(SYSTEM_USER);
+            d.setDisplayName("(katman kararı)");
+            d.setTitle(titleSetting());
+            d.setStatus(reason);
+            d.setCreatedAt(ISO.format(Instant.now()));
+            deliveryRepo.save(d);
+        } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
     }
 
     /** Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. */
@@ -584,6 +781,7 @@ public class UserPushService {
         d.setAttempts(0);
         d.setError(null);
         d.setHttpStatus(null);
+        d.setNextAttemptAt(null);   // elle yeniden kuyruk = hemen (eski backoff damgası beklenmez)
         d.setBatchId("requeue-" + d.getId() + "-" + System.currentTimeMillis());
         deliveryRepo.save(d);
         worker.execute(this::drainOutbox);
@@ -608,8 +806,8 @@ public class UserPushService {
 
     /**
      * Periyodik ağ süpürmesi: bellekteki backoff timer'ı kaybolduysa (restart) ya da bir tur
-     * istisnayla düştüyse kuyruk burada geri alınır. {@code findTop50ByStatusOrderByIdAsc}
-     * idempotent; kuyruk boşsa tur bedava. Devre kesici açıkken atlanır — cooldown'ı zaten
+     * istisnayla düştüyse kuyruk burada geri alınır. {@code findDuePending} idempotent ve backoff'u
+     * bekleyen satırı ALMAZ (damga satırda); kuyruk boşsa tur bedava. Devre kesici açıkken atlanır — cooldown'ı zaten
      * {@code drainOutbox}'ın kendi {@code schedule}'ı bekliyor, üstüne görev yığmayalım.
      */
     @Scheduled(fixedDelayString = "${site.monitor.userpush.outbox-sweep-ms:60000}",
@@ -622,7 +820,9 @@ public class UserPushService {
     /** PENDING satırları batch bazında gönderir. Tek worker — eşzamanlılık yok. */
     void drainOutbox() {
         try {
-            List<UserPushDelivery> pending = deliveryRepo.findTop50ByStatusOrderByIdAsc("PENDING");
+            // Yalnız ZAMANI GELMİŞ satırlar: fail()'in backoff'u satıra yazılır; süpürme/enqueue/açılış turları
+            // bekleyen retry'ı erken göndermesin (2026-09-28). Yeni satırlar (damgasız) hemen gelir.
+            List<UserPushDelivery> pending = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE);
             if (pending.isEmpty()) return;
             if (circuitOpen()) {   // kuyruktakiler BEKLER (kaybolmaz); cooldown sonunda tekrar bak
                 worker.schedule(this::drainOutbox, Math.max(1,
@@ -643,7 +843,7 @@ public class UserPushService {
             for (UserPushDelivery d : pending) if (d.getId() != null) handled.add(d.getId());
             for (var e : byBatch.entrySet()) sendBatch(e.getValue());
             // Gönderim sürerken YENİ satır birikmiş olabilir — yalnız onlar için bir tur daha bak.
-            boolean freshWork = deliveryRepo.findTop50ByStatusOrderByIdAsc("PENDING").stream()
+            boolean freshWork = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE).stream()
                     .anyMatch(d -> d.getId() == null || !handled.contains(d.getId()));
             if (freshWork) worker.execute(this::drainOutbox);
         } catch (Exception e) {
@@ -670,6 +870,11 @@ public class UserPushService {
         String targetUrl = url();
         if (targetUrl.isBlank()) { fail(rows, null, "URL ayarlanmamış", false); return; }
 
+        // GÖNDERİM hatası ile SONUCU YAZMA hatası AYRI (2026-09-28): eskiden 2xx sonrası saveAll da aynı try'daydı;
+        // kayıt düşünce (ör. 60 karakteri aşan notificationId) catch fail(retryable) çağırıyor, fail()'in kaydı da
+        // aynı alan yüzünden düşüyor, satır PENDING + eski sayaçla kalıp HER süpürmede (dakikada bir) kullanıcıya
+        // yeniden gidiyordu. Yalnız isteğin kendisi başarısızsa yeniden denenir.
+        HttpResponse<java.io.InputStream> resp;
         try {
             HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(targetUrl))
                     .timeout(Duration.ofSeconds(totalTimeout()))
@@ -680,40 +885,73 @@ public class UserPushService {
             // yalnız notificationId (birkaç bayt) ve günlüğe yazılacak ilk MAX_RAW_RESPONSE karakter
             // lazım; tek pod'da sınırsız okuma gereksiz bir OOM yüzeyi. Tavanda kesilen gövde
             // ayrıştırılamazsa notificationId null kalır — gönderim YİNE başarılıdır.
-            HttpResponse<java.io.InputStream> resp =
-                    client().send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
-            // Gövde SÜRE sınırıyla (prod kapısı 2026-09-25, N1): tek iş parçacıklı push worker'ı, başlığı gönderip
-            // gövdeyi bitirmeyen bir API yanıtında SÜRESİZ bekliyor ve tüm push kanalı duruyordu. Süre dolarsa
-            // okunan kısım kullanılır — başarı durum koduyla belli; gövde yalnız notificationId + günlük içindir.
-            String bodyText = new String(com.sitemonitor.util.HttpBodies.readPreview(resp.body(), MAX_RESPONSE_BYTES,
-                    totalTimeout() * 1000L, "Push"), java.nio.charset.StandardCharsets.UTF_8);
-            String raw = bodyText.length() > MAX_RAW_RESPONSE ? bodyText.substring(0, MAX_RAW_RESPONSE) : bodyText;
-
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                consecutiveFailures.set(0);
-                // notificationId — kanıt zinciri: API bu push'a bu numarayı verdi. Ayrıştırılamazsa
-                // gönderim YİNE başarılıdır (SENT + null) — kimlik alınamadı diye FAILED yazılmaz.
-                String notificationId = null;
-                try {
-                    JsonNode n = MAPPER.readTree(bodyText);
-                    if (n.hasNonNull("notificationId")) notificationId = n.get("notificationId").asText();
-                } catch (Exception ignored) { }
-                String sentAt = ISO.format(Instant.now());
-                for (UserPushDelivery d : rows) {
-                    d.setStatus("SENT");
-                    d.setHttpStatus(resp.statusCode());
-                    d.setSentAt(sentAt);
-                    d.setAttempts(d.getAttempts() == null ? 1 : d.getAttempts() + 1);
-                    d.setNotificationId(notificationId);   // tek istek → tek numara, TÜM alt satırlara
-                    d.setRawResponse(raw);
-                }
-                deliveryRepo.saveAll(rows);
-                log.info("user-push gönderildi: {} alıcı (HTTP {})", userIds.size(), resp.statusCode());
-            } else {
-                fail(rows, resp.statusCode(), "HTTP " + resp.statusCode() + " — " + raw, true);
-            }
+            resp = client().send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (Exception e) {
             fail(rows, null, explain(e), true);
+            return;
+        }
+        // Gövde SÜRE sınırıyla (prod kapısı 2026-09-25, N1): tek iş parçacıklı push worker'ı, başlığı gönderip
+        // gövdeyi bitirmeyen bir API yanıtında SÜRESİZ bekliyor ve tüm push kanalı duruyordu. Süre dolarsa
+        // okunan kısım kullanılır — başarı durum koduyla belli; gövde yalnız notificationId + günlük içindir
+        // (okunamaması da sonucu değiştirmez: 2xx geldiyse push gitmiştir, yeniden gönderilmez).
+        String bodyText;
+        try {
+            bodyText = new String(com.sitemonitor.util.HttpBodies.readPreview(resp.body(), MAX_RESPONSE_BYTES,
+                    totalTimeout() * 1000L, "Push"), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            bodyText = "";
+        }
+        String raw = bodyText.length() > MAX_RAW_RESPONSE ? bodyText.substring(0, MAX_RAW_RESPONSE) : bodyText;
+
+        if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
+            consecutiveFailures.set(0);
+            // notificationId — kanıt zinciri: API bu push'a bu numarayı verdi. Ayrıştırılamazsa
+            // gönderim YİNE başarılıdır (SENT + null) — kimlik alınamadı diye FAILED yazılmaz.
+            String notificationId = null;
+            try {
+                JsonNode n = MAPPER.readTree(bodyText);
+                if (n.hasNonNull("notificationId")) notificationId = n.get("notificationId").asText();
+            } catch (Exception ignored) { }
+            // Kolon sınırına kırpılır (rawResponse gibi): uzun kimlik satır kaydını düşürüyordu.
+            if (notificationId != null && notificationId.length() > MAX_NOTIFICATION_ID)
+                notificationId = notificationId.substring(0, MAX_NOTIFICATION_ID);
+            String sentAt = ISO.format(Instant.now());
+            for (UserPushDelivery d : rows) {
+                d.setStatus("SENT");
+                d.setHttpStatus(resp.statusCode());
+                d.setSentAt(sentAt);
+                d.setAttempts(d.getAttempts() == null ? 1 : d.getAttempts() + 1);
+                d.setNextAttemptAt(null);
+                d.setNotificationId(notificationId);   // tek istek → tek numara, TÜM alt satırlara
+                d.setRawResponse(raw);
+            }
+            saveOutcome(rows);
+            log.info("user-push gönderildi: {} alıcı (HTTP {})", userIds.size(), resp.statusCode());
+        } else {
+            fail(rows, resp.statusCode(), "HTTP " + resp.statusCode() + " — " + raw, true);
+        }
+    }
+
+    /**
+     * Gönderim sonucunu yazar; tam kayıt DÜŞERSE durum/sayaç/zamanlar dar güncellemeyle yine yazılır
+     * ({@code updateOutcome} — kimlik/ham yanıt gibi sorunlu olabilecek alanlara dokunmaz). SENT satırı
+     * PENDING kalıp yeniden gönderilmesin, başarısız satırın deneme sayacı da ilerlesin diye (2026-09-28).
+     */
+    private void saveOutcome(List<UserPushDelivery> rows) {
+        try {
+            deliveryRepo.saveAll(rows);
+        } catch (Exception e) {
+            log.warn("user-push sonucu tam kaydedilemedi ({} satır) — durum dar güncellemeyle yazılıyor: {}",
+                    rows.size(), e.toString());
+            for (UserPushDelivery d : rows) {
+                if (d.getId() == null) continue;
+                try {
+                    deliveryRepo.updateOutcome(d.getId(), d.getStatus(), d.getAttempts(), d.getHttpStatus(),
+                            d.getError(), d.getSentAt(), d.getNextAttemptAt());
+                } catch (Exception ex) {
+                    log.warn("user-push satır #{} durumu yazılamadı: {}", d.getId(), ex.toString());
+                }
+            }
         }
     }
 
@@ -748,6 +986,8 @@ public class UserPushService {
                     failures, circuitCooldownSec());
         }
         List<Integer> backoff = backoffSeconds();
+        Instant now = Instant.now();
+        long minDelay = Long.MAX_VALUE;
         for (UserPushDelivery d : rows) {
             int attempts = (d.getAttempts() == null ? 0 : d.getAttempts()) + 1;
             d.setAttempts(attempts);
@@ -755,17 +995,19 @@ public class UserPushService {
             d.setError(error != null && error.length() > 500 ? error.substring(0, 500) : error);
             if (retryable && attempts <= retryMax()) {
                 d.setStatus("PENDING");   // kuyrukta kalır; backoff sonrası yeniden denenir
+                int delay = backoff.get(Math.min(Math.max(0, attempts - 1), backoff.size() - 1));
+                // Backoff SATIRA yazılır: tarama (findDuePending) bu damgadan önce satırı almaz. Eskiden yalnız
+                // bellekteki timer vardı; 60 sn süpürmesi / her yeni kuyruk satırı retry'ı hemen yeniden gönderiyor,
+                // ~2 dk'lık bir API kesintisi o penceredeki HER push'u kalıcı FAILED yapıyordu (2026-09-28).
+                d.setNextAttemptAt(ISO.format(now.plusSeconds(delay)));
+                minDelay = Math.min(minDelay, delay);
             } else {
                 d.setStatus("FAILED");
+                d.setNextAttemptAt(null);
             }
         }
-        deliveryRepo.saveAll(rows);
-        boolean willRetry = rows.stream().anyMatch(d -> "PENDING".equals(d.getStatus()));
-        if (willRetry) {
-            int attempt = rows.get(0).getAttempts();
-            int delay = backoff.get(Math.min(Math.max(0, attempt - 1), backoff.size() - 1));
-            worker.schedule(this::drainOutbox, delay, TimeUnit.SECONDS);
-        }
+        saveOutcome(rows);
+        if (minDelay != Long.MAX_VALUE) worker.schedule(this::drainOutbox, minDelay, TimeUnit.SECONDS);
         log.warn("user-push gönderilemedi ({} alıcı): {}", rows.size(), error);
     }
 
@@ -838,22 +1080,38 @@ public class UserPushService {
 
     /** E2 sessiz saatler: pencere içinde yalnız min seviye ve üstü geçer. */
     boolean quietHoursBlock(String level) {
+        QuietWindow w = quietWindow();
+        return w != null && w.contains(LocalTime.now(ZONE)) && w.blocks(level);
+    }
+
+    /**
+     * Sessiz saat penceresi — gönderim ({@link #quietHoursBlock}) ve senaryo ({@link #scenarioChannel}) ortak okur.
+     * Boş, bozuk ya da sıfır uzunluklu ayar = pencere YOK ({@code null}): bozuk ayar bildirimi ENGELLEMESİN.
+     */
+    record QuietWindow(LocalTime start, LocalTime end, String minLevel) {
+        boolean contains(LocalTime now) {
+            return start.isBefore(end) ? (!now.isBefore(start) && now.isBefore(end))
+                    : (!now.isBefore(start) || now.isBefore(end));   // gece devrilen pencere (22:00-07:00)
+        }
+        /** Pencere içindeyken bu seviye susturulur mu (asgari seviyenin altında mı). */
+        boolean blocks(String level) {
+            return UserPushRecipientResolver.levelValue(level) < UserPushRecipientResolver.levelValue(minLevel);
+        }
+    }
+
+    QuietWindow quietWindow() {
         String start = appSettings.getString("site.monitor.userpush.quiet-start", "");
         String end = appSettings.getString("site.monitor.userpush.quiet-end", "");
-        if (start.isBlank() || end.isBlank()) return false;
+        if (start == null || end == null || start.isBlank() || end.isBlank()) return null;
         try {
             LocalTime s = LocalTime.parse(start), e = LocalTime.parse(end);
             // Y20: start == end (ör. "22:00"-"22:00") gece-devrilen dalda (!before(s) || before(e))
             // totolojiye dönüp 24 saat susturuyordu; sıfır uzunluklu pencere = pencere YOK.
-            if (s.equals(e)) return false;
-            LocalTime now = LocalTime.now(ZONE);
-            boolean inWindow = s.isBefore(e) ? (!now.isBefore(s) && now.isBefore(e))
-                    : (!now.isBefore(s) || now.isBefore(e));   // gece devrilen pencere (22:00-07:00)
-            if (!inWindow) return false;
-            String min = appSettings.getString("site.monitor.userpush.quiet-min-level", "CRITICAL");
-            return UserPushRecipientResolver.levelValue(level) < UserPushRecipientResolver.levelValue(min);
+            if (s.equals(e)) return null;
+            // Ham değer (boş dize → levelValue 1 → hiçbir seviye susturulmaz) — gönderimin eski davranışı birebir.
+            return new QuietWindow(s, e, appSettings.getString("site.monitor.userpush.quiet-min-level", "CRITICAL"));
         } catch (Exception ex) {
-            return false;   // bozuk pencere ayarı bildirimi ENGELLEMESİN
+            return null;   // bozuk pencere ayarı bildirimi ENGELLEMESİN
         }
     }
 

@@ -12,7 +12,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetClose } from '@/components/shadcn/sheet'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
-import { IssueStatusBadge, SourceBadge, CategoryBadge } from './IssueBadges.jsx'
+import { IssueStatusBadge, SourceBadge, CategoryBadge, ImpactChips } from './IssueBadges.jsx'
 import { IssueStepper, IssueConversation, IssueComposer } from './IssueThread.jsx'
 import { IssueStatusActions, IssueTechDetails, IssueMailHistory } from './IssueAdminPanel.jsx'
 import ImageLightbox from './ImageLightbox.jsx'
@@ -235,6 +235,13 @@ export default function IssueDetailSheet({ id, source = 'mine', onClose, onChang
                 <Card data-slot="issue-description" className="gap-0 px-4 py-3">
                   <p className="m-0 text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">{d.message}</p>
                 </Card>
+                {/* "Ne yaşıyorsunuz?" (2026-09-28): seçilen etkiler tam cümleyle; "Diğer" metni çipte */}
+                {Array.isArray(d.impacts) && d.impacts.length > 0 && (
+                  <div data-slot="issue-detail-impacts" className="flex min-w-0 flex-col gap-1.5">
+                    <span className="text-xs font-semibold text-muted-foreground">{t('issues.impacts')}</span>
+                    <ImpactChips row={d} />
+                  </div>
+                )}
                 {d.errorText && (
                   <div className="min-w-0 overflow-hidden rounded-lg border bg-muted/40">
                     <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">

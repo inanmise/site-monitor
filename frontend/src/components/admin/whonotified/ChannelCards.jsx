@@ -3,7 +3,6 @@ import { Mail, Users, Webhook, BellRing } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
 import HintPopover from '../../ui/HintPopover.jsx'
-import AlertBanner from '../../ui/AlertBanner.jsx'
 import { avatarBg, initialsOf } from '../../ui/UserBadge.jsx'
 import ToneBadge, { DecisionBadge, OrgRoleBadge } from '../ToneBadge.jsx'
 import { Avatar, AvatarFallback } from '@/components/shadcn/avatar'
@@ -11,7 +10,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
-import { LEVEL_DOT } from './whoNotifiedModel.js'
+import { LEVEL_DOT, pushReasonText } from './whoNotifiedModel.js'
 
 /**
  * "Kim bilgilendirilir?" kanal kartları — e-posta / push / webhook alıcıları ve "bilgilendirilmeyenler".
@@ -57,10 +56,10 @@ export function PersonAvatar({ name, ident, icon: Icon }) {
   )
 }
 
-/** Satır — shadcn Item; `role="listitem"` (ItemGroup `role="list"`). */
-function RecipientItem({ source, media, title, badges, description, mono = true, extra, actions }) {
+/** Satır — shadcn Item; `role="listitem"` (ItemGroup `role="list"`). Ek `data-*` kancaları köke geçer. */
+export function RecipientItem({ source, media, title, badges, description, mono = true, extra, actions, ...rest }) {
   return (
-    <Item role="listitem" size="sm" variant="outline" data-slot="wn-recipient" data-source={source}
+    <Item role="listitem" size="sm" variant="outline" data-slot="wn-recipient" data-source={source} {...rest}
       className="flex-nowrap items-start gap-3 px-3 py-2.5">
       <ItemMedia>{media}</ItemMedia>
       <ItemContent className="min-w-0 gap-1">
@@ -148,49 +147,7 @@ export function EmailCard({ view, level, cardRef }) {
   )
 }
 
-export function PushCard({ view, cardRef }) {
-  const t = useT()
-  const { push } = view
-  const groupLabel = (g) => {
-    if (!g) return '—'
-    const key = `userpush.group.${g}`
-    const v = t(key)
-    return v === key ? g : v
-  }
-  return (
-    <ChannelCard ref={cardRef} channel="push" icon={BellRing} title={t('sim.pushTitle')}
-      count={push.available ? view.counts.push : null} description={t('wn.pushCardDesc')}>
-      {!push.available ? (
-        push.error
-          ? <AlertBanner tone="danger" className="mb-0">{t('wn.pushError', push.error)}</AlertBanner>
-          : <p className="px-1 py-2 text-sm text-muted-foreground">{t('wn.pushAdminOnly')}</p>
-      ) : push.recipients.length === 0 ? none(t) : (
-        <ItemGroup className="gap-2">
-          {push.recipients.map((p) => (
-            <RecipientItem key={p.key} source="push"
-              media={<PersonAvatar name={p.name} ident={p.username} />}
-              title={p.name}
-              badges={<>
-                <HintPopover content={t('wn.why.push', groupLabel(p.group), p.minLevel ? t(`sim.level.${p.minLevel}`) : '—')}
-                  aria-label={t('wn.whyAria', t('userpush.decision.RECIPIENT'), p.name)} triggerClassName="pointer-coarse:min-h-10">
-                  <DecisionBadge decision="RECIPIENT">{t('userpush.decision.RECIPIENT')}</DecisionBadge>
-                </HintPopover>
-                {p.orgRole && <OrgRoleBadge role={p.orgRole}>{t(`usr.orgRoleVal.${p.orgRole}`)}</OrgRoleBadge>}
-              </>}
-              description={p.username}
-              extra={p.group && (
-                <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  {t('wn.pushGroup', groupLabel(p.group))}
-                  {p.minLevel && <LevelBadge level={p.minLevel} prefix="≥ " className="h-5 text-[11px]" />}
-                </p>
-              )}
-            />
-          ))}
-        </ItemGroup>
-      )}
-    </ChannelCard>
-  )
-}
+// Push kartı: ./PushDecisions.jsx (2026-09-28 — alanlar VE almayanlar, görünürlük, sonraki adımlar).
 
 const WEBHOOK_TYPE = { TEAMS: 'Microsoft Teams', SLACK: 'Slack' }
 
@@ -223,11 +180,7 @@ export function WebhookCard({ view, cardRef, className }) {
 /** Bilgilendirilmeyenler — değerlendirilip elenen kişiler ve gerekçesi (push kararı / e-posta adresi yok). */
 export function ExcludedList({ view }) {
   const t = useT()
-  const reasonText = (code) => {
-    const key = code === 'NO_EMAIL' ? 'wn.reason.NO_EMAIL' : `userpush.decision.${code}`
-    const v = t(key)
-    return v === key ? code : v
-  }
+  const reasonText = (code) => (code === 'NO_EMAIL' ? t('wn.reason.NO_EMAIL') : pushReasonText(t, code))
   if (view.excluded.length === 0) {
     return <p className="px-1 py-2 text-sm text-muted-foreground">{t('wn.excludedNone')}</p>
   }

@@ -16,8 +16,9 @@ import org.springframework.stereotype.Service;
  * sertifika detay penceresinin okuma uçları, Durum İzleme özeti + geçmişi). Yazma kapıları
  * ({@code requireInventoryWriter}, {@code requireTeamScopedAdmin}, {@code canManage}, anlık kontrol
  * için özgün {@code canView}) bu sınıfı HİÇ çağırmaz — dolayısıyla ayar açıkken de başka takımın
- * kaydına yazma yolu açılmaz. Pano, izleme sayfaları, alarmlar, olaylar ve bildirimler takım
- * kapsamlı kalır.
+ * kaydına yazma yolu açılmaz. Pano, izleme sayfaları, alarmlar ve bildirimler takım kapsamlı kalır;
+ * Olaylar ekranının org geneli salt okunur görünürlüğü AYRI bir ayardır
+ * ({@code site.monitor.incidents.visible-to-all}, IncidentsController — 2026-09-28).
  *
  * <p>Ayar {@code site.monitor.inventory.visible-to-all} canlı okunur (Genel Ayarlar, yalnız global
  * yönetici değiştirir — {@code AppSettingsCatalog.GLOBAL_ONLY}). Kapalıyken {@code scope=all}

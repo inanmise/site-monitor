@@ -108,11 +108,16 @@ export function buildPayload(f, options) {
 }
 
 /** "Tüm monitörler" — shadcn Checkbox + bağlı etiket. */
-export function AllMonitorsCheckbox({ checked, onChange, label }) {
-  const id = useId()
+/**
+ * "Tüm izlemeler" (2026-09-28): sunucu yalnız global yöneticiye izin verir (MaintenanceController). Global olmayana kutu
+ * hiç gösterilmez; mevcut bir tüm-izlemeler penceresinde durum görünsün diye işaretli ama KİLİTLİ çizilir.
+ */
+export function AllMonitorsCheckbox({ checked, onChange, label, allowed = true }) {
+  const id = useId()   // hook erken return'den ÖNCE
+  if (!allowed && !checked) return null
   return (
     <div className="flex items-center gap-2">
-      <Checkbox id={id} checked={!!checked} onCheckedChange={(v) => onChange(v === true)} />
+      <Checkbox id={id} checked={!!checked} disabled={!allowed} onCheckedChange={(v) => onChange(v === true)} />
       <Label htmlFor={id} className="cursor-pointer font-normal">{label}</Label>
     </div>
   )
@@ -153,7 +158,7 @@ export function DurationPicker({ minutes, onChange, error, label }) {
  * ayın günü, ilk oluşum + süre). Canlı özet: düz sözcüklerle zamanlama + sıradaki oluşum + durum önizlemesi.
  * `onSave(payload)` API sonucunu döner; başarısızsa hata burada gösterilir, pencere açık kalır.
  */
-export default function MaintenanceEditor({ open, mode, initial, monitorOptions, saving, onSave, onClose }) {
+export default function MaintenanceEditor({ open, mode, initial, monitorOptions, saving, onSave, onClose, canAllMonitors = true }) {
   const t = useT()
   const { sentence, dateTimeOf } = useScheduleText()
   const [form, setForm] = useState(EMPTY_FORM)
@@ -232,7 +237,7 @@ export default function MaintenanceEditor({ open, mode, initial, monitorOptions,
         <fieldset data-slot="mw-targets" className="mb-3.5 flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3.5 py-3 sm:col-span-2"
           aria-invalid={errors.targets ? true : undefined}>
           <legend className="px-1 text-[0.9em] font-bold">{t('mw.monitorsTitle')}</legend>
-          <AllMonitorsCheckbox checked={form.allMonitors} label={t('mw.allMonitorsOpt')} onChange={(v) => set({ allMonitors: v })} />
+          <AllMonitorsCheckbox checked={form.allMonitors} allowed={canAllMonitors} label={t('mw.allMonitorsOpt')} onChange={(v) => set({ allMonitors: v })} />
           {!form.allMonitors && (
             // Önce tür, sonra o türün monitörleri (2026-09-17): düz liste hangi türü durdurduğunu göstermiyordu.
             <MaintenanceTargetPicker options={monitorOptions} value={form.targets}

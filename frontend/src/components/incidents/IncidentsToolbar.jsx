@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Search, SlidersHorizontal, X, FilterX } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import DateTimeField from '../ui/DateTimeField.jsx'
@@ -13,6 +13,8 @@ import { statusOf, activeFilters, SEVERITY_ORDER, severityMeta } from './inciden
 
 /** Seçicilerin ortak kabı: NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için `*:w-full`. */
 const SEL = 'w-full *:w-full sm:w-auto'
+/** Yazarken arama bu kadar duraklamadan sonra uygulanır (her tuşta istek yok); Enter / odak kaybı hemen uygular. */
+export const SEARCH_DEBOUNCE_MS = 250
 
 /**
  * Süzgeç araç çubuğu — masaüstünde tek sarılan satır; telefonda arama + "Süzgeçler" düğmesi (alt Sheet).
@@ -21,15 +23,36 @@ const SEL = 'w-full *:w-full sm:w-auto'
  *
  * Sunucu yalnız durum / kök neden / arama / tarih süzer; önem ve takım YÜKLENEN SAYFAYA uygulanır — bunu
  * sayfa gövdesindeki not söyler (`incov.pageFacetNote`), araç çubuğu ayrım yapmadan aynı görünümde sunar.
+ *
+ * <p>`busy`: yavaş yüklemede (sayfa ~180 ms geciktirir) süzgeç satırının sonunda duran küçük Spinner — sonuçlar yerinde
+ * soluk kalır, satır yüksekliği değişmez. Arama yazarken 250 ms duraklamada uygulanır (Enter / odak kaybı hemen).
  */
-export default function IncidentsToolbar({ filters, patch, reset, typeCounts, total, teams, phone, labelsFor }) {
+export default function IncidentsToolbar({ filters, patch, reset, typeCounts, total, teams, phone, labelsFor, busy = null }) {
   const t = useT()
   const [sheetOpen, setSheetOpen] = useState(false)
   // Arama kutusu kontrollü: dış süzgeç (çip ×, Temizle, URL) değişince taslak da onu izler — ref gerekmez
   // (InputGroupInput forwardRef DEĞİL; ref verilse düşer). Uygulama Enter / odak kaybında (her tuşta istek yok).
   const [draft, setDraft] = useState(filters.q)
-  useEffect(() => { setDraft(filters.q) }, [filters.q])
-  const applySearch = () => { const v = draft.trim(); if (v !== filters.q) patch({ q: v }) }
+  // Kutunun UYGULADIĞI son değer: dışarıdan gelen değişim (çip ×, Temizle, URL) taslağı eşitler; kutunun kendi
+  // (gecikmeli) uygulaması eşitlemez — yoksa yazarken sondaki boşluk silinir, imleç zıplardı.
+  const appliedRef = useRef(filters.q)
+  useEffect(() => {
+    if (filters.q !== appliedRef.current) { appliedRef.current = filters.q; setDraft(filters.q) }
+  }, [filters.q])
+  // Yazarken gecikmeli uygulama — tek zamanlayıcı, son değer kazanır; Enter/odak kaybı bekleyeni iptal edip hemen uygular.
+  const searchTimer = useRef(null)
+  useEffect(() => () => clearTimeout(searchTimer.current), [])
+  const commitSearch = (value) => {
+    const v = value.trim()
+    appliedRef.current = v
+    patch({ q: v })   // sayfa aynı değeri yenilemez (patchFilters eşitlikte durum döndürür) — çift istek yok
+  }
+  const applySearch = () => { clearTimeout(searchTimer.current); commitSearch(draft) }
+  const onDraft = (value) => {
+    setDraft(value)
+    clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => commitSearch(value), SEARCH_DEBOUNCE_MS)
+  }
   const active = activeFilters(filters)
   const status = statusOf(filters.stat)
   const pills = Object.entries(typeCounts || {}).sort((a, b) => b[1] - a[1])
@@ -72,19 +95,26 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
   const search = (
     <InputGroup className="w-full sm:w-64">
       <InputGroupInput type="search" placeholder={t('incov.searchPlaceholder')} aria-label={t('incov.searchPlaceholder')}
-        value={draft} onChange={(e) => setDraft(e.target.value)}
+        value={draft} onChange={(e) => onDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applySearch() } }}
-        onBlur={applySearch} />
+        onBlur={() => applySearch()} />
       <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
     </InputGroup>
   )
-  const clearAll = () => { setDraft(''); reset() }
+  const clearAll = () => { clearTimeout(searchTimer.current); setDraft(''); reset() }
+  // Yükleme göstergesinin yeri HEP ayrılı (16 px): Spinner belirip kaybolurken satır sarmaz, içerik zıplamaz.
+  const busySlot = (
+    <span className="inline-flex size-4 shrink-0 items-center justify-center">
+      {busy && <span data-slot="incidents-busy" className="inline-flex">{busy}</span>}
+    </span>
+  )
 
   return (
     <div data-slot="incidents-toolbar" className="flex min-w-0 flex-col gap-2">
       {phone ? (
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">{search}</div>
+          {busySlot}
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
             <Button type="button" variant="outline" className="h-10 shrink-0 gap-1.5" onClick={() => setSheetOpen(true)}
               aria-label={t('incov.filters')} aria-expanded={sheetOpen}>
@@ -118,10 +148,10 @@ export default function IncidentsToolbar({ filters, patch, reset, typeCounts, to
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
+          {/* "Süzgeçleri temizle" burada TEKRARLANMAZ (etkin çip satırında var): süzgeç seçilince satır sarıp kartları
+              aşağı itiyordu (1280 ölçümü, titreme bildirimi 2026-09-28). */}
           {statusSelect}{severitySelect}{teamSelect}{search}{dates}
-          {active.length > 0 && (
-            <Button type="button" variant="secondary" size="sm" onClick={clearAll}><FilterX aria-hidden="true" />{t('incov.clearFilters')}</Button>
-          )}
+          {busySlot}
         </div>
       )}
 

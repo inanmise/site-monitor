@@ -42,12 +42,18 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       // olmayan detay penceresi (Uptime) kabuğun i18n'li X'ini kullanır.
       hideClose={Boolean(actions)}
       size="lg"
+      // SABİT BOYUT (2026-09-28, kullanıcı: "Domain kaydı → Alarm geçmişi sekmesine geçince pencere küçülüyor,
+      // değişiyor, titriyor"): kutu yüksekliği sekme içeriğine göre değişiyor, dikey ortalı pencere her değişimde
+      // yeniden konumlanıyordu (yükleniyor → liste geçişinde iki kez). Artık geniş ekranda sabit yükseklik, başlık +
+      // eylemler sabit, YALNIZ gövde kayar (`scrollBody`); kaydırma çubuğu için yer ayrılır (genişlik oynamaz).
+      scrollBody
       data-status={status}
       // Telefonda başlık satırı SARAR: eylem grubu (dokunmatikte 40 px düğmeler) başlığı sıfıra ezmesin, kendi
       // satırına sağa yaslı insin. Geniş ekranda eski düzen (tek satır, uzun başlık kırpılır).
       // `grid-cols-[minmax(0,1fr)]`: Dialog kutusu bir ızgara; `auto` sütun en uzun kırılmaz metne (uzun başlık) göre
       // genişleyip pencereyi telefonda ekrandan taşırıyordu (Sentetik detayı 439 px, 2026-09-26 responsive ölçümü).
-      className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(960px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap', className)}
+      className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(960px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
+        'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', className)}
       title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
       headerExtra={(actions || nocNotify) ? <>
         {nocNotify && <NocBadge />}

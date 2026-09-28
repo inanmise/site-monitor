@@ -4,7 +4,9 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
-import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
+import { flushUrlQuerySync, readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
+import { DEEP_OPEN } from '../utils/monitorDeepLink.js'
+import { useCopyLink } from '../components/ui/CopyLinkButton.jsx'
 import { usePagination } from '../hooks/usePagination.js'
 import PageHeader from '../components/ui/PageHeader.jsx'
 import AlertBanner from '../components/ui/AlertBanner.jsx'
@@ -20,7 +22,7 @@ import NocTypeCoverage from '../components/noc/NocTypeCoverage.jsx'
 import NocCallListCard from '../components/noc/NocCallListCard.jsx'
 import { typeLabel } from '../components/noc/nocUi.jsx'
 import {
-  BULK_SKIP_REASONS, NOC_LEVELS, NOC_REASONS, NOC_TYPES, STATUS_KEYS, applyFilters, canEditCallList, canEditItem, itemKey,
+  BULK_SKIP_REASONS, NOC_LEVELS, NOC_REASONS, NOC_TYPES, STATUS_KEYS, applyFilters, canEditCallList, canEditItem, deepLinkOf, itemKey,
   openTargetOf, reasonOptions, sortItems, summarize, summarizeSkipped, teamOptions, typeOptions, unwrap, withNotify,
 } from '../components/noc/nocModel.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -41,6 +43,11 @@ import { useElementWidth } from './forecast/forecastUi.jsx'
  * `n_type`, neden `n_reason`) → liste (geniş kapta tablo, dar kapta kart; sayfalama `n_page`/`n_ps`) + toplu
  * "Seçilenleri bildir" → takım arama listesi (`n_ct`). URL önekleri `n_` (PAGE_STATE_PREFIXES) — uygulamanın
  * `tab`/`domain`/`monitor`/`incident` anahtarlarına dokunulmaz.
+ *
+ * <p>İzlemeye git (2026-09-28): satır adı ve "İzlemeyi aç" ikonu GERÇEK bağlantı (nocModel.deepLinkOf) — kartına
+ * tıklamakla aynı pencere (9 tür `?tab=<tür>&monitor=<id>`, SSL `?tab=dashboard&domain=<d>&open=cert`). Düz tık uygulama
+ * içinde gezinir (Geri buraya süzgeçleriyle döner), Ctrl/⌘/orta tık yeni sekme. "…" menüsü: bağlantıyı kopyala ·
+ * 7/24 ayarını düzenle (`open=noc`: form 7/24 alanına kaydırılmış) · bildirimi kapat.
  *
  * <p>Tek tık / toplu açma İYİMSER: satır hemen "kapsanıyor" görünür, sunucu satırı gelince onunla değişir; hata ya da
  * atlanan satır eski hâline döner (geri alma). Yarış koruması: `loadSeq` — hızlı yeniden yüklemede eski yanıt yenisini,
@@ -74,6 +81,7 @@ export default function NocCoveragePage({
 }) {
   const t = useT()
   const toast = useToast()
+  const copyLink = useCopyLink()
   const isMobile = useIsMobile()
   const dir = useTeamDirectory()
   const [listWidth, listRef] = useElementWidth()
@@ -229,9 +237,21 @@ export default function NocCoveragePage({
     }
   }
 
+  // İzlemeye git (2026-09-28): kartına tıklamakla aynı pencere. Gitmeden ÖNCE bekleyen süzgeç yazımı (300 ms debounce)
+  // bu geçmiş kaydına işlenir — Geri kapsam sayfasına süzgeçleriyle döner (sekme geçişi sayfayı söker, bekleyen yazım
+  // iptal olurdu). navigateTo → App.handleTabChange yeni geçmiş kaydı AÇAR (pushState).
+  const go = (it, opts) => {
+    const target = openTargetOf(it, opts)
+    if (!target) return
+    flushUrlQuerySync()
+    navigateTo(target.tab, target.params)
+  }
   const h = {
     canEdit,
-    onOpen: (it) => { const target = openTargetOf(it); if (target) navigateTo(target.tab, target.params) },
+    hrefOf: (it) => deepLinkOf(it),
+    onOpen: (it) => go(it),
+    onEditNoc: (it) => go(it, { action: DEEP_OPEN.NOC }),
+    onCopyLink: (it) => copyLink(deepLinkOf(it)),
     onEnable: (it) => setNotify(it, true),
     onDisable: (it) => setNotify(it, false),
     onToggle: (key) => setSelected((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n }),

@@ -690,44 +690,136 @@ describe('AlertHistory — "neden hâlâ açık?" çipleri (2026-09-12, #16)', (
 })
 
 /**
- * EYLEMLER — sahiplen / çöz GEREKÇE ister (AlertActionNote): not penceresi, en az 3 kelime, sunucuya not gider.
+ * EYLEMLER — sahiplen / çöz GEREKÇE ister (AlertActionNote): gerekçeli pencere (incidents/ActionNoteDialog), en az 3
+ * kelime, sunucuya not gider. Sunucu hatası pencerede SATIR İÇİ kalır (pencere kapanmaz, not kaybolmaz, tost yok).
  */
 describe('AlertHistory — açık kart eylemleri (gerekçeli)', () => {
   const open = { ...closedAlert, id: 55, resolved: false, acknowledged: false, alert_type: 'HTTP_DOWN', domain: 'act.example.com' }
+  const NOTE = 'bilinen sorun takip ediliyor şimdi'
 
   beforeEach(() => {
     vi.clearAllMocks()
     api.admin.getAlerts.mockResolvedValue({ success: true, data: [open], total: 1, page: 0, size: 20 })
     api.admin.acknowledgeAlert.mockResolvedValue({ success: true, data: { ...open, acknowledged: true, acknowledged_by: 'ops' } })
     api.admin.resolveAlert.mockResolvedValue({ success: true, data: { ...open, resolved: true } })
+    api.admin.bulkAlertAction.mockResolvedValue({ success: true, data: { processed: 2, skipped: 0, failed: 0 } })
   })
 
-  async function fillNoteAndConfirm(confirmName) {
+  async function fillNoteAndConfirm(confirmName, note = NOTE) {
     const dlg = await screen.findByRole('dialog')
-    const note = within(dlg).getByRole('textbox')
-    expect(within(dlg).getByRole('button', { name: confirmName })).toBeDisabled()   // not yazılmadan onay YOK
-    fireEvent.change(note, { target: { value: 'bilinen sorun takip ediliyor şimdi' } })
+    const box = within(dlg).getByRole('textbox', { name: /^Reason/ })
+    // Not yazılmadan gönderim sunucuya GİTMEZ — eksikler kırmızıya döner
     fireEvent.click(within(dlg).getByRole('button', { name: confirmName }))
+    expect([...dlg.querySelectorAll('[data-slot="action-note-rule"]')].map((r) => r.getAttribute('data-state'))).toEqual(['error', 'error'])
+    fireEvent.change(box, { target: { value: note } })
+    fireEvent.click(within(dlg).getByRole('button', { name: confirmName }))
+    return dlg
   }
 
-  it('Onayla → gerekçe penceresi → acknowledgeAlert(id, not)', async () => {
+  it('Onayla → gerekçeli pencere (alarm bağlamı) → acknowledgeAlert(id, not) → pencere kapanır', async () => {
     render(<AlertHistory />)
     fireEvent.click(await screen.findByRole('button', { name: /act\.example\.com.*— Acknowledge$/ }))
-    await fillNoteAndConfirm(/^Acknowledge$/)
-    await waitFor(() => expect(api.admin.acknowledgeAlert).toHaveBeenCalledWith(55, 'bilinen sorun takip ediliyor şimdi'))
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveAccessibleName('Acknowledge alert')
+    expect(dlg.querySelector('[data-slot="action-note-target"]')).toHaveTextContent('act.example.com')
+    await fillNoteAndConfirm('Take ownership')
+    await waitFor(() => expect(api.admin.acknowledgeAlert).toHaveBeenCalledWith(55, NOTE))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.admin.acknowledgeAlert).toHaveBeenCalledTimes(1)
   })
 
-  it('Çöz → gerekçe penceresi → resolveAlert(id, not); iptal edilirse istek GİTMEZ', async () => {
+  it('Çöz → gerekçeli pencere → resolveAlert(id, not); iptal edilirse istek GİTMEZ', async () => {
     render(<AlertHistory />)
     fireEvent.click(await screen.findByRole('button', { name: /act\.example\.com.*— Resolve$/ }))
     const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveAccessibleName('Resolve alert')
     fireEvent.click(within(dlg).getByRole('button', { name: /Cancel|İptal/ }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(api.admin.resolveAlert).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: /act\.example\.com.*— Resolve$/ }))
-    await fillNoteAndConfirm(/^Close$/)
-    await waitFor(() => expect(api.admin.resolveAlert).toHaveBeenCalledWith(55, 'bilinen sorun takip ediliyor şimdi'))
+    await fillNoteAndConfirm('Mark as resolved')
+    await waitFor(() => expect(api.admin.resolveAlert).toHaveBeenCalledWith(55, NOTE))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('sunucu reddederse (403) hata PENCEREDE: açık kalır, not duruyor; düzeltip yeniden denenince gider', async () => {
+    api.admin.acknowledgeAlert
+      .mockResolvedValueOnce({ success: false, error: 'Bu alarm başka bir takıma ait' })
+      .mockResolvedValueOnce({ success: true, data: { ...open, acknowledged: true } })
+    render(<AlertHistory />)
+    fireEvent.click(await screen.findByRole('button', { name: /act\.example\.com.*— Acknowledge$/ }))
+    const dlg = await fillNoteAndConfirm('Take ownership')
+    expect(await within(dlg).findByRole('alert')).toHaveTextContent('Bu alarm başka bir takıma ait')
+    expect(screen.getByRole('dialog')).toBe(dlg)
+    expect(within(dlg).getByRole('textbox', { name: /^Reason/ })).toHaveValue(NOTE)
+    expect(screen.getAllByText('Bu alarm başka bir takıma ait')).toHaveLength(1)   // ayrıca tost YOK
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Take ownership' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(api.admin.acknowledgeAlert).toHaveBeenCalledTimes(2)
+  })
+
+  it('toplu sahiplen: seçilenlerin özeti (sayı + önem) → bulkAlertAction(acknowledge, ids, not); seçim temizlenir', async () => {
+    const second = { ...open, id: 56, domain: 'act2.example.com', alert_level: 'WARNING' }
+    api.admin.getAlerts.mockResolvedValue({ success: true, data: [open, second], total: 2, page: 0, size: 20 })
+    render(<AlertHistory />)
+    await screen.findByText('act2.example.com')
+    fireEvent.click(screen.getByRole('checkbox', { name: /act\.example\.com.*select this alert/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /act2\.example\.com.*select this alert/i }))
+    fireEvent.click(within(await screen.findByTestId('alh-bulk-actions')).getByRole('button', { name: /^Acknowledge$/ }))
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveAccessibleName('Acknowledge 2 alerts')
+    expect(within(dlg).getByText('2 alerts selected')).toBeInTheDocument()
+    expect([...dlg.querySelectorAll('[data-slot="action-note-mix"]')].map((m) => m.getAttribute('data-level'))).toEqual(['CRITICAL', 'WARNING'])
+    await fillNoteAndConfirm('Acknowledge 2 alerts')
+    await waitFor(() => expect(api.admin.bulkAlertAction).toHaveBeenCalledWith('acknowledge', [55, 56], NOTE))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('alh-bulk-actions')).toBeNull())
+  })
+
+  it('toplu çöz: aynı pencere çöz tonunda → bulkAlertAction(resolve, ids, not); sunucu hatası pencerede kalır', async () => {
+    const second = { ...open, id: 56, domain: 'act2.example.com' }
+    api.admin.getAlerts.mockResolvedValue({ success: true, data: [open, second], total: 2, page: 0, size: 20 })
+    api.admin.bulkAlertAction.mockResolvedValueOnce({ success: false, error: 'Gerekçe notu zorunlu' })
+    render(<AlertHistory />)
+    await screen.findByText('act2.example.com')
+    fireEvent.click(screen.getByRole('checkbox', { name: /act\.example\.com.*select this alert/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /act2\.example\.com.*select this alert/i }))
+    fireEvent.click(within(await screen.findByTestId('alh-bulk-actions')).getByRole('button', { name: /^Resolve$/ }))
+    const dlg = await fillNoteAndConfirm('Resolve 2 alerts')
+    expect(dlg).toHaveAttribute('data-action', 'resolve')
+    await waitFor(() => expect(api.admin.bulkAlertAction).toHaveBeenCalledWith('resolve', [55, 56], NOTE))
+    expect(await within(dlg).findByRole('alert')).toHaveTextContent('Gerekçe notu zorunlu')
+    expect(screen.getByTestId('alh-bulk-actions')).toBeInTheDocument()        // seçim korunur
+  })
+
+  // Regresyon taraması FE2: A+B seçiliyken A karttan çözülünce liste yenilenir ama seçim sıfırlanmıyordu → toplu "Çöz"
+  // penceresi yalnız B'yi gösterip [A,B] gönderiyor, kullanıcı "1 başarısız" tostu görüyordu.
+  it('karttan tekli çöz sonrası seçim listede KALANLARA budanır; toplu çöz yalnız pencerenin gösterdiğini gönderir', async () => {
+    const second = { ...open, id: 56, domain: 'act2.example.com' }
+    api.admin.getAlerts.mockResolvedValue({ success: true, data: [open, second], total: 2, page: 0, size: 20 })
+    api.admin.resolveAlert.mockImplementation(async () => {
+      // çözülen uyarı AÇIK listeden düşer (refreshAll'un yeni yanıtı)
+      api.admin.getAlerts.mockResolvedValue({ success: true, data: [second], total: 1, page: 0, size: 20 })
+      return { success: true, data: { ...open, resolved: true } }
+    })
+    render(<AlertHistory />)
+    await screen.findByText('act2.example.com')
+    fireEvent.click(screen.getByRole('checkbox', { name: /act\.example\.com.*select this alert/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /act2\.example\.com.*select this alert/i }))
+    expect(await screen.findByText(/^2 selected/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /act\.example\.com.*— Resolve$/ }))
+    await fillNoteAndConfirm('Mark as resolved')
+    await waitFor(() => expect(api.admin.resolveAlert).toHaveBeenCalledWith(55, NOTE))
+    await waitFor(() => expect(screen.queryByText('act.example.com')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.getByText(/^1 selected/i)).toBeInTheDocument()   // sayaç listede kalanı sayar
+
+    fireEvent.click(within(screen.getByTestId('alh-bulk-actions')).getByRole('button', { name: /^Resolve$/ }))
+    const dlg = await fillNoteAndConfirm('Mark as resolved')
+    expect(dlg.querySelector('[data-slot="action-note-target"]')).toHaveTextContent('act2.example.com')
+    await waitFor(() => expect(api.admin.bulkAlertAction).toHaveBeenCalledWith('resolve', [56], NOTE))
   })
 })
 

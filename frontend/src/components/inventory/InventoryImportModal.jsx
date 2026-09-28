@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Upload, FileSpreadsheet, Download } from 'lucide-react'
 import ModalShell from '../ui/ModalShell.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
+import TeamBadge from '../ui/TeamBadge.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { api } from '../../api/client'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
@@ -127,7 +128,16 @@ export default function InventoryImportModal({ onClose, onDone }) {
                     <TableCell className="tabular-nums">{r.line}</TableCell>
                     <TableCell className="whitespace-normal break-all">{r.domain}</TableCell>
                     <TableCell><Badge variant="secondary" className={cn(ACTION_TONE[r.action])}>{t(ACTION_LABEL[r.action] || 'inv.importSkip')}</Badge></TableCell>
-                    <TableCell className="text-[.88em] whitespace-normal text-muted-foreground">{reasonText(r)}</TableCell>
+                    <TableCell className="text-[.88em] whitespace-normal text-muted-foreground">
+                      {reasonText(r)}
+                      {/* Mevcut kayda çarpan satır (başka ekip / çöp kutusu, 2026-09-28): kaydın SAHİBİ ekip — rozet üyeleri açar */}
+                      {r.team_name && (
+                        <span data-slot="inv-import-owner" className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1">
+                          <span>{t('dupx.owner')}:</span>
+                          <TeamBadge teamId={r.team_id} teamName={r.team_name} />
+                        </span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

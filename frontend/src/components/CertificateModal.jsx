@@ -3,11 +3,11 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
-import UserBadge from './ui/UserBadge.jsx'
-import { Trash2, Globe, X, Pencil, Clock, User, History, Undo2, Stethoscope, Play, RefreshCw, StickyNote,
-  ShieldCheck, HeartPulse, FileText, Bell, LineChart, Package } from 'lucide-react'
+import { Trash2, Globe, X, Pencil, History, Stethoscope, Play, RefreshCw, StickyNote,
+  ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
+import CertNotesTab from './certmodal/CertNotesTab.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import { deleteInventoryByDomain } from '../utils/deleteInventory.js'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
@@ -22,15 +22,12 @@ import ModalShell from './ui/ModalShell.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
-import SegmentedControl from './ui/SegmentedControl.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
-import { Card } from '@/components/shadcn/card'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Separator } from '@/components/shadcn/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
-import { Textarea } from '@/components/shadcn/textarea'
 import { cn } from '@/lib/utils'
 
 /** Medya sorgusu — yalnız DAVRANIŞ farkı için (sekme ipucu, etiket gizliyken); görünüm CSS'te (max-xl:sr-only). */
@@ -51,26 +48,13 @@ function useMediaQuery(query) {
  * Sertifika DETAY penceresi — ui/ModalShell (shadcn Dialog) + Tabs + Card/Badge (eski elle kurulu `.modal.show`,
  * `.modal-tabs`, `.modal-field`, `.alert-history-card`+`.ahc-stripe` ailesinin yerine). Test kancaları: sekmeler
  * role="tab" (data-state="active"), başlık durum rozeti `data-slot="cert-modal-status"`, notlar `data-slot="cert-note"`.
+ * SSL Kontrol sekmesi: SslCheckerPanel (+ certmodal/Ssl*); Notlar sekmesi: certmodal/CertNotesTab (2026-09-28).
  */
 
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
 
-const NOTE_CATEGORIES   = ['NOTE', 'DEPLOYMENT', 'INCIDENT', 'RENEWAL']
-const NOTE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000
-const NOTE_MAX_LENGTH   = 5000
-
-/** Not kategorisi rozet tonu (eski sol renk şeridi `categoryStripe`'ın yerine — şerit YOK, rozet renkli). */
-const NOTE_CAT_TONE = {
-  DEPLOYMENT: 'bg-primary/10 text-primary dark:bg-primary/20',
-  INCIDENT:   'bg-destructive/10 text-destructive dark:bg-destructive/20',
-  RENEWAL:    'bg-success/15 text-success dark:bg-success/20',
-  NOTE:       'bg-muted text-muted-foreground',
-}
-/** Not geçmişi olay tonu (eski .cert-note-history-event*). */
-const REV_TONE = { CREATE: 'text-success', EDIT: 'text-primary', DELETE: 'text-destructive', RESTORE: 'text-amber-700 dark:text-amber-400' }
-const META_ITEM = 'inline-flex items-center gap-1'
 /** Başlık durum rozeti tonu (eski .modal-status-*). */
 const STATUS_TONE = {
   valid:    'bg-success/15 text-success dark:bg-success/20',
@@ -79,360 +63,6 @@ const STATUS_TONE = {
   critical: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
   error:    'bg-destructive/10 text-destructive dark:bg-destructive/20',
   expired:  'bg-muted text-muted-foreground',
-}
-
-function isWithinEditWindow(createdAt) {
-  if (!createdAt) return false
-  const ts = Date.parse(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z')
-  if (Number.isNaN(ts)) return false
-  return Date.now() - ts < NOTE_EDIT_WINDOW_MS
-}
-
-function fmtTs(ts, fallback) {
-  if (!ts) return fallback
-  const out = formatDate(ts)
-  return (!out || out === 'N/A') ? fallback : out
-}
-
-/** `readOnly` (2026-09-26): başka takımın alan adı — not eklenmez/düzenlenmez/silinmez (sunucu da reddeder), yalnız okunur. */
-function NotesTab({ domain, t, currentUser, isAdmin, readOnly = false }) {
-  const [notes, setNotes]       = useState(null)
-  const [loading, setLoading]   = useState(false)
-  const [newNote, setNewNote]   = useState('')
-  const [newCategory, setNewCategory] = useState('NOTE')
-  const [filter, setFilter]     = useState('ALL')
-  const [saving, setSaving]     = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [editBody, setEditBody] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [error, setError]       = useState(null)
-  const [historyOpen, setHistoryOpen] = useState({})
-  const [revisions, setRevisions] = useState({})
-  const [historyLoading, setHistoryLoading] = useState({})
-  const { showConfirm } = useDialog()
-  const textRef = useRef(null)
-  const catId = useId()
-
-  useEffect(() => { loadNotes() }, [domain])
-
-  async function loadNotes() {
-    setLoading(true)
-    try {
-      const res = await api.admin.getNotes(domain)
-      setNotes(res?.data ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function addNote() {
-    setError(null)
-    if (!newNote.trim()) return
-    if (newNote.length > NOTE_MAX_LENGTH) {
-      setError(t('notes.tooLong', NOTE_MAX_LENGTH))
-      return
-    }
-    setSaving(true)
-    try {
-      const res = await api.admin.addNote(domain, newNote.trim(), newCategory)
-      if (res?.success) {
-        setNewNote('')
-        setNewCategory('NOTE')
-        loadNotes()
-      } else {
-        setError(res?.error || t('notes.saveFailed'))
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  function startEdit(n) {
-    setEditingId(n.id)
-    setEditBody(n.note)
-    setError(null)
-  }
-  function cancelEdit() {
-    setEditingId(null)
-    setEditBody('')
-  }
-  async function saveEdit() {
-    setError(null)
-    if (!editBody.trim()) return
-    if (editBody.length > NOTE_MAX_LENGTH) {
-      setError(t('notes.tooLong', NOTE_MAX_LENGTH))
-      return
-    }
-    setEditSaving(true)
-    try {
-      const res = await api.admin.updateNote(domain, editingId, editBody.trim())
-      if (res?.success) {
-        // Invalidate cached revisions so accordion reloads with new EDIT entry
-        setRevisions(prev => { const c = { ...prev }; delete c[editingId]; return c })
-        cancelEdit()
-        loadNotes()
-      } else {
-        setError(res?.error || t('notes.saveFailed'))
-      }
-    } finally {
-      setEditSaving(false)
-    }
-  }
-
-  async function deleteNote(n) {
-    const ok = await showConfirm({
-      title: t('notes.deleteTitle'),
-      message: t('notes.deleteConfirm'),
-      variant: 'danger',
-      confirmText: t('notes.delete'),
-      cancelText: t('notes.cancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.deleteNote(domain, n.id)
-    if (res?.success) {
-      setRevisions(prev => { const c = { ...prev }; delete c[n.id]; return c })
-      if (editingId === n.id) cancelEdit()
-      loadNotes()
-    }
-  }
-
-  async function restoreNote(n) {
-    const ok = await showConfirm({
-      title: t('notes.restoreTitle'),
-      message: t('notes.restoreConfirm'),
-      variant: 'default',
-      confirmText: t('notes.restoreBtn'),
-      cancelText: t('notes.cancel'),
-    })
-    if (!ok) return
-    const res = await api.admin.restoreNote(domain, n.id)
-    if (res?.success) {
-      setRevisions(prev => { const c = { ...prev }; delete c[n.id]; return c })
-      loadNotes()
-    }
-  }
-
-  async function toggleHistory(noteId) {
-    const willOpen = !historyOpen[noteId]
-    setHistoryOpen(prev => ({ ...prev, [noteId]: willOpen }))
-    if (willOpen && !revisions[noteId]) {
-      setHistoryLoading(prev => ({ ...prev, [noteId]: true }))
-      // try/finally ŞART: request() ağ hatasında THROW eder; yakalanmazsa notun geçmiş spinner'ı kalıcı dönerdi.
-      // Hatada revizyon YAZILMAZ ve panel kapanır ("geçmiş yok" DENMEZ — bilinmiyor ≠ yok); yeniden açmak yeniden dener.
-      try {
-        const res = await api.admin.getNoteRevisions(domain, noteId)
-        setRevisions(prev => ({ ...prev, [noteId]: res?.data ?? [] }))
-      } catch (e) {
-        setHistoryOpen(prev => ({ ...prev, [noteId]: false }))
-        setError(e?.message || t('settings.loadError'))
-      } finally {
-        setHistoryLoading(prev => ({ ...prev, [noteId]: false }))
-      }
-    }
-  }
-
-  if (loading) return <LoadingBlock label={t('modal.loading')} fullWidth />
-
-  const visibleNotes = (notes ?? []).filter(n =>
-    filter === 'ALL' ? true : (n.category || 'NOTE') === filter
-  )
-
-  function renderAuthorLine(authorName, authorUsername) {
-    if (!authorName && !authorUsername) {
-      return <span className={META_ITEM}><User size={12} aria-hidden="true" /> {t('notes.authorUnknown')}</span>
-    }
-    return (
-      <span className={META_ITEM}>
-        <UserBadge username={authorUsername || authorName} displayName={authorName || undefined} inline size="sm" />
-      </span>
-    )
-  }
-
-  return (
-    <div data-slot="cert-notes" className="flex flex-col gap-3">
-      {isAdmin && (
-        // Not formu — shadcn NativeSelect (kategori) + Textarea + Button
-        <div data-slot="cert-note-form" className="flex flex-col gap-2 rounded-lg border bg-muted/30 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <Label htmlFor={catId} className="text-[13px] font-semibold">{t('notes.categoryLabel')}</Label>
-            <NativeSelect id={catId} size="sm" value={newCategory} onChange={(e) => setNewCategory(e.target.value)}>
-              {NOTE_CATEGORIES.map(c => (
-                <NativeSelectOption key={c} value={c}>{t(`notes.cat.${c}`)}</NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-          <Textarea
-            ref={textRef}
-            rows={3}
-            value={newNote}
-            maxLength={NOTE_MAX_LENGTH}
-            aria-label={t('notes.bodyPlaceholder')}
-            onChange={(e) => setNewNote(e.target.value)}
-            placeholder={t('notes.bodyPlaceholder')}
-            onKeyDown={(e) => { if (e.ctrlKey && e.key === 'Enter') addNote() }}
-          />
-          <div className="flex items-center justify-end gap-2">
-            <span className="mr-auto text-xs text-muted-foreground tabular-nums">{newNote.length} / {NOTE_MAX_LENGTH}</span>
-            <Button onClick={addNote} disabled={saving || !newNote.trim()}>
-              {saving ? t('notes.saving') : t('notes.add')}
-            </Button>
-          </div>
-          {error && <AlertBanner tone="danger" role="alert" className="mb-0">{error}</AlertBanner>}
-        </div>
-      )}
-
-      {notes && notes.length > 0 && (
-        // Kategori süzgeci — tek aktif seçim → ui/SegmentedControl (shadcn ToggleGroup); telefonda sarar
-        <SegmentedControl value={filter} onChange={setFilter} ariaLabel={t('notes.categoryLabel')} className="flex-wrap"
-          options={['ALL', ...NOTE_CATEGORIES].map(f => ({ value: f, label: f === 'ALL' ? t('notes.filterAll') : t(`notes.cat.${f}`) }))} />
-      )}
-
-      {notes && notes.length === 0 ? (
-        <StatusBlock tone="neutral" icon={StickyNote} title={t('notes.empty')} className="py-6 md:py-6" />
-      ) : visibleNotes.length === 0 ? (
-        <StatusBlock tone="neutral" icon={StickyNote} title={t('notes.emptyForFilter')} className="py-6 md:py-6" />
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {visibleNotes.map((n) => {
-            const cat        = n.category || 'NOTE'
-            const createdAt  = n.created_at
-            const updatedAt  = n.updated_at
-            const updatedBy  = n.updated_by
-            const deletedAt  = n.deleted_at
-            const deletedBy  = n.deleted_by
-            const authorName = n.author_name
-            const authorUser = n.author_username
-            const isDeleted  = !!deletedAt
-            const isAuthor   = currentUser && authorUser === currentUser
-            const canEdit    = !readOnly && !isDeleted && isAuthor && isWithinEditWindow(createdAt)
-            const canDelete  = !readOnly && !isDeleted && (isAuthor || isAdmin)
-            const canRestore = !readOnly && isDeleted && isAdmin
-            const isEditing  = editingId === n.id
-            const revs       = revisions[n.id] ?? []
-            return (
-              // Not kartı — shadcn Card; kategori RENKLİ ROZETLE (eski sol renk şeridi .ahc-stripe YOK — kullanıcı kuralı)
-              <Card key={n.id} data-slot="cert-note" data-category={cat} data-deleted={isDeleted ? 'true' : undefined}
-                className={cn('gap-2 rounded-lg px-4 py-3 shadow-none', isDeleted && 'border-dashed bg-muted/40')}>
-                {isDeleted && (
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                    <Trash2 size={13} aria-hidden="true" />
-                    <span>
-                      {t('notes.deletedBanner', fmtTs(deletedAt, t('notes.dateUnknown')), deletedBy || t('notes.authorUnknown'))}
-                    </span>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-2">
-                  <Badge variant="secondary" data-slot="cert-note-category" className={cn('font-bold', isDeleted ? 'bg-muted text-muted-foreground' : NOTE_CAT_TONE[cat])}>
-                    {t(`notes.cat.${cat}`)}
-                  </Badge>
-                  <div className="flex items-center gap-0.5">
-                    {canEdit && !isEditing && (
-                      <SimpleTooltip content={t('notes.edit')}>
-                        <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-primary pointer-coarse:size-10"
-                          aria-label={t('notes.edit')} onClick={() => startEdit(n)}>
-                          <Pencil size={13} aria-hidden="true" />
-                        </Button>
-                      </SimpleTooltip>
-                    )}
-                    {canDelete && !isEditing && (
-                      <SimpleTooltip content={t('notes.delete')}>
-                        <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive pointer-coarse:size-10"
-                          aria-label={t('notes.delete')} onClick={() => deleteNote(n)}>
-                          <Trash2 size={13} aria-hidden="true" />
-                        </Button>
-                      </SimpleTooltip>
-                    )}
-                    {canRestore && (
-                      <SimpleTooltip content={t('notes.restoreBtn')}>
-                        <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-success pointer-coarse:size-10"
-                          aria-label={t('notes.restoreBtn')} onClick={() => restoreNote(n)}>
-                          <Undo2 size={13} aria-hidden="true" />
-                        </Button>
-                      </SimpleTooltip>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  {renderAuthorLine(authorName, authorUser)}
-                  <span className={META_ITEM}>
-                    <Clock size={12} aria-hidden="true" />
-                    {fmtTs(createdAt, t('notes.dateUnknown'))}
-                  </span>
-                  {updatedAt && (
-                    <span className={cn(META_ITEM, 'italic')} title={`${t('notes.editedLabel')}: ${fmtTs(updatedAt, t('notes.dateUnknown'))}${updatedBy ? ' · ' + updatedBy : ''}`}>
-                      <Pencil size={11} aria-hidden="true" />
-                      {t('notes.editedLabel')}
-                    </span>
-                  )}
-                  <Button type="button" variant="link" size="xs" className="h-auto p-0 text-xs" aria-expanded={!!historyOpen[n.id]}
-                    onClick={() => toggleHistory(n.id)}>
-                    <History size={12} aria-hidden="true" />
-                    {historyOpen[n.id] ? t('notes.hideHistory') : t('notes.showHistory')}
-                  </Button>
-                </div>
-
-                {isEditing ? (
-                  <div className="flex flex-col gap-2">
-                    <Textarea
-                      rows={3}
-                      value={editBody}
-                      maxLength={NOTE_MAX_LENGTH}
-                      aria-label={t('notes.edit')}
-                      onChange={(e) => setEditBody(e.target.value)}
-                    />
-                    <div className="flex items-center justify-end gap-2">
-                      <span className="mr-auto text-xs text-muted-foreground tabular-nums">{editBody.length} / {NOTE_MAX_LENGTH}</span>
-                      <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={editSaving}>
-                        {t('notes.cancel')}
-                      </Button>
-                      <Button size="sm" onClick={saveEdit} disabled={editSaving || !editBody.trim()}>
-                        {editSaving ? t('notes.saving') : t('notes.save')}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className={cn('text-sm whitespace-pre-wrap [overflow-wrap:anywhere]', isDeleted && 'text-muted-foreground line-through')}>{n.note}</div>
-                )}
-
-                {historyOpen[n.id] && (
-                  <div data-slot="cert-note-history" className="mt-1 flex flex-col gap-1.5 rounded-md border bg-muted/40 px-3 py-2">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
-                      <History size={13} aria-hidden="true" /> {t('notes.historyTitle')}
-                    </div>
-                    {historyLoading[n.id] ? (
-                      <LoadingBlock label={t('notes.historyLoading')} fullWidth />
-                    ) : revs.length === 0 ? (
-                      <div className="text-xs text-muted-foreground">{t('notes.historyEmpty')}</div>
-                    ) : (
-                      [...revs].reverse().map(r => (
-                        <div key={r.id} className="flex gap-2 text-xs">
-                          <span aria-hidden="true" className="text-muted-foreground">●</span>
-                          <div className="min-w-0 flex-1">
-                            <div>
-                              <span className={cn('font-bold', REV_TONE[r.event_type])}>
-                                {t(`notes.event${r.event_type}`)}
-                              </span>
-                              <span> · {fmtTs(r.edited_at, t('notes.dateUnknown'))}</span>
-                              <span> · {(r.edited_by || r.edited_by_name)
-                                ? <UserBadge username={r.edited_by || r.edited_by_name} displayName={r.edited_by_name || undefined} inline size="sm" />
-                                : <strong>{t('notes.authorUnknown')}</strong>}</span>
-                            </div>
-                            {r.body && <div className="mt-0.5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">{r.body}</div>}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-              </Card>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
 }
 
 export default function CertificateModal({ domain, alertLevel, onClose, initialData, previewMode, currentUser, currentUserRole,
@@ -458,6 +88,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   const sslSeq = useRef(0)
   const [sslData, setSslData]         = useState(null)
   const [sslLoading, setSslLoading]   = useState(false)
+  // Canlı kontrol başarısız (ağ hatası / 403 / boş yanıt): null = hata yok; dize (boş olabilir) = hata. Eskiden hata
+  // dalında sslData null + sslLoading false kalıyor, effect koşulu yeniden sağlanıyor ve istek DÖNGÜYE giriyordu.
+  const [sslError, setSslError]       = useState(null)
+  const bodyRef = useRef(null)   // ModalShell kaydırılan gövdesi — sekme değişince başa sarılır
   const [activeTab, setActiveTab]     = useState('ssl')
   const [showDiag, setShowDiag]       = useState(false)
   const isAdmin = !readOnly && (currentUserRole === 'ADMIN' || currentUserRole === 'TEAM_ADMIN')
@@ -550,6 +184,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     // sıfırlar — `!domain` dalından ÖNCE, çünkü kapanış tam da bayrağın sızdığı yoldu.
     sslSeq.current++
     setSslLoading(false)
+    setSslError(null)
     setRefreshing(false)
     lastCheckedRef.current = null   // yeni domain = yeni damga çizgisi; ilk yükleme "yeni kontrol" sayılmaz
     if (!domain) return
@@ -559,7 +194,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
     if (initialData) {
       setCertData(initialData)
-      setSslData(initialData)
+      // Yalnız GERÇEK bir kontrol sonucu (status taşıyan) SSL sekmesine gider; paylaşılan sertifika penceresinden gelen
+      // `{ domain, _preview }` saplaması boş/kırmızı bir panel çiziyordu → saplamada canlı kontrol koşar.
+      setSslData(initialData.status ? initialData : null)
       return
     }
 
@@ -579,18 +216,31 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // probe'u B modalında A'nın SSL verisini gösterebiliyordu. Yanıt yalnız İSTEK ANINDAKİ tur
   // hâlâ güncelse yazılır (sslSeq) — ve hangi dalda dönerse dönsün yükleme bayrağı, turu
   // geçersizleyen domain effect'i tarafından sıfırlanır.
-  useEffect(() => {
-    if (!domain || activeTab !== 'ssl' || sslData || sslLoading) return
+  // "Yeniden kontrol et" de aynı yoldan geçer: eski sonuç ekranda KALIR (yükleniyor ekranına düşmez), düğme döner;
+  // başarısızsa eski sonuç + uyarı bandı. Hata dalında sslError dolar → effect yeniden tetiklemez (döngü yok).
+  const probeSsl = useCallback((reqDomain) => {
     setSslLoading(true)
+    setSslError(null)
     const mySeq = ++sslSeq.current
-    api.checkDomainPreview(domain).then((res) => {
+    api.checkDomainPreview(reqDomain).then((res) => {
       if (mySeq !== sslSeq.current) return          // daha yeni bir tur var → bu yanıtı AT
-      setSslData(res?.data ?? null)
+      if (res?.data) setSslData(res.data)
+      else setSslError(res?.error || res?.message || '')
       setSslLoading(false)
-    }).catch(() => { if (mySeq === sslSeq.current) setSslLoading(false) })
-  }, [domain, activeTab, sslData, sslLoading])
+    }).catch((e) => { if (mySeq === sslSeq.current) { setSslError(e?.message || ''); setSslLoading(false) } })
+  }, [])
 
-  function switchTab(tab) { setActiveTab(tab) }
+  useEffect(() => {
+    if (!domain || activeTab !== 'ssl' || sslData || sslLoading || sslError != null) return
+    probeSsl(domain)
+  }, [domain, activeTab, sslData, sslLoading, sslError, probeSsl])
+
+  // Sekme değişince kaydırılan gövde başa sarılır: pencere boyu SABİT (sekme içeriğine göre değişmez), önceki
+  // sekmede aşağı kaydırılmış konum yeni sekmenin ortasından başlatıyordu.
+  function switchTab(tab) {
+    setActiveTab(tab)
+    if (bodyRef.current) bodyRef.current.scrollTop = 0
+  }
 
   if (!domain) return null
 
@@ -692,8 +342,16 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     <ModalShell open={!!domain} onClose={() => onClose()} size="lg" hideClose dismissOnEscape={!previewMode}
       icon={Globe}
       // Genişlik (2026-09-27, kullanıcı: "sekmeler ikinci satıra düşüyor"): 8 sekme (ikon + etiket + sayaç, TR daha uzun)
-      // md+'da TEK satırda dursun diye pencere 96vw / 1200px'e çıktı; dikey sınır ve iç kaydırma ModalShell'den (max-h + overflow-y).
-      className="grid-cols-[minmax(0,1fr)] sm:max-w-[min(96vw,1200px)] [&>[data-slot=dialog-header]]:flex-wrap"
+      // md+'da TEK satırda dursun diye pencere 96vw / 1200px'e çıktı.
+      // SABİT BOYUT (2026-09-28, kullanıcı: "sekmeler arasında gezinince pencere küçülüyor, titriyor" — MonitorDetailModal ile
+      // aynı çözüm): kutu yüksekliği sekme içeriğine göre değişiyor, dikey ortalı pencere her geçişte yeniden konumlanıyordu.
+      // Artık yükseklik sabit (sm+ 88vh tavanı; telefonda neredeyse tam ekran), başlık + eylemler sabit, sekme şeridi gövdenin
+      // tepesine yapışık (sticky), YALNIZ içerik kayar (`scrollBody`); kaydırma çubuğuna yer ayrılır (genişlik oynamaz).
+      scrollBody bodyRef={bodyRef}
+      className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(96vw,1200px)] [&>[data-slot=dialog-header]]:flex-wrap',
+        'h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] sm:h-[min(88vh,calc(100dvh-2rem))] sm:max-h-[min(88vh,calc(100dvh-2rem))] sm:w-full',
+        // scroll-pt: odak/scrollIntoView yapışık sekme şeridinin ALTINA kaydırsın (öğe şeridin arkasında kalmasın).
+        '[&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable] [&_[data-slot=modal-shell-body]]:scroll-pt-14')}
       title={<span data-slot="cert-modal-title" className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]" title={domain}>{domain}</span>
@@ -723,9 +381,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
         · Kontrol Geçmişi + Grafik önizlemede gizli; Alarmlar takım kapsamlı → başka takımın kaydında yok.
       */}
       <Tabs value={activeTab} onValueChange={switchTab} className="min-w-0 gap-3">
-        <div className="sm:hidden">
+        {/* Seçici ve sekme şeridi kaydırılan gövdenin tepesine YAPIŞIK (sticky + opak zemin): içerik altından kayar. */}
+        <div className="sticky top-0 z-10 bg-background pb-1 sm:hidden">
           <Label htmlFor={tabPickId} className="sr-only">{t('modal.sectionPicker')}</Label>
-          <NativeSelect id={tabPickId} data-slot="cert-modal-section-picker" value={activeTab} onChange={(e) => switchTab(e.target.value)}>
+          <NativeSelect id={tabPickId} data-slot="cert-modal-section-picker" className="h-10" value={activeTab} onChange={(e) => switchTab(e.target.value)}>
             {tabDefs.map((td) => (
               <NativeSelectOption key={td.value} value={td.value}>{td.label}{td.count ? ` (${td.count})` : ''}</NativeSelectOption>
             ))}
@@ -736,7 +395,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             sığar), etiket ekran okuyucuda (sr-only) + ipucu. İpucu TETİĞİN İÇİNDEKİ span'e bağlanır:
             TooltipTrigger asChild çocuğuna kendi data-state'ini yazar — TabsTrigger'a sarılırsa "active" ezilir. */}
         <TabsList variant="line" data-tour="cert-modal-tabs"
-          className="hidden h-auto w-full flex-nowrap justify-start gap-x-0.5 gap-y-1 border-b pb-1 sm:flex group-data-[orientation=horizontal]/tabs:h-auto">
+          className="hidden h-auto w-full flex-nowrap justify-start gap-x-0.5 gap-y-1 border-b bg-background pb-1 sm:sticky sm:top-0 sm:z-10 sm:flex group-data-[orientation=horizontal]/tabs:h-auto">
           {tabDefs.map((td) => (
             <TabsTrigger key={td.value} value={td.value} className="flex-none gap-1.5">
               <SimpleTooltip content={wideTabs ? null : td.label}>
@@ -762,13 +421,20 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           </TabsContent>
         )}
 
+        {/* SSL Kontrol (2026-09-28 shadcn yeniden tasarım): hüküm + gruplu kontroller + zincir — SslCheckerPanel.
+            "Yeniden kontrol et" eski sonucu ekranda tutar; ilk kontrol başarısızsa "Yeniden dene"li hata bloğu. */}
         <TabsContent value="ssl">
-          {(sslLoading || !sslData) ? (
-            <LoadingBlock label={t('modal.loading')} fullWidth />
+          {sslData ? (
+            <SslCheckerPanel data={sslData} onRecheck={() => probeSsl(domain)} rechecking={sslLoading} recheckError={sslError} />
+          ) : sslError != null ? (
+            <StatusBlock tone="danger" icon={ShieldX} title={t('sslv.loadFailed')} description={sslError || t('sslv.loadFailedHint')}
+              actions={(
+                <Button type="button" variant="outline" className="gap-1.5 max-sm:h-10" onClick={() => probeSsl(domain)}>
+                  <RefreshCw aria-hidden="true" className="size-4" />{t('sslv.retry')}
+                </Button>
+              )} />
           ) : (
-            <div className="ssl-tab-body">
-              <SslCheckerPanel data={sslData} />
-            </div>
+            <LoadingBlock label={t('sslv.loading')} fullWidth />
           )}
         </TabsContent>
 
@@ -923,7 +589,9 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {!previewMode && (
           <TabsContent value="notes">
-            <NotesTab domain={domain} t={t} currentUser={currentUser} isAdmin={isAdmin} readOnly={readOnly} />
+            {/* Notlar (2026-09-28 shadcn yeniden tasarım) — certmodal/CertNotesTab; ekle/sil/geri yükle sekme sayacını tazeler. */}
+            <CertNotesTab domain={domain} currentUser={currentUser} isAdmin={isAdmin} readOnly={readOnly} readOnlyTeam={readOnlyTeam}
+              onCountChange={(n) => setTabCounts((c) => (c.notes === n ? c : { ...c, notes: n }))} />
           </TabsContent>
         )}
       </Tabs>

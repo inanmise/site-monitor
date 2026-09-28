@@ -62,10 +62,11 @@ public final class PermissionCatalog {
         r("alerts.read",        "alerts", VIEW),
         r("alerts.actions",     "alerts", EXECUTE),
         // 7/24 İzleme Ekibi (NOC) arama kaydı (2026-09-27): uyarının üzerinden "kim, ne zaman arandı, sonuç, not".
-        // Varsayılan YALNIZ ADMIN (diğer rollerin listesine EKLENMEZ; AUDIT'in VIEW kuralı EDIT'i açmaz). Hassas:
-        // izni taşıyan TÜM takımların uyarılarını görür (uyarı listesi/detayı + arama uçları — NocCallLogService).
-        // Önerilen kurulum: 7/24 operatörleri AUDIT rolünde (global salt okur) + bu izin AUDIT'e verilir. Kapsamlı
-        // müdür (rol ADMIN, takım kapsamlı) ADMIN satırından bu izni ALMAZ — kural NocCallLogService.canWrite'ta.
+        // Varsayılan: ADMIN + AUDIT (2026-09-28, kullanıcı kararı: "İzleme ekibi üyelerine AUDIT yetkisi altından
+        // noc_calls.write tanımlanacak" — 7/24 operatörleri AUDIT rolünde; bkz. AUDIT_WRITE_GRANTS). TEAM_ADMIN/USER'a
+        // verilmez. Hassas: izni taşıyan TÜM takımların uyarılarını görür (uyarı listesi/detayı + arama uçları —
+        // NocCallLogService). Onay/çözüm/yeniden bildirim alerts.actions'tadır; AUDIT'te kapalı kalır. Kapsamlı müdür
+        // (rol ADMIN, takım kapsamlı) ADMIN satırından bu izni ALMAZ — kural NocCallLogService.canWrite'ta.
         r("noc_calls.write",    "alerts", EDIT, Set.of(EDIT)),
 
         // ── İzleme ────────────────────────────────────────────────────────
@@ -310,13 +311,26 @@ public final class PermissionCatalog {
         return map;
     }
 
+    /**
+     * AUDIT'in salt-okunurluk kuralının TEK bilinçli istisna listesi (yazma eylemi taşıyan kaynaklar).
+     *
+     * <p>{@code noc_calls.write} (2026-09-28, kullanıcı kararı): 7/24 izleme ekibinin üyeleri AUDIT rolündedir (tüm
+     * takımları salt okur) ve arama kaydı girmeleri gerekir. İzin yalnız ARAMA KAYDI yazar — onay/çözüm/yeniden
+     * bildirim ({@code alerts.actions}) ve olaya müdahale AUDIT'te KAPALI kalır. Mevcut kurulumlarda
+     * {@code PermissionService.POLICY_UPGRADES} açar (yöneticinin elle kapattığı satıra dokunmaz).
+     *
+     * <p>Buraya satır eklemek salt-okunur rolün tanımını değiştirir: {@code PermissionCatalogTest} süpürme kapısı
+     * listeyi birebir pinler — gerekçesiz genişleme kırmızı olur.
+     */
+    public static final Set<String> AUDIT_WRITE_GRANTS = Set.of("noc_calls.write");
+
     private static Map<String, Map<String, Boolean>> auditDefaults() {
         var map = new java.util.LinkedHashMap<String, Map<String, Boolean>>();
         // System-wide read-only auditor. Sistem ayarları (SMTP/LDAP/secret/DB) AUDIT'e
         // otomatik AÇILMAZ — kimlik bilgisi/altyapı sırrı sızmasın (yalnız ADMIN veya grant).
         for (Resource r : ALL) {
             boolean isRead = r.actions.contains(VIEW) && !"settings".equals(r.group);
-            putAll(map, r, isRead);
+            putAll(map, r, isRead || AUDIT_WRITE_GRANTS.contains(r.key));
         }
         for (Resource r : INTERNAL) putAll(map, r, false);
         return map;

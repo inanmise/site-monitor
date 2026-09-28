@@ -38,3 +38,38 @@ export function domainDeepLink(tab, domain) {
   if (!tab || !domain) return null
   return `${base()}?tab=${encodeURIComponent(tab)}&domain=${encodeURIComponent(domain)}`
 }
+
+/**
+ * Tek seferlik "vardığında aç" eylemi — uygulama düzeyi `open` parametresi (2026-09-28, 7/24 Kapsamı → izleme).
+ *
+ * <p>`monitor`/`domain` NEYİ gösterdiğini söyler, `open` varışta NE AÇILACAĞINI:
+ * <ul>
+ *   <li>`cert` — Pano (`tab=dashboard&domain=<d>`): alanın sertifika penceresi (yalnız `domain` eskisi gibi süzer).</li>
+ *   <li>`noc`  — izleme sayfası (`monitor=<id>`) ya da Pano (`domain=<d>`, SSL envanteri): DÜZENLEME formu, "7/24 izleme
+ *       ekibine bildir" alanı görünüme kaydırılmış ve odaklı. Düzenleme yetkisi yoksa detay/sertifika penceresi açılır.</li>
+ * </ul>
+ * Tüketilince adresten SİLİNİR (olaylardaki `action` gibi): Geri/yenile pencereyi ya da formu yeniden açmasın.
+ * Sekme değişince de silinir (PAGE_STATE_PARAMS). Okuyucular: hooks/useMonitorDeepLink, hooks/useCertDeepLink.
+ */
+export const DEEP_OPEN_PARAM = 'open'
+export const DEEP_OPEN = Object.freeze({ CERT: 'cert', NOC: 'noc' })
+
+/**
+ * Genel mutlak derin bağlantı: `?tab=<sekme>&<anahtar>=<değer>…` — boş/null değerler yazılmaz, sıra korunur.
+ * `monitorDeepLink(tab, id)` ile `tabDeepLink(tab, { monitor: id })` AYNI metni üretir.
+ */
+export function tabDeepLink(tab, params) {
+  if (!tab) return null
+  const parts = [`tab=${encodeURIComponent(tab)}`]
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v == null || v === '') continue
+    parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+  }
+  return `${base()}?${parts.join('&')}`
+}
+
+/** SSL sertifikası: Pano'da alanın sertifika penceresini açan bağlantı (`action` = DEEP_OPEN değeri). */
+export function certDeepLink(domain, action = DEEP_OPEN.CERT) {
+  if (!domain) return null
+  return tabDeepLink('dashboard', { domain, [DEEP_OPEN_PARAM]: action })
+}

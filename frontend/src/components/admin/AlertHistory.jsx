@@ -23,9 +23,11 @@ import ReNotifyConfirmModal from './alerts/ReNotifyConfirmModal.jsx'
 import { OpenAlertCard, OpenAlertList, AlertRowsList, ListSkeleton } from './alerts/AlertLists.jsx'
 import { AlertDetailSheet, AlertDetailModal } from './alerts/AlertDetail.jsx'
 import { NocCallQuickSheet } from './alerts/NocCallLog.jsx'   // 7/24 arama kaydı — telefonda alttan hızlı giriş (2026-09-27)
+import ActionNoteDialog from '../incidents/ActionNoteDialog.jsx'   // gerekçeli sahiplen / çöz penceresi (2026-09-28)
+import { contextFromAlert } from '../incidents/actionNoteModel.js'
 import {
   FILTER_DEFAULTS, TABS, tabFromUrl, filtersFromUrl, filtersToUrl, activeAlertFilters, listParams, csvParams,
-  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, outsideActScope,
+  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, actBlockReason,
 } from './alerts/alertHistoryModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -63,7 +65,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const embedded = !urlSync
   const t = useT()
   const locale = useDateLocale()
-  const { showConfirm, showNoteConfirm } = useDialog()
+  const { showConfirm } = useDialog()
   const toast = useToast()
   const phone = useIsMobile()
   const bulkAllId = useId()
@@ -88,6 +90,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const [notifying, setNotifying] = useState(null)
   const [renotifyModal, setRenotifyModal] = useState(null)
   const [renotifySending, setRenotifySending] = useState(false)
+  // Gerekçeli sahiplen / çöz penceresi: { action: 'ack'|'resolve', items: ActionContext[], submit(note) } — tekli ve toplu
+  const [noteDialog, setNoteDialog] = useState(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   // Bildirim kutusundan derin bağlantı (2026-09-16): ?alert=<id> — kart vurgulanır, detay açılır, param tüketilir.
   const [linkedAlertId, setLinkedAlertId] = useState(() => (urlSync ? readUrlParam('alert', null) : null))
@@ -95,6 +99,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   // 7/24 arama kaydı (2026-09-27): yazma kapısı SUNUCUDAN (`noc_can_write` — kapsamlı müdür matriste ADMIN görünür ama
   // yazamaz); derin bağlantı `&n_call=1` (7/24 e-postasındaki "Arama kaydı ekle") uyarıyı form odakta açar ve tüketilir.
   const [nocCanWrite, setNocCanWrite] = useState(false)
+  // Sahiplen/çöz/tekrar bildir izni (alerts.actions) SUNUCUDAN (`can_act`, 2026-09-28): AUDIT rolündeki 7/24 operatörü
+  // arama kaydı girer ama bu eylemleri yapamaz — düğmeler 403'e giden ölü düğme olmasın. Alan yoksa açık sayılır.
+  const [canAct, setCanAct] = useState(true)
   const [nocFocus, setNocFocus] = useState(null)      // { id, n } — masaüstü detayında formu odakla
   const [quickCall, setQuickCall] = useState(null)    // telefon: alttan hızlı giriş açık olan uyarı
   const [linkedNocCall, setLinkedNocCall] = useState(() => (urlSync ? readUrlParam('n_call', null) === '1' : false))
@@ -117,7 +124,16 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       const res = await api.admin.getAlerts(listParams({ tab, filters, page, pageSize, domain, typesParam }))
       if (seq !== loadSeq.current) return
       if (res?.success) {
-        setAlerts(res.data ?? [])
+        const rows = res.data ?? []
+        setAlerts(rows)
+        // Seçim listede KALANLARA budanır: karttan tekli sahiplen/çöz (refreshAll) uyarıyı listeden düşürür ama seçimi
+        // sıfırlamaz → bayat id sayaçta kalıp toplu isteğe (pencere göstermediği hâlde) giriyor, "1 başarısız" üretiyordu.
+        setSelected((s) => {
+          if (s.size === 0) return s
+          const live = new Set(rows.map((a) => a.id))
+          const next = new Set([...s].filter((id) => live.has(id)))
+          return next.size === s.size ? s : next
+        })
         setTotal(res.total ?? 0)
         setFacets({
           typeCounts: res.type_counts ?? {},
@@ -125,6 +141,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           push: res.push_summary && typeof res.push_summary === 'object' ? res.push_summary : {},
         })
         setNocCanWrite(res.noc_can_write === true)
+        setCanAct(res.can_act !== false)
         setError(null)
         setLoaded(true)
         setUpdatedAt(new Date())
@@ -281,13 +298,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }, [teams])
 
   // ── Eylemler (gerekçe zorunlu — sunucu AlertActionNote ile aynı kural) ──
-  function noteOpts(extra) {
-    return {
-      noteHint: t('alh.note.hint'), noteOkText: t('alh.note.ok'), noteLabel: t('alh.note.label'), placeholder: t('alh.note.placeholder'),
-      chips: [t('alh.note.chip1'), t('alh.note.chip2'), t('alh.note.chip3'), t('alh.note.chip4'), t('alh.note.chip5')],
-      cancelText: t('alh.ackDialog.cancel'), ...extra,
-    }
-  }
+  // Pencere: incidents/ActionNoteDialog (Olaylar ile ortak). Sunucu çağrısı pencerenin İÇİNDEN (`submit`): hata
+  // (kural, 403, ağ) pencerede satır içi gösterilir, pencere kapanmaz, not kaybolmaz; başarıda tost + yenileme burada.
   const mergeDetail = (id, data, fallback) => setDetail((d) => {
     if (!d || String(d.id) !== String(id)) return d
     const next = { ...d, ...fallback }
@@ -295,32 +307,35 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     return next
   })
   const nowIso = () => new Date().toISOString().slice(0, 19)
+  /** Alarm → pencere bağlamı: takım adı sayfanın dizininden, push özeti sayfanın `push_summary`'sinden. */
+  const noteContext = (a) => contextFromAlert(a, { teamName: teamNameOf(a.team_id), push: facets.push[String(a.id)] })
 
-  async function ack(a) {
-    const res = await showNoteConfirm(noteOpts({
-      title: t('alh.ackDialog.title'), message: t('alh.ackDialog.msg', a?.domain ?? ''), variant: 'warning', confirmText: t('alh.ackDialog.confirm'),
-    }))
-    if (!res?.confirmed) return
+  function ack(a) {
+    if (!a || actBlocked(a)) return   // başka takımın uyarısı / eylem izni yok — düğme zaten çizilmez (savunma)
+    setNoteDialog({ action: 'ack', items: [noteContext(a)], submit: (note) => submitAck(a, note) })
+  }
+  async function submitAck(a, note) {
     let r
-    try { r = await api.admin.acknowledgeAlert(a.id, res.note) } catch { r = null }
-    if (r == null || r.success === false) { toast.error(r?.error || t('alh.note.error')); return }
+    try { r = await api.admin.acknowledgeAlert(a.id, note) } catch { r = null }
+    if (r == null || r.success === false) return { ok: false, error: r?.error || t('alh.note.error') }
     toast.success(t('alh.ackSuccess'))
-    mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: res.note, acknowledged_at: nowIso() })
+    mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: note, acknowledged_at: nowIso() })
     refreshAll()
+    return { ok: true }
   }
 
-  async function resolve(a) {
-    const res = await showNoteConfirm(noteOpts({
-      title: t('alh.resolveDialog.title'), message: t('alh.resolveDialog.msg', a?.domain ?? ''), variant: 'success',
-      confirmText: t('alh.resolveDialog.confirm'), cancelText: t('alh.resolveDialog.cancel'), placeholder: t('alh.note.placeholderResolve'),
-    }))
-    if (!res?.confirmed) return
+  function resolve(a) {
+    if (!a || actBlocked(a)) return
+    setNoteDialog({ action: 'resolve', items: [noteContext(a)], submit: (note) => submitResolve(a, note) })
+  }
+  async function submitResolve(a, note) {
     let r
-    try { r = await api.admin.resolveAlert(a.id, res.note) } catch { r = null }
-    if (r == null || r.success === false) { toast.error(r?.error || t('alh.resolveError')); refreshAll(); return }
+    try { r = await api.admin.resolveAlert(a.id, note) } catch { r = null }
+    if (r == null || r.success === false) { refreshAll(); return { ok: false, error: r?.error || t('alh.resolveError') } }
     toast.success(t('alh.resolveSuccess'))
-    mergeDetail(a.id, r.data, { resolved: true, resolved_note: res.note, resolved_at: nowIso() })
+    mergeDetail(a.id, r.data, { resolved: true, resolved_note: note, resolved_at: nowIso() })
     refreshAll()
+    return { ok: true }
   }
 
   // Tekrar Bildir: önce alıcı önizlemesi → onay penceresi; gönderim sendReNotify ile.
@@ -356,8 +371,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }
 
   // ── Toplu seçim + toplu işlem (yalnız açık görünüm; sunucu /admin/alerts/bulk) ──
-  // 7/24 operatörü başka takımın uyarısını GÖRÜR ama sahiplenemez/çözemez (sunucu 403) — bkz. outsideActScope
-  const actBlocked = (a) => outsideActScope(a, { nocCanWrite, globalViewer, myTeamIds })
+  // 7/24 operatörü başka takımın uyarısını GÖRÜR ama sahiplenemez/çözemez (sunucu 403); alerts.actions izni olmayan
+  // (AUDIT) hiçbir uyarıda bu eylemleri yapamaz — bkz. actBlockReason. Dönüş: neden anahtarı ya da null.
+  const actBlocked = (a) => actBlockReason(a, { canAct, nocCanWrite, globalViewer, myTeamIds })
   const toggleSelect = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const selectable = alerts.filter((a) => !actBlocked(a))
   const allSelected = selectable.length > 0 && selectable.every((a) => selected.has(a.id))
@@ -366,25 +382,25 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   async function bulkAction(action) {
     const ids = [...selected]
     if (ids.length === 0) return
-    const meta = {
-      acknowledge: { title: t('alh.bulk.ackTitle'), msg: t('alh.bulk.ackMsg', ids.length), variant: 'warning', confirm: t('alh.ack') },
-      resolve: { title: t('alh.bulk.resolveTitle'), msg: t('alh.bulk.resolveMsg', ids.length), variant: 'success', confirm: t('alh.resolveAction') },
-      're-notify': { title: t('alh.bulk.renotifyTitle'), msg: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning', confirm: t('alh.renotify') },
-    }[action]
-    // Sahiplen/çöz TOPLU yolda da gerekçe ister — yalnız teklide istenseydi zorunluluk delinirdi.
-    let note = null
+    // Sahiplen/çöz TOPLU yolda da gerekçe ister — yalnız teklide istenseydi zorunluluk delinirdi. Aynı gerekçeli
+    // pencere: seçilenlerin özeti (sayı, önem dağılımı, ilk birkaçı) + tek not hepsine; hata pencerede kalır.
     if (action === 'acknowledge' || action === 'resolve') {
-      const res0 = await showNoteConfirm(noteOpts({
-        title: meta.title, message: meta.msg, variant: meta.variant, confirmText: meta.confirm,
-        placeholder: action === 'resolve' ? t('alh.note.placeholderResolve') : t('alh.note.placeholder'),
-        noteHint: t('alh.note.hintBulk', ids.length),
-      }))
-      if (!res0?.confirmed) return
-      note = res0.note
-    } else {
-      const ok = await showConfirm({ title: meta.title, message: meta.msg, variant: meta.variant, confirmText: meta.confirm, cancelText: t('alh.resolveDialog.cancel') })
-      if (!ok) return
+      const byId = new Map(alerts.map((a) => [a.id, a]))
+      const items = ids.map((id) => byId.get(id)).filter(Boolean).map(noteContext)
+      if (items.length === 0) return
+      // Gönderilen = pencerenin GÖSTERDİĞİ (listede olmayan seçim sessizce isteğe girmesin)
+      const shownIds = items.map((i) => i.id)
+      setNoteDialog({ action: action === 'resolve' ? 'resolve' : 'ack', items, submit: (note) => runBulk(action, shownIds, note) })
+      return
     }
+    const ok = await showConfirm({ title: t('alh.bulk.renotifyTitle'), message: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning',
+      confirmText: t('alh.renotify'), cancelText: t('alh.resolveDialog.cancel') })
+    if (!ok) return
+    await runBulk(action, ids, null)
+  }
+
+  /** Toplu uç — `{ ok, error }` döner (gerekçeli pencere hatayı satır içi gösterir; tekrar bildirde pencere yok → tost). */
+  async function runBulk(action, ids, note) {
     setBulkBusy(true)
     let res
     try { res = await api.admin.bulkAlertAction(action, ids, note) } catch { res = null } finally { setBulkBusy(false) }
@@ -396,9 +412,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (failed) toast.error(msg); else toast.success(msg)
       setSelected(new Set())
       refreshAll()
-    } else {
-      toast.error(res?.error || t('alh.resolveError'))
+      return { ok: true }
     }
+    const error = res?.error || t('alh.resolveError')
+    if (note == null) toast.error(error)
+    return { ok: false, error }
   }
 
 
@@ -547,7 +565,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   const detailProps = detail ? {
     nowMs, teamName: teamNameOf(detail.team_id), push: facets.push[String(detail.id)],
-    ...(actBlocked(detail) ? { actBlocked: true } : { onAck: ack, onResolve: resolve, onReNotify: reNotify }),
+    ...(actBlocked(detail) ? { actBlocked: actBlocked(detail) } : { onAck: ack, onResolve: resolve, onReNotify: reNotify }),
     notifying: notifying === detail.id, onShowHistory: showSignatureHistory,
     nocCanWrite, nocFocusKey: nocFocus && String(nocFocus.id) === String(detail.id) ? nocFocus.n : 0, onNocChanged,
   } : null
@@ -628,6 +646,12 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       {renotifyModal && (
         <ReNotifyConfirmModal domain={renotifyModal.domain} recipients={renotifyModal.recipients} webhook={renotifyModal.webhook}
           sending={renotifySending} onSend={sendReNotify} onClose={() => { if (!renotifySending) setRenotifyModal(null) }} />
+      )}
+
+      {noteDialog && (
+        <ActionNoteDialog key={`${noteDialog.action}:${noteDialog.items.map((c) => c.id).join(',')}`}
+          action={noteDialog.action} subject="alert" items={noteDialog.items}
+          onSubmit={noteDialog.submit} onClose={() => setNoteDialog(null)} />
       )}
     </div>
   )

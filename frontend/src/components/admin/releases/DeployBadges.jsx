@@ -70,13 +70,22 @@ export function SourceBadge({ source, className }) {
   )
 }
 
-/** Ortam rozeti (Sistem Sağlığı "Uygulama" kartıyla aynı: bilgi tonu, büyük harf). */
+/**
+ * Ortam rozeti (Sürüm & Dağıtım, sürüm penceresi, Sistem Sağlığı "Uygulama" kartı — hepsi bu bileşen). Sunucu ortam adını Helm `config.environmentName` (APP_ENVIRONMENT) ayarından okur; ayar boşsa pod'da
+ * "unknown", pod dışında "local" döner (BuildInfo). Ham "unknown" kullanıcıya bir şey söylemiyordu (2026-09-27,
+ * kullanıcı: "neden unknown yazıyor?") → çevrilmiş etiket + nedenini ve çözümünü anlatan ipucu.
+ */
 export function EnvBadge({ env, className }) {
+  const t = useT()
   if (!env) return null
+  const key = String(env).toLowerCase()
+  const unknown = key === 'unknown'
+  const label = unknown ? t('version.envUnknown') : key === 'local' ? t('version.envLocal') : env
   return (
-    <Badge variant="outline" data-env={env}
-      className={cn('rounded-md px-1.5 font-semibold tracking-wide uppercase', TONE_CLASS.info, className)}>
-      {env}
+    <Badge variant="outline" data-env={env} title={unknown ? t('version.envUnknownTip') : undefined}
+      className={cn('rounded-md px-1.5 font-semibold tracking-wide', !unknown && key !== 'local' && 'uppercase',
+        unknown ? TONE_CLASS.warning : TONE_CLASS.info, className)}>
+      {label}
     </Badge>
   )
 }

@@ -1370,6 +1370,71 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data.push").isArray());
     }
 
+    /** Push ayağı (2026-09-28): kişi satırları görünürlüğe göre; tel biçimi snake_case, telefon/adres yok. */
+    private void stubPushScenario() {
+        when(escalationService.simulateRecipients(eq(2L), eq("HIGH"), anyBoolean(), isNull()))
+                .thenAnswer(inv -> new java.util.LinkedHashMap<>(Map.of("level", "HIGH", "email_total", 0L)));
+        when(userPushRecipientResolver.explain(2L, "HIGH")).thenReturn(List.of(
+                new com.sitemonitor.service.UserPushRecipientResolver.Explanation("N00001", "Kişi A", "Uzman", "TECH", true,
+                        "uzman", true, "WARNING", false, "RECIPIENT"),
+                new com.sitemonitor.service.UserPushRecipientResolver.Explanation("regularuser", "Kişi B", "Uzman", "PO", true,
+                        "po", false, "WARNING", false, "GROUP_DISABLED"),
+                new com.sitemonitor.service.UserPushRecipientResolver.Explanation("N00003", "Kişi C", null, null, true,
+                        null, null, null, true, "NO_ORG_ROLE")));
+        java.util.Map<String, Object> channel = new java.util.LinkedHashMap<>();
+        channel.put("enabled", false); channel.put("configured", true); channel.put("block_reason", "CHANNEL_DISABLED");
+        when(userPushService.scenarioChannel(2L, "HIGH", false)).thenReturn(channel);
+    }
+
+    @Test
+    @DisplayName("Push ayağı: global yönetici ve takımı YÖNETEN müdür herkesi (alır + almaz) görür; kanal durumu snake_case")
+    void simulateRecipients_pushLeg_fullForManagers() throws Exception {
+        stubPushScenario();
+        for (MockHttpSession s : List.of(authSession(), scopedAdminSession(), teamAdminSession())) {
+            mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.push_access").value("FULL"))
+                    .andExpect(jsonPath("$.data.push.length()").value(3))
+                    .andExpect(jsonPath("$.data.push[1].decision").value("GROUP_DISABLED"))
+                    .andExpect(jsonPath("$.data.push[1].display_name").value("Kişi B"))
+                    .andExpect(jsonPath("$.data.push[2].opt_out").value(true))
+                    .andExpect(jsonPath("$.data.push_channel.block_reason").value("CHANNEL_DISABLED"))
+                    .andExpect(jsonPath("$.data.push[0].phone").doesNotExist())
+                    .andExpect(jsonPath("$.data.push[0].webhook_url").doesNotExist());
+        }
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").session(scopedAdminSession()))
+                .andExpect(jsonPath("$.data.push_access_reason").value("TEAM_MANAGER"))
+                .andExpect(jsonPath("$.data.push_settings").value("LIMITED"));
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").session(authSession()))
+                .andExpect(jsonPath("$.data.push_access_reason").value("GLOBAL_ADMIN"))
+                .andExpect(jsonPath("$.data.push_settings").value("FULL"));
+    }
+
+    @Test
+    @DisplayName("Push ayağı: üye (USER) yalnız KENDİ satırını; üyesi olmayan AUDIT hiç satır görmez ama nedenini alır")
+    void simulateRecipients_pushLeg_selfAndNone() throws Exception {
+        stubPushScenario();
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.push_access").value("SELF"))
+                .andExpect(jsonPath("$.data.push_access_reason").value("MEMBER_SELF"))
+                .andExpect(jsonPath("$.data.push.length()").value(1))
+                .andExpect(jsonPath("$.data.push[0].username").value("regularuser"))
+                .andExpect(jsonPath("$.data.push[0].decision").value("GROUP_DISABLED"))
+                .andExpect(jsonPath("$.data.push_settings").value("NONE"));
+
+        MockHttpSession audit = new MockHttpSession();
+        audit.setAttribute("authenticated", Boolean.TRUE);
+        audit.setAttribute("username", "auditor");
+        audit.setAttribute("systemRole", "AUDIT");
+        mvc.perform(get("/api/admin/recipients/simulate").param("teamId", "2").session(audit))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.push_access").value("NONE"))
+                .andExpect(jsonPath("$.data.push_access_reason").value("NOT_MEMBER"))
+                .andExpect(jsonPath("$.data.push").doesNotExist())
+                .andExpect(jsonPath("$.data.push_channel.enabled").value(false));
+    }
+
     @Test
     @DisplayName("POST /contacts/{id}/webhook-test: gönderir, notification_log'a WEBHOOK_TEST yazar, denetler; webhook'suz kişi 400")
     void contactWebhookTest() throws Exception {
@@ -1412,6 +1477,149 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data['po@test.com'].status").value("SENT"))
                 .andExpect(jsonPath("$.data['mgr@test.com'].status").value("FAILED"))
                 .andExpect(jsonPath("$.data['mgr@test.com'].detail").value("404"));
+    }
+
+    // ── Eskalasyon kişileri — kapsamlı müdür (bug regresyon 2026-09-28, F1/F2/F8) ──
+
+    /** Müdür: rol ADMIN, görüş/yönetim kapsamı takım 2 + 3, birincil takım 2 → global DEĞİL. */
+    private MockHttpSession scopedAdminTwoTeams() {
+        MockHttpSession s = scopedAdminSession();
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(2L, 3L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(2L, 3L)));
+        return s;
+    }
+
+    /** Alfabetik İLK takım başka bir takım (1) — eski hata kişiyi buraya yazıyordu. */
+    private void stubFirstTeamIsForeign() {
+        Team first = new Team(); first.setId(1L); first.setName("Takım A");
+        when(userService.listTeams()).thenReturn(List.of(first));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    @Test
+    @DisplayName("F1: kapsamlı müdürün team_id'si (kapsam içi) KULLANILIR — kişi alfabetik ilk takıma düşmez")
+    void addContact_scopedAdmin_honoursTeamIdInScope() throws Exception {
+        stubFirstTeamIsForeign();
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminTwoTeams())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"TECH\",\"team_id\":3,"
+                                + "\"webhook_url\":\"https://hooks.example.com/x\",\"webhook_type\":\"TEAMS\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(3));
+        ArgumentCaptor<EscalationContact> cap = ArgumentCaptor.forClass(EscalationContact.class);
+        verify(contactRepo).save(cap.capture());
+        assertThat(cap.getValue().getTeamId()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("F1: kapsamlı müdür YÖNETMEDİĞİ takıma kişi (e-posta + webhook) ekleyemez → 403, kayıt yok")
+    void addContact_scopedAdmin_teamOutsideScope_returns403() throws Exception {
+        stubFirstTeamIsForeign();
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"TECH\",\"team_id\":99,"
+                                + "\"webhook_url\":\"https://hooks.example.com/x\"}"))
+                .andExpect(status().isForbidden());
+        verify(contactRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("F1: kapsamlı müdür team_id vermezse BİRİNCİL takımı (2) yazılır — ilk takım (1) DEĞİL")
+    void addContact_scopedAdmin_noTeam_usesPrimaryTeam() throws Exception {
+        stubFirstTeamIsForeign();
+        mvc.perform(post("/api/admin/contacts").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"TECH\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("F1: birincil takımı yönetim kapsamında olmayan müdür takımsız ekleyemez → 403 (ilk takıma düşme YOK)")
+    void addContact_scopedAdmin_primaryOutsideScope_returns403() throws Exception {
+        stubFirstTeamIsForeign();
+        MockHttpSession s = scopedAdminSession();
+        s.setAttribute("teamId", 5L);   // birincil 5, yönetim kapsamı [2]
+        mvc.perform(post("/api/admin/contacts").session(s)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"TECH\"}"))
+                .andExpect(status().isForbidden());
+        verify(contactRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("F1: TEAM_ADMIN'in gövdedeki team_id'si ezilir — kendi takımı (2) yazılır (eski davranış korunur)")
+    void addContact_teamAdmin_forcedToOwnTeam() throws Exception {
+        stubFirstTeamIsForeign();
+        mvc.perform(post("/api/admin/contacts").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Kişi\",\"email\":\"kisi@example.com\",\"role\":\"TECH\",\"team_id\":99}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(2));
+    }
+
+    @Test
+    @DisplayName("F1: kapsamlı müdür kişiyi YÖNETMEDİĞİ takıma taşıyamaz (403, kayıt yok); yönettiği takıma taşır")
+    void updateContact_scopedAdmin_moveRespectsManageScope() throws Exception {
+        EscalationContact existing = contact("po@example.com", "PO"); existing.setId(9L); existing.setTeamId(2L);
+        when(contactRepo.findById(9L)).thenReturn(Optional.of(existing));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/contacts/9").session(scopedAdminTwoTeams())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"PO\",\"email\":\"po@example.com\",\"team_id\":99}"))
+                .andExpect(status().isForbidden());
+        verify(contactRepo, never()).save(any());
+        assertThat(existing.getTeamId()).isEqualTo(2L);
+
+        mvc.perform(put("/api/admin/contacts/9").session(scopedAdminTwoTeams())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"PO\",\"email\":\"po@example.com\",\"team_id\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_id").value(3));
+    }
+
+    @Test
+    @DisplayName("F2: webhook-status kapsamlı görüntüleyiciye (müdür/TEAM_ADMIN/USER) yalnız GÖRDÜĞÜ kişilerin adreslerini döner")
+    void contactWebhookStatus_scopedViewer_onlyContactsInViewScope() throws Exception {
+        NotificationLog mine = new NotificationLog(); mine.setRecipientEmail("po@example.com"); mine.setWebhookStatus("SENT"); mine.setSentAt("2026-09-20T10:00:00"); mine.setTrigger("INITIAL");
+        NotificationLog foreign = new NotificationLog(); foreign.setRecipientEmail("baska@example.com"); foreign.setWebhookStatus("FAILED: 500 gizli ayrıntı"); foreign.setSentAt("2026-09-20T11:00:00"); foreign.setTrigger("INITIAL");
+        when(notificationLogRepo.findLatestWebhookPerRecipient()).thenReturn(List.of(mine, foreign));
+        EscalationContact own = contact("PO@Example.com", "PO"); own.setTeamId(2L);   // harf farkı eşleşmeyi bozmaz
+        when(contactRepo.findByTeamIdInOrderByRoleAsc(List.of(2L))).thenReturn(List.of(own));
+
+        for (MockHttpSession s : List.of(scopedAdminSession(), teamAdminSession(), userSession())) {
+            mvc.perform(get("/api/admin/contacts/webhook-status").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data['po@example.com'].status").value("SENT"))
+                    .andExpect(jsonPath("$.data['baska@example.com']").doesNotExist());
+        }
+        // Global yönetici hepsini görür (süzgeç yalnız kapsamlı görüntüleyicide).
+        mvc.perform(get("/api/admin/contacts/webhook-status").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data['baska@example.com'].status").value("FAILED"));
+    }
+
+    @Test
+    @DisplayName("F8: webhook testi YÖNETİM kapsamı ister — kişiyi yalnız GÖREN USER 403; başka takımın kişisi müdüre 403; kendi takımı 200")
+    void contactWebhookTest_requiresManageScope() throws Exception {
+        EscalationContact c = contact("po@example.com", "PO"); c.setId(5L); c.setTeamId(2L);
+        c.setWebhookUrl("https://hooks.example.com/services/T/B/x"); c.setWebhookType("SLACK");
+        when(contactRepo.findById(5L)).thenReturn(Optional.of(c));
+        EscalationContact foreign = contact("baska@example.com", "PO"); foreign.setId(6L); foreign.setTeamId(7L);
+        foreign.setWebhookUrl("https://hooks.example.com/services/T/B/y"); foreign.setWebhookType("SLACK");
+        when(contactRepo.findById(6L)).thenReturn(Optional.of(foreign));
+
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(userSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/contacts/6/webhook-test").session(scopedAdminSession()))
+                .andExpect(status().isForbidden());
+        verify(webhookService, never()).send(any(), any(), any(), any(), any());
+
+        mvc.perform(post("/api/admin/contacts/5/webhook-test").session(scopedAdminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SENT"));
+        verify(webhookService).send(eq("SLACK"), eq("https://hooks.example.com/services/T/B/x"), any(), any(), eq("INFO"));
     }
 
     // ── Yönetim Paneli değişiklik geçmişi (2026-09-20) ────────────────────────

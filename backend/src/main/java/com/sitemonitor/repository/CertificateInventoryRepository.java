@@ -20,6 +20,11 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     boolean existsByDomain(String domain);
     /** Rename çakışması: DB UNIQUE büyük/küçük harfe duyarlı, envanter ise küçük harf saklar. */
     boolean existsByDomainIgnoreCase(String domain);
+    /**
+     * Mükerrer alan adı (2026-09-28): çakışan kaydın KENDİSİ — 409 yanıtı sahibi takımı adıyla söyler
+     * ({@code DOMAIN_EXISTS}). Harf duyarsız: eski satırlar karışık harfle kalmış olabilir; birden çoksa en eskisi.
+     */
+    Optional<CertificateInventory> findFirstByDomainIgnoreCaseOrderByIdAsc(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
     /** Sahipsiz (takımsız) aktif alanlar — yapılandırma sağlığı kartı (2026-09-12). */

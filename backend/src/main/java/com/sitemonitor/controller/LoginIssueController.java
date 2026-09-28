@@ -55,7 +55,8 @@ public class LoginIssueController {
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String source,   // LOGIN | CLIENT_ERROR | USER_REPORT
-            @RequestParam(required = false) String category, // BLOCKER | ANNOYANCE | SUGGESTION
+            @RequestParam(required = false) String category, // BLOCKER | ANNOYANCE | SUGGESTION | DOMAIN_TRANSFER
+            @RequestParam(required = false) String impact,   // etki kodu (2026-09-28) — LoginIssueService.IMPACTS
             @RequestParam(required = false) String q,        // hata mesajı / açıklama / kullanıcı içinde arama
             @RequestParam(required = false) String since,    // bildirim tarihi >= (ISO UTC)
             @RequestParam(required = false) String until,    // bildirim tarihi <= (ISO UTC)
@@ -63,7 +64,7 @@ public class LoginIssueController {
             @RequestParam(defaultValue = "20") int size,
             HttpSession session) {
         requireAccess(session, "view");
-        Page<LoginIssueReport> p = loginIssueService.list(status, source, category, q, since, until, page, size);
+        Page<LoginIssueReport> p = loginIssueService.list(status, source, category, impact, q, since, until, page, size);
         List<Map<String, Object>> data = new ArrayList<>();
         for (LoginIssueReport r : p.getContent()) data.add(toListItem(r));
         Map<String, Object> body = new LinkedHashMap<>();
@@ -244,12 +245,22 @@ public class LoginIssueController {
      * hesabı kilitli kalmasın), ama normal yolda {@code issues.login-reports.purge} istenir.
      */
     private void requirePurge(HttpSession session) {
+        SessionScope.requireNotScopedAdmin(session, PERM + ".purge");
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
         permissionService.require(session, PERM + ".purge", "execute");
     }
 
-    /** Bootstrap admin (login'de set edilen bayrak) her zaman erişir; aksi halde matris izni. */
+    /**
+     * Bootstrap admin (login'de set edilen bayrak) her zaman erişir; aksi halde matris izni.
+     *
+     * <p>Kapsamlı müdür (AD ADMIN) GEÇEMEZ (2026-09-28 regresyon taraması): bildirimler takımsız, sistem geneli
+     * kayıtlardır (her kullanıcının IP'si, tarayıcı bilgisi, ekran görüntüleri, mail geçmişi). ADMIN rolü matriste
+     * bu izni taşıdığı için müdür yalnız {@code permissionService.require} ile her kullanıcının bildirimini okuyup
+     * yanıtlayabiliyor, durumunu değiştirip kalıcı silebiliyordu. Müdürün KENDİ bildirimleri
+     * {@code /api/issue-reports/mine} ({@link IssueReportController}) üzerinden açık kalır.
+     */
     private void requireAccess(HttpSession session, String action) {
+        SessionScope.requireNotScopedAdmin(session, PERM);
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
         permissionService.require(session, PERM, action);
     }
@@ -269,6 +280,7 @@ public class LoginIssueController {
         m.put("imageCount", r.getImageCount());
         m.put("source", r.getSource());
         m.put("category", r.getCategory());
+        m.put("impacts", LoginIssueService.impactList(r.getImpacts()));   // çoklu etki (2026-09-28); eski kayıtta []
         m.put("linkedReference", r.getLinkedReference());
         m.put("lastActivityAt", r.getLastActivityAt() != null ? r.getLastActivityAt() : r.getReportedAt());
         // İmza: hata metninin normalize ilk satırı — frontend gruplama bunu anahtar alır.
@@ -307,6 +319,8 @@ public class LoginIssueController {
         m.put("imageCount", r.getImageCount());
         m.put("source", r.getSource());
         m.put("category", r.getCategory());
+        m.put("impacts", LoginIssueService.impactList(r.getImpacts()));
+        m.put("impactOther", r.getImpactOther());
         m.put("appVersion", r.getAppVersion());
         m.put("screenSize", r.getScreenSize());
         m.put("tabKey", r.getTabKey());

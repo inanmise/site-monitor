@@ -576,3 +576,72 @@ describe('InventoryFormModal — Kaydet sırasında kayma yok', () => {
     expect(copyMock).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * Mükerrer alan adı (2026-09-28, kullanıcı isteği): 409 DOMAIN_EXISTS artık ham bildirim değil — alt çubukta EYLEMLİ
+ * uyarı bandı (sahibi takım rozeti + ileti + aktar/talep). Kayıt yapılmaz, ilk kontrol koşmaz; alan adı değişince bant
+ * gider. Global yönetici aktarırsa form kapanır ve çağıran taşınan kaydı açar (`onSaved(…, { open: true })`).
+ */
+describe('InventoryFormModal — mükerrer alan adı bandı', () => {
+  const conflictRes = (existing = {}) => ({
+    success: false, status: 409, code: 'DOMAIN_EXISTS',
+    error: "This domain is already registered in the 'Takım B' team's inventory. A duplicate record can't be created; if the domain should belong to your team, the record needs to be transferred to it.",
+    existing: { domain: 'b.example.com', inventory_id: 7, team_id: 9, team_name: 'Takım B', ug_team_id: null, ug_team_name: null,
+      deleted: false, deleted_at: null, same_team: false, can_view: true, can_restore: false, can_transfer: false, ...existing },
+  })
+  const openDuplicate = (props = {}) => {
+    render(<InventoryFormModal mode="duplicate" record={RECORD} teams={TEAMS} onClose={() => {}} {...props} />)
+    fireEvent.change(screen.getByDisplayValue('a.example.com'), { target: { value: 'b.example.com' } })
+    fireEvent.click(saveBtn())
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    confirmMock.mockResolvedValue(true)
+    api.refreshCertificateHealth = vi.fn().mockResolvedValue({ success: true })
+  })
+
+  it('409 DOMAIN_EXISTS → uyarı bandı (sahibi takım rozeti + ileti) alt çubukta; alan işaretli; kayıt yok, ilk kontrol yok', async () => {
+    api.admin.addInventory = vi.fn().mockResolvedValue(conflictRes())
+    const onSaved = vi.fn()
+    openDuplicate({ onSaved })
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveAttribute('data-tone', 'warning')
+    expect(alert.closest('[data-slot="inv-form-conflict"]')).not.toBeNull()
+    expect(alert.textContent).toContain("'Takım B' team's inventory")
+    expect(alert.querySelector('[data-slot="team-badge"]').textContent).toBe('Takım B')
+    expect(within(alert).getByRole('button', { name: 'Request a transfer' })).toBeInTheDocument()
+    expect(within(alert).queryByRole('button', { name: /^Move to/ })).toBeNull()   // aktarım izni yok
+    expect(screen.getByRole('textbox', { name: /^Domain/ })).toHaveAttribute('aria-invalid', 'true')
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(api.refreshCertificateHealth).not.toHaveBeenCalled()
+
+    // Alan adı değişince çakışma bayatlar → bant gider
+    fireEvent.change(screen.getByDisplayValue('b.example.com'), { target: { value: 'c.example.com' } })
+    expect(document.querySelector('[data-slot="inv-form-conflict"]')).toBeNull()
+  })
+
+  it('global yönetici: "Seçili ekibe aktar" formdaki takımı hedefler → transfer(7, 1) → form kaydı açtırır (onSaved open)', async () => {
+    api.admin.addInventory = vi.fn().mockResolvedValue(conflictRes({ can_transfer: true }))
+    api.admin.transferCertSy = vi.fn().mockResolvedValue({ success: true, data: { id: 7, domain: 'b.example.com', team_id: 1 } })
+    const onSaved = vi.fn()
+    openDuplicate({ onSaved })
+    const alert = await screen.findByRole('alert')
+    fireEvent.click(within(alert).getByRole('button', { name: "Move to 'SY-Takım A'" }))
+    await waitFor(() => expect(api.admin.transferCertSy).toHaveBeenCalledWith(7, 1))
+    expect(confirmMock.mock.calls[0][0].message).toMatch(/moved from 'Takım B' to 'SY-Takım A'/)
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+    const [, domain, opts] = onSaved.mock.calls[0]
+    expect(domain).toBe('b.example.com')
+    expect(opts).toEqual({ open: true, record: { id: 7, domain: 'b.example.com', team_id: 1 } })
+  })
+
+  it('düz 409 (yapısal alan yok, ör. DB yarışı) eskisi gibi satır içi kırmızı bant — mükerrer bandı ÇİZİLMEZ', async () => {
+    api.admin.addInventory = vi.fn().mockResolvedValue({ success: false, status: 409, error: 'Bu domain envanterde zaten var.' })
+    openDuplicate()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveAttribute('data-tone', 'danger')
+    expect(alert.textContent).toContain('Bu domain envanterde zaten var.')
+    expect(document.querySelector('[data-slot="inv-form-conflict"]')).toBeNull()
+  })
+})

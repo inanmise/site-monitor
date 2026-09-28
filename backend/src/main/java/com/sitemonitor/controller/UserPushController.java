@@ -20,7 +20,9 @@ import com.sitemonitor.util.Csv;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -145,6 +147,7 @@ public class UserPushController {
     public ResponseEntity<Map<String, Object>> saveScopes(
             @RequestBody List<Map<String, Object>> body, HttpSession session) {
         requireAdmin(session);
+        requireScopeRowsManageable(session, body);
         int changed = 0;
         // Bildirim KAPSAMI bir yetki ayarıdır ("hangi takım/tür push alır"): hangi anahtarın
         // açılıp kapandığı yazılmadan "N kapsam güncellendi" demek denetimde işe yaramıyordu.
@@ -173,6 +176,41 @@ public class UserPushController {
         return ok(Map.of("data", scopeRepo.findAll()));
     }
 
+    /**
+     * Kapsam satırı yetkisi (2026-09-28 regresyon taraması): kapsamlı müdür (AD ADMIN) {@link #requireAdmin}'den geçip
+     * HERHANGİ bir takımın push'unu kapatabiliyordu. Global olmayan çağıran yalnız YÖNETTİĞİ takımın TEAM satırını
+     * değiştirir; TYPE satırı takımsızdır (bütün takımları etkiler) → yalnız global yönetici. Doğrulama yazmadan ÖNCE,
+     * bütün gövde için yapılır: bir satır reddedilirse hiçbiri yazılmaz (yarım uygulanmış toplu işlem yok).
+     */
+    private static void requireScopeRowsManageable(HttpSession session, List<Map<String, Object>> body) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        for (Map<String, Object> e : body) {
+            String type = String.valueOf(e.get("scopeType"));
+            String key = String.valueOf(e.get("scopeKey"));
+            if (!List.of("TEAM", "TYPE").contains(type) || key.isBlank() || "null".equals(key)) continue;   // kayıt döngüsü de atlar
+            if ("TYPE".equals(type)) {
+                throw new SecurityException(Msg.t(
+                        "İzleme türü kapsamı bütün takımları etkiler; yalnız global yönetici değiştirebilir: ",
+                        "A monitor-type scope affects every team; only a global administrator can change it: ") + key);
+            }
+            Long teamId = canonicalTeamId(key);
+            if (teamId == null || !SessionScope.canManage(session, teamId)) {
+                throw new SecurityException(Msg.t("Bu takımın push kapsamını değiştirme yetkiniz yok: ",
+                        "You don't have permission to change this team's push scope: ") + key);
+            }
+        }
+    }
+
+    /** TEAM anahtarı → takım id'si; yalnız kanonik biçim ("5"; " 5"/"05" değil — kayıt anahtarı birebir yazılır). */
+    private static Long canonicalTeamId(String key) {
+        try {
+            Long id = Long.valueOf(key);
+            return String.valueOf(id).equals(key) ? id : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     // ── Test gönderimi ─────────────────────────────────────────────────────────────────────
 
     @PostMapping("/test")
@@ -190,12 +228,37 @@ public class UserPushController {
             for (Object o : list) if (o != null && !o.toString().isBlank()) usernames.add(o.toString().trim());
         if (usernames.isEmpty()) return badRequest("En az bir sicil girin");
         if (usernames.size() > 10) return badRequest(Msg.t("Tek denemede en çok 10 sicil", "At most 10 users per attempt"));
+        requireTestRecipientsManageable(session, usernames);
         String template = body.get("template") == null ? "test" : String.valueOf(body.get("template"));
         Map<String, Object> result = userPushService.sendTest(usernames, template, "TEST — " + actor(session));
         // Kural 0 + gizlilik: audit'e sicil listesi DEĞİL yalnız adet yazılır.
         auditService.recordAction("USER_PUSH_TEST", session, "USER_PUSH", "test",
                 usernames.size() + " alıcıya test gönderimi (" + template + ")", null);
         return ok(Map.of("data", result));
+    }
+
+    /**
+     * Test alıcısı yetkisi (2026-09-28 regresyon taraması): kapsamlı müdür test ucundan HERHANGİ bir sicile gerçek
+     * push atabiliyordu. Global olmayan çağıran için her sicil, YÖNETTİĞİ bir takımın üyesi olmalı. Üyelik = birincil
+     * takım VEYA {@code app_user_teams} ({@code findMemberIdentities}; alıcı çözümünün baktığı iki kaynak — birincil
+     * takımı olup üyelik satırı eksik kişi de test edilebilsin, teşhis tam o kişi için yapılır). Kullanıcı tablosunda
+     * olmayan sicil de reddedilir.
+     */
+    private void requireTestRecipientsManageable(HttpSession session, List<String> usernames) {
+        if (SessionScope.isGlobalAdmin(session)) return;
+        List<Long> managed = SessionScope.manageTeamIds(session);
+        Set<String> members = new java.util.HashSet<>();
+        if (managed != null && !managed.isEmpty()) {
+            for (Object[] row : userRepo.findMemberIdentities(managed)) {
+                if (row != null && row.length > 1 && row[1] != null) members.add(row[1].toString().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        for (String u : usernames) {
+            if (!members.contains(u.toLowerCase(java.util.Locale.ROOT))) {
+                throw new SecurityException(Msg.t("Test gönderimi yalnız yönettiğiniz takımların üyelerine yapılabilir: ",
+                        "Test pushes can only be sent to members of teams you manage: ") + u);
+            }
+        }
     }
 
     // ── Teslimat günlüğü (K11) ─────────────────────────────────────────────────────────────
@@ -210,9 +273,7 @@ public class UserPushController {
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "25") int size,
             HttpSession session) {
         requireAdmin(session);
-        var pg = deliveryRepo.search(blankToNull(username), teamId, blankToNull(monitorType),
-                blankToNull(level), blankToNull(status), blankToNull(trigger),
-                blankToNull(notificationId), blankToNull(q), blankToNull(from), blankToNull(to),
+        var pg = scopedSearch(session, username, teamId, monitorType, level, status, trigger, notificationId, q, from, to,
                 PageRequest.of(Math.max(0, page), Math.max(1, Math.min(size, 200))));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("deliveries", pg.getContent());
@@ -226,6 +287,41 @@ public class UserPushController {
         return ok(out);
     }
 
+    /**
+     * Teslimat günlüğü TAKIM KAPSAMI (2026-09-28 regresyon taraması; `/explain` ve "Kim bilgilendirilir?" ile TEK kural):
+     * global yönetici her satırı, kapsamlı müdür (AD ADMIN) yalnız YÖNETTİĞİ takımların alarmlarına ait satırları görür.
+     * Eskiden {@link #requireAdmin} yeterliydi → müdür her takımın kişi adlarını, durumlarını (SKIPPED_USER_OPT_OUT
+     * dâhil) ve mesaj metinlerini liste + CSV'den okuyabiliyordu. Yönetmediği takım süzgeci 403; takımsız
+     * (test/sistem) satırlar müdüre gösterilmez.
+     */
+    private Page<UserPushDelivery> scopedSearch(HttpSession session, String username, Long teamId, String monitorType,
+                                                String level, String status, String trigger, String notificationId,
+                                                String q, String from, String to, Pageable pageable) {
+        if (!SessionScope.isGlobalAdmin(session)) {
+            if (teamId != null && !SessionScope.canManage(session, teamId)) {
+                throw new SecurityException(Msg.t("Bu takımın push teslimatlarını görme yetkiniz yok.",
+                        "You don't have permission to see this team's push deliveries."));
+            }
+            if (teamId == null) {
+                List<Long> managed = SessionScope.manageTeamIds(session);
+                if (managed == null || managed.isEmpty()) return Page.empty(pageable);
+                return deliveryRepo.searchInTeams(managed, blankToNull(username), blankToNull(monitorType),
+                        blankToNull(level), blankToNull(status), blankToNull(trigger),
+                        blankToNull(notificationId), blankToNull(q), blankToNull(from), blankToNull(to), pageable);
+            }
+        }
+        return deliveryRepo.search(blankToNull(username), teamId, blankToNull(monitorType),
+                blankToNull(level), blankToNull(status), blankToNull(trigger),
+                blankToNull(notificationId), blankToNull(q), blankToNull(from), blankToNull(to), pageable);
+    }
+
+    /** İstatistik kapsamı: global yönetici için null (tümü), kapsamlı müdür için yönettiği takımlar (boş olabilir). */
+    private static Set<Long> statsScope(HttpSession session) {
+        if (SessionScope.isGlobalAdmin(session)) return null;
+        List<Long> managed = SessionScope.manageTeamIds(session);
+        return managed == null ? Set.of() : new java.util.HashSet<>(managed);
+    }
+
     /** CSV — listeyle AYNI süzgeçler (ekranda 12 satır varken dosyada 800 çıkmasın). */
     @GetMapping("/deliveries/export")
     public ResponseEntity<byte[]> exportDeliveries(
@@ -236,9 +332,7 @@ public class UserPushController {
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             HttpSession session) {
         requireAdmin(session);
-        var pg = deliveryRepo.search(blankToNull(username), teamId, blankToNull(monitorType),
-                blankToNull(level), blankToNull(status), blankToNull(trigger),
-                blankToNull(notificationId), blankToNull(q), blankToNull(from), blankToNull(to),
+        var pg = scopedSearch(session, username, teamId, monitorType, level, status, trigger, notificationId, q, from, to,
                 PageRequest.of(0, 10_000));
         StringBuilder sb = new StringBuilder();
         sb.append("created_at,sent_at,username,display_name,team_id,monitor_type,monitor_name,")
@@ -273,6 +367,12 @@ public class UserPushController {
                                                        @RequestParam(defaultValue = "HIGH") String level,
                                                        HttpSession session) {
         requireAdmin(session);
+        // Kişi kararları (org rolü, opt-out) — "Kim bilgilendirilir?" ile TEK kural (2026-09-28): kapsamlı müdür yalnız
+        // YÖNETTİĞİ takımı sorar. Eskiden requireAdmin'den geçen müdür, API'den herhangi bir takımın üyelerini okuyabiliyordu.
+        if (PushDecisionAccess.of(session, teamId).level() != PushDecisionAccess.Level.FULL) {
+            throw new SecurityException(Msg.t("Bu takımın push kararlarını görme yetkiniz yok.",
+                    "You don't have permission to see this team's push decisions."));
+        }
         String lvl = level == null ? "HIGH" : level.trim().toUpperCase(java.util.Locale.ROOT);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("teamId", teamId);
@@ -296,8 +396,9 @@ public class UserPushController {
         requireAdmin(session);
         Map<String, Object> out = new LinkedHashMap<>();
         // Geriye uyum: last24h / last7d düz sayaç haritası olarak kalır (eski istemci/test sözleşmesi).
-        out.put("last24h", statusCounts(STAT_WINDOWS.get("24h")));
-        out.put("last7d", statusCounts(STAT_WINDOWS.get("7d")));
+        Set<Long> scope = statsScope(session);   // kapsamlı müdür: yalnız yönettiği takımların sayıları
+        out.put("last24h", statusCounts(STAT_WINDOWS.get("24h"), scope));
+        out.put("last7d", statusCounts(STAT_WINDOWS.get("7d"), scope));
         // Yeni sözleşme: windows[key] = { counts: {status→n}, teams: [{team_id, team_name, SENT, FAILED, total}] }
         Map<String, Object> windows = new LinkedHashMap<>();
         Map<Long, String> teamNames = new LinkedHashMap<>();
@@ -305,8 +406,8 @@ public class UserPushController {
         for (Map.Entry<String, Duration> w : STAT_WINDOWS.entrySet()) {
             String since = ISO.format(Instant.now().minus(w.getValue()));
             Map<String, Object> win = new LinkedHashMap<>();
-            win.put("counts", statusCounts(w.getValue()));
-            win.put("teams", teamBreakdown(since, teamNames));
+            win.put("counts", statusCounts(w.getValue(), scope));
+            win.put("teams", teamBreakdown(since, teamNames, scope));
             windows.put(w.getKey(), win);
         }
         out.put("windows", windows);
@@ -314,19 +415,28 @@ public class UserPushController {
         return ok(out);
     }
 
-    private Map<String, Long> statusCounts(Duration window) {
+    private Map<String, Long> statusCounts(Duration window, Set<Long> scope) {
         String since = ISO.format(Instant.now().minus(window));
         Map<String, Long> counts = new LinkedHashMap<>();
-        for (Object[] row : deliveryRepo.countByStatusSince(since))
-            counts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
+        if (scope == null) {
+            for (Object[] row : deliveryRepo.countByStatusSince(since))
+                counts.put(String.valueOf(row[0]), ((Number) row[1]).longValue());
+            return counts;
+        }
+        for (Object[] row : deliveryRepo.countByTeamAndStatusSince(since)) {
+            Long teamId = row[0] == null ? null : ((Number) row[0]).longValue();
+            if (teamId == null || !scope.contains(teamId)) continue;
+            counts.merge(String.valueOf(row[1]), ((Number) row[2]).longValue(), Long::sum);
+        }
         return counts;
     }
 
     /** Takım başına SENT/FAILED/toplam — toplam azalan; takımsız satırlar (test/sistem) "—" adıyla en sonda. */
-    private List<Map<String, Object>> teamBreakdown(String since, Map<Long, String> teamNames) {
+    private List<Map<String, Object>> teamBreakdown(String since, Map<Long, String> teamNames, Set<Long> scope) {
         Map<Long, Map<String, Object>> byTeam = new LinkedHashMap<>();
         for (Object[] row : deliveryRepo.countByTeamAndStatusSince(since)) {
             Long teamId = row[0] == null ? null : ((Number) row[0]).longValue();
+            if (scope != null && (teamId == null || !scope.contains(teamId))) continue;
             String status = String.valueOf(row[1]);
             long n = ((Number) row[2]).longValue();
             Map<String, Object> m = byTeam.computeIfAbsent(teamId, id -> {

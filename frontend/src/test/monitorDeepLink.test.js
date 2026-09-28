@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { monitorDeepLink, domainDeepLink } from '../utils/monitorDeepLink.js'
+import { monitorDeepLink, domainDeepLink, tabDeepLink, certDeepLink, DEEP_OPEN } from '../utils/monitorDeepLink.js'
 
 /**
  * Paylaşılabilir derin bağlantı. Sözleşmenin iki kritik yanı var:
@@ -41,5 +41,19 @@ describe('monitorDeepLink', () => {
     expect(url).toContain('?tab=uptime&domain=')
     expect(url).toContain(encodeURIComponent('ödeme.example.com'))
     expect(domainDeepLink('uptime', '')).toBeNull()
+  })
+
+  it('tabDeepLink: monitorDeepLink ile AYNI metin; boş değer yazılmaz, sıra korunur, kaçışlanır', () => {
+    expect(tabDeepLink('http', { monitor: 5 })).toBe(monitorDeepLink('http', 5))
+    expect(tabDeepLink('http', { monitor: 5, open: null, x: '' })).toBe(monitorDeepLink('http', 5))
+    expect(tabDeepLink('dns', { monitor: 7, open: DEEP_OPEN.NOC })).toMatch(/[?]tab=dns&monitor=7&open=noc$/)
+    expect(tabDeepLink('dashboard', { domain: 'a b.example.com' })).toContain('domain=a%20b.example.com')
+    expect(tabDeepLink(null, { monitor: 1 })).toBeNull()
+  })
+
+  it('certDeepLink: Pano + alan + open=cert (varsayılan) / open=noc; alan yoksa null', () => {
+    expect(certDeepLink('shop.example.com')).toMatch(/^http.*[?]tab=dashboard&domain=shop[.]example[.]com&open=cert$/)
+    expect(certDeepLink('shop.example.com', DEEP_OPEN.NOC)).toMatch(/&open=noc$/)
+    expect(certDeepLink('')).toBeNull()
   })
 })

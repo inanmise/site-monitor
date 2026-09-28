@@ -51,10 +51,11 @@ const TITLE = cn(
  *
  * @param {object} monitor        GET /monitoring/domain satırı (snake_case)
  * @param {Function} onOpen       detay penceresini aç (başlık düğmesi — kartın tamamını örter)
+ * @param {boolean} running       kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onPlanRenewal yenileme planı penceresini aç; verilmezse plan çipi salt bilgi, kısayol yok
  */
 export default function DomainMonitorCard({
-  monitor: m, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions,
+  monitor: m, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions, running = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -68,7 +69,7 @@ export default function DomainMonitorCard({
   const name = String(m.name || '').trim()
   const hasMeta = !!(m.team_name || m.group_name || tagsOf(m).length || m.noc_notify)
   return (
-    <MonitorCard status={status} density={density} alarm={alarm} inactive={paused} data-expiry={tone} data-domain={m.domain}
+    <MonitorCard status={status} density={density} running={running} alarm={alarm} inactive={paused} data-expiry={tone} data-domain={m.domain}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={<>

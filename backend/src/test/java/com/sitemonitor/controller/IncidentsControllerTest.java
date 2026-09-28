@@ -45,6 +45,7 @@ class IncidentsControllerTest {
     @MockitoBean com.sitemonitor.repository.TeamRepository teamRepo;
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
+    @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;   // org geneli okuma anahtarı (mock: KAPALI)
     // Auth + metrics interceptor bağımlılıkları (WebMvc slice)
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
@@ -80,9 +81,9 @@ class IncidentsControllerTest {
         AlertEvent pageInt = new AlertEvent();
         pageInt.setId(3L); pageInt.setDomain("https://x/campaign"); pageInt.setAlertType("PAGE_INTEGRITY");
         pageInt.setAlertLevel("WARNING"); pageInt.setResolved(false); pageInt.setCreatedAt("2026-07-10T11:00:00");
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(scripted, pageInt)));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
         com.sitemonitor.model.ScriptedMonitor sm = new com.sitemonitor.model.ScriptedMonitor();
         sm.setId(20L); sm.setName("Login akışı");
@@ -109,9 +110,9 @@ class IncidentsControllerTest {
         AlertEvent portDown = new AlertEvent();
         portDown.setId(4L); portDown.setDomain("svc.example.com"); portDown.setAlertType("PORT_DOWN");
         portDown.setAlertLevel("CRITICAL"); portDown.setResolved(false); portDown.setCreatedAt("2026-07-10T10:00:00");
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(portDown)));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
         com.sitemonitor.model.PortMonitor deleted = new com.sitemonitor.model.PortMonitor();
         deleted.setId(40L); deleted.setName("eski"); deleted.setHost("svc.example.com"); deleted.setDeletedAt("2026-09-01T00:00:00");
@@ -127,9 +128,9 @@ class IncidentsControllerTest {
     @Test
     @DisplayName("GET /incidents: HTTP_DOWN + http_status=500 → root_cause 500/server_error, status ongoing, monitor=domain")
     void list_returnsIncidentDto() throws Exception {
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(httpDown500())));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
         when(httpMonitorRepo.findAll()).thenReturn(List.of());   // eşleşen monitör yok → ad = domain
 
@@ -152,9 +153,9 @@ class IncidentsControllerTest {
         viaInventory.setId(2L); viaInventory.setDomain("inv.example.com");
         AlertEvent orphan = httpDown500();                        // ne damga ne envanter → null
         orphan.setId(3L); orphan.setDomain("yok.example.com");
-        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), any(), any()))
+        when(alertEventRepo.findIncidents(any(), any(), any(), any(), any(), anyBoolean(), anyBoolean(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(stamped, viaInventory, orphan)));
-        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(List.of());
+        when(alertEventRepo.countIncidentsByType(any(), any(), any(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(List.of());
         when(commentRepo.countByAlertIds(any())).thenReturn(List.of());
         when(httpMonitorRepo.findAll()).thenReturn(List.of());
         com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();

@@ -961,6 +961,9 @@ public class SchedulerService {
         patch("ALTER TABLE login_issue_reports ADD COLUMN last_activity_at VARCHAR(30)");
         patch("ALTER TABLE login_issue_reports ADD COLUMN last_admin_activity_at VARCHAR(30)");
         patch("ALTER TABLE login_issue_reports ADD COLUMN reporter_seen_at VARCHAR(30)");
+        // Sorun bildirimi "Ne yaşıyorsunuz?" çoklu etki seçimi (2026-09-28) — nullable; eski satırlar null kalır.
+        patch("ALTER TABLE login_issue_reports ADD COLUMN impacts TEXT");
+        patch("ALTER TABLE login_issue_reports ADD COLUMN impact_other TEXT");
         // MonitoringGroupService.typeOf'ta Page/Scripted eksikti → grupları type='' ile kaydolmuştu;
         // takım+ad eşleşmesiyle doğru türe backfill (idempotent; boş-tür satır kalmayana dek zararsız).
         patch("UPDATE monitoring_groups g SET type='scripted' WHERE (g.type='' OR g.type IS NULL) AND EXISTS "

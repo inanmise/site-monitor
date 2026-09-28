@@ -229,7 +229,7 @@ public class RetentionAdminController {
     /** Dry-run: hiçbir satır silinmez, yalnız sayım yapılır. */
     @PostMapping("/dry-run")
     public ResponseEntity<Map<String, Object>> dryRun(HttpSession session, HttpServletRequest request) {
-        requireAccess(session);
+        requireWrite(session);
         RetentionService.RunResult run = retentionService.execute(true, actor(session));
         auditService.recordAction("RETENTION_DRY_RUN", session, request, "RETENTION", "dry-run",
                 "{\"rows\":" + run.totalRows() + "}");
@@ -240,7 +240,7 @@ public class RetentionAdminController {
     /** Elle temizlik — YIKICI. Legal hold açıkken reddedilir. */
     @PostMapping("/run")
     public ResponseEntity<Map<String, Object>> runNow(HttpSession session, HttpServletRequest request) {
-        requireAccess(session);
+        requireWrite(session);
         if (retentionService.holdActive()) {
             throw new IllegalStateException(
                     Msg.t("Yasal saklama (legal hold) açıkken temizlik çalıştırılamaz. Önce ayarı kapatın.", "Cleanup cannot run while legal hold is on. Turn the setting off first."));
@@ -262,7 +262,7 @@ public class RetentionAdminController {
     @PostMapping("/backfill-hourly")
     public ResponseEntity<Map<String, Object>> backfillHourly(
             @RequestParam(defaultValue = "0") int days, HttpSession session, HttpServletRequest request) {
-        requireAccess(session);
+        requireWrite(session);
         int d = days > 0 ? days : maxRawSeriesDays();
         long t0 = System.currentTimeMillis();
         int buckets = schedulerService.backfillHourlyRollup(d);
@@ -289,7 +289,7 @@ public class RetentionAdminController {
     @SuppressWarnings("unchecked")
     public ResponseEntity<Map<String, Object>> saveSettings(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAccess(session);
+        requireWrite(session);
         Map<String, Object> values = body.get("values") instanceof Map<?, ?> m
                 ? (Map<String, Object>) m : new LinkedHashMap<>();
 
@@ -405,7 +405,7 @@ public class RetentionAdminController {
     @PutMapping("/approval")
     public ResponseEntity<Map<String, Object>> saveApproval(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
-        requireAccess(session);
+        requireWrite(session);
         String policyId = String.valueOf(body.getOrDefault("policy_id", "")).trim();
         if (RetentionCatalog.byId(policyId).isEmpty()) {
             throw new IllegalArgumentException("Bilinmeyen politika: " + policyId);
@@ -503,6 +503,19 @@ public class RetentionAdminController {
     private void requireAccess(HttpSession session) {
         if (Boolean.TRUE.equals(session != null ? session.getAttribute("bootstrapAdmin") : null)) return;
         permissionService.require(session, "settings.retention", "edit");
+    }
+
+    /**
+     * YAZMA / ÇALIŞTIRMA kapısı (2026-09-28 regresyon taraması): saklama süreleri, yasal saklama, uyum onayı ve elle
+     * temizlik BÜTÜN takımların verisini siler ya da korur — sistem geneli ayar. ADMIN rolü matriste
+     * {@code settings.retention} iznini taşıdığı için kapsamlı müdür (AD ADMIN) yalnız {@link #requireAccess} ile yasal
+     * saklamayı kapatıp süreleri tabana çekerek temizliği elle koşturabiliyordu. Görüntüleme uçları (overview / runs /
+     * changes) müdüre açık kalır — Ayarlar'da salt okunur ekran. Anahtar düzeyindeki ikinci kapı
+     * {@code AppSettingsCatalog.GLOBAL_ONLY} (saklama anahtarları; Genel Ayarlar yolu da kapalı).
+     */
+    private void requireWrite(HttpSession session) {
+        SessionScope.requireNotScopedAdmin(session, "settings.retention");
+        requireAccess(session);
     }
 
     private String actor(HttpSession session) {

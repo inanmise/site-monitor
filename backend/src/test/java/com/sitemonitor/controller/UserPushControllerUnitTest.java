@@ -193,4 +193,201 @@ class UserPushControllerUnitTest {
         assertThat(teams.get(0)).containsEntry("SENT", 3L).containsEntry("FAILED", 1L).containsEntry("total", 4L);
         assertThat(teams.get(2)).containsEntry("team_id", null).containsEntry("total", 2L);
     }
+
+    // ── Teslimat günlüğü / CSV / stats TAKIM KAPSAMI (2026-09-28 regresyon taraması) ─────────
+    // Kapsamlı müdür requireAdmin'den geçiyordu → her takımın kişi adları, durumları (opt-out dâhil) ve mesaj
+    // metinleri liste + CSV'den okunabiliyordu. `/explain` ile aynı kural: yalnız YÖNETTİĞİ takımlar.
+
+    private static MockHttpSession scopedManaging(Long... teams) {
+        MockHttpSession s = session("ADMIN", true);
+        s.setAttribute("manageTeamIds", List.of(teams));
+        return s;
+    }
+
+    private static UserPushController controllerWithRepo(com.sitemonitor.repository.UserPushDeliveryRepository repo,
+                                                          com.sitemonitor.repository.TeamRepository teamRepo) {
+        UserPushService push = mock(UserPushService.class);
+        when(push.healthSnapshot()).thenReturn(Map.of());
+        return new UserPushController(mock(AppSettingsService.class), push, repo,
+                mock(com.sitemonitor.repository.UserPushScopeRepository.class), mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class), teamRepo);
+    }
+
+    @Test
+    @DisplayName("deliveries: global yönetici tüm satırları arar; kapsamlı müdür YALNIZ yönettiği takımlarda (searchInTeams)")
+    void deliveries_scopedAdmin_onlyManagedTeams() {
+        var repo = mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        when(repo.search(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(org.springframework.data.domain.Page.empty());
+        when(repo.searchInTeams(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(org.springframework.data.domain.Page.empty());
+        var c = controllerWithRepo(repo, mock(com.sitemonitor.repository.TeamRepository.class));
+
+        c.deliveries(null, null, null, null, null, null, null, null, null, null, 0, 25, session("ADMIN", false));
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).searchInTeams(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+
+        c.deliveries(null, null, null, null, null, null, null, null, null, null, 0, 25, scopedManaging(5L));
+        org.mockito.Mockito.verify(repo).searchInTeams(org.mockito.ArgumentMatchers.eq(List.of(5L)),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        // tek arama global yöneticininki (müdürünki searchInTeams'e gitti)
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.times(1)).search(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("deliveries + CSV: kapsamlı müdür yönetmediği takımı süzerse 403; yönettiğini süzebilir; hiç takımı yoksa boş (sorgu yok)")
+    void deliveries_scopedAdmin_foreignTeamRejected() {
+        var repo = mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        when(repo.search(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+        var c = controllerWithRepo(repo, mock(com.sitemonitor.repository.TeamRepository.class));
+
+        assertThatThrownBy(() -> c.deliveries(null, 6L, null, null, null, null, null, null, null, null, 0, 25, scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> c.exportDeliveries(null, 6L, null, null, null, null, null, null, null, null, scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class);
+        org.assertj.core.api.Assertions.assertThatCode(
+                () -> c.deliveries(null, 5L, null, null, null, null, null, null, null, null, 0, 25, scopedManaging(5L)))
+                .doesNotThrowAnyException();
+
+        var none = mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        var c2 = controllerWithRepo(none, mock(com.sitemonitor.repository.TeamRepository.class));
+        @SuppressWarnings("unchecked")
+        var data = (Map<String, Object>) c2.deliveries(null, null, null, null, null, null, null, null, null, null, 0, 25,
+                session("ADMIN", true)).getBody().get("data");
+        assertThat(data).containsEntry("total", 0L);
+        org.mockito.Mockito.verifyNoInteractions(none);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @DisplayName("stats: kapsamlı müdür yalnız yönettiği takımın sayılarını ve takım kırılımını görür (başka takım + takımsız satır yok)")
+    void stats_scopedAdmin_onlyManagedTeams() {
+        var deliveryRepo = mock(com.sitemonitor.repository.UserPushDeliveryRepository.class);
+        var teamRepo = mock(com.sitemonitor.repository.TeamRepository.class);
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(5L); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(6L); b.setName("Takım B");
+        when(teamRepo.findAll()).thenReturn(List.of(a, b));
+        when(deliveryRepo.countByStatusSince(anyString())).thenReturn(List.<Object[]>of(new Object[]{"SENT", 6L}));
+        when(deliveryRepo.countByTeamAndStatusSince(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{6L, "SENT", 1L},
+                new Object[]{5L, "SENT", 3L}, new Object[]{5L, "SKIPPED_USER_OPT_OUT", 1L},
+                new Object[]{null, "SENT", 2L}));
+        var c = controllerWithRepo(deliveryRepo, teamRepo);
+
+        var data = (Map<String, Object>) c.stats(scopedManaging(5L)).getBody().get("data");
+        assertThat((Map<String, Object>) data.get("last24h")).containsEntry("SENT", 3L).containsEntry("SKIPPED_USER_OPT_OUT", 1L);
+        var w24 = (Map<String, Object>) ((Map<String, Object>) data.get("windows")).get("24h");
+        assertThat((Map<String, Object>) w24.get("counts")).containsEntry("SENT", 3L);
+        assertThat((List<Map<String, Object>>) w24.get("teams")).extracting(m -> m.get("team_name")).containsExactly("Takım A");
+    }
+
+    // ── /scopes + /test TAKIM KAPSAMI (2026-09-28 regresyon taraması) ─────────────────────────
+    // Kapsamlı müdür requireAdmin'den geçip herhangi bir takımın push'unu kapatabiliyor (/scopes) ve herhangi bir
+    // sicile gerçek test push'u atabiliyordu (/test). Kural: yalnız YÖNETTİĞİ takımlar; TYPE satırı yalnız global.
+
+    private static Map<String, Object> scopeRow(String type, String key, boolean enabled) {
+        return Map.of("scopeType", type, "scopeKey", key, "enabled", enabled);
+    }
+
+    @Test
+    @DisplayName("scopes: kapsamlı müdür yönetmediği takımın ya da TYPE satırını değiştiremez (403, HİÇBİR satır yazılmaz); yönettiği takımı değiştirir")
+    void scopes_scopedAdmin_onlyManagedTeamRows() {
+        var scopeRepo = mock(com.sitemonitor.repository.UserPushScopeRepository.class);
+        var c = new UserPushController(mock(AppSettingsService.class), mock(UserPushService.class),
+                mock(com.sitemonitor.repository.UserPushDeliveryRepository.class), scopeRepo, mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class), mock(com.sitemonitor.repository.TeamRepository.class));
+
+        assertThatThrownBy(() -> c.saveScopes(List.of(scopeRow("TEAM", "6", false)), scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> c.saveScopes(List.of(scopeRow("TYPE", "http", false)), scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class);
+        // Toplu gövdede TEK yabancı satır bütün isteği düşürür — yönettiği satır da yazılmaz (yarım uygulama yok).
+        assertThatThrownBy(() -> c.saveScopes(List.of(scopeRow("TEAM", "5", false), scopeRow("TEAM", "6", false)),
+                scopedManaging(5L))).isInstanceOf(SecurityException.class);
+        // Kanonik olmayan anahtar ("05") yönetilen takımı taklit edemez.
+        assertThatThrownBy(() -> c.saveScopes(List.of(scopeRow("TEAM", "05", false)), scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class);
+        org.mockito.Mockito.verify(scopeRepo, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+
+        c.saveScopes(List.of(scopeRow("TEAM", "5", false)), scopedManaging(5L));
+        var saved = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.UserPushScope.class);
+        org.mockito.Mockito.verify(scopeRepo).save(saved.capture());
+        assertThat(saved.getValue().getScopeKey()).isEqualTo("5");
+        assertThat(saved.getValue().getEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("scopes: global yönetici TYPE satırını ve her takımı değiştirir")
+    void scopes_globalAdmin_anyRow() {
+        var scopeRepo = mock(com.sitemonitor.repository.UserPushScopeRepository.class);
+        var c = new UserPushController(mock(AppSettingsService.class), mock(UserPushService.class),
+                mock(com.sitemonitor.repository.UserPushDeliveryRepository.class), scopeRepo, mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                mock(com.sitemonitor.repository.AppUserRepository.class), mock(com.sitemonitor.repository.TeamRepository.class));
+
+        c.saveScopes(List.of(scopeRow("TYPE", "http", false), scopeRow("TEAM", "6", false)), session("ADMIN", false));
+        org.mockito.Mockito.verify(scopeRepo, org.mockito.Mockito.times(2)).save(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("test: kapsamlı müdür yalnız YÖNETTİĞİ takımların üyelerine test push'u atar (birincil ya da ek üyelik); yabancı sicil 403 ve gönderim YOK")
+    void sendTest_scopedAdmin_onlyMembersOfManagedTeams() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.enabled()).thenReturn(true);
+        when(push.sendTest(org.mockito.ArgumentMatchers.anyList(), anyString(), anyString())).thenReturn(Map.of());
+        var userRepo = mock(com.sitemonitor.repository.AppUserRepository.class);
+        when(userRepo.findMemberIdentities(List.of(5L))).thenReturn(List.<Object[]>of(new Object[]{1L, "n00001", "USER"}));
+        var c = new UserPushController(mock(AppSettingsService.class), push,
+                mock(com.sitemonitor.repository.UserPushDeliveryRepository.class),
+                mock(com.sitemonitor.repository.UserPushScopeRepository.class), mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                userRepo, mock(com.sitemonitor.repository.TeamRepository.class));
+
+        assertThatThrownBy(() -> c.sendTest(Map.of("usernames", List.of("N00001", "N00002")), scopedManaging(5L)))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("N00002");
+        // Yönetim kapsamı BOŞ müdür (view dolu, manage boş) kimseye gönderemez.
+        assertThatThrownBy(() -> c.sendTest(Map.of("usernames", List.of("N00001")), session("ADMIN", true)))
+                .isInstanceOf(SecurityException.class);
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.never())
+                .sendTest(org.mockito.ArgumentMatchers.anyList(), anyString(), anyString());
+
+        c.sendTest(Map.of("usernames", List.of("N00001")), scopedManaging(5L));   // harf duyarsız eşleşme
+        org.mockito.Mockito.verify(push).sendTest(org.mockito.ArgumentMatchers.eq(List.of("N00001")), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("test: global yönetici herhangi bir sicile gönderir — üyelik sorgusu yapılmaz")
+    void sendTest_globalAdmin_noMembershipCheck() {
+        UserPushService push = mock(UserPushService.class);
+        when(push.enabled()).thenReturn(true);
+        when(push.sendTest(org.mockito.ArgumentMatchers.anyList(), anyString(), anyString())).thenReturn(Map.of());
+        var userRepo = mock(com.sitemonitor.repository.AppUserRepository.class);
+        var c = new UserPushController(mock(AppSettingsService.class), push,
+                mock(com.sitemonitor.repository.UserPushDeliveryRepository.class),
+                mock(com.sitemonitor.repository.UserPushScopeRepository.class), mock(SecretCipher.class),
+                mock(AuditService.class), mock(com.sitemonitor.service.UserPushRecipientResolver.class),
+                userRepo, mock(com.sitemonitor.repository.TeamRepository.class));
+
+        c.sendTest(Map.of("usernames", List.of("N00009")), session("ADMIN", false));
+        org.mockito.Mockito.verify(push).sendTest(org.mockito.ArgumentMatchers.eq(List.of("N00009")), anyString(), anyString());
+        org.mockito.Mockito.verifyNoInteractions(userRepo);
+    }
 }

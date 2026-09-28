@@ -1,4 +1,4 @@
-import { BellOff, BellRing } from 'lucide-react'
+import { ArrowUpRight, BellOff, BellRing, Link2, SlidersHorizontal } from 'lucide-react'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import { Spinner } from '../ui/Progress.jsx'
@@ -12,12 +12,18 @@ import { NocTypeTag, ReasonBadge } from './nocUi.jsx'
 
 /**
  * Kapsam listesi (2026-09-27): geniş kapta shadcn Table, dar kapta (telefon / kenar çubuklu tablet) kartlar — karar
- * KAP genişliğinden (Uyarılar sayfasıyla aynı). Satır: tür ikonu, ad (izlemeye derin bağlantı) + hedef, takım rozeti,
- * düz sözcüklü durum rozeti, gruplar (geniş ekranda) ve TEK TIK "7/24'e bildir" (yalnız düzenleyebilene). Bildirimi
- * açık satırda "…" menüsünde kapatma (yanlış tıklamanın geri alınması). Toplu seçim yalnız açılabilir satırlarda.
+ * KAP genişliğinden (Uyarılar sayfasıyla aynı). Satır: tür ikonu, ad + hedef, takım rozeti, düz sözcüklü durum rozeti,
+ * gruplar (geniş ekranda) ve TEK TIK "7/24'e bildir" (yalnız düzenleyebilene). Toplu seçim yalnız açılabilir satırlarda.
  *
- * Saf sunum: durum ve eylemler sayfada (`h`). Test kancaları: `data-slot="noc-list"` (`data-view`),
- * satır `data-slot="noc-row"` + `data-key` + `data-status`.
+ * İzlemeye gitme (2026-09-28): ad ve "İzlemeyi aç" ikonu GERÇEK bağlantıdır (`<a href>` — kartına tıklamakla aynı
+ * pencereyi açan derin bağlantı). Düz sol tık uygulama içinde gezinir (Geri kapsam sayfasına süzgeçleriyle döner);
+ * Ctrl/⌘/orta tık tarayıcının kendi davranışıyla YENİ SEKMEDE açar, bağlantı kopyalanabilir. Her satırda "…" menüsü:
+ * Bağlantıyı kopyala · 7/24 ayarını düzenle (düzenleyebilene: form 7/24 alanına kaydırılmış açılır) · bildirimi açık
+ * satırda 7/24 bildirimini kapat.
+ *
+ * Saf sunum: durum ve eylemler sayfada (`h`: canEdit, hrefOf, onOpen, onEditNoc, onCopyLink, onEnable, onDisable,
+ * onToggle, onSelectPage). Test kancaları: `data-slot="noc-list"` (`data-view`), satır `data-slot="noc-row"` +
+ * `data-key` + `data-status`; bağlantılar `data-action="noc-open"` (ad) / `noc-open-icon`.
  */
 export default function NocCoverageList({ items, narrow, t, h, selected, pending }) {
   if (narrow) return <CardsView items={items} t={t} h={h} selected={selected} pending={pending} />
@@ -25,15 +31,29 @@ export default function NocCoverageList({ items, narrow, t, h, selected, pending
 }
 
 const selectable = (h, it) => h.canEdit(it) && !it.noc_notify
+const labelOf = (it) => it.name || it.target
+
+/** Düz sol tık uygulama içinde gezinir; Ctrl/⌘/Shift/Alt ya da orta tık tarayıcıya kalır (yeni sekme / pencere). */
+function spaClick(e, go) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  go()
+}
 
 function NameCell({ it, t, h }) {
+  const href = h.hrefOf(it)
   return (
     <div className="flex min-w-0 flex-col items-start">
-      <Button type="button" variant="link" data-action="noc-open"
-        className="h-auto min-h-0 max-w-full justify-start p-0 text-left font-semibold whitespace-normal [overflow-wrap:anywhere] pointer-coarse:min-h-10"
-        title={t('noc.openMonitor', it.name)} onClick={() => h.onOpen(it)}>
-        {it.name || it.target}
-      </Button>
+      {href ? (
+        <Button asChild variant="link"
+          className="h-auto min-h-0 max-w-full justify-start p-0 text-left font-semibold whitespace-normal [overflow-wrap:anywhere] pointer-coarse:min-h-10">
+          <a href={href} data-action="noc-open" title={t('noc.openMonitor', labelOf(it))} onClick={(e) => spaClick(e, () => h.onOpen(it))}>
+            {labelOf(it)}
+          </a>
+        </Button>
+      ) : (
+        <span className="max-w-full font-semibold [overflow-wrap:anywhere]">{labelOf(it)}</span>
+      )}
       {it.target && it.target !== it.name && (
         <span className="max-w-full truncate text-xs text-muted-foreground" title={it.target}>{it.target}</span>
       )}
@@ -41,24 +61,46 @@ function NameCell({ it, t, h }) {
   )
 }
 
-/** Satır eylemi: kapalıysa birincil "7/24'e bildir"; açıksa "…" menüsünde "Bildirimi kapat". */
-function RowAction({ it, t, h, pending, block = false }) {
-  if (!h.canEdit(it)) return null
-  const busy = pending.has(itemKey(it))
-  if (!it.noc_notify) {
-    return (
-      <Button type="button" size="sm" data-action="noc-enable" disabled={busy} aria-busy={busy || undefined}
-        // Birincil yalnız kullanıcının düzeltebileceği neden (bildirim kapalı); duraklatılmış / tür kapalı / grup yok satırında sakin
-        variant={!it.reason || it.reason === 'MONITOR_OFF' ? 'default' : 'outline'}
-        className={block ? 'h-10 w-full' : 'h-10 sm:h-8 sm:pointer-coarse:h-10'}
-        aria-label={t('a11y.rowAction', t('noc.enable'), it.name)} onClick={() => h.onEnable(it)}>
-        {busy ? <Spinner size={14} inline decorative /> : <BellRing aria-hidden="true" />}{t('noc.enable')}
-      </Button>
-    )
-  }
+/** "İzlemeyi aç" — ikonlu bağlantı (masaüstünde 32 px, dokunmatikte 40 px); adı satırı taşır. */
+function OpenLink({ it, t, h }) {
+  const href = h.hrefOf(it)
+  if (!href) return null
   return (
-    <KebabMenu label={t('noc.rowMenu')} rowLabel={it.name}
-      items={[{ label: t('noc.disable'), icon: <BellOff aria-hidden="true" />, danger: true, hidden: busy, onClick: () => h.onDisable(it) }]} />
+    <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground pointer-coarse:size-10">
+      <a href={href} data-action="noc-open-icon" title={t('noc.openShort')}
+        aria-label={t('a11y.rowAction', t('noc.openShort'), labelOf(it))} onClick={(e) => spaClick(e, () => h.onOpen(it))}>
+        <ArrowUpRight aria-hidden="true" />
+      </a>
+    </Button>
+  )
+}
+
+/** Kapalı satırın birincil eylemi "7/24'e bildir" (yalnız düzenleyebilene). */
+function EnableButton({ it, t, h, pending, block = false }) {
+  if (!h.canEdit(it) || it.noc_notify) return null
+  const busy = pending.has(itemKey(it))
+  return (
+    <Button type="button" size="sm" data-action="noc-enable" disabled={busy} aria-busy={busy || undefined}
+      // Birincil yalnız kullanıcının düzeltebileceği neden (bildirim kapalı); duraklatılmış / tür kapalı / grup yok satırında sakin
+      variant={!it.reason || it.reason === 'MONITOR_OFF' ? 'default' : 'outline'}
+      className={block ? 'h-10 w-full' : 'h-10 sm:h-8 sm:pointer-coarse:h-10'}
+      aria-label={t('a11y.rowAction', t('noc.enable'), it.name)} onClick={() => h.onEnable(it)}>
+      {busy ? <Spinner size={14} inline decorative /> : <BellRing aria-hidden="true" />}{t('noc.enable')}
+    </Button>
+  )
+}
+
+/** Satır menüsü ("…"): her satırda bağlantıyı kopyala; düzenleyebilene 7/24 ayarını düzenle + (açıksa) kapat. */
+function RowMenu({ it, t, h, pending }) {
+  const editable = h.canEdit(it)
+  const busy = pending.has(itemKey(it))
+  return (
+    <KebabMenu label={t('noc.rowMenu')} rowLabel={labelOf(it)}
+      items={[
+        { label: t('share.copyLink'), icon: <Link2 aria-hidden="true" />, hidden: !h.hrefOf(it), onClick: () => h.onCopyLink(it) },
+        { label: t('noc.editNoc'), icon: <SlidersHorizontal aria-hidden="true" />, hidden: !editable || !h.hrefOf(it), onClick: () => h.onEditNoc(it) },
+        { label: t('noc.disable'), icon: <BellOff aria-hidden="true" />, danger: true, hidden: !editable || !it.noc_notify || busy, onClick: () => h.onDisable(it) },
+      ]} />
   )
 }
 
@@ -95,7 +137,7 @@ function TableView({ items, t, h, selected, pending }) {
             <TableHead>{t('noc.colMonitor')}</TableHead>
             <TableHead>{t('noc.colTeam')}</TableHead>
             <TableHead>{t('noc.colStatus')}</TableHead>
-            {anyEditable && <TableHead className="text-right">{t('noc.colAction')}</TableHead>}
+            <TableHead className="text-right">{t('noc.colAction')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -122,9 +164,13 @@ function TableView({ items, t, h, selected, pending }) {
                 <TableCell className="w-[14rem] min-w-[12rem] whitespace-normal">
                   <div className="flex min-w-0 flex-col items-start gap-1"><ReasonBadge item={it} t={t} /><GroupNames it={it} t={t} /></div>
                 </TableCell>
-                {anyEditable && (
-                  <TableCell className="text-right"><RowAction it={it} t={t} h={h} pending={pending} /></TableCell>
-                )}
+                <TableCell className="text-right">
+                  <div className="inline-flex items-center justify-end gap-1">
+                    <EnableButton it={it} t={t} h={h} pending={pending} />
+                    <OpenLink it={it} t={t} h={h} />
+                    <RowMenu it={it} t={t} h={h} pending={pending} />
+                  </div>
+                </TableCell>
               </TableRow>
             )
           })}
@@ -159,7 +205,10 @@ function CardsView({ items, t, h, selected, pending }) {
                     <NocTypeTag type={it.type} t={t} />
                     <NameCell it={it} t={t} h={h} />
                   </div>
-                  {it.noc_notify && <RowAction it={it} t={t} h={h} pending={pending} />}
+                  <div className="-my-1 -mr-1 flex shrink-0 items-center gap-0.5">
+                    <OpenLink it={it} t={t} h={h} />
+                    <RowMenu it={it} t={t} h={h} pending={pending} />
+                  </div>
                 </div>
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
                   <ReasonBadge item={it} t={t} />
@@ -168,7 +217,7 @@ function CardsView({ items, t, h, selected, pending }) {
                     : <span className="text-xs text-muted-foreground">{t('app.noTeam')}</span>}
                 </div>
                 <GroupNames it={it} t={t} />
-                {!it.noc_notify && <RowAction it={it} t={t} h={h} pending={pending} block />}
+                <EnableButton it={it} t={t} h={h} pending={pending} block />
               </CardContent>
             </Card>
           </li>

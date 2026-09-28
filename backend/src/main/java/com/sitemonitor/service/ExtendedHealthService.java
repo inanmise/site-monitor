@@ -225,7 +225,10 @@ public class ExtendedHealthService {
                 .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         List<NotificationLog> logs = notificationLogRepo.findAllSince(cutoff);
         Map<Long, String> aeToDomain = aeIdToDomainMap(logs);
+        // 7/24 satırı MASKELİ (A3, 2026-09-28): gövdedeki arama listesi telefonları ve 7/24 grup adresleri
+        // SmtpLogQueryService / alarm bildirim listesiyle aynı biçimde gizlenir — bu uç atlıyordu.
         return logs.stream()
+                .map(com.sitemonitor.service.noc.NocLogRedaction::forViewer)
                 .map(n -> {
                     String status = n.getEmailStatus() != null ? n.getEmailStatus() : "";
                     String kind   = status.equals("SENT") ? "SENT"

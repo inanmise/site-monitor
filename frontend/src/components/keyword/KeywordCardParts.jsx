@@ -5,7 +5,7 @@ import {
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import HintPopover from '../ui/HintPopover.jsx'
-import { CARD_LAYER, MonitorCardMetrics } from '../monitoring/MonitorCard.jsx'
+import { CARD_LAYER, MonitorCardMetrics, MonitorPendingText } from '../monitoring/MonitorCard.jsx'
 import { intervalText } from '../ping/pingCardModel.js'
 import { CompactValue, CompactVerdict } from '../ping/PingCardParts.jsx'
 import { urlParts } from '../pagespeed/pageSpeedCardModel.js'
@@ -92,7 +92,9 @@ export function KeywordRulePanel({ monitor: m, verdict, reason, rowLabel }) {
 
       <p data-slot="keyword-result" className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         <span className={cn('inline-flex min-w-0 items-center gap-1.5 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
-          <Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}
+          {kind === 'pending'
+            ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
+            : <><Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}</>}
         </span>
         {showCount && (
           <span data-slot="keyword-count" className="text-xs font-medium text-muted-foreground tabular-nums">
@@ -334,7 +336,9 @@ export function KeywordCompactResult({ monitor: m, verdict, reason }) {
   return (
     <div data-slot="keyword-compact" data-result={kind} data-tone={tone} className="mt-2 flex min-w-0 items-center gap-x-2">
       <span data-slot="keyword-result" className={cn('inline-flex shrink-0 items-center gap-1 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
-        <Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}
+        {kind === 'pending'
+          ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
+          : <><Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}</>}
       </span>
       {kw && (
         <span data-slot="keyword-compact-kw" title={kw} className="min-w-0 overflow-hidden font-mono text-xs text-ellipsis whitespace-pre text-muted-foreground">

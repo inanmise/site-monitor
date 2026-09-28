@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Siren, Bell, UserCheck, MessageSquare, CheckCircle2, Send, Trash2, ExternalLink, Clock, Hash,
+  X, Siren, Bell, UserCheck, MessageSquare, CheckCircle2, Send, Trash2, ExternalLink, Clock, Hash, Lock,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
@@ -9,7 +9,9 @@ import { useToast } from '../ui/Toast.jsx'
 import { durationMs, formatDuration, formatIncidentTime } from '../../utils/incidentMeta.js'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyableRef from '../ui/CopyableRef.jsx'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetClose } from '@/components/shadcn/sheet'
@@ -20,7 +22,9 @@ import { Textarea } from '@/components/shadcn/textarea'
 import { Separator } from '@/components/shadcn/separator'
 import { cn } from '@/lib/utils'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon, MonitorLink, ResolvedBy } from './IncidentBadges.jsx'
-import { buildTimeline, incidentHref, incidentLink, isOpen, isAcked, rowName, MONITOR_TYPE_LABEL_KEY } from './incidentsModel.js'
+import {
+  buildTimeline, incidentHref, incidentLink, isOpen, isAcked, rowName, MONITOR_TYPE_LABEL_KEY, isForeign, canActOn, canDeleteIncident,
+} from './incidentsModel.js'
 import { NocCallSummary } from '../admin/alerts/NocCallLog.jsx'   // 7/24 arama kayıtları — salt okunur özet (2026-09-27)
 
 // Kaydırma kilidi sayaçlı (ModalShell ile aynı sözleşme): iç içe pencerede erken açılmaz.
@@ -55,6 +59,12 @@ function Fact({ label, children, className }) {
  * kaydırma kilidi o pencereleri tıklanabilir bırakır; kapatma yolları scrim, X ve Escape (Radix katmanı).
  *
  * <p>Zaman çizelgesinde SOL RENK ŞERİDİ YOK (kullanıcı kuralı): nötr `border` çizgisi + tonlu ikon daireleri.
+ *
+ * <p><b>Başka ekibin olayı</b> (`can_manage:false`, org geneli salt okunur görünürlük 2026-09-28): durum şeridinin altında
+ * "Başka takımın kaydı — salt okunur" rozeti + sahibi ekibin TeamBadge'i ve tek satır açıklama; onayla/çöz/sil, izleme
+ * bağlantısı, yorum yazıcı ve yorum silme YOK. Bildirim alıcıları / teslimat günlüğü İSTENMEZ (takım içi veri, uç zaten
+ * 403); 7/24 arama özeti yalnız 7/24 operatörüne (`noc_calls.write`, sunucu tüm uyarıları okutur). Kendi olayında
+ * eylem izni yoksa (`can_act:false`, ör. AUDIT) aynı denetimler gizlenir ve yazıcının yerinde nedeni yazar.
  */
 export default function IncidentDetailSheet({
   incident, onClose, isAdmin = false, onAck, onResolve, onDelete, onCommentDelta, focusComposer = false,
@@ -70,6 +80,8 @@ export default function IncidentDetailSheet({
   const [nowMs, setNowMs] = useState(Date.now())
   const composerRef = useRef(null)
   const id = incident?.id
+  const foreign = isForeign(incident)
+  const nocOperator = usePermissions().canEdit('noc_calls.write')
 
   const load = useCallback(async () => {
     if (id == null) return
@@ -78,14 +90,15 @@ export default function IncidentDetailSheet({
       const [c, n] = await Promise.all([
         api.monitoring.incidents.comments(id).catch(() => null),
         // Bildirim geçmişi (e-posta günlüğü): alerts.read + takım kapsamı — yetkisiz/hatalı yanıt sessizce boş kalır.
-        api.admin.getAlertNotifications(id).catch(() => null),
+        // Başka ekibin olayında HİÇ istenmez: alıcılar takım içi veri (uç 403 döner, boşuna istek olurdu).
+        foreign ? Promise.resolve(null) : api.admin.getAlertNotifications(id).catch(() => null),
       ])
       setComments(c?.success ? (c.data ?? []) : [])
       setNotifications(n?.success && Array.isArray(n.data) ? n.data : [])
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, foreign])
   useEffect(() => { load() }, [load])
 
   // Süren olayın süresi canlı (1 sn); kapalı olayda gereksiz.
@@ -115,7 +128,7 @@ export default function IncidentDetailSheet({
 
   async function submitComment() {
     const text = body.trim()
-    if (!text || saving) return
+    if (!text || saving || !canActOn(incident)) return
     setSaving(true)
     try {
       const res = await api.monitoring.incidents.addComment(id, text)
@@ -149,6 +162,7 @@ export default function IncidentDetailSheet({
   const timeline = buildTimeline({ incident, comments, notifications })
   const typeKey = MONITOR_TYPE_LABEL_KEY[incident.monitor?.type] || MONITOR_TYPE_LABEL_KEY.cert
   const nComments = incident.comment_count ?? comments.length
+  const act = canActOn(incident)
 
   return (
     <Sheet open modal={false} onOpenChange={(next) => { if (!next) onClose?.() }}>
@@ -194,23 +208,33 @@ export default function IncidentDetailSheet({
             </span>
           </div>
 
+          {/* Başka ekibin olayı — salt okunur (rozet + sahibi ekip + tek satır açıklama) */}
+          {foreign && (
+            <div data-slot="incident-read-only" className="mt-3 flex min-w-0 flex-col gap-1.5">
+              <ReadOnlyBadge teamId={incident.team_id} teamName={incident.team_name} />
+              <p className="m-0 text-xs text-muted-foreground">{t('incov.foreignNote')}</p>
+            </div>
+          )}
+
           {/* Eylemler — API'nin sunduğu kadar: onayla / çöz (gerekçeli), izlemeyi aç, bağlantıyı kopyala, sil (yönetici) */}
           <div data-slot="incident-actions" className="mt-3 flex flex-wrap items-center gap-2">
-            {open && !isAcked(incident) && onAck && (
+            {act && open && !isAcked(incident) && onAck && (
               <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => onAck(incident)}>
                 <UserCheck aria-hidden="true" />{t('incov.ack')}
               </Button>
             )}
-            {open && onResolve && (
+            {act && open && onResolve && (
               <Button type="button" variant="success" size="sm" className="h-9" onClick={() => onResolve(incident)}>
                 <CheckCircle2 aria-hidden="true" />{t('incov.resolve')}
               </Button>
             )}
-            <Button asChild variant="outline" size="sm" className="h-9">
-              <a href={incidentHref(incident)}><ExternalLink aria-hidden="true" />{t('incov.openMonitor')}</a>
-            </Button>
+            {!foreign && (
+              <Button asChild variant="outline" size="sm" className="h-9">
+                <a href={incidentHref(incident)}><ExternalLink aria-hidden="true" />{t('incov.openMonitor')}</a>
+              </Button>
+            )}
             <CopyLinkButton variant="outline" className="h-9" url={incidentLink(incident.id)} />
-            {isAdmin && onDelete && (
+            {canDeleteIncident(incident, isAdmin) && onDelete && (
               <Button type="button" variant="ghost" size="sm" className="ml-auto h-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 aria-label={t('a11y.rowAction', rowName(incident, dateLocale), t('incov.delete'))} onClick={() => onDelete(incident)}>
                 <Trash2 aria-hidden="true" />{t('incov.delete')}
@@ -223,7 +247,8 @@ export default function IncidentDetailSheet({
             <h3 className="px-4 pt-3 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('incov.facts')}</h3>
             <dl className="m-0 grid grid-cols-1 gap-x-4 gap-y-3 px-4 py-3 sm:grid-cols-2">
               <Fact label={t('incov.colMonitor')} className="sm:col-span-2">
-                <MonitorLink inc={incident} className="text-[1em]" />
+                {/* Başka ekibin izleme sayfası takım kapsamlı — bağlantı çıkmaz sokak olurdu, ad düz metin */}
+                {foreign ? <span className="font-semibold">{name}</span> : <MonitorLink inc={incident} className="text-[1em]" />}
                 {incident.domain && incident.domain !== name && <div className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{incident.domain}</div>}
               </Fact>
               <Fact label={t('incov.monitorType')}>{t(typeKey)}</Fact>
@@ -254,7 +279,7 @@ export default function IncidentDetailSheet({
           </Card>
 
           {/* 7/24 arama kayıtları: olay = uyarı (aynı kimlik) — son 3 kayıt + Alarm Geçmişi bağlantısı */}
-          <NocCallSummary key={incident.id} alertId={incident.id} />
+          {(!foreign || nocOperator) && <NocCallSummary key={incident.id} alertId={incident.id} />}
 
           {/* Zaman çizelgesi */}
           <h3 className="mt-5 mb-2 text-xs font-bold tracking-wide text-muted-foreground uppercase">{t('incov.timeline')}</h3>
@@ -280,7 +305,7 @@ export default function IncidentDetailSheet({
                         {ev.kind === 'opened' && <SeverityBadge level={ev.level} className="text-[0.7em]" />}
                         {ev.kind === 'notified' && ev.trigger && <Badge variant="outline" className="text-[0.7em]">{ev.trigger}</Badge>}
                         <span className="ml-auto text-xs whitespace-nowrap text-muted-foreground" title={ev.when || undefined}>{when}</span>
-                        {ev.kind === 'comment' && (
+                        {ev.kind === 'comment' && act && (
                           <Button type="button" variant="ghost" size="icon-xs" title={t('incov.delete')}
                             aria-label={t('a11y.rowAction', `${ev.author} · ${when}`, t('incov.delete'))}
                             className="text-muted-foreground hover:text-destructive pointer-coarse:size-8" onClick={() => removeComment(ev.commentId)}>
@@ -310,20 +335,28 @@ export default function IncidentDetailSheet({
           )}
         </div>
 
-        {/* Yorum yazıcı — altta sabit; Ctrl/⌘+Enter gönderir */}
+        {/* Yorum yazıcı — altta sabit; Ctrl/⌘+Enter gönderir. Eylem hakkı yoksa yerinde nedeni yazar. */}
         <Separator />
-        <form data-slot="incident-composer" className="shrink-0 flex flex-col gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-          onSubmit={(e) => { e.preventDefault(); submitComment() }}>
-          <Textarea ref={composerRef} rows={2} value={body} placeholder={t('incov.commentPlaceholder')} aria-label={t('incov.commentPlaceholder')}
-            onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submitComment() } }} />
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">{t('incov.commentHint')}</span>
-            <Button type="submit" size="sm" className="h-9" disabled={saving || !body.trim()} aria-busy={saving || undefined}>
-              <Send aria-hidden="true" />{t('incov.addComment')}
-            </Button>
-          </div>
-        </form>
+        {!act ? (
+          <p data-slot="incident-composer-locked"
+            className="m-0 flex shrink-0 items-center gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-xs text-muted-foreground">
+            <Lock aria-hidden="true" className="size-3.5 shrink-0" />
+            {foreign ? t('incov.composerLocked.foreign') : t('incov.composerLocked.noPermission')}
+          </p>
+        ) : (
+          <form data-slot="incident-composer" className="shrink-0 flex flex-col gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            onSubmit={(e) => { e.preventDefault(); submitComment() }}>
+            <Textarea ref={composerRef} rows={2} value={body} placeholder={t('incov.commentPlaceholder')} aria-label={t('incov.commentPlaceholder')}
+              onChange={(e) => setBody(e.target.value)}
+              onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submitComment() } }} />
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] text-muted-foreground">{t('incov.commentHint')}</span>
+              <Button type="submit" size="sm" className="h-9" disabled={saving || !body.trim()} aria-busy={saving || undefined}>
+                <Send aria-hidden="true" />{t('incov.addComment')}
+              </Button>
+            </div>
+          </form>
+        )}
       </SheetContent>
     </Sheet>
   )

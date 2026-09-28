@@ -67,11 +67,21 @@ public class SystemController {
     // Tier bilincli olarak `heartbeat-timeline` ile ayni: requireSystemRead DEGIL, cunku Sistem
     // Sagligi sekmesi tum rollere acik (Nav `show: true`) ve `system_health.read` USER
     // varsayilanlarinda VAR — admin/AUDIT daraltmasi ekrani siradan kullaniciya kirardi.
+    //
+    // ISTISNA smtp-logs (2026-09-28, A3): bu uc TAKIM SUZGECSIZ tum posta gunlugunu (her takimin alici
+    // adresi/adi, konu, alarm govdesi) donduruyordu ve 7/24 satirlarini maskelemiyordu. Arayuz bu ucu
+    // artik KULLANMIYOR — Sistem Sagligi -> SMTP Gonderim Logu `/api/admin/smtp-log/*` (SmtpLogController,
+    // satir bazinda takim kapsami) uzerinden okur. Bu yuzden eski uc GLOBAL GORUCUYE (admin/AUDIT) daraltildi;
+    // kapsamli mudur / TEAM_ADMIN / USER 403 alir. 7/24 satirlari servis tarafinda maskelenir.
     @GetMapping("/smtp-logs")
     public ResponseEntity<Map<String, Object>> getSmtpLogs(
             @RequestParam(defaultValue = "30") int days,
             HttpSession session) {
         permissionService.require(session, "system_health.read", "view");
+        if (!SessionScope.isGlobalViewer(session))
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Tüm takımların posta günlüğü yalnız global görüntüleyiciye açık; SMTP Gönderim Logu ekranını kullanın",
+                    "The organisation-wide mail log is available to global viewers only; use the SMTP Delivery Log screen"));
         int d = Math.max(1, Math.min(days, 365));
         return ok(Map.of(
                 "data", extendedHealthService.getSmtpFailures(d),

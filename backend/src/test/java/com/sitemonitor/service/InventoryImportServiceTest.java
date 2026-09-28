@@ -111,7 +111,7 @@ class InventoryImportServiceTest {
     }
 
     @Test
-    @DisplayName("org geneli görünürlük (2026-09-26): BAŞKA takımın MEVCUT alan adı CSV ile ezilemez / kendi takımına çekilemez — skip:scope, tek alan bile yazılmaz")
+    @DisplayName("org geneli görünürlük (2026-09-26): BAŞKA takımın MEVCUT alan adı CSV ile ezilemez / kendi takımına çekilemez — skip:duplicate_other_team (+ sahibi takım, 2026-09-28), tek alan bile yazılmaz")
     void existingForeignDomain_cannotBeOverwrittenOrHijacked() {
         CertificateInventory foreign = new CertificateInventory();
         foreign.setId(8L); foreign.setDomain("foreign.example.com"); foreign.setTeamId(9L); foreign.setTier(3); foreign.setPort(443);
@@ -125,15 +125,47 @@ class InventoryImportServiceTest {
                 manager5, "po", null);
 
         assertThat(r.updated()).isZero();
-        assertThat(r.rows()).extracting("reason").containsExactly("scope", "duplicate_row");
+        assertThat(r.rows()).extracting("reason").containsExactly("duplicate_other_team", "duplicate_row");
+        // Satır sahibi takımı taşır (içe aktarma penceresi "hangi ekipte kayıtlı" rozetini çizer); ikinci satır taşımaz.
+        assertThat(r.rows()).extracting("teamId", "teamName").containsExactly(
+                org.assertj.core.groups.Tuple.tuple(9L, "Takım B"), org.assertj.core.groups.Tuple.tuple(null, null));
         var alone = service.commit(List.of(row("domain", "foreign.example.com", "svc_mgmt_contact", "saldirgan@example.com")),
                 manager5, "po", null);
-        assertThat(alone.rows()).extracting("action", "reason").containsExactly(org.assertj.core.groups.Tuple.tuple("skip", "scope"));
+        assertThat(alone.rows()).extracting("action", "reason").containsExactly(org.assertj.core.groups.Tuple.tuple("skip", "duplicate_other_team"));
         verify(inventoryRepo, never()).save(any());
         verify(monitorHistory, never()).record(any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(foreign.getTeamId()).isEqualTo(9L);
         assertThat(foreign.getTier()).isEqualTo(3);
         assertThat(foreign.getSvcMgmtContact()).isEqualTo("Takım B - destek@example.com");
+    }
+
+    @Test
+    @DisplayName("mükerrer (2026-09-28): çöp kutusundaki kayıt skip:deleted + sahibi takım; eski KARIŞIK HARFLİ satır da bulunur (mükerrer satır açılmaz)")
+    void deletedCarriesOwner_andLegacyMixedCaseRowIsMatched() {
+        CertificateInventory gone = new CertificateInventory();
+        gone.setId(3L); gone.setDomain("gone.example.com"); gone.setTeamId(9L); gone.setDeletedAt("2026-09-01T00:00:00");
+        when(inventoryRepo.findByDomain("gone.example.com")).thenReturn(Optional.of(gone));
+        CertificateInventory legacy = new CertificateInventory();   // tam eşleşme ("legacy.example.com") BULAMAZ
+        legacy.setId(4L); legacy.setDomain("Legacy.Example.com"); legacy.setTeamId(9L); legacy.setPort(443);
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc("legacy.example.com")).thenReturn(Optional.of(legacy));
+        java.util.function.Predicate<Long> manager5 = t -> t != null && t == 5L;
+
+        var r = service.commit(List.of(
+                row("domain", "gone.example.com", "team", "5"),
+                row("domain", "legacy.example.com", "team", "5", "tier", "1")), manager5, "po", null);
+
+        assertThat(r.created()).isZero();
+        assertThat(r.rows()).extracting("action", "reason", "teamId", "teamName").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("skip", "deleted", 9L, "Takım B"),
+                org.assertj.core.groups.Tuple.tuple("skip", "duplicate_other_team", 9L, "Takım B"));
+        verify(inventoryRepo, never()).save(any());
+
+        // Kendi takımının karışık harfli satırı → GÜNCELLENİR (ikinci satır yaratılmaz)
+        legacy.setTeamId(5L);
+        var own = service.commit(List.of(row("domain", "legacy.example.com", "tier", "1")), manager5, "po", null);
+        assertThat(own.rows()).extracting("action").containsExactly("update");
+        assertThat(own.created()).isZero();
+        verify(inventoryRepo).save(argThat(c -> c.getId() == 4L && c.getTier() == 1));
     }
 
     /** Kapsamlı müdür oturumu: rol ADMIN ama takım 5 ile sınırlı → global DEĞİL. */

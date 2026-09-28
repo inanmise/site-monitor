@@ -22,6 +22,7 @@ import Nav from './components/Nav'
 import MobileTopBar from './components/nav/MobileTopBar.jsx'
 import BrandLogo from './components/BrandLogo.jsx'
 import { useStatusFavicon } from './hooks/useStatusFavicon.js'
+import { useCertDeepLink } from './hooks/useCertDeepLink.js'
 import { runWithConcurrency } from './utils/concurrentQueue.js'
 import StatsPanel from './components/StatsPanel'
 import StatsView from './components/StatsView'
@@ -32,6 +33,7 @@ import CertificateModal from './components/CertificateModal'
 import CaDiversityModal from './components/CaDiversityModal'
 import RenewalPlanModal from './components/RenewalPlanModal.jsx'   // Genel Bakış kartı 'Planla' (2026-09-19)
 import CardDensityToggle from './components/ui/CardDensityToggle.jsx'
+import { useNewDomainWarmup } from './hooks/useNewDomainWarmup.js'   // yeni alan adı kartı ısınırken kısa tazeleme (2026-09-28)
 import { expiryKey } from './pages/forecastModel.js'   // bitiş günü YEREL gün (UTC dilimi geç saatte bir gün erken)
 import RenewalAdvice from './components/RenewalAdvice'
 import CertRenewalGuide from './components/CertRenewalGuide.jsx'
@@ -490,6 +492,21 @@ export default function App() {
     }
   }, [user, loadData])
 
+  // Yeni eklenen alan adı "ısınıyor" (2026-09-28): ilk kontrol arka planda biterken kart boş değil "hesaplanıyor"
+  // gösterir; veri gelene dek sertifika + kart ekleri kısa aralıklarla yeniden istenir. Döngü + oturuma bağlılık
+  // hooks/useNewDomainWarmup.js'de. Hook auth kapısının (erken return) ÜSTÜNDE.
+  const warmRefresh = useCallback(async (d, isAlive) => {
+    const [certsRes, extrasRes] = await Promise.allSettled([api.getCertificates(), api.getCardExtras()])
+    if (!isAlive() || !loadAliveRef.current) return false   // çıkış yapıldı: yeni oturumun durumuna yazma
+    const certs = certsRes.status === 'fulfilled' ? certsRes.value : null
+    const extras = extrasRes.status === 'fulfilled' ? extrasRes.value : null
+    if (certs?.success) { setCerts(certs.data); setLastUpdate(certs.timestamp) }
+    if (extras?.success) setCardExtras(extras.data || {})
+    const cert = certs?.success ? (certs.data || []).find((c) => c.domain === d) : null
+    return !!(cert?.checked_at && extras?.success && extras.data?.[d])
+  }, [])
+  const warmingDomains = useNewDomainWarmup(Boolean(user), warmRefresh, loadData)
+
   // Lightweight 60s poll just for network outage status — keeps banner in sync
   // without waiting for the 5-minute full data refresh
   useEffect(() => {
@@ -709,6 +726,18 @@ export default function App() {
     // Başlangıç listesi: ilk kart açıldı (sunucuya yalnız henüz işaretli değilse yazılır — TourProvider aynı kuralı sekmeler için uygular)
     const ts = readMirror(); if (ts && ts.status !== 'dismissed' && !ts.checklist?.card && !ts.checklist_hidden) persistTourRef.current?.({ checklist: { card: true } })
   }, [])
+
+  // SSL derin bağlantısı (2026-09-28, 7/24 Kapsamı): ?tab=dashboard&domain=<d>&open=cert → sertifika penceresi; open=noc →
+  // envanter formu 7/24 alanına kaydırılmış. `domain` süzgeci yukarıda (getMe / sm:navigate) eskisi gibi. hooks/useCertDeepLink.js
+  useCertDeepLink({
+    ready: !!user && lastUpdate != null, tab, certs,
+    openCert: openCertModal, openByDomain: (d) => setModalCert({ domain: d }),
+    editCert: (d) => setInvForm({ domain: d, mode: 'edit' }), canEdit: canEditCert,
+    onNotFound: () => toast.error(t('deepLink.notFound')),
+    // Geri (Pano'dan ayrılış): YALNIZ kancanın açtığı ve hâlâ açık olan kapanır — kullanıcının elle açtığı pencere/form değil
+    close: (kind) => (kind === 'form' ? setInvForm(null) : setModalCert(null)),
+    shownCert: modalCert?.domain ?? null, shownForm: invForm?.domain ?? null,
+  })
 
   /**
    * Karttan silme — detay modalinin başlığındaki çöp kutusuyla AYNI akış (ortak yardımcı):
@@ -1384,6 +1413,7 @@ export default function App() {
                       {dashPager.pageItems.map((cert, ci) => (
                         <CertificateCard key={cert.domain} cert={cert} onClick={openCertModal} tourId={ci === 0 ? 'first-card' : undefined}
                           extra={cardMode === 'rich' ? cardExtras[cert.domain] : undefined}
+                          warming={warmingDomains.has(cert.domain)} extrasPending={cardMode === 'rich' && warmingDomains.has(cert.domain)}
                           live={cardExtras[cert.domain] ? { uptime: cardExtras[cert.domain].uptime, alert: cardExtras[cert.domain].last_alert, renewal: cardExtras[cert.domain].renewal } : undefined}
                           onOpenHealth={openCertHealth} onConfirmRenewal={confirmCardRenewal} onPlanRenewal={planCardRenewal} confirming={confirmingDomain === cert.domain}
                           onOpenShared={setSharedCert}
@@ -1520,7 +1550,7 @@ export default function App() {
 
             {tab === 'maintenance' && (
               <div className="tab-content active">
-                <MaintenanceWindowsPage systemRole={systemRole} teamId={teamId} teamName={teamName} />
+                <MaintenanceWindowsPage systemRole={systemRole} teamId={teamId} teamName={teamName} globalAdmin={globalAdmin} />
               </div>
             )}
 
@@ -1611,7 +1641,8 @@ export default function App() {
 
             {tab === 'login-issues' && (
               <div className="tab-content active">
-                <LoginIssueReports />
+                {/* Kapsamlı müdür (ADMIN ama global değil): yönetici uçları 403 → kendi bildirimleri görünümü (2026-09-28) */}
+                <LoginIssueReports scopedAdmin={systemRole === 'ADMIN' && !globalAdmin} />
               </div>
             )}
 
@@ -1698,7 +1729,8 @@ export default function App() {
             canMoveTeam={systemRole === 'ADMIN'}
             canOpenSettings={globalAdmin}   // 7/24 alanı "aktif grup yok" → Ayarlar bağlantısı yalnız global yöneticiye
             onClose={() => setInvForm(null)}
-            onSaved={() => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1) }}
+            // Mükerrer alan adı bandından aktarım / geri yükleme (2026-09-28): form kapanır, taşınan kaydın penceresi açılır
+            onSaved={(_res, domain, opts) => { setInvForm(null); loadData(); setCertModalRefresh(k => k + 1); if (opts?.open && domain) setModalCert({ domain, team_id: opts.record?.team_id ?? null }) }}
           />
         </Suspense>
       )}

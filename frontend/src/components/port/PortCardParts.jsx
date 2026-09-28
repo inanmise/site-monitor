@@ -6,7 +6,7 @@ import { useT } from '../../i18n/index.jsx'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { Badge } from '@/components/shadcn/badge'
 import HintPopover from '../ui/HintPopover.jsx'
-import { CARD_LAYER, MonitorCardMetrics } from '../monitoring/MonitorCard.jsx'
+import { CARD_LAYER, MonitorCardMetrics, MonitorPendingText } from '../monitoring/MonitorCard.jsx'
 import { intervalText, ipFamily, signedPercent } from '../ping/pingCardModel.js'
 import { msParts, msText } from '../keyword/keywordCardModel.js'
 import { cn } from '@/lib/utils'
@@ -160,8 +160,10 @@ export function PortResultPanel({ monitor: m, result }) {
     <div data-slot="port-result" data-state={result.kind} data-tone={result.tone} role="group" aria-label={t('port.card.result')}
       className={cn('mb-2.5 min-w-0 rounded-lg border px-3 py-2', PANEL[result.tone])}>
       <p data-slot="port-result-title" className={cn('flex min-w-0 items-center gap-1.5 text-sm leading-tight font-bold', TITLE_TONE[result.tone])}>
-        <Icon aria-hidden="true" className="size-4 shrink-0" />
-        <span className="min-w-0">{title}</span>
+        {result.kind === 'pending'
+          // Hiç kontrol yok: ilk kontrol koşarken "İlk kontrol yapılıyor…" (dönen gösterge), değilse bekleme başlığı.
+          ? <MonitorPendingText idle={<span className="min-w-0">{title}</span>} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
+          : <><Icon aria-hidden="true" className="size-4 shrink-0" /><span className="min-w-0">{title}</span></>}
       </p>
       {why && (
         <p data-slot="port-result-why"
@@ -215,8 +217,13 @@ export function PortCompactSummary({ monitor: m, result, baseline }) {
     <div data-slot="port-compact" data-state={result.kind} data-tone={result.tone}
       className={cn('mb-2 min-w-0 rounded-md border px-2.5 py-1.5', PANEL[result.tone])}>
       <p className="flex min-w-0 items-center gap-1.5 text-[13px] leading-5 font-semibold">
-        <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', TITLE_TONE[result.tone])} />
-        <span data-slot="port-compact-verdict" className={cn('min-w-0 truncate', TITLE_TONE[result.tone])}>{title}</span>
+        {result.kind === 'pending'
+          ? <MonitorPendingText idle={<span data-slot="port-compact-verdict" className={cn('min-w-0 truncate', TITLE_TONE[result.tone])}>{title}</span>}
+              icon={Icon} iconClassName={cn('size-3.5 shrink-0', TITLE_TONE[result.tone])} />
+          : <>
+              <Icon aria-hidden="true" className={cn('size-3.5 shrink-0', TITLE_TONE[result.tone])} />
+              <span data-slot="port-compact-verdict" className={cn('min-w-0 truncate', TITLE_TONE[result.tone])}>{title}</span>
+            </>}
         {time && (
           <span data-slot="port-compact-time" data-tone={slow ? 'warn' : undefined}
             className={cn('ml-auto flex shrink-0 items-center gap-1 text-xs tabular-nums', slow ? 'text-amber-700 dark:text-amber-400' : 'text-foreground')}>

@@ -1,12 +1,12 @@
 import {
-  BellRing, CircleAlert, CornerDownRight, Hourglass, LockKeyhole, LockKeyholeOpen, SearchX, ServerCrash, ShieldAlert,
+  BellRing, CircleAlert, CornerDownRight, LockKeyhole, LockKeyholeOpen, SearchX, ServerCrash, ShieldAlert,
   ShieldCheck, Target, Timer, TimerOff, TriangleAlert, Unplug,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatPercent } from '../../i18n/dateLocale.js'
 import { Badge } from '@/components/shadcn/badge'
 import HintPopover from '../ui/HintPopover.jsx'
-import { CARD_LAYER, MonitorCardMetrics } from '../monitoring/MonitorCard.jsx'
+import { CARD_LAYER, MonitorCardMetrics, MonitorPendingText } from '../monitoring/MonitorCard.jsx'
 import { intervalText, latencyBaseline, signedPercent } from '../ping/pingCardModel.js'
 import { CardCompactMetric, CompactValue, CompactVerdict } from '../ping/PingCardParts.jsx'
 import { urlParts } from '../pagespeed/pageSpeedCardModel.js'
@@ -151,7 +151,7 @@ export function HttpMetricTiles({ monitor: m, verdict, reason, spark }) {
   if (verdict.kind === 'pending') {
     return (
       <p data-slot="http-pending" className="mb-2.5 flex min-w-0 items-center gap-1.5 rounded-lg border border-dashed bg-muted/40 px-2.5 py-2 text-xs font-medium text-muted-foreground dark:bg-muted/20">
-        <Hourglass aria-hidden="true" className="size-3.5 shrink-0" />{t('keyword.card.pending')}
+        <MonitorPendingText idle={t('keyword.card.pending')} />
       </p>
     )
   }
@@ -232,7 +232,7 @@ export function HttpCompactMetric({ monitor: m, verdict, reason }) {
   if (verdict.kind === 'pending') {
     return (
       <p data-slot="http-pending" data-compact="true" className="mt-2 flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <Hourglass aria-hidden="true" className="size-3.5 shrink-0" />{t('keyword.card.pending')}
+        <MonitorPendingText idle={t('keyword.card.pending')} />
       </p>
     )
   }

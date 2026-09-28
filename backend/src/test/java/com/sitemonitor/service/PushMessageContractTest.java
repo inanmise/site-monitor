@@ -69,7 +69,7 @@ class PushMessageContractTest {
         when(appSettings.getBoolean(anyString(), any(Boolean.class))).thenAnswer(i -> i.getArgument(1));
         when(appSettings.getInt(anyString(), any(Integer.class))).thenAnswer(i -> i.getArgument(1));
         when(deliveryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
     }
 
     private static AlertEvent event(String level, String domain, String message, Instant createdAt) {

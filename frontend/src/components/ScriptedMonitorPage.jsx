@@ -20,6 +20,7 @@ import { duplicateName } from '../utils/duplicateName.js'
 import { collectK6Markers } from '../utils/k6Errors.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
@@ -53,6 +54,7 @@ import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { VersionChip } from './scripted/VersionTimeline.jsx'
@@ -313,7 +315,6 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
   const [selCheck, setSelCheck] = useState(null)
-  const deepLinkDone = useRef(false)
   // ── Otomatik taslak ──
   const [drafts, setDrafts] = useState([])            // kullanıcının sunucudaki taslakları
   const [pendingDraft, setPendingDraft] = useState(null)   // açık monitör için "yükle?" teklifi
@@ -443,15 +444,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  // Deep-link: ?monitor=<id> → detay modalını aç (bir kez) — diğer izleme türleriyle parite.
-  useEffect(() => {
-    if (deepLinkDone.current || monitors.length === 0) return
-    deepLinkDone.current = true
-    const id = readUrlParam('monitor', null)
-    if (!id) return
-    const m = monitors.find(x => String(x.id) === String(id))
-    if (m) openDetail(m)
-  }, [monitors])  
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, kart "Bağlantıyı kopyala", 7/24 Kapsamı) — diğer sekiz sayfayla AYNI kanca
+  // (2026-09-28). Satır içi kopyası liste gelince okuyordu: URL senkronu `monitor`'ü 300 ms'de siliyor, yavaş listede
+  // bağlantı hiçbir şey açmıyordu; bulunamayan kimlikte de sessizdi. Bir-kez koruması kancada (hooks/useMonitorDeepLink).
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'SCRIPTED',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null); setSelCheck(null) }
@@ -861,15 +860,23 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // Engellemeyen uyarılar (eksik/kullanılmayan __ENV, sonuçsuz sözdizimi doğrulaması) KALICI
         // gösterilir — toast kaybolur, bu bilgi kaydettikten sonra da lazım.
         const w = res.data?.warnings
-        if (Array.isArray(w) && w.length) setSaveWarnings(w)
-        else if (shouldSmokeRun(res.data)) {
-          // Kaydetme sonrası DOĞRULAMA KOŞUMU. Modal açık kalır; sürüm ZATEN kalıcı, koşum
-          // kaydı bloklamıyor — banner metni bunu açıkça söylüyor.
-          toast.success(t('scripted.saved'))
-          runSmokeCheck(res.data?.id ?? modal?.id)
-        }
+        const warned = Array.isArray(w) && w.length > 0
+        const fresh = shouldSmokeRun(res.data)
+        const savedId = res.data?.id ?? modal?.id
+        if (warned) setSaveWarnings(w)
+        // Kaydetme sonrası DOĞRULAMA KOŞUMU (aşağıda). Modal açık kalır; sürüm ZATEN kalıcı, koşum
+        // kaydı bloklamıyor — banner metni bunu açıkça söylüyor.
+        else if (fresh) toast.success(t('scripted.saved'))
         else { toast.success(t('scripted.saved')); closeEdit({ skipDraft: true }) }
-        load()
+        // Liste ÖNCE tazelenir (2026-09-28): koşumun sonucu KARTA da işlenir (checkNow → setMonitors) ve bunun için
+        // yeni kart ızgarada olmalı. Eskiden liste koşumdan önce çekilip sonuç yalnız forma yazılıyordu — pencere
+        // kapanınca kart bir sonraki yenilemeye kadar BOŞ kalıyordu (kullanıcı bildirimi).
+        await load()
+        if (fresh && savedId != null) {
+          // Uyarı varken bant yok (uyarılar okunuyor) ama ilk / taze koşum yine KARTTA başlar — kart boş kalmasın.
+          if (warned) startCheckAfterSave(checkNow, { id: savedId }, { silent: true })
+          else runSmokeCheck(savedId)
+        }
       }
       else {
         // Sözdizimi hatası kaydetmeyi ENGELLER (prod politikası BLOCK) ve mesaj çok satırlı bir
@@ -888,15 +895,16 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   /**
    * Kaydetme sonrası doğrulama koşumu YAPILSIN MI?
    *
-   * <p>KAPI: yalnız gerçekten YENİ BİR SÜRÜM yazıldıysa. Yalnız ayar (aralık, takım, alarm
-   * tercihi) değiştiren bir kayıt sürüm üretmez ve k6 slotu yakmamalı — havuz varsayılan 2.
-   * Yeni kayıtta önceki sürüm yok, `1.0.0` doğal olarak farklıdır.
+   * <p>KAPI: yeni kayıt, YENİ BİR SÜRÜM (script/env) ya da koşumu etkileyen ayar (süreç bütçesi, vekil) — ve
+   * izleme etkinse. Yalnız ayar (aralık, takım, alarm tercihi) değiştiren bir kayıt k6 slotu yakmamalı — havuz
+   * varsayılan 2. Yeni kayıtta önceki sürüm yok, `1.0.0` doğal olarak farklıdır. Koşumun sonucu hem bu formun
+   * bandına hem KARTA düşer (runSmokeCheck → checkNow) — kart kayıttan sonra boş kalmaz (2026-09-28).
    */
   function shouldSmokeRun(saved) {
     if (!k6.available) return false
-    const newVersion = saved?.script_version
-    if (!newVersion) return false
-    return newVersion !== modal?.script_version
+    // Kanonik karar paylaşılan: yeni kayıt ya da sürüm (script/env) / süreç bütçesi / vekil değişti ve izleme ETKİN
+    // (duraklatılmış izleme koşulmaz). Bkz. utils/checkAfterSave — dokuz türde aynı kural.
+    return shouldCheckAfterSave('scripted', { isNew: !modal?.id, before: modal, after: saved })
   }
 
   /**
@@ -916,9 +924,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     const my = ++smokeSeq.current
     setSmoke({ state: 'running' })
     setTestResult(null)
-    let res
+    let r
     try {
-      res = await api.monitoring.triggerScriptedCheck(id)
+      // KARTIN "Şimdi çalıştır" yolu (2026-09-28): koşum track'e girer — kart dönen göstergeyle "İlk kontrol
+      // yapılıyor…" der — ve sonuç KARTA da işlenir (setMonitors / açık detay). Eskiden sonuç yalnız bu forma
+      // yazılıyordu: bant kapatılınca kart bir sonraki yenilemeye kadar BOŞ kalıyordu. Kart birleştirmesi form
+      // sırasına (smokeSeq) BAĞLI DEĞİL: pencere kapatılsa da kart dolar. Sessiz: durumu bant anlatır.
+      r = await checkNow({ id }, { silent: true })
     } catch (e) {
       // Ağ hatası (request() THROW eder): bant "koşuyor"da takılı kalmasın.
       if (my !== smokeSeq.current) return
@@ -927,15 +939,16 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     }
     // Form o arada kapatıldı / başka forma geçildi → sonuç bu forma AİT DEĞİL, yazılmaz.
     if (my !== smokeSeq.current) return
-    if (res?.success) {
-      if (res.data?.skipped) setSmoke({ state: 'skipped', reason: res.data.skipped_reason || '' })
-      else if (res.data?.queued) setSmoke({ state: 'queued' })
-      else {
-        setSmoke(null)
-        setTestResult({ ...res.data, _source: 'smoke', _checkedAt: res.data?.checked_at })
-      }
-    } else if (res?.status === 429) setSmoke({ state: 'cooldown' })
-    else { setSmoke(null); toast.error(res?.error || t('scripted.triggerError')) }
+    // undefined: aynı izleme ZATEN koşuyor (kart düğmesi / toplu koşum) — sonucu arkada gelir.
+    if (r === undefined) { setSmoke({ state: 'queued' }); return }
+    const data = r.data || {}
+    if (data.skipped) setSmoke({ state: 'skipped', reason: data.skipped_reason || '' })
+    else if (r.ok && data.queued) setSmoke({ state: 'queued' })
+    else if (r.ok) {
+      setSmoke(null)
+      setTestResult({ ...data, _source: 'smoke', _checkedAt: data.checked_at })
+    } else if (r.status === 429) setSmoke({ state: 'cooldown' })
+    else { setSmoke(null); toast.error(r.error || t('scripted.triggerError')) }
   }
 
   /**
@@ -1057,7 +1070,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       } else if (res && !silent) toast.error(res.error || t('scripted.triggerError'))
-      return { ok: false, error: res?.error || null, data: res?.data ?? null }
+      // `status`: kayıt sonrası doğrulama bandı bekleme süresini (429) ayrı anlatır (runSmokeCheck).
+      return { ok: false, error: res?.error || null, data: res?.data ?? null, status: res?.status }
     })
   }
 
@@ -1174,7 +1188,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                yuva olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak), toplu seçim
                kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). Duraklatılmış = `active === false`
                — sayfanın "Duraklatılan" sayacı/süzgeciyle AYNI yüklem. */
-            <ScriptedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density} onOpen={() => openDetail(m)}
+            <ScriptedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />

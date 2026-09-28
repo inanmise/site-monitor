@@ -61,6 +61,19 @@ describe('VersionChip', () => {
     expect(document.querySelector('[data-new-version]')).toBeNull()
   })
 
+  // 2026-09-27 (kullanıcı: "commit bilgisi pop up dışına taşıyor"): 40 karakterlik SHA dar pencerede kırılamıyordu.
+  // Pencerede KISA commit görünür, tam SHA title'da ve kopyada; kap daralabilir + metin kırılabilir.
+  it('commit satırı kısa SHA gösterir, tam SHA title + kopyada; taşmaya karşı daralabilir ve kırılabilir', async () => {
+    render(<VersionChip onTabChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /v20\.54\.0/ }))
+    const code = await screen.findByText('abcdef01')
+    expect(code.tagName).toBe('CODE')
+    expect(code).toHaveAttribute('title', 'abcdef0123456789')
+    expect(screen.queryByText('abcdef0123456789')).toBeNull()
+    expect(code.className).toMatch(/break-all/)
+    expect(code.closest('[data-slot="copyable-ref"]').className).toMatch(/min-w-0/)
+  })
+
   it('"Yenilikler" Yardım sekmesine view=releases ile, "Dağıtım geçmişi" Sağlık sekmesine sec=releases ile götürür', async () => {
     const onTabChange = vi.fn()
     render(<VersionChip onTabChange={onTabChange} />)

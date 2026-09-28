@@ -2,6 +2,7 @@ package com.sitemonitor.controller;
 
 import com.sitemonitor.model.MaintenanceWindow;
 import com.sitemonitor.repository.MaintenanceWindowRepository;
+import com.sitemonitor.service.AlertKeyOwnershipService;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
@@ -24,6 +25,8 @@ import java.util.*;
 /**
  * Bakım penceresi yönetimi (CRUD + pause/resume + ad-hoc "start now" + /active). Occurrence/bastırma mantığı
  * {@link MaintenanceService}'te. Yetki: view=maintenance.view, yaz=maintenance.manage, sil=maintenance.delete.
+ * Sahiplik ({@code requireManageable}) + kapsam ({@code requireWindowScope}: tüm-izlemeler yalnız global yönetici,
+ * hedefler yönetilen takımlardan, süre tavanı) ayrı ayrı doğrulanır.
  * Her yazım {@code maintenanceService.refresh()} çağırır → aktif-hedef cache'i anında güncellenir.
  */
 @Slf4j
@@ -42,6 +45,20 @@ public class MaintenanceController {
     private final PermissionService permissionService;
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
+    /** Hedef anahtarı → sahip takımlar (takım kapsamı kapısı + /active süzgeci). */
+    private final AlertKeyOwnershipService targetOwnership;
+
+    /**
+     * Bakım süresi TAVANI (dk, 2026-09-28). Eskiden sınır yoktu: {@code minutes:100000} ≈ 70 gün sessizlik tek
+     * istekle açılıyordu. Global yönetici 30 gün, diğer yazarlar (takım yöneticisi / kapsamlı müdür) 7 gün.
+     * Daha uzun "bakım" artık bakım değil izlemenin kapatılmasıdır — onun yolu izlemeyi duraklatmaktır.
+     * Tekrarlayan pencerede tavan HER OLUŞUMUN süresidir.
+     */
+    static final int MAX_MINUTES_GLOBAL = 30 * 24 * 60;
+    static final int MAX_MINUTES_SCOPED = 7 * 24 * 60;
+
+    /** Kapsam reddinde iletide adı geçen hedef sayısı (gerisi "…"). */
+    private static final int DENIED_HEAD = 5;
 
     /** Bakım penceresinin geçmişte tutulan alanları. */
     private static final String[] MAINTENANCE_FIELDS = {
@@ -119,11 +136,25 @@ public class MaintenanceController {
         return ok(Map.of("data", data));
     }
 
-    /** Aktif bakım hedefleri (badge overlay için). */
+    /**
+     * Aktif bakım hedefleri (badge overlay için). Global görüntüleyici (admin/AUDIT) hepsini görür; diğerleri
+     * yalnız görüş kapsamındaki takımların hedeflerini — eskiden {@code maintenance.view} taşıyan HERKES her
+     * takımın susturulan host/URL listesini okuyordu. {@code all} bayrağı süzülmez: "tüm izlemeler" penceresi
+     * çağıranın izlemelerini de susturur (liste ucundaki görünürlük kuralıyla aynı gerekçe).
+     */
     @GetMapping("/active")
     public ResponseEntity<Map<String, Object>> active(HttpSession session) {
         permissionService.require(session, "maintenance.view", "view");
-        return ok(Map.of("data", maintenanceService.activeInfo()));
+        Map<String, Object> info = maintenanceService.activeInfo();
+        if (SessionScope.isGlobalViewer(session)) return ok(Map.of("data", info));
+        List<String> targets = new ArrayList<>();
+        if (info.get("targets") instanceof Collection<?> c) for (Object o : c) if (o != null) targets.add(o.toString());
+        Map<String, Set<Long>> viewers = targets.isEmpty() ? Map.of() : targetOwnership.viewerTeams(targets);
+        Map<String, Object> scoped = new LinkedHashMap<>(info);
+        scoped.put("targets", targets.stream()
+                .filter(k -> viewers.getOrDefault(k, Set.of()).stream().anyMatch(t -> SessionScope.canView(session, t)))
+                .toList());
+        return ok(Map.of("data", scoped));
     }
 
     // ── Oluştur / Güncelle / Sil ─────────────────────────────────────────────────
@@ -136,6 +167,7 @@ public class MaintenanceController {
         MaintenanceWindow w = new MaintenanceWindow();
         applyFields(w, body);
         validateWindow(w);
+        requireWindowScope(w, session);
         w.setActive(true);
         w.setCreatedAt(now());
         w.setUpdatedAt(now());
@@ -159,6 +191,8 @@ public class MaintenanceController {
         Map<String, Object> _before = AuditDiff.snapshot(w, MAINTENANCE_FIELDS);
         applyFields(w, body);
         validateWindow(w);
+        // SONUÇ durumu doğrulanır: "tüm izlemeler"e çevirme, yabancı hedef ekleme ve süre uzatma aynı kapıdan geçer.
+        requireWindowScope(w, session);
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
@@ -201,6 +235,9 @@ public class MaintenanceController {
     private ResponseEntity<Map<String, Object>> toggle(Long id, boolean active, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.manage", "edit");
         MaintenanceWindow w = requireManageable(id, session);
+        // Sürdürme bastırmayı YENİDEN açar → oluşturmayla aynı kapı (eski/yabancı kapsamlı pencere geri açılamasın).
+        // Duraklatma yalnız bastırmayı kaldırır; kapıya takılmaz.
+        if (active) requireWindowScope(w, session);
         w.setActive(active);
         w.setUpdatedAt(now());
         MaintenanceWindow saved = repo.save(w);
@@ -231,6 +268,7 @@ public class MaintenanceController {
         w.setUpdatedAt(now());
         w.setCreatedBy(actor(session));
         w.setTeamId(sessionTeamId(session));
+        requireWindowScope(w, session);
         MaintenanceWindow saved = repo.save(w);
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_QUICK", session, request, "MAINTENANCE_WINDOW",
@@ -327,6 +365,56 @@ public class MaintenanceController {
         if (!SessionScope.canManage(session, w.getTeamId()))
             throw new SecurityException("Bu bakım penceresini yönetme yetkiniz yok");
         return w;
+    }
+
+    /**
+     * Pencerenin KAPSAMI — neyi susturduğu (2026-09-28, yayın öncesi regresyon taraması, A1).
+     *
+     * <p>{@link #requireManageable} yalnız pencerenin SAHİBİNE bakıyordu; kapsam ({@code allMonitors} /
+     * {@code targets}) doğrudan istek gövdesinden geliyordu. {@code maintenance.manage} TEAM_ADMIN ve kapsamlı
+     * müdürde varsayılan açık olduğundan tek bir {@code POST /quick {"allMonitors":true,"minutes":100000}}
+     * kurumun TÜM alarmlarını (e-posta, push, 7/24) aylarca susturuyordu; {@code targets:["b.example.com"]}
+     * de başka takımın host'unu.
+     *
+     * <p>Kural (global yönetici dışındaki her yazar):
+     * <ul>
+     *   <li>{@code allMonitors=true} → 403 (kurum geneli susturma yalnız global yöneticide);</li>
+     *   <li>her hedef anahtarı en az bir izleme/envanter satırına çözülmeli ve anahtarı taşıyan TÜM satırların
+     *       sahip takımı çağıranın yönetim kapsamında olmalı ({@link SessionScope#canManage}). Motor anahtarı
+     *       türden bağımsız susturur; aynı host'u başka takım da izliyorsa onun alarmı da susar → reddedilir.
+     *       Takımsız ya da hiçbir satıra çözülmeyen anahtar da reddedilir;</li>
+     *   <li>süre ≤ {@link #MAX_MINUTES_SCOPED} (global: {@link #MAX_MINUTES_GLOBAL}) → aşan 400.</li>
+     * </ul>
+     * Anahtar listesi motorun OKUDUĞU ayrıştırmayla çıkarılır ({@link MaintenanceService#targetKeys}).
+     */
+    private void requireWindowScope(MaintenanceWindow w, HttpSession session) {
+        boolean global = SessionScope.isGlobalAdmin(session);
+        if (!global) {
+            if (Boolean.TRUE.equals(w.getAllMonitors()))
+                throw new SecurityException(com.sitemonitor.util.Msg.t(
+                        "Tüm izlemeleri kapsayan bakım penceresini yalnız global yönetici açabilir; hedefleri tek tek seçin",
+                        "Only a global administrator can open a maintenance window covering all monitors; choose the targets individually"));
+            List<String> keys = MaintenanceService.targetKeys(w.getTargetsJson()).stream().distinct().toList();
+            if (!keys.isEmpty()) {
+                Map<String, Set<Long>> owners = targetOwnership.ownerTeams(keys);
+                List<String> denied = keys.stream().filter(k -> {
+                    Set<Long> o = owners.get(k);
+                    return o == null || o.isEmpty() || !o.stream().allMatch(t -> SessionScope.canManage(session, t));
+                }).toList();
+                if (!denied.isEmpty()) {
+                    String head = String.join(", ", denied.subList(0, Math.min(DENIED_HEAD, denied.size())))
+                            + (denied.size() > DENIED_HEAD ? " …" : "");
+                    throw new SecurityException(com.sitemonitor.util.Msg.t(
+                            "Yönetim kapsamınız dışındaki hedefler bakım penceresine eklenemez: " + head,
+                            "Targets outside your management scope can't be added to a maintenance window: " + head));
+                }
+            }
+        }
+        int cap = global ? MAX_MINUTES_GLOBAL : MAX_MINUTES_SCOPED;
+        if (w.getDurationMinutes() != null && w.getDurationMinutes() > cap)
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Bakım süresi en fazla " + (cap / (24 * 60)) + " gün olabilir; daha uzun süre için izlemeyi duraklatın",
+                    "A maintenance window can last at most " + (cap / (24 * 60)) + " days; pause the monitor for anything longer"));
     }
 
     private static String csvDays(Object v) {

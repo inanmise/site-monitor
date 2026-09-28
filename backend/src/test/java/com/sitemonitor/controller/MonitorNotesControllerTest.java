@@ -27,14 +27,27 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(MonitorNotesController.class)
+@org.springframework.context.annotation.Import(com.sitemonitor.service.MonitorTargetTeams.class)   // GERÇEK hedef yetki kuralı
 class MonitorNotesControllerTest {
 
     @Autowired MockMvc mvc;
+    @Autowired com.sitemonitor.service.MonitorTargetTeams targetTeams;
 
     @MockitoBean MonitorGuideRepository guideRepo;
     @MockitoBean MonitorNoteRepository noteRepo;
     @MockitoBean PermissionService permissionService;   // require(...) mock → no-op
     @MockitoBean AuditService auditService;
+    // MonitorTargetTeams bağımlılıkları (rehber hedef yetkisi, 2026-09-28)
+    @MockitoBean com.sitemonitor.repository.HttpMonitorRepository httpRepo;
+    @MockitoBean com.sitemonitor.repository.KeywordMonitorRepository keywordRepo;
+    @MockitoBean com.sitemonitor.repository.PageMonitorRepository pageRepo;
+    @MockitoBean com.sitemonitor.repository.PageSpeedMonitorRepository pageSpeedRepo;
+    @MockitoBean com.sitemonitor.repository.PingMonitorRepository pingRepo;
+    @MockitoBean com.sitemonitor.repository.PortMonitorRepository portRepo;
+    @MockitoBean com.sitemonitor.repository.DnsMonitorRepository dnsRepo;
+    @MockitoBean com.sitemonitor.repository.DomainMonitorRepository domainRepo;
+    @MockitoBean com.sitemonitor.repository.ScriptedMonitorRepository scriptedRepo;
+    @MockitoBean com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
 
     // Web-context altyapısı (interceptor/filter) için gerekli mock'lar
     @MockitoBean RememberMeService rememberMeService;
@@ -193,9 +206,21 @@ class MonitorNotesControllerTest {
         return n;
     }
 
+    /** 1.2.3.4'ü izleyen ping izlemeleri — verilen takımlar (hedef yetkisi bunlardan türer). */
+    private void pingOwnedBy(Long... teams) {
+        List<com.sitemonitor.model.PingMonitor> rows = new java.util.ArrayList<>();
+        for (Long t : teams) {
+            com.sitemonitor.model.PingMonitor m = new com.sitemonitor.model.PingMonitor();
+            m.setHost("1.2.3.4"); m.setTeamId(t);
+            rows.add(m);
+        }
+        when(pingRepo.findByHost("1.2.3.4")).thenReturn(rows);
+    }
+
     @Test
     @DisplayName("GET /notes: başka takımın notu listeden elenir, kendi takımınınki kalır")
     void get_otherTeamNote_filteredOut() throws Exception {
+        pingOwnedBy(1L);
         when(guideRepo.findByMonitorTypeAndTarget("PING", "1.2.3.4")).thenReturn(Optional.empty());
         when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc("PING", "1.2.3.4"))
                 .thenReturn(List.of(note(1L, 1L, "a"), note(2L, 2L, "b")));
@@ -210,6 +235,7 @@ class MonitorNotesControllerTest {
     @Test
     @DisplayName("GET /notes: takımsız (eski) not görünür kalır — mevcut içerik sessizce yok olmaz")
     void get_legacyNoteWithoutTeam_stillVisible() throws Exception {
+        pingOwnedBy(1L);
         when(guideRepo.findByMonitorTypeAndTarget("PING", "1.2.3.4")).thenReturn(Optional.empty());
         when(noteRepo.findByMonitorTypeAndTargetAndDeletedAtIsNullOrderByCreatedAtDesc("PING", "1.2.3.4"))
                 .thenReturn(List.of(note(1L, null, "a")));
@@ -258,5 +284,114 @@ class MonitorNotesControllerTest {
 
         mvc.perform(delete("/api/monitoring/notes/9").session(teamSession("USER", 1L)))
                 .andExpect(status().isOk());
+    }
+
+    // ── Rehber HEDEF yetkisi (2026-09-28 regresyon taraması) ─────────────────────────────────
+    // Rehber (tip, hedef) başına tek satır ve takımsız: monitoring.crud tek başına yetiyordu → bir takımın kullanıcısı
+    // başka takımın rehberinin üzerine yazabiliyor, hedef adını bilen herkes okuyabiliyordu. Kural: hedefi izleyen
+    // izlemelerden birini ÇALIŞTIRABİLEN yazar (canOperateTeam), GÖREBİLEN okur.
+
+    private static final String GUIDE_BODY = "{\"type\":\"PING\",\"target\":\"1.2.3.4\",\"guide\":\"# ele geçirildi\"}";
+
+    @Test
+    @DisplayName("PUT /guide: hedefi YALNIZ başka takım izliyorsa USER → 403, rehber yazılmaz; GET de 403")
+    void guide_otherTeamTarget_forbidden() throws Exception {
+        pingOwnedBy(2L);
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("USER", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/notes?type=PING&target=1.2.3.4").session(teamSession("USER", 1L)))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(guideRepo, org.mockito.Mockito.never()).save(any(MonitorGuide.class));
+    }
+
+    @Test
+    @DisplayName("PUT /guide: kapsamlı müdür (AD ADMIN) yönetmediği takımın hedefine 403; yönettiği takımınkine 200")
+    void guide_scopedAdmin_onlyManagedTargets() throws Exception {
+        when(guideRepo.save(any(MonitorGuide.class))).thenAnswer(a -> a.getArgument(0));
+        pingOwnedBy(2L);
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("ADMIN", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isForbidden());
+        pingOwnedBy(1L);
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("ADMIN", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT /guide: hedefi kendi takımı da izliyorsa (aynı host iki takımda) USER üyesi → 200")
+    void guide_sharedTarget_memberAllowed() throws Exception {
+        when(guideRepo.save(any(MonitorGuide.class))).thenAnswer(a -> a.getArgument(0));
+        pingOwnedBy(2L, 1L);
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("USER", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("PUT /guide: hedefi izleyen hiçbir izleme yoksa yalnız global yönetici yazar")
+    void guide_noMatchingMonitor_onlyGlobalAdmin() throws Exception {
+        when(guideRepo.save(any(MonitorGuide.class))).thenAnswer(a -> a.getArgument(0));
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("USER", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/monitoring/notes/guide").session(session("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content(GUIDE_BODY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("DNS ÇİFT KAYNAK: envanter-türevi satır (team_id null) takımını ENVANTERDEN alır — SY yazar, UG yalnız okur, yabancı ikisini de yapamaz")
+    void guide_dnsInventoryDerived_usesInventoryTeam() throws Exception {
+        when(guideRepo.save(any(MonitorGuide.class))).thenAnswer(a -> a.getArgument(0));
+        com.sitemonitor.model.DnsMonitor derived = new com.sitemonitor.model.DnsMonitor();
+        derived.setDomain("example.com"); derived.setStandalone(false); derived.setTeamId(null);
+        when(dnsRepo.findByDomain("example.com")).thenReturn(List.of(derived));
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain("example.com"); inv.setTeamId(1L); inv.setUgTeamId(3L);
+        when(inventoryRepo.findByDomain("example.com")).thenReturn(Optional.of(inv));
+        String body = "{\"type\":\"DNS\",\"target\":\"example.com\",\"guide\":\"# rehber\"}";
+
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("USER", 1L))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        mvc.perform(put("/api/monitoring/notes/guide").session(teamSession("USER", 3L))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/notes?type=DNS&target=example.com").session(teamSession("USER", 3L)))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/monitoring/notes?type=DNS&target=example.com").session(teamSession("USER", 2L)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("SÖZLEŞME: Notlar'ın kabul ettiği HER tip hedef sahibini çözer (yeni tür eklenip burası unutulursa rehber herkese kilitlenir)")
+    void everyNotesType_resolvesOwners() {
+        com.sitemonitor.model.HttpMonitor h = new com.sitemonitor.model.HttpMonitor(); h.setTeamId(1L);
+        com.sitemonitor.model.KeywordMonitor k = new com.sitemonitor.model.KeywordMonitor(); k.setTeamId(1L);
+        com.sitemonitor.model.PageMonitor pg = new com.sitemonitor.model.PageMonitor(); pg.setTeamId(1L);
+        com.sitemonitor.model.PageSpeedMonitor ps = new com.sitemonitor.model.PageSpeedMonitor(); ps.setTeamId(1L);
+        com.sitemonitor.model.PingMonitor pi = new com.sitemonitor.model.PingMonitor(); pi.setTeamId(1L);
+        com.sitemonitor.model.DomainMonitor d = new com.sitemonitor.model.DomainMonitor(); d.setTeamId(1L);
+        com.sitemonitor.model.ScriptedMonitor s = new com.sitemonitor.model.ScriptedMonitor(); s.setTeamId(1L);
+        com.sitemonitor.model.DnsMonitor dn = new com.sitemonitor.model.DnsMonitor(); dn.setStandalone(true); dn.setTeamId(1L);
+        com.sitemonitor.model.PortMonitor po = new com.sitemonitor.model.PortMonitor(); po.setStandalone(true); po.setTeamId(1L);
+        when(httpRepo.findByUrl("t")).thenReturn(List.of(h));
+        when(keywordRepo.findByUrl("t")).thenReturn(List.of(k));
+        when(pageRepo.findByUrl("t")).thenReturn(List.of(pg));
+        when(pageSpeedRepo.findByUrl("t")).thenReturn(List.of(ps));
+        when(pingRepo.findByHost("t")).thenReturn(List.of(pi));
+        when(domainRepo.findByDomain("t")).thenReturn(List.of(d));
+        when(scriptedRepo.findByName("t")).thenReturn(List.of(s));
+        when(dnsRepo.findByDomain("t")).thenReturn(List.of(dn));
+        when(portRepo.findByHostAndPortAndActiveTrue("t", 443)).thenReturn(List.of(po));
+
+        List<String> unresolved = new java.util.ArrayList<>();
+        for (String type : MonitorNotesController.TYPES) {
+            String target = "PORT".equals(type) ? "t:443" : "t";
+            if (targetTeams.owners(type, target).isEmpty()) unresolved.add(type);
+        }
+        assertThat(unresolved).as("hedef sahibi çözülemeyen Notlar tipleri").isEmpty();
     }
 }

@@ -123,6 +123,14 @@ public class AppSettingsService {
         return environment.getProperty(key);
     }
 
+    /** Gelen değer anahtarın ŞU ANKİ etkin değeriyle aynı mı (boş = yok; birebir metin karşılaştırması). */
+    private boolean sameAsEffective(String key, String val) {
+        String cur = resolve(key);
+        String a = (val == null || val.isEmpty()) ? null : val;
+        String b = (cur == null || cur.trim().isEmpty()) ? null : cur.trim();
+        return java.util.Objects.equals(a, b);
+    }
+
     // ── Page beslemesi: katalog + efektif değerler ─────────────────────────────
 
     public List<Map<String, Object>> getCatalogForClient() {
@@ -175,6 +183,11 @@ public class AppSettingsService {
             // diyordu; kontrol bunu uygulamıyordu.
             if (AppSettingsCatalog.isGlobalOnly(key)
                     && !com.sitemonitor.controller.SessionScope.isGlobalAdminInRequest()) {
+                // DEĞİŞMEYEN değer yazma değildir (2026-09-28): formun TAMAMINI gönderen, müdüre açık operasyonel
+                // yüzeyler GLOBAL_ONLY bir anahtarı aynı değerle geri yollar (Giriş Anomalisi → failed-login.retention-days
+                // her kayıtta). Bunu 403'e çevirmek o yüzeyin kaydını müdür için tümden kilitlerdi. Anahtar yok sayılır
+                // (satır yazılmaz, olay yayınlanmaz); gerçek bir değişiklik yine reddedilir.
+                if (sameAsEffective(key, val)) continue;
                 throw new SecurityException(com.sitemonitor.util.Msg.t(
                         "Bu ayar yalnız global yönetici tarafından değiştirilebilir: ",
                         "Only a global administrator can change this setting: ") + key);

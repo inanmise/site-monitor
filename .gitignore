@@ -70,3 +70,7 @@ frontend/test-results/
 # denetlenmemis ikinci bir kaynak kopyasi olusur ve her klonda 3+ MB olu agirlik tasir.
 _review_src.tar.gz
 *.tar.gz
+
+# Ajanların geçici Playwright iskeleleri (2026-09-28 regresyon taraması: commit edilirse CI E2E işinde koşar)
+frontend/**/*.tmp.*
+frontend/zz-*/

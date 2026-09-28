@@ -13,13 +13,43 @@ import java.util.List;
 
 public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelivery, Long> {
 
-    /** Outbox: worker'ın alacağı satırlar (yaş sırasıyla — açlık olmasın). */
-    List<UserPushDelivery> findTop50ByStatusOrderByIdAsc(String status);
+    /**
+     * Outbox: worker'ın alacağı ZAMANI GELMİŞ satırlar (yaş sırasıyla — açlık olmasın). {@code nextAttemptAt}
+     * boş = yeni satır, hemen; dolu = backoff bitene dek alınmaz. Eskiden süzgeçsiz PENDING okunuyordu: süpürme
+     * ve her yeni kuyruk satırı bekleyen retry'ı hemen yeniden gönderiyor, 2. ve 3. deneme milisaniyeler içinde
+     * tükeniyordu (2026-09-28). Damgalar {@code createdAt} ile aynı biçimde → metin karşılaştırması sıralıdır.
+     */
+    @Query("""
+           SELECT d FROM UserPushDelivery d
+           WHERE d.status = 'PENDING' AND (d.nextAttemptAt IS NULL OR d.nextAttemptAt <= :now)
+           ORDER BY d.id ASC
+           """)
+    List<UserPushDelivery> findDuePending(@Param("now") String now, Pageable pageable);
+
+    /**
+     * Gönderim sonucunun DAR yazımı — tam satır kaydı düştüğünde yedek (2026-09-28): durum ve deneme sayacı yine
+     * ilerler. Yazılmazsa satır PENDING + eski sayaçla kalır ve her süpürmede yeniden gönderilir (zehirli satır).
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.status = :status, d.attempts = :attempts, d.httpStatus = :httpStatus,
+                  d.error = :error, d.sentAt = :sentAt, d.nextAttemptAt = :nextAttemptAt
+           WHERE d.id = :id
+           """)
+    int updateOutcome(@Param("id") Long id, @Param("status") String status, @Param("attempts") Integer attempts,
+                      @Param("httpStatus") Integer httpStatus, @Param("error") String error,
+                      @Param("sentAt") String sentAt, @Param("nextAttemptAt") String nextAttemptAt);
 
     /** Dedupe ön-kontrolü (yarışta son söz UNIQUE kısıtın — bu yalnız gürültüsüz erken çıkış). */
     boolean existsByAlertEventIdAndDedupeKeyAndUsername(Long alertEventId, String dedupeKey, String username);
     /** Olaysız takım bildirimi (Zayıf Algoritma Raporu) dedupe'u — alertEventId yok. */
     boolean existsByDedupeKeyAndUsername(String dedupeKey, String username);
+    /** Fırtına karar satırı dedupe'u — takım başına (aynı fırtınada iki takımın kararı ayrı yazılır). */
+    boolean existsByDedupeKeyAndUsernameAndTeamId(String dedupeKey, String username, Long teamId);
+    /** Fırtına çözüm push'unun alıcıları: bu fırtınanın bu takıma giden açılış/tekrar satırları (anahtar öneki). */
+    List<UserPushDelivery> findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc(String dedupeKeyPrefix, Long teamId,
+                                                                                       String status);
 
     /** Alarm listesi "kanal durumu" çipi (2026-09-12, #16): sayfadaki alarmlar için durum × adet, tek sorgu. */
     @Query("SELECT d.alertEventId, d.status, COUNT(d) FROM UserPushDelivery d WHERE d.alertEventId IN :ids GROUP BY d.alertEventId, d.status")
@@ -72,6 +102,37 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
                                   @Param("from") String from,
                                   @Param("to") String to,
                                   Pageable pageable);
+
+    /**
+     * {@link #search} + TAKIM KAPSAMI (2026-09-28 regresyon taraması): kapsamlı müdür yalnız YÖNETTİĞİ takımların
+     * alarmlarına ait satırları görür (takımsız test/sistem satırları dâhil değil). {@code teamIds} BOŞ geçilmez —
+     * çağıran boş kapsamda sorguya hiç gitmez.
+     */
+    @Query("""
+           SELECT d FROM UserPushDelivery d
+           WHERE d.teamId IN :teamIds
+             AND (:username IS NULL OR LOWER(d.username) = LOWER(CAST(:username AS string)))
+             AND (:monitorType IS NULL OR d.monitorType = :monitorType)
+             AND (:level IS NULL OR d.alertLevel = :level)
+             AND (:status IS NULL OR d.status = :status)
+             AND (:trigger IS NULL OR d.trigger = :trigger)
+             AND (:notificationId IS NULL OR d.notificationId = :notificationId)
+             AND (:q IS NULL OR LOWER(d.monitorName) LIKE LOWER(CONCAT('%', CAST(:q AS string), '%')))
+             AND (:from IS NULL OR d.createdAt >= :from)
+             AND (:to IS NULL OR d.createdAt <= :to)
+           ORDER BY d.id DESC
+           """)
+    Page<UserPushDelivery> searchInTeams(@Param("teamIds") java.util.Collection<Long> teamIds,
+                                         @Param("username") String username,
+                                         @Param("monitorType") String monitorType,
+                                         @Param("level") String level,
+                                         @Param("status") String status,
+                                         @Param("trigger") String trigger,
+                                         @Param("notificationId") String notificationId,
+                                         @Param("q") String q,
+                                         @Param("from") String from,
+                                         @Param("to") String to,
+                                         Pageable pageable);
 
     /** E3 istatistik şeridi: pencere içi durum dağılımı. */
     @Query("""

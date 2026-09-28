@@ -67,11 +67,13 @@ const openDetail = async (name = 'https://x.example.com') => {
   fireEvent.click(await screen.findByRole('button', { name: new RegExp(`Open incident ${name}|${name} olayını aç`) }))
   return screen.findByRole('dialog', { name: /Incident #|Olay #/ })
 }
-/** Gerekçe penceresini (useDialog note) doldurup onaylar. */
+/** Gerekçeli pencereyi (incidents/ActionNoteDialog) doldurup onaylar; pencereyi döndürür. */
 async function confirmNote(titleRe, confirmRe, note = 'known issue being tracked') {
   const dlg = await screen.findByRole('dialog', { name: titleRe })
-  fireEvent.change(within(dlg).getByRole('textbox'), { target: { value: note } })
+  expect(dlg).toHaveAttribute('data-action-note')
+  fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Reason|Gerekçe)/ }), { target: { value: note } })
   fireEvent.click(within(dlg).getByRole('button', { name: confirmRe }))
+  return dlg
 }
 
 describe('IncidentsPage', () => {
@@ -221,14 +223,15 @@ describe('IncidentsPage', () => {
     render(<IncidentsPage systemRole="USER" />)
     const dlg = await openDetail()
     fireEvent.click(within(dlg).getByRole('button', { name: /^(Acknowledge|Onayla)$/ }))
-    await confirmNote(/Acknowledge incident|Olayı onayla/, /^(Acknowledge|Onayla)$/)
+    await confirmNote(/Acknowledge incident|Olayı onayla/, /^(Take ownership|Onayla ve sahiplen)$/)
     await waitFor(() => expect(api.admin.acknowledgeAlert).toHaveBeenCalledWith(1, 'known issue being tracked'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Acknowledge incident|Olayı onayla/ })).toBeNull())
     expect(await within(dlg).findByText(/Acknowledged by Demo|Demo onayladı/)).toBeInTheDocument()
     expect(dlg.querySelector('[data-slot="incident-ack"]')).not.toBeNull()
     expect(within(dlg).queryByRole('button', { name: /^(Acknowledge|Onayla)$/ })).toBeNull()
 
     fireEvent.click(within(dlg).getByRole('button', { name: /^(Resolve|Çöz)$/ }))
-    await confirmNote(/Resolve incident|Olayı çöz/, /^(Resolve|Çöz)$/, 'fix deployed and verified')
+    await confirmNote(/Resolve incident|Olayı çöz/, /^(Mark as resolved|Çözüldü olarak kapat)$/, 'fix deployed and verified')
     await waitFor(() => expect(api.admin.resolveAlert).toHaveBeenCalledWith(1, 'fix deployed and verified'))
     await waitFor(() => expect(dlg.querySelector('[data-slot="incident-status"][data-status="resolved"]')).not.toBeNull())
     expect(within(dlg).queryByRole('button', { name: /^(Resolve|Çöz)$/ })).toBeNull()
@@ -236,17 +239,53 @@ describe('IncidentsPage', () => {
     expect(within(dlg).queryByRole('button', { name: /— (Sil|Delete)$/ })).toBeNull()
   })
 
-  it('onay başarısızsa iyimser güncelleme geri alınır ve hata bildirimi çıkar', async () => {
+  it('onay başarısızsa iyimser güncelleme geri alınır; hata gerekçeli pencerede SATIR İÇİ (pencere açık, not duruyor)', async () => {
     mockList({ rows: [incident], total: 1 })
     api.admin.acknowledgeAlert.mockResolvedValue({ success: false, error: 'yetki yok' })
     render(<IncidentsPage systemRole="USER" />)
     const dlg = await openDetail()
     fireEvent.click(within(dlg).getByRole('button', { name: /^(Acknowledge|Onayla)$/ }))
-    await confirmNote(/Acknowledge incident|Olayı onayla/, /^(Acknowledge|Onayla)$/)
+    const note = await confirmNote(/Acknowledge incident|Olayı onayla/, /^(Take ownership|Onayla ve sahiplen)$/)
     await waitFor(() => expect(api.admin.acknowledgeAlert).toHaveBeenCalled())
     await waitFor(() => expect(dlg.querySelector('[data-slot="incident-ack"]')).toBeNull())
     expect(within(dlg).getByRole('button', { name: /^(Acknowledge|Onayla)$/ })).toBeInTheDocument()
-    expect((await screen.findAllByText('yetki yok')).length).toBeGreaterThan(0)
+    expect(await within(note).findByRole('alert')).toHaveTextContent('yetki yok')
+    expect(screen.getByRole('dialog', { name: /Acknowledge incident|Olayı onayla/ })).toBe(note)
+    expect(within(note).getByRole('textbox', { name: /^(Reason|Gerekçe)/ })).toHaveValue('known issue being tracked')
+    expect(screen.getAllByText('yetki yok')).toHaveLength(1)   // ayrıca tost YOK
+  })
+
+  it('Onayla/Çöz penceresi KENDİ olayda Alarm Geçmişi bağlamını gösterir: bildirim sayıları (başarısız dahil), 7/24 arama, sahip', async () => {
+    // IncidentsController bu alanları YALNIZ kendi satıra yazar (tel biçimi snake_case, Alarm Geçmişi adlarıyla).
+    const owned = { ...incident, can_manage: true, can_act: true, acknowledged_by: null, acknowledged_at: null,
+      email_sent_count: 4, email_failed_count: 1, push_summary: { sent: 2, failed: 0, skipped: 1, other: 0 }, noc_call_count: 2 }
+    const ownedAcked = { ...acked, can_manage: true, can_act: true, acknowledged_by: 'kisi.a', acknowledged_at: '2026-07-10T10:20:00',
+      email_sent_count: 3, email_failed_count: 0, noc_call_count: 0 }
+    mockList({ rows: [owned, ownedAcked], total: 2 })
+    render(<IncidentsPage systemRole="USER" />)
+
+    let dlg = await openDetail()
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(Acknowledge|Onayla)$/ }))
+    let note = await screen.findByRole('dialog', { name: /Acknowledge incident|Olayı onayla/ })
+    const notifs = note.querySelector('[data-slot="action-note-notifs"]')
+    expect(notifs).toHaveTextContent(/(Email|E-posta): 4/)
+    expect(notifs).toHaveTextContent(/1 (failed|başarısız)/)
+    expect(notifs).toHaveTextContent(/Push: 2/)
+    expect(note.querySelector('[data-slot="action-note-noc"]')).toHaveTextContent(/2 (calls|arama)/)
+    expect(note.querySelector('[data-slot="action-note-owner"]')).toBeNull()   // henüz sahiplenilmemiş
+    fireEvent.click(within(note).getByRole('button', { name: /^(Cancel|İptal)$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Acknowledge incident|Olayı onayla/ })).toBeNull())
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(Close|Kapat)$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Incident #|Olay #/ })).toBeNull())
+
+    // Sahiplenilmiş olay → Çöz penceresinde mevcut sahip; arama yoksa 7/24 satırı, push özeti yoksa push çizilmez
+    dlg = await openDetail('api.example.com')
+    fireEvent.click(within(dlg).getByRole('button', { name: /^(Resolve|Çöz)$/ }))
+    note = await screen.findByRole('dialog', { name: /Resolve incident|Olayı çöz/ })
+    expect(note.querySelector('[data-slot="action-note-owner"]')).toHaveTextContent('kisi.a')
+    expect(note.querySelector('[data-slot="action-note-notifs"]')).toHaveTextContent(/(Email|E-posta): 3/)
+    expect(note.querySelector('[data-slot="action-note-notifs"]')).not.toHaveTextContent(/Push|failed|başarısız/)
+    expect(note.querySelector('[data-slot="action-note-noc"]')).toBeNull()
   })
 
   it('ADMIN: detaydaki Sil → onay → remove(id) → çekmece kapanır; ad olayı ayırır', async () => {
@@ -316,6 +355,24 @@ describe('IncidentsPage', () => {
     fireEvent.click(within(banner).getByRole('button', { name: /Try again|Tekrar dene/ }))
     expect(await screen.findByText('500')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  // Regresyon taraması FE3: başarısız sunucu süzgeci isteği "yerleşmiş" sayılmıyordu → istemci süzgeçleri (önem, takım,
+  // Onaylı/Kritik/Atanmamış/Benim) çipi değiştiriyor ama liste başarılı bir yeniden denemeye dek DONUK kalıyordu.
+  it.each([
+    ['ağ hatası (throw)', () => api.monitoring.incidents.list.mockRejectedValue(new Error('ağ koptu')), 'ağ koptu'],
+    ['sunucu reddi (success:false)', () => api.monitoring.incidents.list.mockResolvedValue({ success: false, error: 'sunucu meşgul' }), 'sunucu meşgul'],
+  ])('sunucu süzgeci değişip yükleme BAŞARISIZ olursa (%s) istemci süzgeci (önem) eski satırlara yine uygulanır — liste donmaz', async (_name, fail, message) => {
+    mockList({ rows: [incident, acked], total: 2 })
+    render(<IncidentsPage systemRole="ADMIN" />)
+    await screen.findByText('api.example.com')
+    fail()
+    fireEvent.change(screen.getByRole('combobox', { name: /^(Durum|Status)$/ }), { target: { value: 'ongoing' } })
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(screen.getByText('api.example.com')).toBeInTheDocument()   // eski satırlar yerinde (iskelet/boş durum yok)
+    fireEvent.change(screen.getByRole('combobox', { name: /^(Önem|Severity)$/ }), { target: { value: 'CRITICAL' } })
+    await waitFor(() => expect(screen.queryByText('api.example.com')).toBeNull())
+    expect(screen.getByText('https://x.example.com')).toBeInTheDocument()
   })
 
   it('başlık "Olaylar/Incidents" — Olay Geçmişi ile i18n çakışması yok (H1)', async () => {

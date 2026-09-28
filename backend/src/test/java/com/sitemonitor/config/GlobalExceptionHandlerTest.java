@@ -57,6 +57,24 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("DomainExistsException (2026-09-28) → 409 + code=DOMAIN_EXISTS + existing (null değerli harita da taşınır)")
+    void domainExists_structuredConflict() {
+        Map<String, Object> existing = new java.util.LinkedHashMap<>();
+        existing.put("domain", "shop.example.com");
+        existing.put("team_name", "Takım B");
+        existing.put("ug_team_id", null);
+        ResponseEntity<Map<String, Object>> r = handler.handleConflict(
+                new GlobalExceptionHandler.DomainExistsException("zaten kayıtlı", existing));
+        assertEquals(409, r.getStatusCode().value());
+        assertEquals(false, r.getBody().get("success"));
+        assertEquals("zaten kayıtlı", r.getBody().get("error"));
+        assertEquals("DOMAIN_EXISTS", r.getBody().get("code"));
+        assertSame(existing, r.getBody().get("existing"));
+        // Düz IllegalStateException'da yapısal alan YOK (eski 409 sözleşmesi aynen)
+        assertNull(handler.handleConflict(new IllegalStateException("x")).getBody().get("code"));
+    }
+
+    @Test
     @DisplayName("IllegalStateException → 409")
     void conflict() {
         ResponseEntity<Map<String, Object>> r = handler.handleConflict(new IllegalStateException("çakıştı"));

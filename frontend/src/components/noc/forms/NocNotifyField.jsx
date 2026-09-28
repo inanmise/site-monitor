@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Headset, MoonStar, Settings } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { navigateTo } from '../../../utils/navigate.js'
@@ -15,6 +15,10 @@ import {
   activeGroupsOf, effectiveSelection, isTypeDisabled, listedGroups, shownSelection, toggleGroupId,
 } from './nocFormModel.js'
 import { useNocFormOptions } from './useNocFormOptions.js'
+import { consumeNocFieldFocus } from './nocFieldFocus.js'
+
+/** "7/24 ayarını düzenle" kısayolunda alanın vurgulu kaldığı süre (odak halkası tıklamadan sonra görünmeyebilir). */
+const FOCUS_FLASH_MS = 2400
 
 /**
  * "7/24 izleme ekibine bildir" — dokuz izleme formu + sertifika envanter formunun ORTAK alanı (2026-09-27; sözleşme
@@ -34,6 +38,9 @@ import { useNocFormOptions } from './useNocFormOptions.js'
  *
  * Test kancaları: `data-slot="noc-notify-field"` (+ `data-on`), `noc-type-off`, `noc-no-groups`, `noc-group-picker`
  * (+ `data-explicit`), `noc-group-option` (+ `data-group-id`), `noc-one-group`.
+ *
+ * Derin bağlantı (2026-09-28, 7/24 Kapsamı "7/24 ayarını düzenle"): form bu kısayolla açıldıysa (nocFieldFocus isteği
+ * bu türe ait) alan bağlanınca görünüme kaydırılır, anahtar odaklanır ve alan kısa süre vurgulanır (`data-focus-target`).
  */
 export default function NocNotifyField({
   type, checked = false, groupIds = [], onChange, canOpenSettings, disabled = false, className,
@@ -56,9 +63,29 @@ export default function NocNotifyField({
   const noGroups = known && active.length === 0
   const typeLabel = t(`noc.type.${type}`)
 
+  // Kısayol isteği: ref'te tutulur — StrictMode'un bağla/sök/bağla döngüsünde ilk koşu isteği tüketir, söküm zamanlayıcıyı
+  // iptal eder; ikinci koşu isteği BURADAN görür (yoksa geliştirmede odak hiç gelmezdi).
+  const rootRef = useRef(null)
+  const wantFocus = useRef(false)
+  const [flash, setFlash] = useState(false)
+  useEffect(() => {
+    if (consumeNocFieldFocus(type)) wantFocus.current = true
+    if (!wantFocus.current) return undefined
+    let off = null
+    // Pencerenin kendi ilk odağından SONRA (Radix FocusScope üst bileşende, bu etkiden sonra koşar)
+    const h = setTimeout(() => {
+      wantFocus.current = false
+      try { rootRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }) } catch { /* jsdom */ }
+      document.getElementById(id)?.focus({ preventScroll: true })
+      setFlash(true)
+      off = setTimeout(() => setFlash(false), FOCUS_FLASH_MS)
+    }, 60)
+    return () => { clearTimeout(h); if (off) clearTimeout(off) }
+  }, [type, id])
+
   return (
-    <div data-slot="noc-notify-field" data-on={on ? 'true' : 'false'}
-      className={cn('flex min-w-0 flex-col gap-2.5 sm:col-span-2', className)}>
+    <div ref={rootRef} data-slot="noc-notify-field" data-on={on ? 'true' : 'false'} data-focus-target={flash ? 'true' : undefined}
+      className={cn('flex min-w-0 flex-col gap-2.5 rounded-lg sm:col-span-2 data-[focus-target=true]:ring-2 data-[focus-target=true]:ring-ring', className)}>
       <FieldLabel htmlFor={id} className="w-full cursor-pointer has-[:disabled]:cursor-default">
         <ShadcnField orientation="horizontal" role={undefined} data-disabled={disabled ? 'true' : undefined}
           className="min-h-11 items-center gap-3">

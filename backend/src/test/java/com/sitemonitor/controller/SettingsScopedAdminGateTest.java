@@ -97,6 +97,41 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("org geneli görünürlük anahtarları (envanter + Olaylar, 2026-09-28) GLOBAL_ONLY — müdür diğer takımlar adına açamaz/kapatamaz")
+    void orgVisibilitySwitches_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.inventory.visible-to-all",
+                IncidentsController.VISIBLE_TO_ALL_KEY);
+    }
+
+    @Test
+    @DisplayName("2026-09-28: veri saklama anahtarları GLOBAL_ONLY — yasal saklama, parti boyutu, envanter oto-boşaltma, HER politikanın süre + onay anahtarı")
+    void retentionKeys_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY,
+                com.sitemonitor.service.retention.RetentionCatalog.BATCH_KEY,
+                com.sitemonitor.service.InventoryAutoPurgeService.KEY,
+                "site.monitor.activity.retention-days",
+                "site.monitor.audit.retention-days",
+                "site.monitor.failed-login.retention-days");
+        for (var p : com.sitemonitor.service.retention.RetentionCatalog.ALL) {
+            if (p.settingKey() != null) {
+                assertThat(AppSettingsCatalog.isGlobalOnly(p.settingKey())).as("süre anahtarı açık: " + p.settingKey()).isTrue();
+            }
+            assertThat(AppSettingsCatalog.isGlobalOnly(AppSettingsCatalog.RETENTION_APPROVAL_PREFIX + p.id()))
+                    .as("uyum onayı anahtarı açık: " + p.id()).isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
+    void systemWideSurfaces_keepGate() throws IOException {
+        for (String c : List.of("RetentionAdminController", "LoginIssueController")) {
+            assertThat(src(c)).as(c + " müdür kapısını kaybetmiş").contains("SessionScope.requireNotScopedAdmin(");
+        }
+    }
+
+    @Test
     @DisplayName("isScopedAdmin / isScopedAdminInRequest: ADMIN + viewTeamIds dolu = müdür; global ADMIN ve USER değil; bağlam yoksa false")
     void scopedAdminDetection() {
         try {

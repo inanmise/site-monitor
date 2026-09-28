@@ -23,6 +23,8 @@ public interface PageMonitorRepository extends JpaRepository<PageMonitor, Long> 
     /** Aynı domain için AKTİF sayfa izlemeleri — karışık içerik satırı bunların sonucundan beslenir. */
     java.util.List<PageMonitor> findByUrlContainingIgnoreCaseAndActiveTrue(String domain);
     List<PageMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
+    List<PageMonitor> findByUrl(String url);
     Optional<PageMonitor> findFirstByUrlOrderByIdAsc(String url);
 
     /** Aynı URL (case-insensitive) + takım için (kendisi hariç) başka bir sayfa monitörü var mı. */

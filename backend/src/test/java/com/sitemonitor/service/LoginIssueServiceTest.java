@@ -133,17 +133,24 @@ class LoginIssueServiceTest {
     @Test
     @DisplayName("list: q '%küçükharf%'e sarılır; status/source/category geçersizse null'a düşer; NPE yok")
     void list_wrapsQueryAndNullStatus() {
-        when(reportRepo.findFiltered(any(), any(), any(), any(), any(), any(), any()))
+        when(reportRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(org.springframework.data.domain.Page.empty());
         assertThat(service.list(null, null, null, null, null, null, 0, 20)).isNotNull();
         // geçersiz status + geçersiz source/category + boş q → hepsi null'a düşer
         assertThat(service.list("BOGUS", "HACK", "WRONG", "  ", null, null, 0, 20)).isNotNull();
         service.list("OPEN", "USER_REPORT", "BLOCKER", "  Locked ", "2026-07-01T00:00:00", "2026-07-31T23:59:59", 1, 50);
         // status/source/category geçer; q → "%locked%"; since/until iletilir
-        verify(reportRepo).findFiltered(eq("OPEN"), eq("USER_REPORT"), eq("BLOCKER"), eq("%locked%"),
+        verify(reportRepo).findFiltered(eq("OPEN"), eq("USER_REPORT"), eq("BLOCKER"), isNull(), eq("%locked%"),
                 eq("2026-07-01T00:00:00"), eq("2026-07-31T23:59:59"), any());
+        // Alan adı aktarım talepleri (2026-09-28) yöneticinin süzebildiği bir tür
+        service.list(null, null, "DOMAIN_TRANSFER", null, null, null, 0, 20);
+        verify(reportRepo).findFiltered(isNull(), isNull(), eq("DOMAIN_TRANSFER"), isNull(), isNull(), isNull(), isNull(), any());
+        // Etki süzgeci (2026-09-28): tek kod → ",KOD," deseni (tam kod eşleşmesi); bilinmeyen kod yok sayılır
+        service.list(null, null, null, "SLOW", null, null, null, 0, 20);
+        verify(reportRepo).findFiltered(isNull(), isNull(), isNull(), eq("%,SLOW,%"), isNull(), isNull(), isNull(), any());
+        service.list(null, null, null, "SLOW%' OR 1=1", null, null, null, 0, 20);
         // İlk iki çağrı tüm filtreleri null'a düşürür → NPE atmadan çalıştı (isNotNull).
-        verify(reportRepo, times(2)).findFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any());
+        verify(reportRepo, times(3)).findFiltered(isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), any());
     }
 
     @Test
@@ -162,6 +169,51 @@ class LoginIssueServiceTest {
         assertThat(saved.getTabKey()).isEqualTo("scripted");
         assertThat(saved.getAutoContextJson()).contains("dark");
         assertThat(saved.getLinkedReference()).isEqualTo("LIR-2026-000077");
+    }
+
+    @Test
+    @DisplayName("save(meta + etkiler, 2026-09-28): impacts ve impactOther kaydedilir; etkisiz meta'da ikisi de null")
+    void save_withImpacts_persists() {
+        when(reportRepo.save(any())).thenAnswer(inv -> { LoginIssueReport r = inv.getArgument(0); r.setId(9L); return r; });
+        LoginIssueReport saved = service.save("N1", "u@x.com", null, "msg", List.of(), "10.0.0.1", "UA", "2026-09-28T10:00:00",
+                new LoginIssueService.ReportMeta("USER_REPORT", "ANNOYANCE", null, null, "dashboard", null, null,
+                        "LOGIN,SLOW,OTHER", "VPN kapalıyken açılıyor"));
+        assertThat(saved.getImpacts()).isEqualTo("LOGIN,SLOW,OTHER");
+        assertThat(saved.getImpactOther()).isEqualTo("VPN kapalıyken açılıyor");
+        LoginIssueReport plain = service.save("N1", "u@x.com", null, "msg", List.of(), "10.0.0.1", "UA", "2026-09-28T10:00:00",
+                new LoginIssueService.ReportMeta("USER_REPORT", "BLOCKER", null, null, null, null, null));
+        assertThat(plain.getImpacts()).isNull();
+        assertThat(plain.getImpactOther()).isNull();
+    }
+
+    @Test
+    @DisplayName("normalizeImpacts: izin listesi, tekilleştirme, KANONİK sıra, küçük harf kabul; bilinmeyen / liste olmayan → 400")
+    void normalizeImpacts_allowlistDedupeOrder() {
+        assertThat(LoginIssueService.normalizeImpacts(List.of("slow", "LOGIN", "SLOW", " other "))).isEqualTo("LOGIN,SLOW,OTHER");
+        assertThat(LoginIssueService.normalizeImpacts(List.of())).isNull();
+        assertThat(LoginIssueService.normalizeImpacts(null)).isNull();
+        assertThat(LoginIssueService.normalizeImpacts(LoginIssueService.IMPACTS)).isEqualTo(String.join(",", LoginIssueService.IMPACTS));
+        assertThat(LoginIssueService.IMPACTS).hasSize(12);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> LoginIssueService.normalizeImpacts(List.of("LOGIN", "HACK")))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> LoginIssueService.normalizeImpacts("LOGIN,SLOW"))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> LoginIssueService.normalizeImpacts(java.util.Collections.nCopies(25, "SLOW")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("sanitizeImpactOther: yalnız OTHER seçiliyse; kontrol/biçim karakterleri ayıklanır; 200'ü aşan → 400")
+    void sanitizeImpactOther_rules() {
+        String nl = Character.toString(10), rlo = Character.toString(0x202E), nul = Character.toString(0);
+        assertThat(LoginIssueService.sanitizeImpactOther("serbest", "LOGIN,SLOW")).isNull();   // OTHER yok → saklanmaz
+        assertThat(LoginIssueService.sanitizeImpactOther("  a" + nl + nl + "b" + rlo + "c" + nul + "  ", "OTHER")).isEqualTo("a b c");
+        assertThat(LoginIssueService.sanitizeImpactOther("   ", "OTHER")).isNull();
+        assertThat(LoginIssueService.sanitizeImpactOther("x".repeat(200), "LOGIN,OTHER")).hasSize(200);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> LoginIssueService.sanitizeImpactOther("x".repeat(201), "OTHER"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(LoginIssueService.impactList("LOGIN,BOGUS,SLOW")).containsExactly("LOGIN", "SLOW");
+        assertThat(LoginIssueService.impactList(null)).isEmpty();
     }
 
     @Test

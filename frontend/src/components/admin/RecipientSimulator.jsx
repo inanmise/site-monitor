@@ -19,14 +19,16 @@ const DEBOUNCE_MS = 200
  * "Kim bilgilendirilir?" — Yönetim Paneli › Bildirim & Alarmlar altında AYRI sekme (2026-09-27; önceden Eskalasyon
  * Kişileri sayfasının içinde katlanır bir karttı). Takım + alarm seviyesi + alarm türü (+ bildirim grubu) seçilir,
  * alarm gitmeden alıcı zinciri görünür: e-posta (bildirim grubu → takım varsayılan grubu → takım adresi), eskalasyon
- * kişileri (seviye eşiği + takımsız/global düşüşü), kişi webhook'ları ve push alıcıları (yalnız global yönetici).
+ * kişileri (seviye eşiği + takımsız/global düşüşü), kişi webhook'ları, kişi bazlı push kararları (alır / almaz + neden)
+ * ve 7/24 ekibi notu. Push satırlarını kimin göreceğini SUNUCU söyler (`push_access`, 2026-09-28): global yönetici her
+ * takım, takımı yöneten tüm üyeler, üye yalnız kendini; göremeyen neden göremediğini okur.
  * Kararları sunucu verir — gerçek gönderimle AYNI kod yolu ({@code EscalationService.simulateRecipients}).
  *
  * <p>Senaryo URL'de (`g_team`, `g_level`, `g_kind`, `g_group`; varsayılan değer yazılmaz): simülasyon bağlantıyla
  * paylaşılır, yenileme korunur. Sekme değişince AdminPanel `g_*` anahtarlarını temizler.
  *
  * @param teams          görünür takımlar (AdminPanel yükler)
- * @param isAdmin        sistem rolü ADMIN — push kartı yalnız o zaman çizilir (veriyi yine sunucu kapsar)
+ * @param isAdmin        sistem rolü ADMIN — yalnız kurulum geçişinde takım süzgecini taşımak için (push görünürlüğü sunucudan)
  * @param defaultTeamId  tek takımlı ADMIN olmayan kullanıcıda o takım (takımlar geç yüklenir → efektle uygulanır)
  * @param onNavigate     (sekmeId, g_* paramları) → AdminPanel.jump; "kimse bilgilendirilmez" durumundan kuruluma geçiş
  */
@@ -125,7 +127,7 @@ export default function RecipientSimulator({ teams = [], isAdmin = false, defaul
     body = <ResultSkeleton />
   } else {
     body = (
-      <SimResult data={result.data} level={level} kind={kind} isAdmin={isAdmin} refreshing={result.loading}
+      <SimResult data={result.data} level={level} kind={kind} refreshing={result.loading}
         onNavigate={onNavigate} navParams={navParams} />
     )
   }

@@ -87,4 +87,16 @@ class CertificateInventoryRepositoryTest {
 
         assertThat(repo.findDomainsForTeams(List.of(5L))).isEmpty();
     }
+
+    @Test
+    @DisplayName("findFirstByDomainIgnoreCaseOrderByIdAsc (2026-09-28, mükerrer 409): harf duyarsız + çöp kutusundaki kayıt dâhil; birden çoksa EN ESKİSİ")
+    void findFirstByDomainIgnoreCase_caseInsensitiveOldestIncludingDeleted() {
+        CertificateInventory legacy = inv("Shop.Example.com", 9L, null);
+        legacy.setDeletedAt("2026-09-01T00:00:00");
+        repo.save(legacy);
+        repo.save(inv("shop.example.COM", 5L, null));   // harf farkıyla ikinci satır (DB UNIQUE harf-duyarlı)
+        assertThat(repo.findFirstByDomainIgnoreCaseOrderByIdAsc("SHOP.example.com"))
+                .get().extracting(CertificateInventory::getTeamId).isEqualTo(9L);
+        assertThat(repo.findFirstByDomainIgnoreCaseOrderByIdAsc("none.example.com")).isEmpty();
+    }
 }

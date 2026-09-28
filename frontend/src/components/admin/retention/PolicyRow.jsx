@@ -138,7 +138,7 @@ export default function PolicyRow({
           </dl>
 
           {needsApproval && (
-            <Button type="button" variant="outline" size="sm" onClick={onApprove} data-approved={approval ? 'true' : 'false'}
+            <Button type="button" variant="outline" size="sm" onClick={onApprove} disabled={disabled} data-approved={approval ? 'true' : 'false'}
               className={cn('mt-3 h-auto min-h-8 border-dashed py-1 text-left text-[11.5px] font-semibold whitespace-normal hover:border-solid',
                 approval
                   ? 'border-success text-success hover:text-success'

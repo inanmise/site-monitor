@@ -111,8 +111,16 @@ const SIM_RESULT = { success: true, data: {
   push: [
     { username: 'kisia', display_name: 'Kişi A', org_role: 'PO', group: 'po', min_level: 'WARNING', decision: 'RECIPIENT' },
     { username: 'kisib', display_name: 'Kişi B', org_role: null, group: null, min_level: null, decision: 'NO_ORG_ROLE' },
+    // 2026-09-28: almayanlar da satır + sade gerekçe + sonraki adım düğmesi (uzun metin telefonda sarmalı)
+    { username: 'kisic', display_name: 'Kişi C', org_role: 'MANAGER', group: 'yonetici', min_level: 'CRITICAL', decision: 'BELOW_MIN_LEVEL' },
+    { username: 'kisid', display_name: 'Kişi D', org_role: 'TECH', group: null, min_level: null, decision: 'MISSING_MEMBERSHIP' },
   ],
+  push_access: 'FULL', push_access_reason: 'GLOBAL_ADMIN', push_settings: 'FULL', push_viewer: 'demo',
+  push_channel: { enabled: true, configured: true, team_enabled: true, types: ['cert'], disabled_types: [],
+    quiet_start: '22:00', quiet_end: '07:00', quiet_min_level: 'CRITICAL', quiet_active: false, quiet_blocks_level: true, block_reason: null },
 } }
+const NOC_COVERAGE = { success: true, data: { items: [], summary: { total: 3, covered: 1, not_covered: 2, paused: 0,
+  by_type: { SSL: { total: 3, covered: 1 } }, active_groups: 1, disabled_types: [], min_level: 'CRITICAL' } } }
 const ADMIN_SUBTABS = [
   // "Kim bilgilendirilir?" (2026-09-27): senaryo formu + özet kutucukları + kanal kartları
   { key: 'admin/whoNotified', url: '/?tab=admin&g_tab=whoNotified&g_team=1', ready: '[data-slot="wn-result"]' },
@@ -128,6 +136,8 @@ for (const vp of VIEWPORTS) {
           (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [{ id: 1, name: 'Takım A' }] }) }))
         await page.route((u) => new URL(u).pathname === '/api/admin/recipients/simulate',
           (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(SIM_RESULT) }))
+        await page.route((u) => new URL(u).pathname === '/api/noc/coverage',
+          (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(NOC_COVERAGE) }))
         await page.goto(sub.url)
         await page.locator(sub.ready).waitFor({ timeout: 20_000 })
         await page.waitForTimeout(800)

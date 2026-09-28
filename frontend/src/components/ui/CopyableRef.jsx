@@ -13,8 +13,15 @@ import { cn } from '@/lib/utils'
  * yoksa throw ediyor. Geri bildirim yerinde verilir (ikon 2 sn onaya döner).
  *
  * Saf sunum: etiketler prop olarak gelir.
+ *
+ * `display` (isteğe bağlı): ekranda gösterilecek KISA biçim (ör. 12 karakterlik commit); kopya HER ZAMAN tam `value`,
+ * tam değer `title` ile görünür. Uzun değer (40 karakterlik SHA gibi boşluksuz metin) kutusundan TAŞMAZ: kap
+ * `max-w-full min-w-0`, metin `break-all` (2026-09-27, sürüm penceresinde commit dışarı taşıyordu).
+ *
+ * `buttonClassName` / `codeClassName` (isteğe bağlı, 2026-09-28): kopya düğmesine / değer kutusuna ek sınıf — ör. telefonda
+ * 40 px dokunma hedefi (`max-sm:size-10`) ya da uzun parmak izinde normal kalınlık. Verilmezse görünüm aynı.
  */
-export default function CopyableRef({ value, copyLabel, copiedLabel, className = '' }) {
+export default function CopyableRef({ value, display, copyLabel, copiedLabel, className = '', buttonClassName, codeClassName }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef(null)
 
@@ -29,13 +36,14 @@ export default function CopyableRef({ value, copyLabel, copiedLabel, className =
   }
 
   return (
-    <span data-slot="copyable-ref" className={cn('inline-flex items-center gap-1 align-middle', className)}>
-      <code className="rounded-sm bg-muted px-1.5 py-px font-mono text-[.95em] font-bold text-foreground">{value}</code>
+    <span data-slot="copyable-ref" className={cn('inline-flex max-w-full min-w-0 items-center gap-1 align-middle', className)}>
+      <code title={display && display !== value ? value : undefined}
+        className={cn('min-w-0 rounded-sm bg-muted px-1.5 py-px font-mono text-[.95em] font-bold break-all text-foreground', codeClassName)}>{display || value}</code>
       <Button
         type="button"
         variant="ghost"
         size="icon-xs"
-        className="text-muted-foreground hover:text-primary"
+        className={cn('shrink-0 text-muted-foreground hover:text-primary', buttonClassName)}
         onClick={onCopy}
         aria-label={copied ? copiedLabel : copyLabel}
         title={copied ? copiedLabel : copyLabel}

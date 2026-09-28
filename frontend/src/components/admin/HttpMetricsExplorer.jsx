@@ -58,6 +58,8 @@ export default function HttpMetricsExplorer() {
   const [series, setSeries] = useState(null)
   const [loading, setLoading] = useState(false)
   const [retention, setRetention] = useState(null)      // null = okunamadı/yetkisiz → kutu gizli
+  // Saklama anahtarı GLOBAL_ONLY (2026-09-28): kapsamlı müdürde katalog satırı read_only gelir → değer görünür, kaydet yok
+  const [retentionLocked, setRetentionLocked] = useState(false)
   const [savingRet, setSavingRet] = useState(false)
   const [hidden, setHidden] = useState(() => new Set())  // gizli seri anahtarları (tıklanabilir legend)
   const retentionId = useId()
@@ -85,7 +87,7 @@ export default function HttpMetricsExplorer() {
       if (!res?.success) return
       const list = res.data?.settings ?? res.data ?? []
       const row = Array.isArray(list) ? list.find(s => s.key === RETENTION_KEY) : null
-      if (row) setRetention(String(row.value ?? row.default ?? '7'))
+      if (row) { setRetention(String(row.value ?? row.default ?? '7')); setRetentionLocked(!!row.read_only) }
     }).catch(() => {})
   }, [])
 
@@ -155,11 +157,13 @@ export default function HttpMetricsExplorer() {
           <div data-testid="hme-retention" className="flex flex-wrap items-center gap-2 text-sm">
             <Label htmlFor={retentionId} className="font-normal text-muted-foreground">{t('http.exp.retention')}</Label>
             <Input id={retentionId} type="number" min="1" max="365" value={retention} className="h-8 w-20"
-              onChange={e => setRetention(e.target.value)} />
+              disabled={retentionLocked} onChange={e => setRetention(e.target.value)} />
             <span className="text-muted-foreground">{t('http.exp.days')}</span>
-            <Button type="button" size="sm" onClick={saveRetention} disabled={savingRet}>
-              {t('http.exp.save')}
-            </Button>
+            {!retentionLocked && (
+              <Button type="button" size="sm" onClick={saveRetention} disabled={savingRet}>
+                {t('http.exp.save')}
+              </Button>
+            )}
           </div>
         )}
       </div>

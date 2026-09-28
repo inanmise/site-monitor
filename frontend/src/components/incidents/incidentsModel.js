@@ -53,8 +53,26 @@ export function iso24hAgo(nowMs) {
   return new Date(nowMs - 24 * 3600 * 1000).toISOString().slice(0, 19)
 }
 
+/**
+ * Olay kapsamı (2026-09-28, org geneli salt okunur Olaylar) — sunucu sözleşmesiyle aynı (`scope=mine|others|all`).
+ * "Takımımın olayları" varsayılandır ve BUGÜNKÜ görünümdür; diğer ekiplerin olayları salt okunur gelir.
+ */
+export const SCOPE_MINE = 'mine'
+export const SCOPE_OTHERS = 'others'
+export const SCOPE_ALL = 'all'
+export const SCOPES = [SCOPE_MINE, SCOPE_OTHERS, SCOPE_ALL]
+/** Bilinmeyen/boş değer → 'mine' (URL'den ya da sunucudan gelen her şey buradan geçer). */
+export function normalizeIncidentScope(v) {
+  return v === SCOPE_OTHERS || v === SCOPE_ALL ? v : SCOPE_MINE
+}
+/** İstek parçası — varsayılan (mine) GÖNDERİLMEZ: istek biçimi bugünküyle aynı kalır. */
+export function scopeParam(scope) {
+  const s = normalizeIncidentScope(scope)
+  return s === SCOPE_MINE ? {} : { scope: s }
+}
+
 /** Sunucu istek parametreleri — istemci-taraflı boyutlar (level/team/ack…) BURADA YOK (sunucu tanımıyor). */
-export function serverParams(filters, sort, nowMs) {
+export function serverParams(filters, sort, nowMs, scope = SCOPE_MINE) {
   const status = statusOf(filters.stat)
   return {
     status: status === 'all' ? '' : status,
@@ -64,8 +82,18 @@ export function serverParams(filters, sort, nowMs) {
     until: filters.until || '',
     sort: sort?.by || undefined,
     dir: sort?.dir || 'desc',
+    ...scopeParam(scope),
   }
 }
+
+/**
+ * Satırın sahipliği ve eylem hakları — SUNUCUDAN (`can_manage` / `can_act` / `can_delete`, IncidentsController).
+ * Alan yoksa (eski yanıt) bugünkü davranış: kendi olayı sayılır, eylemler görünür, silme rol ipucuna bakar.
+ */
+export const isForeign = (inc) => inc?.can_manage === false
+export const canActOn = (inc) => !isForeign(inc) && inc?.can_act !== false
+export const canDeleteIncident = (inc, isAdmin = false) =>
+  !isForeign(inc) && (inc?.can_delete != null ? inc.can_delete === true : Boolean(isAdmin))
 
 export const isOpen = (inc) => inc?.status === 'ongoing'
 export const isAcked = (inc) => Boolean(inc?.acknowledged)

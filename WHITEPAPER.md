@@ -744,6 +744,7 @@ Kurumsal 7/24 izleme ekibi (NOC) ekranları sürekli izler ve bir sorun gördü�
 - **Tür anahtarları:** yönetici bir türü (ör. Ping) kapatırsa o türdeki TÜM izlemelerin NOC e-postası durur — izleme "bildir" dese bile.
 - **Kurallar:** yalnız seçilen seviye ve üstü gider (varsayılan: yalnız kritik). Takımın sessiz saatleri, seviye eşikleri ve kişisel susturmalar NOC'u etkilemez; bakım pencereleri ve genel e-posta kapatma etkiler. Alarm başına tek açılış e-postası gider; açılış NOC'a gittiyse çözülünce "ÇÖZÜLDÜ" e-postası da gider (kapatılabilir). Fırtına / toplu kesintide NOC da takım gibi tek toplu e-posta alır.
 - **E-posta içeriği:** konu `[Site Monitor] [7/24] <SEVİYE> — <hedef> — <Takım>`; gövdede ne olduğu, sahibi takım, **arama listesi** (ad · unvan · tıklanabilir telefon — telefon Active Directory'den canlı okunur), Takım Müdürü, eskalasyon kişileri, arama talimatı ve izleme bağlantısı. Posta günlüğünde kategori `NOC`.
+- **Arama kaydı ve operatör kurulumu:** 7/24 operatörleri **AUDIT** rolüyle tanımlanır (tüm takımları salt okur). `noc_calls.write` izni AUDIT'e **varsayılan olarak** verilir: operatör uyarı listesinden ya da uyarı detayından kimi, ne zaman, hangi kanaldan aradığını ve sonucunu kaydeder. İzin yalnız arama kaydı yazar — sahiplenme, çözme, yeniden bildirim ve olaylara müdahale AUDIT'te kapalı kalır; bu düğmeler de gösterilmez, yerine kısa bir "yetkiniz yok" notu çıkar. Yükseltmede mevcut kurulumlarda izin AUDIT için açılır; bir yöneticinin **Yetkiler** ekranından bilerek kapattığı izne dokunulmaz.
 
 Hangi izlemelerin NOC'a gitmediği **7/24 Kapsamı** ekranında görünür (bkz. §14.31); Genel Bakış'taki uyarı şeridi oraya götürür.
 
@@ -1019,6 +1020,9 @@ Aşağıdaki varsayılanlar **Yetkiler** ekranından rol bazında düzenlenebili
 | "Şimdi Kontrol Et" / canlı tarama | ✓ | ✗ | ✗ | ✗ |
 | Sertifika Envanteri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Alarm onay / yeniden bildir / çözüldü | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✗ |
+| 7/24 arama kaydı (`noc_calls.write`) | ✓ (yalnız global) | ✗ | ✗ | ✓ |
+| Olayları görüntüleme (Alarmlar → Olaylar) | ✓ (tümü) | ✓ (kendi + diğer ekipler salt okunur) | ✓ (kendi + diğer ekipler salt okunur) | ✓ (tümü) |
+| Olaya yorum ekleme | ✓ | ✓ (kapsam) | ✓ (kendi takımı) | ✗ |
 | Eskalasyon kişileri (CRUD) | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
 | Alarm eşikleri | ✓ | ✗ | ✗ (okuma) | ✗ (okuma) |
 | Takım / kullanıcı yönetimi | ✓ | ✓ (kapsam) | ✗ (okuma) | ✗ (okuma) |
@@ -1094,7 +1098,7 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 | İzleme | Sayfa Bütünlüğü | `?tab=page` | Herkes |
 | İzleme | Sentetik İzleme | `?tab=scripted` | Görüntüleme herkes; yazma ayrı yetki ister |
 | Alarmlar | Uyarılar | `?tab=warnings` | Herkes |
-| Alarmlar | Olaylar | `?tab=incidents` | Herkes |
+| Alarmlar | Olaylar | `?tab=incidents` | Herkes — diğer ekiplerin olayları salt okunur |
 | Alarmlar | Bakım | `?tab=maintenance` | Herkes (yönetim yetkiye bağlı) |
 | Alarmlar | Alarm Geçmişi | `?tab=alerthistory` | Herkes |
 | Alarmlar | 7/24 Kapsamı | `?tab=noc` | Herkes — görüş kapsamındaki izlemeler; açma, izlemeyi düzenleyebilene |
@@ -1230,6 +1234,8 @@ Monitör davranışlarının ayrıntısı için bkz. [10. İzleme Türleri](#10-
 ### 14.15 Olaylar
 
 İzleme alarmlarından türeyen kesinti olaylarının çalışma listesi. Her satırda başlangıç zamanı, durum, önem ve kök neden sınıfı görünür; filtreleyebilir, yorum ekleyebilir, çözülen olayları kapatabilirsiniz. Bir kesintinin "kaç dakika sürdü, ne zaman kapandı" cevabı buradadır.
+
+Üstteki **Takımımın olayları · Diğer ekiplerin olayları · Tümü** süzgeci (sayılarıyla) başka takımlara açılan olayları da gösterir; varsayılan görünüm yalnız kendi takımlarınızdır. Başka ekibin olayı **salt okunurdur**: "Başka takımın kaydı — salt okunur" rozeti ve sahibi ekip görünür, yorumlarını okuyabilirsiniz; onaylama, çözme, yorum ekleme ve silme yalnız o ekibe açıktır (sunucu da reddeder). Bildirim alıcıları, teslimat günlüğü ve 7/24 arama kayıtları olayın ekibinde kalır. Global yönetici bu görünürlüğü **Ayarlar → Genel** altındaki `site.monitor.incidents.visible-to-all` anahtarıyla kapatabilir (varsayılan açık); global yönetici ve AUDIT zaten tüm olayları görür, süzgeç onlara gösterilmez. Süzgeçler arasında geçerken sonuçlar yerinde kalır; yanıt gecikirse liste soluklaşır ve yeni sonuç gelince yerini alır.
 
 ### 14.16 Bakım
 

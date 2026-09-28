@@ -13,6 +13,8 @@ public interface PingMonitorRepository extends JpaRepository<PingMonitor, Long> 
     List<PingMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<PingMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
+    List<PingMonitor> findByHost(String host);
     Optional<PingMonitor> findFirstByHostOrderByIdAsc(String host);
 
     /** Aynı host (case-insensitive) + takım için (kendisi hariç) başka bir ping monitörü var mı. */

@@ -12,12 +12,14 @@ import java.util.List;
 public interface LoginIssueReportRepository extends JpaRepository<LoginIssueReport, Long> {
 
     /** Filtreli + sayfalı. status/tarih aralığı + serbest metin (q) opsiyonel (:p IS NULL OR ...). En yeni önce.
+     *  impact (2026-09-28): çağıran "%,KOD,%" olarak sarar — etki CSV'sinin iki ucuna virgül eklenip aranır.
      *  q, çağıran tarafından "%küçükharf%" olarak sarılıp geçirilir (message + errorText + username içinde arar). */
     @Query("""
             SELECT r FROM LoginIssueReport r
              WHERE (:status IS NULL OR r.status = :status)
                AND (:source   IS NULL OR r.source = :source)
                AND (:category IS NULL OR r.category = :category)
+               AND (:impact IS NULL OR CONCAT(',', r.impacts, ',') LIKE :impact)
                AND (:since  IS NULL OR r.reportedAt >= :since)
                AND (:until  IS NULL OR r.reportedAt <= :until)
                AND (:q IS NULL OR LOWER(r.message) LIKE :q OR LOWER(r.errorText) LIKE :q OR LOWER(r.username) LIKE :q)
@@ -26,6 +28,7 @@ public interface LoginIssueReportRepository extends JpaRepository<LoginIssueRepo
     Page<LoginIssueReport> findFiltered(@Param("status") String status,
                                         @Param("source") String source,
                                         @Param("category") String category,
+                                        @Param("impact") String impact,
                                         @Param("q") String q,
                                         @Param("since") String since,
                                         @Param("until") String until,

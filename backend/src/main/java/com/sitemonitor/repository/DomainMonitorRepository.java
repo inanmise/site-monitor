@@ -13,6 +13,8 @@ public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Lo
     List<DomainMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<DomainMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
+    List<DomainMonitor> findByDomain(String domain);
     Optional<DomainMonitor> findFirstByDomainOrderByIdAsc(String domain);
 
     /** Aynı domain (case-insensitive) + takım için (kendisi hariç) başka bir domain monitörü var mı. */

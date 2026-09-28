@@ -371,4 +371,86 @@ class IncidentControllerTest {
                 .andExpect(status().isOk());
         verify(service).transfer(anyList(), eq(42L), any(), any());
     }
+
+    // -- POST/PUT gövdesindeki team_id (A2, 2026-09-28) -------------------------------------
+    // Yalnız /transfer hedefi doğruluyordu; create/update gövdedeki team_id'yi olduğu gibi yazıyordu.
+    // incidents.manage USER'da açık → Takım B'nin ledger'ına sahte olay + (send_notification) B'ye mail.
+
+    /** AD-kaynaklı kapsamlı müdür: rol ADMIN ama takım 2'ye sınırlı — global görücü DEĞİL. */
+    private MockHttpSession scopedAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "mudur");
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(java.util.List.of(2L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("A2 create: USER yabancı team_id (+send_notification) → 403; kayıt ve mail YOK")
+    void create_foreignTeamId_user_403() throws Exception {
+        allowManage();
+        mvc.perform(post("/api/incidents").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"Sahte\",\"occurred_at\":\"2026-09-28T10:00:00\",\"team_id\":42,"
+                                + "\"team_name\":\"Takim B\",\"send_notification\":true}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).create(any(), any(), any(), any());
+        verify(notificationService, never()).notifyIncident(any(), any());
+    }
+
+    @Test
+    @DisplayName("A2 create: kapsamlı müdür (ADMIN + viewTeamIds) yabancı team_id → 403 (rol ADMIN ≠ global)")
+    void create_foreignTeamId_scopedAdmin_403() throws Exception {
+        allowManage();
+        mvc.perform(post("/api/incidents").session(scopedAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-09-28T10:00:00\",\"team_id\":9}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).create(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("A2 create: kendi takımı (form değeri metin \"7\") → 200; global admin her takıma → 200")
+    void create_ownTeamOrGlobal_200() throws Exception {
+        allowManage();
+        when(service.create(any(), any(), any(), any())).thenReturn(sample());
+        mvc.perform(post("/api/incidents").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-09-28T10:00:00\",\"team_id\":\"7\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-09-28T10:00:00\",\"team_id\":42}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("A2 update: kendi olayını YABANCI takıma taşıma → 403, güncelleme yazılmaz")
+    void update_moveToForeignTeam_403() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(recOfTeam(1L, 7L));
+        mvc.perform(put("/api/incidents/1").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":42,\"send_notification\":true}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).update(any(), any(), any());
+        verify(notificationService, never()).notifyIncident(any(), any());
+    }
+
+    @Test
+    @DisplayName("A2 update: AYNI team_id'yi geri göndermek taşıma değil → 200 (yalnız oluşturan takım kapsamındaki kayıt dâhil)")
+    void update_sameTeamIdResent_200() throws Exception {
+        allowManage();
+        IncidentRecord rec = recOfTeam(1L, 99L);   // sahibi takım 99; çağıran onu OLUŞTURAN takım (7) üzerinden görüyor
+        rec.setCreatedByTeamId(7L);
+        when(service.get(1L)).thenReturn(rec);
+        when(service.update(eq(1L), any(), any())).thenReturn(rec);
+        mvc.perform(put("/api/incidents/1").session(userSessionTeam(7L))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"duzeltme\",\"team_id\":\"99\"}"))
+                .andExpect(status().isOk());
+        verify(service).update(eq(1L), any(), any());
+    }
 }

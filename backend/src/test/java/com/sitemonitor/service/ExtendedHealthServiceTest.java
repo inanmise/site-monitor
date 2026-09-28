@@ -218,6 +218,32 @@ class ExtendedHealthServiceTest {
         assertThat(result.get(0).get("kind")).isEqualTo("SKIPPED");
     }
 
+    @Test
+    @DisplayName("A3: 7/24 (NOC) satırı MASKELİ döner — alıcı adres sayısı, gövdedeki tel: bağlantısı son iki hane; diğer satır aynen")
+    void getSmtpFailures_nocRowRedacted() {
+        NotificationLog noc = new NotificationLog();
+        noc.setId(3L);
+        noc.setRecipientRole(com.sitemonitor.service.noc.NocLogRedaction.ROLE);
+        noc.setRecipientEmail("noc1@example.com, noc2@example.com");
+        noc.setMessage("<p>Nöbetçi: <a href=\"tel:+905550000012\">+90 555 000 00 12</a></p>");
+        noc.setEmailStatus("SENT");
+        NotificationLog team = new NotificationLog();
+        team.setId(4L);
+        team.setRecipientEmail("takim-a@example.com");
+        team.setMessage("<p>tel:+905550000034</p>");
+        team.setEmailStatus("SENT");
+        when(notificationLogRepo.findAllSince(any())).thenReturn(List.of(noc, team));
+
+        List<Map<String, Object>> result = service.getSmtpFailures(30);
+
+        assertThat(result.get(0).get("recipient_email")).isEqualTo("2 adres");
+        assertThat(result.get(0).get("message").toString())
+                .doesNotContain("905550000012").doesNotContain("href=\"tel:")
+                .contains(com.sitemonitor.service.noc.NocLogRedaction.MASK + "12");
+        assertThat(result.get(1).get("recipient_email")).isEqualTo("takim-a@example.com");   // NOC olmayan satır dokunulmaz
+        assertThat(result.get(1).get("message")).isEqualTo("<p>tel:+905550000034</p>");
+    }
+
     // -- getSmtpStats: oran ONDALIGI (O15) -------------------------------------
     // `Math.round(rate * 10) / 10L` TAMSAYI bolmesiydi: "*10 ... /10" ile hedeflenen tek ondalik
     // aninda atiliyordu (96,7 -> 967/10L -> 96). Daha kotusu ekran ile alarm celisiyordu.

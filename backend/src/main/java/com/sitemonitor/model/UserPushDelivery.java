@@ -99,6 +99,16 @@ public class UserPushDelivery {
     @Column(name = "sent_at")
     private String sentAt;
 
+    /**
+     * Bir sonraki deneme ZAMANI ({@code createdAt} ile aynı UTC biçimi). Yalnız {@code fail()} yeniden deneme
+     * planlayınca dolar; null = hemen gönderilebilir (yeni satır). Outbox taraması bu damgadan ÖNCE satırı almaz:
+     * backoff eskiden yalnız bellekteki timer'daydı, 60 sn süpürmesi ve her yeni kuyruk satırı bekleyen retry'ı
+     * hemen yeniden gönderiyordu (2026-09-28). Sonradan eklenen kolon — NOT NULL YAPILMAZ (dolu tabloya
+     * ddl-auto NOT NULL kolon ekleyemez, sessizce atlar).
+     */
+    @Column(name = "next_attempt_at")
+    private String nextAttemptAt;
+
     /** Aynı toplu isteğin alt satırlarını bağlar (tek istek → tek batchId). */
     @Column(name = "batch_id", length = 40)
     private String batchId;

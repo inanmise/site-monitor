@@ -180,4 +180,62 @@ class AlertListNocCallTest {
                 .andExpect(status().isForbidden());
         verifyNoInteractions(escalationService);
     }
+
+    // ── 2026-09-28: Olaylar org geneli salt okunur — olayın ALARM eylemleri başka ekipte kapalı kalır ─────────────
+
+    @Test
+    @DisplayName("başka ekibin olayı (takım A'nın uyarısı), takım B üyesi: sahiplen/çöz/yeniden bildir/önizleme 403; toplu işlem ATLAR")
+    void foreignIncident_everyAlertWriteForbidden() throws Exception {
+        String note = "{\"note\":\"başka ekibin olayına müdahale denemesi\"}";
+        mvc.perform(post("/api/admin/alerts/50/acknowledge").session(memberB).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/resolve").session(memberB).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/re-notify").session(memberB).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/alerts/50/re-notify/preview").session(memberB))
+                .andExpect(status().isForbidden());
+        for (String action : List.of("acknowledge", "resolve", "re-notify")) {
+            mvc.perform(post("/api/admin/alerts/bulk").session(memberB).contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"action\":\"" + action + "\",\"ids\":[50],\"note\":\"toplu müdahale denemesi\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.processed").value(0))
+                    .andExpect(jsonPath("$.data.skipped").value(1));
+        }
+        verifyNoInteractions(escalationService);
+        verifyNoInteractions(userPushService);
+    }
+
+    @Test
+    @DisplayName("AUDIT + noc_calls.write (7/24 operatörü): tüm uyarıları görür, can_act=false; sahiplen/çöz 403 (alerts.actions yok)")
+    void auditNocOperator_logsCallsButCannotAct() throws Exception {
+        MockHttpSession audit = new MockHttpSession();
+        audit.setAttribute("authenticated", Boolean.TRUE);
+        audit.setAttribute("username", "noc1");
+        audit.setAttribute("systemRole", "AUDIT");   // viewTeamIds YOK → global görüntüleyici
+        doReturn(true).when(nocCallLog).canWrite(any());   // when(...) mevcut cevabı null oturumla çağırırdı
+        when(permissionService.allows(any(HttpSession.class), eq("alerts.actions"), eq("execute")))
+                .thenAnswer(i -> !"AUDIT".equals(((HttpSession) i.getArgument(0)).getAttribute("systemRole")));
+        doThrow(new SecurityException("Bu işlem için yetkiniz yok: alerts.actions/execute")).when(permissionService)
+                .require(argThat((HttpSession s) -> s != null && "AUDIT".equals(s.getAttribute("systemRole"))),
+                        eq("alerts.actions"), eq("execute"));
+
+        mvc.perform(get("/api/admin/alerts").session(audit)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_can_write").value(true))
+                .andExpect(jsonPath("$.can_act").value(false));
+        mvc.perform(get("/api/admin/alerts/50").session(audit)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_can_write").value(true))
+                .andExpect(jsonPath("$.can_act").value(false));
+        mvc.perform(get("/api/admin/alerts").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.can_act").value(true));
+
+        String note = "{\"note\":\"arandı, ekip bakıyor\"}";
+        mvc.perform(post("/api/admin/alerts/50/acknowledge").session(audit).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/resolve").session(audit).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/re-notify").session(audit).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(escalationService);
+    }
 }
