@@ -7,7 +7,6 @@ import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import { ProgressBar } from '../ui/Progress.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
@@ -55,7 +54,7 @@ export default function PageSpeedMonitorCard({
   monitor: m, status = 'unknown', badge, onOpen,
   selection, meta, actions,
   spark, sla, slaTarget, slaDays, week7, week14,
-  density = 'rich', running = false,
+  density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const meters = metersFor(m)
@@ -65,6 +64,7 @@ export default function PageSpeedMonitorCard({
   const rel = m.last_check ? relativeTime(m.last_check, t) : null
   return (
     <MonitorCard status={status} density={density} running={running} alarm={!!m.active_alarm} inactive={!m.active}
+      noc={{ type: 'PAGESPEED', monitor: m, rowLabel: m.url, canEdit }}
       // Kesinti (alarm henüz açılmamış olsa da): TÜM kenar kırmızı tonda — sol şerit değil (kalıcı kural).
       // Kompakt: dikey ritim bir kademe sıkı (dokunma alanları değişmez).
       className={cn(down && !m.active_alarm && m.active && 'border-destructive/45', compact && 'pt-3 sm:pt-3.5')}>
@@ -86,10 +86,9 @@ export default function PageSpeedMonitorCard({
       <MonitorCardContent>
         {compact && <CompactSummary monitor={m} meters={meters} down={down} />}
         <MonitorCardRich>
-          {(meta || m.noc_notify) && (
+          {meta && (
             <div className={cn(CARD_LAYER, 'mb-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5')}>
               {meta}
-              {m.noc_notify && <NocBadge rowLabel={m.url} />}
             </div>
           )}
           {down && m.error && (

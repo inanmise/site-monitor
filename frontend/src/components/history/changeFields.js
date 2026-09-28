@@ -35,6 +35,11 @@ export function humanMillis(v, t) {
 const SECONDS_FIELDS = /Seconds$/
 const MILLIS_FIELDS = /(Ms|MillisecondS?)$/i
 
+/** Alan bir SÜRE mi (saniye / milisaniye) — İzleme Değişiklikleri fark görünümü değer türünü buradan seçer. */
+export function isDurationField(key) {
+  return SECONDS_FIELDS.test(String(key || '')) || MILLIS_FIELDS.test(String(key || ''))
+}
+
 /**
  * Bir alan değerini ekrana uygun metne çevirir.
  *
@@ -54,7 +59,11 @@ export function formatValue(key, value, ctx = {}) {
   if (key === 'teamId' && ctx.teamNames && ctx.teamNames[value]) return ctx.teamNames[value]
   if (SECONDS_FIELDS.test(key)) return humanSeconds(value, t)
   if (MILLIS_FIELDS.test(key)) return humanMillis(value, t)
-  const s = String(value)
+  // Koleksiyon / harita (AuditDiff JSON'u dizi ve nesne yazar): String() "[object Object]" basıyordu, dizide de
+  // virgülden sonra boşluk yoktu. Liste "a, b"; harita tek satır JSON (kırpma kuralı aşağıda aynen uygulanır).
+  const s = Array.isArray(value) ? (value.map(String).join(', ') || '—')
+    : typeof value === 'object' ? JSON.stringify(value)
+      : String(value)
   // Uzun metin (script gövdesi, env JSON) satırı taşırmasın — tamamı title'da durur.
   return s.length > 120 ? s.slice(0, 120) + '…' : s
 }

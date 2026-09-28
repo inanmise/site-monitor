@@ -214,6 +214,22 @@ export const CHANGE_SNAPSHOT = JSON.stringify({
   name: 'www.example.com', url: 'https://www.example.com/', method: 'GET', expectedStatus: '200-399',
   intervalSeconds: 300, timeoutMs: 10000, verifySsl: false, followRedirects: true, teamId: 1, tags: 'prod', active: true,
 })
+/** İzleme Değişiklikleri konsolu (2026-09-28): `/changes/summary` zarfı — kartlar DOLU ölçülsün (boş kart taşmayı kanıtlamaz). */
+export const CHANGE_SUMMARY = {
+  total: 42,
+  event_counts: { CREATE: 6, UPDATE: 31, DELETE: 3, RESTORE: 2, PAUSE: 4, RESUME: 3 },
+  kind_counts: { HTTP: { CREATE: 2, UPDATE: 14, DELETE: 1 }, PING: { CREATE: 1, UPDATE: 9, RESTORE: 2 }, PORT: { CREATE: 3, UPDATE: 8, DELETE: 2 } },
+  daily_since: iso(89 * 24 * HOUR).slice(0, 10),
+  daily: Array.from({ length: 14 }, (_, i) => ({ day: iso((13 - i) * 24 * HOUR).slice(0, 10), count: (i * 7) % 5 })).filter((d) => d.count > 0),
+  top_resources: [
+    { kind: 'HTTP', resource_id: 100, resource_name: 'www.example.com', team_id: 1, team_name: 'Takım A', count: 17, deleted: false },
+    { kind: 'PORT', resource_id: 7, resource_name: 'cok-uzun-bir-alt-alan-adi.hizmetler.example.com:8443', team_id: 1, team_name: 'Takım A', count: 6, deleted: true },
+  ],
+  actors: [
+    { actor: 'N10001', actor_id: 1, actor_name: 'Ayşe Örnek', count: 29 },
+    { actor: 'N10002', actor_id: 2, actor_name: 'Kişi B', count: 13 },
+  ],
+}
 export const MONITOR_NOTES = {
   guide: { guide: '## Alarm gelince\n\n1. Önce **NetScaler** sağlık sayfasına bakın.\n2. Uygulama loglarında `502` arayın.\n3. Çözülmezse nöbetçiyi arayın.', updated_by: 'Ayşe Örnek', updated_at: iso(2 * 24 * HOUR) },
   notes: [
@@ -536,6 +552,11 @@ export async function mockApi(page, opts = {}) {
       const list = monitors[type] || []
       body = { success: true, target_pct: 99.9, days: Number(u.searchParams.get('days') || 30),
         data: Object.fromEntries(list.map((m, i) => [String(m.id), sla(i)])) }
+    } else if (p === '/api/monitoring/changes/recent') {
+      // İzleme Değişiklikleri konsolu — zaman çizelgesi dolu ölçülsün (2026-09-28)
+      body = { success: true, data: { changes: [...MONITOR_CHANGES].reverse(), total: MONITOR_CHANGES.length, page: 0, size: 25 } }
+    } else if (p === '/api/monitoring/changes/summary') {
+      body = { success: true, data: CHANGE_SUMMARY }
     } else if (/^\/api\/monitoring\/changes\/[a-z]+\/\d+\/\d+$/.test(p)) {
       // Tek değişikliğin ayrıntısı (snapshot dâhil) — detay penceresi Değişiklikler sekmesi
       const seq = Number(p.split('/').pop())

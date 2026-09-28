@@ -5,18 +5,20 @@ import Field from '../../ui/Field.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from '@/components/shadcn/sheet'
+import { cn } from '@/lib/utils'
 
 /**
- * İzleme Değişiklikleri süzgeçleri — tür / olay / kullanıcı / takım. Aynı süzgeç tanımı iki yerleşimde çizilir:
- * masaüstü/tablet araç çubuğunda yan yana seçiciler (`FilterFields`), telefonda "Süzgeçler (n)" düğmesinin açtığı alt
- * Sheet'te etiketli, alt alta (`FilterSheet`). Etkin süzgeçler iki yerleşimde de X'li rozet olarak görünür
- * (`ActiveFilterChips`). Seçim anında uygulanır (Sheet'in "Sonuçları göster" düğmesi yalnız kapatır).
+ * İzleme Değişiklikleri süzgeçleri — tür / olay / kişi / takım. Aynı süzgeç tanımı iki yerleşimde çizilir:
+ * geniş kapta araç çubuğunda yan yana seçiciler (`FilterFields`), telefonda "Süzgeçler (n)" düğmesinin açtığı alt
+ * Sheet'te etiketli, alt alta (`FilterSheet`). Etkin süzgeçler (bunlar + izleme, arama, zaman aralığı) iki yerleşimde
+ * de X'li rozet olarak görünür (`ActiveFilterChips`). Seçim anında uygulanır (Sheet'in "Sonuçları göster" düğmesi
+ * yalnız kapatır).
  *
  * Süzgeç tanımı: `{ key, label, ariaLabel, value, options: [{value,label}], onChange, searchThreshold }` — boş dize
  * "süzgeç yok" demektir (seçeneklerin ilki "Tümü").
  */
 
-const labelOf = (f) => f.options.find(o => String(o.value) === String(f.value))?.label ?? String(f.value)
+export const labelOf = (f) => f.options.find(o => String(o.value) === String(f.value))?.label ?? String(f.value)
 
 /** Seçiciler — `stacked`: etiketli, tam genişlik (Sheet); değilse satır içi, sabit genişlikli (araç çubuğu). */
 export function FilterFields({ filters, stacked = false }) {
@@ -65,7 +67,8 @@ export function FilterSheet({ t, filters, activeCount, onClear }) {
             <X aria-hidden="true" />
           </Button>
         </SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        {/* Seçici tetikleri (ui/PickerPopover, varsayılan 36 px) telefonda 40 px dokunma hedefi */}
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 [&_[role=combobox]]:h-10">
           <FilterFields filters={filters} stacked />
         </div>
         <SheetFooter className="flex-row gap-2 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
@@ -80,34 +83,35 @@ export function FilterSheet({ t, filters, activeCount, onClear }) {
 }
 
 /**
- * Etkin süzgeç rozetleri (X ile tek tek kaldırılır) + "Süzgeçleri temizle" (arama ve zaman aralığı dâhil HEPSİ).
- * X düğmesi görsel olarak küçük; dokunma alanı görünmez `::after` ile 40 px'e genişler.
+ * Etkin süzgeç rozetleri (X ile tek tek kaldırılır) + "Süzgeçleri temizle" (arama ve zaman aralığı dâhil HEPSİ) +
+ * sağda sonuç sayısı. Rozet: `{ key, label, value, onRemove }`. X düğmesi görsel olarak küçük; dokunma alanı görünmez
+ * `::after` ile 40 px'e genişler. Hiç rozet ve sayı yoksa satır çizilmez.
  */
-export function ActiveFilterChips({ t, filters, showClearAll, onClearAll }) {
-  const active = filters.filter(f => f.value)
-  if (active.length === 0 && !showClearAll) return null
+export function ActiveFilterChips({ t, chips, onClearAll, status, statusClassName }) {
+  if (chips.length === 0 && !status) return null
   return (
-    <div data-slot="chg-active-filters" className="flex min-w-0 flex-wrap items-center gap-1.5">
-      {active.map(f => {
-        const value = labelOf(f)
-        return (
-          <Badge key={f.key} variant="outline" data-filter-chip={f.key}
-            className="h-7 max-w-full gap-1 overflow-visible py-0 pr-0.5 pl-2.5 font-normal">
-            <span className="min-w-0 truncate"><span className="text-muted-foreground">{f.label}:</span> <span className="font-medium">{value}</span></span>
-            <Button type="button" variant="ghost" size="icon-xs"
-              className="relative shrink-0 rounded-full text-muted-foreground after:absolute after:-inset-2 after:content-[''] hover:text-foreground"
-              aria-label={t('chg.removeFilter', `${f.label}: ${value}`)} onClick={() => f.onChange('')}>
-              <X aria-hidden="true" />
-            </Button>
-          </Badge>
-        )
-      })}
-      {showClearAll && (
-        <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive max-md:h-10"
-          onClick={onClearAll}>
-          <X aria-hidden="true" /> {t('chg.presetClear')}
-        </Button>
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      {chips.length > 0 && (
+        <div data-slot="chg-active-filters" role="group" aria-label={t('chg.activeFilters')}
+          className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {chips.map(c => (
+            <Badge key={c.key} variant="outline" data-filter-chip={c.key}
+              className="h-7 max-w-full gap-1 overflow-visible py-0 pr-0.5 pl-2.5 font-normal">
+              <span className="min-w-0 truncate"><span className="text-muted-foreground">{c.label}:</span> <span className="font-medium">{c.value}</span></span>
+              <Button type="button" variant="ghost" size="icon-xs"
+                className="relative shrink-0 rounded-full text-muted-foreground after:absolute after:-inset-2 hover:text-foreground"
+                aria-label={t('chg.removeFilter', `${c.label}: ${c.value}`)} onClick={c.onRemove}>
+                <X aria-hidden="true" />
+              </Button>
+            </Badge>
+          ))}
+          <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground hover:text-destructive max-md:h-10"
+            onClick={onClearAll}>
+            <X aria-hidden="true" /> {t('chg.presetClear')}
+          </Button>
+        </div>
       )}
+      {status && <span className={cn('ml-auto text-xs text-muted-foreground', statusClassName)}>{status}</span>}
     </div>
   )
 }

@@ -156,9 +156,30 @@ public class IncidentService {
         out.put("by_status", byStatus);
         out.put("by_category", byCategory);
         out.put("by_channel", byChannel);
-        out.put("summary", Map.of("total", total, "critical", critical, "sla_breached", sla,
-                "open", open, "resolved", resolved, "resolved_within_sla", resolvedWithinSla,
-                "today", today, "last_7d", last7d, "last_30d", last30d));
+        // MTTR (2026-09-28, Olay & Hata Geçmişi KPI'ı): çözülmüş olayların ortalama süresi (dk, yuvarlanmış) + örneklem.
+        // Çözülmüş-süreli olay yoksa null (ekranda "—"; uydurma 0 dakika yazılmaz). Map.of 10 çifte sınırlı ve null
+        // kabul etmez → sıralı LinkedHashMap.
+        Long mttrMinutes = null;
+        long mttrSample = 0;
+        List<Object[]> dur = repo.resolvedDurationStats(s, u, scoped, scopeList);
+        if (dur != null && !dur.isEmpty() && dur.get(0) != null) {
+            Object[] row = dur.get(0);
+            if (row.length > 1 && row[1] instanceof Number n) mttrSample = n.longValue();
+            if (row.length > 0 && row[0] instanceof Number avg && mttrSample > 0) mttrMinutes = Math.round(avg.doubleValue());
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("total", total);
+        summary.put("critical", critical);
+        summary.put("sla_breached", sla);
+        summary.put("open", open);
+        summary.put("resolved", resolved);
+        summary.put("resolved_within_sla", resolvedWithinSla);
+        summary.put("today", today);
+        summary.put("last_7d", last7d);
+        summary.put("last_30d", last30d);
+        summary.put("mttr_minutes", mttrMinutes);
+        summary.put("mttr_sample", mttrSample);
+        out.put("summary", summary);
         return out;
     }
 

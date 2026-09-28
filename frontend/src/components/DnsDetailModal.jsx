@@ -198,7 +198,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
   }
 
   return (
-    <MonitorDetailModal onClose={onClose} status={status} badge={badge} nocNotify={!!monitor.noc_notify}
+    <MonitorDetailModal onClose={onClose} status={status} badge={badge} noc={{ type: 'DNS', monitor, canEdit: canManage }}
       // "DNS Detayları" alt başlığı eskiden başlık satırında `hidden sm:inline` idi (telefonda kayboluyordu).
       title={monitor.domain} subtitle={t('dns.detailTitle')}
       actions={
@@ -390,7 +390,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
 
         <TabsContent value="chart">
           <Suspense fallback={<LoadingBlock label={t('dns.loadingDetails')} />}>
-            <ResponseTimeChart monitorId={monitor.id} kind="dns" />
+            <ResponseTimeChart monitorId={monitor.id} kind="dns" slowThreshold={details?.monitor?.id === monitor.id ? details.slow_threshold_ms : null} />
           </Suspense>
         </TabsContent>
 

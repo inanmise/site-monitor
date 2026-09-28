@@ -686,7 +686,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
           {pager.pageItems.map(m => (
             /* Kart sunumu ping/PingMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
                yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
-            <PingMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
+            <PingMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.host)} />
@@ -707,7 +707,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.host} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.host} noc={{ type: 'PING', monitor: selected, canEdit: canManageRow(selected) }}
           // Protokol satırı kartla AYNI gösterim (büyük boy), başlığın hemen altında — ortak alt başlık yuvası.
           subtitle={<PingProtocol host={selected.host} ipVersion={selected.ip_version} packetCount={selected.packet_count} size="lg" />}
           actions={

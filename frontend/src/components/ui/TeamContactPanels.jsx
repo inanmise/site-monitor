@@ -111,7 +111,7 @@ export function CallListPanel({ rows = [], t, teamName, seedFor = (r) => r.displ
               <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary tabular-nums">
                 {i + 1}
               </span>
-              <PersonAvatar name={r.display_name} seed={seedFor(r)} />
+              <PersonAvatar name={r.display_name} seed={seedFor(r)} photoId={r.user_id ?? null} />
               <div className="min-w-0 flex-1 basis-40">
                 <div className="font-medium break-words">{r.display_name || '—'}</div>
                 {r.title && <div className="truncate text-sm text-muted-foreground" title={r.title}>{r.title}</div>}

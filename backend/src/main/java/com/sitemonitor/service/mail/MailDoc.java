@@ -359,6 +359,16 @@ public final class MailDoc {
         return touch();
     }
 
+    /**
+     * Özel "Neden bu e-postayı aldınız?" gövdesi — alıcısı izleme takımı OLMAYAN e-postalar için (ör. aylık envanter
+     * raporu: alıcılar envanterdeki SAHİPLİKTEN türer). {@code html} hazır (kaçırılmış), {@code text} aynı bilginin düz metni.
+     */
+    public MailDoc footerWhyCustom(String html, String text) {
+        this.whyHtml = html;
+        this.whyText = text == null || text.isBlank() ? null : "Neden bu e-postayı aldınız? " + text;
+        return touch();
+    }
+
     /** Alt bilgi meta satırı (düz metin; birden çok parça " · " ile birleşir). */
     public MailDoc footerMeta(String... parts) {
         List<String> p = new ArrayList<>();
@@ -373,7 +383,7 @@ public final class MailDoc {
     public String html() {
         if (rendered == null) {
             StringBuilder sb = new StringBuilder(body.length() + 6000);
-            sb.append(MailKit.open(title, preheader, width))
+            sb.append(MailKit.open(title, preheader, width, extraCss))
               .append(MailKit.header(kicker))
               .append(MailKit.bodyOpen()).append(body).append(MailKit.bodyClose())
               .append(MailKit.footer(whyHtml, metaHtml))
@@ -422,5 +432,59 @@ public final class MailDoc {
         List<T> out = new ArrayList<>(Arrays.asList(items));
         out.removeIf(java.util.Objects::isNull);
         return out;
+    }
+
+    // ── Haftalık rapor blokları (2026-09-28, WeeklyAvailabilityMail) ─────────
+
+    /** TEK stil bloğuna eklenecek ek kurallar (null = yok); {@link #darkCanvas()} ile dolar. */
+    private String extraCss;
+
+    /**
+     * Sistem koyu temadaysa dış zemin koyulaşır, kart açık kalır ({@link MailKit#DARK_CANVAS_CSS}). Opt-in: kilit
+     * ({@link MailKit#LIGHT_SCHEME_META}) ailenin kararıdır, ek kural yalnız isteyen e-postaya girer.
+     */
+    public MailDoc darkCanvas() {
+        this.extraCss = MailKit.DARK_CANVAS_CSS;
+        return touch();
+    }
+
+    /** Değişim çipli KPI kutuları; düz metin: "Etiket: değer (değişim · ipucu)". */
+    public MailDoc kpis(List<MailKit.Kpi> tiles) {
+        if (tiles == null || tiles.isEmpty()) return this;
+        StringBuilder t = new StringBuilder();
+        for (MailKit.Kpi k : tiles) {
+            t.append(k.label()).append(": ").append(k.value());
+            String extra = join2(k.delta(), k.hint());
+            if (!extra.isEmpty()) t.append(" (").append(extra).append(')');
+            t.append('\n');
+        }
+        txt(t.toString());
+        return html(MailKit.kpis(tiles), GAP - 8);
+    }
+
+    /** Çubuk listesi; düz metin: "- Etiket: değer — açıklama". */
+    public MailDoc bars(List<MailKit.Bar> rows) {
+        if (rows == null || rows.isEmpty()) return this;
+        StringBuilder t = new StringBuilder();
+        for (MailKit.Bar b : rows) {
+            t.append("- ").append(b.label()).append(": ").append(b.value());
+            if (b.caption() != null && !b.caption().isBlank()) t.append(" — ").append(b.caption());
+            t.append('\n');
+        }
+        txt(t.toString());
+        return html(MailKit.bars(rows), GAP);
+    }
+
+    /** Sıralı liste kartı; düz metni çağıran verir (satırlar HTML olduğu için türetilmez). */
+    public MailDoc rankList(List<MailKit.RankRow> rows, String plain) {
+        if (rows == null || rows.isEmpty()) return this;
+        txt(plain);
+        return html(MailKit.rankList(rows), GAP);
+    }
+
+    private static String join2(String a, String b) {
+        boolean ha = a != null && !a.isBlank(), hb = b != null && !b.isBlank();
+        if (ha && hb) return a + " · " + b;
+        return ha ? a : (hb ? b : "");
     }
 }

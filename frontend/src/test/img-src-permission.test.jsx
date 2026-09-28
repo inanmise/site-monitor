@@ -61,8 +61,8 @@ describe('img src yetki bekçisi', () => {
 
   it('kullanıcı avatarları authenticated foto ucunu kullanıyor', () => {
     const consumers = [
-      // components/ui/TeamMemberCards.jsx 2026-09-28'de listeden çıktı: takım üyeleri penceresi fotoğraf İSTEMEZ
-      // (gizlilik kararı — baş harf avatarı; bkz. TeamMembersModal.test.jsx "gizlilik").
+      // Takım üyeleri penceresi (kullanıcı kararı 2026-09-28: fotoğraf görünür) — authenticated uçtan.
+      'components/ui/TeamMemberCards.jsx',
       'components/admin/UserManager.jsx',
       'components/admin/UserEditModal.jsx',
       'components/ui/UserBadge.jsx',

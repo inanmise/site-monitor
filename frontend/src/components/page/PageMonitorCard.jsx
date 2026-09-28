@@ -4,7 +4,6 @@ import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import {
@@ -43,7 +42,7 @@ import {
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function PageMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
+  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -52,10 +51,11 @@ export default function PageMonitorCard({
   const paused = !m.active
   const name = String(m.name || '').trim()
   // Kompakt'ta meta satırı YALNIZ takım rozetidir (grup / vekil / etiketler Zengin'de).
-  const hasMeta = compact ? !!m.team_name : !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length || m.noc_notify)
+  const hasMeta = compact ? !!m.team_name : !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length)
   const alarmLabel = `${t('page.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
     <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused}
+      noc={{ type: 'PAGE', monitor: m, rowLabel: m.url, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       {/* Kompakt'ta kapsam çipleri yok → başlık ile özet arasındaki boşluğu başlık bölgesi verir */}
       <MonitorCardHeader className={compact ? 'mb-2' : undefined}>
@@ -96,8 +96,6 @@ export default function PageMonitorCard({
               ? <MonitorCardMeta monitor={{ team_id: m.team_id, team_name: m.team_name }} />
               : <>
                 <MonitorCardMeta monitor={m} />
-                {/* 7/24 rozeti yalnız Zengin'de — satır Kompakt ile ortak olduğu için ayrıca MonitorCardRich (display:contents) */}
-                {m.noc_notify && <MonitorCardRich className="contents"><NocBadge rowLabel={m.url} /></MonitorCardRich>}
                 <PageTags monitor={m} />
               </>}
           </div>

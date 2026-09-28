@@ -225,8 +225,41 @@ describe('Yönetim kipi — düzenle eylemi yalnız canManage', () => {
   })
 })
 
-describe('Gizlilik — telefon / sicil / sistem rolü / fotoğraf çizilmez, istenmez', () => {
-  it('yönetim yükleyicisi tam entity verse de alanlar görünmez; hiç <img> yok', async () => {
+/**
+ * jsdom görsel YÜKLEMEZ → Radix AvatarImage `<img>` çizmez. Yüklenmiş görseli taklit eden sahte Image: src atanınca
+ * bir sonraki turda `load` tetiklenir (Radix hem onload hem addEventListener yolunu kullanabilir).
+ */
+class LoadedImage {
+  constructor() { this.complete = false; this.naturalWidth = 0; this.listeners = {} }
+  addEventListener(type, fn) { this.listeners[type] = fn }
+  removeEventListener(type) { delete this.listeners[type] }
+  set src(v) {
+    this._src = v; this.complete = true; this.naturalWidth = 40
+    // Radix olayın hedefinden okur (`event.currentTarget.complete`) — hedefsiz olay yakalanmamış TypeError üretiyordu
+    const ev = { type: 'load', target: this, currentTarget: this }
+    setTimeout(() => { this.onload?.(ev); this.listeners.load?.(ev) }, 0)
+  }
+  get src() { return this._src }
+}
+
+describe('Fotoğraf ve sistem rolü görünür (kullanıcı kararı 2026-09-28); telefon / sicil asla', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('rehber verisi: has_photo olan üyenin fotoğrafı istenir, olmayanınki istenmez; sistem rolü rozeti', async () => {
+    vi.stubGlobal('Image', LoadedImage)
+    const withRoles = MEMBERS.map((m, i) => ({ ...m, system_role: i === 0 ? 'ADMIN' : 'USER', has_photo: m.id !== 13 }))
+    api.teams.members.mockResolvedValue(payload({ members: withRoles }))
+    show()
+    await waitFor(() => expect(rowNames()).toHaveLength(5))
+    await waitFor(() => expect(dialog().querySelector('img[src="/api/users/12/photo"]')).not.toBeNull())
+    expect(dialog().querySelector('img[src="/api/users/13/photo"]')).toBeNull()   // has_photo:false → istek yok
+    const roles = [...dialog().querySelectorAll('[data-slot="team-member-system-role"]')].map((b) => b.getAttribute('data-role'))
+    expect(roles).toHaveLength(5)
+    expect(roles.filter((r) => r === 'ADMIN')).toHaveLength(1)
+  })
+
+  it('yönetim yükleyicisi tam entity verse de telefon / sicil görünmez; fotoğraf ve sistem rolü görünür', async () => {
+    vi.stubGlobal('Image', LoadedImage)
     const full = MEMBERS.map((m, i) => ({ ...m, phone: `+90 532 000 00 0${i}`, employee_id: `10020${i}`, system_role: 'ADMIN', photo_base64: 'QUJD' }))
     const loadMembers = vi.fn().mockResolvedValue({ success: true, data: { team: TEAM, members: full, escalation_contacts: CONTACTS } })
     api.noc.getCallList.mockResolvedValue({ success: true, data: [{ user_id: 12, display_name: 'Kişi C', title: 'Uzman', has_phone: true, phone: '+90 555 111 22 33' }] })
@@ -238,10 +271,11 @@ describe('Gizlilik — telefon / sicil / sistem rolü / fotoğraf çizilmez, ist
       const text = document.body.textContent
       expect(text).not.toMatch(/\+90/)
       expect(text).not.toContain('100200')
-      expect(dialog().querySelector('[data-role="ADMIN"]')).toBeNull()
-      expect(document.querySelectorAll('img')).toHaveLength(0)
     }
     assertClean()   // Üyeler sekmesi (satırlar DOM'da)
+    // yönetim verisinde has_photo yok → fotoğraf istenir (yoksa sunucu 204 → baş harf); sistem rolü rozeti görünür
+    await waitFor(() => expect(dialog().querySelector('img[src="/api/users/11/photo"]')).not.toBeNull())
+    expect(dialog().querySelectorAll('[data-slot="team-member-system-role"][data-role="ADMIN"]')).toHaveLength(5)
     openTab(new RegExp(EN['team.tabEscalation']))
     await waitFor(() => expect(dialog().querySelector('[data-slot="team-escalation-group"]')).not.toBeNull())
     assertClean()

@@ -71,7 +71,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(emailService.sendHtmlWithAttachments(any(), any(), any(), any(), any(), any())).thenReturn("SENT");
         when(outageReportService.collect(any(), any(), any())).thenReturn(outageData(3, 1));
         when(outageReportService.pdf(any())).thenReturn(new byte[]{ 1, 2, 3 });
-        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(emailService.buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn("<html></html>");
         // Varsayılan: dağıtım geçmişi boş → "dağıtım yapılmadı" satırı (rapor yine gider).
         when(deploymentHistory.currentEnvironment()).thenReturn("prod");
@@ -105,6 +105,19 @@ class WeeklyAvailabilityReportServiceTest {
         c.setDomain("x"); c.setPort(443);
         c.setStatus(status); c.setResponseMs(ms); c.setCheckedAt(checkedAt);
         return c;
+    }
+
+    /**
+     * Toplu okumanın (BO5/O15, {@code findWindowForDomains}) karşılığı: istenen HER domain için tek "up" kontrolü —
+     * eski "her domain için aynı up satırı" stub'ının birebir eşi (domain alanı istenen domainle doldurulur).
+     */
+    private void stubAllUp(long ms) {
+        when(uptimeCheckRepo.findWindowForDomains(any(), any(), any())).thenAnswer(inv -> {
+            java.util.Collection<String> ds = inv.getArgument(0);
+            List<UptimeCheck> out = new java.util.ArrayList<>();
+            for (String d : ds) { UptimeCheck c = uc("up", ms, "2026-06-15T00:00:00"); c.setDomain(d); out.add(c); }
+            return out;
+        });
     }
 
     private UptimeCheck ucMaint(String status, String checkedAt) {
@@ -247,8 +260,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com"), inv("b.com")));
         // hepsi up → kesinti yok ama yine de gönderilmeli
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO"))
                 .thenReturn(List.of(contact("po@x.com")));
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of());
@@ -273,8 +285,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com"), inv("b.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
 
         service.sendWeeklyReports(false);
 
@@ -305,15 +316,14 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
 
         service.sendWeeklyReports(false);
 
         // Ek sessizce iliştirilseydi okuyanların çoğu — özellikle telefonda — fark etmezdi.
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any(), any());
         assertThat(attCap.getValue()).isNotNull();
         assertThat(attCap.getValue().fileName()).endsWith(".pdf");
         assertThat(attCap.getValue().monitorTypeCount()).isEqualTo(MonitorTypeCatalog.ORDER.size());
@@ -326,8 +336,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
 
         service.sendWeeklyReports(false);
 
@@ -344,15 +353,14 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(outageReportService.collect(any(), any(), any())).thenThrow(new RuntimeException("patladı"));
 
         var result = service.sendWeeklyReports(false);
 
         ArgumentCaptor<EmailNotificationService.AttachmentInfo> attCap =
                 ArgumentCaptor.forClass(EmailNotificationService.AttachmentInfo.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), attCap.capture(), any(), any(), any(), any(), any());
         assertThat(attCap.getValue()).isNull();      // gövdede ek bandı çizilmez
         verify(outageReportService, never()).pdf(any());
         assertThat(result.sent()).isEqualTo(1);      // rapor yine gitti
@@ -365,8 +373,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         // Toplayıcı patlıyor (veritabanı hatası, bozuk veri, ne olursa)
         when(outageReportService.collect(any(), any(), any()))
                 .thenThrow(new RuntimeException("kesinti toplama patladı"));
@@ -388,8 +395,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(outageReportService.pdf(any())).thenReturn(new byte[0]);
 
         var result = service.sendWeeklyReports(false);
@@ -427,8 +433,7 @@ class WeeklyAvailabilityReportServiceTest {
         t.setWeeklyAvailabilityEnabled(true);               // Pazartesi raporu açık
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
 
         assertThat(service.sendWeeklyReports(false).sent()).isEqualTo(1);
     }
@@ -448,8 +453,7 @@ class WeeklyAvailabilityReportServiceTest {
         Team t = team(5L, "Dijital", "dijital@x.com");
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         WeeklyAvailabilityLog sentLog = new WeeklyAvailabilityLog();
         sentLog.setStatus("SENT");
         when(walRepo.findByTeamIdAndReportYearAndWeekNo(eq(5L), anyInt(), anyInt())).thenReturn(Optional.of(sentLog));
@@ -479,8 +483,7 @@ class WeeklyAvailabilityReportServiceTest {
         Team noMail = team(7L, "Mailsiz", null);
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(noMail));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(7L)).thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 100L, "2026-06-15T00:00:00")));
+        stubAllUp(100L);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(7L, "PO")).thenReturn(List.of(contact("po@x.com")));
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(7L, "MANAGER")).thenReturn(List.of());
 
@@ -498,8 +501,7 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findById(5L)).thenReturn(Optional.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
                 .thenReturn(List.of(inv("a.com"), inv("b.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO")).thenReturn(List.of(contact("po@x.com")));
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of());
 
@@ -559,8 +561,7 @@ class WeeklyAvailabilityReportServiceTest {
         Team t = team(5L, "Dijital", "dijital@x.com");
         when(teamRepo.findById(5L)).thenReturn(Optional.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(anyLong(), anyString())).thenReturn(List.of());
 
         assertThat(service.preview(5L, 0).weekLabel()).isEqualTo(service.windowForOffset(0).weekLabel());   // bu hafta
@@ -574,8 +575,7 @@ class WeeklyAvailabilityReportServiceTest {
         Team t = team(5L, "Dijital", "dijital@x.com");
         when(teamRepo.findById(5L)).thenReturn(Optional.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
 
         String status = service.sendTest(5L, "tester@x.com");
         assertThat(status).isEqualTo("SENT");
@@ -809,7 +809,7 @@ class WeeklyAvailabilityReportServiceTest {
         service.sendWeeklyReports(false);
         ArgumentCaptor<EmailNotificationService.DeploymentWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.DeploymentWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), cap.capture(), any(), any(), any());
         assertThat(cap.getValue()).isNull();
         verify(emailService).sendHtmlWithAttachments(any(), any(), any(), any(), any(), any());
     }
@@ -845,14 +845,13 @@ class WeeklyAvailabilityReportServiceTest {
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(t.getId()))
                 .thenReturn(List.of(inv("a.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
     }
 
     private EmailNotificationService.PageSpeedWeekly capturePageSpeed() {
         ArgumentCaptor<EmailNotificationService.PageSpeedWeekly> cap =
                 ArgumentCaptor.forClass(EmailNotificationService.PageSpeedWeekly.class);
-        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any(), any(), any());
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), cap.capture(), any(), any(), any(), any());
         return cap.getValue();
     }
 
@@ -942,8 +941,8 @@ class WeeklyAvailabilityReportServiceTest {
         weak.setDomain("a.example.com"); weak.setSignatureAlgorithm("SHA1withRSA"); weak.setPublicKeyAlgorithm("RSA"); weak.setPublicKeySize(2048); weak.setCheckedAt("2026-01-01T00:00:00");
         com.sitemonitor.model.LatestCheck other = new com.sitemonitor.model.LatestCheck();
         other.setDomain("other.example.com"); other.setSignatureAlgorithm("MD5withRSA");
-        when(latestCheckRepo.findById("a.example.com")).thenReturn(java.util.Optional.of(weak));
-        when(latestCheckRepo.findById("b.example.com")).thenReturn(java.util.Optional.empty());
+        // TOPLU okuma (BO5/O15): tek findAllById; b.example.com'un son kontrolü yok → dönmez.
+        when(latestCheckRepo.findAllById(any())).thenReturn(java.util.List.of(weak));
         when(latestCheckRepo.findWeakAlgorithmCandidates()).thenReturn(java.util.List.of(weak, other));
 
         EmailNotificationService.WeakAlgoWeekly w = service.collectWeakAlgo(java.util.List.of(a, b));
@@ -1002,8 +1001,7 @@ class WeeklyAvailabilityReportServiceTest {
         Team t = team(5L, "Takım A", "team@example.com");
         when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
         when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.example.com")));
-        when(uptimeCheckRepo.findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(anyString(), anyInt(), any(), any()))
-                .thenReturn(List.of(uc("up", 120L, "2026-06-15T00:00:00")));
+        stubAllUp(120L);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO")).thenReturn(List.of(contact("po@example.com")));
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "TECH")).thenReturn(List.of(contact("tech@example.com"), contact("PO@example.com")));
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of(contact("mgr@example.com")));
@@ -1015,5 +1013,140 @@ class WeeklyAvailabilityReportServiceTest {
         verify(emailService).sendHtmlWithAttachments(any(), ccCap.capture(), anyString(), anyString(), any(), any());
         assertThat(ccCap.getValue()).containsExactly("po@example.com", "tech@example.com", "mgr@example.com");
         assertThat(WeeklyAvailabilityReportService.CC_ROLES).containsExactly("PO", "TECH", "MANAGER");
+    }
+
+    // ── BO5/O15 (2026-09-28): TOPLU okuma — domain başına sorgu YOK ─────────────────────────────
+
+    private UptimeCheck ucAt(String domain, int port, String status, String checkedAt) {
+        UptimeCheck c = uc(status, "up".equals(status) ? 100L : null, checkedAt);
+        c.setDomain(domain); c.setPort(port);
+        return c;
+    }
+
+    @Test
+    @DisplayName("BO5/O15: 120 domainli takım → uptime 50'lik parçalarla 3 sorgu (domain başına sorgu YOK), son kontroller TEK findAllById")
+    void buildTeamReport_batchesUptimeAndLatestReads() {
+        List<CertificateInventory> domains = new java.util.ArrayList<>();
+        for (int i = 1; i <= 120; i++) domains.add(inv("d" + i + ".example.com"));
+        stubAllUp(120L);
+
+        WeeklyAvailabilityReportService.TeamReport r = service.buildTeamReport(team(5L, "Takım A", "takim-a@example.com"),
+                service.lastFullWeekWindow(), domains);
+
+        assertThat(r.rows()).hasSize(120).allSatisfy(row -> assertThat(row.availabilityPct()).isEqualTo(100.0));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<String>> parts = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(uptimeCheckRepo, times(3)).findWindowForDomains(parts.capture(), any(), any());
+        assertThat(parts.getAllValues()).extracting(java.util.Collection::size).containsExactly(50, 50, 20);
+        verify(uptimeCheckRepo, never()).findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(any(), any(), any(), any());
+        verify(uptimeCheckRepo, times(3)).countWindowForDomains(any(), any(), any());        // geçen hafta: yine parça başına 1
+        verify(latestCheckRepo, times(1)).findAllById(any());                                // sertifika günü + zayıf algoritma aynı harita
+        verify(latestCheckRepo, never()).findById(anyString());
+    }
+
+    @Test
+    @DisplayName("BO5/O15: toplu satırlar (domain, port) ile gruplanır — envanterin portu seçilir, başka port/başka domain karışmaz")
+    void rowsFor_groupsByDomainAndPort() {
+        CertificateInventory a = inv("a.example.com"); a.setPort(8443);
+        CertificateInventory b = inv("b.example.com"); b.setPort(null);                     // port yok → 443
+        when(uptimeCheckRepo.findWindowForDomains(any(), any(), any())).thenReturn(List.of(
+                ucAt("a.example.com", 443, "down", "2026-06-15T00:00:00"),                 // a'nın 443'ü: SAYILMAZ
+                ucAt("a.example.com", 8443, "up", "2026-06-15T00:00:00"),
+                ucAt("a.example.com", 8443, "down", "2026-06-15T00:01:00"),
+                ucAt("a.example.com", 8443, "up", "2026-06-15T00:02:00"),
+                ucAt("b.example.com", 443, "down", "2026-06-15T00:00:00")));
+
+        List<AvailabilityRow> rows = service.rowsFor(List.of(a, b), service.lastFullWeekWindow(), Map.of("a.example.com", 12));
+
+        assertThat(rows).extracting(AvailabilityRow::domain).containsExactly("a.example.com", "b.example.com");
+        assertThat(rows.get(0).availabilityPct()).isEqualTo(66.67);
+        assertThat(rows.get(0).outageCount()).isEqualTo(1);
+        assertThat(rows.get(0).downtimeMinutes()).isEqualTo(1);
+        assertThat(rows.get(0).certDaysRemaining()).isEqualTo(12);
+        assertThat(rows.get(1).availabilityPct()).isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("geçen hafta ortalaması: BİR hafta önceki pencere, (domain, port) sayımı → computeRow/summarize ile AYNI sonuç; patlarsa null")
+    void previousWeekAvg_sameRuleAsComputeRow() {
+        CertificateInventory a = inv("a.example.com"), b = inv("b.example.com"), c = inv("c.example.com");
+        LocalDate monday = LocalDate.of(2026, 9, 21);   // yalnız pencere aritmetiği — "şimdi"ye göre kayan eşik yok
+        WeeklyAvailabilityReportService.Window w = service.windowForMonday(monday);
+        WeeklyAvailabilityReportService.Window prev = service.windowForMonday(monday.minusWeeks(1));
+        when(uptimeCheckRepo.countWindowForDomains(any(), eq(prev.fromUtc()), eq(prev.toUtc()))).thenReturn(List.of(
+                new Object[]{ "a.example.com", 443, 4L, 3L },
+                new Object[]{ "b.example.com", 443, 2L, 2L },
+                new Object[]{ "c.example.com", 8443, 5L, 0L }));                         // c'nin portu 443 → veri yok sayılır
+
+        Double avg = service.previousWeekAvg(List.of(a, b, c), w);
+
+        // Aynı veri ham satırla computeRow'dan geçseydi: a = 3/4 = %75, b = 2/2 = %100, c = veri yok → ort. %87.5
+        Instant end = w.windowEnd();
+        double viaComputeRow = (service.computeRow("a", List.of(uc("up", 1L, "2026-06-15T00:00:00"), uc("up", 1L, "2026-06-15T00:01:00"),
+                uc("down", null, "2026-06-15T00:02:00"), uc("up", 1L, "2026-06-15T00:03:00")), end, null).availabilityPct()
+                + service.computeRow("b", List.of(uc("up", 1L, "2026-06-15T00:00:00"), uc("up", 1L, "2026-06-15T00:01:00")), end, null).availabilityPct()) / 2;
+        assertThat(avg).isEqualTo(87.5).isEqualTo(viaComputeRow);
+
+        when(uptimeCheckRepo.countWindowForDomains(any(), any(), any())).thenThrow(new RuntimeException("db"));
+        assertThat(service.previousWeekAvg(List.of(a), w)).isNull();
+    }
+
+    @Test
+    @DisplayName("e-posta bağlamı: hafta günleri (Pzt–Paz, kurum saati) + takım + geçen hafta ortalaması; kesinti verisi yoksa alarm bölümü null")
+    void insightsFor_weekContext() {
+        var ins = WeeklyAvailabilityReportService.insightsFor(WeeklyAvailabilitySamples.team(), WeeklyAvailabilitySamples.W39, 99.5, null);
+        assertThat(ins.teamId()).isEqualTo(7L);
+        assertThat(ins.isoYear()).isEqualTo(2026);
+        assertThat(ins.isoWeek()).isEqualTo(39);
+        assertThat(ins.weekStartDay()).isEqualTo("2026-09-21");
+        assertThat(ins.weekEndDay()).isEqualTo("2026-09-27");
+        assertThat(ins.prevAvgAvailabilityPct()).isEqualTo(99.5);
+        assertThat(ins.alarms()).isNull();
+    }
+
+    @Test
+    @DisplayName("alarm özeti: MTTR yalnız ÇÖZÜLMÜŞ alarmlardan, tür başına alarm süresi, boş tür atlanır, liste en uzun önce + Türkçe etiketler")
+    void alarmsOf_mttrTypesAndIncidents() {
+        var o = WeeklyAvailabilitySamples.typical();
+        var alarms = o.insights().alarms();
+        assertThat(alarms.total()).isEqualTo(14);
+        assertThat(alarms.resolved()).isEqualTo(12);
+        assertThat(alarms.mttrMinutes()).isEqualTo(27L);                                   // (180+12+90+45)/12 = 27.25
+        assertThat(alarms.stillOpen()).isEqualTo(2);
+        assertThat(alarms.carriedOver()).isEqualTo(1);
+        assertThat(alarms.openedThisWeek()).isEqualTo(13);
+        assertThat(alarms.openedPrevWeek()).isEqualTo(3);
+        assertThat(alarms.types()).extracting(com.sitemonitor.service.mail.WeeklyAvailabilityMail.TypeRow::label)
+                .containsExactly("Sertifika", "HTTP/Website", "Ping", "Port", "DNS");      // Keyword: izleme/kontrol/alarm yok
+        assertThat(alarms.types().get(3).alarmMinutes()).isEqualTo(6720L);
+        assertThat(alarms.types().get(2).alarmMinutes()).isEqualTo(45L);
+        var first = alarms.incidents().get(0);
+        assertThat(first.alertId()).isEqualTo(4105L);
+        assertThat(first.problem()).isEqualTo("Sertifika süresi doluyor");
+        assertThat(first.levelLabel()).isEqualTo("KRİTİK");
+        assertThat(first.startedAtLocal()).isEqualTo("10.09 09:00");                        // UTC 06:00 → Türkiye 09:00
+        assertThat(first.carriedOver()).isTrue();
+        assertThat(alarms.incidents().get(3).note()).isEqualTo("Planlı IP değişikliği — Kişi A onayladı.");
+        assertThat(alarms.incidents()).extracting(com.sitemonitor.service.mail.WeeklyAvailabilityMail.IncidentRow::weekDurationMin)
+                .isSortedAccordingTo(java.util.Comparator.reverseOrder());
+    }
+
+    @Test
+    @DisplayName("buildTeamReport e-postaya bağlamı verir: geçen hafta ortalaması + alarm özeti (kesinti verisinden, ikinci toplama YOK)")
+    void buildTeamReport_passesInsights() {
+        when(uptimeCheckRepo.countWindowForDomains(any(), any(), any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "a.com", 443, 10L, 9L }));
+        stubAllUp(120L);
+
+        service.buildTeamReport(team(5L, "Takım A", "takim-a@example.com"), service.lastFullWeekWindow(), List.of(inv("a.com")));
+
+        ArgumentCaptor<com.sitemonitor.service.mail.WeeklyAvailabilityMail.Insights> cap =
+                ArgumentCaptor.forClass(com.sitemonitor.service.mail.WeeklyAvailabilityMail.Insights.class);
+        verify(emailService).buildWeeklyAvailabilityHtml(any(), any(), any(), any(), any(), any(), any(), any(), any(), cap.capture());
+        assertThat(cap.getValue().prevAvgAvailabilityPct()).isEqualTo(90.0);
+        assertThat(cap.getValue().teamId()).isEqualTo(5L);
+        assertThat(cap.getValue().alarms()).isNotNull();
+        assertThat(cap.getValue().alarms().total()).isEqualTo(3);
+        verify(outageReportService, times(1)).collect(any(), any(), any());
     }
 }

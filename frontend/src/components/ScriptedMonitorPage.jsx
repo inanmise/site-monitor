@@ -1188,7 +1188,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
                yuva olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak), toplu seçim
                kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). Duraklatılmış = `active === false`
                — sayfanın "Duraklatılan" sayacı/süzgeciyle AYNI yüklem. */
-            <ScriptedMonitorCard key={m.id} monitor={m} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
+            <ScriptedMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} badge={statusBadge(m)} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.name)} />
@@ -1210,7 +1210,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
       {/* ── Detay penceresi (ui/ModalShell) — 7 sekme (Kontrol / Alarm / Grafik / Sürümler / Teşhis / Rehber&Notlar / Değişiklikler) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.name} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeDetail} status={statusKey(selected)} badge={statusBadge(selected)} title={selected.name} noc={{ type: 'SCRIPTED', monitor: selected, canEdit: canManageRow(selected) }}
           actions={
               /* CSV butonu kaldırıldı: mükerrerdi ve bozuktu (tanımsız `history` → window.history →
                   "history.map is not a function"). Çalışan, sunucu-taraflı CSV linkini Kontrol
@@ -1375,7 +1375,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
             <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <ResponseTimeChart monitorId={selected.id} kind="scripted" />
+                <ResponseTimeChart monitorId={selected.id} kind="scripted" slowThreshold={selected.slow_response_enabled ? selected.slow_threshold_ms : null} />
               </Suspense>
             </TabsContent>
 

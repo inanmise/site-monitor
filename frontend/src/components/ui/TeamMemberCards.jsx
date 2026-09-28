@@ -5,12 +5,12 @@ import CopyButton from './CopyButton.jsx'
 import PaginationBar from './PaginationBar.jsx'
 import StatusBlock from './StatusBlock.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
-import { OrgRoleBadge, TONE_CLASS } from '../admin/ToneBadge.jsx'
+import { OrgRoleBadge, SystemRoleBadge, TONE_CLASS } from '../admin/ToneBadge.jsx'
 import {
   FACET_ALL, FACET_SECONDARY, NO_ROLE, avatarSlot, avatarToneFor, buildSearchIndex, filterMembers, initialsOf,
   isSecondaryMember, memberFacets, memberSeed, nameOf, sortMembers as sortMembersModel, sortMembersBy,
 } from './teamMembersModel.js'
-import { Avatar, AvatarFallback } from '@/components/shadcn/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
@@ -31,9 +31,9 @@ import { cn } from '@/lib/utils'
  * (100+) standart sayfalamayla (usePagination `modal` ön ayarı + PaginationBar, varsayılan {@link PAGE} satır;
  * "N kişi daha göster" açılımı sayfalama kapısına aykırıydı); sayı her zaman görünür ("N sonuç").
  *
- * <p><b>Gizlilik:</b> satır yalnız beyaz-liste alanlarını çizer (ad, unvan, birim, müdürlük, org rolü, e-posta,
- * müdür adı). Yönetim yükleyicisi tam entity verse de telefon / sicil / sistem rolü / fotoğraf ÇİZİLMEZ ve
- * fotoğraf İSTENMEZ — avatar baş harflerdir (jeton tonlu, kişiye göre kararlı).
+ * <p><b>Gizlilik:</b> satır yalnız beyaz-liste alanlarını çizer (ad, unvan, birim, müdürlük, org rolü, SİSTEM ROLÜ,
+ * e-posta, müdür adı) + fotoğraf (kullanıcı kararı 2026-09-28: fotoğraf ve sistem rolü görünür). Yönetim yükleyicisi
+ * tam entity verse de telefon / sicil ÇİZİLMEZ. Fotoğrafı olmayanda baş harf (jeton tonlu, kişiye göre kararlı).
  *
  * <p>Test kancaları: `team-member-cards` (liste), `team-member-card` (satır), `team-member-name`,
  * `team-member-leader`, `team-member-manager`, `team-member-open` (yalnız canManage), `team-member-results`.
@@ -69,10 +69,19 @@ export function avatarStyleFor(seed) {
 /** Geriye uyum: eski içe aktarımlar (`sortMembers`) çalışmaya devam etsin — kural modelde. */
 export const sortMembers = sortMembersModel
 
-/** Baş harf avatarı — fotoğraf İSTEMEZ; ton kişiye göre kararlı. Ad yanında durduğu için ekran okuyucudan gizli. */
-export function PersonAvatar({ name, seed, initials, className }) {
+/**
+ * Kişinin fotoğraf kimliği (kullanıcı kararı 2026-09-28: takım penceresinde fotoğraf görünür). Rehber ucu
+ * `has_photo` döner → fotoğrafı olmayan için istek atılmaz; yönetim verisinde bayrak yoksa istenir (yoksa 204 →
+ * baş harf). Fotoğraf `/api/users/{id}/photo` — oturum açmış herkese açık uç (UserBadge ile aynı).
+ */
+export const photoIdOf = (m) => (m && m.id != null && m.has_photo !== false ? m.id : null)
+
+/** Avatar: fotoğraf varsa o, yoksa / yüklenemezse baş harf (ton kişiye göre kararlı). Ad yanında durduğu için
+ *  ekran okuyucudan gizli. */
+export function PersonAvatar({ name, seed, initials, className, photoId = null }) {
   return (
     <Avatar data-slot="person-avatar" aria-hidden="true" className={cn('size-9', className)}>
+      {photoId != null && <AvatarImage src={`/api/users/${photoId}/photo`} alt="" className="object-cover" />}
       <AvatarFallback className={cn('text-xs font-semibold', avatarToneFor(seed || name))}>
         {initials || initialsOf(name)}
       </AvatarFallback>
@@ -118,13 +127,15 @@ const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary
     <li data-slot="team-member-card" aria-labelledby={nameId} data-inactive={m.active === false ? 'true' : undefined}
       className={cn('grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2.5 lg:items-center lg:gap-y-0', LG_COLS,
         m.active === false && 'bg-muted/40')}>
-      <PersonAvatar name={name} seed={memberSeed(m)} initials={adSoyadInitials(m)} className="row-span-3 mt-0.5 lg:row-span-1 lg:mt-0" />
+      <PersonAvatar name={name} seed={memberSeed(m)} initials={adSoyadInitials(m)} photoId={photoIdOf(m)}
+        className="row-span-3 mt-0.5 lg:row-span-1 lg:mt-0" />
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <span id={nameId} data-slot="team-member-name" className="min-w-0 font-medium break-words">{name}</span>
           {isManager && <Badge variant="secondary" data-slot="team-member-manager">{t('team.colManager')}</Badge>}
           {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
           {m.org_role && m.org_role !== 'TECH' && <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>}
+          {m.system_role && <SystemRoleBadge role={m.system_role} data-slot="team-member-system-role" />}
           {secondary && <Badge variant="outline" data-slot="team-member-secondary">{t('team.memberSecondary')}</Badge>}
           {m.active === false && <Badge variant="outline" className={TONE_CLASS.muted}>{t('usr.inactive')}</Badge>}
         </div>

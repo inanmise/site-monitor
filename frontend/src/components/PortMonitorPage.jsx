@@ -758,7 +758,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
                rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı parçalar BURADA kurulur ve yuva olarak
                geçer — toplu seçim kutusu, meta, kart eylemleri (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü
                detay penceresiyle ortak (cardStatus / statusBadge / alarmLabel). */
-            <PortMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
+            <PortMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} density={density} running={isRunning(m.id)} status={cardStatus(m)} badge={statusBadge(m.status)} alarmLabel={alarmLabel(m)}
               onOpen={() => openModal(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
@@ -781,7 +781,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
-        <MonitorDetailModal onClose={closeModal} status={statusKey(selected.status)} badge={statusBadge(selected.status)} title={selected.host} nocNotify={!!selected.noc_notify}
+        <MonitorDetailModal onClose={closeModal} status={statusKey(selected.status)} badge={statusBadge(selected.status)} title={selected.host} noc={{ type: 'PORT', monitor: selected, canEdit: canManageRow(selected) }}
           // Uç nokta satırı kartla AYNI gösterim (büyük boy) — ortak alt başlık yuvası (eski ":25" gri etiketi değil).
           subtitle={<PortEndpoint host={selected.host} port={selected.port} protocol={selected.protocol} path={selected.send_data} size="lg" />}
           actions={
@@ -847,7 +847,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
             <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <ResponseTimeChart monitorId={selected.id} kind="port" />
+                <ResponseTimeChart monitorId={selected.id} kind="port" slowThreshold={selected.slow_response_enabled ? selected.slow_threshold_ms : null} />
               </Suspense>
             </TabsContent>
 

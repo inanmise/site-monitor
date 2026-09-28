@@ -462,6 +462,40 @@ class CertificateServiceTest {
         assertThat(result).hasSize(2);
     }
 
+    @Test
+    @DisplayName("getAllLatest: noc_notify envanterden (null kolon = kapalı), TEK envanter okumasıyla (N+1 yok); ham DTO'da alan YAZILMAZ")
+    void getAllLatest_carriesNocNotifyFromInventory() throws Exception {
+        CertificateInventory on = new CertificateInventory();
+        on.setDomain("on.example.com"); on.setActive(true); on.setNocNotify(true);
+        CertificateInventory off = new CertificateInventory();
+        off.setDomain("off.example.com"); off.setActive(true); off.setNocNotify(false);
+        CertificateInventory unset = new CertificateInventory();
+        unset.setDomain("unset.example.com"); unset.setActive(true);   // eski satır: kolon null
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(on, off, unset));
+        when(latestRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(
+                latestCheck("off.example.com", "valid", false, 90, "VALID", "OK"),
+                latestCheck("on.example.com", "valid", false, 90, "VALID", "OK"),
+                latestCheck("unset.example.com", "valid", false, 90, "VALID", "OK")));
+
+        List<CertificateDto> result = service.getAllLatest();
+
+        Map<String, Boolean> byDomain = new HashMap<>();
+        for (CertificateDto d : result) byDomain.put(d.getDomain(), d.getNocNotify());
+        assertThat(byDomain).containsEntry("on.example.com", true)
+                .containsEntry("off.example.com", false)
+                .containsEntry("unset.example.com", false);
+        // Maliyet: tek envanter okuması; satır başına envanter sorgusu YOK
+        verify(inventoryRepo, times(1)).findByActiveTrueOrderByDomainAsc();
+        verify(inventoryRepo, never()).findByDomain(anyString());
+        // Tel biçimi snake_case; envanter birleşimi olmayan ham DTO'da (Uyarılar) anahtar hiç yazılmaz — "bilinmiyor" ≠ "kapalı"
+        ObjectMapper om = new ObjectMapper();
+        CertificateDto onDto = result.stream().filter(d -> "on.example.com".equals(d.getDomain())).findFirst().orElseThrow();
+        assertThat(om.writeValueAsString(onDto)).contains("\"noc_notify\":true");
+        CertificateDto raw = new CertificateDto();
+        raw.setDomain("raw.example.com");
+        assertThat(om.writeValueAsString(raw)).doesNotContain("noc_notify");
+    }
+
     // ── getHistory ────────────────────────────────────────────────────────────
 
     @Test

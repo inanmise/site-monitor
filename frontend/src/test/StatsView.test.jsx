@@ -105,15 +105,17 @@ describe('StatsView — katlanabilir takım istatistikleri', () => {
 
     await user.click(collapseBar())
 
-    // Takım bölümündeki tıklanabilir ilk hücre/satır — bileşen yapısı değişse de
-    // "açık bölümde etkileşim çalışıyor" iddiası korunur.
-    // Katlama tetiği de bir düğmedir — onu seçmek bölümü geri kapatır, dışarıda bırakılır.
-    const clickable = document.querySelector('.sv-root [role="button"]:not([data-slot="stats-toggle"]), .sv-root tbody tr, .sv-root .sv-team-row')
-    if (clickable) {
-      await user.click(clickable)
-      expect(onRowClick.mock.calls.length >= 0).toBe(true)
-    }
+    // Açık bölümde matris hücresi gerçekten çizildi ve tıklanabiliyor (2026-09-28: eski `.sv-root` seçicisi
+    // yeniden tasarımla hiçbir şey bulmuyordu — iddia koşulsuz yapıldı). Hücre tabloyu süzer, bölüm açık kalır;
+    // süzülmüş tablonun satırı onRowClick'i alan adıyla çağırır.
+    const cell = document.querySelector('[data-slot="stats-matrix-cell"][data-level="critical"]')
+    expect(cell).not.toBeNull()
+    await user.click(cell)
     expect(isOpen()).toBe(true)
+    const row = document.querySelector('[data-slot="stats-row"]')
+    expect(row?.getAttribute('data-domain')).toBe('crit.example.com')
+    await user.click(row)
+    expect(onRowClick).toHaveBeenCalledWith('crit.example.com')
   })
 })
 

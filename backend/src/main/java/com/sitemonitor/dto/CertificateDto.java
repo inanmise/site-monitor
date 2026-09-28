@@ -140,6 +140,16 @@ public class CertificateDto {
     private Integer checkIntervalHours;
 
     /**
+     * Envanter kaydının "7/24 izleme ekibine bildir" anahtarı (2026-09-28) — Genel Bakış sertifika kartındaki 7/24
+     * göstergesi (açık / açık · iletilmiyor / kapalı). Envanter birleşimi olan listeler ({@code getAllLatest}: Pano +
+     * Tüm Sertifikalar) doldurur; envanter birleşimi OLMAYAN ham satırda (Uyarılar {@code getWarnings}) null →
+     * YAZILMAZ: arayüz "bilinmiyor"u "kapalı" sanmasın (alan yoksa gösterge çizilmez).
+     */
+    @JsonProperty("noc_notify")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Boolean nocNotify;
+
+    /**
      * Org geneli görünürlük (2026-09-26): çağıran bu satırın kaydını DEĞİŞTİREBİLİR mi
      * ({@code SessionScope.canWriteInventory}). Yalnız Tüm Sertifikalar listesi doldurur — ve yalnız
      * {@link #withCanManage} KOPYASINA: {@code getAllLatest} sonucu önbellekte PAYLAŞILIYOR, aynı nesneye

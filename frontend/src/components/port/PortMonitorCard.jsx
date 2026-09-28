@@ -4,7 +4,6 @@ import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
 import MaintenanceBadge from '../ui/MaintenanceBadge.jsx'
-import NocBadge from '../noc/forms/NocBadge.jsx'
 import MonitorSpark from '../ui/MonitorSpark.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import {
@@ -48,7 +47,7 @@ import { endpointText, portResult, sourceOf } from './portCardModel.js'
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function PortMonitorCard({
-  monitor: m, status = 'unknown', badge, alarmLabel, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
+  monitor: m, status = 'unknown', badge, alarmLabel, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false, canEdit = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -61,6 +60,7 @@ export default function PortMonitorCard({
   const name = String(m.name || '').trim()
   return (
     <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused} data-result={result.kind} data-protocol={result.proto}
+      noc={{ type: 'PORT', monitor: m, rowLabel, canEdit }}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={
@@ -101,8 +101,6 @@ export default function PortMonitorCard({
         <div className={cn(CARD_LAYER, 'flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5', compact ? 'mb-2' : 'mt-2 mb-2.5')}>
           <PortSourceBadge source={sourceOf(m)} rowLabel={rowLabel} />
           {compact ? (m.team_name && <MonitorCardMeta monitor={{ team_id: m.team_id, team_name: m.team_name }} />) : <>{meta}<PingTags monitor={m} /></>}
-          {/* 7/24 rozeti yalnız Zengin'de (satır Kompakt ile ortak → MonitorCardRich, display:contents) */}
-          {m.noc_notify && <MonitorCardRich className="contents"><NocBadge rowLabel={rowLabel} /></MonitorCardRich>}
         </div>
       </MonitorCardContent>
       {/* mt-auto: ızgara satırındaki kartlar aynı boya uzar — alt çubuk kısa kartta da en altta hizalı kalır. */}

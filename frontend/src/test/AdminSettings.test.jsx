@@ -21,7 +21,8 @@ vi.mock('../components/admin/StormSettings', () => ({ default: () => <div data-t
 vi.mock('../components/admin/UserPushSettings', () => ({ default: () => <div data-testid="sec-userpush" /> }))
 // 7/24 İzleme Ekibi (2026-09-27): readOnly prop'u stub'a yazılır — kapsamlı müdürde salt okunur geçtiği sınanır
 vi.mock('../components/admin/NocSettings.jsx', () => ({ default: ({ readOnly }) => <div data-testid="sec-noc" data-readonly={String(!!readOnly)} /> }))
-vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: () => <div data-testid="sec-loginanomaly" /> }))
+// Login Anomali (2026-09-28): saklama süresi GLOBAL_ONLY → kapsamlı müdürde retentionReadOnly geçtiği sınanır
+vi.mock('../components/admin/LoginAnomalySettings', () => ({ default: ({ retentionReadOnly }) => <div data-testid="sec-loginanomaly" data-retention-ro={String(!!retentionReadOnly)} /> }))
 vi.mock('../components/admin/LdapSettings', () => ({ default: () => <div data-testid="sec-ldap" /> }))
 vi.mock('../components/admin/DomainDiagnostics', () => ({ default: () => <div data-testid="sec-domaindiag" /> }))
 // Veri Saklama (2026-09-28): readOnly prop'u stub'a yazılır — kapsamlı müdürde salt okunur geçtiği sınanır
@@ -286,6 +287,17 @@ describe('AdminSettings — kapsamlı müdür kilitleri', () => {
     render(<AdminSettings />)
     clickTab(/Data Retention|Veri Saklama/)
     expect(screen.getByTestId('sec-retention')).toHaveAttribute('data-readonly', 'false')
+  })
+
+  it('Login Anomali müdüre KİLİTLİ değil; saklama alanı müdürde salt okunur, global admine yazılabilir', () => {
+    const r1 = render(<AdminSettings globalAdmin={false} />)
+    clickTab(/^Login Anomal/)
+    expect(screen.getByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'true')
+    expect(screen.queryByTestId('settings-global-only')).toBeNull()
+    r1.unmount()
+    render(<AdminSettings />)
+    clickTab(/^Login Anomal/)
+    expect(screen.getByTestId('sec-loginanomaly')).toHaveAttribute('data-retention-ro', 'false')
   })
 
   it('müdür: operasyonel bölümler (Genel, Storm) normal çizilir', () => {

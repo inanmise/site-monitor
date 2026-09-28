@@ -780,7 +780,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
                beklenmeyen değer), kaynak rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı ortak
                parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, mini trend, kart eylemleri
                (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü detay penceresiyle ortak (statusKey/statusBadge). */
-            <DnsMonitorCard key={m.id} monitor={m} status={statusKey(m)} density={density} running={isRunning(m.id)}
+            <DnsMonitorCard key={m.id} monitor={m} canEdit={canManageRow(m)} status={statusKey(m)} density={density} running={isRunning(m.id)}
               statusBadge={statusBadge(m, { lastKnown: true })} alarmLabel={alarmLabel(m)}
               onOpen={() => setDetailMonitor(m)}
               select={canManageRow(m) && (

@@ -2,6 +2,10 @@ package com.sitemonitor.service.report;
 
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.service.CertificateInventoryOps;
+import com.sitemonitor.service.mail.CertInventoryMail;
+import com.sitemonitor.service.mail.MailKit;
+import com.sitemonitor.service.mail.MailTokens;
+import com.sitemonitor.service.mail.MailTokens.Tone;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -98,11 +102,26 @@ class InventoryPdfWriter implements AutoCloseable {
     // ── Genel akış ───────────────────────────────────────────────────────────
 
     byte[] write(List<CertificateInventory> rows, Map<Long, String> teams) throws IOException {
+        return write(rows, teams, null);
+    }
+
+    /**
+     * {@code summary} doluysa (aylık rapor eki) YALNIZ e-posta gövdesiyle AYNI özetten özet bölümü basılır — kayıt bazındaki
+     * detay blokları eke girmez (kullanıcı kararı 2026-09-28: büyük envanterde ek ~146 sayfaya çıkıyordu; kayıt bazında tam
+     * liste CSV ekinde). null → eski belge (ekrandaki "Dışa Aktar → PDF", kayıt başına detay blokları — değişmedi).
+     */
+    byte[] write(List<CertificateInventory> rows, Map<Long, String> teams, CertInventoryMail.Report summary) throws IOException {
+        this.footerLabel = summary == null ? null
+                : "Site Monitor · Sertifika Envanteri · " + (summary.monthLabel() == null ? "" : summary.monthLabel());
         newPage();
-        drawBrandHeader(rows.size());
-        for (CertificateInventory r : rows) {
-            ensureSpace(estimateHeight(r));
-            drawRecord(r, teams);
+        if (summary != null) {
+            drawSummary(summary, rows.size());
+        } else {
+            drawBrandHeader(rows.size());
+            for (CertificateInventory r : rows) {
+                ensureSpace(estimateHeight(r));
+                drawRecord(r, teams);
+            }
         }
         closeStream();
         stampPageNumbers();
@@ -110,6 +129,345 @@ class InventoryPdfWriter implements AutoCloseable {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         doc.save(out);
         return out.toByteArray();
+    }
+
+    // ── Özet bölümü (aylık rapor eki, 2026-09-28) ────────────────────────────
+    // Renkler e-postanın belirteçlerinden (MailTokens/Tone) türetilir → PDF ile gövde aynı paleti konuşur.
+
+    private static final float[] FG = rgb(MailTokens.FG);
+    private static final float[] SOFT = rgb(MailTokens.MUTED);
+    private static final float[] RULE = rgb(MailTokens.BORDER);
+    private static final float[] ZEBRA = rgb(MailTokens.SECONDARY);
+    private static final float[] HEAD_BG = rgb(MailTokens.SUBTLE);
+    private static final float[] WHITE = { 1f, 1f, 1f };
+    private static final float ROW_H = 15f;
+    private static final float CONTENT_W = PAGE.getWidth() - MARGIN * 2;
+
+    /** Alt bilgi sol etiketi (ay) — yalnız özetli belgede. */
+    private String footerLabel;
+
+    /** Tablo başlığı sayfa kırılımında yeniden çizilsin diye (null = başlıksız akış). */
+    private Runnable tableHeader;
+
+    private void drawSummary(CertInventoryMail.Report s, int count) throws IOException {
+        // 1) Marka başlığı + durum hapı (sağda)
+        y -= 26;
+        try (InputStream logo = InventoryPdfWriter.class.getResourceAsStream("/email-assets/email-ok.png")) {
+            if (logo != null) {
+                PDImageXObject img = PDImageXObject.createFromByteArray(doc, logo.readAllBytes(), "logo");
+                cs.drawImage(img, MARGIN, y - 12, 34, 34);
+            }
+        } catch (Exception ignored) { /* logosuz devam */ }
+        String month = s.monthLabel() == null ? "" : s.monthLabel();
+        text(bold, 14f, MARGIN + 46, y + 6, clip("Sertifika Envanteri — " + month, CONTENT_W - 170, bold, 14f), FG);
+        text(regular, 8f, MARGIN + 46, y - 7, clip(
+                ZonedDateTime.now(IST).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")) + "  ·  " + count + " kayıt  ·  "
+                + (s.scope() == null ? "" : s.scope()) + "  ·  " + s.ownerTeams() + " sahip takım", CONTENT_W - 60, regular, 8f), SOFT);
+        CertInventoryMail.Buckets b = s.buckets();
+        String status; Tone st; boolean solid;
+        if (b.expired() > 0 || b.within7() > 0) { status = "AKSİYON GEREKLİ"; st = Tone.DESTRUCTIVE; solid = true; }
+        else if (b.within30() > 0 || s.findingTotal() > 0 || s.errors() > 0) { status = "TAKİP GEREKLİ"; st = Tone.WARNING; solid = false; }
+        else { status = "SORUNSUZ"; st = Tone.SUCCESS; solid = false; }
+        float pw = pillWidth(status);
+        pill(PAGE.getWidth() - MARGIN - pw, y + 7, status, st, solid);
+        y -= 30;
+
+        // 2) Hüküm
+        for (String line : wrap(CertInventoryMail.verdict(s), CONTENT_W, bold, 10.5f, 3)) {
+            text(bold, 10.5f, MARGIN, y, line, FG);
+            y -= 14;
+        }
+        y -= 8;
+
+        // 3) KPI ızgarası (4 × 2)
+        Integer pt = s.prevTotal(), pf = s.prevFindings();
+        List<Tile> tiles = List.of(
+                new Tile("Toplam kayıt", s.total(), null, s.active() + " aktif · " + s.passive() + " pasif", pdfDelta(s.total(), pt)),
+                new Tile("30 gün içinde", b.within30(), Tone.WARNING.strong, "bitecek sertifika", null),
+                new Tile("14 gün içinde", b.within14(), Tone.WARNING.strong, "bitecek sertifika", null),
+                new Tile("7 gün içinde", b.within7(), Tone.DESTRUCTIVE.strong, "bitecek sertifika", null),
+                new Tile("Süresi dolmuş", b.expired(), Tone.DESTRUCTIVE.text, "yenileme gecikmiş", null),
+                new Tile("Hata / erişilemez", s.errors(), Tone.DESTRUCTIVE.strong, "sertifika okunamadı", null),
+                new Tile("Veri yok", b.unknown(), MailTokens.FG, "bitiş tarihi bilinmiyor", null),
+                new Tile("Hijyen bulgusu", s.findingTotal(), Tone.WARNING.strong,
+                        s.findingTotal() == 0 ? "envanter temiz" : s.findings().size() + " grupta", pdfDelta(s.findingTotal(), pf)));
+        float gap = 8f, tw = (CONTENT_W - gap * 3) / 4f, th = 50f;
+        for (int i = 0; i < tiles.size(); i += 4) {
+            ensureSpace(th + gap);
+            for (int j = 0; j < 4 && i + j < tiles.size(); j++) {
+                Tile t = tiles.get(i + j);
+                float x = MARGIN + j * (tw + gap), top = y;
+                roundRect(x, top - th, tw, th, 4f, WHITE, RULE);
+                text(regular, 7.5f, x + 9, top - 13, clip(t.label(), tw - 18, regular, 7.5f), SOFT);
+                String v = String.valueOf(t.value());
+                text(bold, 17f, x + 9, top - 32, v,
+                        t.value() > 0 && t.color() != null ? rgb(t.color()) : (t.color() == null ? FG : SOFT));
+                if (t.delta() != null) {                   // geçen aya göre değişim — değerin yanında küçük
+                    float dx = x + 9 + width(v, bold, 17f) + 6;
+                    text(regular, 7f, dx, top - 32, clip(t.delta(), x + tw - 8 - dx, regular, 7f), SOFT);
+                }
+                text(regular, 7f, x + 9, top - 43, clip(t.hint(), tw - 18, regular, 7f), SOFT);
+            }
+            y -= th + gap;
+        }
+        y -= 6;
+
+        // 4) Kalan süreye göre dağılım
+        if (s.active() > 0) {
+            sectionTitle("Kalan süreye göre dağılım", s.active() + " aktif sertifika");
+            drawSegmentBar(b);
+        }
+
+        // 5) 90 gün içinde bitenler (süresi dolmuşlar dahil) — TAM liste
+        List<CertInventoryMail.Cert> horizon = new ArrayList<>(s.upcoming());
+        for (CertInventoryMail.Cert c : s.later()) if (c.daysLeft() != null && c.daysLeft() <= 90) horizon.add(c);
+        if (s.active() > 0) {
+            sectionTitle("90 gün içinde bitenler", horizon.isEmpty() ? "90 gün içinde süresi dolacak sertifika yok."
+                    : horizon.size() + " sertifika · süresi dolmuşlar dahil · tarihler Türkiye saatiyle");
+            if (!horizon.isEmpty()) drawCertTable(horizon);
+        }
+
+        // 6) Envanter hijyeni — TAM liste (gövde grup başına ilk 10'u gösterir)
+        if (s.findings().isEmpty()) {
+            sectionTitle("Envanter hijyeni", "Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.");
+        } else {
+            sectionTitle("Envanter hijyeni", s.findingTotal() + " bulgu · " + s.findings().size() + " grup · tam liste");
+            for (CertInventoryMail.FindingGroup g : s.findings()) drawFindingGroup(g);
+        }
+    }
+
+    private record Tile(String label, int value, String color, String hint, String delta) { }
+
+    /** PDF'te değişim: "+8 (geçen ay 418)" — ▲/▼ gömülü fontta yok, işaret yazıyla. Geçen ay bilinmiyorsa null. */
+    static String pdfDelta(int now, Integer prev) {
+        if (prev == null) return null;
+        int diff = now - prev;
+        return (diff == 0 ? "değişmedi" : (diff > 0 ? "+" : "-") + Math.abs(diff)) + " (geçen ay " + prev + ")";
+    }
+
+    private void sectionTitle(String title, String desc) throws IOException {
+        tableHeader = null;
+        ensureSpace(52);
+        y -= 14;
+        text(bold, 11f, MARGIN, y, title, FG);
+        y -= 12;
+        if (desc != null && !desc.isBlank()) {
+            text(regular, 7.5f, MARGIN, y, clip(desc, CONTENT_W, regular, 7.5f), SOFT);
+            y -= 12;
+        }
+        y -= 2;
+    }
+
+    private void drawSegmentBar(CertInventoryMail.Buckets b) throws IOException {
+        String[] labels = { "Süresi dolmuş", "0–7 gün", "8–30 gün", "31–90 gün", "90 gün üstü", "Tarih yok" };
+        int[] counts = { b.expired(), b.days0to7(), b.days8to14() + b.days15to30(), b.days31to90(), b.over90(), b.unknown() };
+        String[] colors = { Tone.DESTRUCTIVE.text, Tone.DESTRUCTIVE.strong, Tone.WARNING.strong, Tone.INFO.strong,
+                Tone.SUCCESS.strong, Tone.NEUTRAL.strong };
+        int total = 0;
+        for (int c : counts) total += c;
+        if (total == 0) return;
+        ensureSpace(40);
+        float x = MARGIN, h = 10f, gap = 1.5f;
+        int nonZero = 0;
+        for (int c : counts) if (c > 0) nonZero++;
+        float usable = CONTENT_W - gap * (nonZero - 1);
+        // Küçük dilim en az 3 pt; kalan genişlik yalnız büyük dilimlere orantılı dağıtılır. Eskiden asgari genişlik
+        // telafisizdi → toplam taşıyor, son dilim ("Tarih yok") eksi genişliğe düşüp kayboluyordu (regresyon 2026-09-28b B4).
+        final float minW = 3f;
+        float fixed = 0f;
+        long bigCount = 0;
+        for (int c : counts) {
+            if (c <= 0) continue;
+            if (usable * c / total < minW) fixed += minW; else bigCount += c;
+        }
+        float rest = Math.max(0f, usable - fixed);
+        int drawn = 0;
+        for (int i = 0; i < counts.length; i++) {
+            if (counts[i] <= 0) continue;
+            drawn++;
+            boolean small = usable * counts[i] / total < minW;
+            float natural = small || bigCount == 0 ? minW : rest * counts[i] / bigCount;
+            float w = drawn == nonZero ? Math.max(minW, MARGIN + CONTENT_W - x) : natural;
+            rect(x, y - h, w, h, rgb(colors[i]));
+            x += w + gap;
+        }
+        y -= h + 12;
+        float lx = MARGIN;
+        for (int i = 0; i < counts.length; i++) {
+            if (counts[i] <= 0) continue;
+            String label = labels[i] + "  " + counts[i] + " · " + MailKit.segmentPct(counts[i], total);
+            float w = 10 + width(label, regular, 7.5f) + 14;
+            if (lx + w > MARGIN + CONTENT_W) { lx = MARGIN; y -= 12; }
+            rect(lx, y - 1, 7, 7, rgb(colors[i]));
+            text(regular, 7.5f, lx + 10, y, label, FG);
+            lx += w;
+        }
+        y -= 16;
+    }
+
+    private static final float[] CERT_W = { 175f, 95f, 110f, 58f, 0f };   // son sütun kalan genişlik
+
+    private void drawCertTable(List<CertInventoryMail.Cert> certs) throws IOException {
+        float[] w = CERT_W.clone();
+        w[4] = CONTENT_W - (w[0] + w[1] + w[2] + w[3]);
+        String[] head = { "Alan adı", "Takım", "Sağlayıcı", "Bitiş", "Kalan" };
+        tableHeader = () -> headerRow(head, w, true);
+        ensureSpace(ROW_H * 3);
+        tableHeader.run();
+        for (int i = 0; i < certs.size(); i++) {
+            CertInventoryMail.Cert c = certs.get(i);
+            rowBreak();
+            if (i % 2 == 1) rect(MARGIN, y - ROW_H, CONTENT_W, ROW_H, ZEBRA);
+            float base = y - 10.3f, x = MARGIN + 5;
+            String dom = c.domain() + (c.tier() == null ? "" : "  T" + c.tier());
+            text(bold, 7.5f, x, base, clip(dom, w[0] - 10, bold, 7.5f), FG);
+            x = MARGIN + w[0] + 5;
+            text(regular, 7.5f, x, base, clip(c.team() == null ? "Takım atanmamış" : c.team(), w[1] - 10, regular, 7.5f), SOFT);
+            x += w[1];
+            text(regular, 7.5f, x, base, clip(c.issuer() == null ? "—" : c.issuer(), w[2] - 10, regular, 7.5f), SOFT);
+            x += w[2];
+            text(regular, 7.5f, x, base, c.expiry() == null ? "—" : c.expiry(), FG);
+            String label = pillLabel(c.daysLeft());
+            float pw = pillWidth(label);
+            pill(MARGIN + CONTENT_W - pw - 5, base, label, pillTone(c.daysLeft()), c.daysLeft() != null && c.daysLeft() <= 0);
+            y -= ROW_H;
+        }
+        tableHeader = null;
+        y -= 6;
+    }
+
+    private void drawFindingGroup(CertInventoryMail.FindingGroup g) throws IOException {
+        tableHeader = null;
+        ensureSpace(ROW_H * 4 + 30);
+        boolean severe = "health".equals(g.key()) || "error".equals(g.key());
+        y -= 4;
+        text(bold, 9f, MARGIN, y, clip(g.title(), CONTENT_W - 90, bold, 9f), FG);
+        String cnt = g.total() + " kayıt";
+        pill(MARGIN + width(g.title(), bold, 9f) + 8, y, cnt, severe ? Tone.DESTRUCTIVE : Tone.WARNING, false);
+        y -= 11;
+        String ex = CertInventoryMail.explain(g.key()), ac = CertInventoryMail.action(g.key());
+        if (ex != null) for (String l : wrap(ex, CONTENT_W, regular, 7.5f, 2)) { text(regular, 7.5f, MARGIN, y, l, SOFT); y -= 10; }
+        if (ac != null) for (String l : wrap("Önerilen: " + ac, CONTENT_W, regular, 7.5f, 2)) { text(regular, 7.5f, MARGIN, y, l, FG); y -= 10; }
+        y -= 3;
+        float[] w = { 200f, CONTENT_W - 200f };
+        String[] head = { "Alan adı", "Bulgu" };
+        tableHeader = () -> headerRow(head, w, false);
+        tableHeader.run();
+        List<CertInventoryMail.Finding> all = g.findings();
+        for (int i = 0; i < all.size(); i++) {
+            CertInventoryMail.Finding f = all.get(i);
+            rowBreak();
+            if (i % 2 == 1) rect(MARGIN, y - ROW_H, CONTENT_W, ROW_H, ZEBRA);
+            float base = y - 10.3f;
+            text(bold, 7.5f, MARGIN + 5, base, clip(f.domain() == null ? "—" : f.domain(), w[0] - 10, bold, 7.5f), FG);
+            text(regular, 7.5f, MARGIN + w[0] + 5, base, clip(f.detail() == null ? "" : f.detail(), w[1] - 10, regular, 7.5f), SOFT);
+            y -= ROW_H;
+        }
+        // Özet toplam > liste uzunluğu olursa (kırpılmış kaynak) açıkça söylenir — sessiz eksik yok.
+        if (g.total() > all.size()) {
+            text(regular, 7f, MARGIN + 5, y - 9, "+" + (g.total() - all.size()) + " kayıt daha", SOFT);
+            y -= 12;
+        }
+        tableHeader = null;
+        y -= 8;
+    }
+
+    /** Satır sığmıyorsa yeni sayfa + tablo başlığını yinele. */
+    private void rowBreak() throws IOException {
+        if (y - ROW_H < BOTTOM) {
+            newPage();
+            if (tableHeader != null) tableHeader.run();
+        }
+    }
+
+    private void headerRow(String[] head, float[] w, boolean lastRight) {
+        try {
+            rect(MARGIN, y - ROW_H, CONTENT_W, ROW_H, HEAD_BG);
+            cs.setStrokingColor(RULE[0], RULE[1], RULE[2]);
+            cs.setLineWidth(0.6f);
+            cs.moveTo(MARGIN, y - ROW_H);
+            cs.lineTo(MARGIN + CONTENT_W, y - ROW_H);
+            cs.stroke();
+            float x = MARGIN;
+            for (int i = 0; i < head.length; i++) {
+                if (lastRight && i == head.length - 1) {
+                    text(bold, 7f, MARGIN + CONTENT_W - width(head[i], bold, 7f) - 5, y - 10f, head[i], SOFT);
+                } else {
+                    text(bold, 7f, x + 5, y - 10f, head[i], SOFT);
+                }
+                x += w[i];
+            }
+            y -= ROW_H;
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    // ── Hap / dikdörtgen ilkelleri ───────────────────────────────────────────
+
+    static String pillLabel(Integer days) {
+        if (days == null) return "veri yok";
+        if (days < 0) return Math.abs(days) + " gün önce doldu";
+        if (days == 0) return "bugün bitiyor";
+        return days + " gün";
+    }
+
+    static Tone pillTone(Integer days) {
+        if (days == null) return Tone.NEUTRAL;
+        if (days <= 7) return Tone.DESTRUCTIVE;
+        if (days <= 30) return Tone.WARNING;
+        if (days <= 90) return Tone.INFO;
+        return Tone.SUCCESS;
+    }
+
+    private float pillWidth(String label) throws IOException {
+        return width(label, bold, 6.8f) + 10;
+    }
+
+    /** Tonlu hap: {@code solid} → dolu zemin + beyaz yazı (e-postadaki MailKit.pill ile aynı kural). */
+    private void pill(float x, float baseline, String label, Tone t, boolean solid) throws IOException {
+        float w = pillWidth(label);
+        float[] bg = solid ? rgb(t.strong) : (t == Tone.NEUTRAL ? rgb(MailTokens.SECONDARY) : rgb(t.bg));
+        float[] bd = solid ? rgb(t.strong) : (t == Tone.NEUTRAL ? RULE : rgb(t.border));
+        float[] fg = solid ? WHITE : (t == Tone.NEUTRAL ? FG : rgb(t.text));
+        roundRect(x, baseline - 3f, w, 10.5f, 3f, bg, bd);
+        text(bold, 6.8f, x + 5, baseline, label, fg);
+    }
+
+    private void rect(float x, float yy, float w, float h, float[] c) throws IOException {
+        cs.setNonStrokingColor(c[0], c[1], c[2]);
+        cs.addRect(x, yy, w, h);
+        cs.fill();
+    }
+
+    /** Yuvarlak köşeli dikdörtgen (Bezier çeyrek daireler); {@code stroke} null → yalnız dolgu. */
+    private void roundRect(float x, float yy, float w, float h, float r, float[] fill, float[] stroke) throws IOException {
+        float k = 0.5523f * r;
+        cs.moveTo(x + r, yy);
+        cs.lineTo(x + w - r, yy);
+        cs.curveTo(x + w - r + k, yy, x + w, yy + r - k, x + w, yy + r);
+        cs.lineTo(x + w, yy + h - r);
+        cs.curveTo(x + w, yy + h - r + k, x + w - r + k, yy + h, x + w - r, yy + h);
+        cs.lineTo(x + r, yy + h);
+        cs.curveTo(x + r - k, yy + h, x, yy + h - r + k, x, yy + h - r);
+        cs.lineTo(x, yy + r);
+        cs.curveTo(x, yy + r - k, x + r - k, yy, x + r, yy);
+        cs.closePath();
+        if (fill != null) cs.setNonStrokingColor(fill[0], fill[1], fill[2]);
+        if (stroke != null) {
+            cs.setStrokingColor(stroke[0], stroke[1], stroke[2]);
+            cs.setLineWidth(0.6f);
+        }
+        if (fill != null && stroke != null) cs.fillAndStroke();
+        else if (fill != null) cs.fill();
+        else cs.stroke();
+    }
+
+    /** "#rrggbb" → PDF RGB (0..1). Palet MailTokens'tan okunur; serbest renk üretilmez. */
+    static float[] rgb(String hex) {
+        String h = hex.startsWith("#") ? hex.substring(1) : hex;
+        int v = Integer.parseInt(h, 16);
+        return new float[]{ ((v >> 16) & 0xFF) / 255f, ((v >> 8) & 0xFF) / 255f, (v & 0xFF) / 255f };
     }
 
     private void newPage() throws IOException {
@@ -368,6 +726,13 @@ class InventoryPdfWriter implements AutoCloseable {
                 s.newLineAtOffset(PAGE.getWidth() - MARGIN - 60, MARGIN - 16);
                 s.showText("Sayfa " + (i + 1) + " / " + total);
                 s.endText();
+                if (footerLabel != null) {           // özetli belge: sol altta rapor + ay (her sayfada bağlam)
+                    s.beginText();
+                    s.setFont(regular, 7f);
+                    s.newLineAtOffset(MARGIN, MARGIN - 16);
+                    s.showText(encodable(regular, footerLabel));
+                    s.endText();
+                }
             }
         }
     }

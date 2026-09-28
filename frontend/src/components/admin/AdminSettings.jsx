@@ -226,7 +226,8 @@ export default function AdminSettings({ globalAdmin = true }) {
             className="sticky top-3 flex max-h-[calc(100dvh-1.5rem)] min-w-0 flex-col gap-2 overflow-y-auto rounded-xl border bg-card p-2.5">
             <InputGroup className="h-9 shrink-0">
               <InputGroupInput id={searchId} type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('settings.navSearch')} aria-label={t('settings.navSearch')} autoComplete="off" />
+                placeholder={t('settings.navSearch')} aria-label={t('settings.navSearch')} autoComplete="off"
+                name="settings-section-search" data-1p-ignore data-lpignore="true" data-form-type="other" />
               <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
             </InputGroup>
             <TabsList aria-label={t('settings.navHeader')} className="w-full items-stretch gap-0.5 bg-transparent p-0">
@@ -266,7 +267,8 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'storm' && <StormSettings />}
           {active === 'userpush' && <UserPushSettings />}
           {active === 'noc' && <NocSettings readOnly={!globalAdmin} />}
-          {active === 'loginanomaly' && <LoginAnomalySettings />}
+          {/* Kapsamlı müdür sayfayı kaydeder ama saklama süresi GLOBAL_ONLY → alan salt okunur (2026-09-28) */}
+          {active === 'loginanomaly' && <LoginAnomalySettings retentionReadOnly={!globalAdmin} />}
           {active === 'ldap' && <LdapSettings />}
           {active === 'domaindiag' && <DomainDiagnostics />}
           {active === 'retention' && <RetentionSettings readOnly={!globalAdmin} />}

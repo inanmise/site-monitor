@@ -64,6 +64,8 @@ const INCIDENTS = [
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 2026-09-28 yeniden tasarım: süzgeçler adrese (`ih_*`) yazılıyor — önceki testin süzgeci sonrakine taşınmasın.
+  window.history.replaceState({}, '', '/')
   permMock.allow = true
   api.incidents.list.mockResolvedValue({ success: true, data: INCIDENTS, total: 2, page: 0, size: 50 })
   api.incidents.trends.mockResolvedValue({ success: true, data: [{ day: '2026-08-18', count: 1, critical: 1, high: 0, medium: 0, low: 0 }] })
@@ -235,15 +237,18 @@ describe('IncidentHistoryPage — shadcn (D2, 2026-09-26)', () => {
       .toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('satır Enter ile ayrıntı penceresini (ModalShell, role=dialog) açar; toplu seçim kutusunun adı satırı ayırır', async () => {
+  // 2026-09-28 yeniden tasarım: ayrıntı artık ÖNCE-OKUMA Sheet'i (role=dialog) — salt okunur form (devre dışı
+  // metin kutuları) yerine başlık + işlenmiş içerik. Korunan sözleşme aynı: satır klavyeyle (Enter) açılır, açılan
+  // pencere o kaydın başlığını taşır ve hiçbir düzenlenebilir alan içermez.
+  it('satır Enter ile ayrıntı penceresini (Sheet, role=dialog) açar; toplu seçim kutusunun adı satırı ayırır', async () => {
     render(<IncidentHistoryPage />)
     await waitFor(() => expect(document.body.textContent).toContain('Ödeme servisi kesintisi'))
     expect(screen.getByRole('checkbox', { name: /Ödeme servisi kesintisi/ })).toBeInTheDocument()
     const row = screen.getByRole('row', { name: /Ödeme servisi kesintisi/ })
     fireEvent.keyDown(row, { key: 'Enter' })
     const dlg = await screen.findByRole('dialog')
-    expect(within(dlg).getByRole('textbox', { name: /Başlık|Title/ })).toHaveValue('Ödeme servisi kesintisi')
-    expect(within(dlg).getByRole('textbox', { name: /Başlık|Title/ })).toBeDisabled()
+    expect(within(dlg).getByRole('heading', { name: 'Ödeme servisi kesintisi' })).toBeInTheDocument()
+    expect(within(dlg).queryByRole('textbox')).toBeNull()
   })
 
   it('telefonda (390 px) kart listesi — tablo yok, düzenle düğmesi satırı adıyla ayırır', async () => {

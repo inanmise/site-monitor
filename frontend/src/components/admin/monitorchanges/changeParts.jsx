@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { FilePlus2, Pencil, Trash2, RotateCcw, FolderPen, Copy, Check, Layers, Bot } from 'lucide-react'
+import { FilePlus2, Pencil, Trash2, RotateCcw, FolderPen, Copy, Check, Layers, Bot, Pause, Play } from 'lucide-react'
 import { formatDateSec } from '../../../api/client'
 import { navigateTo } from '../../../utils/navigate.js'
 import { copyText } from '../../../utils/copyText.js'
+import { flushUrlQuerySync } from '../../../hooks/useUrlQuerySync.js'
 import SimpleTooltip from '../../ui/SimpleTooltip.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
 import ToneBadge from '../ToneBadge.jsx'
@@ -10,6 +11,10 @@ import { ICONS as KIND_ICONS } from '../ChangeKindCards.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
+import HintPopover from '../../ui/HintPopover.jsx'
+import { clockOf, eventLabel } from './changeModel.js'
+
+export { eventLabel }
 
 /**
  * İzleme Değişiklikleri ekranının satır parçaları — masaüstü tablo, telefon kartı ve ayrıntı paneli AYNI parçaları
@@ -21,18 +26,15 @@ import { cn } from '@/lib/utils'
  * NÖTR (listenin çoğu düzenleme — hepsi renkli olsaydı renk sinyal olmaktan çıkardı). İkon renk körü için ikinci
  * kanal. Sol renk şeridi YOK (kullanıcı kuralı 2026-09-26): durum yalnız rozetle.
  */
-const EVENT_META = {
+export const EVENT_META = {
   CREATE: { tone: 'success', Icon: FilePlus2 },
   UPDATE: { tone: 'muted', Icon: Pencil },
   DELETE: { tone: 'danger', Icon: Trash2 },
   RESTORE: { tone: 'info', Icon: RotateCcw },
   GROUP_RENAME: { tone: 'muted', Icon: FolderPen },
-}
-
-export function eventLabel(t, ev) {
-  const key = `chg.event${ev}`
-  const label = t(key)
-  return label === key ? String(ev ?? '') : label
+  // Türetilmiş (active alanını çeviren güncelleme) — İzleme Değişiklikleri 2026-09-28
+  PAUSE: { tone: 'warning', Icon: Pause },
+  RESUME: { tone: 'info', Icon: Play },
 }
 
 /** Olay rozeti (shadcn Badge, ToneBadge). Test kancası: `data-event` (küçük harf olay adı) + `data-tone`. */
@@ -81,6 +83,23 @@ export function TimeAgo({ at, t, now, className }) {
   )
 }
 
+/**
+ * Zaman çizelgesi damgası: yerel saat ("14:03") + son 24 saatteyse göreli ("3 dk önce"). Tam tarih-saat DOKUN-GÖR
+ * balonunda (ui/HintPopover — telefonda da açılır; SimpleTooltip yalnız hover'dır). Gün başlığı tarihi zaten verir.
+ * Düğme kart örtüsünün (stretched button) ÜSTÜNDE: `relative z-10`.
+ */
+export function TimeStamp({ at, t, now = Date.now(), className }) {
+  const ms = toMs(at)
+  const recent = Number.isFinite(ms) && now - ms < 24 * 3600 * 1000
+  return (
+    <HintPopover content={formatDateSec(at)} align="end" data-slot="chg-time"
+      triggerClassName={cn('relative z-10 rounded-sm px-0.5 text-xs whitespace-nowrap text-muted-foreground hover:text-foreground pointer-coarse:min-h-10 max-md:min-h-10 max-md:px-1.5', className)}>
+      <time dateTime={at} className="font-medium text-foreground tabular-nums">{clockOf(at)}</time>
+      {recent && <span className="max-sm:hidden">&nbsp;· {relTime(at, t, now)}</span>}
+    </HintPopover>
+  )
+}
+
 /** Kim — avatarlı kullanıcı rozeti; aktörsüz (zamanlanmış/geri doldurma) ya da `system` satır "SİSTEM" rozeti. */
 export function ActorBadge({ r, t, full = false }) {
   if (!r.actor || r.actor === 'system') {
@@ -118,6 +137,8 @@ export function MonitorName({ r, link, wrap = false, className }) {
     e.stopPropagation()
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
     e.preventDefault()
+    // Son 300 ms'de değişen süzgeç o anki geçmiş kaydına yazılsın: Geri tuşu konsolu aynı süzgeçle geri getirir.
+    flushUrlQuerySync()
     navigateTo(link.tab, link.params)
   }
   const anchor = (

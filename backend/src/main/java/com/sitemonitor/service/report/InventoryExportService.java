@@ -109,8 +109,18 @@ public class InventoryExportService {
      * (ekran + aylık mail eki) çıktıların farklı görünmemesi gerekir.
      */
     public byte[] pdf(List<CertificateInventory> rows, Map<Long, String> teams) {
+        return pdf(rows, teams, null);
+    }
+
+    /**
+     * Aylık rapor eki: {@code summary} doluysa detay bloklarından ÖNCE e-posta gövdesiyle aynı özetten bir özet bölümü
+     * basılır (hüküm, KPI, kalan süre çubuğu, 90 gün içinde bitenler, hijyen bulgularının TAMAMI). Detay düzeni
+     * değişmez (ekranla birebir). {@code summary == null} → eski belge.
+     */
+    public byte[] pdf(List<CertificateInventory> rows, Map<Long, String> teams,
+                      com.sitemonitor.service.mail.CertInventoryMail.Report summary) {
         try (InventoryPdfWriter w = new InventoryPdfWriter()) {
-            return w.write(rows, teams);
+            return w.write(rows, teams, summary);
         } catch (Exception e) {
             log.error("Envanter PDF üretimi başarısız: {}", e.getMessage(), e);
             return new byte[0];        // ek olmadan gönderim sürsün — rapor tamamen düşmesin

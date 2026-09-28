@@ -35,6 +35,12 @@ public final class MailTokens {
     public static final String WARNING = "#d97706";
     /** İlerleme çubuğu boş kısmı. */
     public static final String TRACK = "#e4e4e7";
+    /**
+     * Karanlık tuval — zinc-950 (shadcn koyu {@code --background}). YALNIZ {@code MailDoc.darkCanvas()} açan
+     * e-postada ve {@code prefers-color-scheme:dark} altında dış zemine uygulanır; kart AÇIK kalır
+     * ({@code LIGHT_SCHEME_META} kilidi — 2026-09-28, Haftalık Erişilebilirlik yeniden tasarımı).
+     */
+    public static final String DARK_CANVAS = "#09090b";
 
     /** Yazı ailesi — web font YÜKLENMEZ; Inter kuruluysa o, değilse sistem fontu. Outlook için
      *  head'deki MSO bloğu Segoe UI'ı zorlar (ilk font kurulu değilse Word Times New Roman'a düşer). */

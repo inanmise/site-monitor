@@ -9,6 +9,7 @@ import com.sitemonitor.service.mail.MailKit.Row;
 import com.sitemonitor.service.mail.MailKit.Stat;
 import com.sitemonitor.service.mail.MailTokens;
 import com.sitemonitor.service.mail.MailTokens.Tone;
+import com.sitemonitor.service.mail.WeeklyAvailabilityMail;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -2625,274 +2626,38 @@ public class EmailNotificationService {
                                               List<AvailabilityRow> rows, AvailabilitySummary s,
                                               AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
                                               WeakAlgoWeekly weak, DomainExpiryWeekly dom) {
-        MailDoc d = MailDoc.create("[Site Monitor] " + nzs(teamName) + " — Haftalık Erişilebilirlik (" + nzs(weekLabel) + ")").wide()
-                .preheader("Ortalama erişilebilirlik " + pctText(s.avgAvailabilityPct()) + " · " + s.downDomainCount() + " domain kesinti yaşadı")
-                .kicker("Haftalık Erişilebilirlik");
-        d.title(nzs(teamName), weekLabel);
-        d.paragraphHtml("<strong>Sayın " + esc(teamName) + " ekibi,</strong>", "Sayın " + nzs(teamName) + " ekibi,");
-        d.paragraphHtml("Aşağıda sahip olduğunuz domainlerin geçen haftaya (<strong>" + esc(weekLabel) + "</strong>) ait erişilebilirlik özeti yer almaktadır.",
-                "Aşağıda sahip olduğunuz domainlerin geçen haftaya (" + nzs(weekLabel) + ") ait erişilebilirlik özeti yer almaktadır.");
-
-        // KPI kutuları — medya sorgusu olmadan da sarar (4 → 2 → 1)
-        d.stats(List.of(
-                new Stat("İzlenen Domain", String.valueOf(s.domainCount()), null, null),
-                new Stat("Ort. Erişilebilirlik", pctText(s.avgAvailabilityPct()), pctColor(s.avgAvailabilityPct()), null),
-                new Stat("Kesinti Yaşayan", String.valueOf(s.downDomainCount()),
-                        s.downDomainCount() > 0 ? Tone.DESTRUCTIVE.strong : Tone.SUCCESS.strong, null),
-                new Stat("En Yakın Sertifika", s.nearestCertDays() != null ? s.nearestCertDays() + " gün" : "—",
-                        s.nearestCertDays() != null && s.nearestCertDays() <= 30 ? Tone.DESTRUCTIVE.strong : null, null)));
-
-        // Ek duyurusu — ekin ADI ve İÇERİĞİ gövdede yazılı olmazsa çoğu okuyucu eki kaçırır.
-        if (att != null) {
-            String what = att.alarmCount() == 0
-                    ? "Bu hafta kesinti yaşanmadı; ek, kapsam ve yöntem notunu içerir."
-                    : att.alarmCount() + " alarmın tamamı — izleme türü bazında gruplanmış detay, "
-                      + "kesinti zaman çizelgesi, gün/saat yoğunluğu ve erişilebilirlik tabloları."
-                      + (att.stillOpenCount() > 0 ? " " + att.stillOpenCount() + " alarm hâlâ açık." : "");
-            String scope = "Ek, bu e-postadan DAHA GENİŞ bir kapsamı raporlar: " + att.monitorTypeCount() + " izleme türünün alarmları. "
-                    + "Bu gövde ise yalnız sertifika envanterindeki domainlerin HTTP erişilebilirliğini gösterir — iki yerdeki sayılar bu yüzden birbirini tutmaz.";
-            d.alertHtml(Tone.INFO, "Ek: ayrıntılı kesinti raporu (PDF)",
-                    MailKit.mono(att.fileName()) + "<br>" + esc(what) + "<br><span style=\"font-size:12px\">" + esc(scope) + "</span>",
-                    "Ek: ayrıntılı kesinti raporu (PDF) — " + att.fileName() + "\n" + what + "\n" + scope);
-        }
-
-        // Kesinti bölümü — varsa liste, yoksa "kesinti yok" (mail her durumda gider)
-        if (s.downDomainCount() > 0) {
-            List<List<Cell>> down = new ArrayList<>();
-            for (AvailabilityRow r : rows) {
-                if (r.outageCount() > 0) {
-                    down.add(List.of(Cell.of(r.domain(), Tone.DESTRUCTIVE.text, true),
-                            Cell.of(pctText(r.availabilityPct()), Tone.DESTRUCTIVE.strong, true),
-                            Cell.of(r.outageCount() + " kesinti · " + r.downtimeMinutes() + " dk", Tone.DESTRUCTIVE.text, false)));
-                }
-            }
-            d.heading("Bu hafta kesinti yaşayan domainler (" + s.downDomainCount() + ")");
-            d.table(List.of(Col.of("Domain"), Col.num("Erişilebilirlik"), Col.num("Kesinti")), down);
-        } else {
-            d.alert(Tone.SUCCESS, "Bu hafta hiçbir domain kesinti yaşamadı", null);
-        }
-
-        if (s.bestDomain() != null && s.worstDomain() != null && s.withDataCount() > 0) {
-            d.noteHtml("En yüksek: " + MailKit.strong(s.bestDomain(), Tone.SUCCESS.strong) + " (" + pctText(s.bestPct()) + ") · "
-                            + "En düşük: " + MailKit.strong(s.worstDomain(), pctColor(s.worstPct())) + " (" + pctText(s.worstPct()) + ")",
-                    "En yüksek: " + s.bestDomain() + " (" + pctText(s.bestPct()) + ") · En düşük: " + s.worstDomain() + " (" + pctText(s.worstPct()) + ")");
-        }
-
-        // Domain tablosu (en kötü üstte — servis sıralar)
-        List<List<Cell>> body = new ArrayList<>();
-        for (AvailabilityRow r : rows) {
-            String resp = (r.avgMs() != null) ? r.avgMs() + " / " + (r.p95Ms() != null ? r.p95Ms() : "—") + " ms" : "—";
-            String certTxt = r.certDaysRemaining() != null ? r.certDaysRemaining() + " gün" : "—";
-            String certColor = r.certDaysRemaining() != null && r.certDaysRemaining() <= 30 ? Tone.DESTRUCTIVE.strong
-                             : r.certDaysRemaining() != null && r.certDaysRemaining() <= 60 ? Tone.WARNING.strong : MailTokens.MUTED;
-            body.add(List.of(Cell.of(r.domain()),
-                    Cell.of(pctText(r.availabilityPct()), pctColor(r.availabilityPct()), true),
-                    Cell.of(r.outageCount() > 0 ? r.outageCount() + " · " + r.downtimeMinutes() + " dk" : "—",
-                            r.outageCount() > 0 ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, false),
-                    Cell.of(resp, MailTokens.MUTED, false),
-                    Cell.of(certTxt, certColor, true)));
-        }
-        if (!body.isEmpty()) {
-            d.heading("Domain Erişilebilirlik Detayı");
-            d.table(List.of(Col.of("Domain"), Col.num("Erişilebilirlik"), Col.num("Kesinti"), new Col("Yanıt (ort/p95)", true, true, true),
-                    Col.num("Sertifika")), body);
-        }
-
-        // ── Sayfa Hızı (opsiyonel) — PERFORMANS anlatır, kesinti değil
-        if (ps != null && !ps.slowest().isEmpty()) {
-            List<List<Cell>> psRows = new ArrayList<>();
-            for (PageSpeedWeeklyRow r : ps.slowest()) {
-                String load = r.avgLoadMs() != null ? r.avgLoadMs() + " ms" : "—";
-                String trend = "—";
-                String trendColor = MailTokens.MUTED;
-                if (r.avgLoadMs() != null && r.prevAvgLoadMs() != null && r.prevAvgLoadMs() > 0) {
-                    long diff = r.avgLoadMs() - r.prevAvgLoadMs();
-                    long pct = Math.round(100.0 * diff / r.prevAvgLoadMs());
-                    if (pct > 0) { trend = "▲ %" + pct + " yavaşladı"; trendColor = Tone.DESTRUCTIVE.strong; }
-                    else if (pct < 0) { trend = "▼ %" + Math.abs(pct) + " hızlandı"; trendColor = Tone.SUCCESS.strong; }
-                    else { trend = "değişmedi"; }
-                }
-                psRows.add(List.of(Cell.of(r.name()), Cell.of(load, null, true), Cell.of(trend, trendColor, true),
-                        Cell.of(r.breachedChecks() > 0 ? r.breachedChecks() + " ölçüm" : "—",
-                                r.breachedChecks() > 0 ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, false)));
-            }
-            d.heading("Sayfa Hızı — en yavaş " + ps.slowest().size() + " sayfa"
-                    + (ps.breachedMonitorCount() > 0 ? " · " + ps.breachedMonitorCount() + " izlemede eşik aşıldı" : ""));
-            d.table(List.of(Col.of("Sayfa"), Col.num("Ort. yükleme"), Col.nw("Geçen haftaya göre"), Col.num("Eşik aşımı")), psRows);
-            d.note("Bu bölüm PERFORMANSI anlatır, kesintiyi değil: yavaş bir sayfa yukarıdaki erişilebilirlik yüzdesini düşürmez. "
-                    + "Ölçüm sunucudan çekilen HTML ve alt kaynaklarla yapılır; tarayıcı çalıştırılmadığı için JavaScript ile sonradan "
-                    + "yüklenen kaynaklar sayıma girmez.");
-        }
-
-        // ── Sürüm & Dağıtım (E2) — geri alma varsa ton kırmızı. TR ana satır + EN alt satır.
-        if (dep != null) {
-            String range = (dep.fromVersion() != null && dep.toVersion() != null && !dep.fromVersion().equals(dep.toVersion()))
-                    ? " (v" + dep.fromVersion() + " → v" + dep.toVersion() + ")"
-                    : (dep.toVersion() != null ? " (v" + dep.toVersion() + ")" : "");
-            String tr = dep.deployments() == 0
-                    ? "Bu hafta dağıtım yapılmadı; " + dep.restarts() + " yeniden başlatma, " + dep.rollbacks() + " geri alma"
-                    : "Bu hafta " + dep.deployments() + " dağıtım" + range + ", " + dep.restarts()
-                      + " yeniden başlatma, " + dep.rollbacks() + " geri alma";
-            String en = dep.deployments() == 0
-                    ? "No deployments this week; " + dep.restarts() + " restart(s), " + dep.rollbacks() + " rollback(s)"
-                    : dep.deployments() + " deployment(s)" + range + ", " + dep.restarts()
-                      + " restart(s), " + dep.rollbacks() + " rollback(s) this week";
-            bilingual(d, dep.rollbacks() > 0 ? Tone.DESTRUCTIVE : Tone.NEUTRAL, "Sürüm & Dağıtım", tr, en);
-        }
-
-        // Zayıf algoritma (2026-09-12): "temiz" raporun da kanıtı olsun — "0 (tarandı: 212)" satırı görünür.
-        if (weak != null) {
-            String tr = weak.weak() == 0
-                    ? "Zayıf algoritmalı sertifika yok (tarandı: " + weak.scanned() + " alan)"
-                    : weak.weak() + " sertifika zayıf imza/anahtar kullanıyor (tarandı: " + weak.scanned() + " alan) — yenileme planı gerekli";
-            String en = weak.weak() == 0
-                    ? "No weak-algorithm certificates (" + weak.scanned() + " domains scanned)"
-                    : weak.weak() + " certificate(s) use a weak signature/key (" + weak.scanned() + " domains scanned) — renewal plan needed";
-            bilingual(d, weak.weak() > 0 ? Tone.DESTRUCTIVE : Tone.SUCCESS, "Zayıf Algoritma", tr, en);
-        }
-
-        // Alan adı (registrar) bitişleri (2026-09-22, madde G): sertifikadan AYRI vade sınıfı — kayıt dolarsa site kaybolur.
-        // Boş pencere de raporlanır ("90 günde biten yok, izlenen N"): sessizlik "bakılmadı" ile karışmasın.
-        if (dom != null) {
-            boolean any = dom.rows() != null && !dom.rows().isEmpty();
-            Tone tone = any && dom.rows().stream().anyMatch(r -> r.daysRemaining() != null && r.daysRemaining() <= 30) ? Tone.DESTRUCTIVE
-                    : any ? Tone.WARNING : Tone.SUCCESS;
-            String head = any
-                    ? dom.rows().size() + " alan adı önümüzdeki " + dom.windowDays() + " günde doluyor (izlenen: " + dom.monitorCount() + ")"
-                    : "Önümüzdeki " + dom.windowDays() + " günde biten alan adı yok (izlenen: " + dom.monitorCount() + ")";
-            String unlocked = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + " alan adında transfer kilidi YOK" : "";
-            // İngilizce alt satır — kardeş bantlarla (Sürüm & Dağıtım, Zayıf Algoritma) aynı iki dilli düzen
-            String headEn = any
-                    ? dom.rows().size() + (dom.rows().size() == 1 ? " domain expires" : " domains expire") + " within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)"
-                    : "No domain expires within the next " + dom.windowDays() + " days (" + dom.monitorCount() + " monitored)";
-            String unlockedEn = dom.unlockedCount() > 0 ? " · " + dom.unlockedCount() + (dom.unlockedCount() == 1 ? " domain has" : " domains have") + " no transfer lock" : "";
-            d.heading("Alan Adı Bitişleri");
-            bilingual(d, tone, null, head + unlocked, headEn + unlockedEn);
-            if (any) {
-                List<List<Cell>> domRows = new ArrayList<>();
-                for (DomainExpiryWeeklyRow r : dom.rows()) {
-                    Integer dd = r.daysRemaining();
-                    String dc = dd == null ? MailTokens.MUTED : dd < 0 ? Tone.DESTRUCTIVE.text : dd <= 7 ? Tone.DESTRUCTIVE.strong
-                            : dd <= 30 ? Tone.WARNING.strong : MailTokens.FG;
-                    String dTxt = dd == null ? "—" : dd < 0 ? Math.abs(dd) + " gün önce doldu" : dd + " gün";
-                    String lock = r.transferLock() == null ? "—" : switch (r.transferLock()) {
-                        case "BOTH" -> "registrar+registry"; case "SERVER" -> "registry"; case "CLIENT" -> "registrar";
-                        case "NONE" -> "YOK"; default -> "doğrulanamadı"; };
-                    String plan = r.plannedAt() == null ? "—" : (r.planOverdue() ? "GECİKMİŞ " : "") + r.plannedAt();
-                    domRows.add(List.of(Cell.of(r.domain()), Cell.of(dTxt, dc, true),
-                            Cell.of(r.expiryDate() == null ? "—" : r.expiryDate().length() >= 10 ? r.expiryDate().substring(0, 10) : r.expiryDate(), MailTokens.MUTED, false),
-                            Cell.of(r.registrar() == null ? "—" : r.registrar(), MailTokens.MUTED, false),
-                            Cell.of(lock, "NONE".equals(r.transferLock()) ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, "NONE".equals(r.transferLock())),
-                            Cell.of(plan, r.planOverdue() ? Tone.DESTRUCTIVE.strong : MailTokens.MUTED, r.planOverdue())));
-                }
-                d.table(List.of(Col.of("Alan adı"), Col.num("Kalan"), new Col("Bitiş", false, true, true), Col.opt("Registrar"),
-                        Col.nw("Kilit"), Col.opt("Plan")), domRows);
-            }
-        }
-        d.footerMeta("Site Monitor — Otomatik Haftalık Rapor", "Oluşturuldu: " + nowStamp());
-        return d.html();
+        return buildWeeklyAvailabilityHtml(teamName, weekLabel, rows, s, att, ps, dep, weak, dom, null);
     }
 
-    /** İki dilli tonlu bant (TR ana satır + EN alt satır). */
-    private static void bilingual(MailDoc d, Tone tone, String title, String tr, String en) {
-        d.alertHtml(tone, title == null ? null : esc(title),
-                esc(tr) + "<br><span style=\"font-size:12px;line-height:18px\">" + esc(en) + "</span>",
-                (title == null ? "" : title + ": ") + tr + "\n" + en);
+    /**
+     * Haftalık Erişilebilirlik e-postası (yeniden tasarım 2026-09-28): gövde {@link WeeklyAvailabilityMail}'de kurulur
+     * (hüküm, KPI'lar + geçen haftaya göre değişim, izleme türü çubukları, en kötü domainler, haftanın alarmları,
+     * yaklaşan sertifikalar, derin bağlantılar). {@code ins} null → alarm/tür bölümleri ve değişim çipi çizilmez
+     * (eski çağıranlar). Bağlantılar CANLI taban adresten ({@link #liveBaseUrl()}).
+     */
+    public String buildWeeklyAvailabilityHtml(String teamName, String weekLabel,
+                                              List<AvailabilityRow> rows, AvailabilitySummary s,
+                                              AttachmentInfo att, PageSpeedWeekly ps, DeploymentWeekly dep,
+                                              WeakAlgoWeekly weak, DomainExpiryWeekly dom,
+                                              WeeklyAvailabilityMail.Insights ins) {
+        return WeeklyAvailabilityMail.build(new WeeklyAvailabilityMail.Input(teamName, weekLabel, rows, s, att, ps, dep, weak, dom,
+                ins, liveBaseUrl(), nowStamp())).html();
     }
 
     // ── Aylık sertifika envanteri raporu ─────────────────────────────────────
 
-    /** Rapor tablosunun bir satırı — kalan süre görünümü. */
-    public record InventoryReportRow(String domain, String teamName, Integer tier,
-                                     Integer daysRemaining, String notAfter, String status) { }
-
-    /** Hijyen bulgu grubu (InventoryHygieneService.Group'un mail-katmanı karşılığı). */
-    public record InventoryFindingGroup(String title, int total, List<String[]> samples, int hidden) { }
-
     /**
-     * Aylık sertifika envanteri raporu (640px rapor kartı). Sıra: başlık → KPI kutuları
-     * (Aktif/Pasif/Toplam) → kalan süre tablosu → hijyen bulguları → ek notu → CTA → alt bilgi.
+     * Aylık sertifika envanteri raporu — düzen {@link com.sitemonitor.service.mail.CertInventoryMail}'de (yeniden tasarım
+     * 2026-09-28: hüküm satırı, KPI kutuları, kalan süre çubuğu, "Önümüzdeki 30 gün", hijyen kartları, kırılımlar, ekler).
+     * Burada yalnız CANLI taban adres ({@code site.monitor.app.base-url}) ve oluşturma damgası eklenir.
      */
-    public String buildCertInventoryReportHtml(String monthLabel, Map<String, Integer> counts,
-                                               List<InventoryReportRow> rows,
-                                               List<InventoryFindingGroup> findings,
-                                               List<String> attachmentNames) {
-        MailDoc d = MailDoc.create("[Site Monitor] Aylık Sertifika Envanteri — " + nzs(monthLabel)).wide()
-                .preheader(nzs(monthLabel) + " envanter özeti · " + counts.getOrDefault("active", 0) + " aktif kayıt")
-                .kicker("Aylık Sertifika Envanteri");
-        d.title("Envanter Raporu", monthLabel);
-        d.paragraphHtml("<strong>Sayın Sertifika Ekibi,</strong>", "Sayın Sertifika Ekibi,");
-        d.paragraphHtml("Aşağıda sertifika envanterinin <strong>" + esc(monthLabel) + "</strong> dönemi özeti yer almaktadır. "
-                        + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.",
-                "Aşağıda sertifika envanterinin " + nzs(monthLabel) + " dönemi özeti yer almaktadır. "
-                        + "Eksik, hatalı veya güncel olmayan kayıtlar varsa lütfen envanterden güncelleyiniz.");
-        // Silinmiş kayıtlar raporda YOK — sahibinden aksiyon beklenmeyen satırlar gürültü yapıyordu.
-        d.stats(List.of(
-                new Stat("Aktif", String.valueOf(counts.getOrDefault("active", 0)), Tone.SUCCESS.strong, null),
-                new Stat("Pasif", String.valueOf(counts.getOrDefault("passive", 0)), MailTokens.MUTED, null),
-                new Stat("Toplam", String.valueOf(counts.getOrDefault("total", 0)), null, null)));
-
-        List<List<Cell>> body = new ArrayList<>();
-        for (InventoryReportRow r : rows) {
-            body.add(List.of(Cell.of(r.domain()), Cell.of(nzText(r.teamName()), MailTokens.MUTED, false),
-                    Cell.of(r.tier() == null ? "—" : "T" + r.tier(), MailTokens.MUTED, false),
-                    Cell.of(r.daysRemaining() == null ? "veri yok" : r.daysRemaining() + " gün", daysColor(r.daysRemaining()), true),
-                    Cell.of(nzText(r.notAfter()), MailTokens.MUTED, false),
-                    Cell.of(nzText(r.status()), MailTokens.MUTED, false)));
-        }
-        if (!body.isEmpty()) {
-            d.heading("Sertifika Kalan Süreleri");
-            d.table(List.of(Col.of("Domain"), Col.nw("Takım"), new Col("Tier", false, true, true), Col.num("Kalan Gün"),
-                    new Col("Bitiş", false, true, true), Col.opt("Durum")), body);
-        }
-
-        if (findings == null || findings.isEmpty()) {
-            d.alert(Tone.SUCCESS, "Envanterde eksik, hatalı veya güncel olmayan kayıt bulunmadı.", null);
-        } else {
-            for (InventoryFindingGroup g : findings) {
-                List<List<Cell>> lines = new ArrayList<>();
-                for (String[] s : g.samples()) lines.add(List.of(Cell.of(s[0]), Cell.of(s[1], Tone.WARNING.text, false)));
-                d.heading(g.title() + " (" + g.total() + ")");
-                d.table(List.of(Col.of("Kayıt"), Col.of("Bulgu")), lines);
-                if (g.hidden() > 0) d.note("+" + g.hidden() + " kayıt daha — tamamı ekteki dosyalarda");
-            }
-        }
-
-        // Her dosya adı AYRI escape edilir; ayırıcı işaretleme escape'in DIŞINDA kalmalı —
-        // eskiden tüm birleşik metin escape edilince kullanıcı ham "</strong>, <strong>" görüyordu.
-        if (attachmentNames != null && !attachmentNames.isEmpty()) {
-            d.alertHtml(Tone.NEUTRAL, "Envanterin tamamı ektedir",
-                    attachmentNames.stream().map(n -> "<strong>" + esc(n) + "</strong>").collect(java.util.stream.Collectors.joining(", ")),
-                    "Envanterin tamamı ektedir: " + String.join(", ", attachmentNames));
-        }
-        // Sertifika Envanteri ekranının sekmesi "domains" (App.jsx) — "inventory" diye bir sekme yok.
-        d.button(liveBaseUrl() + "/?tab=domains", "Sertifika Envanterini Görüntüle");
-        d.footerMeta("Site Monitor — Otomatik Aylık Envanter Raporu", "Oluşturuldu: " + nowStamp());
-        return d.html();
-    }
-
-    /** Kalan güne göre renk — EmailTemplateBuilder aciliyet skalasıyla aynı tonlar. */
-    private static String daysColor(Integer days) {
-        if (days == null) return MailTokens.MUTED;
-        if (days < 0) return Tone.DESTRUCTIVE.text;
-        if (days <= 7) return Tone.DESTRUCTIVE.strong;
-        if (days <= 30) return Tone.WARNING.strong;
-        return Tone.SUCCESS.strong;
+    public String buildCertInventoryReportHtml(com.sitemonitor.service.mail.CertInventoryMail.Report report) {
+        return com.sitemonitor.service.mail.CertInventoryMail.build(report, liveBaseUrl(), nowStamp()).html();
     }
 
     private static String nzText(String s) { return s == null || s.isBlank() ? "—" : s; }
 
-    /** Availability %'sine göre renk: ≥99.9 yeşil, ≥99 amber, <99 kırmızı, null gri. */
-    private static String pctColor(Double pct) {
-        if (pct == null) return MailTokens.MUTED;
-        if (pct >= 99.9) return Tone.SUCCESS.strong;
-        if (pct >= 99.0) return Tone.WARNING.strong;
-        return Tone.DESTRUCTIVE.strong;
-    }
-    private static String pctText(Double pct) {
-        if (pct == null) return "veri yok";
-        return String.format(java.util.Locale.US, "%.2f%%", pct);
-    }
+    // pctColor / pctText: haftalık e-postayla birlikte WeeklyAvailabilityMail'e taşındı (2026-09-28).
 
     // ── Olay & Hata bildirimi (manuel SRE kaydı) ─────────────────────────────
 

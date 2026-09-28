@@ -25,7 +25,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Kurum-geneli takım rehberi: oturum açmış herkes okur → projeksiyon beyaz-listeli olmalı
- * (telefon / sicil / sistem rolü / foto SIZMAZ), üyelik yüklemi birincil + çoklu takım,
+ * (telefon / sicil / foto base64 SIZMAZ; sistem rolü + has_photo 2026-09-28 kullanıcı kararıyla görünür), üyelik yüklemi birincil + çoklu takım,
  * yalnız aktif hesaplar, bilinmeyen takım 404, eskalasyon kişileri takıma göre.
  */
 @ExtendWith(MockitoExtension.class)
@@ -57,7 +57,7 @@ class TeamDirectoryControllerTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    @DisplayName("members: beyaz-liste alanları döner, telefon/sicil/sistem rolü/foto SIZMAZ; çoklu-takım üyesi dahil, pasif hariç")
+    @DisplayName("members: beyaz-liste alanları (+ sistem rolü, has_photo) döner, telefon/sicil/foto base64 SIZMAZ; çoklu-takım üyesi dahil, pasif hariç")
     void members_whitelistedProjection() {
         AppUser lead = user(7, "lead", "Lider Kişi", 1L);
         AppUser multi = user(8, "multi", "Çoklu Üye", 9L, 1L);          // birincil 9, ek üyelik 1
@@ -78,7 +78,10 @@ class TeamDirectoryControllerTest {
         Map<String, Object> leadRow = members.stream().filter(m -> "lead".equals(m.get("username"))).findFirst().orElseThrow();
         assertThat(leadRow).containsKeys("display_name", "title", "department", "mudurluk_name", "org_role", "email", "company_level", "manager_id", "manager_display_name");
         assertThat(leadRow.get("manager_display_name")).isEqualTo("Müdür Kişi");
-        assertThat(leadRow).doesNotContainKeys("phone", "employee_id", "system_role", "photo_base64", "password_hash");
+        assertThat(leadRow).doesNotContainKeys("phone", "employee_id", "photo_base64", "password_hash");
+        // 2026-09-28 kullanıcı kararı: sistem rolü ve fotoğraf VARLIĞI görünür (fotoğrafın kendisi /api/users/{id}/photo'dan)
+        assertThat(leadRow).containsEntry("system_role", "USER").containsEntry("has_photo", true);
+        assertThat(leadRow.toString()).doesNotContain("AAAA").doesNotContain("+90 555");
         Map<String, Object> t = (Map<String, Object>) data.get("team");
         assertThat(t.get("leader_display_name")).isEqualTo("Lider Kişi");
         List<Map<String, Object>> contacts = (List<Map<String, Object>>) data.get("escalation_contacts");

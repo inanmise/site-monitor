@@ -1317,6 +1317,14 @@ export const api = {
       const qs = q.toString()
       return request(`/monitoring/changes/recent${qs ? '?' + qs : ''}`)
     },
+    // İzleme Değişiklikleri özet kartları (2026-09-28): pencere + takım için olay dağılımı, günlük eğri (tz = istemcinin
+    // IANA saat dilimi), en çok değişen izlemeler, kişiler. Liste ucundan AYRI — sayfa çevirmek bunu yeniden istemez.
+    getChangeSummary: (params = {}) => {
+      const q = new URLSearchParams()
+      Object.keys(params).forEach(k => { if (params[k] != null && params[k] !== '') q.set(k, params[k]) })
+      const qs = q.toString()
+      return request(`/monitoring/changes/summary${qs ? '?' + qs : ''}`)
+    },
     // Geri döndürme: geçmişi EZMEZ, RESTORE olaylı yeni bir satır üretir (sunucu tarafında).
     restoreChange: (kind, id, seq, note) => request(`/monitoring/changes/${kind}/${id}/${seq}/restore`,
       { method: 'POST', body: JSON.stringify(note ? { changeNote: note } : {}) }),

@@ -75,6 +75,27 @@ public interface UptimeCheckRepository extends JpaRepository<UptimeCheck, Long> 
     List<UptimeCheck> findByDomainAndPortAndCheckedAtBetweenOrderByCheckedAtAsc(
         String domain, Integer port, String checkedAtStart, String checkedAtEnd);
 
+    /**
+     * Haftalık rapor TOPLU okuma (BO5/O15, 2026-09-28): bir PARÇA domainin pencere içi kontrolleri tek sorguda,
+     * domain → port → zaman sıralı (çağıran (domain, port) ile gruplar; sınırlar dahil — derived {@code Between} ile aynı).
+     * Eskiden takım başına domain sayısı kadar sorgu atılıyordu; çağıran listeyi sınırlı parçalara böler (bellek tavanı).
+     */
+    @Query("SELECT u FROM UptimeCheck u WHERE u.domain IN :domains AND u.checkedAt >= :from AND u.checkedAt <= :to "
+         + "ORDER BY u.domain, u.port, u.checkedAt")
+    List<UptimeCheck> findWindowForDomains(@Param("domains") java.util.Collection<String> domains,
+                                           @Param("from") String from, @Param("to") String to);
+
+    /**
+     * Haftalık rapor "geçen haftaya göre" kıyası (2026-09-28): (domain, port) başına [domain, port, toplam, up] — bakım
+     * satırları HARİÇ, up = status 'up' (harf duyarsız). {@code computeRow}'un yüzde girdisiyle birebir aynı sayım;
+     * ham satır JVM'e taşınmaz.
+     */
+    @Query("SELECT u.domain, u.port, COUNT(u), SUM(CASE WHEN LOWER(u.status) = 'up' THEN 1 ELSE 0 END) FROM UptimeCheck u "
+         + "WHERE u.domain IN :domains AND u.checkedAt >= :from AND u.checkedAt <= :to "
+         + "AND (u.maintenance = false OR u.maintenance IS NULL) GROUP BY u.domain, u.port")
+    List<Object[]> countWindowForDomains(@Param("domains") java.util.Collection<String> domains,
+                                         @Param("from") String from, @Param("to") String to);
+
     /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
      *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
      *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */

@@ -1341,8 +1341,10 @@ export default function App() {
                     {/* Kart görünümü — ortak ui/CardDensityToggle (izleme sayfalarıyla aynı bileşen, 2026-09-27) */}
                     <CardDensityToggle value={cardMode} onChange={(v) => { if (v !== cardMode) toggleCardMode() }} tip={t('ccx.modeTip')} />
                     {/* Domain ara — kart görünümü seçicisinin yanında (2026-09-25, kullanıcı isteği; eskiden üst
-                        kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. */}
-                    <InputGroup className="h-8 w-64 max-w-full">
+                        kontrol satırındaydı). shadcn InputGroup: büyüteç + doluysa temizle düğmesi. Genişlik 2026-09-28
+                        (kullanıcı: "domain ara alanını biraz genişletelim"): telefonda tam satır (40 px dokunma), tablette
+                        20rem, geniş ekranda 26rem — uzun alan adları kırpılmadan yazılır. */}
+                    <InputGroup data-slot="dashboard-domain-search" className="h-8 w-full max-w-full max-sm:h-10 sm:w-80 lg:w-[26rem]">
                       <InputGroupAddon><Search /></InputGroupAddon>
                       <InputGroupInput
                         type="text"
@@ -1438,7 +1440,7 @@ export default function App() {
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.stats.Icon} title={t('app.statsTitle')} description={t('app.statsDesc')} />
                 <StatsView certs={certs} teamStats={teamStats} onRowClick={(d) => setModalCert(certs.find(c => c.domain === d) ?? null)}
-                  canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'}
+                  canAddDomain={systemRole === 'ADMIN' || systemRole === 'TEAM_ADMIN'} loading={lastUpdate == null}
                   onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }} />
               </div>
             )}

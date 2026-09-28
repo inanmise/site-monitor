@@ -835,4 +835,464 @@ public final class MailKit {
         return sb.toString().replace("&nbsp;", " ").replace("&middot;", "·").replace("&rarr;", "→").replace("&zwnj;", "")
                 .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
     }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // ── AYLIK ENVANTER RAPORU BLOKLARI (2026-09-28, CertInventoryMail) ────────
+    // Parçalı durum çubuğu, satır içi tonlu hap, 4→2 sütunlu öğe tablosu, liste kartı.
+    // Genel amaçlıdır; kapı: CertInventoryMailTest + EmailResponsiveContractTest.
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /** Parçalı çubuğun bir dilimi: etiket, adet, dolgu rengi (yalnız {@link MailTokens}/{@link Tone} değerleri). */
+    public record Segment(String label, int count, String color) { }
+
+    /** Sıfırdan büyük bir dilimin çubukta kapladığı en az yüzde — 1/1000'lik dilim de görünür kalsın. */
+    static final int SEGMENT_MIN_PCT = 2;
+
+    /**
+     * Parçalı durum çubuğu + lejant. Dilimler yüzde genişlikli {@code td bgcolor} (Outlook-güvenli: görsel, CSS gradyanı,
+     * {@code rgba} yok); aralarında kart renginde 2px boşluk. Yalnız dolu dilimler çizilir ve lejantta adet + yüzdeyle yazılır
+     * (renk TEK sinyal değildir). Toplam 0 ise boş dize.
+     */
+    public static String segmentBar(List<Segment> segments) {
+        List<Segment> nz = new ArrayList<>();
+        int total = 0;
+        for (Segment s : segments) {
+            if (s != null && s.count() > 0) { nz.add(s); total += s.count(); }
+        }
+        if (total == 0) return "";
+        int[] w = segmentWidths(nz, total);
+        StringBuilder sb = new StringBuilder("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\"><tr>");
+        for (int i = 0; i < nz.size(); i++) {
+            Segment s = nz.get(i);
+            boolean first = i == 0, last = i == nz.size() - 1;
+            String radius = first && last ? "6px" : first ? "6px 0 0 6px" : last ? "0 6px 6px 0" : "0";
+            sb.append("<td width=\"").append(w[i]).append("%\" height=\"12\" bgcolor=\"").append(s.color())
+              .append("\" title=\"").append(esc(s.label())).append(": ").append(s.count())
+              .append("\" style=\"height:12px;background-color:").append(s.color()).append(";border-radius:").append(radius)
+              .append(last ? "" : ";border-right:2px solid " + CARD)
+              .append(";font-size:0;line-height:0;mso-line-height-rule:exactly\">&nbsp;</td>");
+        }
+        sb.append("</tr></table>");
+        List<String> legend = new ArrayList<>();
+        for (Segment s : nz) {
+            legend.add("<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\"><tr>"
+                    + "<td width=\"10\" height=\"10\" bgcolor=\"" + s.color() + "\" style=\"width:10px;height:10px;background-color:" + s.color()
+                    + ";border-radius:3px;font-size:0;line-height:0;mso-line-height-rule:exactly\">&nbsp;</td>"
+                    + "<td style=\"padding:0 0 0 6px;" + font() + "font-size:12px;line-height:16px;color:" + MUTED + ";white-space:nowrap\">"
+                    + esc(s.label()) + " <strong style=\"font-weight:600;color:" + FG + "\">" + s.count() + "</strong> · "
+                    + segmentPct(s.count(), total) + "</td></tr></table>");
+        }
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding:10px 0 0\">")
+          .append(inlineWrap(legend, 12, null)).append("</td></tr></table>");
+        return sb.toString();
+    }
+
+    /** Lejant yüzdesi (Türkçe yazım: "%12"); sıfırdan büyük ama %1'in altındaki pay "<%1". */
+    public static String segmentPct(int count, int total) {
+        if (total <= 0 || count <= 0) return "%0";
+        double p = 100.0 * count / total;
+        return p < 1 ? "<%1" : "%" + Math.round(p);
+    }
+
+    /**
+     * Dilim genişlikleri (tam sayı yüzde, toplam TAM 100): en büyük artık yöntemi + dolu dilime en az
+     * {@link #SEGMENT_MIN_PCT}. Taşma en geniş dilimden, eksik en büyük artıktan kapatılır.
+     */
+    static int[] segmentWidths(List<Segment> nz, int total) {
+        int n = nz.size();
+        int[] w = new int[n];
+        double[] rem = new double[n];
+        int sum = 0;
+        for (int i = 0; i < n; i++) {
+            double exact = 100.0 * nz.get(i).count() / total;
+            w[i] = Math.max(SEGMENT_MIN_PCT, (int) Math.floor(exact));
+            rem[i] = exact - Math.floor(exact);
+            sum += w[i];
+        }
+        while (sum > 100) {
+            int j = 0;
+            for (int i = 1; i < n; i++) if (w[i] > w[j]) j = i;
+            w[j]--;
+            sum--;
+        }
+        while (sum < 100) {
+            int j = -1;
+            for (int i = 0; i < n; i++) if (rem[i] >= 0 && (j < 0 || rem[i] > rem[j])) j = i;
+            if (j < 0) {                       // artıklar tükendi → en geniş dilime ekle
+                j = 0;
+                for (int i = 1; i < n; i++) if (w[i] > w[j]) j = i;
+            } else {
+                rem[j] = -1;
+            }
+            w[j]++;
+            sum++;
+        }
+        return w;
+    }
+
+    /**
+     * Satır içi TONLU hap (tablo hücresindeki aciliyet rozeti) — {@link #pill(String)}'in tonlu eşi. {@code solid} yalnız
+     * DESTRUCTIVE/INFO'da dolu zemin + beyaz yazı (kontrast); aksi tonlu zemin + tam kenarlık. Outlook'ta kare gölge.
+     */
+    public static String pill(String label, Tone tone, boolean solid) {
+        if (tone == null) return pill(label);
+        String bg, border, color;
+        if (solid && (tone == Tone.DESTRUCTIVE || tone == Tone.INFO)) {
+            bg = tone.strong; border = tone.strong; color = "#ffffff";
+        } else if (tone == Tone.NEUTRAL) {
+            bg = SECONDARY; border = BORDER; color = FG;
+        } else {
+            bg = tone.bg; border = tone.border; color = tone.text;
+        }
+        return "<span style=\"display:inline-block;background-color:" + bg + ";border:1px solid " + border + ";border-radius:"
+                + RADIUS_CONTROL + "px;padding:1px 8px;font-size:12px;line-height:18px;font-weight:600;color:" + color
+                + ";white-space:nowrap\">" + esc(label) + "</span>";
+    }
+
+    /**
+     * Sade bağlantı (tablo/liste içi, çok tekrarlı): {@link #link} gibi şema denetimli ve kaçışlı, ama altı çizgisiz ve
+     * kısa stilli — kırılma kuralını kapsayan tablodan miras alır (uzun listede satır başına ~70 bayt tasarruf).
+     */
+    public static String quietLink(String url, String label) {
+        if (!safeHref(url)) return esc(label);
+        return "<a href=\"" + esc(url) + "\" target=\"_blank\" style=\"color:" + PRIMARY + ";text-decoration:none\">" + esc(label) + "</a>";
+    }
+
+    /**
+     * Öğe tablosu satırı — tüm alanlar HAZIR (kaçırılmış) HTML: {@code main} + {@code sub} ilk sütunda iki satır,
+     * {@code c2}/{@code c3} ikincil sütunlar, {@code end} sağdaki kısa değer (ör. aciliyet hapı). null alan "—" olur.
+     */
+    public record Item(String main, String sub, String c2, String c3, String end) { }
+
+    /**
+     * 4 sütunlu öğe tablosu: masaüstünde {@code [main/sub] [c2] [c3] [end]}; telefonda ({@value #BREAKPOINT}px altı)
+     * ikincil sütunlar gizlenir ({@code .col-opt}) ve içerikleri ilk hücrenin altına TEK satır olarak iner ("c2 · c3",
+     * {@code .m-only}) — tablo 2 sütunlu istif satıra döner. {@link #dataTable}'ın aksine satır İKİ KEZ basılmaz: uzun
+     * listede gövde yarı boyutta kalır (Gmail 102 KB'ta kırpar). Stil atan istemci masaüstü düzenini görür (hücreler
+     * kırılabilir, yatay kaydırma yok); mobil kopyalar Outlook'a hiç gitmez.
+     */
+    public static String itemTable(List<String> headers, List<Item> items) {
+        if (items == null || items.isEmpty()) return "";
+        String[] h = new String[4];
+        for (int i = 0; i < 4; i++) h[i] = headers != null && i < headers.size() && headers.get(i) != null ? headers.get(i) : "";
+        String headCell = "background-color:" + SUBTLE + ";padding:10px 12px;border-bottom:1px solid " + BORDER
+                + ";font-size:12px;line-height:16px;font-weight:600;color:" + MUTED + ";";
+        StringBuilder sb = new StringBuilder(items.size() * 900 + 1200);
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;border:1px solid ")
+          .append(BORDER).append(";border-radius:").append(RADIUS_INNER).append("px;").append(font())
+          // kırılma kuralı TABLODA bir kez (miras alınır) — satır başına tekrar gövdeyi şişiriyordu
+          .append("word-break:break-word;overflow-wrap:anywhere\"><tr>")
+          .append("<td bgcolor=\"").append(SUBTLE).append("\" align=\"left\" style=\"").append(headCell)
+          .append("border-radius:").append(RADIUS_INNER).append("px 0 0 0;text-align:left\">").append(esc(h[0])).append("</td>")
+          .append("<td class=\"col-opt\" bgcolor=\"").append(SUBTLE).append("\" align=\"left\" style=\"").append(headCell).append("text-align:left\">")
+          .append(esc(h[1])).append("</td>")
+          .append("<td class=\"col-opt\" bgcolor=\"").append(SUBTLE).append("\" align=\"left\" style=\"").append(headCell).append("text-align:left\">")
+          .append(esc(h[2])).append("</td>")
+          .append("<td bgcolor=\"").append(SUBTLE).append("\" align=\"right\" style=\"").append(headCell)
+          .append("border-radius:0 ").append(RADIUS_INNER).append("px 0 0;text-align:right\">").append(esc(h[3])).append("</td></tr>");
+        for (int r = 0; r < items.size(); r++) {
+            Item it = items.get(r);
+            String line = r == items.size() - 1 ? "0" : "1px solid " + DIVIDER;
+            String cell = "padding:10px 12px;border-bottom:" + line + ";";
+            sb.append("<tr><td valign=\"top\" style=\"").append(cell).append("\">")
+              .append("<p style=\"margin:0;font-size:13px;line-height:20px;font-weight:600;color:").append(FG).append("\">").append(blankDash(it.main())).append("</p>");
+            if (it.sub() != null && !it.sub().isBlank()) {
+                sb.append("<p style=\"margin:2px 0 0;font-size:12px;line-height:16px;color:").append(MUTED).append("\">").append(it.sub()).append("</p>");
+            }
+            String m2 = it.c2() == null || it.c2().isBlank() ? "" : it.c2();
+            String m3 = it.c3() == null || it.c3().isBlank() ? "" : it.c3();
+            if (!m2.isEmpty() || !m3.isEmpty()) sb.append(mobileLine(m2.isEmpty() ? m3 : m3.isEmpty() ? m2 : m2 + " · " + m3, "2px 0 0"));
+            sb.append("</td>")
+              .append("<td class=\"col-opt\" valign=\"top\" style=\"").append(cell).append("font-size:13px;line-height:20px;color:").append(MUTED)
+              .append("\">").append(blankDash(it.c2())).append("</td>")
+              .append("<td class=\"col-opt nw\" valign=\"top\" style=\"").append(cell).append("font-size:13px;line-height:20px;color:").append(MUTED)
+              .append("\">").append(blankDash(it.c3())).append("</td>")
+              .append("<td valign=\"top\" align=\"right\" style=\"").append(cell).append("text-align:right;white-space:nowrap\">")
+              .append(blankDash(it.end())).append("</td></tr>");
+        }
+        return sb.append("</table>").toString();
+    }
+
+    /** Yalnız telefonda görünen küçük ikincil satır (Outlook'a gitmez; stil atan istemcide gizli kalır). */
+    private static String mobileLine(String html, String margin) {
+        return "<!--[if !mso]><!--><div class=\"m-only\" style=\"display:none;max-height:0;overflow:hidden;mso-hide:all;margin:" + margin
+                + ";font-size:12px;line-height:16px;color:" + MUTED + "\">" + html + "</div><!--<![endif]-->";
+    }
+
+    /** Liste kartı öğesi — HAZIR (kaçırılmış) HTML başlık + alt satır. */
+    public record ListItem(String title, String sub) { }
+
+    /**
+     * Liste kartı: başlık + sağda rozet, açıklama, (isteğe bağlı) "önerilen aksiyon" kutusu, alt alta öğeler ve dip notu.
+     * Tek sütun olduğundan her genişlikte aynı okunur — telefon kopyası gerekmez. Tüm HTML girdileri çağıran kaçırır;
+     * boş/null parça çizilmez. Sol şerit YOK: ton yalnız rozette.
+     */
+    public static String listCard(String titleHtml, Badge badge, String descHtml, String actionHtml,
+                                  List<ListItem> items, String footHtml) {
+        StringBuilder sb = new StringBuilder(2048);
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\"><tr>")
+          .append("<td bgcolor=\"").append(CARD).append("\" style=\"background-color:").append(CARD).append(";border:1px solid ").append(BORDER)
+          .append(";border-radius:").append(RADIUS_INNER).append("px;padding:14px 16px;").append(font()).append("color:").append(FG).append("\">")
+          .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>")
+          .append("<td valign=\"top\" style=\"font-size:14px;line-height:20px;font-weight:600;color:").append(FG)
+          .append(";word-break:break-word;overflow-wrap:anywhere\">").append(titleHtml == null ? "" : titleHtml).append("</td>");
+        if (badge != null && badge.label() != null && !badge.label().isBlank()) {
+            // Rozet tablosu blok öğedir, td align'ı onu sağa itmez → align="right" sarmalayıcı tablo.
+            sb.append("<td valign=\"top\" align=\"right\" style=\"padding:0 0 0 12px\">")
+              .append("<table role=\"presentation\" align=\"right\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td>")
+              .append(badge(badge)).append("</td></tr></table></td>");
+        }
+        sb.append("</tr></table>");
+        if (descHtml != null && !descHtml.isBlank()) {
+            sb.append("<p style=\"margin:4px 0 0;font-size:13px;line-height:20px;color:").append(MUTED)
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(descHtml).append("</p>");
+        }
+        if (actionHtml != null && !actionHtml.isBlank()) {
+            sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;margin:10px 0 0\"><tr>")
+              .append("<td bgcolor=\"").append(SUBTLE).append("\" style=\"background-color:").append(SUBTLE).append(";border:1px solid ").append(BORDER)
+              .append(";border-radius:").append(RADIUS_CONTROL).append("px;padding:8px 10px;font-size:13px;line-height:20px;color:").append(FG)
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(actionHtml).append("</td></tr></table>");
+        }
+        if (items != null && !items.isEmpty()) {
+            sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:10px 0 0;word-break:break-word;overflow-wrap:anywhere\">");
+            for (int i = 0; i < items.size(); i++) {
+                ListItem it = items.get(i);
+                sb.append("<tr><td valign=\"top\" style=\"padding:8px 0;border-top:1px solid ").append(DIVIDER).append("\">")
+                  .append("<p style=\"margin:0;font-size:13px;line-height:20px;font-weight:600;color:").append(FG).append("\">")
+                  .append(blankDash(it.title())).append("</p>");
+                if (it.sub() != null && !it.sub().isBlank()) {
+                    sb.append("<p style=\"margin:2px 0 0;font-size:12px;line-height:18px;color:").append(MUTED).append("\">").append(it.sub()).append("</p>");
+                }
+                sb.append("</td></tr>");
+            }
+            sb.append("</table>");
+        }
+        if (footHtml != null && !footHtml.isBlank()) {
+            sb.append("<p style=\"margin:").append(items != null && !items.isEmpty() ? "2px" : "10px")
+              .append(" 0 0;font-size:12px;line-height:18px;color:").append(MUTED).append("\">").append(footHtml).append("</p>");
+        }
+        return sb.append("</td></tr></table>").toString();
+    }
+
+    /**
+     * Sıkı sayısal tablo (kırılım/özet): ilk sütun metin (kırılabilir, kalın), diğerleri kısa değer ({@link Col#right()}
+     * sağa hizalı, tek satır). Telefon KOPYASI yok — sayısal sütunlar dar olduğundan 360px'te de sığar; hücre stilleri
+     * kısa tutulur ({@link #dataTable} satırı ~1,6 KB, bu ~0,5 KB — uzun raporda Gmail 102 KB sınırı). Hücreler
+     * {@link Cell} (renk/kalınlık) taşır; {@code Cell.html} hazır HTML'dir.
+     */
+    public static String compactTable(List<Col> cols, List<List<Cell>> rows) {
+        if (cols == null || cols.isEmpty() || rows == null || rows.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(rows.size() * 500 + 800);
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;border:1px solid ")
+          .append(BORDER).append(";border-radius:").append(RADIUS_INNER).append("px;").append(font())
+          .append("word-break:break-word;overflow-wrap:anywhere\"><tr>");
+        for (int c = 0; c < cols.size(); c++) {
+            Col col = cols.get(c);
+            String radius = c == 0 && c == cols.size() - 1 ? RADIUS_INNER + "px " + RADIUS_INNER + "px 0 0"
+                    : c == 0 ? RADIUS_INNER + "px 0 0 0" : c == cols.size() - 1 ? "0 " + RADIUS_INNER + "px 0 0" : "0";
+            sb.append("<td bgcolor=\"").append(SUBTLE).append("\" align=\"").append(col.right() ? "right" : "left")
+              .append("\" style=\"padding:8px 12px;border-bottom:1px solid ").append(BORDER).append(";border-radius:").append(radius)
+              .append(";font-size:12px;line-height:16px;font-weight:600;color:").append(MUTED).append(";text-align:")
+              .append(col.right() ? "right" : "left").append(col.nowrap() ? ";white-space:nowrap" : "").append("\">")
+              .append(esc(col.label())).append("</td>");
+        }
+        sb.append("</tr>");
+        for (int r = 0; r < rows.size(); r++) {
+            List<Cell> row = rows.get(r);
+            String line = r == rows.size() - 1 ? "0" : "1px solid " + DIVIDER;
+            sb.append("<tr>");
+            for (int c = 0; c < cols.size(); c++) {
+                Col col = cols.get(c);
+                Cell cell = c < row.size() ? row.get(c) : Cell.of("—");
+                sb.append("<td valign=\"top\"").append(col.right() ? " align=\"right\"" : "")
+                  .append(" style=\"padding:8px 12px;border-bottom:").append(line).append(";font-size:13px;line-height:18px;color:")
+                  .append(cell.color() == null ? FG : cell.color()).append(cell.bold() || c == 0 ? ";font-weight:600" : "")
+                  .append(col.right() ? ";text-align:right;white-space:nowrap" : "").append("\">")
+                  .append(blankDash(cell.html())).append("</td>");
+            }
+            sb.append("</tr>");
+        }
+        return sb.append("</table>").toString();
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // ── HAFTALIK RAPOR BLOKLARI (2026-09-28, WeeklyAvailabilityMail) ──────────
+    // Değişim çipli KPI kutuları, çubuk listesi, sıralı liste kartı, karanlık tuval. Genel amaçlıdır;
+    // kapı: WeeklyAvailabilityEmailTest + MailKitReportBlocksTest + EmailResponsiveContractTest. Aynı Outlook-güvenli dil: td bgcolor +
+    // düz hex, yüzde genişlik, sol şerit YOK; telefon kopyası YOK (tek işaretleme her genişlikte okunur).
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Karanlık tuval ({@code MailDoc.darkCanvas()} ile yalnız isteyen e-postaya): sistem koyu temadaysa DIŞ zemin
+     * koyulaşır, kart AÇIK kalır ({@link #LIGHT_SCHEME_META} kilidi — kartın içi hiç ters çevrilmez, okunurluk riski
+     * yok). YALNIZ tür ve sınıf seçicisi: öznitelik seçicisi Gmail'de TÜM stil bloğunu düşürtebiliyor (mobil kurallar
+     * da giderdi) ve iç içe @ kuralı yok.
+     */
+    public static final String DARK_CANVAS_CSS = "@media (prefers-color-scheme:dark){body,.outer{background-color:"
+            + MailTokens.DARK_CANVAS + "!important}}";
+
+    /** {@link #open(String, String, int)} + TEK stil bloğunun sonuna ek kurallar (ikinci {@code <style>} açılmaz). */
+    public static String open(String title, String preheader, int width, String extraCss) {
+        String base = open(title, preheader, width);
+        if (extraCss == null || extraCss.isBlank()) return base;
+        return base.replace("<style>" + CSS + "</style>", "<style>" + CSS + extraCss + "</style>");
+    }
+
+    /**
+     * KPI kutusu: etiket, değer (renk null = ana metin), isteğe bağlı DEĞİŞİM çipi ({@code delta} metni + tonu; null =
+     * çip yok) ve alt ipucu. Hepsi DÜZ metin (burada kaçırılır). Renk tek sinyal değildir: yön metinde de yazılır (▲/▼).
+     */
+    public record Kpi(String label, String value, String valueColor, String delta, Tone deltaTone, String hint) { }
+
+    /**
+     * KPI kutuları — {@link #stats}'ın akışkan ızgarası (4'lü satır, telefonda {@code .tile} ile 2×N; stil atan
+     * istemcide min-width ile kendiliğinden sarar; Outlook'ta yüzde sütunlu hayalet tablo) + değişim çipi.
+     */
+    public static String kpis(List<Kpi> tiles) {
+        int n = tiles.size();
+        if (n == 0) return "";
+        int perRow = n <= 4 ? n : (n <= 6 ? 3 : 4);
+        String pct = perRow == 3 ? "33.33%" : (100 / perRow) + "%";
+        String cls = n == 1 ? null : (n % 3 == 0 ? "tile3" : "tile");
+        StringBuilder sb = new StringBuilder("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"font-size:0;line-height:0\">");
+        sb.append("<!--[if mso]><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><![endif]-->");
+        for (int i = 0; i < n; i++) {
+            Kpi k = tiles.get(i);
+            if (i > 0 && i % perRow == 0) sb.append("<!--[if mso]></tr><tr><![endif]-->");
+            sb.append("<!--[if mso]><td width=\"").append(pct).append("\" valign=\"top\"><![endif]-->")
+              .append("<div").append(cls == null ? "" : " class=\"" + cls + "\"")
+              .append(" style=\"display:inline-block;vertical-align:top;width:100%;min-width:").append(TILE_MIN).append("px;max-width:")
+              .append(pct).append("\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr><td style=\"padding:0 8px 8px 0\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate\"><tr>")
+              .append("<td bgcolor=\"").append(CARD).append("\" style=\"background-color:").append(CARD).append(";border:1px solid ").append(BORDER)
+              .append(";border-radius:").append(RADIUS_INNER).append("px;padding:12px 14px;").append(font()).append("\">")
+              .append("<p style=\"margin:0;font-size:12px;line-height:16px;font-weight:500;color:").append(MUTED)
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(esc(k.label())).append("</p>")
+              .append("<p style=\"margin:4px 0 0;font-size:22px;line-height:28px;font-weight:600;color:").append(k.valueColor() == null ? FG : k.valueColor())
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(esc(k.value())).append("</p>");
+            if (k.delta() != null && !k.delta().isBlank()) {
+                Tone t = k.deltaTone() == null ? Tone.NEUTRAL : k.deltaTone();
+                String bg = t == Tone.NEUTRAL ? SECONDARY : t.bg, bd = t == Tone.NEUTRAL ? BORDER : t.border, fg = t == Tone.NEUTRAL ? FG : t.text;
+                sb.append("<p style=\"margin:6px 0 0;font-size:12px;line-height:18px\"><span style=\"display:inline-block;background-color:").append(bg)
+                  .append(";border:1px solid ").append(bd).append(";border-radius:").append(RADIUS_CONTROL)
+                  .append("px;padding:0 6px;font-size:12px;line-height:18px;font-weight:600;color:").append(fg).append(";white-space:nowrap\">")
+                  .append(esc(k.delta())).append("</span></p>");
+            }
+            if (k.hint() != null && !k.hint().isBlank()) {
+                sb.append("<p style=\"margin:4px 0 0;font-size:12px;line-height:16px;color:").append(MUTED)
+                  .append(";word-break:break-word;overflow-wrap:anywhere\">").append(esc(k.hint())).append("</p>");
+            }
+            sb.append("</td></tr></table></td></tr></table></div><!--[if mso]></td><![endif]-->");
+        }
+        sb.append("<!--[if mso]></tr></table><![endif]-->").append("</td></tr></table>");
+        return sb.toString();
+    }
+
+    /**
+     * Çubuk satırı: etiket, sağda değer (renk null = ana metin), 0–100 çubuk ({@code pct} null = çubuk yok) + dolgu rengi,
+     * alt açıklama. Hepsi DÜZ metin (burada kaçırılır).
+     */
+    public record Bar(String label, String value, String valueColor, Double pct, String barColor, String caption) { }
+
+    /**
+     * Çubuk listesi (ör. izleme türü başına başarı oranı): kenarlıklı tek kart, satırlar ayraçlı. Çubuk
+     * {@link #progress} — iki yüzde genişlikli {@code td bgcolor} hücresi (görsel / CSS gradyanı YOK). Yüzde AŞAĞI
+     * yuvarlanır: %99,9 tam dolu görünmesin, kusur çubukta da seçilsin. Tek sütun → her genişlikte aynı düzen.
+     */
+    public static String bars(List<Bar> rows) {
+        if (rows == null || rows.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(rows.size() * 900 + 300);
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;border:1px solid ")
+          .append(BORDER).append(";border-radius:").append(RADIUS_INNER).append("px\">");
+        for (int i = 0; i < rows.size(); i++) {
+            Bar b = rows.get(i);
+            String line = i == rows.size() - 1 ? "0" : "1px solid " + DIVIDER;
+            sb.append("<tr><td style=\"padding:12px 16px;border-bottom:").append(line).append(";").append(font()).append("\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>")
+              .append("<td valign=\"top\" style=\"font-size:14px;line-height:20px;font-weight:600;color:").append(FG)
+              .append(";word-break:break-word;overflow-wrap:anywhere\">").append(esc(b.label())).append("</td>")
+              .append("<td valign=\"top\" align=\"right\" style=\"padding-left:12px;font-size:14px;line-height:20px;font-weight:600;text-align:right;white-space:nowrap;color:")
+              .append(b.valueColor() == null ? FG : b.valueColor()).append("\">").append(esc(b.value())).append("</td></tr>");
+            if (b.pct() != null) {
+                sb.append("<tr><td colspan=\"2\" style=\"padding:8px 0 0\">")
+                  .append(progress((int) Math.floor(b.pct()), b.barColor() == null ? PRIMARY : b.barColor())).append("</td></tr>");
+            }
+            if (b.caption() != null && !b.caption().isBlank()) {
+                sb.append("<tr><td colspan=\"2\" style=\"padding:6px 0 0;font-size:12px;line-height:18px;color:").append(MUTED)
+                  .append(";word-break:break-word;overflow-wrap:anywhere\">").append(esc(b.caption())).append("</td></tr>");
+            }
+            sb.append("</table></td></tr>");
+        }
+        return sb.append("</table>").toString();
+    }
+
+    /**
+     * Sıralı liste satırı — HAZIR (kaçırılmış) HTML: başlık (ör. bağlantılı alan adı), alt satırlar (etiketli olgular),
+     * sağda değer ve isteğe bağlı rozet. Boş alt satırlar atlanır.
+     */
+    public record RankRow(String titleHtml, List<String> metaHtml, String valueHtml, Badge badge) { }
+
+    /** Sağ sütun genişliği (px) — "2g 23sa 59dk" / "100.00%" + rozet sığar; 360px ekranda solda ~170px kalır. */
+    static final int RANK_VALUE_W = 112;
+
+    /**
+     * Sıralı liste kartı (en kötü domainler, haftanın alarmları): satır başına solda başlık + etiketli alt satırlar,
+     * sağda değer + rozet. {@link #dataTable}'ın aksine telefon KOPYASI yoktur — iki hücreli satır her genişlikte aynı
+     * okunur (360px'te sağ sütun sabit, sol kırılabilir), gövde yarı boyutta kalır (Gmail 102 KB'ta kırpar).
+     */
+    public static String rankList(List<RankRow> rows) {
+        if (rows == null || rows.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder(rows.size() * 800 + 300);
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"border-collapse:separate;border:1px solid ")
+          .append(BORDER).append(";border-radius:").append(RADIUS_INNER).append("px\">");
+        for (int i = 0; i < rows.size(); i++) {
+            RankRow r = rows.get(i);
+            String line = i == rows.size() - 1 ? "0" : "1px solid " + DIVIDER;
+            sb.append("<tr><td style=\"padding:12px 14px;border-bottom:").append(line).append(";").append(font()).append("\">")
+              .append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>")
+              .append("<td valign=\"top\" style=\"word-break:break-word;overflow-wrap:anywhere\">")
+              .append("<p style=\"margin:0;font-size:14px;line-height:20px;font-weight:600;color:").append(FG).append("\">")
+              .append(blankDash(r.titleHtml())).append("</p>");
+            // Alt satırlar TEK paragrafta (<br>): satır başına ayrı <p> gövdeyi büyütüyordu (Gmail 102 KB kırpar).
+            StringBuilder meta = new StringBuilder();
+            if (r.metaHtml() != null) {
+                for (String m : r.metaHtml()) {
+                    if (m == null || m.isBlank()) continue;
+                    meta.append(meta.length() == 0 ? "" : "<br>").append(m);
+                }
+            }
+            if (meta.length() > 0) {
+                sb.append("<p style=\"margin:2px 0 0;font-size:12px;line-height:18px;color:").append(MUTED).append("\">").append(meta).append("</p>");
+            }
+            sb.append("</td><td width=\"").append(RANK_VALUE_W).append("\" valign=\"top\" align=\"right\" style=\"width:").append(RANK_VALUE_W)
+              .append("px;padding-left:12px;text-align:right\">")
+              .append("<p style=\"margin:0;font-size:15px;line-height:20px;font-weight:600;color:").append(FG).append(";white-space:nowrap\">")
+              .append(blankDash(r.valueHtml())).append("</p>");
+            if (r.badge() != null && r.badge().label() != null && !r.badge().label().isBlank()) {
+                sb.append("<p style=\"margin:6px 0 0;font-size:12px;line-height:18px\">").append(badgeSpan(r.badge())).append("</p>");
+            }
+            sb.append("</td></tr></table></td></tr>");
+        }
+        return sb.append("</table>").toString();
+    }
+
+    /**
+     * Satır içi rozet — {@link #badge}'in renk kuralları (dolu yalnız DESTRUCTIVE/INFO), tablo yerine {@code span}: sağa
+     * yaslı hücrede kendiliğinden hizalanır, satır başına ~250 bayt kazandırır. Outlook'ta köşe/iç boşluk düşer, zemin kalır.
+     */
+    static String badgeSpan(Badge b) {
+        String bg, border, color;
+        if (b.tone() == null) {
+            bg = CARD; border = BORDER; color = FG;
+        } else if (b.solid() && (b.tone() == Tone.DESTRUCTIVE || b.tone() == Tone.INFO)) {
+            bg = b.tone().strong; border = b.tone().strong; color = "#ffffff";
+        } else if (b.tone() == Tone.NEUTRAL) {
+            bg = SECONDARY; border = BORDER; color = FG;
+        } else {
+            bg = b.tone().bg; border = b.tone().border; color = b.tone().text;
+        }
+        return "<span style=\"display:inline-block;background-color:" + bg + ";border:1px solid " + border + ";border-radius:" + RADIUS_CONTROL
+                + "px;padding:1px 8px;font-size:12px;line-height:16px;font-weight:600;color:" + color + ";white-space:nowrap\">" + esc(b.label()) + "</span>";
+    }
 }

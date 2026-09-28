@@ -9,7 +9,9 @@ import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.NotificationLogRepository;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.CertificateService;
+import com.sitemonitor.service.CertificateInventoryOps;
 import com.sitemonitor.service.EmailNotificationService;
+import com.sitemonitor.service.mail.CertInventoryMail;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,17 +28,18 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
  * AYLIK sertifika envanteri raporu — ayın SON CUMA günü 10:00'da (Europe/Istanbul) sertifika
- * ekibine gider. Gövdede kalan süre tablosu + Aktif/Pasif/Silinmiş sayıları + envanter hijyen
- * bulguları; ekte envanterin tamamı CSV ve PDF olarak.
+ * ekibine gider. Gövde ({@link CertInventoryMail}, 2026-09-28): hüküm satırı + KPI kutuları + kalan süre
+ * dağılımı + "Önümüzdeki 30 gün" + envanter hijyeni + kırılımlar; ekte envanterin tamamı CSV ve PDF
+ * (özet + detay) olarak.
  *
  * <p>{@code WeeklyAvailabilityReportService} deseninin aylık eşi: aynı enabled/status/preview/
  * sendTest/history yüzeyi, aynı idempotency + notification_log arşivi yaklaşımı.
@@ -53,8 +56,6 @@ public class CertificateInventoryReportService {
     public static final String CC_KEY = "site.monitor.cert-inventory-report.cc";
     /** Zamanlama — ayarlar sayfasından CANLI değiştirilebilir (dinamik tetikleyici okur). */
     public static final String CRON_KEY = "site.monitor.cert-inventory-report.cron";
-    /** Gövdedeki kalan süre tablosunda en fazla kaç domain listelenir (tamamı ekte). */
-    private static final int MAX_TABLE_ROWS = 40;
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     private static final DateTimeFormatter UTC_ISO =
@@ -175,13 +176,20 @@ public class CertificateInventoryReportService {
 
     // ── Rapor üretimi ────────────────────────────────────────────────────────
 
-    /** Rapor gövdesi + ekleri (önizleme ve gönderim aynı üreticiyi kullanır → önizleme sadıktır). */
+    /**
+     * Rapor gövdesi + ekleri (önizleme ve gönderim aynı üreticiyi kullanır → önizleme sadıktır).
+     *
+     * <p>2026-09-28 yeniden tasarım: gövde ve PDF eki AYNI özetten ({@link CertInventorySummary}) beslenir. Hijyen
+     * bulguları TAM liste olarak alınır: gövde grup başına ilk {@value InventoryHygieneService#MAX_PER_GROUP}'u gösterir,
+     * PDF hepsini basar — gövdedeki "+N kayıt daha — tamamı ekte" sözü artık gerçekten karşılanır (eskiden ekte hijyen
+     * bulgusu hiç yoktu). Maliyet: {@code analyze} bir kez (eskisi gibi), özet tek geçiş; yeni sorgu yalnız geçen ayın
+     * tek satırlık rapor kaydı (KPI değişim çipi).
+     */
     public Built build(LocalDate reportDate) {
         // Kapsam: SİLİNMEMİŞ kayıtlar. Silinmişler raporda hiç yer almaz — ne satır ne sayaç
         // olarak; sahibinden bir aksiyon beklenmeyen kayıtlar raporu gürültülendiriyordu.
         List<CertificateInventory> rows = exportService.reportRows();
         Map<Long, String> teams = exportService.teamNames(rows);
-        Map<String, Integer> counts = hygieneService.counts(rows);
 
         Map<String, CertificateDto> latest;
         try {
@@ -193,52 +201,60 @@ public class CertificateInventoryReportService {
             latest = Map.of();
         }
 
-        // Kalan süresi en az olan üstte — okur önce riskli olanı görsün.
-        final Map<String, CertificateDto> lat = latest;
-        List<EmailNotificationService.InventoryReportRow> tableRows = rows.stream()
-                .filter(r -> !Boolean.FALSE.equals(r.getActive()))
-                .map(r -> {
-                    CertificateDto d = lat.get(r.getDomain());
-                    return new EmailNotificationService.InventoryReportRow(
-                            r.getDomain(),
-                            r.getTeamId() == null ? null : teams.get(r.getTeamId()),
-                            r.getTier(),
-                            d == null ? null : d.getDaysRemaining(),
-                            d == null ? null : shortDate(d.getNotAfter()),
-                            d == null ? "kontrol edilmemiş" : statusText(d));
-                })
-                .sorted(Comparator.comparing(
-                        (EmailNotificationService.InventoryReportRow r) -> r.daysRemaining() == null
-                                ? Integer.MAX_VALUE : r.daysRemaining()))
-                .limit(MAX_TABLE_ROWS)
-                .toList();
-
-        InventoryHygieneService.Result hygiene = hygieneService.analyze(rows);
-        List<EmailNotificationService.InventoryFindingGroup> findings = hygiene.groups().stream()
-                .map(g -> new EmailNotificationService.InventoryFindingGroup(
-                        g.title(), g.total(),
-                        g.samples().stream().map(f -> new String[]{ f.domain(), f.detail() }).toList(),
-                        g.hidden()))
-                .toList();
+        InventoryHygieneService.Result hygiene = hygieneService.analyze(rows, Integer.MAX_VALUE);
 
         int year = reportDate.getYear(), month = reportDate.getMonthValue();
         Map<String, String> names = InventoryExportService.fileNames(year, month);
         String monthLabel = MONTHS_TR[month - 1] + " " + year;
 
-        String html = emailService.buildCertInventoryReportHtml(
-                monthLabel, counts, tableRows, findings, List.of(names.get("csv"), names.get("pdf")));
+        CertInventoryMail.Report report = CertInventorySummary.of(monthLabel, rows, teams, latest, hygiene);
+        LocalDate prev = reportDate.minusMonths(1);
+        Optional<CertInventoryReportLog> prevLog = previousLog(prev.getYear(), prev.getMonthValue());
+        report = report.withPrevious(prevLog.map(CertInventoryReportLog::getRowCount).orElse(null),
+                prevLog.map(CertInventoryReportLog::getFindingCount).orElse(null));
 
-        List<EmailNotificationService.MailAttachment> attachments = List.of(
-                new EmailNotificationService.MailAttachment(
-                        names.get("csv"), exportService.csv(rows, teams), "text/csv"),
-                new EmailNotificationService.MailAttachment(
-                        names.get("pdf"), exportService.pdf(rows, teams), "application/pdf"));
+        // Boş ek (üretim hatası → 0 bayt) GÖNDERİLMEZ ve gövdede ek olarak anılmaz: eskiden 0 baytlık PDF ekleniyordu.
+        byte[] csv = exportService.csv(rows, teams);
+        byte[] pdf = exportService.pdf(rows, teams, report);
+        List<EmailNotificationService.MailAttachment> attachments = new ArrayList<>();
+        List<CertInventoryMail.Attachment> infos = new ArrayList<>();
+        if (csv != null && csv.length > 0) {
+            attachments.add(new EmailNotificationService.MailAttachment(names.get("csv"), csv, "text/csv"));
+            infos.add(new CertInventoryMail.Attachment(names.get("csv"), "Envanterin tamamı — " + rows.size()
+                    + " kayıt; takım, kritiklik, platform ve " + CertificateInventoryOps.ALL.size()
+                    + " operasyonel bayrak dahil. Excel'de doğrudan açılır."));
+        }
+        if (pdf != null && pdf.length > 0) {
+            attachments.add(new EmailNotificationService.MailAttachment(names.get("pdf"), pdf, "application/pdf"));
+            infos.add(new CertInventoryMail.Attachment(names.get("pdf"), "Özet (KPI, durum dağılımı, 90 gün içinde "
+                    + "bitenler, hijyen bulgularının tamamı) — " + rows.size() + " kayıtlık envanterin özeti; kayıt bazında "
+                    + "tam liste CSV ekinde."));
+        } else {
+            log.warn("Aylık rapor: PDF eki üretilemedi — yalnız CSV ile gönderiliyor");
+        }
+        report = report.withAttachments(infos);
 
+        String html = emailService.buildCertInventoryReportHtml(report);
+
+        CertInventoryMail.Buckets b = report.buckets();
         String subject = "[Site Monitor] Sertifika Envanteri Raporu · " + monthLabel
-                + " · " + counts.getOrDefault("active", 0) + " aktif"
+                + " · " + report.active() + " aktif"
+                + (b.expired() > 0 ? " · " + b.expired() + " süresi dolmuş" : "")
+                + (b.within30() > 0 ? " · " + b.within30() + " tanesi 30 gün içinde bitiyor" : "")
                 + (hygiene.clean() ? "" : " · " + hygiene.totalFindings() + " bulgu");
 
         return new Built(subject, html, attachments, rows.size(), hygiene.totalFindings(), monthLabel);
+    }
+
+    /** Geçen ayın rapor kaydı (KPI değişim çipi) — okunamazsa boş: çip çizilmez, rapor düşmez. */
+    private Optional<CertInventoryReportLog> previousLog(int year, int month) {
+        try {
+            Optional<CertInventoryReportLog> l = logRepo.findByReportYearAndMonthNo(year, month);
+            return l == null ? Optional.empty() : l;
+        } catch (Exception e) {
+            log.debug("Aylık rapor: geçen ayın kaydı okunamadı: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     public record Built(String subject, String html,
@@ -442,20 +458,6 @@ public class CertificateInventoryReportService {
     }
 
     // ── küçük yardımcılar ────────────────────────────────────────────────────
-
-    private static String shortDate(String iso) {
-        if (iso == null || iso.length() < 10) return null;
-        return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4);
-    }
-
-    private static String statusText(CertificateDto d) {
-        if ("error".equalsIgnoreCase(d.getStatus())) return "hata";
-        if (d.getDaysRemaining() != null && d.getDaysRemaining() < 0) return "süresi dolmuş";
-        if ("REVOKED".equalsIgnoreCase(d.getRevocationStatus())) return "iptal";
-        if ("BROKEN".equalsIgnoreCase(d.getChainStatus())) return "zincir kırık";
-        if ("INCOMPLETE".equalsIgnoreCase(d.getDeploymentStatus())) return "dağıtım eksik";
-        return "geçerli";
-    }
 
     /** Locale bağımsız küçük harf (Türkçe İ tuzağı) — dışarıdan gelen karşılaştırmalar için. */
     static String lower(String s) {

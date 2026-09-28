@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-28T02:07:20Z",
+  "generatedAt": "2026-09-28T10:35:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 686,
+  "count": 687,
   "releases": [
+    {
+      "version": "20.89.0",
+      "tag": "v20.89.0",
+      "releasedAt": "2026-09-28T10:35:10Z",
+      "commit": "3d6bce9e993b18b02710638f10c4498717de61dc",
+      "prevVersion": "20.88.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d6bce9e",
+          "subject": "Olay & Hata Geçmişi, İstatistikler, İzleme Değişiklikleri, süre grafiği ve login anomali yeniden tasarımı; kartlarda 7/24 durumu; haftalık ve aylık rapor e-postaları; Anahtar Çözümleme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.88.0",
       "tag": "v20.88.0",

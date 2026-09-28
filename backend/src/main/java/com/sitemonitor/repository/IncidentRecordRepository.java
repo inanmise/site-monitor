@@ -160,6 +160,21 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
     long countResolvedWithinSla(@Param("since") String since, @Param("until") String until,
                                 @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
+    /**
+     * MTTR girdisi: çözülmüş (status=RESOLVED) ve süresi girilmiş olayların ORTALAMA süresi (dk) + kaç olaydan
+     * hesaplandığı. Tek satır döner: [AVG(durationMinutes) (Double, olay yoksa null), COUNT (Long)]. Süre, formda
+     * oluş ↔ çözülme farkından otomatik yazılır (tespit gecikmesi düşülmez). Negatif (bozuk) süre hesaba girmez.
+     */
+    @Query("""
+            SELECT AVG(i.durationMinutes), COUNT(i) FROM IncidentRecord i
+             WHERE i.status = 'RESOLVED' AND i.durationMinutes IS NOT NULL AND i.durationMinutes >= 0
+               AND (:since IS NULL OR i.occurredAt >= :since)
+               AND (:until IS NULL OR i.occurredAt <= :until)
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
+            """)
+    List<Object[]> resolvedDurationStats(@Param("since") String since, @Param("until") String until,
+                                         @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
     @Query("""
             SELECT COUNT(i) FROM IncidentRecord i
              WHERE i.status <> 'RESOLVED'

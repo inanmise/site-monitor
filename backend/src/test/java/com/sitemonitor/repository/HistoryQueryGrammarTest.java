@@ -270,28 +270,28 @@ class HistoryQueryGrammarTest {
         var all = List.of(5L, 7L);
 
         // 1) TÜM süzgeçler null (konsolun ilk açılışı) — kaçağın yaşandığı tam senaryo.
-        var open = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES, PageRequest.of(0, 25));
+        var open = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null, null, true, all, NO_IDS, NO_NAMES, PageRequest.of(0, 25));
         assertThat(open.getTotalElements()).isEqualTo(3);
         assertThat(open.getContent()).extracting("resourceKind").doesNotContain("SYSTEM");
         // Sıralama: en yeni üstte.
         assertThat(open.getContent().get(0).getResourceName()).isEqualTo("Ödeme akışı");
 
         // 2) Serbest arama + aktör: LOWER/CONCAT yolu gerçekten eşleşmeli (cast doğru yerde mi).
-        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, "ödeme p", true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, "ödeme p", null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);
-        assertThat(changeRepo.search(null, null, "n23456", null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, null, "n23456", null, NO_IDS, NO_NAMES, null, null, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(2);   // aktör aramasi harf duyarsiz
 
         // 3) Tür + olay + tarih süzgeçleri.
-        assertThat(changeRepo.search("SCRIPTED", null, null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search("SCRIPTED", null, null, null, NO_IDS, NO_NAMES, null, null, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
-        assertThat(changeRepo.search(null, "UPDATE", null, null, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, "UPDATE", null, null, NO_IDS, NO_NAMES, null, null, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
-        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, "2026-08-01T11:30:00", null, null, true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, "2026-08-01T11:30:00", null, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         // 4) Takım kapsamı: teamScopeAll=false iken YALNIZ verilen takımlar.
-        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, false, List.of(7L), NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null, null, false, List.of(7L), NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         // 5) Özet şeridi de aynı kapsam + SYSTEM dışlaması ile çalışmalı.
@@ -315,7 +315,7 @@ class HistoryQueryGrammarTest {
         // 5c) TAKIM süzgeci ÜÇ sorguda da daraltmalı. Yalnız listeye uygulansaydı yönetici bir
         //     takım seçtiğinde liste daralır ama şerit ve kartlar tüm takımları saymaya devam
         //     eder, rakamlar ekranda listeyle çelişirdi.
-        assertThat(changeRepo.search(null, null, null, 7L, NO_IDS, NO_NAMES, null, null, null, true, all, NO_IDS, NO_NAMES,
+        assertThat(changeRepo.search(null, null, null, 7L, NO_IDS, NO_NAMES, null, null, null, null, null, true, all, NO_IDS, NO_NAMES,
                 PageRequest.of(0, 25)).getTotalElements()).isEqualTo(1);
 
         Map<String, Long> team7 = new LinkedHashMap<>();
@@ -360,16 +360,16 @@ class HistoryQueryGrammarTest {
         var page = PageRequest.of(0, 25);
 
         // Kapsam: takım 5 + üyeleri → takım satırı + iki üye satırı; yabancı YOK.
-        var scoped = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null,
+        var scoped = changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null, null,
                 false, List.of(5L), members, memberNames, page);
         assertThat(scoped.getContent()).extracting("resourceName")
                 .containsExactlyInAnyOrder("Port A", "Sentetik A", "Alan A");
         // Üye listesi boşken (kukla) eski davranış: yalnız takımın kendi satırı.
-        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null,
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null, null,
                 false, List.of(5L), NO_IDS, NO_NAMES, page).getTotalElements()).isEqualTo(1);
 
         // Takım SÜZGECİ aynı kural: global görünümde takım 5 seçilince üyelerin satırları da gelir.
-        assertThat(changeRepo.search(null, null, null, 5L, members, memberNames, null, null, null,
+        assertThat(changeRepo.search(null, null, null, 5L, members, memberNames, null, null, null, null, null,
                 true, List.of(5L), NO_IDS, NO_NAMES, page).getTotalElements()).isEqualTo(3);
 
         // Şerit ve tür kartları listeyle aynı sayıyı söylemeli.
@@ -386,6 +386,70 @@ class HistoryQueryGrammarTest {
             kinds.merge(String.valueOf(r[0]), ((Number) r[2]).longValue(), Long::sum);
         }
         assertThat(kinds).containsOnly(Map.entry("PORT", 1L), Map.entry("SCRIPTED", 1L), Map.entry("DOMAIN", 1L));
+    }
+
+    // 2026-09-28 İzleme Değişiklikleri yeniden tasarımı: izleme + duraklatma/sürdürme süzgeçleri ve özet kartlarının
+    // sorguları (saatlik eğri, en çok değişen izlemeler, kişiler, silinmiş kimlikler) GERÇEK veritabanında koşar.
+    @Test
+    @DisplayName("değişiklik geçmişi: izleme / duraklatma süzgeci ve özet sorguları koşar, kapsamı uygular")
+    void monitorChangeLogSummaryQueries() {
+        MonitorChangeLog pause = chg("PORT", 1L, "Port A", "UPDATE", 5L, "N23456", "2026-08-03T10:05:00");
+        pause.setChanges("{\"timeoutMs\":{\"from\":5000,\"to\":9000},\"active\":{\"from\":true,\"to\":false}}");
+        MonitorChangeLog resume = chg("PORT", 1L, "Port A (yeni ad)", "RESTORE", 5L, "N23456", "2026-08-03T11:00:00");
+        resume.setChanges("{\"active\":{\"from\":false,\"to\":true}}");
+        MonitorChangeLog look = chg("PORT", 2L, "Port B", "UPDATE", 5L, "N22222", "2026-08-03T10:40:00");
+        look.setChanges("{\"isActive\":{\"from\":true,\"to\":false}}");   // başka alan — duraklatma SAYILMAZ
+        changeRepo.saveAll(List.of(
+                chg("PORT", 1L, "Port A", "CREATE", 5L, "N23456", "2026-08-03T09:00:00"),
+                pause, resume, look,
+                chg("PORT", 2L, "Port B", "DELETE", 5L, "N22222", "2026-08-03T12:00:00"),
+                chg("DNS", 1L, "Aynı kimlik, başka tür", "CREATE", 5L, "system", "2026-08-03T12:30:00"),
+                chg("HTTP", 9L, "Yabancı", "UPDATE", 9L, "N99999", "2026-08-03T10:10:00")));
+        var page = PageRequest.of(0, 25);
+        var mine = List.of(5L);
+
+        // İzleme süzgeci (tür + kimlik) ve duraklatma / sürdürme desenleri — olay tipinden bağımsız.
+        assertThat(changeRepo.search("PORT", null, null, null, NO_IDS, NO_NAMES, null, null, null, 1L, null,
+                false, mine, NO_IDS, NO_NAMES, page).getTotalElements()).isEqualTo(3);
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null,
+                MonitorChangeLogRepository.ACTIVE_PAUSED, false, mine, NO_IDS, NO_NAMES, page).getContent())
+                .extracting("eventType").containsExactly("UPDATE");
+        assertThat(changeRepo.search(null, null, null, null, NO_IDS, NO_NAMES, null, null, null, null,
+                MonitorChangeLogRepository.ACTIVE_RESUMED, false, mine, NO_IDS, NO_NAMES, page).getContent())
+                .extracting("eventType").containsExactly("RESTORE");
+        assertThat(changeRepo.countActiveToggles(MonitorChangeLogRepository.ACTIVE_PAUSED, null, null, null,
+                NO_IDS, NO_NAMES, false, mine, NO_IDS, NO_NAMES)).isEqualTo(1L);
+        assertThat(changeRepo.countActiveToggles(MonitorChangeLogRepository.ACTIVE_RESUMED, "2026-08-03T11:30:00", null, null,
+                NO_IDS, NO_NAMES, false, mine, NO_IDS, NO_NAMES)).isZero();   // pencere dışı
+
+        // Saatlik kovalar: SELECT/GROUP BY aynı SUBSTRING ifadesi (42803 dersi), sıralı, kapsamlı (yabancı yok).
+        Map<String, Long> hours = new LinkedHashMap<>();
+        for (Object[] r : changeRepo.countByHour("2026-08-03T00:00:00", null, null, NO_IDS, NO_NAMES,
+                false, mine, NO_IDS, NO_NAMES)) {
+            hours.put(String.valueOf(r[0]), ((Number) r[1]).longValue());
+        }
+        assertThat(hours).containsExactly(Map.entry("2026-08-03T09", 1L), Map.entry("2026-08-03T10", 2L),
+                Map.entry("2026-08-03T11", 1L), Map.entry("2026-08-03T12", 2L));
+
+        // En çok değişen izlemeler: PORT 1 (3) > PORT 2 (2) > DNS 1 (1); yabancı takımın izlemesi yok.
+        List<Object[]> top = changeRepo.topResources(null, null, null, NO_IDS, NO_NAMES, false, mine, NO_IDS, NO_NAMES,
+                PageRequest.of(0, 5));
+        assertThat(top).extracting(r -> r[0] + ":" + r[1] + "=" + ((Number) r[2]).longValue())
+                .containsExactly("PORT:1=3", "PORT:2=2", "DNS:1=1");
+        // En yeni satır kimliği → YENİ ad
+        assertThat(changeRepo.findById(((Number) top.get(0)[3]).longValue())).get()
+                .extracting("resourceName").isEqualTo("Port A (yeni ad)");
+        assertThat(changeRepo.topResources(null, null, null, NO_IDS, NO_NAMES, false, mine, NO_IDS, NO_NAMES,
+                PageRequest.of(0, 1))).hasSize(1);
+
+        // Kişiler: system satırı kişi değildir; adede göre azalan.
+        assertThat(changeRepo.topActors(null, null, null, NO_IDS, NO_NAMES, false, mine, NO_IDS, NO_NAMES, page))
+                .extracting(r -> r[0] + "=" + ((Number) r[1]).longValue())
+                .containsExactly("N23456=3", "N22222=2");
+
+        // Silinmiş kimlikler: yalnız DELETE satırı olan (PORT 2); DNS 1 aynı kimlik ama silinmemiş.
+        assertThat(changeRepo.findDeletedAmong(List.of(1L, 2L)))
+                .extracting(r -> r[0] + ":" + r[1]).containsExactly("PORT:2");
     }
 
     /** Ekip üyesinin (kimlik 41) BAŞKA takımın (9) izlemesinde yaptığı değişiklik — R1: takım 5'e görünmez. */

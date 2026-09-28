@@ -366,4 +366,52 @@ class IncidentServiceTest {
         assertThat(((Number) summary.get("last_7d")).longValue()).isEqualTo(1L);  // 3 gün önce → 7 gün içinde
         assertThat(((Number) summary.get("today")).longValue()).isEqualTo(0L);    // 3 gün önce → bugün değil
     }
+
+    @Test
+    @DisplayName("trends: MTTR = çözülmüş + süreli olayların ortalaması; açık / süresiz olay girmez, kapsam uygulanır")
+    void trends_mttrFromResolvedDurations() {
+        Map<String, Object> a = body("çözüldü 60", "2026-06-20T10:00:00", "HIGH", "OTHER");
+        a.put("duration_minutes", 60);
+        service.create(a, "admin", 1L, 1L);
+        Map<String, Object> b = body("çözüldü 121", "2026-06-21T10:00:00", "LOW", "OTHER");
+        b.put("duration_minutes", 121);
+        service.create(b, "admin", 1L, 1L);
+        Map<String, Object> open = body("açık ama süreli", "2026-06-22T10:00:00", "LOW", "OTHER");
+        open.put("status", "OPEN");
+        open.put("duration_minutes", 5000);            // çözülmemiş → MTTR'a girmez
+        service.create(open, "admin", 1L, 1L);
+        service.create(body("çözüldü süresiz", "2026-06-23T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L); // süre yok → girmez
+        Map<String, Object> other = body("başka takım", "2026-06-24T10:00:00", "LOW", "OTHER");
+        other.put("duration_minutes", 10);
+        other.put("team_id", 2);
+        service.create(other, "admin", 2L, 2L);
+
+        @SuppressWarnings("unchecked")
+        var all = (Map<String, Object>) service.trends(null, null, null).get("summary");
+        assertThat(((Number) all.get("mttr_sample")).longValue()).isEqualTo(3L);
+        assertThat(((Number) all.get("mttr_minutes")).longValue()).isEqualTo(64L);   // (60 + 121 + 10) / 3 = 63.67 → 64
+
+        @SuppressWarnings("unchecked")
+        var team1 = (Map<String, Object>) service.trends(null, null, List.of(1L)).get("summary");
+        assertThat(((Number) team1.get("mttr_sample")).longValue()).isEqualTo(2L);
+        assertThat(((Number) team1.get("mttr_minutes")).longValue()).isEqualTo(91L); // (60 + 121) / 2 = 90.5 → 91
+
+        @SuppressWarnings("unchecked")
+        var ranged = (Map<String, Object>) service.trends("2026-06-21T00:00:00", "2026-06-21T23:59:59", null).get("summary");
+        assertThat(((Number) ranged.get("mttr_minutes")).longValue()).isEqualTo(121L);
+    }
+
+    @Test
+    @DisplayName("trends: çözülmüş-süreli olay yoksa MTTR null (uydurma 0 yok), örneklem 0")
+    void trends_mttrNullWhenNoSample() {
+        Map<String, Object> open = body("açık", "2026-06-20T10:00:00", "HIGH", "OTHER");
+        open.put("status", "OPEN");
+        service.create(open, "admin", 1L, 1L);
+        @SuppressWarnings("unchecked")
+        var summary = (Map<String, Object>) service.trends(null, null, null).get("summary");
+        assertThat(summary).containsKey("mttr_minutes");
+        assertThat(summary.get("mttr_minutes")).isNull();
+        assertThat(((Number) summary.get("mttr_sample")).longValue()).isEqualTo(0L);
+        assertThat(((Number) summary.get("total")).longValue()).isEqualTo(1L);
+    }
 }
