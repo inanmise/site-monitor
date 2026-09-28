@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.89.0] — 2026-09-28
+
 ### Changed
 - ⚠ Davranış — **Takım üyeleri penceresinde fotoğraf ve sistem rolü yeniden görünür** (kullanıcı kararı): üye
   satırlarında, Takım Müdürü / Lideri kartlarında ve 7/24 arama listesinde kişinin AD fotoğrafı (yoksa baş harf),
@@ -1458,7 +1460,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.88.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.89.0...HEAD
+[20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0
 [20.88.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.88.0
 [20.87.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.87.0
 [20.86.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.86.0
