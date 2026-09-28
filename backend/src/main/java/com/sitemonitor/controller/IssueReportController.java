@@ -105,6 +105,15 @@ public class IssueReportController {
         if (!category.isBlank() && !LoginIssueService.CATEGORIES.contains(category)) {
             return err(HttpStatus.BAD_REQUEST, "Geçersiz önem değeri");
         }
+        // "Ne yaşıyorsunuz?" (2026-09-28): çoklu etki — izin listesi, tekil, kanonik sıra; "Diğer" metni yalnız OTHER'da.
+        String impacts;
+        String impactOther;
+        try {
+            impacts = LoginIssueService.normalizeImpacts(body.get("impacts"));
+            impactOther = LoginIssueService.sanitizeImpactOther(body.get("impactOther"), impacts);
+        } catch (IllegalArgumentException e) {
+            return err(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
 
         // E-posta kuralı: profil e-postası birincil; yoksa payload zorunlu.
         AppUser user = appUserRepository.findByUsername(username).orElse(null);
@@ -173,7 +182,8 @@ public class IssueReportController {
         }
 
         ReportMeta meta = new ReportMeta("USER_REPORT", blankToNull(category), blankToNull(appVersion),
-                blankToNull(screenSize), blankToNull(tabKey), autoContextJson, blankToNull(linkedReference));
+                blankToNull(screenSize), blankToNull(tabKey), autoContextJson, blankToNull(linkedReference),
+                impacts, impactOther);
         LoginIssueReport report = loginIssueService.save(
                 username, email, blankToNull(errorText), message, parsed, ip, userAgent, now, meta);
         String refCode = LoginIssueService.refCode(report);
@@ -184,7 +194,7 @@ public class IssueReportController {
         if (adminEmail != null && !adminEmail.isBlank() && !digest) {
             loginIssueMailService.dispatchUserReport(report.getId(), refCode, adminEmail, username, email,
                     blankToNull(category), message, blankToNull(errorText), blankToNull(linkedReference),
-                    blankToNull(tabKey), blankToNull(appVersion), images, ip, userAgent, now);
+                    blankToNull(tabKey), blankToNull(appVersion), images, ip, userAgent, now, impacts, impactOther);
         }
         loginIssueMailService.dispatchAck(report.getId(), refCode, email, username,
                 blankToNull(errorText), message, images, now);
@@ -315,6 +325,7 @@ public class IssueReportController {
         m.put("status", r.getStatus());
         m.put("source", r.getSource());
         m.put("category", r.getCategory());
+        m.put("impacts", LoginIssueService.impactList(r.getImpacts()));   // çoklu etki (2026-09-28)
         m.put("reportedAt", r.getReportedAt());
         m.put("resolvedAt", r.getResolvedAt());
         m.put("messageSummary", summarize(r.getMessage()));
@@ -333,6 +344,8 @@ public class IssueReportController {
         m.put("status", r.getStatus());
         m.put("source", r.getSource());
         m.put("category", r.getCategory());
+        m.put("impacts", LoginIssueService.impactList(r.getImpacts()));
+        m.put("impactOther", r.getImpactOther());
         m.put("reportedAt", r.getReportedAt());
         m.put("message", r.getMessage());
         m.put("errorText", r.getErrorText());

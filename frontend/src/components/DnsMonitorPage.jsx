@@ -41,6 +41,7 @@ import { LoadingBlock } from './ui/Progress.jsx'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -213,8 +214,11 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.dns) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili DNS monitörünün detayını aç (bir kez), paramı temizle.
-  useMonitorDeepLink(monitors, setDetailMonitor)
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, 7/24 Kapsamı): TAM listeden açar; yoksa uyarır (hooks/useMonitorDeepLink)
+  useMonitorDeepLink(monitors, setDetailMonitor, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'DNS',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   // Ortak bildirim blogunun "kime gidecek" satiri icin hedef takim adi (HttpMonitorPage deseni).
   const selectedTeamLabel = canPickTeam
@@ -315,6 +319,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       // icin AYRI bir izleme surecek (bkz. MonitoringController.detachIfIdentityChanged).
       if (res.data?.detached_from_inventory) toast.info(t('mon.detachedFromInventory'), 8000)
       closeEditModal()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, alan adı / kayıt tipi değişen kart eski değeri
+      // göstermesin. Liste YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('dns', { isNew, before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -773,7 +780,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
                beklenmeyen değer), kaynak rozeti (bağımsız / envanterden). Yetkiye, seçime ve eylemlere bağlı ortak
                parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, mini trend, kart eylemleri
                (türev satırda silme = "izlemeyi durdur"). Durum sözlüğü detay penceresiyle ortak (statusKey/statusBadge). */
-            <DnsMonitorCard key={m.id} monitor={m} status={statusKey(m)} density={density}
+            <DnsMonitorCard key={m.id} monitor={m} status={statusKey(m)} density={density} running={isRunning(m.id)}
               statusBadge={statusBadge(m, { lastKnown: true })} alarmLabel={alarmLabel(m)}
               onOpen={() => setDetailMonitor(m)}
               select={canManageRow(m) && (

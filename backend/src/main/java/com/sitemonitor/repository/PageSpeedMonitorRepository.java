@@ -14,6 +14,8 @@ public interface PageSpeedMonitorRepository extends JpaRepository<PageSpeedMonit
     List<PageSpeedMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<PageSpeedMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
+    List<PageSpeedMonitor> findByUrl(String url);
     Optional<PageSpeedMonitor> findFirstByUrlOrderByIdAsc(String url);
 
     /** Aynı URL (case-insensitive) + takım için (kendisi hariç) başka bir sayfa hızı monitörü var mı. */

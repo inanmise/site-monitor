@@ -15,6 +15,214 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **"Kim bilgilendirilir?" — kişi bazlı push kararı:** push kartı artık takımın her üyesini "Alır / Almaz" kararıyla ve
+  almayanın nedeniyle gösterir (org rolü yok, grup eşleşmedi ya da kapalı, seviye grubun asgarisinin altında, kişi
+  kapattı, pasif hesap, üyelik kaydı yok). Süzgeç (Tümü / Alacaklar / Almayacaklar) ve arama; her "Almaz" satırında
+  sonraki adım (Kullanıcıyı aç / Push gruplarını düzenle / Etkinliklerim'i aç ya da kime başvurulacağı). Kanal kapalı,
+  adres yok, tür/takım kapsam dışı ve sessiz saat durumları açıkça yazılır; engel varken "kanal engeli kalkınca alır".
+  Özet kutucuklarında push alır / almaz sayıları; 7/24 (NOC) notu takımın 7/24 kapsamını özetler ve 7/24 Kapsamı'na
+  bağlanır. Kararlar Ayarlar → Webhook → "Kim alır?" ile aynı servisten gelir.
+- **Mükerrer alan adı — kayıt hangi ekipte ve ne yapılır:** aynı alan adı eklenmek (ya da kayıt o ada yeniden
+  adlandırılmak) istendiğinde form, ham bildirim yerine eylemli bir uyarı bandı gösterir: kaydın sahibi ekip (rozet →
+  üyeler), çöp kutusunda olup olmadığı, "Kaydı görüntüle" (salt okunur), yetkiliye "'<seçili takım>' ekibine aktar"
+  (çöp kutusundaysa aktar + geri yükle) ve "Çöp kutusundan geri yükle", diğerlerine Sorun Bildir üzerinden
+  **"Alan adı aktarımı"** talebi (yeni kategori; Sorun Bildirimleri'nde süzgeç, yönetici e-postasında etiket). Sunucu
+  409 yanıtı yapısal (`code: DOMAIN_EXISTS` + sahibi ekip ve yetki bayrakları; iletişim/not/IP gibi alanlar dönmez).
+  CSV içe aktarma başka ekibin kaydına çarpan satırı `duplicate_other_team` nedeni ve sahibi ekip rozetiyle gösterir.
+- **7/24 Kapsamı → izlemeye doğrudan bağlantı:** her satırın adı ve yeni "İzlemeyi aç" simgesi gerçek bağlantı; izleme
+  kartına tıklamakla aynı pencereyi açar (10 tür — Sentetik ve SSL sertifika penceresi dâhil; izleme 2. sayfada,
+  duraklatılmış ya da süzgeçle gizli olsa da). Ctrl/⌘/orta tıkla yeni sekmede açılır, Geri 7/24 süzgeçlerini korur.
+  "…" menüsünde "Bağlantıyı kopyala" ve (yetkiliye) "7/24 ayarını düzenle" — form, "7/24 izleme ekibine bildir"
+  anahtarına kaydırılmış ve odaklanmış açılır. Yeni tek seferlik URL parametresi `open=cert|noc`.
+- **E-postadan sertifika penceresi:** sertifika uyarısı / çözüm e-postalarındaki ve 7/24 e-postasındaki bağlantı artık
+  Genel Bakış'ı yalnız süzmekle kalmaz, alan adının sertifika penceresini doğrudan açar.
+- **Sorun Bildir — "Ne yaşıyorsunuz?":** 12 yaygın durumdan çoklu seçim (giriş, sayfa açılmıyor, yavaşlık, yanlış veri,
+  kaydetme hatası, alarm gelmiyor / yanlış alarm, erişim, mobil, rapor/dışa aktarma, özellik isteği, Diğer + kısa
+  açıklama) ve kompakt önem seçimi. Seçimler kayda, yönetici e-postasına, Sorun Bildirimleri listesi ve ayrıntısına
+  düşer; "Etki" süzgeci eklendi. Eski kayıtlar değişmeden görünür.
+
+### Changed
+- ⚠ Davranış — **Olaylar tüm takımlara açık (salt okunur):** Alarmlar → Olaylar'da "Takımımın olayları · Diğer ekiplerin
+  olayları · Tümü" süzgeci (sayılarıyla; varsayılan "Takımımın" = bugünkü görünüm). Başka ekibin olayı liste, detay ve
+  yorumlarıyla okunur; "Başka takımın kaydı — salt okunur" rozeti ve sahibi ekip görünür, onaylama / çözme / yorum /
+  silme yoktur (sunucu 403). Bildirim alıcıları, teslim günlüğü ve 7/24 arama kayıtları olayın ekibinde kalır.
+  **Yeni yapılandırma:** `site.monitor.incidents.visible-to-all` (`INCIDENTS_VISIBLE_TO_ALL`, varsayılan `true`,
+  yalnız global yönetici).
+- ⚠ Davranış — **7/24 ekibi (AUDIT) varsayılan olarak arama kaydı girer:** `noc_calls.write` AUDIT rolüne varsayılan
+  verilir; yükseltmede mevcut kurulumlarda açılır, yöneticinin elle kapattığı izne dokunulmaz. AUDIT sahiplenme /
+  çözme / yeniden bildirim yapamaz; Alarm Geçmişi'nde bu düğmeler gösterilmez (yerine neden notu).
+- **Takım üyeleri penceresi yeniden tasarlandı:** başlıkta Takım Müdürü ve Takım Lideri ayrı kişi kartlarında (müdür üye
+  listesine eklenmez), takım e-postası kopyalanabilir; üyelerde Türkçe karakter duyarsız arama, rol / ad / unvana göre
+  sıralama ve rol süzgeç çipleri; geniş ekranda sütunlu liste, telefonda tam ekran ve yapışkan arama; kalabalık
+  takımlar standart sayfalamayla (varsayılan 50 kişi) hızlı açılır. Eskalasyon kişileri alarm seviyesine göre gruplu (önce kritik) ve
+  açıklamalı; yetkisi olana salt okunur "7/24 arama listesi" sekmesi (AD'de telefonu olmayan işaretli, numara
+  gösterilmez).
+- **Olayı / alarmı onayla ve çöz penceresi yeniden tasarlandı** (Olaylar ve Alarm Geçmişi, tekli ve toplu aynı
+  pencere): hedef, önem, tür, açılış, takım, sahiplenen, bildirim ve 7/24 arama sayılarıyla özet kartı; eylemin gerçekte
+  ne yaptığını anlatan açıklama ("Onayla ve sahiplen"); sunucu kuralıyla birebir canlı gerekçe kontrol listesi (en az
+  10 karakter, 3 kelime) ve karakter sayacı; eyleme özel hazır gerekçe çipleri; Ctrl/⌘+Enter ile gönderim. Sunucu
+  hatası (403, not kuralı, ağ) artık pencerenin içinde gösterilir — pencere kapanmaz, not kaybolmaz; yazılmış not
+  kapatılırken onay istenir. Telefonda alttan açılır, eylem çubuğu sabit, klavye açıkken not alanı görünür kalır.
+  Olaylar listesi bu bağlam için sahiplenen kişi, e-posta / push teslim sayıları ve 7/24 arama sayısını yalnız
+  kullanıcının kendi takımının olaylarında döndürür (başka ekiplerin olaylarında yok); sayfa başına kaynak başına tek
+  toplu sorgu.
+- **Alan Adı izleme detay penceresi yeniden tasarlandı:** kalan gün kahramanı (uzun bitiş tarihi, kayıt dönemi
+  çubuğu), yenileme planı bloğu (planlı / gecikmiş / "Yenileme planla"), özet kartı (kayıt kuruluşu + IANA, kaynak,
+  son kontrol, sıklık, alarm eşikleri, "Şimdi kontrol et"); bitiş tarihi bilinmiyorsa neden + tam hata metni +
+  sonraki adımlar ve "Sorun Tanıla". Telefonda pencere tam ekran. "Domain Kaydı" sekmesi bölümlere ayrıldı: kayıt zaman
+  çizelgesi, kayıt kuruluşu, ad sunucuları ve DNS (DNSSEC, IP ↔ PTR), koruma (transfer / güncelleme / silme /
+  yenileme kilitleri sade dille, kara liste kanıtı + listeden çıkarma sayfası), açıklamalı tüm EPP kodları,
+  hatırlatmalar ve kopyalanabilir kayıt verisi (JSON).
+- **Sertifika penceresi → "SSL Kontrol" sekmesi yeniden tasarlandı:** tek bakışta hüküm (her şey yolunda / dikkat /
+  sorun var / yeterli bilgi yok) ve düz dille gerekçeleri, gruplu kontroller (Sertifika · Güven ve zincir · Bağlantı;
+  HSTS / ileri gizlilik öneri olarak, bilinmeyen gri), sunucu → ara → kök zincir kartları (SAN listesi, seri numarası ve
+  SHA-256 parmak izi kopyalama, teknik ayrıntılar), bağlantı hatasında nedene göre açıklama ve "Yeniden kontrol et".
+  Canlı önizleme artık sunucu hükmünü taşır (`assessment` + `security_flags`, kart rozeti ve Sağlık sekmesiyle aynı
+  kural — `*.example.com` artık `a.b.example.com`'u kapsıyor görünmez).
+- **Sertifika penceresi → "Notlar" sekmesi zenginleştirildi:** kategori çipleri, büyüyen metin alanı, Ctrl/⌘+Enter ile
+  kaydetme, 5000 karakter sayacı; sayılı kategori süzgeci + arama + "Silinenleri göster"; zaman çizelgesi (baş harf
+  avatarı, göreli zaman, "düzenlendi" işareti, katlanır geçmiş), satır içi düzenleme; salt okunur / yetkisiz durumda
+  nedenini söyleyen bant. Yazarken Escape artık pencereyi kapatıp taslağı silmiyor.
+- ⚠ Davranış — **Takım üyeleri penceresi kişisel veri göstermez:** fotoğraf, telefon, sicil ve sistem rolü artık yönetici
+  görünümünde de yok (baş harf avatarı); bu bilgiler Kullanıcılar sekmesinde kalır.
+
+### Fixed
+- **Geri yükleme, aktarım ve grup yeniden adlandırma sonrası Genel Bakış eskiyordu:** çöp kutusundan geri yükleme
+  (mükerrer alan adı akışı dâhil), SY/UG aktarımı, takım varlık taşıma ve grup yeniden adlandırma önbelleği
+  boşaltmıyordu — alan adı 5 dakikaya kadar görünmüyor, takım ve grup adları eski kalıyordu. Envanteri yazan her uç
+  artık önbelleği (takım adları dâhil) boşaltır; `CertificateServiceCacheEvictionTest` bunu her uç için denetler.
+- **Devredilen alan adının açık sertifika alarmı iki takıma bölünüyordu:** alarm açıkken envanter başka takıma
+  devredildiğinde yükseltme / günlük hatırlatma e-postası, eskalasyon kişileri ve 7/24 arama listesi yeni takıma, push
+  ve çözüm eski takıma gidiyordu. Artık açılıştaki kaçırılan hatırlatma turu dâhil tüm bildirimler alarmın açıldığı
+  takımı kullanır.
+- **Geçici zaman aşımı KRİTİK sertifika alarmını UYARI'ya indiriyordu:** günlük hatırlatma vakti geçici bir bağlantı
+  hatasına denk gelince müdür alıcılardan düşüyor, gün sayısı kayboluyor ve doğru hatırlatma 24 saat kayıyordu.
+  Doğrulanmamış tur artık alarmı değiştirmez; hatırlatma ilk doğrulanmış turda gider ve alıcı seviyesi alarmın
+  seviyesinin altına inmez.
+- **İlk bildirimi yarıda kalan sertifika alarmı ~24 saat sessiz kalıyordu:** dağıtım / yeniden başlatma sırasında ilk
+  bildirimi kesilen alarm bir sonraki taramada ya da açılıştaki tamamlama turunda İLK bildirim olarak bir kez gönderilir
+  (gönderim sürerken çift gönderim olmaz).
+- **Giriş ve oran sınırı yanıtı yavaşlayabiliyordu:** girişte ve 429 yanıtında coğrafi IP sorgusu ile zaman aşımsız
+  ters DNS istek iş parçacığında eşzamanlı çalışıyordu (arka plan işaretlemesi sınıf içi çağrıda devreye girmiyordu).
+  Zenginleştirme artık gerçekten arka planda çalışır, ters DNS 1,5 sn ile sınırlıdır.
+- **Push yeniden denemeleri beklemiyordu:** push gönderim kuyruğu yeniden denemelerde bekleme süresini (30 sn /
+  120 sn) artık gerçekten uygular — bir sonraki deneme zamanı satıra yazılır (`next_attempt_at`, boş olabilir kolon;
+  yükseltmede kendiliğinden eklenir), dakikalık tarama ve yeni bildirimler bekleyen denemeyi erken göndermez. Önceden
+  ~2 dakikalık bir push API kesintisi o penceredeki bütün bildirimleri kalıcı olarak başarısız yapıyordu.
+- **Aynı push her dakika yeniden gidebiliyordu:** push API'si 60 karakterden uzun bir bildirim kimliği döndürdüğünde
+  kayıt düşüyor ve bildirim sonsuza dek yeniden gönderiliyordu. Kimlik kolon sınırına kırpılır, başarılı gönderim
+  kayıt hatası yüzünden yeniden denenmez, kayıt düşse bile deneme sayacı ilerler.
+- ⚠ Davranış — **Alarm fırtınası push'u kanal kurallarına uyar:** takım ve izleme türü anahtarları, izleme bazında push
+  kapatma, sessiz saatler ve günlük tekrar ayarı artık fırtına push'unda da geçerli; engellenen gönderimler teslimat
+  günlüğünde gerekçesiyle görünür. Fırtına push'u bireysel push gibi yalnız SY takımına gider (UG takımı fırtına
+  e-postasını almaya devam eder). Fırtına "çözüldü" push'u açılış bildirimini alan herkese gider ve saatlik tavana
+  takılmaz (yöneticiler "N izleme erişilemez"i alıp "çözüldü"yü hiç almıyordu); günlük tekrar push'u ilk günden sonra
+  sessizce atlanıyordu, artık her gün gider.
+- **HTTP uyarısı e-postasındaki bağlantı yanlış sayfaya gidiyordu:** HTTP izleme uyarılarının "Site Monitor'de
+  Görüntüle" bağlantısı Genel Bakış'ı izlemenin URL'siyle süzüyordu (boş sonuç); artık HTTP İzleme'de izlemenin
+  kendisini açar. Sertifika penceresini açan `open=cert` yalnız gerçek sertifika uyarılarına eklenir. Düz metin
+  e-postadaki bağlantı HTML ile aynı tabanı kullanır (sonda `/` olan adreste `//?tab=` oluşmaz); çözüm e-postasının düz
+  metin sürümüne de görüntüleme bağlantısı eklendi.
+- **Yeni alan adı kartı tazelemesi oturumdan bağımsızdı:** çıkış yapıldığında ya da oturum düştüğünde kısa aralıklı
+  tazeleme durur ve kart "hesaplanıyor" durumunda takılı kalmaz; aynı alan adı yeniden eklenirse eski döngü biter.
+- **İzleme derin bağlantıları yavaş listede açılmıyordu (dokuz tür):** e-postadaki ya da kartın "Bağlantıyı kopyala"
+  ile paylaşılan `?monitor=` bağlantısı, izleme listesi 300 ms'den geç yüklendiğinde hiçbir şey açmıyordu (sayfanın URL
+  eşitlemesi parametreyi liste gelmeden siliyordu). Artık açılır; bulunamayan ya da erişilemeyen izlemede "İzleme
+  bulunamadı ya da erişiminiz yok" uyarısı çıkar. Sentetik İzleme'nin kendi kopyası da aynı yola geçti.
+- **SSL derin bağlantısı elle açılan formu kapatıyordu:** bağlantının açtığı sertifika penceresi kullanıcı tarafından
+  kapatılıp elle başka bir pencere ya da "Düzenle" formu açıldığında, Pano'dan ayrılmak (Geri, 7/24 alanının Ayarlar
+  bağlantısı) o formu sessizce kapatıyor ve düzenlemeler kayboluyordu; artık yalnız bağlantının açtığı ve hâlâ açık
+  olan pencere kapanır.
+- **Alarm Geçmişi toplu işlem yersiz "1 başarısız" veriyordu:** seçili bir uyarı karttan tekli sahiplenilip / çözülüp
+  listeden düşünce seçim artık kalanlara budanır; toplu Sahiplen / Çöz yalnız pencerenin gösterdiği uyarıları gönderir.
+- **Olaylar süzgeçleri hatalı yüklemeden sonra donuyordu:** sunucu süzgeci değişikliği yüklenemediğinde istemci
+  süzgeçleri (önem, takım, Onaylı / Kritik / Atanmamış / Benim kutucukları) eski satırlara anında uygulanır.
+- **Sentetik İzleme bekleme süresi uyarısı hiç görünmüyordu:** kayıt sonrası doğrulama koşumu elle çalıştırma bekleme
+  süresine (429) takıldığında hata bildirimi yerine "bu izleme az önce çalıştırıldı" bandı gösterilir.
+- **Kara liste çipi yanlış sayıyordu:** alan adı kartı ve detay başlığı `;` ayraçlı kara liste kanıtını tek liste
+  sayıyordu (3 liste → "1 liste"); artık sunucunun biçimiyle doğru sayar.
+- **CSV içe aktarmada harf duyarlı eşleşme:** envanterdeki karışık harfli eski kayıtlar (ör. `Www.Example.com`)
+  içe aktarmada eşleşmiyor ve ikinci kayıt oluşuyordu; artık harf duyarsız eşleşir. Port ve DNS izlemelerinin takımlar arası mükerrer iletisi artık kaydın sahibi ekibi adıyla söyler.
+- **Sertifika penceresi sekmeler arasında boy değiştiriyordu:** pencere artık sabit boyutta (yapışık sekme şeridi,
+  yalnız içerik kayar; telefonda neredeyse tam ekran) — gerçek tarayıcı testi `cert-detail-stability.spec.js`.
+  Canlı SSL kontrolü hata aldığında oluşan sonsuz istek döngüsü ve not listesinde alan adı değişirken beliren yalancı
+  "Henüz not yok" giderildi.
+- **İzleme detay penceresi sekmeler arasında küçülüp büyüyor, titriyordu (dokuz tür):** pencere yüksekliği sekme
+  içeriğine göre değişip ortalanan pencere yeniden konumlanıyordu (HTTP'de yükseklik 499–868 px, üst kenar 16–200 px).
+  Artık geniş ekranda sabit boyut; başlık ve eylemler sabit, yalnız içerik kayar. Gerçek tarayıcı testi
+  `monitor-detail-stability.spec.js` (dokuz türün her sekmesi, oynama ≤ 2 px).
+- **Yeni eklenen alan adının kartı bir süre boş kalıyordu:** sağlık, açık alarm, erişilebilirlik ve sorumlu kişi alanları
+  ilk kontrol bitene ve 5 dakikalık tazeleme gelene kadar boştu. Artık ekleme (ve aktarım / geri yükleme) sonrası Genel
+  Bakış o alan adının verisi gelene dek kısa aralıklarla tazelenir; bu sürede kart "İlk kontrol yapılıyor…" ve
+  "hesaplanıyor" gösterir. Envanter uçlarının önbellek temizliği kart eklerini de kapsar (kapı
+  `CertificateServiceCacheEvictionTest`, kaynak taraması).
+- **Olaylar titremesi:** süzgeç / kapsam / sayfa değişiminde kartlar yerinde kalır (iskelet yalnız ilk yüklemede);
+  yavaş yanıtta liste soluklaşır (180 ms gecikmeli gösterge); arama yazarken 250 ms duraklamada tek istek gider.
+- **Yeni izleme kartı boş kalıyordu (dokuz tür):** kaydedince kart zamanlayıcının ilk turunu bekliyordu (türüne göre
+  30 sn – 1 saat). Artık kaydetmeden hemen sonra kartın kendi "Şimdi kontrol et" yolu çalışır; kart "İlk kontrol
+  yapılıyor…" gösterir ve ilk sonuç saniyeler içinde düşer (geçmiş, alarm ve trend normal kontrolle aynı). Düzenlemede
+  hedef/kontrol ayarı değiştiyse taze kontrol koşulur; yalnız ad/etiket/grup/bildirim değişikliği ve duraklatılmış
+  izleme kontrol başlatmaz. Sentetik İzleme'de kaydetme sonrası doğrulama koşumu (tek koşum) artık karta da işlenir.
+  Hiç kontrol edilmemiş Ping ve Sayfa Hızı kartları boş değil, bekleme satırı gösterir.
+- **Genel Bakış kartı yenileme planı:** plan kaydedilince ya da kaldırılınca "başarılı" bildirimi çıkıyor ama kart
+  60 saniyeye kadar eski durumu ("Yenilemeyi planla" / "Yenileme planlandı") gösteriyordu — kart eklerinin sunucu
+  önbelleği sertifika/envanter değişikliğinde boşaltılmıyordu. Artık plan, kaldırma, yenileme onayı ve envanter
+  değişikliğinden hemen sonra kart güncel; kapı `CertificateServiceCacheEvictionTest`.
+- **Sürüm penceresi** (sol üstteki sürüm bilgisi): commit satırı pencerenin dışına taşıyordu (40 karakterlik SHA
+  kırılamıyordu). Artık kısa commit gösterilir, tam SHA üzerine gelince görünür ve kopyalanır; uzun değişiklik
+  başlıkları da satır içinde kırılır. Kopyalanabilir referans bileşeni uzun değerleri her ekranda taşırmadan kırar.
+  Gerçek tarayıcı testi `nav-brand.spec.js`.
+- **Ortam rozeti:** sürüm penceresi, Sürüm & Dağıtım ve Sistem Sağlığı'nda ortam adı verilmemiş kurulumlar ham
+  "unknown" gösteriyordu; artık "Ortam adı yok" + nedenini ve çözümünü anlatan ipucu (Helm `config.environmentName`,
+  prod dağıtım komutu `environments/master.yaml` ile çalışınca "prod"); yerel kurulum "Yerel".
+
+### Security
+- **Kişi bazlı push kararlarının görünürlüğü sunucuda:** global yönetici her takımı, takımı yöneten (TEAM_ADMIN /
+  kapsamlı müdür) yalnız yönettiği takımları, üye yalnız kendi satırını görür; göremeyene nedeni ve kime başvuracağı
+  yazılır. Ayarlar → Webhook → "Kim alır?" ucu (`/api/admin/user-push/explain`) da aynı kurala bağlandı — kapsamlı
+  müdür artık yönetmediği takımın üyelerinin org rolünü ve push tercihini API'den okuyamaz.
+- ⚠ Davranış — **Bakım penceresi kapsamı sunucuda:** "Tüm izlemeler" penceresini yalnız global yönetici açabilir;
+  takım yöneticisi / kapsamlı müdür yalnız YÖNETTİĞİ takımların izlemelerini susturabilir (aynı hedefi başka takım da
+  izliyorsa reddedilir) — oluşturma, hızlı bakım, düzenleme ve sürdürmede. Eskiden takım yöneticisi tek istekle tüm
+  kurumun alarmlarını (e-posta, push, 7/24) susturabiliyordu. Süre tavanı: global yönetici 30 gün, diğerleri 7 gün.
+  `GET /maintenance/active` global olmayana yalnız kendi takımlarının hedeflerini döner. Bakım penceresi formunda
+  "Tüm monitörler" kutusu yalnız global yöneticiye görünür.
+- **Olay kaydı takımı doğrulanır:** olay oluştururken ya da düzenlerken takımı değiştirirken hedef takım `/transfer`
+  ile aynı kurala tabidir — kullanıcı başka takımın defterine olay açamaz, o takıma bildirim e-postası gönderemez.
+- **Eski `/api/admin/system/smtp-logs` yalnız global görüntüleyiciye:** tüm takımların posta günlüğünü (alıcı, konu,
+  alarm metni) süzmeden döndürüyordu; 7/24 satırları artık maskeli. Arayüz takım kapsamlı SMTP Gönderim Logu'nu
+  kullanmaya devam eder.
+- **Canlı teyit zincirleri takım kapsamlı:** `GET /monitoring/confirmations` global olmayana yalnız kendi (UG dâhil)
+  takımlarının düşen hedeflerini gösterir.
+- **Sertifika sağlığı yazma uçları işlem kapsamı ister:** Sağlık sekmesindeki "Şimdi kontrol et" ve "Planlı
+  yenilemeydi" onayı yalnız o takımda işlem yapabilene açık; salt okur AUDIT yenileme onaylayamaz.
+- **Eskalasyon kişisi başka takıma yazılmıyor:** AD kaynaklı kapsamlı müdür kişi eklerken `team_id` yok sayılıyor ve
+  kişi (e-posta + webhook adresi) alfabetik ilk takıma kaydediliyordu — o takımın eskalasyon e-postalarını ve
+  webhook'larını alıyor, müdür onu göremiyor ve silemiyordu. Hedef takım artık gövdeden (yoksa birincil takımdan)
+  alınır ve yönetim kapsamında olmalıdır (403); güncellemede de kişi yalnız yönetilen takıma taşınabilir.
+- **Webhook teslim durumu ve webhook testi takım kapsamlı:** `/contacts/webhook-status` her kullanıcıya tüm takımların
+  webhook alıcı e-postalarını, son durumu ve hata ayrıntısını döndürüyordu; artık yalnız görebildiği kişiler. Kişi
+  webhook testi güncelleme / silme ile aynı yönetim kapsamını ister.
+- **Kişi bazlı push ayarları kapsamlı:** kapsamlı müdür yalnız yönettiği takımların push kapsamını değiştirebilir;
+  izleme türü kapsamı yalnız global yöneticide. Test push'u yalnız yönettiği takımların üyelerine gönderilebilir.
+- **Sorun Bildirimleri yönetimi kapsamlı müdüre kapalı:** liste, ayrıntı, yanıt, durum değişikliği ve kalıcı silme
+  (IP, tarayıcı bilgisi, ekran görüntüsü içerir) yalnız global yönetim rollerinde; müdür ekranda kendi bildirimlerini
+  görür ve yeni bildirim açabilir.
+- ⚠ Davranış — **Veri Saklama yalnız global yöneticide:** ayar, yasal saklama, onay, deneme, elle temizlik ve geriye
+  doldurma uçları ile tüm saklama anahtarları kapsamlı müdüre kapalı; müdür ekranı salt okunur görür. Değişmeyen
+  global-only değeri geri gönderen kayıt artık reddedilmez, yok sayılır (Giriş Anomalisi ve push ayarları müdürde
+  kaydedilmeye devam eder).
+- **İzleme Rehberi takım kapsamlı:** rehberi yalnız o hedefi izleyen bir izlemede işlem yapabilen düzenler, görebilen
+  okur (DNS / Port envanter türevi satırda takım envanterden).
+- **Push teslimat günlüğü takım kapsamlı:** Ayarlar → Webhook teslimat günlüğü, CSV dışa aktarımı ve istatistik
+  kutucukları kapsamlı müdüre (AD ADMIN) yalnız YÖNETTİĞİ takımların satırlarını gösterir; eskiden her takımın kişi
+  adları, teslim durumları (kişinin push'u kapattığı dâhil) ve mesaj metinleri okunabiliyordu. Yönetmediği takım
+  süzgeci 403.
+- **Olaylar — başka ekibin olayında çözen kişi gizli:** kurum geneli salt okunur görünümde başka ekibin olayını
+  çözen kişinin adı artık dönmez (sahiplenen gibi); sistem kapanışları ("Sistem (…)", envanter silindi) görünmeye
+  devam eder.
+
 ## [20.87.0] — 2026-09-27
 
 ### Added

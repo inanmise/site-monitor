@@ -331,4 +331,48 @@ class RetentionAdminControllerTest {
         org.assertj.core.api.Assertions.assertThat(csv).contains("id,started_at,finished_at,kind,total_deleted")
                 .contains("3,2026-09-03T03:00:00,2026-09-03T03:00:05,real,120,0,5000,scheduler,pod-a,activity-log=120");
     }
+
+    // ── Kapsamlı müdür (AD ADMIN) kapısı (2026-09-28 regresyon taraması) ─────────────────────
+    // Saklama sistem geneli: müdür matris izniyle yasal saklamayı kapatıp süreleri tabana çekerek temizliği
+    // koşturabiliyordu. Yazma/çalıştırma uçları requireNotScopedAdmin; görüntüleme açık (salt okunur ekran).
+
+    private MockHttpSession scopedAdmin() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", true);
+        s.setAttribute("username", "mudur");
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", List.of(2L));
+        s.setAttribute("manageTeamIds", List.of(2L));
+        return s;
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür: ayar kaydı / yasal saklama / onay / dry-run / elle temizlik / geriye doldurma 403 — hiçbir şey yazılmaz, koşmaz")
+    void scopedAdmin_cannotWriteOrPurge() throws Exception {
+        mvc.perform(put("/api/admin/retention/settings").session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"" + RetentionCatalog.HOLD_KEY + "\":\"false\"}}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/retention/settings").session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"values\":{\"" + ACTIVITY_KEY + "\":\"30\"}}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/retention/approval").session(scopedAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"policy_id\":\"user-push-deliveries\",\"note\":\"uygundur\"}"))
+                .andExpect(status().isForbidden());
+        for (String path : List.of("/api/admin/retention/dry-run", "/api/admin/retention/run", "/api/admin/retention/backfill-hourly")) {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path).session(scopedAdmin()))
+                    .andExpect(status().isForbidden());
+        }
+
+        verify(settingsService, never()).save(any(), anyString());
+        verify(retentionService, never()).execute(anyBoolean(), anyString());
+        verify(schedulerService, never()).backfillHourlyRollup(anyInt());
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür: görüntüleme uçları (overview) açık kalır — Ayarlar'da salt okunur ekran")
+    void scopedAdmin_canStillView() throws Exception {
+        when(runRepo.findFirstByDryRunFalseOrderByStartedAtDesc()).thenReturn(java.util.Optional.empty());
+        mvc.perform(get("/api/admin/retention/overview").session(scopedAdmin()))
+                .andExpect(status().isOk());
+    }
 }

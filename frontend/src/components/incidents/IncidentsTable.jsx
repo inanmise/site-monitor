@@ -3,13 +3,14 @@ import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { durationMs, formatDuration, formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
+import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import IncidentCard from './IncidentCard.jsx'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
-import { isOpen, isAcked, incidentHref, rowName } from './incidentsModel.js'
+import { isOpen, isAcked, incidentHref, rowName, isForeign, canActOn, canDeleteIncident } from './incidentsModel.js'
 
 const TH = 'h-9 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase'
 /** Sütun → sunucu sıralama anahtarı (IncidentsController.sortFor). */
@@ -28,6 +29,8 @@ export function TableSkeleton({ phone = false }) {
  * Liste görünümü — shadcn Table (md+), telefonda kart yığını (aynı IncidentCard). Satır tıklaması detayı açar;
  * satır klavyeyle odaklanır (Enter/Space açar, ↑/↓ satırlar arasında gezer); satır eylemleri tek KebabMenu'de
  * (adı satırı ayırır). Sıralama başlıkta `aria-sort` ile duyurulur. Seçili satır TÜM zeminle vurgulanır.
+ * Başka ekibin olayı (`can_manage:false`) salt okunur: olay hücresinde kilit rozeti, menüde yalnız "Detayı aç" kalır —
+ * onayla/çöz/sil ve (takım kapsamlı) izleme bağlantısı YOK.
  */
 export default function IncidentsTable({
   rows, nowMs, sort, onSort, onOpen, selectedId, phone = false, isAdmin = false, onAck, onResolve, onDelete,
@@ -71,13 +74,16 @@ export default function IncidentsTable({
     }
   }
 
-  const menuItems = (inc) => [
-    { label: t('incov.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(inc) },
-    { label: t('incov.openMonitor'), icon: <ExternalLink aria-hidden="true" />, onClick: () => window.location.assign(incidentHref(inc)) },
-    { label: t('incov.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => onAck?.(inc), hidden: !isOpen(inc) || isAcked(inc) || !onAck },
-    { label: t('incov.resolve'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => onResolve?.(inc), hidden: !isOpen(inc) || !onResolve },
-    { label: t('incov.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete?.(inc), danger: true, hidden: !isAdmin || !onDelete },
-  ]
+  const menuItems = (inc) => {
+    const act = canActOn(inc)
+    return [
+      { label: t('incov.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(inc) },
+      { label: t('incov.openMonitor'), icon: <ExternalLink aria-hidden="true" />, onClick: () => window.location.assign(incidentHref(inc)), hidden: isForeign(inc) },
+      { label: t('incov.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => onAck?.(inc), hidden: !act || !isOpen(inc) || isAcked(inc) || !onAck },
+      { label: t('incov.resolve'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => onResolve?.(inc), hidden: !act || !isOpen(inc) || !onResolve },
+      { label: t('incov.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete?.(inc), danger: true, hidden: !canDeleteIncident(inc, isAdmin) || !onDelete },
+    ]
+  }
 
   return (
     <div data-slot="incident-list" className="overflow-hidden rounded-lg border bg-card">
@@ -102,6 +108,7 @@ export default function IncidentsTable({
             const open = isOpen(inc)
             return (
               <TableRow key={inc.id} data-status={inc.status} data-incident-id={inc.id} data-state={selected ? 'selected' : undefined}
+                data-foreign={isForeign(inc) || undefined}
                 tabIndex={0} title={t('incov.openDetail')}
                 className={cn('cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
                   open && !selected && 'bg-destructive/[0.04]',
@@ -116,6 +123,7 @@ export default function IncidentsTable({
                       <div className="line-clamp-2 font-semibold [overflow-wrap:anywhere]" title={name}>{name}</div>
                       <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <RootCauseChip rc={inc.root_cause} />
+                        {isForeign(inc) && <ReadOnlyBadge compact />}
                         {inc.message && <span className="line-clamp-1 [overflow-wrap:anywhere]" title={inc.message}>{inc.message}</span>}
                       </div>
                     </div>

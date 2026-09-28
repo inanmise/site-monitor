@@ -10,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -45,6 +44,8 @@ public class AuditService {
     @org.springframework.context.annotation.Lazy
     private final NewDeviceNotifier newDeviceNotifier;
     private final ClientIpResolver clientIpResolver;
+    /** E2: geo/PTR zenginleştirmesi AYRI bean'de — proxy'den geçmezse @Async çalışmaz (bkz. AuditGeoEnricher). */
+    private final AuditGeoEnricher geoEnricher;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -313,7 +314,7 @@ public class AuditService {
 
         AuditLog saved = persist(entry);
         if (saved != null) {
-            enrichGeoAsync(saved.getId(), ipAddress);
+            geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
             // E1: daha önce görülmemiş bir cihazdan giriş → kullanıcıya bilgi maili.
             // Best-effort ve @Async: bildirim GİRİŞİ engellemez, hatası yutulur.
             if (success) {
@@ -341,7 +342,7 @@ public class AuditService {
                 + (actor != null && !actor.isBlank() ? " (targeting '" + actor + "')" : ""));
         entry.setAnomalyFlags("RATE_LIMITED");
         AuditLog saved = persist(entry);
-        if (saved != null) enrichGeoAsync(saved.getId(), ipAddress);
+        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
         log.warn("Rate-limited login blocked: IP={} actor={}", ipAddress, actor);
     }
 
@@ -564,28 +565,8 @@ public class AuditService {
         return out;
     }
 
-    // ── Geo zenginleştirme (hash'e girmeyen kolonlar; async) ─────────────────────
-
-    @Async("certCheckExecutor")
-    public void enrichGeoAsync(Long auditLogId, String ip) {
-        try {
-            GeoIpService.GeoInfo geo = geoIpService.lookup(ip);
-            String host = reverseDns(ip);
-            auditLogRepo.updateGeo(auditLogId, geo.country(), geo.city(), geo.org(), host);
-        } catch (Exception e) {
-            log.debug("Geo enrichment failed for id={}: {}", auditLogId, e.getMessage());
-        }
-    }
-
-    private String reverseDns(String ip) {
-        if (ip == null || ip.isBlank() || geoIpService.isPrivateIp(ip)) return null;
-        try {
-            String host = java.net.InetAddress.getByName(ip).getCanonicalHostName();
-            return (host != null && !host.equalsIgnoreCase(ip)) ? host : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
+    // Geo zenginleştirme (hash'e girmeyen kolonlar; async) → AuditGeoEnricher (E2: sınıf-içi @Async çağrısı
+    // proxy'yi atlıyor, geo HTTP + ters-DNS giriş iş parçacığında koşuyordu).
 
     // ── Yardımcılar ──────────────────────────────────────────────────────────────
 

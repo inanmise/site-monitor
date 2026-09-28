@@ -19,7 +19,8 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
   'atype', 'astatus', 'arange', 'aq',   // Aktivite Logu süzgeçleri (QA ISSUE-003: sekme değişince başka sekmeye taşınıyordu)
   'via', 'dq',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
   'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
-  'scope']       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli)
+  'scope',       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli) + Olaylar kapsamı mine|others|all (2026-09-28)
+  'open']        // UYGULAMA düzeyi tek seferlik "vardığında aç" (cert | noc — utils/monitorDeepLink.js DEEP_OPEN_PARAM, 2026-09-28); tüketilince silinir
 
 /**
  * Sekme değişince temizlenecek param AİLELERİ (önek eşleşmesi).
@@ -50,6 +51,19 @@ export function readUrlInt(key, fallback = null) {
   return Number.isInteger(n) && n > 0 ? n : fallback
 }
 
+/** Zamanlayıcısı henüz dolmamış (debounce'lu) yazımlar — {@link flushUrlQuerySync} bunları hemen uygular. */
+const pendingWrites = new Set()
+
+/**
+ * Bekleyen TÜM debounce'lu yazımları ŞİMDİ uygular (2026-09-28). Bir sayfa başka sekmeye gitmeden HEMEN ÖNCE çağırır
+ * (7/24 Kapsamı → izleme): son 300 ms'de değişen süzgeç o anki geçmiş kaydına yazılsın ki Geri onu geri getirsin. Sekme
+ * geçişi sayfayı söker ve söküm zamanlayıcıyı İPTAL eder (yazılmamış süzgeç kaybolurdu); söküm anında yazmak ise
+ * App'in az önce pushState ettiği YENİ kaydın adresini kirletirdi — bu yüzden yazım gezinmeden önce, açıkça.
+ */
+export function flushUrlQuerySync() {
+  for (const write of [...pendingWrites]) write()
+}
+
 export function useUrlQuerySync(mapping, { debounceMs = 300, enabled = true } = {}) {
   const timerRef = useRef(null)
   // Son eşleme ref'te — debounce dolduğunda en güncel değerler yazılır (son değer kazanır).
@@ -60,8 +74,10 @@ export function useUrlQuerySync(mapping, { debounceMs = 300, enabled = true } = 
   useEffect(() => {
     if (!enabled) return
     if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null
+    // Zamanlayıcı dolunca YA DA flushUrlQuerySync çağrılınca bir kez koşar (hangisi önce gelirse).
+    const write = () => {
+      pendingWrites.delete(write)
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
       try {
         const url = new URL(window.location.href)
         let changed = false
@@ -79,8 +95,13 @@ export function useUrlQuerySync(mapping, { debounceMs = 300, enabled = true } = 
           window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
         }
       } catch { /* history rate-limit / kısıtlı ortam — sync en iyi-çaba, sayfayı kırma */ }
-    }, debounceMs)
-    return () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null } }
+    }
+    pendingWrites.add(write)
+    timerRef.current = setTimeout(write, debounceMs)
+    return () => {
+      pendingWrites.delete(write)
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [depsKey, enabled])
 }

@@ -130,6 +130,10 @@ public class IncidentController {
     public ResponseEntity<Map<String, Object>> create(
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireManage(session);
+        // Hedef takım kapsamı (2026-09-28, A2): gövdedeki team_id doğrulanmadan kayda yazılıyordu. incidents.manage
+        // USER'da açık → kullanıcı Takım B'nin team_id'siyle sahte olay açıp (send_notification ile) B'nin
+        // ekibine/müdürüne mail attırabiliyor, B'nin SLA/ledger'ını kirletebiliyordu. Kural /transfer ile AYNI.
+        if (body.containsKey("team_id")) requireTransferTarget(session, longVal(body.get("team_id")));
         IncidentRecord e = service.create(body,
                 (String) session.getAttribute("username"),
                 longAttr(session, "userId"), longAttr(session, "teamId"));
@@ -150,6 +154,10 @@ public class IncidentController {
         requireManage(session);
         IncidentRecord cur = service.get(id);
         requireIncidentWrite(session, cur);   // takım kapsamı (IDOR engeli)
+        // Takım DEĞİŞİYORSA hedef de kapsamda olmalı (A2) — PUT, /transfer'in atladığı kapıdan geçen ikinci yoldu.
+        // Aynı team_id'yi geri göndermek (form her kayıtta tüm alanları yollar) taşıma değildir → kapıya takılmaz.
+        if (body.containsKey("team_id") && !java.util.Objects.equals(longVal(body.get("team_id")), cur.getTeamId()))
+            requireTransferTarget(session, longVal(body.get("team_id")));
         String prevStatus = cur.getStatus(); // RESOLVED'e GEÇİŞ tespiti için
         IncidentRecord e = service.update(id, body, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_UPDATE", session, request,

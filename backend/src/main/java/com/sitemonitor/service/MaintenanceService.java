@@ -188,11 +188,20 @@ public class MaintenanceService {
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
-    @SuppressWarnings("unchecked")
     public List<String> targetsOf(MaintenanceWindow w) {
-        if (w.getTargetsJson() == null || w.getTargetsJson().isBlank()) return List.of();
+        return targetKeys(w.getTargetsJson());
+    }
+
+    /**
+     * {@code targets_json} → alarm anahtarları — motorun (refresh / isUnderMaintenance) OKUDUĞU liste. Statik:
+     * MaintenanceController'ın takım kapsamı kapısı AYNI ayrıştırmayı kullanır; kapının doğruladığı liste ile
+     * motorun susturduğu liste ayrışamaz (servis testte mock'lansa bile).
+     */
+    @SuppressWarnings("unchecked")
+    public static List<String> targetKeys(String targetsJson) {
+        if (targetsJson == null || targetsJson.isBlank()) return List.of();
         try {
-            List<Map<String, Object>> list = MAPPER.readValue(w.getTargetsJson(), List.class);
+            List<Map<String, Object>> list = MAPPER.readValue(targetsJson, List.class);
             List<String> out = new ArrayList<>();
             for (Map<String, Object> t : list) if (t.get("target") != null) out.add(t.get("target").toString());
             return out;

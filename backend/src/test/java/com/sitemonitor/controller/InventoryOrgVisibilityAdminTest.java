@@ -240,10 +240,11 @@ class InventoryOrgVisibilityAdminTest {
             when(inventoryRepo.findById(r.getId())).thenReturn(Optional.of(r));
             when(inventoryRepo.findByDomain(r.getDomain())).thenReturn(Optional.of(r));
         }
-        when(inventoryRepo.existsByDomainIgnoreCase(anyString())).thenAnswer(i -> {
+        // Mükerrer kapısı (2026-09-28) çakışan KAYDI okur (sahibi takımı 409'da adıyla söylemek için).
+        when(inventoryRepo.findFirstByDomainIgnoreCaseOrderByIdAsc(anyString())).thenAnswer(i -> {
             String d = i.getArgument(0);
-            return List.of("own.example.com", "foreign.example.com", "gone.example.com", "gone-own.example.com")
-                    .stream().anyMatch(x -> x.equalsIgnoreCase(d));
+            return java.util.stream.Stream.of(own, foreign, goneForeign, goneOwn)
+                    .filter(x -> x.getDomain().equalsIgnoreCase(d)).findFirst();
         });
         when(inventoryRepo.save(any(CertificateInventory.class))).thenAnswer(i -> i.getArgument(0));
         when(latestCheckRepo.findAll()).thenReturn(List.of());
@@ -556,5 +557,157 @@ class InventoryOrgVisibilityAdminTest {
         verify(noteRepo).findByDomainAndTeamIdInOrderByCreatedAtDesc(eq("foreign.example.com"), anyList());
         mvc.perform(get("/api/admin/notes/foreign.example.com/60/revisions").session(user()))
                 .andExpect(status().isForbidden());
+    }
+
+    // ══ Mükerrer alan adı 409 (2026-09-28): sahibi takım ADIYLA + yapısal `existing` ═════════════════════════
+
+    /** `existing` beyaz listesi — bunun DIŞINDA anahtar yanıtta olamaz (sorumlu kişi, açıklama, IP, platform…). */
+    private static final java.util.Set<String> EXISTING_KEYS = java.util.Set.of(
+            "domain", "inventory_id", "team_id", "team_name", "ug_team_id", "ug_team_name", "deleted", "deleted_at",
+            "same_team", "can_view", "can_restore", "can_transfer");
+
+    private static final String ADD_BODY = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"%s\",\"port\":443,\"team_id\":5}";
+
+    private org.springframework.test.web.servlet.ResultActions add(MockHttpSession s, String domain, String lang) throws Exception {
+        return mvc.perform(post("/api/admin/inventory").session(s).header("X-Lang", lang)
+                .contentType(MediaType.APPLICATION_JSON).content(String.format(ADD_BODY, domain)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertWhitelisted(String body) {
+        java.util.Map<String, Object> json = com.jayway.jsonpath.JsonPath.parse(body).read("$", java.util.Map.class);
+        assertThat(json.keySet()).containsExactlyInAnyOrder("success", "error", "code", "existing");
+        java.util.Map<String, Object> ex = (java.util.Map<String, Object>) json.get("existing");
+        assertThat(ex.keySet()).isSubsetOf(EXISTING_KEYS)
+                .contains("domain", "inventory_id", "team_id", "team_name", "deleted", "same_team",
+                        "can_view", "can_restore", "can_transfer");
+        // Kaydın iç/kişisel alanları (sorumlu e-postası, açıklama, IP, platform) 409 yanıtına SIZMAZ.
+        assertThat(body).doesNotContain("destek@example.com", "ödeme sitesi", "10.0.0.2", "IIS", "svc_mgmt", "created_ip");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("scopedRoles")
+    @DisplayName("mükerrer (ekle): başka takımın kaydı → 409 + code=DOMAIN_EXISTS + existing.team_name; ileti ekibi ADIYLA söyler; beyaz liste")
+    void duplicateAdd_foreign_namesOwnerTeam(String role, Supplier<MockHttpSession> session) throws Exception {
+        String body = add(session.get(), "Foreign.Example.COM", "tr")   // harf duyarsız
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("'Takım B' ekibinin envanterinde kayıtlı")))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("aktarılması (transfer) gerekir")))
+                .andExpect(jsonPath("$.existing.domain").value("foreign.example.com"))
+                .andExpect(jsonPath("$.existing.inventory_id").value(2))
+                .andExpect(jsonPath("$.existing.team_id").value(9))
+                .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
+                .andExpect(jsonPath("$.existing.deleted").value(false))
+                .andExpect(jsonPath("$.existing.same_team").value(false))
+                .andExpect(jsonPath("$.existing.can_view").value(true))        // org geneli okuma açık
+                .andExpect(jsonPath("$.existing.can_restore").value(false))
+                .andExpect(jsonPath("$.existing.can_transfer").value(false))   // takım kapsamlı rol aktaramaz
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertWhitelisted(body);
+        verify(inventoryRepo, never()).save(any());
+        assertThat(foreign.getTeamId()).isEqualTo(FOREIGN_TEAM);
+    }
+
+    @Test
+    @DisplayName("mükerrer (ekle): İngilizce ileti doğal ve takımı adıyla söyler; ayar kapalıyken can_view=false ama takım ADI yine söylenir")
+    void duplicateAdd_englishMessage_andSwitchOff() throws Exception {
+        add(user(), "foreign.example.com", "en")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(
+                        "This domain is already registered in the 'Takım B' team's inventory. A duplicate record can't be "
+                        + "created; if the domain should belong to your team, the record needs to be transferred to it."));
+        switchOn(false);
+        add(user(), "foreign.example.com", "tr")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
+                .andExpect(jsonPath("$.existing.can_view").value(false));
+    }
+
+    @Test
+    @DisplayName("mükerrer (ekle): ÇÖP KUTUSUNDAKİ başka takımın kaydı → deleted=true + deleted_at, geri yükleme/aktarım ileti; USER geri yükleyemez")
+    void duplicateAdd_foreignInBin() throws Exception {
+        String body = add(user(), "gone.example.com", "tr")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
+                .andExpect(jsonPath("$.existing.deleted").value(true))
+                .andExpect(jsonPath("$.existing.deleted_at").value("2026-09-01T00:00:00"))
+                .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
+                .andExpect(jsonPath("$.existing.can_view").value(false))       // çöp kutusu org geneli okunmaz
+                .andExpect(jsonPath("$.existing.can_restore").value(false))
+                .andExpect(jsonPath("$.error").value(
+                        "Bu alan adı çöp kutusunda ('Takım B' ekibinin kaydı). Mükerrer kayıt oluşturulamaz; kaydın geri "
+                        + "yüklenmesi ya da ekibinize aktarılması gerekir."))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertWhitelisted(body);
+    }
+
+    @Test
+    @DisplayName("mükerrer (ekle): AYNI takım — kayıt varsa 'mevcut kaydı düzenleyin', çöp kutusundaysa 'geri yükleyin' + can_restore (yönetici)")
+    void duplicateAdd_sameTeam() throws Exception {
+        when(permissionService.allows(any(HttpSession.class), eq("inventory.crud"), eq("edit"))).thenReturn(true);
+        add(user(), "own.example.com", "tr")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existing.same_team").value(true))
+                .andExpect(jsonPath("$.existing.team_name").value("Takım A"))
+                .andExpect(jsonPath("$.existing.can_view").value(true))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(
+                        "seçtiğiniz 'Takım A' ekibinin envanterinde zaten kayıtlı. Mükerrer kayıt oluşturulamaz; mevcut kaydı açıp düzenleyin")));
+        add(teamAdmin(), "gone-own.example.com", "tr")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existing.same_team").value(true))
+                .andExpect(jsonPath("$.existing.deleted").value(true))
+                .andExpect(jsonPath("$.existing.can_restore").value(true))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("seçtiğiniz 'Takım A' ekibinin çöp kutusunda")));
+        add(user(), "gone-own.example.com", "tr")   // USER restore kapısından (takım yönetimi) geçmez
+                .andExpect(jsonPath("$.existing.can_restore").value(false));
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("mükerrer: can_transfer YALNIZ global admin + inventory.transfer — rolü ADMIN olan kapsamlı müdür değil (tuzak)")
+    void duplicateAdd_canTransfer_onlyGlobalAdminWithPermission() throws Exception {
+        add(globalAdmin(), "foreign.example.com", "tr").andExpect(jsonPath("$.existing.can_transfer").value(false));
+        when(permissionService.allows(any(HttpSession.class), eq("inventory.transfer"), eq("execute"))).thenReturn(true);
+        add(globalAdmin(), "foreign.example.com", "tr")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.existing.can_transfer").value(true))
+                .andExpect(jsonPath("$.existing.can_view").value(true));
+        add(scopedAdmin(), "foreign.example.com", "tr").andExpect(jsonPath("$.existing.can_transfer").value(false));
+        add(teamAdmin(), "foreign.example.com", "tr").andExpect(jsonPath("$.existing.can_transfer").value(false));
+    }
+
+    @Test
+    @DisplayName("mükerrer (yeniden adlandır, PUT): aynı 409 + existing; alan adı taşıma (renameDomain) HİÇ çalışmaz")
+    void duplicateRename_sameStructuredConflict() throws Exception {
+        String body = mvc.perform(put("/api/admin/inventory/1").session(teamAdmin()).header("X-Lang", "tr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"FOREIGN.example.com\",\"port\":443,\"active\":true,\"team_id\":5}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DOMAIN_EXISTS"))
+                .andExpect(jsonPath("$.existing.team_name").value("Takım B"))
+                .andExpect(jsonPath("$.existing.inventory_id").value(2))
+                .andExpect(jsonPath("$.existing.same_team").value(false))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("'Takım B' ekibinin envanterinde kayıtlı")))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertWhitelisted(body);
+        verify(latestCheckRepo, never()).renameDomain(anyString(), anyString());
+        verify(inventoryRepo, never()).save(any());
+        assertThat(own.getDomain()).isEqualTo("own.example.com");
+    }
+
+    @Test
+    @DisplayName("aktarım ucu kapısı DEĞİŞMEDİ: USER 403; global admin (+izin) aktarır — mükerrer akışının 'Ekibime aktar' düğmesi bu uca gider")
+    void transferEndpoint_permissionsUnchanged() throws Exception {
+        mvc.perform(post("/api/admin/inventory/2/transfer").session(user()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":5}"))
+                .andExpect(status().isForbidden());
+        assertThat(foreign.getTeamId()).isEqualTo(FOREIGN_TEAM);
+        mvc.perform(post("/api/admin/inventory/2/transfer").session(globalAdmin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"team_id\":5}"))
+                .andExpect(status().isOk());
+        assertThat(foreign.getTeamId()).isEqualTo(OWN_TEAM);
+        verify(derivedMonitorTeamSync).syncTeam("foreign.example.com", OWN_TEAM);
     }
 }

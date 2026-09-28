@@ -680,6 +680,93 @@ class CertificateControllerTest {
         verify(checkerService, never()).check(eq("b.example.com"), anyInt(), anyBoolean(), any());
     }
 
+    // ── A11 (2026-09-28): YAZAN sağlık uçları görüş kapsamıyla değil İŞLEM kapsamıyla kapılı ─────────
+    // Global görücü AUDIT (salt okur) her takımı GÖRDÜĞÜ için her takımın parmak izi değişimini "planlı yenileme"
+    // diye onaylayabiliyor (araya girme uyarısı yeşile döner) ve canlı el sıkışması tetikleyebiliyordu.
+
+    private static MockHttpSession auditSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "denetci");
+        s.setAttribute("systemRole", "AUDIT");   // viewTeamIds null → global görücü, takım üyeliği yok
+        return s;
+    }
+
+    /** Kapsamlı müdür: rol ADMIN, takım 5'i GÖRÜR (ast takım) ama yalnız takım 2'yi YÖNETİR. */
+    private static MockHttpSession scopedAdminViewingOnly5() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "mudur");
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("teamId", 2L);
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(2L, 5L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(2L)));
+        return s;
+    }
+
+    private com.sitemonitor.model.LatestCheck pendingRenewal(String domain) {
+        com.sitemonitor.model.LatestCheck lc = latestOf();
+        lc.setDomain(domain);
+        lc.setFingerprint("AA:BB");
+        lc.setPinnedFingerprint("AA:BB");
+        lc.setFingerprintChangedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusDays(1).withNano(0).toString());
+        return lc;
+    }
+
+    @Test
+    @DisplayName("A11: AUDIT yenileme ONAYLAYAMAZ ve tazeleme TETİKLEYEMEZ (403) — hiçbir şey yazılmaz/koşmaz")
+    void healthWrites_audit_forbidden() throws Exception {
+        com.sitemonitor.model.CertificateInventory inv = invOf(5L, 443);
+        inv.setDomain("audit.example.com");
+        when(inventoryRepo.findByDomain("audit.example.com")).thenReturn(java.util.Optional.of(inv));
+        when(latestCheckRepo.findById("audit.example.com")).thenReturn(java.util.Optional.of(pendingRenewal("audit.example.com")));
+
+        mvc.perform(post("/api/certificates/audit.example.com/health/confirm-renewal").session(auditSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/certificates/audit.example.com/health/refresh").session(auditSession()))
+                .andExpect(status().isForbidden());
+
+        verify(latestCheckRepo, never()).save(any());
+        verify(checkerService, never()).check(eq("audit.example.com"), anyInt(), anyBoolean(), any(), any());
+        verify(certService, never()).saveResult(any());
+    }
+
+    @Test
+    @DisplayName("A11: kapsamlı müdür ast takımı GÖRÜR ama İŞLEM yapamaz (403); YÖNETTİĞİ takımda onay 200")
+    void healthWrites_scopedAdmin_viewOnlyTeamForbidden_managedTeamOk() throws Exception {
+        com.sitemonitor.model.CertificateInventory sub = invOf(5L, 443);
+        sub.setDomain("ast.example.com");
+        when(inventoryRepo.findByDomain("ast.example.com")).thenReturn(java.util.Optional.of(sub));
+        when(latestCheckRepo.findById("ast.example.com")).thenReturn(java.util.Optional.of(pendingRenewal("ast.example.com")));
+        mvc.perform(post("/api/certificates/ast.example.com/health/confirm-renewal").session(scopedAdminViewingOnly5()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/certificates/ast.example.com/health/refresh").session(scopedAdminViewingOnly5()))
+                .andExpect(status().isForbidden());
+        verify(latestCheckRepo, never()).save(any());
+
+        com.sitemonitor.model.CertificateInventory own = invOf(2L, 443);
+        own.setDomain("kendi.example.com");
+        com.sitemonitor.model.LatestCheck lc = pendingRenewal("kendi.example.com");
+        when(inventoryRepo.findByDomain("kendi.example.com")).thenReturn(java.util.Optional.of(own));
+        when(latestCheckRepo.findById("kendi.example.com")).thenReturn(java.util.Optional.of(lc));
+        mvc.perform(post("/api/certificates/kendi.example.com/health/confirm-renewal").session(scopedAdminViewingOnly5()))
+                .andExpect(status().isOk());
+        verify(latestCheckRepo).save(lc);
+    }
+
+    @Test
+    @DisplayName("A11: onay inventory.crud/edit izni ister — izin yoksa 403, kayda bakılmaz bile")
+    void confirmRenewal_requiresInventoryEditPermission() throws Exception {
+        org.mockito.Mockito.doThrow(new SecurityException("Bu islem icin yetkiniz yok: inventory.crud/edit"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("inventory.crud"), eq("edit"));
+
+        mvc.perform(post("/api/certificates/a.example.com/health/confirm-renewal").session(teamSession(5L)))
+                .andExpect(status().isForbidden());
+
+        verify(inventoryRepo, never()).findByDomain("a.example.com");
+        verify(latestCheckRepo, never()).save(any());
+    }
+
     @Test
     @DisplayName("check-preview envanter PORTUNU kullanır (443 sabiti kaldırıldı)")
     void preview_usesInventoryPort() throws Exception {
@@ -873,6 +960,95 @@ class CertificateControllerTest {
 
         mvc.perform(get("/api/check-preview/t5.example.com").session(scopedSession())).andExpect(status().isOk());
         mvc.perform(get("/api/check-preview/adhoc.example.com").session(scopedSession())).andExpect(status().isOk());
+    }
+
+    // ── 2026-09-28: SSL Kontrol sekmesi — değerlendirme SUNUCUDAN (CertificateHealthRules, tek kural) ──────────
+
+    /** check-preview için gerçek tel biçiminde başarılı el sıkışma sonucu (CertificateCheckerService anahtarları). */
+    private static java.util.Map<String, Object> handshake(String domain, java.util.List<String> san, String tls,
+            String cipher, String sigAlg, String keyAlg, int keySize, String trust) {
+        java.util.Map<String, Object> r = new java.util.LinkedHashMap<>();
+        r.put("domain", domain);
+        r.put("status", "valid");
+        r.put("san", san);
+        r.put("tls_version", tls);
+        r.put("cipher_suite", cipher);
+        r.put("signature_algorithm", sigAlg);
+        r.put("public_key_algorithm", keyAlg);
+        r.put("public_key_size", keySize);
+        r.put("trust_status", trust);
+        return r;
+    }
+
+    @Test
+    @DisplayName("check-preview sağlıklı sonuca değerlendirme ekler: her satır OK, güvenlik bayrağı yok")
+    void preview_addsAssessment_healthy() throws Exception {
+        when(inventoryRepo.findByDomain("www.example.com")).thenReturn(java.util.Optional.empty());
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(handshake("www.example.com", List.of("example.com", "*.example.com"), "TLSv1.3",
+                        "TLS_AES_128_GCM_SHA256", "SHA256withRSA", "RSA", 2048, "TRUSTED"));
+
+        mvc.perform(get("/api/check-preview/www.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.assessment.hostname").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.protocol").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.protocol_latest").value(true))
+                .andExpect(jsonPath("$.data.assessment.cipher").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.pfs").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.signature").value("OK"))
+                .andExpect(jsonPath("$.data.assessment.key_size").value("OK"))
+                .andExpect(jsonPath("$.data.security_flags").isEmpty());
+    }
+
+    @Test
+    @DisplayName("check-preview: joker TEK etiket (RFC 6125) — *.example.com a.b.example.com'u kapsamaz; zayıf ayarlar FAIL")
+    void preview_addsAssessment_weakAndMismatch() throws Exception {
+        when(inventoryRepo.findByDomain("a.b.example.com")).thenReturn(java.util.Optional.empty());
+        when(checkerService.check(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenReturn(handshake("a.b.example.com", List.of("*.example.com"), "TLSv1",
+                        "TLS_RSA_WITH_3DES_EDE_CBC_SHA", "SHA1withRSA", "RSA", 1024, "UNTRUSTED"));
+
+        mvc.perform(get("/api/check-preview/a.b.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.assessment.hostname").value("FAIL"))
+                .andExpect(jsonPath("$.data.assessment.protocol").value("FAIL"))
+                .andExpect(jsonPath("$.data.assessment.protocol_latest").value(false))
+                .andExpect(jsonPath("$.data.assessment.cipher").value("FAIL"))
+                .andExpect(jsonPath("$.data.assessment.pfs").value("FAIL"))
+                .andExpect(jsonPath("$.data.assessment.signature").value("FAIL"))
+                .andExpect(jsonPath("$.data.assessment.key_size").value("FAIL"))
+                .andExpect(jsonPath("$.data.security_flags[0]").value("HOSTNAME_MISMATCH"))
+                .andExpect(jsonPath("$.data.security_flags[1]").value("UNTRUSTED_CA"));
+    }
+
+    @Test
+    @DisplayName("check-preview: ölçülmeyen alan UNKNOWN (FAIL değil); hata sonucuna değerlendirme EKLENMEZ")
+    void preview_assessment_unknownAndErrorResult() throws Exception {
+        when(inventoryRepo.findByDomain(anyString())).thenReturn(java.util.Optional.empty());
+        java.util.Map<String, Object> bare = new java.util.LinkedHashMap<>();
+        bare.put("domain", "bare.example.com");
+        bare.put("status", "valid");
+        bare.put("san", List.of());
+        bare.put("public_key_size", -1);
+        java.util.Map<String, Object> failed = new java.util.LinkedHashMap<>();
+        failed.put("domain", "down.example.com");
+        failed.put("status", "error");
+        failed.put("error", "Connection timeout after 10s");
+        failed.put("san", List.of());
+        when(checkerService.check(eq("bare.example.com"), anyInt(), anyBoolean(), any(), any())).thenReturn(bare);
+        when(checkerService.check(eq("down.example.com"), anyInt(), anyBoolean(), any(), any())).thenReturn(failed);
+
+        mvc.perform(get("/api/check-preview/bare.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.assessment.hostname").value("UNKNOWN"))
+                .andExpect(jsonPath("$.data.assessment.protocol").value("UNKNOWN"))
+                .andExpect(jsonPath("$.data.assessment.key_size").value("UNKNOWN"))
+                .andExpect(jsonPath("$.data.security_flags").isEmpty());
+        mvc.perform(get("/api/check-preview/down.example.com").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("error"))
+                .andExpect(jsonPath("$.data.assessment").doesNotExist())
+                .andExpect(jsonPath("$.data.security_flags").doesNotExist());
     }
     @Test
     @DisplayName("2026-09-12: GET /stats/executive gövdeyi servisten kapsam predicate'iyle döner")

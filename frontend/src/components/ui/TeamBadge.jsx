@@ -83,7 +83,7 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
       )}
       {open && (
         <TeamMembersModal open={open} onClose={() => setOpen(false)}
-          team={{ id, name, email: entry?.email, leader_id: entry?.leader_id, leader_display_name: entry?.leader_display_name }} />
+          team={{ id, name, email: entry?.email, leader_id: entry?.leader_id, leader_display_name: entry?.leader_display_name, manager_id: entry?.manager_id }} />
       )}
     </>
   )

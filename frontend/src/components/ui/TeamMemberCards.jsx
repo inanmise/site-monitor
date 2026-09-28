@@ -1,44 +1,46 @@
+import { memo, useId, useMemo, useState } from 'react'
+import { Mail, PenLine, Search, SearchX, Users, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
+import CopyButton from './CopyButton.jsx'
+import PaginationBar from './PaginationBar.jsx'
+import StatusBlock from './StatusBlock.jsx'
+import { usePagination } from '../../hooks/usePagination.js'
+import { OrgRoleBadge, TONE_CLASS } from '../admin/ToneBadge.jsx'
+import {
+  FACET_ALL, FACET_SECONDARY, NO_ROLE, avatarSlot, avatarToneFor, buildSearchIndex, filterMembers, initialsOf,
+  isSecondaryMember, memberFacets, memberSeed, nameOf, sortMembers as sortMembersModel, sortMembersBy,
+} from './teamMembersModel.js'
+import { Avatar, AvatarFallback } from '@/components/shadcn/avatar'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
-import { Card } from '@/components/shadcn/card'
-import { OrgRoleBadge, SystemRoleBadge } from '../admin/ToneBadge.jsx'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
+import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { cn } from '@/lib/utils'
 
 /**
- * Takım üyesi kartları — takım-üyeleri modalında (her yüzeyden) çizilir. YALNIZ GERÇEK ÜYELER.
+ * Takım ÜYELERİ paneli — takım-üyeleri penceresinin (TeamMembersModal) "Üyeler" sekmesi. YALNIZ GERÇEK ÜYELER.
  *
- * <p><b>Prod hatası (2026-09-26):</b> eskiden {@code usersById} verilince üyelerden yukarı 2 kademe yönetim zinciri
- * yürünüp müdürler (ve onların müdürleri) üye ızgarasına "Müdür" rozetiyle EKLENİYORDU — takımın üyesi olmayan kişi
- * takımın içinde görünüyor, "N üye" sayacıyla kart sayısı tutmuyordu. Zincir yürüyüşü kaldırıldı; takım müdürü üye
- * listesine değil yönetim ekranındaki Takım Müdürü sütununa aittir (`utils/teamManager.js`). Üyenin müdürü kartında
- * yalnız ALAN olarak ("Müdür: …") görünür.
+ * <p><b>Prod hatası (2026-09-26):</b> eskiden üyelerden yukarı 2 kademe yönetim zinciri yürünüp müdürler üye
+ * ızgarasına EKLENİYORDU. Zincir yürüyüşü yok; Takım Müdürü pencere başlığında AYRI çipte durur, üye listesine
+ * girmez (gerçekten üyeyse satırında "Takım Müdürü" rozeti taşır). Üyenin kendi müdürü satırda ALAN ("Müdürü: …").
  *
- * <p>Sıralama: MANAGER → PO → diğer; sonra company_level büyükten küçüğe (tr, sayısal); sonra ad (tr).
- * shadcn Card + Avatar + Badge; yönetici düzenleyebiliyorsa ad gerçek bir düğmedir ve kartın tamamını kaplar
- * (MonitorCard'daki gerilmiş düğme deseni). Telefonda tek sütun.
+ * <p><b>Yeniden tasarım (2026-09-28):</b> dizin görünümü — yapışkan araç çubuğu (arama: ad/unvan/birim/e-posta,
+ * aksan duyarsız · sıralama: rol+kademe / ad / unvan · veriden türeyen rol çipleri + yönetim verisinde "Ek üyelik"),
+ * masaüstünde (lg) sütunlu yoğun liste (Kişi · Birim · E-posta), telefonda/tablette yığılmış satır. Büyük takım
+ * (100+) standart sayfalamayla (usePagination `modal` ön ayarı + PaginationBar, varsayılan {@link PAGE} satır;
+ * "N kişi daha göster" açılımı sayfalama kapısına aykırıydı); sayı her zaman görünür ("N sonuç").
+ *
+ * <p><b>Gizlilik:</b> satır yalnız beyaz-liste alanlarını çizer (ad, unvan, birim, müdürlük, org rolü, e-posta,
+ * müdür adı). Yönetim yükleyicisi tam entity verse de telefon / sicil / sistem rolü / fotoğraf ÇİZİLMEZ ve
+ * fotoğraf İSTENMEZ — avatar baş harflerdir (jeton tonlu, kişiye göre kararlı).
+ *
+ * <p>Test kancaları: `team-member-cards` (liste), `team-member-card` (satır), `team-member-name`,
+ * `team-member-leader`, `team-member-manager`, `team-member-open` (yalnız canManage), `team-member-results`.
  */
-function computeInitials(name) {
-  if (!name) return '?'
-  const parts = String(name).trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return '?'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
 
-const AVATAR_PALETTE = [
-  'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-  'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
-  'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
-  'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
-  'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
-]
-export function avatarStyleFor(seed) {   // dışa açık (2026-09-27): kullanıcı menüsü aynı renk kimliğini kullanır
-  const s = String(seed || '')
-  let hash = 0
-  for (let i = 0; i < s.length; i++) hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
-  return { background: AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length], color: '#fff' }
-}
+/** Varsayılan sayfa boyutu (modal ön ayarının listesinde) — 300 kişilik takımda ilk çizim hızlı kalsın. */
+export const PAGE = 50
 
 /** Ad + Soyad baş harfleri (AD'den); yoksa display_name'e düşer. Türkçe-uyumlu büyütme. */
 export function adSoyadInitials(m) {
@@ -48,88 +50,222 @@ export function adSoyadInitials(m) {
     const ii = ((fn[0] || '') + (ln[0] || '')).toLocaleUpperCase('tr-TR')
     if (ii) return ii
   }
-  return computeInitials(m.display_name || m.username)
+  return initialsOf(m.display_name || m.username)
 }
 
-/** Üye avatarı: LDAP fotoğrafı; yüklenemezse baş harf rozeti (shadcn Avatar kendi düşüşünü yönetir).
- *  /api/users/{id}/photo oturum açmış herkese açık (admin ucu ACCESS_DENIED denetim satırı üretirdi). */
-export function MemberAvatar({ m }) {
+const AVATAR_PALETTE = [
+  'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+  'linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)',
+  'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)',
+  'linear-gradient(135deg, #f59e0b 0%, #ef4444 100%)',
+  'linear-gradient(135deg, #ec4899 0%, #a855f7 100%)',
+]
+/** Kullanıcı menüsü / kullanıcı detayı gradyanı (dışa açık, 2026-09-27). Takım penceresi jeton tonlarını
+ *  (`avatarToneFor`) kullanır; ikisi AYNI karmayı paylaşır → kişi her yüzeyde aynı ton ailesinde. */
+export function avatarStyleFor(seed) {
+  return { background: AVATAR_PALETTE[avatarSlot(seed, AVATAR_PALETTE.length)], color: '#fff' }
+}
+
+/** Geriye uyum: eski içe aktarımlar (`sortMembers`) çalışmaya devam etsin — kural modelde. */
+export const sortMembers = sortMembersModel
+
+/** Baş harf avatarı — fotoğraf İSTEMEZ; ton kişiye göre kararlı. Ad yanında durduğu için ekran okuyucudan gizli. */
+export function PersonAvatar({ name, seed, initials, className }) {
   return (
-    <Avatar className="size-11 shrink-0">
-      <AvatarImage src={`/api/users/${m.id}/photo`} alt="" className="object-cover" />
-      <AvatarFallback className="text-sm font-semibold" style={avatarStyleFor(m.username || m.display_name || String(m.id))}>
-        {adSoyadInitials(m)}
+    <Avatar data-slot="person-avatar" aria-hidden="true" className={cn('size-9', className)}>
+      <AvatarFallback className={cn('text-xs font-semibold', avatarToneFor(seed || name))}>
+        {initials || initialsOf(name)}
       </AvatarFallback>
     </Avatar>
   )
 }
 
-/** Yalnız üyeler, sıralı. (Eski `buildMemberCards(members, usersById)` zincir yürüyüşü KALDIRILDI — bkz. dosya başı.) */
-export function sortMembers(members) {
-  const rankOf = (m) => (m.org_role === 'MANAGER' ? 0 : (m.org_role === 'PO' ? 1 : 2))
-  return [...members].sort((a, b) => {
-    if (rankOf(a) !== rankOf(b)) return rankOf(a) - rankOf(b)
-    const la = (a.company_level || '').toLowerCase()
-    const lb = (b.company_level || '').toLowerCase()
-    if (la !== lb) return lb.localeCompare(la, 'tr', { numeric: true })
-    return (a.display_name || a.username || '').localeCompare(b.display_name || b.username || '', 'tr')
-  })
+/** Satır içi e-posta: mailto bağlantısı (adres görünür) + kişiyi adıyla anan kopyala düğmesi. */
+export function EmailLine({ email, personName, t, className }) {
+  if (!email) return null
+  return (
+    <div className={cn('flex min-w-0 items-center gap-1', className)}>
+      <Mail aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+      <a href={`mailto:${email}`} data-slot="person-email"
+        className="inline-flex min-h-10 min-w-0 items-center text-sm text-primary underline-offset-4 hover:underline lg:min-h-0">
+        <span className="break-all">{email}</span>
+      </a>
+      <CopyButton value={email} variant="ghost" buttonSize="icon-sm"
+        label={t('a11y.rowAction', personName || email, t('team.copyEmail'))}
+        copiedLabel={t('a11y.rowAction', personName || email, t('team.emailCopied'))}
+        className="shrink-0 text-muted-foreground max-sm:size-10 pointer-coarse:size-10" />
+    </div>
+  )
 }
 
-export default function TeamMemberCards({ members = [], leaderId, canManage = false, onSelect, managerLabelFor }) {
-  const t = useT()
-  if (!members.length) return <p className="text-sm text-muted-foreground">{t('team.noMembers')}</p>
-  const mgrLabel = (m) => (managerLabelFor ? managerLabelFor(m) : (m.manager_display_name || null))
-  const field = (label, value, extra) => value ? (
-    <>
-      <dt className="text-muted-foreground">{label}:</dt>
-      <dd className="min-w-0 break-words" {...extra}>{value}</dd>
-    </>
-  ) : null
-  // list-none: preflight yok — <ul> madde işaretini kendisi çizer (sayfalama çubuğu "•" hatasıyla aynı sınıf)
+const facetLabel = (t, f) => {
+  if (f.value === FACET_ALL) return t('team.filterAll')
+  if (f.value === FACET_SECONDARY) return t('team.filterSecondary')
+  return f.role === NO_ROLE ? t('team.filterNoRole') : t('usr.orgRoleVal.' + f.role)
+}
+
+/** Masaüstü sütun şablonu — başlık satırı ve üye satırları AYNI şablonu kullanır. */
+const LG_COLS = 'lg:grid-cols-[2.25rem_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.3fr)_2.5rem]'
+
+const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary, canManage, onSelect, managerLabel, sharedUnit }) {
+  const nameId = useId()
+  const name = nameOf(m) || '—'
+  // Takımın ORTAK müdürlüğü başlıkta bir kez yazılır; satırda tekrar edilmez (her satırda aynı metin = gürültü).
+  const unit = m.mudurluk_name && m.mudurluk_name !== m.department && m.mudurluk_name !== sharedUnit ? m.mudurluk_name : null
+  const unitLine = [m.department, unit].filter(Boolean).join(' · ')
+  const hasUnit = Boolean(unitLine || managerLabel)
   return (
-    <ul data-slot="team-member-cards" className="m-0 grid list-none grid-cols-1 gap-3 p-0 sm:grid-cols-2">
-      {sortMembers(members).map((m) => {
-        const name = m.display_name || m.username
-        const isLeader = leaderId != null && Number(leaderId) === Number(m.id)
-        return (
-          <li key={m.id} className="min-w-0">
-            <Card data-slot="team-member-card" data-clickable={canManage ? 'true' : undefined}
-              className="relative h-full gap-0 p-3.5 shadow-none transition-colors has-[[data-slot=team-member-open]:hover]:bg-accent/40 motion-reduce:transition-none">
-              <div className="flex min-w-0 items-start gap-3">
-                <MemberAvatar m={m} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {canManage ? (
-                      // Gerilmiş düğme: ad gerçek bir düğme, ::after ile kartın tamamını tıklanabilir yapar
-                      <Button type="button" variant="link" data-slot="team-member-open" title={t('usr.editTitle')}
-                        onClick={() => onSelect?.(m)}
-                        className="h-auto min-w-0 p-0 text-left text-[15px] font-semibold whitespace-normal text-foreground after:absolute after:inset-0 after:rounded-xl after:content-['']">
-                        <span data-slot="team-member-name" className="break-words">{name}</span>
-                      </Button>
-                    ) : (
-                      <strong data-slot="team-member-name" className="min-w-0 text-[15px] break-words">{name}</strong>
-                    )}
-                    {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
-                  </div>
-                  <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[12.5px]">
-                    {field(t('usr.colUsername'), m.username, { className: 'min-w-0 font-mono break-all' })}
-                    {field(t('usr.colEmployeeId'), m.employee_id)}
-                    {field(t('usr.colEmail'), m.email, { title: m.email, className: 'min-w-0 break-all' })}
-                    {m.system_role && field(t('usr.colRole'), <SystemRoleBadge role={m.system_role} />)}
-                    {m.org_role && field(t('usr.colOrgRole'), <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>)}
-                    {field(t('usr.colTitle'), m.title)}
-                    {field(t('usr.colPhone'), m.phone)}
-                    {field(t('usr.colDept'), m.department)}
-                    {field(t('usr.colMudurluk'), m.mudurluk_name)}
-                    {field(t('team.memberManager'), mgrLabel(m))}
-                  </dl>
-                </div>
-              </div>
-            </Card>
-          </li>
-        )
-      })}
-    </ul>
+    <li data-slot="team-member-card" aria-labelledby={nameId} data-inactive={m.active === false ? 'true' : undefined}
+      className={cn('grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2.5 lg:items-center lg:gap-y-0', LG_COLS,
+        m.active === false && 'bg-muted/40')}>
+      <PersonAvatar name={name} seed={memberSeed(m)} initials={adSoyadInitials(m)} className="row-span-3 mt-0.5 lg:row-span-1 lg:mt-0" />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span id={nameId} data-slot="team-member-name" className="min-w-0 font-medium break-words">{name}</span>
+          {isManager && <Badge variant="secondary" data-slot="team-member-manager">{t('team.colManager')}</Badge>}
+          {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
+          {m.org_role && m.org_role !== 'TECH' && <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>}
+          {secondary && <Badge variant="outline" data-slot="team-member-secondary">{t('team.memberSecondary')}</Badge>}
+          {m.active === false && <Badge variant="outline" className={TONE_CLASS.muted}>{t('usr.inactive')}</Badge>}
+        </div>
+        {m.title && <div className="truncate text-sm text-muted-foreground" title={m.title}>{m.title}</div>}
+      </div>
+      <div className={cn('col-start-2 min-w-0 text-sm lg:col-start-auto', !hasUnit && 'max-lg:hidden')}>
+        {unitLine && <div className="line-clamp-2 break-words">{unitLine}</div>}
+        {managerLabel && <div className="truncate text-xs text-muted-foreground">{t('team.reportsTo', managerLabel)}</div>}
+      </div>
+      <div className={cn('col-start-2 min-w-0 lg:col-start-auto', !m.email && 'max-lg:hidden')}>
+        <EmailLine email={m.email} personName={name} t={t} />
+      </div>
+      <div className="col-start-3 row-start-1 flex justify-end lg:col-start-auto lg:row-start-auto">
+        {canManage && (
+          <Button type="button" variant="ghost" size="icon-sm" data-slot="team-member-open"
+            aria-label={t('a11y.rowAction', name, t('usr.editTitle'))} title={t('usr.editTitle')}
+            onClick={() => onSelect?.(m)} className="text-muted-foreground max-sm:size-10 pointer-coarse:size-10">
+            <PenLine aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+    </li>
+  )
+})
+
+/**
+ * @param members        takımın ÜYELERİ (sunucunun döndürdüğü; müdür zinciri EKLENMEZ)
+ * @param leaderId       takım lideri (satırında "Lider" rozeti)
+ * @param managerUserId  Takım Müdürü üyeyse satırında rozet (üye değilse listede hiç yoktur)
+ * @param teamId         ek üyelik tespiti (yönetim verisi `team_id` taşır)
+ * @param managerLabelFor üyenin müdür etiketi (yönetim ekranı: ad ya da sicil); yoksa `manager_display_name`
+ * @param sharedUnit     başlıkta gösterilen ortak müdürlük — satırlarda tekrar edilmez
+ */
+export default function TeamMemberCards({ members = [], leaderId, managerUserId = null, teamId = null, teamName = '',
+  canManage = false, onSelect, managerLabelFor, sharedUnit = null }) {
+  const t = useT()
+  const searchId = useId()
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState('role')
+  const [facet, setFacet] = useState(FACET_ALL)
+
+  const index = useMemo(() => buildSearchIndex(members), [members])
+  const facets = useMemo(() => memberFacets(members, teamId), [members, teamId])
+  // Yeniden yüklemede seçili çip kaybolduysa (üye ayrıldı) sessizce "Tümü"ne dön.
+  const activeFacet = facets.some((f) => f.value === facet) ? facet : FACET_ALL
+  const visible = useMemo(
+    () => sortMembersBy(filterMembers(members, { query, facet: activeFacet, teamId, index }), sort),
+    [members, query, activeFacet, teamId, index, sort])
+  // Görünüm (arama/çip/sıra) değişince 1. sayfaya dönülür. Hook erken return'den ÖNCE.
+  const pager = usePagination(visible, { listKey: 'team-members', preset: 'modal', defaultSize: PAGE,
+    resetDeps: [query, activeFacet, sort] })
+
+  if (!members.length) return <StatusBlock icon={Users} title={t('team.noMembers')} />
+
+  const filtering = Boolean(query.trim()) || activeFacet !== FACET_ALL
+  const clearAll = () => { setQuery(''); setFacet(FACET_ALL) }
+  const mgrLabel = (m) => (managerLabelFor ? managerLabelFor(m) : null) || m.manager_display_name || null
+  const count = visible.length
+  const sameId = (a, b) => a != null && b != null && String(a) === String(b)
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      {/* Yapışkan araç çubuğu: pencere gövdesi kayarken (telefonda tam ekran) arama hep elde. */}
+      <div data-slot="team-member-toolbar" className="sticky top-0 z-10 -mx-1 flex flex-col gap-2 bg-background px-1 pt-1 pb-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <InputGroup className="min-w-0 flex-1 max-sm:h-10 pointer-coarse:h-10">
+            <InputGroupInput id={searchId} type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('team.memberSearchPh')} aria-label={t('team.memberSearchLabel')} autoComplete="off" enterKeyHint="search"
+              className="[&::-webkit-search-cancel-button]:appearance-none" />
+            <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
+            {query && (
+              <InputGroupAddon align="inline-end">
+                <InputGroupButton size="icon-xs" aria-label={t('team.clearSearch')} title={t('team.clearSearch')}
+                  onClick={() => setQuery('')} className="max-sm:size-10 pointer-coarse:size-10">
+                  <X aria-hidden="true" />
+                </InputGroupButton>
+              </InputGroupAddon>
+            )}
+          </InputGroup>
+          <NativeSelect value={sort} onChange={(e) => setSort(e.target.value)} aria-label={t('team.sortLabel')}
+            title={t('team.sortLabel')} className="w-[8.75rem] max-sm:h-10 sm:w-44 pointer-coarse:h-10">
+            <NativeSelectOption value="role">{t('team.sortRole')}</NativeSelectOption>
+            <NativeSelectOption value="name">{t('team.sortName')}</NativeSelectOption>
+            <NativeSelectOption value="title">{t('team.sortTitle')}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+        {facets.length > 2 && (
+          // Veriden türeyen hızlı süzgeç: telefonda tek satır yatay kayar, geniş ekranda sarar.
+          <ToggleGroup type="single" variant="outline" size="sm" spacing={1} value={activeFacet}
+            onValueChange={(v) => v && setFacet(v)} aria-label={t('team.filterLabel')} data-slot="team-member-facets"
+            className="w-full flex-nowrap justify-start overflow-x-auto pb-0.5 sm:flex-wrap sm:overflow-visible">
+            {facets.map((f) => (
+              <ToggleGroupItem key={f.value} value={f.value} aria-label={`${facetLabel(t, f)} (${f.count})`}
+                className="shrink-0 gap-1.5 rounded-full px-3 max-sm:h-10 pointer-coarse:h-10 data-[state=on]:border-primary/50 data-[state=on]:bg-primary/10 data-[state=on]:text-primary">
+                {facetLabel(t, f)}
+                <span className="text-xs tabular-nums opacity-70">{f.count}</span>
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        )}
+      </div>
+
+      {/* Sonuç satırı yalnız süzerken GÖRÜNÜR (sayı zaten başlıkta ve sekme hapında); canlı bölge hep DOM'da → duyuru kaçmaz. */}
+      <div className={cn('flex min-h-8 items-center justify-between gap-2 text-sm text-muted-foreground', !filtering && 'sr-only')}>
+        <span data-slot="team-member-results" role="status" aria-live="polite" className="tabular-nums">
+          {filtering
+            ? t(count === 1 ? 'team.results.one' : 'team.results', count)
+            : t(count === 1 ? 'team.membersCount.one' : 'team.membersCount', count)}
+        </span>
+        {filtering && count > 0 && (
+          <Button type="button" variant="link" size="sm" onClick={clearAll} className="h-auto px-0 max-sm:min-h-10 pointer-coarse:min-h-10">
+            {t('team.clearFilters')}
+          </Button>
+        )}
+      </div>
+
+      {count === 0 ? (
+        <StatusBlock icon={SearchX} title={t('team.noResultsTitle')} description={t('team.noResultsDesc')}
+          className="rounded-lg border border-dashed py-8"
+          actions={<Button type="button" variant="outline" onClick={clearAll} className="max-sm:h-10 pointer-coarse:h-10">{t('team.clearFilters')}</Button>} />
+      ) : (
+        <div className="min-w-0 overflow-hidden rounded-lg border bg-card">
+          {/* Sütun başlıkları yalnız masaüstünde (görsel; ekran okuyucu satırın adını ve içeriğini okur). */}
+          <div aria-hidden="true" className={cn('hidden gap-x-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground lg:grid', LG_COLS)}>
+            <span className="col-span-2">{t('team.colPerson')}</span>
+            <span>{t('team.colUnit')}</span>
+            <span>{t('team.colContact')}</span>
+            <span />
+          </div>
+          <ul data-slot="team-member-cards" aria-label={t('team.membersListLabel', teamName)} className="m-0 list-none divide-y p-0">
+            {pager.pageItems.map((m) => (
+              <MemberRow key={m.id ?? m.username} m={m} t={t}
+                isLeader={sameId(leaderId, m.id)} isManager={sameId(managerUserId, m.id)}
+                secondary={isSecondaryMember(m, teamId)} canManage={canManage} onSelect={onSelect}
+                managerLabel={mgrLabel(m)} sharedUnit={sharedUnit} />
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {count > 0 && <PaginationBar {...pager} />}
+    </div>
   )
 }

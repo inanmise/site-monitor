@@ -15,7 +15,16 @@
 
 export const STATUSES = ['OPEN', 'IN_PROGRESS', 'RESOLVED']
 export const SOURCES = ['USER_REPORT', 'CLIENT_ERROR', 'LOGIN']
-export const CATEGORIES = ['BLOCKER', 'ANNOYANCE', 'SUGGESTION']
+/** Önem seçenekleri + talep türü DOMAIN_TRANSFER (2026-09-28, alan adı aktarım talebi — LoginIssueService.CATEGORIES ile aynı). */
+export const CATEGORIES = ['BLOCKER', 'ANNOYANCE', 'SUGGESTION', 'DOMAIN_TRANSFER']
+/**
+ * "Ne yaşıyorsunuz?" etki kodları (2026-09-28) — ÇOKLU seçim, önemden ayrı. Sıra = LoginIssueService.IMPACTS (en sık
+ * görülenden); sunucu bilinmeyen kodu 400 ile reddeder, saklarken bu sıraya dizer.
+ */
+export const IMPACTS = ['LOGIN', 'PAGE_NOT_LOADING', 'SLOW', 'WRONG_DATA', 'SAVE_ERROR', 'NO_ALERTS', 'FALSE_ALERTS',
+  'ACCESS', 'MOBILE', 'REPORT_EXPORT', 'FEATURE_REQUEST', 'OTHER']
+/** "Diğer" serbest metninin üst sınırı — sunucuyla aynı (LoginIssueService.IMPACT_OTHER_MAX). */
+export const IMPACT_OTHER_MAX = 200
 /** Yorum gövdesi üst sınırı — sunucuyla aynı (IssueReportComment.MAX_BODY). */
 export const COMMENT_MAX = 4000
 /** Çözüm notu üst sınırı — sunucuyla aynı (LoginIssueService.MAX_NOTE). */
@@ -105,7 +114,18 @@ export function categoryLabel(c, t) {
   if (c === 'BLOCKER') return t('issue.catBlocker')
   if (c === 'ANNOYANCE') return t('issue.catAnnoyance')
   if (c === 'SUGGESTION') return t('issue.catSuggestion')
+  if (c === 'DOMAIN_TRANSFER') return t('issue.catDomainTransfer')
   return ''
+}
+/** Etki etiketi — `short`: liste çipi / süzgeç (kısa), aksi hâlde formdaki tam cümle. Bilinmeyen kod → ''. */
+export function impactLabel(code, t, short = false) {
+  if (!IMPACTS.includes(code)) return ''
+  return t((short ? 'issue.impactShort.' : 'issue.impact.') + code)
+}
+/** Yanıttaki etki listesini güvenli diziye çevirir (eski kayıt / bilinmeyen kod → düşer), kanonik sırada. */
+export function impactsOf(row) {
+  const got = Array.isArray(row?.impacts) ? row.impacts : []
+  return IMPACTS.filter((c) => got.includes(c))
 }
 
 /** `LIR-2026-000041` → 41 (LoginIssueService.refCode biçimi); `#41` / `41` de kabul. Geçersiz → null. */
@@ -123,11 +143,11 @@ export function isRefQuery(q) {
 // ── Süzgeçler ────────────────────────────────────────────────────────────────
 
 export const FILTER_DEFAULTS = Object.freeze({
-  status: '', source: '', category: '', q: '', since: '', until: '', sort: 'activity', awaiting: false,
+  status: '', source: '', category: '', impact: '', q: '', since: '', until: '', sort: 'activity', awaiting: false,
 })
 /** Süzgeç ↔ URL (hepsi `ir_` önekli sayfa-durumu anahtarı; uygulama düzeyi tab/domain/monitor/incident'a DOKUNULMAZ). */
 export const URL_KEYS = {
-  status: 'ir_status', source: 'ir_src', category: 'ir_cat', q: 'ir_q', since: 'ir_from', until: 'ir_to', sort: 'ir_sort', awaiting: 'ir_new',
+  status: 'ir_status', source: 'ir_src', category: 'ir_cat', impact: 'ir_imp', q: 'ir_q', since: 'ir_from', until: 'ir_to', sort: 'ir_sort', awaiting: 'ir_new',
 }
 
 export function filtersFromUrl(read) {
@@ -138,6 +158,8 @@ export function filtersFromUrl(read) {
   if (SOURCES.includes(source)) f.source = source
   const category = read(URL_KEYS.category)
   if (CATEGORIES.includes(category)) f.category = category
+  const impact = read(URL_KEYS.impact)
+  if (IMPACTS.includes(impact)) f.impact = impact
   f.q = read(URL_KEYS.q) || ''
   const since = read(URL_KEYS.since); if (/^\d{4}-\d{2}-\d{2}$/.test(since || '')) f.since = since
   const until = read(URL_KEYS.until); if (/^\d{4}-\d{2}-\d{2}$/.test(until || '')) f.until = until
@@ -152,6 +174,7 @@ export function filtersToUrl(f) {
     [URL_KEYS.status]: f.status || null,
     [URL_KEYS.source]: f.source || null,
     [URL_KEYS.category]: f.category || null,
+    [URL_KEYS.impact]: f.impact || null,
     [URL_KEYS.q]: f.q ? f.q : null,
     [URL_KEYS.since]: f.since || null,
     [URL_KEYS.until]: f.until || null,
@@ -167,6 +190,7 @@ export function activeFilters(f) {
   if (f.awaiting) out.push({ key: 'awaiting', value: true, patch: { awaiting: false } })
   if (f.source) out.push({ key: 'source', value: f.source, patch: { source: '' } })
   if (f.category) out.push({ key: 'category', value: f.category, patch: { category: '' } })
+  if (f.impact) out.push({ key: 'impact', value: f.impact, patch: { impact: '' } })
   if (f.q) out.push({ key: 'q', value: f.q, patch: { q: '' } })
   if (f.since) out.push({ key: 'since', value: f.since, patch: { since: '' } })
   if (f.until) out.push({ key: 'until', value: f.until, patch: { until: '' } })
@@ -182,6 +206,7 @@ export function matchesFilters(row, f, t) {
   if (f.awaiting && !row.unread) return false
   if (f.source && (row.source || 'LOGIN') !== f.source) return false
   if (f.category && row.category !== f.category) return false
+  if (f.impact && !impactsOf(row).includes(f.impact)) return false
   if (f.since || f.until) {
     const day = istanbulDay(row.reportedAt)
     if (f.since && day < f.since) return false
@@ -213,6 +238,7 @@ export function serverParams(f) {
     status: f.status || undefined,
     source: f.source || undefined,
     category: f.category || undefined,
+    impact: f.impact || undefined,
     q: f.q && !isRefQuery(f.q) ? f.q.trim() : undefined,
     since: localDayToUtcIso(f.since, false),
     until: localDayToUtcIso(f.until, true),
@@ -224,7 +250,7 @@ export function detailToRow(d) {
   if (!d) return null
   const msg = String(d.message || '').replace(/\s+/g, ' ').trim()
   return {
-    id: d.id, refCode: d.refCode, status: d.status, source: d.source, category: d.category, username: d.username,
+    id: d.id, refCode: d.refCode, status: d.status, source: d.source, category: d.category, impacts: impactsOf(d), username: d.username,
     reportedAt: d.reportedAt, resolvedAt: d.resolvedAt, lastActivityAt: d.lastActivityAt || d.reportedAt,
     messageSummary: msg.length > 120 ? msg.slice(0, 120) + '…' : msg, imageCount: d.imageCount ?? (d.images || []).length,
   }

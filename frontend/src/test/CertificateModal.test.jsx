@@ -66,6 +66,7 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
 
 import { api } from '../api/client'
 import CertificateModal from '../components/CertificateModal.jsx'
+import { healthyPreview } from './helpers/sslPreviewFixture.js'
 
 describe('CertificateModal', () => {
   beforeEach(() => {
@@ -491,5 +492,66 @@ describe('CertificateModal — Çalıştır sonrası Kontrol Geçmişi tazelenir
     const strip = await screen.findByRole('status')
     expect(strip.textContent).toMatch(/kontrol ediliyor|checking/i)
     expect(strip.textContent).toMatch(/[0-9]+ ?(sn|s)/i)   // saniye sayaci ilerliyor
+  })
+})
+
+/**
+ * 2026-09-28 — SSL Kontrol + Notlar sekmeleri (shadcn yeniden tasarım) ve SABİT pencere boyu.
+ * Yerleşimin kendisi (yükseklik/konum sekme geçişinde sabit) e2e/cert-detail-stability.spec.js'te ölçülür; burada
+ * sözleşme: kabuk kaydırmalı gövde kipinde, canlı kontrol hatası döngüye girmez ve "Yeniden dene" ile toparlanır.
+ */
+describe('CertificateModal — SSL Kontrol sekmesi ve pencere boyu (2026-09-28)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('pencere kaydırmalı gövde kipinde (başlık + sekmeler sabit, yalnız içerik kayar)', async () => {
+    api.checkDomainPreview = vi.fn().mockResolvedValue({ success: true, data: null })
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    const dlg = await screen.findByRole('dialog')
+    expect(dlg).toHaveAttribute('data-scroll-body', 'true')
+    expect(dlg.querySelector('[data-slot="modal-shell-body"]')).not.toBeNull()
+  })
+
+  it('canlı kontrol başarısız: hata bloğu + "Yeniden dene"; istek DÖNGÜYE girmez', async () => {
+    api.checkDomainPreview = vi.fn()
+      .mockRejectedValueOnce(new Error('Failed to fetch'))
+      .mockResolvedValueOnce({ success: true, data: healthyPreview({ domain: 'example.com' }) })
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    expect(await screen.findByText("Couldn't run the live check")).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(api.checkDomainPreview).toHaveBeenCalledTimes(1)          // eskiden hata dalı effect'i yeniden tetikliyordu
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(document.querySelector('[data-slot="ssl-verdict"]')).not.toBeNull())
+    expect(api.checkDomainPreview).toHaveBeenCalledTimes(2)
+  })
+
+  it('"Yeniden kontrol et": eski sonuç ekranda kalır, uç yeniden çağrılır', async () => {
+    api.checkDomainPreview = vi.fn().mockResolvedValue({ success: true, data: healthyPreview({ domain: 'example.com' }) })
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    const verdict = await waitFor(() => { const v = document.querySelector('[data-slot="ssl-verdict"]'); expect(v).not.toBeNull(); return v })
+    fireEvent.click(within(verdict).getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledTimes(2))
+    expect(document.querySelector('[data-slot="ssl-verdict"]')).not.toBeNull()
+  })
+
+  it('önizleme saplaması ({ domain } — status yok) SSL paneli çizmez: canlı kontrol sürerken yükleniyor görünür', async () => {
+    api.checkDomainPreview = vi.fn(() => new Promise(() => {}))   // canlı kontrol sürüyor
+    render(<CertificateModal domain="example.com" previewMode initialData={{ domain: 'example.com', _preview: true }}
+      onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" />)
+    await waitFor(() => expect(api.checkDomainPreview).toHaveBeenCalledWith('example.com'))
+    expect(await screen.findByText('Checking the certificate live…')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="ssl-panel"]')).toBeNull()   // saplamadan "hüküm yok" paneli çizilmez
+  })
+
+  it('Notlar: not eklenince sekme sayacı tazelenir (pencereyi yeniden açmadan)', async () => {
+    api.checkDomainPreview = vi.fn().mockResolvedValue({ success: true, data: null })
+    const n1 = { id: 1, domain: 'example.com', note: 'a', category: 'NOTE', author_username: 'admin', author_name: 'Yönetici', created_at: '2026-09-01T10:00:00' }
+    api.admin.getNotes.mockResolvedValue({ success: true, data: [n1] })
+    render(<CertificateModal domain="example.com" onClose={() => {}} currentUser="admin" currentUserRole="ADMIN" initialTab="notes" />)
+    const dlg = await screen.findByRole('dialog')
+    await within(dlg).findByRole('tab', { name: /notes.*1/i })
+    api.admin.getNotes.mockResolvedValue({ success: true, data: [{ ...n1, id: 2, note: 'b' }, n1] })
+    fireEvent.change(within(dlg).getByRole('textbox', { name: 'Note text' }), { target: { value: 'b' } })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Add note' }))
+    await within(dlg).findByRole('tab', { name: /notes.*2/i })
   })
 })

@@ -9,6 +9,7 @@ vi.mock('../api/client', () => ({
   api: withApiFallback({
     admin: { simulateRecipients: vi.fn() },
     notificationGroups: { list: vi.fn() },
+    noc: { coverage: vi.fn() },
   }),
 }))
 import { api } from '../api/client'
@@ -30,6 +31,10 @@ const RESULT = {
     { username: 'ali', display_name: 'Ali PO', org_role: 'PO', group: 'po', min_level: 'WARNING', decision: 'RECIPIENT' },
     { username: 'veli', display_name: 'Veli', org_role: null, group: null, min_level: null, decision: 'NO_GROUP' },
   ],
+  // Push ayağı görünürlüğü + kanal durumu (2026-09-28, PushDecisionAccess / UserPushService.scenarioChannel)
+  push_access: 'FULL', push_access_reason: 'GLOBAL_ADMIN', push_settings: 'FULL', push_viewer: 'admin',
+  push_channel: { enabled: true, configured: true, team_enabled: true, types: ['cert'], disabled_types: [],
+    quiet_start: null, quiet_end: null, quiet_min_level: null, quiet_active: false, quiet_blocks_level: false, block_reason: null },
 }
 const EMPTY = { ...RESULT, team_id: 9, team_name: 'Takım B', team_emails: [], contacts: [], webhooks: [], push: [], email_total: 0 }
 
@@ -51,6 +56,8 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     vi.clearAllMocks()
     api.admin.simulateRecipients.mockResolvedValue({ success: true, data: RESULT })
     api.notificationGroups.list.mockResolvedValue({ success: true, data: GROUPS })
+    api.noc.coverage.mockResolvedValue({ success: true, data: { summary: { total: 3, covered: 1, not_covered: 2, paused: 0,
+      by_type: { SSL: { total: 3, covered: 1 } }, active_groups: 1, disabled_types: [], min_level: 'CRITICAL' }, items: [] } })
   })
   afterEach(() => { window.history.replaceState(null, '', '/') })
 
@@ -125,11 +132,12 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     expect(document.querySelector('[data-slot="wn-result"]')).toBeNull()
   })
 
-  it('result: summary tiles, email grouped by source (duplicate merged), push recipients only, masked webhook', async () => {
+  it('result: summary tiles, email grouped by source (duplicate merged), push gets / doesn’t get, masked webhook', async () => {
     render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} />)
     await screen.findByRole('heading', { name: 'Result' })
     expect(tileValue('email')).toBe('2')
     expect(tileValue('push')).toBe('1')
+    expect(tileValue('pushNot')).toBe('1')
     expect(tileValue('webhook')).toBe('1')
     expect(tileValue('excluded')).toBe('2')
     expect(screen.getByText('of 2 team members')).toBeInTheDocument()
@@ -144,11 +152,14 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     expect(within(rows[1]).getByText('Escalation contact')).toBeInTheDocument()
     expect(within(rows[1]).getByRole('button', { name: 'Copy po@example.com' })).toBeInTheDocument()
 
+    // Push kartı artık HER üyeyi gösterir: alan (Ali) VE almayan (Veli) — nedeniyle (2026-09-28)
     const push = channel('push')
-    expect(within(push).getAllByRole('listitem')).toHaveLength(1)
+    expect(within(push).getAllByRole('listitem')).toHaveLength(2)
     expect(within(push).getByText('Ali PO')).toBeInTheDocument()
-    expect(within(push).queryByText('Veli')).toBeNull()
     expect(push.querySelector('[data-decision="RECIPIENT"]')).not.toBeNull()
+    const veli = within(push).getAllByRole('listitem').find((r) => within(r).queryByText('Veli'))
+    expect(veli.querySelector('[data-decision="NO_GROUP"]')).toHaveTextContent('Doesn’t get it')
+    expect(within(veli).getByText('No group match (org role is not assigned to any group)')).toBeInTheDocument()
 
     expect(within(channel('webhook')).getByText(/hooks\.example\.com/)).toBeInTheDocument()
     expect(within(channel('webhook')).getByText('Slack')).toBeInTheDocument()
@@ -179,21 +190,15 @@ describe('RecipientSimulator — "Who gets notified?" tab', () => {
     expect(screen.getByRole('button', { name: 'Escalation contact — why does Ali PO’s webhook fire?' })).toBeInTheDocument()
   })
 
-  it('non-admin: no push card or tile; monitor alerts at WARNING say only the team is notified', async () => {
-    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, level: 'WARNING', managers_included: false, contacts: [], webhooks: [], push: undefined, email_total: 1 } })
+  it('older server without push data: the push card explains it is hidden (no tile); WARNING monitor note stays', async () => {
+    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, level: 'WARNING', managers_included: false, contacts: [], webhooks: [], push: undefined, push_access: undefined, push_access_reason: undefined, push_channel: undefined, email_total: 1 } })
     render(<RecipientSimulator teams={TEAMS} isAdmin={false} defaultTeamId={7} />)
     await screen.findByRole('heading', { name: 'Result' })
-    expect(channel('push')).toBeNull()
+    const hidden = channel('push').querySelector('[data-slot="wn-push-hidden"]')
+    expect(hidden).toHaveTextContent('Per-person push decisions aren’t available to you')
+    expect(hidden).toHaveTextContent('You don’t have permission to see this team’s per-person push decisions.')
     expect(document.querySelector('[data-slot="stat-item"][data-key="push"]')).toBeNull()
     expect(screen.getByText(/For monitor alerts at WARNING only the team is notified/)).toBeInTheDocument()
-  })
-
-  it('scoped ADMIN (server omitted push): the push card says it is global-admin only, not "None"', async () => {
-    api.admin.simulateRecipients.mockResolvedValue({ success: true, data: { ...RESULT, push: undefined } })
-    render(<RecipientSimulator teams={TEAMS} isAdmin defaultTeamId={7} />)
-    await screen.findByRole('heading', { name: 'Result' })
-    expect(within(channel('push')).getByText('Only global administrators can see push decisions.')).toBeInTheDocument()
-    expect(document.querySelector('[data-slot="stat-item"][data-key="push"]')).toBeNull()
   })
 
   it('nobody notified: warning with next steps that jump to contacts / notification groups for the team', async () => {

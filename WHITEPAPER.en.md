@@ -596,6 +596,7 @@ Many organisations have a 24/7 monitoring team (NOC) that watches screens round 
 - **Per-type switches:** if an administrator switches a type off (Ping, say), NOC e-mails stop for EVERY monitor of that type — even monitors that are opted in.
 - **Rules:** only alerts at or above the chosen level go out (default: critical only). Team quiet hours, level thresholds and personal mutes don't affect the NOC; maintenance windows and the global e-mail switch do. There is one opening e-mail per alert, and a "RESOLVED" e-mail follows if the opening one went to the NOC (this can be switched off). During a storm or mass outage the NOC, like the team, gets a single combined e-mail.
 - **What the e-mail contains:** the subject is `[Site Monitor] [7/24] <LEVEL> — <target> — <Team>`; the body covers what happened, the owning team, the **call list** (name · job title · tappable phone number, read live from Active Directory), the team manager, escalation contacts, the call instructions and a link to the monitor. The mail log files it under the `NOC` category.
+- **Call log and operator set-up:** 24/7 operators are given the **AUDIT** role (read-only across every team). The `noc_calls.write` permission is granted to AUDIT **by default**, so an operator can record from the alert list or the alert details whom they called, when, over which channel and with what outcome. The permission only writes call logs — acknowledging, resolving, re-notifying and acting on incidents stay closed to AUDIT; those buttons aren't shown and a short "you don't have permission" note appears instead. On upgrade the permission is switched on for AUDIT in existing installations, unless an administrator has deliberately switched it off on the **Permissions** screen.
 
 The **24/7 Coverage** screen shows which monitors don't reach the NOC (see §14.31); the warning strip on the dashboard takes you there.
 
@@ -876,6 +877,9 @@ The defaults below can be edited per role from the **Permissions** screen. Admin
 | Triggering an immediate scan | ✓ | ✗ | ✗ | ✗ |
 | Managing the certificate inventory | ✓ | ✓ (in scope) | read only | read only |
 | Acknowledging, resending and resolving alerts | ✓ | ✓ (in scope) | ✓ (own teams) | ✗ |
+| Logging 24/7 calls (`noc_calls.write`) | ✓ (global only) | ✗ | ✗ | ✓ |
+| Viewing incidents (Alerts → Incidents) | ✓ (all) | ✓ (own, other teams read only) | ✓ (own, other teams read only) | ✓ (all) |
+| Commenting on incidents | ✓ | ✓ (in scope) | ✓ (own teams) | ✗ |
 | Managing escalation contacts | ✓ | ✓ (in scope) | read only | read only |
 | Editing alert thresholds | ✓ | ✗ | read only | read only |
 | Managing teams and users | ✓ | ✓ (in scope) | read only | read only |
@@ -953,7 +957,7 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 | Monitoring | Page Integrity | `?tab=page` | Everyone |
 | Monitoring | Synthetic Monitoring | `?tab=scripted` | Viewing is open; editing needs its own permission |
 | Alerts | Warnings | `?tab=warnings` | Everyone |
-| Alerts | Incidents | `?tab=incidents` | Everyone |
+| Alerts | Incidents | `?tab=incidents` | Everyone — other teams' incidents read only |
 | Alerts | Maintenance | `?tab=maintenance` | Everyone; managing depends on permission |
 | Alerts | Alert History | `?tab=alerthistory` | Everyone |
 | Alerts | 24/7 Coverage | `?tab=noc` | Everyone — monitors within your scope; switching on needs permission to edit the monitor |
@@ -1087,6 +1091,8 @@ For the behaviour behind each type, see [10. Monitor Types](#10-monitor-types).
 ### 14.15 Incidents
 
 The worklist of outage events derived from monitoring alerts. Each row shows the start time, status, severity and root-cause class; you can filter, comment and close resolved events. "How long did it last and when did it close?" is answered here.
+
+The **My teams' incidents · Other teams' incidents · All** filter at the top (with counts) also shows incidents raised for other teams; the default view is your own teams only. Another team's incident is **read only**: an "Another team's record — read only" badge and the owning team are shown and you can read its comments, but acknowledging, resolving, commenting and deleting are left to that team (the server refuses them as well). Notification recipients, delivery logs and 24/7 call logs stay with the owning team. A global administrator can switch this visibility off with `site.monitor.incidents.visible-to-all` under **Settings → General** (on by default); global administrators and AUDIT users already see every incident, so the filter isn't shown to them. When you switch filters the results stay where they are; if the response is slow the list dims and the new results replace it once they arrive.
 
 ### 14.16 Maintenance
 

@@ -16,7 +16,7 @@ const EMPTY_QUICK = { name: '', allMonitors: false, targets: [], minutes: 30 }
  * Hızlı pencere ("X'i 30/60/120 dk sustur") — ad isteğe bağlı, hedefler ya da tümü, süre ön ayarları.
  * Şu andan başlar (sunucu `quick` ucu). Sunucu hatası AlertBanner; hedef seçilmemişse alan hatası.
  */
-export default function MaintenanceQuickModal({ open, monitorOptions, saving, onStart, onClose }) {
+export default function MaintenanceQuickModal({ open, monitorOptions, saving, onStart, onClose, canAllMonitors = true }) {
   const t = useT()
   const { timeOf } = useScheduleText()
   const [form, setForm] = useState(EMPTY_QUICK)
@@ -57,7 +57,7 @@ export default function MaintenanceQuickModal({ open, monitorOptions, saving, on
       </Field>
       <fieldset data-slot="mw-targets" className="mb-3.5 flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3.5 py-3">
         <legend className="px-1 text-[0.9em] font-bold">{t('mw.monitorsTitle')}</legend>
-        <AllMonitorsCheckbox checked={form.allMonitors} label={t('mw.allMonitorsOpt')} onChange={(v) => set({ allMonitors: v })} />
+        <AllMonitorsCheckbox checked={form.allMonitors} allowed={canAllMonitors} label={t('mw.allMonitorsOpt')} onChange={(v) => set({ allMonitors: v })} />
         {!form.allMonitors && (
           <MaintenanceTargetPicker options={monitorOptions} value={form.targets}
             onChange={(v) => set({ targets: v })} typeLabel={(ty) => t('mw.type.' + ty)} />

@@ -39,10 +39,11 @@ import {
  * @param {object} monitor  GET /monitoring/page satırı (snake_case)
  * @param {object} spark    useSparklines('page')[id] — 24 sa saatlik süre kovaları
  * @param {object} sla      useSla('page').data[id]
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function PageMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich',
+  monitor: m, status = 'unknown', badge, onOpen, select, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -54,7 +55,7 @@ export default function PageMonitorCard({
   const hasMeta = compact ? !!m.team_name : !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length || m.noc_notify)
   const alarmLabel = `${t('page.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
-    <MonitorCard density={density} status={status} alarm={alarm} inactive={paused}
+    <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       {/* Kompakt'ta kapsam çipleri yok → başlık ile özet arasındaki boşluğu başlık bölgesi verir */}
       <MonitorCardHeader className={compact ? 'mb-2' : undefined}>

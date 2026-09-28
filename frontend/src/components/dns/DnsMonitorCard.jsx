@@ -10,7 +10,7 @@ import { TimeAgo, relTime } from '../admin/monitorchanges/changeParts.jsx'
 import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
 import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardMetrics,
-  MonitorMetric, MonitorCardFooter, MonitorAlarmIcon, MonitorCardRich, CARD_LAYER, CARD_COPY,
+  MonitorMetric, MonitorCardFooter, MonitorAlarmIcon, MonitorCardRich, MonitorPendingText, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
 import { Alert, AlertDescription, AlertTitle } from '@/components/shadcn/alert'
 import { Badge } from '@/components/shadcn/badge'
@@ -54,6 +54,7 @@ const CHIP_TRIGGER = cn(CARD_LAYER, 'rounded-sm pointer-coarse:min-h-10')
  * <p><b>Sayfanın payı:</b> yetkiye/seçime/eylemlere bağlı parçalar sayfada kurulur ve yuva olarak gelir — `select`
  * (toplu seçim kutusu), `meta` (MonitorCardMeta), `spark` (MonitorSpark), `actions` (MonitorCardActions, türev satırın
  * "izlemeyi durdur" adıyla). Durum sözlüğü de sayfanındır (`status` + `statusBadge`; detay penceresiyle ortak).
+ * `running` = sayfanın isRunning(id): hiç sonucu olmayan kartta "İlk kontrol bekleniyor" yerine "İlk kontrol yapılıyor…".
  * Kartta sol renk şeridi YOK — durum rozetle, aktif alarm kartın tüm kenarıyla (MonitorCard).
  *
  * <p><b>Yoğunluk (2026-09-27, Kompakt / Zengin):</b> `density="compact"` kartı taranabilir özete indirir — üst satır,
@@ -68,7 +69,7 @@ const CHIP_TRIGGER = cn(CARD_LAYER, 'rounded-sm pointer-coarse:min-h-10')
  * dns-compact-changed · dns-compact-reason (`data-reason` mismatch|slow).
  */
 export default function DnsMonitorCard({
-  monitor: m, status = 'unknown', statusBadge, alarmLabel, onOpen, select, meta, spark, actions, density = 'rich',
+  monitor: m, status = 'unknown', statusBadge, alarmLabel, onOpen, select, meta, spark, actions, density = 'rich', running = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -80,7 +81,7 @@ export default function DnsMonitorCard({
   const name = m.name && m.name !== m.domain ? m.name : null
 
   return (
-    <MonitorCard density={density} status={status} alarm={!!m.active_alarm} inactive={!m.active} data-record-type={m.record_type || undefined}>
+    <MonitorCard density={density} running={running} status={status} alarm={!!m.active_alarm} inactive={!m.active} data-record-type={m.record_type || undefined}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={<>
           <Badge variant="outline" data-slot="dns-record-type"
@@ -206,7 +207,7 @@ function DnsCompactSummary({ m, values, expected, unexpected, tone }) {
         ) : (
           <span data-slot="dns-compact-empty" data-failed={failed ? 'true' : undefined}
             className={cn('min-w-0 truncate', failed && m.active_alarm ? 'font-medium text-destructive' : 'text-muted-foreground italic')}>
-            {failed ? t('dns.cardNoAnswer') : t('dns.cardAwaiting')}
+            {failed ? t('dns.cardNoAnswer') : <MonitorPendingText idle={t('dns.cardAwaiting')} icon={null} />}
           </span>
         )}
         {m.changed && (
@@ -291,7 +292,7 @@ function ValuePanel({ m, values, expected, unexpected }) {
       ) : (
         <p data-slot="dns-values-empty" data-failed={failed ? 'true' : undefined}
           className={cn('py-1 text-[12.5px]', failed && m.active_alarm ? 'font-medium text-destructive' : 'text-muted-foreground italic')}>
-          {failed ? t('dns.cardNoAnswer') : t('dns.cardAwaiting')}
+          {failed ? t('dns.cardNoAnswer') : <MonitorPendingText idle={t('dns.cardAwaiting')} icon={null} />}
         </p>
       )}
 

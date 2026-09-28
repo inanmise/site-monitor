@@ -72,7 +72,10 @@ describe('whoNotifiedModel', () => {
   it('nobody: no email, webhook or push recipient; push missing → not available (not "zero")', () => {
     const v = buildView({ email_total: 0, team_emails: [], contacts: [], webhooks: [], managers_included: false })
     expect(v.nobody).toBe(true)
-    expect(v.push).toEqual({ available: false, error: null, recipients: [], total: 0 })
+    // 2026-09-28: push görünümü kişi bazlı karar alanlarıyla genişledi (rows / nonRecipients / access / settings / channel)
+    // — anlam aynı: veri yoksa "mevcut değil", sıfır değil; erişim NONE, satır yok.
+    expect(v.push).toMatchObject({ available: false, error: null, recipients: [], total: 0,
+      rows: [], nonRecipients: [], access: 'NONE', settings: 'NONE', self: null })
     expect(v.managersIncluded).toBe(false)
     expect(buildView({ push_error: 'boom' }).push.error).toBe('boom')
   })

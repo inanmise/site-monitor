@@ -2,11 +2,12 @@ import { MessageSquare, Clock } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { durationMs, formatDuration, formatIncidentTime } from '../../utils/incidentMeta.js'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import { Card } from '@/components/shadcn/card'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { IncidentStatusBadge, AckBadge, SeverityBadge, RootCauseChip, MonitorTypeIcon } from './IncidentBadges.jsx'
-import { isOpen, isAcked, laneOf } from './incidentsModel.js'
+import { isOpen, isAcked, laneOf, isForeign } from './incidentsModel.js'
 
 /** Örtünün (başlık düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard ile aynı desen). */
 const LAYER = 'relative z-10'
@@ -18,6 +19,7 @@ const LAYER = 'relative z-10'
  * shadcn Button, `::after` katmanı kartın tamamını örter → kartın herhangi bir yerine tıklamak detayı açar,
  * klavye tek durakta (başlık) Enter/Space ile açar. Takım rozeti örtünün üstüne çıkar (üye penceresi).
  * Sol renk şeridi YOK; durum/önem rozetle. Seçili (açık detay / derin bağlantı) kart TÜM çerçevesiyle vurgulanır.
+ * Başka ekibin olayı (`can_manage:false`, 2026-09-28) kilit rozeti taşır — kartın kendi eylemi yok, detay salt okunur.
  */
 export default function IncidentCard({ inc, nowMs, onOpen, selected = false, showStatus = false, className }) {
   const t = useT()
@@ -28,7 +30,7 @@ export default function IncidentCard({ inc, nowMs, onOpen, selected = false, sho
   const n = inc.comment_count ?? 0
   return (
     <Card data-slot="incident-card" data-status={inc.status} data-lane={laneOf(inc)} data-incident-id={inc.id}
-      data-selected={selected || undefined}
+      data-selected={selected || undefined} data-foreign={isForeign(inc) || undefined}
       className={cn('relative min-w-0 gap-0 overflow-hidden py-0 shadow-xs transition-colors hover:border-primary/50',
         open && !selected && 'border-destructive/30',
         selected && 'border-primary ring-2 ring-primary/40', className)}>
@@ -37,6 +39,7 @@ export default function IncidentCard({ inc, nowMs, onOpen, selected = false, sho
         {showStatus && <IncidentStatusBadge status={inc.status} />}
         {open && isAcked(inc) && <AckBadge />}
         <RootCauseChip rc={inc.root_cause} withLabel={false} />
+        {isForeign(inc) && <ReadOnlyBadge compact />}
         <span className="ml-auto inline-flex items-center gap-1 text-[11px] whitespace-nowrap text-muted-foreground tabular-nums" title={inc.started_at}>
           <Clock aria-hidden="true" className="size-3" />{open ? t('incov.ongoingFor', dur) : t('incov.lastedFor', dur)}
         </span>

@@ -13,6 +13,8 @@ public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor
     List<ScriptedMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<ScriptedMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams) — Notlar sekmesinin hedef anahtarı izleme ADI. */
+    List<ScriptedMonitor> findByName(String name);
     Optional<ScriptedMonitor> findFirstByNameOrderByIdAsc(String name);
 
     /** Aynı ad (case-insensitive) + takım için (kendisi hariç) başka bir senaryo var mı. */

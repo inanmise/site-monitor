@@ -9,7 +9,7 @@ import { InputGroup, InputGroupInput, InputGroupAddon } from '@/components/shadc
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, SheetClose } from '@/components/shadcn/sheet'
 import { Label } from '@/components/shadcn/label'
 import { cn } from '@/lib/utils'
-import { STATUSES, SOURCES, CATEGORIES, activeFilters, statusKey, sourceKey, categoryLabel } from './issuesModel.js'
+import { STATUSES, SOURCES, CATEGORIES, IMPACTS, activeFilters, statusKey, sourceKey, categoryLabel, impactLabel } from './issuesModel.js'
 
 /** NativeSelect sarmalayıcısı `w-fit` — telefonda tam genişlik için `*:w-full`. */
 const SEL = 'w-full *:w-full sm:w-auto'
@@ -39,6 +39,7 @@ export default function IssuesToolbar({
     if (f.key === 'awaiting') return t('issues.tileAwaiting')
     if (f.key === 'source') return t('loginIssues.source' + sourceKey(f.value))
     if (f.key === 'category') return categoryLabel(f.value, t)
+    if (f.key === 'impact') return impactLabel(f.value, t, true)
     if (f.key === 'q') return `“${f.value}”`
     if (f.key === 'since') return t('issues.chipSince', f.value)
     if (f.key === 'until') return t('issues.chipUntil', f.value)
@@ -66,6 +67,15 @@ export default function IssuesToolbar({
       <NativeSelect aria-label={t('myIssues.colCategory')} value={filters.category} onChange={(e) => patch({ category: e.target.value })}>
         <NativeSelectOption value="">{t('loginIssues.categoryAll')}</NativeSelectOption>
         {CATEGORIES.map((c) => <NativeSelectOption key={c} value={c}>{categoryLabel(c, t)}</NativeSelectOption>)}
+      </NativeSelect>
+    </div>
+  )
+  // Etki süzgeci (2026-09-28): tek kod — kaydın etki kümesinde olan (yönetici: sunucuda, "mine": istemcide)
+  const impactSelect = (
+    <div className={SEL}>
+      <NativeSelect aria-label={t('issues.impactFilter')} value={filters.impact || ''} onChange={(e) => patch({ impact: e.target.value })}>
+        <NativeSelectOption value="">{t('issues.impactAll')}</NativeSelectOption>
+        {IMPACTS.map((c) => <NativeSelectOption key={c} value={c}>{impactLabel(c, t, true)}</NativeSelectOption>)}
       </NativeSelect>
     </div>
   )
@@ -127,6 +137,7 @@ export default function IssuesToolbar({
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('loginIssues.colStatus')}{statusSelect}</Label>
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('loginIssues.colSource')}{sourceSelect}</Label>
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('myIssues.colCategory')}{categorySelect}</Label>
+                <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('issues.impactFilter')}{impactSelect}</Label>
                 <div className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">{t('loginIssues.colReportedAt')}{dates}</div>
                 <Label className="flex flex-col items-stretch gap-1 text-xs font-semibold text-muted-foreground">{t('issues.sortLabel')}{sortSelect}</Label>
                 {groupToggle}
@@ -140,7 +151,7 @@ export default function IssuesToolbar({
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          {search}{statusSelect}{sourceSelect}{categorySelect}{dates}{sortSelect}{groupToggle}
+          {search}{statusSelect}{sourceSelect}{categorySelect}{impactSelect}{dates}{sortSelect}{groupToggle}
         </div>
       )}
 

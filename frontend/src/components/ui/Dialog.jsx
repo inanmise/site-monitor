@@ -10,6 +10,7 @@ import {
   AlertDialogMedia, AlertDialogTitle,
 } from '@/components/shadcn/alert-dialog'
 import { useT } from '../../i18n/index.jsx'
+import { NOTE_RULE, isNoteValid } from '../../utils/actionNoteRule.js'
 
 // globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
 const DialogCtx = (globalThis.__smDialogCtx ??= createContext(null))
@@ -48,18 +49,13 @@ const TONE_MEDIA = {
 }
 
 /**
- * Gerekçe notu kuralı — backend {@code AlertActionNote} ile AYNI eşikler.
+ * Gerekçe notu kuralı — backend {@code AlertActionNote} ile AYNI eşikler ve AYNI kırpma/bölme tanımı.
  *
- * <p>Buradaki amaç anında geri bildirim; garanti sunucudadır. İki taraf ayrışırsa kullanıcı
- * arayüzde geçen bir notla 400 yer, o yüzden sayılar bilerek yan yana yazılı.
+ * <p>Buradaki amaç anında geri bildirim; garanti sunucudadır. İki taraf ayrışırsa kullanıcı arayüzde geçen bir notla
+ * 400 yer. Tek uygulama `utils/actionNoteRule.js`'te (Java trim + ASCII boşluk bölmesi); sahiplen/çöz penceresi
+ * (incidents/ActionNoteDialog) ile bu genel not penceresi aynı kuralı paylaşır — iki kopya ayrışamaz.
  */
-export const NOTE_RULE = { minWords: 3, minWordLen: 2, minChars: 10 }
-
-export function isNoteValid(note) {
-  const t = (note ?? '').trim()
-  if (t.length < NOTE_RULE.minChars) return false
-  return t.split(/\s+/).filter(w => w.length >= NOTE_RULE.minWordLen).length >= NOTE_RULE.minWords
-}
+export { NOTE_RULE, isNoteValid }
 
 /**
  * Onay / bilgi / metin / gerekçe penceresi — shadcn AlertDialog (Radix).

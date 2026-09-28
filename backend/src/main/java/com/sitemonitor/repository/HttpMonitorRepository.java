@@ -13,6 +13,8 @@ public interface HttpMonitorRepository extends JpaRepository<HttpMonitor, Long> 
     List<HttpMonitor> findByActiveTrue();
     long countByActiveTrue();
     List<HttpMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams): bu URL'i izleyen HER izleme (takımlar arası aynı URL olabilir). */
+    List<HttpMonitor> findByUrl(String url);
     Optional<HttpMonitor> findFirstByUrlOrderByIdAsc(String url);
 
     /** Aynı URL (case-insensitive) + takım için (kendisi hariç) başka bir HTTP monitörü var mı. */

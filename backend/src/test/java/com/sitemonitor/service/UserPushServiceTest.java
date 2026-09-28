@@ -85,7 +85,7 @@ class UserPushServiceTest {
         when(deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(anyLong(), anyString(), anyString()))
                 .thenReturn(false);
         when(deliveryRepo.countRecentForUser(anyString(), anyString())).thenReturn(0L);
-        // Kayıt deposu taklidi: worker PENDING satırları findTop50 ile okur — save edilenler
+        // Kayıt deposu taklidi: worker PENDING satırları findDuePending ile okur — save edilenler
         // oradan dönmezse outbox hiç boşalmaz ve HTTP testleri sonsuza dek bekler.
         when(deliveryRepo.save(any())).thenAnswer(inv -> {
             UserPushDelivery d = inv.getArgument(0);
@@ -93,8 +93,13 @@ class UserPushServiceTest {
             return d;
         });
         when(deliveryRepo.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenAnswer(inv ->
-                store.stream().filter(d -> inv.getArgument(0).equals(d.getStatus())).toList());
+        // findDuePending'in JPQL'inin aynası (sorgunun kendisi UserPushDeliveryRepositoryTest'te H2 üstünde):
+        // PENDING + (damga yok ya da zamanı gelmiş).
+        when(deliveryRepo.findDuePending(anyString(), any())).thenAnswer(inv -> {
+            String now = inv.getArgument(0);
+            return store.stream().filter(d -> "PENDING".equals(d.getStatus())
+                    && (d.getNextAttemptAt() == null || d.getNextAttemptAt().compareTo(now) <= 0)).toList();
+        });
         when(deliveryRepo.existsByAlertEventIdAndStatus(anyLong(), anyString())).thenReturn(true);
     }
 
@@ -217,7 +222,7 @@ class UserPushServiceTest {
     void hourlyCap_marksRateLimited() {
         // Bu test KUYRUĞA YAZILAN durumu sınar; worker'ın sonradan değiştirmesi konu dışı —
         // outbox okuması kapatılır ki PENDING satır elde kalsın (yarış değil, kasıtlı izolasyon).
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(java.util.List.of());
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(java.util.List.of());
         when(alertEventRepo.findById(1L)).thenReturn(Optional.of(event(1L, "HIGH", "HTTP_DOWN")));
         recipients("N00001", "N00002");
         when(deliveryRepo.countRecentForUser(eq("N00001"), anyString())).thenReturn(999L);
@@ -396,7 +401,7 @@ class UserPushServiceTest {
     @Test
     @DisplayName("N2: kesici açıkken takım bildirimi / doğrudan bildirim / test gönderimi de PENDING yazar")
     void otherEnqueuePaths_writePendingWhileCircuitOpen() {
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(java.util.List.of());   // yalnız yazılanı sına
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(java.util.List.of());   // yalnız yazılanı sına
         org.springframework.test.util.ReflectionTestUtils.setField(service, "circuitOpenUntil",
                 System.currentTimeMillis() + 60_000L);
         recipients("N00001");
@@ -891,7 +896,7 @@ class UserPushServiceTest {
     @Test
     @DisplayName("O-3: çözüm push'u saat tavanından MUAF — kullanıcı tavandayken bile PENDING (telefondaki alarm kapanmalı)")
     void resolve_notRateLimited() {
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());   // yalnız yazılanı sına
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
         when(deliveryRepo.existsByAlertEventIdAndStatus(1L, "SENT")).thenReturn(true);
         when(deliveryRepo.findByAlertEventIdOrderByIdAsc(1L)).thenReturn(List.of(sentRow(1L, "N00001")));
         when(resolver.resolvePrior(List.of("N00001"))).thenReturn(List.of(
@@ -923,7 +928,7 @@ class UserPushServiceTest {
         // Outbox worker'ı SUSTUR: enqueue* kuyruğa satır koyunca worker ipliği hemen koşuyor ve AYNI
         // varlık nesnesini FAILED yapıyordu — assert ile yarışıyor (yerelde yeşil, CI'da kırmızı,
         // 2026-09-16). Bu test satır YAZIMINI sınıyor, teslimatı değil.
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
         recipients("N00001", "N00002");
         when(deliveryRepo.existsByDedupeKeyAndUsername("WEAK_ALGO:a.example.com:2026-09-12", "N00002")).thenReturn(true);
 
@@ -992,7 +997,7 @@ class UserPushServiceTest {
         // Outbox worker'ı SUSTUR: enqueue* kuyruğa satır koyunca worker ipliği hemen koşuyor ve AYNI
         // varlık nesnesini FAILED yapıyordu — assert ile yarışıyor (yerelde yeşil, CI'da kırmızı,
         // 2026-09-16). Bu test satır YAZIMINI sınıyor, teslimatı değil.
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
         // Dedupe cevabı ORTADA yeniden stub'lanMAZ: ilk enqueueDirect'in worker ipliği hâlâ
         // koşarken when(...) çağırmak Mockito'nun stubbing bağlamını o ipliğin çağrısıyla
         // karıştırıyor (WrongTypeOfReturnValue). Tek stub + bayrak: yarış penceresi yok.
@@ -1019,5 +1024,295 @@ class UserPushServiceTest {
         dedupeHit.set(true);
         assertThat(service.enqueueDirect(List.of(a), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", "WR_APPROVED:1:3:MGR").get("queued")).isEqualTo(0);
         assertThat(service.enqueueDirect(List.of(), 5L, "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", "x", "y", null).get("reason")).isEqualTo("SKIPPED_NO_RECIPIENTS");
+    }
+
+    // ── 2026-09-28: outbox backoff satırda (P4) + zehirli satır (P5) ─────────────────────────
+    //
+    // Bu testler drainOutbox'ı TEST İPLİĞİNDE doğrudan çağırır (süpürme/enqueue/açılış turlarının çağırdığı AYNI
+    // metot): enqueue* worker ipliğini başlatmaz, yeniden stub yarışı yok. fail()'in planladığı tur 30 sn sonra
+    // koşacağından her test worker'ı kapatır — başka testin sunucusuna sızmasın.
+
+    private static final java.time.format.DateTimeFormatter UTC_ISO =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
+
+    private static String isoIn(long seconds) { return UTC_ISO.format(java.time.Instant.now().plusSeconds(seconds)); }
+
+    private UserPushDelivery pendingRow(long id) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setId(id);
+        d.setAlertEventId(id);
+        d.setTrigger("OPEN");
+        d.setDedupeKey("OPEN");
+        d.setUsername("N00001");
+        d.setDisplayName("N00001");
+        d.setTitle("Site Monitor");
+        d.setMessage("mesaj");
+        d.setStatus("PENDING");
+        d.setAttempts(0);
+        d.setCreatedAt(isoIn(0));
+        d.setBatchId("b" + id);
+        store.add(d);
+        return d;
+    }
+
+    @Test
+    @DisplayName("P4: retry backoff SATIRA yazılır — süpürme/enqueue turu bekleyen satırı erken yeniden göndermez")
+    void retryBackoff_persistedOnRow_andHonouredByNextDrain() throws Exception {
+        respStatus.set(503);
+        respBody = "unavailable";
+        startServer();
+        when(appSettings.getCsv(anyString(), anyString())).thenReturn(List.of("30", "120"));
+        UserPushDelivery row = pendingRow(31L);
+        try {
+            String before = isoIn(30);
+            service.drainOutbox();                 // 1. deneme — 503
+            String after = isoIn(30);
+
+            assertThat(receivedBodies).hasSize(1);
+            assertThat(row.getStatus()).isEqualTo("PENDING");
+            assertThat(row.getAttempts()).isEqualTo(1);
+            assertThat(row.getNextAttemptAt()).as("backoff satıra yazılmadı").isNotNull();
+            assertThat(row.getNextAttemptAt().compareTo(before)).isGreaterThanOrEqualTo(0);
+            assertThat(row.getNextAttemptAt().compareTo(after)).isLessThanOrEqualTo(0);
+
+            // 60 sn süpürmesi / yeni bir enqueue / açılış turu = aynı drainOutbox. Eskiden satırı hemen yeniden
+            // gönderiyordu: 2. ve 3. deneme milisaniyeler içinde tükenip ~2 dk'lık kesinti push'u kalıcı düşürüyordu.
+            service.drainOutbox();
+            assertThat(receivedBodies).as("backoff dolmadan ikinci deneme gitti").hasSize(1);
+            assertThat(row.getAttempts()).isEqualTo(1);
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("P5: API 60 karakterden uzun notificationId dönerse kolon sınırına kırpılır — satır kaydı düşmez")
+    void longNotificationId_isTruncatedToColumnLength() throws Exception {
+        respBody = "{\"notificationId\": \"" + "n".repeat(80) + "\"}";
+        startServer();
+        UserPushDelivery row = pendingRow(32L);
+        try {
+            service.drainOutbox();
+
+            assertThat(row.getStatus()).isEqualTo("SENT");
+            assertThat(row.getNotificationId()).hasSize(60);
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("P5: gönderim BAŞARILI ama sonuç kaydı düştü → yeniden gönderilmez; SENT dar güncellemeyle yazılır")
+    void sentButSaveFails_isNotRetried_statusWrittenNarrowly() throws Exception {
+        startServer();
+        when(deliveryRepo.saveAll(any())).thenThrow(new RuntimeException("value too long for type character varying(60)"));
+        UserPushDelivery row = pendingRow(33L);
+        try {
+            service.drainOutbox();
+
+            assertThat(receivedBodies).hasSize(1);
+            // Eskiden kayıt istisnası dış catch'e düşüp fail(retryable) çağrılıyordu: teslim edilmiş push PENDING'e
+            // dönüyor ve her süpürmede (dakikada bir) kullanıcıya yeniden gidiyordu.
+            assertThat(row.getStatus()).isEqualTo("SENT");
+            verify(deliveryRepo).updateOutcome(eq(33L), eq("SENT"), eq(1), eq(200), any(), anyString(),
+                    org.mockito.ArgumentMatchers.isNull());
+            verify(deliveryRepo, never()).updateOutcome(anyLong(), eq("PENDING"), any(), any(), any(), any(), any());
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("P5: hata yolunda tam kayıt düşse de deneme sayacı ilerler (dar güncelleme) — satır retry tavanına ulaşır")
+    void failPath_saveFails_attemptsStillPersisted() throws Exception {
+        respStatus.set(503);
+        respBody = "unavailable";
+        startServer();
+        when(appSettings.getCsv(anyString(), anyString())).thenReturn(List.of("30"));
+        when(deliveryRepo.saveAll(any())).thenThrow(new RuntimeException("db"));
+        pendingRow(34L);
+        try {
+            service.drainOutbox();
+
+            // Sayaç yazılmasaydı satır PENDING + attempts=0 kalır, retry tavanı hiç dolmadan sonsuza dek giderdi.
+            verify(deliveryRepo).updateOutcome(eq(34L), eq("PENDING"), eq(1), eq(503),
+                    org.mockito.ArgumentMatchers.contains("503"), org.mockito.ArgumentMatchers.isNull(), anyString());
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    // ── 2026-09-28: fırtına push'u — bireysel push'un kanal kapıları (P12) + yaşam döngüsü (P13) ─────────
+
+    private AlertEvent stormMember(long id, String type, String ctxJson) {
+        AlertEvent e = event(id, "CRITICAL", type);
+        e.setContextJson(ctxJson);
+        return e;
+    }
+
+    private void scopeOff(String type, String key) {
+        UserPushScope off = new UserPushScope();
+        off.setEnabled(false);
+        when(scopeRepo.findByScopeTypeAndScopeKey(type, key)).thenReturn(Optional.of(off));
+    }
+
+    private void quietAllDay() {
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-start"), any())).thenReturn("00:00");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-end"), any())).thenReturn("23:59:59");
+        when(appSettings.getString(eq("site.monitor.userpush.quiet-min-level"), any())).thenReturn("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("P12: fırtına push'u TAKIM kapalıysa gitmez — SKIPPED_TEAM_OFF karar satırı, alıcı çözümü koşmaz")
+    void stormNotice_teamOff_writesDecisionRow() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+        scopeOff("TEAM", "5");
+
+        Map<String, Object> out = service.enqueueStormNotice(9L, 5L, "INITIAL", "CRITICAL",
+                List.of(stormMember(1L, "HTTP_DOWN", null)), "12 monitör birden erişilemez");
+
+        assertThat(out.get("reason")).isEqualTo("SKIPPED_TEAM_OFF");
+        verify(resolver, never()).resolve(any(), any());
+        assertThat(savedRows()).singleElement().satisfies(d -> {
+            assertThat(d.getStatus()).isEqualTo("SKIPPED_TEAM_OFF");
+            assertThat(d.getUsername()).isEqualTo("-");
+            assertThat(d.getTeamId()).isEqualTo(5L);
+            assertThat(d.getMonitorType()).isEqualTo("STORM");
+            assertThat(d.getTrigger()).isEqualTo("STORM");
+            assertThat(d.getDedupeKey()).isEqualTo("storm:9:INITIAL");
+        });
+    }
+
+    @Test
+    @DisplayName("P12: fırtına push'u TÜR kapısı üye ailesinden — hepsi kapalıysa SKIPPED_TYPE_OFF, biri açıksa gider")
+    void stormNotice_typeScope_perMemberFamily() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+        scopeOff("TYPE", "http");
+
+        Map<String, Object> allOff = service.enqueueStormNotice(9L, 5L, "INITIAL", "CRITICAL",
+                List.of(stormMember(1L, "HTTP_DOWN", null), stormMember(2L, "HTTP_DOWN", null)), "m");
+        Map<String, Object> mixed = service.enqueueStormNotice(10L, 5L, "INITIAL", "CRITICAL",
+                List.of(stormMember(3L, "HTTP_DOWN", null), stormMember(4L, "PING_DOWN", null)), "m");
+
+        assertThat(allOff.get("reason")).isEqualTo("SKIPPED_TYPE_OFF");
+        assertThat(mixed.get("reason")).isNull();
+        assertThat(mixed.get("queued")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("P12: izleme bayrağı (push_disabled) — TÜM üyeler kapalıysa SKIPPED_MONITOR_OFF, biri açıksa gider")
+    void stormNotice_monitorFlag_perMember() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+        String off = "{\"push_disabled\":true}";
+
+        Map<String, Object> allOff = service.enqueueStormNotice(9L, 5L, "INITIAL", "CRITICAL",
+                List.of(stormMember(1L, "HTTP_DOWN", off), stormMember(2L, "PING_DOWN", off)), "m");
+        Map<String, Object> oneOn = service.enqueueStormNotice(10L, 5L, "INITIAL", "CRITICAL",
+                List.of(stormMember(3L, "HTTP_DOWN", off), stormMember(4L, "PING_DOWN", null)), "m");
+
+        assertThat(allOff.get("reason")).isEqualTo("SKIPPED_MONITOR_OFF");
+        assertThat(oneOn.get("queued")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("P12: sessiz saat fırtınada da geçerli — eşiğin altı SKIPPED_QUIET_HOURS, KRİTİK geçer (aynı muafiyet)")
+    void stormNotice_quietHours_sameLevelExemption() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+        quietAllDay();
+        List<AlertEvent> members = List.of(stormMember(1L, "HTTP_DOWN", null));
+
+        Map<String, Object> high = service.enqueueStormNotice(9L, 5L, "INITIAL", "HIGH", members, "m");
+        Map<String, Object> critical = service.enqueueStormNotice(10L, 5L, "INITIAL", "CRITICAL", members, "m");
+
+        assertThat(high.get("reason")).isEqualTo("SKIPPED_QUIET_HOURS");
+        assertThat(critical.get("queued")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("P12: günlük tekrar ayarı KAPALIYSA fırtınanın günlük tekrarı da gitmez — SKIPPED_REALERT_OFF; açılış etkilenmez")
+    void stormNotice_realertSetting() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        when(appSettings.getBoolean(eq("site.monitor.userpush.realert-enabled"), any(Boolean.class))).thenReturn(false);
+        recipients("N00001");
+        List<AlertEvent> members = List.of(stormMember(1L, "HTTP_DOWN", null));
+
+        Map<String, Object> realert = service.enqueueStormNotice(9L, 5L, "DAILY_REALERT", "CRITICAL", members, "m");
+        Map<String, Object> open = service.enqueueStormNotice(10L, 5L, "INITIAL", "CRITICAL", members, "m");
+
+        assertThat(realert.get("reason")).isEqualTo("SKIPPED_REALERT_OFF");
+        assertThat(open.get("queued")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("P13c: günlük tekrar anahtarı GÜN taşır (kurum saati) — dünkü tekrar bugünküni 'zaten kayıtlı' diye yutmaz")
+    void stormNotice_dailyRealertKey_carriesDate() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+        java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
+        java.time.LocalDate d0 = java.time.LocalDate.now(ist);
+        // Bugünden BAŞKA her günlük tekrar anahtarı zaten kayıtlı (dünkü tekrar) — eski günsüz anahtar da.
+        when(deliveryRepo.existsByDedupeKeyAndUsername(
+                org.mockito.ArgumentMatchers.argThat(k -> k != null && k.startsWith("storm:9:DAILY_REALERT")
+                        && !k.endsWith(":" + d0)), anyString())).thenReturn(true);
+
+        Map<String, Object> out = service.enqueueStormNotice(9L, 5L, "DAILY_REALERT", "CRITICAL",
+                List.of(stormMember(1L, "HTTP_DOWN", null)), "m");
+        java.time.LocalDate d1 = java.time.LocalDate.now(ist);
+
+        assertThat(out.get("queued")).as("günlük tekrar dünkü anahtara takıldı").isEqualTo(1);
+        String key = savedRows().get(0).getDedupeKey();
+        assertThat(key).isIn("storm:9:DAILY_REALERT:" + d0, "storm:9:DAILY_REALERT:" + d1);
+        assertThat(key.length()).as("dedupe_key kolonu 60").isLessThanOrEqualTo(60);
+        assertThat(UserPushService.stormDedupeKey(9L, "INITIAL")).isEqualTo("storm:9:INITIAL");
+        assertThat(UserPushService.stormDedupeKey(9L, "RESOLVE")).isEqualTo("storm-resolved:9");
+    }
+
+    private UserPushDelivery stormSent(String username) {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setUsername(username); d.setDisplayName(username); d.setStatus("SENT");
+        d.setTrigger("STORM"); d.setDedupeKey("storm:9:INITIAL"); d.setTeamId(5L);
+        return d;
+    }
+
+    @Test
+    @DisplayName("P13: fırtına ÇÖZÜMÜ açılışı ALANLARA gider (seviye çözümlemesi yok), saat tavanı ve sessiz saatten muaf")
+    void stormResolve_goesToOpenRecipients_capAndQuietExempt() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        quietAllDay();
+        when(deliveryRepo.findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc("storm:9:", 5L, "SENT"))
+                .thenReturn(List.of(stormSent("N00007"), stormSent("N00007"), stormSent("-")));
+        when(resolver.resolvePrior(List.of("N00007"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00007", "Yönetici", null)));
+        when(deliveryRepo.countRecentForUser(eq("N00007"), anyString())).thenReturn(999L);   // tavanın çok üstü
+
+        Map<String, Object> out = service.enqueueStormNotice(9L, 5L, "RESOLVE", "HIGH",
+                List.of(stormMember(1L, "HTTP_DOWN", null)), "3 monitör kurtarıldı");
+
+        assertThat(out.get("queued")).isEqualTo(1);
+        verify(resolver, never()).resolve(any(), any());
+        assertThat(savedRows()).singleElement().satisfies(d -> {
+            assertThat(d.getUsername()).isEqualTo("N00007");
+            assertThat(d.getStatus()).isEqualTo("PENDING");
+            assertThat(d.getTrigger()).isEqualTo("STORM_RESOLVED");
+            assertThat(d.getDedupeKey()).isEqualTo("storm-resolved:9");
+        });
+    }
+
+    @Test
+    @DisplayName("P13: açılışı kimseye gitmemiş fırtınanın çözümü de gitmez — SKIPPED_NO_PRIOR (simetri kuralı)")
+    void stormResolve_withoutPriorSent_isSkipped() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        recipients("N00001");
+
+        Map<String, Object> out = service.enqueueStormNotice(9L, 5L, "RESOLVE", "CRITICAL",
+                List.of(stormMember(1L, "HTTP_DOWN", null)), "m");
+
+        assertThat(out.get("reason")).isEqualTo("SKIPPED_NO_PRIOR");
+        verify(resolver, never()).resolve(any(), any());
+        assertThat(savedRows()).singleElement().extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_NO_PRIOR");
     }
 }

@@ -43,8 +43,34 @@ public class GlobalExceptionHandler {
     /** Fired when e.g. trying to re-notify an already-resolved alert. */
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleConflict(IllegalStateException e) {
+        // Mükerrer alan adı (2026-09-28): çakışan kayıt YAPISAL alanla taşınır — arayüz sahibi takımı rozetle
+        // çizer, kaydı açar, aktarım/geri yükleme/talep eylemlerini sunar; metni ayrıştırmak zorunda kalmaz.
+        if (e instanceof DomainExistsException de) {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("error", e.getMessage());
+            body.put("code", DomainExistsException.CODE);
+            body.put("existing", de.getExisting());
+            return ResponseEntity.status(409).body(body);
+        }
         return ResponseEntity.status(409)
                 .body(Map.of("success", false, "error", e.getMessage()));
+    }
+
+    /**
+     * Alan adı envanterde zaten kayıtlı (ekle / yeniden adlandır) — 409 + {@code code=DOMAIN_EXISTS} +
+     * {@code existing}. {@code existing} YALNIZ ad/kimlik/durum ve çağıranın eylem bayraklarını taşır
+     * (beyaz liste, {@code AdminController.domainExists}); sorumlu kişi, not, açıklama gibi alanlar ASLA.
+     * {@link IllegalStateException} alt sınıfı: onu yakalayan her eski yol aynı 409'u görmeye devam eder.
+     */
+    public static class DomainExistsException extends IllegalStateException {
+        public static final String CODE = "DOMAIN_EXISTS";
+        private final Map<String, Object> existing;
+        public DomainExistsException(String message, Map<String, Object> existing) {
+            super(message);
+            this.existing = existing;
+        }
+        public Map<String, Object> getExisting() { return existing; }
     }
 
     /** Validation errors from controllers (e.g. blank domain). */

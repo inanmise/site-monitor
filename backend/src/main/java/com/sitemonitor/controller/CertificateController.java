@@ -7,6 +7,7 @@ import com.sitemonitor.repository.AlertEventRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.LatestCheck;
+import com.sitemonitor.service.CertificateHealthRules;
 import com.sitemonitor.service.CertificateHealthService;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.NetworkOutageEventRepository;
@@ -328,7 +329,40 @@ public class CertificateController {
         Map<String, Object> result = new LinkedHashMap<>(checkerService.check(domain, port, forceProxy,
                 tlsOverride, inv.map(CertificateInventory::getTimeoutSeconds).orElse(null)));
         result.put("port", port);
+        // 2026-09-28 (SSL Kontrol sekmesi yeniden tasarımı): sekmenin hostname / protokol / şifre / imza / anahtar
+        // satırları ve "Güvensiz" hükmü SUNUCUDAN gelir — kart rozeti, Sağlık sekmesi ve Zayıf Algoritma Raporu ile
+        // AYNI kural (CertificateHealthRules). Arayüz ikinci bir kural yazmıyor: eskiden istemci jokeri gevşek
+        // eşliyordu (*.example.com → a.b.example.com "kapsanıyor"), kart aynı sertifikaya "Güvensiz" derken.
+        // El sıkışması olmayan hata sonucunda değerlendirme EKLENMEZ (ölçülmemişi hükme çevirmeyiz).
+        if (!"error".equals(result.get("status"))) putPreviewAssessment(domain, result);
         return ok(Map.of("success", true, "data", result, "timestamp", now()));
+    }
+
+    /**
+     * check-preview değerlendirmesi — yalnız ölçülen alanlardan. Her satır {@code OK|WARN|FAIL|UNKNOWN}
+     * (CertificateHealthRules.Status); ölçülmeyen alan UNKNOWN döner, FAIL değil. {@code security_flags} kartın
+     * "Güvensiz" rozetiyle aynı liste (HOSTNAME_MISMATCH / UNTRUSTED_CA).
+     */
+    static void putPreviewAssessment(String domain, Map<String, Object> result) {
+        List<String> san = result.get("san") instanceof List<?> l
+                ? l.stream().filter(String.class::isInstance).map(String.class::cast).toList()
+                : List.of();
+        String tls = result.get("tls_version") instanceof String s ? s : null;
+        String cipher = result.get("cipher_suite") instanceof String s ? s : null;
+        String sigAlg = result.get("signature_algorithm") instanceof String s ? s : null;
+        String keyAlg = result.get("public_key_algorithm") instanceof String s ? s : null;
+        Integer keySize = result.get("public_key_size") instanceof Number n ? n.intValue() : null;
+        String trust = result.get("trust_status") instanceof String s ? s : null;
+        Map<String, Object> a = new LinkedHashMap<>();
+        a.put("hostname", CertificateHealthRules.sanCoverage(domain, san).name());
+        a.put("protocol", CertificateHealthRules.protocolStatus(tls).name());
+        a.put("protocol_latest", CertificateHealthRules.isLatestProtocol(tls));
+        a.put("cipher", CertificateHealthRules.cipherStatus(cipher).name());
+        a.put("pfs", CertificateHealthRules.pfsStatus(tls, cipher).name());
+        a.put("signature", CertificateHealthRules.signatureStatus(sigAlg).name());
+        a.put("key_size", CertificateHealthRules.keySizeStatus(keyAlg, keySize).name());
+        result.put("assessment", a);
+        result.put("security_flags", CertificateHealthRules.securityFlags(domain, san, trust));
     }
 
     // NOT: eski /api/activity (yalnız sertifika, run-id gruplu) → yeni birleşik ActivityController devraldı
@@ -560,6 +594,7 @@ public class CertificateController {
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
         CertificateInventory inv = requireViewableForHealth(session, domain, request);
         if (inv == null) return notFoundBody();
+        requireOperableForHealth(session, inv);
 
         long nowMs = System.currentTimeMillis();
         Long last = healthRefreshAt.get(domain);
@@ -600,15 +635,19 @@ public class CertificateController {
      * Onay SABİTLENEN parmak izine bağlı kaydedilir (kim, ne zaman, hangi parmak izi): satır hemen
      * yeşile döner; pin yeniden değişirse onay o değişimi kapsamaz ve satır yeniden uyarır.
      *
-     * <p>Kapsam: sağlık listesini görebilen herkes (takım görüş alanı). 409: onaylanacak değişim yok
+     * <p>Kapsam: sağlık listesini görebilen VE o takımda işlem yapabilen ({@code canOperateTeam}) +
+     * {@code inventory.crud/edit} (2026-09-28, A11 — salt-okur AUDIT onaylayamaz). 409: onaylanacak değişim yok
      * ya da sunulan sertifika sabitlenenden farklı (araya girme imzası — bu bir yenileme değildir,
      * onaylanamaz; önce incelenmeli).
      */
     @PostMapping("/certificates/{domain}/health/confirm-renewal")
     public ResponseEntity<Map<String, Object>> confirmCertificateRenewal(
             @PathVariable String domain, HttpSession session, HttpServletRequest request) {
+        // Onay bir KAYIT yazımıdır (uyarıyı yeşile çevirir) → envanter düzenleme izni; salt-okur AUDIT'te yok (A11).
+        permissionService.require(session, "inventory.crud", "edit");
         CertificateInventory inv = requireViewableForHealth(session, domain, request);
         if (inv == null) return notFoundBody();
+        requireOperableForHealth(session, inv);
 
         LatestCheck lc = latestCheckRepo.findById(domain).orElse(null);
         String pinned = lc == null ? null : lc.getPinnedFingerprint();
@@ -649,6 +688,21 @@ public class CertificateController {
     private CertificateInventory requireViewableForHealth(HttpSession session, String domain,
                                                           HttpServletRequest request) {
         return viewableForHealth(session, domain, inventoryRepo.findByDomain(domain).orElse(null), request);
+    }
+
+    /**
+     * YAZAN sağlık uçlarının İŞLEM kapısı (2026-09-28, yayın öncesi regresyon taraması, A11). Görüş kapsamı tek
+     * başına yetmiyordu: global görücü AUDIT (salt okur) her takımın kaydını GÖRDÜĞÜ için her takımın sabitlenmiş
+     * parmak izi değişimini "planlı yenileme" diye onaylayabiliyor — araya girme uyarısını yeşile çevirebiliyor —
+     * ve canlı el sıkışması tetikleyebiliyordu. Kural izleme tetik/yazma uçlarıyla AYNI:
+     * {@link SessionScope#canOperateTeam} (global admin / yönetim kapsamı / takımın üyesi). Kayıt zaten görünür
+     * olduğundan 404 değil 403 — gizlenecek varlık yok.
+     */
+    private static void requireOperableForHealth(HttpSession session, CertificateInventory inv) {
+        if (!SessionScope.canOperateTeam(session, inv.getTeamId()))
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Bu alan adının takımında işlem yetkiniz yok; yalnız görüntüleyebilirsiniz",
+                    "You can view this domain but can't act on it; it belongs to a team outside your scope"));
     }
 
     private CertificateInventory viewableForHealth(HttpSession session, String domain, CertificateInventory inv,

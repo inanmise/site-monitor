@@ -48,6 +48,7 @@ import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -216,8 +217,11 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.http) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
-  useMonitorDeepLink(monitors, openDetail)
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, 7/24 Kapsamı): TAM listeden açar; yoksa uyarır (hooks/useMonitorDeepLink)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'HTTP',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null); setSelCheck(null) }
@@ -303,6 +307,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('http.saved')); closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi değişen kart eski sonucu göstermesin. Liste
+      // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('http', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -713,7 +720,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
             /* Kart sunumu http/HttpMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
                yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada), meta (zorlanmış vekil kipinde yol rozeti kip
                çipine bırakılır — metaRow) ve eylemler (yetki + işleyiciler burada). */
-            <HttpMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+            <HttpMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />

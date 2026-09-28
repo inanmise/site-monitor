@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, PAGE_STATE_PARAMS, flushUrlQuerySync } from '../hooks/useUrlQuerySync.js'
 
 function url() { return window.location.pathname + window.location.search }
 
@@ -53,6 +53,30 @@ describe('useUrlQuerySync', () => {
     spy.mockRestore()
   })
 
+  it('flushUrlQuerySync: bekleyen yazımı HEMEN uygular (gezinmeden önce — Geri süzgeci geri getirsin), zamanlayıcı ikinci kez yazmaz', () => {
+    const spy = vi.spyOn(window.history, 'replaceState')
+    const a = renderHook(() => useUrlQuerySync({ n_q: 'web' }, { debounceMs: 300 }))
+    renderHook(() => useUrlQuerySync({ n_page: 2 }, { debounceMs: 300 }))   // ikinci örnek (sayfalama) de
+    expect(url()).toBe('/?tab=keyword')
+    flushUrlQuerySync()
+    expect(url()).toBe('/?tab=keyword&n_q=web&n_page=2')
+    const calls = spy.mock.calls.length
+    vi.advanceTimersByTime(400)
+    expect(spy.mock.calls.length).toBe(calls)   // iptal edildi, tekrar yazmadı
+    flushUrlQuerySync()                          // bekleyen yok → no-op
+    expect(spy.mock.calls.length).toBe(calls)
+    a.unmount()
+    spy.mockRestore()
+  })
+
+  it('söküm bekleyen yazımı İPTAL eder (flush de onu yazmaz) — yeni geçmiş kaydı kirlenmez', () => {
+    const { unmount } = renderHook(() => useUrlQuerySync({ q: 'eski' }, { debounceMs: 300 }))
+    unmount()
+    flushUrlQuerySync()
+    vi.advanceTimersByTime(400)
+    expect(url()).toBe('/?tab=keyword')
+  })
+
   it('enabled=false iken hiç yazmaz (gömülü bileşen guardı)', () => {
     const spy = vi.spyOn(window.history, 'replaceState')
     renderHook(() => useUrlQuerySync({ q: 'x' }, { debounceMs: 10, enabled: false }))
@@ -84,5 +108,13 @@ describe('readUrlParam / readUrlInt', () => {
   it('PAGE_STATE_PARAMS sözlüğü beklenen paramları içerir', () => {
     for (const p of ['group', 'tag', 'team', 'q', 'stat', 'sort', 'page', 'ps', 'monitor', 'range', 'mtab', 'domain', 'incident'])
       expect(PAGE_STATE_PARAMS).toContain(p)
+  })
+
+  it('uygulama düzeyi tek seferlik `open` (cert | noc, 2026-09-28) sekme değişince temizlenir ve sayfa önekleriyle çakışmaz', async () => {
+    const { PAGE_STATE_PREFIXES } = await import('../hooks/useUrlQuerySync.js')
+    const { DEEP_OPEN_PARAM } = await import('../utils/monitorDeepLink.js')
+    expect(DEEP_OPEN_PARAM).toBe('open')
+    expect(PAGE_STATE_PARAMS).toContain(DEEP_OPEN_PARAM)
+    expect(PAGE_STATE_PREFIXES.some((pre) => DEEP_OPEN_PARAM.startsWith(pre))).toBe(false)
   })
 })

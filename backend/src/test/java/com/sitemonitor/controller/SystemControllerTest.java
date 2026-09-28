@@ -437,22 +437,69 @@ class SystemControllerTest {
     // kullanicinin ekrani kirilmamali. Dordu de izin varken 200 donmeli.
 
     @Test
-    @DisplayName("Dort sistem ucu: izin varken USER icin 200 (ekran kirilmadi)")
+    @DisplayName("Uc sistem ucu: izin varken USER icin 200 (ekran kirilmadi) — smtp-logs ayri (A3, asagida)")
     void systemReadEndpoints_asUserWithPermission_return200() throws Exception {
-        when(extendedHealthService.getSmtpFailures(anyInt())).thenReturn(java.util.List.of());
         when(extendedHealthService.getTableStats()).thenReturn(java.util.List.of());
         when(metricsService.getHistory()).thenReturn(java.util.List.of());
         when(httpMetricsService.getSummary()).thenReturn(Map.of("count", 0));
         when(httpMetricsService.getHistory()).thenReturn(java.util.List.of());
 
-        for (String path : java.util.List.of("/smtp-logs", "/db-stats", "/metrics", "/http-metrics")) {
+        for (String path : java.util.List.of("/db-stats", "/metrics", "/http-metrics")) {
             mvc.perform(get("/api/admin/system" + path).session(userSession()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.success").value(true));
         }
         // Kapi dogru kaynak/eylem ciftiyle soruldu (yanlis anahtar = sessizce her zaman gecen kapi).
-        verify(permissionService, org.mockito.Mockito.times(4))
+        verify(permissionService, org.mockito.Mockito.times(3))
                 .require(any(jakarta.servlet.http.HttpSession.class), eq("system_health.read"), eq("view"));
+    }
+
+    // ── smtp-logs: yalniz GLOBAL gorucu (A3, 2026-09-28) ───────────────────────
+    // Uc takim suzgecsiz TUM posta gunlugunu donduruyordu (her takimin alici adresi + alarm govdesi);
+    // arayuz artik /api/admin/smtp-log/* (satir bazinda takim kapsami) kullaniyor. system_health.read
+    // USER/TEAM_ADMIN varsayilaninda oldugu icin izin kapisi tek basina SIZINTIYI durdurmuyordu.
+
+    private MockHttpSession teamAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "po");
+        s.setAttribute("systemRole", "TEAM_ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(5L)));
+        return s;
+    }
+
+    /** AD-kaynaklı kapsamlı müdür: rol ADMIN ama takım 2'ye sınırlı — global DEĞİL. */
+    private MockHttpSession scopedAdminSession() {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", Boolean.TRUE);
+        s.setAttribute("username", "mudur");
+        s.setAttribute("systemRole", "ADMIN");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(List.of(2L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<>(List.of(2L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("A3 smtp-logs: USER / TEAM_ADMIN / kapsamli mudur izinle bile 403 — servis HIC cagrilmaz")
+    void smtpLogs_nonGlobal_returns403() throws Exception {
+        for (MockHttpSession s : List.of(userSession(), teamAdminSession(), scopedAdminSession())) {
+            mvc.perform(get("/api/admin/system/smtp-logs").session(s))
+                    .andExpect(status().isForbidden());
+        }
+        verify(extendedHealthService, never()).getSmtpFailures(anyInt());
+    }
+
+    @Test
+    @DisplayName("A3 smtp-logs: global admin ve AUDIT (global gorucu) 200 — gun tavani korunur")
+    void smtpLogs_globalViewer_returns200() throws Exception {
+        when(extendedHealthService.getSmtpFailures(anyInt())).thenReturn(java.util.List.of());
+        for (MockHttpSession s : List.of(adminSession(), auditSession())) {
+            mvc.perform(get("/api/admin/system/smtp-logs?days=999").session(s))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.days").value(365));
+        }
+        verify(extendedHealthService, org.mockito.Mockito.times(2)).getSmtpFailures(365);
     }
 
     /** `system_health.read` reddi: PermissionService.require SecurityException atar → 403. */

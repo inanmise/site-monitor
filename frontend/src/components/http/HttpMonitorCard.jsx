@@ -45,10 +45,11 @@ import { httpFailureReason, metaRow, proxyMode, statusVerdict } from './httpCard
  * @param {object} spark    useSparklines('http')[id] — 24 sa saatlik süre kovaları (trend + süre kutusunun 24 sa tabanı)
  * @param {object} sla      useSla('http').data[id]
  * @param {'rich'|'compact'} density  kart yoğunluğu (sayfa: useCardDensity('http'))
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function HttpMonitorCard({
-  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich',
+  monitor: m, status = 'unknown', badge, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
 }) {
   const t = useT()
   const alarm = !!m.active_alarm
@@ -61,7 +62,7 @@ export default function HttpMonitorCard({
   const hasMeta = !!(m.team_name || m.group_name || metaRow(m).proxy_effective || proxyMode(m) || tagsOf(m).length || m.noc_notify)
   const alarmLabel = `${t('http.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
-    <MonitorCard density={density} status={status} alarm={alarm} inactive={paused} data-result={verdict.kind}
+    <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused} data-result={verdict.kind}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={

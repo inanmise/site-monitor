@@ -10,7 +10,7 @@ import MonitorSpark from '../ui/MonitorSpark.jsx'
 import MonitorCardMeta from '../MonitorCardMeta.jsx'
 import {
   MonitorCard, MonitorCardHeader, MonitorCardTop, MonitorCardTitle, MonitorCardContent, MonitorCardFooter, MonitorCardRich,
-  MonitorStatusBadge, MonitorAlarmIcon, CARD_LAYER, CARD_COPY,
+  MonitorStatusBadge, MonitorAlarmIcon, MonitorCardPending, CARD_LAYER, CARD_COPY,
 } from '../monitoring/MonitorCard.jsx'
 import { cn } from '@/lib/utils'
 import PingProtocolChips from './PingProtocolChips.jsx'
@@ -41,9 +41,10 @@ import { failureReason, latencyBaseline, pingStatusKey, pingStatusLabelKey } fro
  * @param {object} spark    useSparklines('ping')[id] — 24 sa saatlik gecikme kovaları
  * @param {object} sla      useSla('ping').data[id]
  * @param {'rich'|'compact'} density  kart yoğunluğu (sayfa: useCardDensity('ping'))
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
-export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, slaDays, density = 'rich', onOpen, select, actions }) {
+export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, slaDays, density = 'rich', running = false, onOpen, select, actions }) {
   const t = useT()
   const status = pingStatusKey(m)
   const alarm = !!m.active_alarm
@@ -51,12 +52,15 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
   const compact = density === 'compact'
   const baseline = useMemo(() => latencyBaseline(spark), [spark])
   const reason = failureReason(m)
+  // Hiç kontrol yok: ölçü kutuları/kompakt ölçü çizilmez (boş "—" kutuları) → yerine bekleme satırı; ilk kontrol
+  // koşarken "İlk kontrol yapılıyor…" (kart boş alan bırakmaz — 2026-09-28).
+  const never = !m.checked_at
   const name = String(m.name || '').trim()
   const subName = name && name !== m.host ? name : null
   const hasMeta = !!(m.team_name || m.group_name || m.proxy_effective || tagsOf(m).length || m.noc_notify)
   const alarmLabel = `${t('ping.activeAlarm')}${m.alarm_level ? ' — ' + m.alarm_level : ''}`
   return (
-    <MonitorCard density={density} status={status} alarm={alarm} inactive={paused}
+    <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop end={
@@ -83,6 +87,7 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
         {compact && (
           <>
             <PingCompactMetric monitor={m} baseline={baseline} />
+            {never && <MonitorCardPending slot="ping-pending" compact />}
             {reason && (
               <CardCompactReason slot="ping-reason" kind={reason.kind} icon={pingReasonIcon(reason.kind)} text={pingReasonText(reason, t)}
                 rowLabel={m.host} tone={reason.kind === 'na' ? 'warn' : 'bad'} />
@@ -90,6 +95,7 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
           </>
         )}
         <MonitorCardRich>
+          {never && <MonitorCardPending slot="ping-pending" />}
           <PingMetricTiles monitor={m} baseline={baseline} />
           <PingFailureReason reason={reason} />
           <PingLatencyRange baseline={baseline} />

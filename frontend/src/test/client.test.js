@@ -328,6 +328,20 @@ describe('api.admin.resolveAlert', () => {
   })
 })
 
+// Regresyon taraması FE4: withStatus yoktu → 429 (elle çalıştırma bekleme süresi) gövdeye yazılmıyor, Senaryo kayıt
+// sonrası doğrulama bandının "az önce çalıştırıldı" dalı hiç çalışmıyordu. Durum YALNIZ hata gövdesine eklenir.
+describe('api.monitoring.triggerScriptedCheck', () => {
+  it('429 hata gövdesine HTTP durumunu ekler; başarı gövdesine dokunmaz; withStatus fetch\'e sızmaz', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 429, json: () => Promise.resolve({ success: false, error: 'çok sık' }) })
+    expect(await api.monitoring.triggerScriptedCheck(7)).toEqual({ success: false, error: 'çok sık', status: 429 })
+    expect(global.fetch).toHaveBeenCalledWith('/api/monitoring/scripted/7/check', expect.objectContaining({ method: 'POST' }))
+    expect(global.fetch.mock.calls[0][1]).not.toHaveProperty('withStatus')
+
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ success: true, data: { status: 'PASS' } }) })
+    expect(await api.monitoring.triggerScriptedCheck(7)).toEqual({ success: true, data: { status: 'PASS' } })
+  })
+})
+
 // ── api.admin — system health & audit ────────────────────────────────────────
 
 describe('api.admin.getDbStats', () => {

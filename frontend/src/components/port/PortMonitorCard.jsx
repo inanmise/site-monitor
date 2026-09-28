@@ -44,10 +44,11 @@ import { endpointText, portResult, sourceOf } from './portCardModel.js'
  * @param {object} monitor  GET /monitoring/port satırı (snake_case)
  * @param {object} spark    useSparklines('port')[id] — 24 sa saatlik süre kovaları
  * @param {object} sla      useSla('port').data[id]
+ * @param {boolean} running  kontrol ŞU AN koşuyor (sayfanın isRunning(id)) — hiç sonucu yoksa "İlk kontrol yapılıyor…"
  * @param {Function} onOpen detay penceresini aç (başlık düğmesi — kartın tamamını örter)
  */
 export default function PortMonitorCard({
-  monitor: m, status = 'unknown', badge, alarmLabel, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich',
+  monitor: m, status = 'unknown', badge, alarmLabel, onOpen, select, meta, actions, spark, sla, slaTarget, slaDays, density = 'rich', running = false,
 }) {
   const t = useT()
   const compact = density === 'compact'
@@ -59,7 +60,7 @@ export default function PortMonitorCard({
   const endpoint = endpointText(m.host, m.port)
   const name = String(m.name || '').trim()
   return (
-    <MonitorCard density={density} status={status} alarm={alarm} inactive={paused} data-result={result.kind} data-protocol={result.proto}
+    <MonitorCard density={density} running={running} status={status} alarm={alarm} inactive={paused} data-result={result.kind} data-protocol={result.proto}
       className={cn(status === 'down' && !alarm && !paused && 'border-destructive/45 dark:border-destructive/60')}>
       <MonitorCardHeader>
         <MonitorCardTop className={compact ? 'mb-2' : undefined} end={

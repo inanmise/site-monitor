@@ -43,6 +43,7 @@ import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { csvCell } from '../utils/csv.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
@@ -240,7 +241,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.page) })
   }, [])
 
-  useMonitorDeepLink(monitors, openDetail)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'PAGE',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   // O2: üç eşzamanlı çağıran var (filtre tıklaması, checkNow, 30sn sessiz refreshModal) ve
   // yavaş bir 'all' yanıtı kullanıcının sonradan seçtiği filtrenin sonucunu ezebiliyordu: çip
@@ -380,6 +384,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('page.saved')); closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi/tarama ayarı değişen kart eski sonucu göstermesin.
+      // Liste YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('page', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -878,7 +885,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
             /* Kart sunumu page/PageMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama yuva
                olarak geçer: durum sözlüğü (statusKey/statusBadge — detay penceresiyle aynı kaynak; CONFIG_ERROR mor
                rozet), toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
-            <PageMonitorCard key={m.id} monitor={m} density={density} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
+            <PageMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusKey(m)} badge={statusBadge(m)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.url)} />

@@ -80,16 +80,16 @@ describe('NocCoveragePage — özet ve liste', () => {
     expect(within(rowOf('PING:1')).getByRole('button', { name: /^(Notify the 24\/7 team|7\/24’e bildir) — ping-a$/ })).toBeInTheDocument()
   })
 
-  it('ada basınca izlemeye derin bağlantı: tür sekmesi + ?monitor=; SSL → Pano araması', async () => {
+  it('ad GERÇEK bağlantı: tür sekmesi + ?monitor=; SSL → Pano + sertifika penceresi (open=cert) — ayrıntı NocCoverageDeepLink.test', async () => {
     const nav = vi.fn()
     window.addEventListener('sm:navigate', nav)
     try {
       await renderPage()
       await waitFor(() => expect(rows()).toHaveLength(5))
-      fireEvent.click(within(rowOf('PORT:4')).getByRole('button', { name: 'db' }))
+      fireEvent.click(within(rowOf('PORT:4')).getByRole('link', { name: 'db' }))
       expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'port', params: { monitor: 4 } })
-      fireEvent.click(within(rowOf('SSL:5')).getByRole('button', { name: 'www.example.com' }))
-      expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'dashboard', params: { domain: 'www.example.com' } })
+      fireEvent.click(within(rowOf('SSL:5')).getByRole('link', { name: 'www.example.com' }))
+      expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'dashboard', params: { domain: 'www.example.com', open: 'cert' } })
     } finally { window.removeEventListener('sm:navigate', nav) }
   })
 })

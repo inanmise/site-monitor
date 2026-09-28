@@ -229,4 +229,50 @@ class AppSettingsServiceTest {
             assertThat(m.get("read_only")).as("global admin için kilit yok: " + m.get("key")).isEqualTo(false);
         }
     }
+
+    @Test
+    @DisplayName("2026-09-28: müdür saklama anahtarlarını (yasal saklama, süre) DEĞİŞTİREMEZ (403, değer korunur); global admin değiştirir")
+    void scopedAdmin_cannotChangeRetention() {
+        // global (bağlam yok) → mevcut değerleri kur
+        service.save(values(com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY, "true"), "admin");
+        service.save(values("site.monitor.activity.retention-days", "365"), "admin");
+        try {
+            bindScopedAdminRequest();
+            assertThatThrownBy(() -> service.save(values(com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY, "false"), "mudur"))
+                    .isInstanceOf(SecurityException.class).hasMessageContaining("hold-enabled");
+            assertThatThrownBy(() -> service.save(values("site.monitor.activity.retention-days", "30"), "mudur"))
+                    .isInstanceOf(SecurityException.class);
+            assertThatThrownBy(() -> service.save(values("site.monitor.activity.retention-days", ""), "mudur"))
+                    .as("override'ı kaldırmak da bir değişikliktir").isInstanceOf(SecurityException.class);
+            assertThat(service.getBoolean(com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY, false)).isTrue();
+            assertThat(service.getInt("site.monitor.activity.retention-days", -1)).isEqualTo(365);
+        } finally {
+            // Önbellek (overrides) bean'de yaşar, DB geri alınsa da diğer testlere sızmasın.
+            org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+            service.save(values(com.sitemonitor.service.retention.RetentionCatalog.HOLD_KEY, ""), "admin");
+            service.save(values("site.monitor.activity.retention-days", ""), "admin");
+        }
+    }
+
+    @Test
+    @DisplayName("2026-09-28: müdür formun TAMAMINI gönderince DEĞİŞMEYEN GLOBAL_ONLY değeri yazma sayılmaz — kayıt geçer, satır yeniden yazılmaz")
+    void scopedAdmin_unchangedGlobalOnlyValue_isNoOp() {
+        service.save(values("site.monitor.failed-login.retention-days", "365"), "admin");
+        try {
+            bindScopedAdminRequest();
+            // Giriş Anomalisi kaydının biçimi: operasyonel anahtar + aynı değerle geri gelen saklama süresi.
+            Map<String, Object> inner = new HashMap<>();
+            inner.put("site.monitor.network.min-errors", "11");
+            inner.put("site.monitor.failed-login.retention-days", "365");
+            service.save(Map.of("values", inner), "mudur");
+
+            assertThat(service.getInt("site.monitor.network.min-errors", -1)).isEqualTo(11);
+            assertThat(repo.findBySettingKey("site.monitor.failed-login.retention-days").orElseThrow().getUpdatedBy())
+                    .as("değişmeyen GLOBAL_ONLY satırı müdür adına yeniden yazılmamalı").isEqualTo("admin");
+        } finally {
+            org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+            service.save(values("site.monitor.failed-login.retention-days", ""), "admin");
+            service.save(values("site.monitor.network.min-errors", ""), "admin");
+        }
+    }
 }

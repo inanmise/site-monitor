@@ -17,6 +17,8 @@ import { CONTACT_FIELDS, looksLikeBrokenEmail } from '../../utils/inventoryConta
 import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import DiagnosticsModal from '../admin/DiagnosticsModal.jsx'
+import DomainConflictBanner from './DomainConflictBanner.jsx'
+import { domainConflictOf } from './domainConflictModel.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import {
@@ -171,7 +173,9 @@ function initialForm(mode, record) {
  *                                        YALNIZ global yönetici (kapsamlı müdür 7/24 grubu yazamaz). Verilmezse bağlantı
  *                                        yok, "yöneticinize başvurun" (NocNotifyField).
  * @param {Function} onClose
- * @param {Function} onSaved              (savedResponse) => void — çağıran kapatır + tazeler
+ * @param {Function} onSaved              (savedResponse, domain, opts) => void — çağıran kapatır + tazeler. Mükerrer alan adı
+ *                                        bandından aktarım / geri yükleme sonrası `opts = { open: true, record }`: çağıran
+ *                                        (form kapandıktan sonra) taşınan / geri yüklenen kaydı açar (2026-09-28).
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
                                              canManage = true, canWrite = false, canMoveTeam = false,
@@ -214,6 +218,8 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [errors, setErrors] = useState({})   // alan-bazlı hatalar (satır içi; özet `msg` alt çubukta yüzer)
+  // Mükerrer alan adı (2026-09-28): 409 DOMAIN_EXISTS → { message, existing } — alt çubukta eylemli uyarı bandı
+  const [conflict, setConflict] = useState(null)
   const [showDiag, setShowDiag] = useState(false)
   const [running, setRunning]   = useState(false)
   // Kaydetmenin ardından koşan OTOMATİK ilk kontrol (elle "Çalıştır"dan ayrı bayrak: ikisi
@@ -265,8 +271,17 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   function f(field, val) {
     setForm(prev => ({ ...prev, [field]: val }))
     if (msg) setMsg(null)
+    // Alan adı ya da takım değişince çakışma bilgisi bayatlar (başka kayıt / başka hedef ekip)
+    if (conflict && (field === 'domain' || field === 'team_id')) setConflict(null)
     if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n })
   }
+
+  // Mükerrer bandının "aktar" hedefi: formda seçili ekip (düzenlemede kaydın ekibi). Liste dışıysa kayıttaki ad.
+  const targetTeam = useMemo(() => {
+    if (!form.team_id) return null
+    const tm = teams.find(x => String(x.id) === String(form.team_id))
+    return { id: tm?.id ?? form.team_id, name: tm?.name ?? record?.team_name ?? String(form.team_id) }
+  }, [form.team_id, teams, record])
 
   // Meşgul evresi TEK yerde, başlıkta anlatılır (düğme metinleri sabit kalır — bkz. alt bar notu).
   const busyLabel = saving ? t('inv.saving') : firstRun ? t('inv.saveRunning')
@@ -459,6 +474,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         setFirstRun(false)
         if (!chk?.success) toast.error(t('inv.saveRunFailed', chk?.error || '—'))
         onSaved?.(res, savedNow)
+      } else if (domainConflictOf(res)) {
+        // Mükerrer alan adı (2026-09-28): ham bildirim yerine alt çubukta EYLEMLİ uyarı bandı — kaydın sahibi ekip
+        // (rozet → üyeler), kaydı görüntüle, aktar / geri yükle / aktarım talebi. Alan kutusu kısa iletiyle işaretlenir.
+        setErrors(prev => ({ ...prev, domain: t('inv.duplicateDomain') }))
+        setMsg(null)
+        setConflict(domainConflictOf(res))
       } else if (res?.status === 409) {
         // Mükerrer alan adı (2026-09-27): SATIR İÇİ — alan adı kutusunun altında + alt çubuğun üstündeki bantta.
         // Sunucunun iletisi daha bilgili ("silinmişse çöp kutusundan geri yükleyin") — varsa o gösterilir.
@@ -484,6 +505,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         title={mode === 'edit' ? t('inv.editTitle') : t('inv.addTitle')}
         duplicate={isDuplicate} busy={saving || firstRun} busyLabel={busyLabel}
         footer={<>
+          {/* Mükerrer alan adı bandı — alt çubuğun ÜSTÜNDE, gözün olduğu yerde; uzun içerik kendi içinde kayar. */}
+          {conflict && (
+            <div data-slot="inv-form-conflict" className="max-h-[45dvh] w-full overflow-y-auto">
+              <DomainConflictBanner conflict={conflict} targetTeam={targetTeam}
+                onDismiss={() => setConflict(null)}
+                onResolved={(out) => { setConflict(null); onSaved?.({ success: true, data: out.record }, out.domain, { open: true, record: out.record }) }} />
+            </div>
+          )}
           {/* Doğrulama mesajı alt çubuğun ÜSTÜNDE yüzer (gövdeyi itmez, başa kaydırmaz) — gözün olduğu yerde. */}
           {msg && (
             <div data-slot="inv-form-float" className="w-full">

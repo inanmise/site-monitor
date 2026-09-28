@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   MAX_INSTRUCTIONS, NOC_TYPES, applyFilters, canEditCallList, canEditItem, configBody, coverageTone, isValidEmail, moveItem, normalizeConfig,
-  openTargetOf, parseEmailInput, sortGroups, sortItems, splitEmailText, statusOf, summarize, summarizeSkipped, teamOptions, testOutcome,
+  deepLinkOf, openTargetOf, parseEmailInput, sortGroups, sortItems, splitEmailText, statusOf, summarize, summarizeSkipped, teamOptions, testOutcome,
   uncoveredActiveCount, unwrap, validateGroup, withNotify,
 } from '../components/noc/nocModel.js'
 
@@ -161,13 +161,43 @@ describe('nocModel — kapsam', () => {
     expect(canEditItem(ITEMS[1], { systemRole: 'ADMIN' })).toBe(true)
   })
 
-  it('openTargetOf: SSL → Pano araması, Sentetik → yalnız sekme, diğerleri ?monitor=', () => {
-    expect(openTargetOf({ type: 'SSL', id: 9, target: 'www.example.com' })).toEqual({ tab: 'dashboard', params: { domain: 'www.example.com' } })
-    // 443 dışı port: hedef `host:8443` Pano aramasında eşleşmez → alan adı (`name`) aranır
+  it('openTargetOf: ON türün HEPSİ kartına tıklamakla aynı pencereye — 9 izleme ?monitor=<id> (Sentetik dâhil), SSL Pano + open=cert', () => {
+    // SSL: alan adıyla Pano süzülür VE sertifika penceresi açılır (2026-09-28; eskiden yalnız süzüyordu)
+    expect(openTargetOf({ type: 'SSL', id: 9, target: 'www.example.com' })).toEqual({ tab: 'dashboard', params: { domain: 'www.example.com', open: 'cert' } })
+    // 443 dışı port: hedef `host:8443` Pano aramasında da pencerede de eşleşmez → alan adı (`name`)
     expect(openTargetOf({ type: 'SSL', id: 9, name: 'www.example.com', target: 'www.example.com:8443' }))
-      .toEqual({ tab: 'dashboard', params: { domain: 'www.example.com' } })
-    expect(openTargetOf({ type: 'SCRIPTED', id: 9 })).toEqual({ tab: 'scripted', params: undefined })
-    expect(openTargetOf({ type: 'PORT', id: 4 })).toEqual({ tab: 'port', params: { monitor: 4 } })
+      .toEqual({ tab: 'dashboard', params: { domain: 'www.example.com', open: 'cert' } })
+    // Sentetik artık derin bağlantılı (eskiden yalnız sekme açılıyordu)
+    expect(openTargetOf({ type: 'SCRIPTED', id: 9 })).toEqual({ tab: 'scripted', params: { monitor: 9 } })
+    const TABS = { PING: 'ping', HTTP: 'http', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed', SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain' }
+    for (const [type, tab] of Object.entries(TABS)) {
+      expect(openTargetOf({ type, id: 4 })).toEqual({ tab, params: { monitor: 4 } })
+      // "7/24 ayarını düzenle": aynı hedef + open=noc
+      expect(openTargetOf({ type, id: 4 }, { action: 'noc' })).toEqual({ tab, params: { monitor: 4, open: 'noc' } })
+    }
+    expect(openTargetOf({ type: 'SSL', name: 'www.example.com' }, { action: 'noc' })).toEqual({ tab: 'dashboard', params: { domain: 'www.example.com', open: 'noc' } })
+    expect(NOC_TYPES.every((type) => openTargetOf({ type, id: 1, name: 'x.example.com' }))).toBe(true)   // on tür, hiçbiri boş değil
+    // bilinmeyen tür / kimliksiz izleme / boş satır → hedef yok (kırık bağlantı üretilmez)
+    expect(openTargetOf({ type: 'FOO', id: 1 })).toBeNull()
+    expect(openTargetOf({ type: 'HTTP' })).toBeNull()
+    expect(openTargetOf(null)).toBeNull()
+    // bilinmeyen eylem yok sayılır (yalnız "noc")
+    expect(openTargetOf({ type: 'HTTP', id: 4 }, { action: 'hack' })).toEqual({ tab: 'http', params: { monitor: 4 } })
+  })
+
+  it('deepLinkOf: mutlak URL, openTargetOf ile AYNI hedef; bilinmeyen türde null', () => {
+    window.history.replaceState({}, '', '/?tab=noc&n_q=abc&n_type=HTTP')
+    try {
+      const base = `${window.location.origin}${window.location.pathname}`
+      expect(deepLinkOf({ type: 'HTTP', id: 12 })).toBe(`${base}?tab=http&monitor=12`)
+      expect(deepLinkOf({ type: 'SCRIPTED', id: 3 })).toBe(`${base}?tab=scripted&monitor=3`)
+      expect(deepLinkOf({ type: 'DNS', id: 7 }, { action: 'noc' })).toBe(`${base}?tab=dns&monitor=7&open=noc`)
+      expect(deepLinkOf({ type: 'SSL', name: 'ödeme.example.com' })).toBe(`${base}?tab=dashboard&domain=${encodeURIComponent('ödeme.example.com')}&open=cert`)
+      // kapsam sayfasının süzgeçleri (n_*) bağlantıya TAŞINMAZ
+      expect(deepLinkOf({ type: 'HTTP', id: 12 })).not.toContain('n_')
+      for (const type of NOC_TYPES) expect(deepLinkOf({ type, id: 5, name: 'a.example.com' })).toMatch(/^http.*[?]tab=[a-z]+&(monitor=5|domain=a[.]example[.]com&open=cert)$/)
+      expect(deepLinkOf({ type: 'FOO', id: 1 })).toBeNull()
+    } finally { window.history.replaceState({}, '', '/') }
   })
 })
 

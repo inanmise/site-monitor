@@ -69,7 +69,7 @@ class LoginIssueControllerTest {
 
     @Test
     void list_returnsCountsAndData() throws Exception {
-        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
         when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 2L, "IN_PROGRESS", 1L, "RESOLVED", 0L));
         mvc.perform(get("/api/admin/login-issues").session(authed()))
                 .andExpect(status().isOk())
@@ -83,6 +83,54 @@ class LoginIssueControllerTest {
                 .when(permissionService).require(any(HttpSession.class), eq("issues.login-reports"), eq("view"));
         mvc.perform(get("/api/admin/login-issues").session(authed()))
                 .andExpect(status().isForbidden());
+    }
+
+    // ── Kapsamlı müdür (AD ADMIN) kapısı (2026-09-28 regresyon taraması) ─────────────────────
+    // ADMIN rolü matriste issues.login-reports(+purge) taşır; müdür yalnız permissionService.require ile her
+    // kullanıcının bildirimini (IP, tarayıcı, ekran görüntüsü) okuyup yanıtlayabiliyor, durumunu değiştirip
+    // kalıcı silebiliyordu. Kural: SessionScope.requireNotScopedAdmin — matris izni mock'ta AÇIK olsa da 403.
+
+    private MockHttpSession scopedAdmin() {
+        MockHttpSession s = authed();
+        s.setAttribute("viewTeamIds", List.of(2L));
+        s.setAttribute("manageTeamIds", List.of(2L));
+        return s;
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür: liste/ayrıntı/yorumlar/durum/yanıt/kalıcı silme HEPSİ 403 — servis hiç çağrılmaz")
+    void scopedAdmin_blockedOnEveryAdminEndpoint() throws Exception {
+        when(loginIssueService.get(7L)).thenReturn(Optional.of(report(7L)));
+
+        mvc.perform(get("/api/admin/login-issues").session(scopedAdmin())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/login-issues/7").session(scopedAdmin())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/login-issues/7/comments").session(scopedAdmin())).andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/login-issues/7/status").session(scopedAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"IN_PROGRESS\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/login-issues/7/comments").session(scopedAdmin())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"body\":\"yanıt\",\"internal\":false}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/login-issues/7").session(scopedAdmin())).andExpect(status().isForbidden());
+
+        verify(loginIssueService, never()).list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt());
+        verify(loginIssueService, never()).get(any());
+        verify(loginIssueService, never()).purge(any());
+        verify(loginIssueService, never()).updateStatus(any(), any(), any(), any(), any());
+        verify(loginIssueService, never()).addComment(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("Kapı yalnız kapsamlı ADMIN'i keser: matristen izin verilen başka rol (TEAM_ADMIN, takım kapsamlı) listeyi açar")
+    void explicitGrantToOtherRole_unaffected() throws Exception {
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(Page.empty());
+        when(loginIssueService.counts(any(), any())).thenReturn(Map.of());
+        MockHttpSession s = authed();
+        s.setAttribute("systemRole", "TEAM_ADMIN");
+        s.setAttribute("viewTeamIds", List.of(2L));
+        s.setAttribute("manageTeamIds", List.of(2L));
+        mvc.perform(get("/api/admin/login-issues").session(s)).andExpect(status().isOk());
     }
 
     @Test
@@ -145,7 +193,7 @@ class LoginIssueControllerTest {
         r.setResolvedAt("2026-07-24T11:30:00"); r.setResolvedBy("admin");   // liste satırında çözülme tarihi
         // 80+ karakter + iç boşluklar → özet 80'de kırpılır, "\s+" tek boşluğa iner, "…" eklenir.
         r.setMessage("Satır1\n\n  çok    boşluklu   ve uzun bir mesaj " + "x".repeat(90));
-        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r)));
         when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 1L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
 
@@ -161,8 +209,35 @@ class LoginIssueControllerTest {
 
         // q/since/status request param'ları servise iletilir (source/category filtresi yok → null).
         verify(loginIssueService).list(eq("RESOLVED"), org.mockito.ArgumentMatchers.isNull(),
-                org.mockito.ArgumentMatchers.isNull(), eq("locked"),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), eq("locked"),
                 eq("2026-07-01T00:00:00"), any(), anyInt(), anyInt());
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("Çoklu etki (2026-09-28): impact süzgeci servise iletilir; liste satırı impacts dizisi, detay impacts + impactOther taşır; eski kayıt []")
+    void impacts_filterListAndDetail() throws Exception {
+        LoginIssueReport r = new LoginIssueReport();
+        r.setId(8L); r.setReportedAt("2026-09-28T09:00:00"); r.setStatus("OPEN"); r.setUsername("N8"); r.setMessage("m");
+        r.setSource("USER_REPORT"); r.setImpacts("LOGIN,SLOW,OTHER"); r.setImpactOther("VPN açıkken");
+        LoginIssueReport old = new LoginIssueReport();
+        old.setId(9L); old.setReportedAt("2026-07-01T09:00:00"); old.setStatus("OPEN"); old.setMessage("eski");
+        when(loginIssueService.list(any(), any(), any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(r, old)));
+        when(loginIssueService.counts(any(), any())).thenReturn(Map.of("OPEN", 2L, "IN_PROGRESS", 0L, "RESOLVED", 0L));
+        mvc.perform(get("/api/admin/login-issues?impact=SLOW").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].impacts[0]").value("LOGIN"))
+                .andExpect(jsonPath("$.data[0].impacts.length()").value(3))
+                .andExpect(jsonPath("$.data[0].impactOther").doesNotExist())   // listede serbest metin yok (hafif)
+                .andExpect(jsonPath("$.data[1].impacts.length()").value(0));
+        verify(loginIssueService).list(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.isNull(), eq("SLOW"), org.mockito.ArgumentMatchers.isNull(), any(), any(), anyInt(), anyInt());
+
+        when(loginIssueService.get(8L)).thenReturn(Optional.of(r));
+        mvc.perform(get("/api/admin/login-issues/8").session(authed()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.impacts[2]").value("OTHER"))
+                .andExpect(jsonPath("$.data.impactOther").value("VPN açıkken"));
     }
 
     @Test

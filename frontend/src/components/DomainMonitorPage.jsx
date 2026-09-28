@@ -39,18 +39,15 @@ import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGr
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { eppLabel } from '../utils/domainEpp.js'
 import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
 import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
-import { formatDateOnly } from '../api/client'
 import ModalShell from './ui/ModalShell.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { loadNocGroupNames } from './noc/forms/useNocFormOptions.js'
-import SimpleTooltip from './ui/SimpleTooltip.jsx'
-import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import {
@@ -61,11 +58,11 @@ import { TabsContent } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import DomainMonitorCard from './domain/DomainMonitorCard.jsx'
-import { EPP_BADGE } from './domain/DomainCardParts.jsx'
+import DomainDetailHeader, { DETAIL_PHONE_FULLSCREEN } from './domain/detail/DomainDetailHeader.jsx'
 import { SOON_DAYS, alarmMatchesStatus, daysTone, expiryKey, fmtExpiry, sourceTag, statusKey } from './domain/domainCardModel.js'
 import { useCardDensity } from '../hooks/useCardDensity.js'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
-import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
+import { MonitorDetailModal, DetailDivider, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
 } from './monitoring/MonitorForm.jsx'
@@ -256,7 +253,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.domain) })
   }, [])
 
-  useMonitorDeepLink(monitors, openDetail)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'DOMAIN',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   function openDetail(m) { setSelected(m); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
@@ -360,6 +360,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         toast.success(t('dom.saved'))
       }
       closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart ("Bitiş tarihi bilinmiyor") zamanlayıcının saatlik turunu beklemesin; alan
+      // adı ya da eşikleri değişen kart eski sonucu göstermesin. Liste YÜKLENDİKTEN sonra başlar (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('domain', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -481,6 +484,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     setMonitors(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))
     setSelected(sel => (sel && sel.id === row.id) ? { ...sel, ...row } : sel)
     setPlanRow(null)
+  }
+  /** Domain Kaydı sekmesinin ANLIK sorgusu taze satır döndürdü: listeye ve açık detaya işle — başlık "son kontrol" ve kalan
+   *  gün sekmeyle aynı anı göstersin. Yanıt geldiğinde başka izlemeye geçilmişse açık pencereye dokunulmaz (kimlik kapısı). */
+  function applyLiveRecord(row) {
+    if (!row?.id) return
+    setMonitors(prev => prev.map(x => x.id === row.id ? { ...x, ...row } : x))
+    setSelected(sel => (sel && sel.id === row.id) ? { ...sel, ...row } : sel)
   }
   async function doExport(kind) {
     if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
@@ -882,7 +892,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                süresi çubuğu, yenileme planı çipi / kısayolu), koruma çipleri, EPP kodları. Yetkiye, seçime ve eylemlere
                bağlı parçalar BURADA kurulur ve yuva olarak geçer — toplu seçim kutusu, meta, kart eylemleri (telefonda
                "Diğer işlemler" menüsü + Yenileme planla), plan penceresi. Durum sözlüğü detay penceresiyle ortak. */
-            <DomainMonitorCard key={m.id} monitor={m} density={density} status={statusCls(m.status)} badge={cardStatusBadge(m)}
+            <DomainMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} status={statusCls(m.status)} badge={cardStatusBadge(m)}
               alarmLabel={alarmLabel(m)} onOpen={() => openDetail(m)}
               onPlanRenewal={canManageRow(m) ? () => setPlanRow(m) : undefined}
               select={canManageRow(m) && (
@@ -910,6 +920,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       {/* ── Detay penceresi (ui/ModalShell) ── */}
       {selected && (
         <MonitorDetailModal onClose={closeDetail} status={statusCls(selected.status)} badge={statusBadge(selected)} title={selected.domain} nocNotify={!!selected.noc_notify}
+          className={DETAIL_PHONE_FULLSCREEN}   // telefonda (< 640) tam ekran; paylaşılan kabuk değişmedi (2026-09-28)
           actions={
             /* Hızlı eylemler KARTIN aynısı (MonitorModalActions): detayı açan kişi kontrol
                koşturmak ya da ayarı düzeltmek için modalı kapatıp karta dönmesin. Yetki
@@ -927,33 +938,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               deleting={deleting === selected.id}
               deleteTitle={t('dom.delete')}
               onClose={closeDetail}>
-              {canManageRow(selected) && (
-                <SimpleTooltip content={t('ccx.planCta')}>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setPlanRow(selected)}>
-                    <CalendarPlus size={14} aria-hidden="true" />
-                    {/* Telefonda başlık satırı dar: metin görsel olarak gizlenir ama erişilebilir ad kalır. */}
-                    <span className="sr-only sm:not-sr-only">{selected.renewal_planned_at ? formatDateOnly(selected.renewal_planned_at) : t('ccx.planCta')}</span>
-                  </Button>
-                </SimpleTooltip>
-              )}
-              <CopyLinkButton iconOnly variant="outline" />
+              {/* Yenileme planı artık başlık alanının plan bloğunda (plan bilgisi + Planı düzenle / Yenileme planla) —
+                  başlık çubuğunda ikinci bir plan düğmesi yok (2026-09-28). */}
+              <CopyLinkButton iconOnly variant="outline" className="pointer-coarse:size-10" />
             </MonitorModalActions>
           }>
-          <DetailDivider className="mt-0" />
-          <DetailSummary items={[
-            { key: 'days', value: selected.days_remaining ?? '—', label: t('dom.daysLeft'), valueClassName: daysTone(selected.days_remaining) },
-            { key: 'expiry', value: fmtExpiry(selected.expiry_date), label: t('dom.expiry') },
-            { key: 'registrar', value: selected.registrar || '—', label: t('dom.registrar'), valueClassName: 'text-xs' },
-            { key: 'source', value: sourceTag(selected.source, selected.whois_provider) || '—', label: t('dom.source'), valueClassName: 'text-xs' },
-            { key: 'ns', label: t('dom.nsResolves'),
-              value: selected.ns_resolves == null ? '—' : <OnOff on={selected.ns_resolves} onText={t('dom.on')} offText={t('dom.off')} /> },
-            selected.checked_at && { key: 'last', value: formatDateSec(selected.checked_at), label: t('dom.lastCheck'), time: true },
-          ]} />
-          {Array.isArray(selected.status_codes) && selected.status_codes.length > 0 && (
-            <div data-slot="domain-epp" className="mt-3 flex flex-wrap gap-1 px-1">
-              {selected.status_codes.map(sc => <Badge key={sc} variant="outline" className={EPP_BADGE}>{eppLabel(sc)}</Badge>)}
-            </div>
-          )}
+          <DetailDivider className="mt-0 max-sm:hidden" />
+          {/* Başlık alanı (domain/detail/DomainDetailHeader, 2026-09-28): kalan gün kahramanı + kayıt süresi çubuğu + yenileme
+              planı bloğu, özet (registrar/kaynak/son kontrol/sıklık/eşikler + Şimdi kontrol et), bitiş bilinmiyorsa neden +
+              sonraki adımlar (Sorun Tanıla), koruma + EPP çipleri. Eski düz DetailSummary satırının yerine; yetki kapıları kartla aynı. */}
+          <DomainDetailHeader monitor={selected} running={isRunning(selected.id)}
+            onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+            onPlanRenewal={canManageRow(selected) ? () => setPlanRow(selected) : undefined}
+            onDiagnose={isAdmin ? () => diagnose(selected) : undefined} />
           <DetailDivider />
           <DetailTabs value={detailTab} onValueChange={setDetailTab} className="mt-0"
             countsFor={{ kind: 'domain', monitorId: selected.id, notesType: 'DOMAIN', notesTarget: selected.domain, openAlerts: selected.active_alarm ? 1 : 0 }}
@@ -965,7 +962,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <TabsContent value="control">
               {isAdmin && (
                 <div className="mb-2 flex justify-end">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => diagnose(selected)}>
+                  <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => diagnose(selected)}>
                     <ShieldAlert size={13} />{t('dexp.diagnose')}
                   </Button>
                 </div>
@@ -994,7 +991,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 }} />
             </TabsContent>
 
-            <TabsContent value="registration"><DomainRegistrationTab monitor={selected} /></TabsContent>
+            <TabsContent value="registration"><DomainRegistrationTab monitor={selected} onLiveRecord={applyLiveRecord} /></TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.domain} types={alertTypesFor('domain')} /></TabsContent>
 

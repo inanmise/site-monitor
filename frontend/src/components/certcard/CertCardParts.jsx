@@ -11,7 +11,7 @@ import CertificateLiveStrip from '../CertificateLiveStrip.jsx'
 import { CheckNowButton, CheckRunningStrip, MON_ACT, MON_ACT_TONE } from '../ui/CheckRunning.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
-import { ProgressBar } from '../ui/Progress.jsx'
+import { ProgressBar, Spinner } from '../ui/Progress.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
@@ -369,8 +369,16 @@ export function CertNotices({ cert, live, hasSilentAlert, hasMailFailure, onMail
 }
 
 /** Son kontrol — göreli ("12 dk önce"); kesin zaman ipucunda ve ekran okuyucuda. Hiç kontrol yoksa açıkça söyler. */
-export function CertCheckedAt({ at }) {
+export function CertCheckedAt({ at, warming = false }) {
   const t = useT()
+  // Yeni eklenen alan adı: ilk kontrol arka planda sürerken "Henüz kontrol edilmedi" yerine bekleme durumu (2026-09-28)
+  if (!at && warming) {
+    return (
+      <span data-slot="cert-checked-at" data-warming="true" role="status" className="inline-flex items-center gap-1.5">
+        <Spinner size={12} inline decorative />{t('certcard.firstCheckRunning')}
+      </span>
+    )
+  }
   if (!at) return <span data-slot="cert-checked-at" data-never="true">{t('certcard.never')}</span>
   const exact = formatDateSec(at)
   return (
@@ -444,5 +452,24 @@ export function CertActions({ cert, plan, onCheckNow, onEdit, onDuplicate, onDel
         </span>
       )}
     </span>
+  )
+}
+
+/**
+ * Zengin görünümde kart ekleri (sağlık, açık alarm, erişilebilirlik, sorumlu kişiler) henüz gelmemişken — yeni eklenen alan
+ * adının ilk kontrolü sürerken — boşluk yerine bekleme iskeleti (2026-09-28). App `warming` verdiğinde çizilir.
+ */
+export function CertExtrasPending() {
+  const t = useT()
+  return (
+    <div data-slot="cert-extras-pending" role="status" aria-live="polite"
+      className="mt-3 flex flex-col gap-2 border-t pt-3">
+      <div className="grid grid-cols-2 gap-2">
+        {[0, 1].map((i) => <div key={i} aria-hidden="true" className="h-14 animate-pulse rounded-lg bg-muted motion-reduce:animate-none" />)}
+      </div>
+      <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Spinner size={12} inline decorative />{t('certcard.extrasPending')}
+      </p>
+    </div>
   )
 }

@@ -96,6 +96,7 @@ class MonitoringControllerTest {
     @MockitoBean com.sitemonitor.service.EscalationService escalationService;
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;
     @MockitoBean com.sitemonitor.service.MonitoringOutageService monitoringOutageService;   // canlı teyit endpoint'i (2026-08-03)
+    @MockitoBean com.sitemonitor.service.AlertKeyOwnershipService alertKeyOwnership;       // teyit listesi kapsamı (A4, 2026-09-28)
     @MockitoBean AlertEventRepository alertEventRepo;
     // Değişiklik geçmişi kapsamı ekip ÜYELERİNİ de sorar (TeamActorScope, 2026-09-25).
     @MockitoBean com.sitemonitor.repository.AppUserRepository appUserRepo;
@@ -1477,6 +1478,8 @@ class MonitoringControllerTest {
                 .content("{\"new_name\":\"yeni\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.affected").value(7));
+        // F3 (2026-09-28): "cert" türü envanteri yeniden yazar → sertifika kartları eski grup adıyla kalmasın.
+        verify(certificateService).evictAllCaches();
     }
 
     @Test
@@ -1488,6 +1491,7 @@ class MonitoringControllerTest {
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("{\"new_name\":\"taken\"}"))
                 .andExpect(status().isConflict());
+        verify(certificateService, never()).evictAllCaches();   // başarısız rename hiçbir şeyi değiştirmedi
     }
 
     @Test
@@ -1675,6 +1679,82 @@ class MonitoringControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten bir izleme var")));
 
+        verify(dnsMonitorRepo, never()).save(any());
+    }
+
+    // ── Takımlar ARASI mükerrer kapıları (2026-09-28): Port ve DNS kurulum genelinde tekil → ileti SAHİBİ takımı söyler ──
+
+    private void teamB() {
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(9L); b.setName("Takım B");
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(b));
+    }
+
+    @Test
+    @DisplayName("POST /port mükerrer (takımlar arası): ileti engelleyen izlemenin SAHİBİ takımını adıyla söyler; envanter-türevi satırda takım envanterden")
+    void createPort_duplicate_namesOwnerTeam() throws Exception {
+        teamB();
+        com.sitemonitor.model.PortMonitor other = new com.sitemonitor.model.PortMonitor();
+        other.setId(5L); other.setHost("x.example.com"); other.setPort(8443); other.setActive(true); other.setStandalone(true); other.setTeamId(9L);
+        when(portMonitorRepo.existsByHostAndPortAndActiveTrue("x.example.com", 8443)).thenReturn(true);
+        when(portMonitorRepo.findByHostAndPortAndActiveTrue("x.example.com", 8443)).thenReturn(List.of(other));
+        String body = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"host\":\"x.example.com\",\"port\":8443,\"teamId\":3}";
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN")).header("X-Lang", "tr")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten 'Takım B' ekibi tarafından izleniyor")));
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN")).header("X-Lang", "en")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("already monitored by the 'Takım B' team")));
+
+        // Envanter-türevi (:443 otomatik) satır: takım kendi alanında değil (null) → envanter kaydının takımı
+        other.setStandalone(false); other.setTeamId(null);
+        CertificateInventory owner = inv("x.example.com"); owner.setTeamId(9L);
+        when(inventoryRepo.findByDomain("x.example.com")).thenReturn(Optional.of(owner));
+        mvc.perform(post("/api/monitoring/port").session(session("ADMIN")).header("X-Lang", "tr")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("'Takım B' ekibi tarafından")));
+        verify(portMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("PUT /port mükerrer: iletideki sahip DÜZENLENEN izlemenin kendisi olamaz (excludeId)")
+    void updatePort_duplicate_namesOtherOwnerNotSelf() throws Exception {
+        teamB();
+        com.sitemonitor.model.PortMonitor self = new com.sitemonitor.model.PortMonitor();
+        self.setId(1L); self.setHost("a.example.com"); self.setPort(443); self.setActive(true); self.setStandalone(true); self.setTeamId(3L);
+        com.sitemonitor.model.PortMonitor other = new com.sitemonitor.model.PortMonitor();
+        other.setId(5L); other.setHost("b.example.com"); other.setPort(443); other.setActive(true); other.setStandalone(true); other.setTeamId(9L);
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(3L); a.setName("Takım A");
+        when(teamRepo.findById(3L)).thenReturn(Optional.of(a));   // kendisinin takımı da çözülür → hariç tutulmazsa ileti onu söylerdi
+        when(portMonitorRepo.findById(1L)).thenReturn(Optional.of(self));
+        when(portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot("b.example.com", 443, 1L)).thenReturn(true);
+        // DB otomatik flush'ta düzenlenen satır da yeni host:port ile dönebilir — iletide O sahip olmamalı
+        when(portMonitorRepo.findByHostAndPortAndActiveTrue("b.example.com", 443)).thenReturn(List.of(self, other));
+        mvc.perform(put("/api/monitoring/port/1").session(session("ADMIN")).header("X-Lang", "tr")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"host\":\"b.example.com\",\"port\":443}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("'Takım B' ekibi tarafından izleniyor")));
+    }
+
+    @Test
+    @DisplayName("POST /dns mükerrer (takımlar arası): aktif → 'Takım B ekibi tarafından izleniyor'; duraklatılmış → 'Takım B ekibinin duraklatılmış izlemesi'")
+    void createDns_duplicate_namesOwnerTeam() throws Exception {
+        teamB();
+        com.sitemonitor.model.DnsMonitor other = new com.sitemonitor.model.DnsMonitor();
+        other.setId(8L); other.setDomain("www.example.com"); other.setRecordType("A"); other.setStandalone(true);
+        other.setTeamId(9L); other.setActive(true);
+        when(dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull("www.example.com", "A"))
+                .thenReturn(Optional.of(other));
+        String body = "{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"www.example.com\",\"recordType\":\"A\",\"teamId\":3}";
+        mvc.perform(post("/api/monitoring/dns").session(session("ADMIN")).header("X-Lang", "tr")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("zaten 'Takım B' ekibi tarafından izleniyor")));
+        other.setActive(false);
+        mvc.perform(post("/api/monitoring/dns").session(session("ADMIN")).header("X-Lang", "tr")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("'Takım B' ekibinin duraklatılmış bir izlemesi var")));
         verify(dnsMonitorRepo, never()).save(any());
     }
 
@@ -4310,5 +4390,59 @@ class MonitoringControllerTest {
         assertThat(idAtSave.get()).as("YENİ satır (silinmiş satır canlandırılmaz)").isNull();
         assertThat(cap.getValue().getDeletedAt()).isNull();
         assertThat(cap.getValue().getActive()).isTrue();
+    }
+
+    // ── GET /confirmations kapsamı (A4, 2026-09-28) ─────────────────────────────────────────
+    // Teyit zincirleri bellekte takımsız tutulur; uç süzmeden döndürüyordu → monitoring.read taşıyan
+    // herkes her takımın o an düşen hedeflerini görüyordu.
+
+    private static java.util.Map<String, Object> confirmRow(String key) {
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("alert_type", "HTTP_DOWN"); m.put("domain", key); m.put("attempt", 1); m.put("total_attempts", 3);
+        return m;
+    }
+
+    @Test
+    @DisplayName("A4 /confirmations: kapsamlı USER yalnız kendi takımının (UG dâhil) anahtarlarını görür; global admin hepsini")
+    void confirmations_scopedToViewer() throws Exception {
+        when(monitoringOutageService.activeConfirmations(any())).thenReturn(List.of(
+                confirmRow("https://a.example.com/"), confirmRow("https://b.example.com/"), confirmRow("ug.example.com")));
+        when(alertKeyOwnership.viewerTeams(any())).thenReturn(java.util.Map.of(
+                "https://a.example.com/", java.util.Set.of(5L),
+                "https://b.example.com/", java.util.Set.of(9L),
+                "ug.example.com", java.util.Set.of(9L, 5L)));   // SY 9, UG 5
+
+        mvc.perform(get("/api/monitoring/confirmations").session(sessionScoped(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].domain").value("https://a.example.com/"))
+                .andExpect(jsonPath("$.data[1].domain").value("ug.example.com"));
+
+        MockHttpSession scopedAdmin = session("ADMIN");   // kapsamlı müdür: rol ADMIN ama takım 2
+        scopedAdmin.setAttribute("viewTeamIds", List.of(2L));
+        scopedAdmin.setAttribute("manageTeamIds", List.of(2L));
+        mvc.perform(get("/api/monitoring/confirmations").session(scopedAdmin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+
+        mvc.perform(get("/api/monitoring/confirmations").session(session("ADMIN")))   // global admin
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(3));
+    }
+
+    @Test
+    @DisplayName("A4 /confirmations: sahiplik çözümü düşerse global olmayana BOŞ liste (kapalı-güvenli); boş zincirde sorgu yok")
+    void confirmations_failClosed_andNoLookupWhenEmpty() throws Exception {
+        when(monitoringOutageService.activeConfirmations(any())).thenReturn(List.of(confirmRow("https://a.example.com/")));
+        when(alertKeyOwnership.viewerTeams(any())).thenThrow(new RuntimeException("db down"));
+        mvc.perform(get("/api/monitoring/confirmations").session(sessionScoped(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+
+        org.mockito.Mockito.reset(alertKeyOwnership);
+        when(monitoringOutageService.activeConfirmations(any())).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/confirmations").session(sessionScoped(5L)))
+                .andExpect(status().isOk());
+        verify(alertKeyOwnership, never()).viewerTeams(any());
     }
 }

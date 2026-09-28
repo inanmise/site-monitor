@@ -255,6 +255,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
   // Fetch yarışı: kapsam anahtarı, Yenile ve kayıt/silme sonrası tazelemeler art arda istek çıkarır; geç dönen
   // "all" yanıtı "mine" listesini (ya da tersini) ezmesin. Yalnız EN SON isteğin yanıtı uygulanır.
   const loadSeq = useRef(0)
+  /** Liste tazeleme; EN SON isteğin yanıtıysa yeni listeyi de döner (mükerrer bandı sonrası kaydı açmak için), aksi hâlde undefined. */
   async function load() {
     const my = ++loadSeq.current
     try {
@@ -267,6 +268,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
         setLoadState('ready')
         // Sunucu isteği daraltmışsa (ayar kapalı / izin yok) anahtar GERÇEKTE uygulanan kapsamı gösterir.
         if (res.scope && normalizeScope(res.scope) !== scope) setScopeRaw(normalizeScope(res.scope))
+        return res.data ?? []
       } else {
         toast.error(res?.error || t('inv.loadError'))
         setLoadState((s) => (s === 'ready' ? s : 'error'))
@@ -461,6 +463,25 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
       onInventoryChange?.()
     } else {
       toast.error(res?.error || t('inv.saveError'))
+    }
+  }
+
+  /**
+   * Form kaydı sonrası tazeleme. Mükerrer alan adı bandından aktarım / geri yükleme (2026-09-28) `opts.open` ile gelir:
+   * form kapanır, liste tazelenir ve taşınan / geri yüklenen kaydın çekmecesi açılır — tazelenmiş satır (can_manage,
+   * takım adı) tercih edilir, liste kapsamı dışındaysa uçtan dönen kayıt.
+   */
+  async function afterFormSaved(domain, opts) {
+    const list = await load()
+    if (!opts?.open) return
+    const rec = opts.record || null
+    const want = String(domain || rec?.domain || '').toLowerCase()
+    const hit = (list || []).find(i => rec?.id != null && i.id === rec.id)
+      ?? (list || []).find(i => (i.domain || '').toLowerCase() === want)
+      ?? rec
+    if (hit) {
+      if (hit.deleted_at) setStatusFilter('deleted')
+      setShowItem(hit)
     }
   }
 
@@ -775,7 +796,7 @@ export default function InventoryManager({ onInventoryChange, systemRole, teams:
           canMoveTeam={isAdmin}
           canOpenSettings={globalAdmin}   // 7/24 alanı: "aktif grup yok" → Ayarlar bağlantısı YALNIZ global yöneticiye (grup tanımlayan o)
           onClose={() => setFormModal(null)}
-          onSaved={() => { setFormModal(null); load(); onInventoryChange?.() }}
+          onSaved={(_res, domain, opts) => { setFormModal(null); afterFormSaved(domain, opts); onInventoryChange?.() }}
         />
       )}
 

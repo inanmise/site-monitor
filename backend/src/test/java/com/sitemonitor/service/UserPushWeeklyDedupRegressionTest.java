@@ -58,7 +58,7 @@ class UserPushWeeklyDedupRegressionTest {
         when(deliveryRepo.countRecentForUser(anyString(), anyString())).thenReturn(0L);
         when(deliveryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         // outbox worker'ı beslemeyelim: PENDING listesi boş dönsün (HTTP tarafı bu testin konusu değil)
-        when(deliveryRepo.findTop50ByStatusOrderByIdAsc(anyString())).thenReturn(List.of());
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
     }
 
     @Test

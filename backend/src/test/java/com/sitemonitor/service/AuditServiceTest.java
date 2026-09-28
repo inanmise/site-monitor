@@ -32,16 +32,18 @@ class AuditServiceTest {
     @Mock AuditLogRepository auditLogRepo;
     @Mock GeoIpService geoIpService;
     @Mock NewDeviceNotifier newDeviceNotifier;
+    @Mock AuditGeoEnricher geoEnricher;
 
     private AuditService service;
+    private ClientIpResolver clientIpResolver;
 
     @BeforeEach
     void setUp() {
         // Gerçek resolver — resolveIp delege testleri davranışı doğrulamaya devam etsin
-        ClientIpResolver clientIpResolver = new ClientIpResolver();
+        clientIpResolver = new ClientIpResolver();
         ReflectionTestUtils.setField(clientIpResolver, "headers", new String[]{"X-Forwarded-For"});
         ReflectionTestUtils.setField(clientIpResolver, "index", 0);
-        service = new AuditService(auditLogRepo, geoIpService, newDeviceNotifier, clientIpResolver);
+        service = new AuditService(auditLogRepo, geoIpService, newDeviceNotifier, clientIpResolver, geoEnricher);
         // NOT: buradaki 0/0 ayari mesai penceresini ETKISIZ birakmaz — `hour >= 0` her zaman
         // dogru oldugundan kural DAIMA "mesai disi" der. (Eski yorum bunun tersini soyluyordu.)
         // Bu testler OFF_HOURS'a bakmiyor; kuralin kendisi OffHoursRuleTest'te saf fonksiyon
@@ -160,6 +162,75 @@ class AuditServiceTest {
         AuditLog saved = captor.getValue();
         assertThat(saved.getOutcome()).isEqualTo("BLOCKED");
         assertThat(saved.getAnomalyFlags()).contains("RATE_LIMITED");
+    }
+
+    // ── E2: geo zenginleştirmesi giriş iş parçacığında KOŞMAZ ──────────────────
+
+    @Test
+    @DisplayName("E2: recordLogin / recordRateLimited geo+PTR'yi AYRI bean'e devreder — kendisi geo sorgusu yapmaz")
+    void geoEnrichment_isDelegatedToSeparateBean_notDoneInline() {
+        service.recordLogin("alice", 1L, 2L, "USER", "203.0.113.7", "Mozilla/5.0", "sess1", true, null, null, 5);
+        service.recordRateLimited("alice", "203.0.113.8", "Mozilla/5.0");
+
+        verify(geoEnricher).enrichGeoAsync(1L, "203.0.113.7");
+        verify(geoEnricher).enrichGeoAsync(1L, "203.0.113.8");
+        verify(geoIpService, never()).lookup(any());   // eskiden this.enrichGeoAsync → geo HTTP satır içinde
+        verify(auditLogRepo, never()).updateGeo(any(), any(), any(), any(), any());
+    }
+
+    /**
+     * E2 kanıtı GERÇEK Spring proxy'siyle: geo sorgusu bir mandalda ASILI kalırken recordLogin yine de döner ve
+     * zenginleştirme ayrı bir iş parçacığında koşar. Sınıf-içi @Async çağrısı (eski hata) proxy'yi atlar →
+     * recordLogin mandala takılır ve aşağıdaki {@code get(5 sn)} zaman aşımıyla KIRMIZI olur.
+     */
+    @Test
+    @DisplayName("E2: geo sorgusu asılıyken recordLogin BEKLEMEDEN döner (@Async proxy devrede)")
+    void recordLogin_returnsWithoutWaitingForGeoLookup() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> geoThread = new java.util.concurrent.atomic.AtomicReference<>();
+        GeoIpService slowGeo = mock(GeoIpService.class);
+        when(slowGeo.isPrivateIp(any())).thenReturn(true);   // PTR yok — yalnız geo HTTP'si beklenir
+        when(slowGeo.lookup(any())).thenAnswer(inv -> {
+            geoThread.set(Thread.currentThread().getName());
+            release.await(15, java.util.concurrent.TimeUnit.SECONDS);
+            return new GeoIpService.GeoInfo("TR", "Istanbul", "Org");
+        });
+        try (var ctx = new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+            ctx.register(AsyncTestConfig.class);
+            // Sahteler hazır singleton olarak (bean son-işlemcileri @Value/@PostConstruct'larına dokunmasın)
+            ctx.getBeanFactory().registerSingleton("auditLogRepository", auditLogRepo);
+            ctx.getBeanFactory().registerSingleton("geoIpService", slowGeo);
+            ctx.registerBean(AuditGeoEnricher.class);
+            ctx.refresh();
+            AuditService svc = new AuditService(auditLogRepo, slowGeo, newDeviceNotifier, clientIpResolver,
+                    ctx.getBean(AuditGeoEnricher.class));
+            ReflectionTestUtils.setField(svc, "bruteForceWindowSeconds", 600);
+            ReflectionTestUtils.setField(svc, "geoVelocityWindowSeconds", 3600);
+            try {
+                java.util.concurrent.CompletableFuture<AuditLog> call = java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> svc.recordLogin("alice", 1L, 2L, "USER", "203.0.113.7", "Mozilla/5.0", "sess1",
+                                true, null, null, 5));
+                AuditLog saved = call.get(5, java.util.concurrent.TimeUnit.SECONDS);   // asılı geo'yu BEKLEMEMELİ
+                assertThat(saved.getEventType()).isEqualTo("LOGIN");
+                verify(auditLogRepo, never()).updateGeo(any(), any(), any(), any(), any());   // hâlâ mandalda
+            } finally {
+                release.countDown();
+            }
+            verify(auditLogRepo, timeout(5000)).updateGeo(1L, "TR", "Istanbul", "Org", null);
+            assertThat(geoThread.get()).as("geo sorgusu async havuzunda koştu").startsWith("audit-async-test-");
+        }
+    }
+
+    @org.springframework.context.annotation.Configuration
+    @org.springframework.scheduling.annotation.EnableAsync
+    static class AsyncTestConfig {
+        @org.springframework.context.annotation.Bean(name = "certCheckExecutor")
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor certCheckExecutor() {
+            var ex = new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+            ex.setCorePoolSize(1);
+            ex.setThreadNamePrefix("audit-async-test-");
+            return ex;
+        }
     }
 
     // ── recordLogout ──────────────────────────────────────────────────────────

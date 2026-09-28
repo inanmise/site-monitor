@@ -397,3 +397,77 @@ describe('IssueReportModal', () => {
     expect(screen.getByRole('button', { name: 'Send report' })).toBeInTheDocument()
   })
 })
+
+/**
+ * "Sizi nasıl etkiliyor?" zenginleştirmesi (2026-09-28): ÇOKLU "Ne yaşıyorsunuz?" çipleri (ToggleGroup, aria-pressed)
+ * + tekli önem ("Ne kadar etkiliyor?"). Gövdeye kanonik sırada `impacts` gider; "Diğer" seçilince kısa metin alanı açılır
+ * ve yalnız OTHER seçiliyken `impactOther` gönderilir. Hiçbir şey seçilmezse alanlar gövdede YOK (eski sözleşme).
+ */
+describe('IssueReportModal — çoklu etki', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getMe.mockResolvedValue({ success: true, username: 'N1', email: 'ben@example.com' })
+    api.sendIssueReport.mockResolvedValue({ success: true, reference: 'LIR-2026-000123' })
+  })
+  const chip = (name) => within(screen.getByRole('group', { name: 'What are you experiencing?' })).getByRole('button', { name })
+
+  it('12 çip; birden çok seçilir / bırakılır; önemden bağımsız; gövdeye KANONİK sırada gider', async () => {
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    const group = screen.getByRole('group', { name: 'What are you experiencing?' })
+    expect(within(group).getAllByRole('button')).toHaveLength(12)
+    fireEvent.click(chip('The app is slow'))
+    fireEvent.click(chip("I can't sign in, or I keep getting signed out"))
+    fireEvent.click(chip("It doesn't display properly on my phone or tablet"))
+    fireEvent.click(chip("It doesn't display properly on my phone or tablet"))   // bırak
+    expect(chip('The app is slow')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip("It doesn't display properly on my phone or tablet")).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('radio', { name: /Blocking me/ }))
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'Pano açılmıyor' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalled())
+    const dto = api.sendIssueReport.mock.calls[0][0]
+    expect(dto.impacts).toEqual(['LOGIN', 'SLOW'])   // tıklama sırası değil, kanonik sıra
+    expect(dto.impactOther).toBeUndefined()
+    expect(dto.category).toBe('BLOCKER')
+  })
+
+  it('"Diğer" seçilince kısa metin alanı açılır (≤200); metin yalnız OTHER seçiliyken gider', async () => {
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    expect(screen.queryByRole('textbox', { name: /Something else — briefly describe it/ })).toBeNull()
+    fireEvent.click(chip('Something else'))
+    const other = screen.getByRole('textbox', { name: /Something else — briefly describe it/ })
+    expect(other).toHaveAttribute('maxLength', '200')
+    fireEvent.change(other, { target: { value: '  Filtreler sıfırlanıyor  ' } })
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalledTimes(1))
+    expect(api.sendIssueReport.mock.calls[0][0]).toMatchObject({ impacts: ['OTHER'], impactOther: 'Filtreler sıfırlanıyor' })
+  })
+
+  it('"Diğer" bırakılırsa yazılan metin GÖNDERİLMEZ; hiçbir etki yoksa alanlar gövdede yok', async () => {
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    fireEvent.click(chip('Something else'))
+    fireEvent.change(screen.getByRole('textbox', { name: /Something else — briefly describe it/ }), { target: { value: 'gizli' } })
+    fireEvent.click(chip('Something else'))
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send report' }))
+    await waitFor(() => expect(api.sendIssueReport).toHaveBeenCalledTimes(1))
+    const dto = api.sendIssueReport.mock.calls[0][0]
+    expect(dto.impacts).toBeUndefined()
+    expect(dto.impactOther).toBeUndefined()
+  })
+
+  it('önem KOMPAKT: seçilenin açıklaması görünür metin; etki çipleri telefonda tek sütun, sm+ iki sütun', async () => {
+    render(<IssueReportModal open onClose={() => {}} />)
+    await waitFor(() => expect(api.getMe).toHaveBeenCalled())
+    expect(screen.queryByText('I can’t get on with my work')).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: /Blocking me/ }))
+    expect(screen.getByText('I can’t get on with my work')).toBeInTheDocument()
+    const picker = document.querySelector('[data-slot="issue-impact-picker"]')
+    expect(picker.className).toMatch(/grid-cols-1/)
+    expect(picker.className).toMatch(/sm:grid-cols-2/)
+  })
+})

@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -103,11 +104,70 @@ class IssueReportControllerTest {
                         && m.autoContextJson() != null && m.autoContextJson().contains("dark")));
         verify(loginIssueMailService).dispatchUserReport(eq(88L), eq("LIR-2026-000088"), eq("admin@example.com"),
                 eq(username), eq("profil@example.com"), eq("BLOCKER"), anyString(), any(), any(),
-                eq("scripted"), eq("20.1.0"), anyList(), eq("10.1.2.3"), any(), anyString());
+                eq("scripted"), eq("20.1.0"), anyList(), eq("10.1.2.3"), any(), anyString(), isNull(), isNull());
         verify(loginIssueMailService).dispatchAck(eq(88L), anyString(), eq("profil@example.com"),
                 eq(username), any(), anyString(), anyList(), anyString());
         // Profil e-postası varken profil GÜNCELLENMEZ.
         verify(appUserRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Alan adı aktarım talebi (2026-09-28): category=DOMAIN_TRANSFER kabul edilir ve kayda/maile aynen gider; uydurma tür 400")
+    void report_domainTransferCategory() throws Exception {
+        when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(userWithEmail("profil@example.com")));
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Alan adı aktarım talebi - Alan adı: shop.example.com\",\"category\":\"DOMAIN_TRANSFER\","
+                                + "\"tabKey\":\"inventory\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueService).save(eq(username), eq("profil@example.com"), any(), anyString(),
+                anyList(), anyString(), any(), anyString(),
+                argThat((LoginIssueService.ReportMeta m) -> "DOMAIN_TRANSFER".equals(m.category())));
+        verify(loginIssueMailService).dispatchUserReport(eq(88L), anyString(), eq("admin@example.com"),
+                eq(username), eq("profil@example.com"), eq("DOMAIN_TRANSFER"), anyString(), any(), any(),
+                eq("inventory"), any(), anyList(), anyString(), any(), anyString(), isNull(), isNull());
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"x\",\"category\":\"TRANSFER_EVERYTHING\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("Çoklu etki (2026-09-28): impacts izin listesiyle kanonik CSV'ye, 'Diğer' metni ayıklanıp kayda ve admin mailine gider; bilinmeyen kod 400")
+    void report_impacts_validatedPersistedAndMailed() throws Exception {
+        when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(userWithEmail("profil@example.com")));
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"Pano yavaş\",\"category\":\"ANNOYANCE\","
+                                + "\"impacts\":[\"SLOW\",\"other\",\"LOGIN\",\"SLOW\"],\"impactOther\":\"  VPN   açıkken  \"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueService).save(eq(username), eq("profil@example.com"), any(), eq("Pano yavaş"),
+                anyList(), anyString(), any(), anyString(),
+                argThat((LoginIssueService.ReportMeta m) -> "LOGIN,SLOW,OTHER".equals(m.impacts())
+                        && "VPN açıkken".equals(m.impactOther()) && "ANNOYANCE".equals(m.category())));
+        verify(loginIssueMailService).dispatchUserReport(eq(88L), anyString(), eq("admin@example.com"),
+                eq(username), eq("profil@example.com"), eq("ANNOYANCE"), anyString(), any(), any(),
+                any(), any(), anyList(), anyString(), any(), anyString(), eq("LOGIN,SLOW,OTHER"), eq("VPN açıkken"));
+
+        // OTHER seçilmeden gelen "Diğer" metni SAKLANMAZ
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"m2\",\"impacts\":[\"MOBILE\"],\"impactOther\":\"gizli metin\"}"))
+                .andExpect(status().isOk());
+        verify(loginIssueService).save(eq(username), any(), any(), eq("m2"), anyList(), anyString(), any(), anyString(),
+                argThat((LoginIssueService.ReportMeta m) -> "MOBILE".equals(m.impacts()) && m.impactOther() == null));
+
+        // Bilinmeyen kod ve 200'ü aşan "Diğer" → 400, kayıt YOK
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"m3\",\"impacts\":[\"LOGIN\",\"DROP_TABLE\"]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"message\":\"m4\",\"impacts\":[\"OTHER\"],\"impactOther\":\"" + "x".repeat(201) + "\"}"))
+                .andExpect(status().isBadRequest());
+        verify(loginIssueService, never()).save(any(), any(), any(), eq("m3"), anyList(), any(), any(), any(), any(LoginIssueService.ReportMeta.class));
+        verify(loginIssueService, never()).save(any(), any(), any(), eq("m4"), anyList(), any(), any(), any(), any(LoginIssueService.ReportMeta.class));
     }
 
     @Test
@@ -236,6 +296,26 @@ class IssueReportControllerTest {
 
         verify(loginIssueService).listMine(eq(username), eq("OPEN"), eq(0), eq(20));
         verify(loginIssueService, never()).listMine(eq("baskasi"), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("Kapsamlı müdür (AD ADMIN) yönetici listesine giremez ama KENDİ bildirimini yazar ve 'Bildirimlerim'i görür (2026-09-28)")
+    void scopedAdmin_ownReportsStayOpen() throws Exception {
+        session.setAttribute("systemRole", "ADMIN");
+        session.setAttribute("viewTeamIds", java.util.List.of(2L));
+        session.setAttribute("manageTeamIds", java.util.List.of(2L));
+        when(appUserRepository.findByUsername(username)).thenReturn(Optional.of(userWithEmail("mudur@example.com")));
+        when(loginIssueService.listMine(eq(username), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(mine(1L, "OPEN"))));
+        when(loginIssueService.countsMine(username)).thenReturn(java.util.Map.of("OPEN", 1L));
+        when(loginIssueService.publicCommentCounts(any())).thenReturn(java.util.Map.of());
+
+        mvc.perform(post("/api/issue-reports").session(session)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"Grafik boş\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/issue-reports/mine").session(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].refCode").value("LIR-2026-000001"));
     }
 
     @Test

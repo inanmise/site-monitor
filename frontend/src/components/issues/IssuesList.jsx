@@ -7,7 +7,7 @@ import { Card } from '@/components/shadcn/card'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-import { IssueStatusBadge, SourceBadge, CategoryBadge, UnreadDot } from './IssueBadges.jsx'
+import { IssueStatusBadge, SourceBadge, CategoryBadge, UnreadDot, ImpactChips } from './IssueBadges.jsx'
 import { fmtDate, fmtRelative, groupBySignature } from './issuesModel.js'
 
 const TH = 'h-9 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase'
@@ -33,12 +33,13 @@ function onRowKey(e, open) {
   }
 }
 
-/** Satır/kart altındaki meta çipleri: kaynak, önem, görsel, yorum, bağlı çökme kaydı. */
+/** Satır/kart altındaki meta çipleri: kaynak, önem, etkiler (en çok 2 + "+N"), görsel, yorum, bağlı çökme kaydı. */
 function MetaChips({ row, t, withComments }) {
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
       <SourceBadge source={row.source} />
       <CategoryBadge category={row.category} />
+      <ImpactChips row={row} compact />
       {row.imageCount > 0 && (
         <span className="inline-flex items-center gap-0.5" title={t('issues.imagesCount', row.imageCount)}>
           <ImageIcon aria-hidden="true" className="size-3.5" /><span className="tabular-nums">{row.imageCount}</span>

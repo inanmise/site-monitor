@@ -36,6 +36,8 @@ public class GlobalSearchService {
      * İzleme türü → (tablo, hedef sütunu, nav sekmesi, canlı-satır süzgeci). {@code liveFilter}: yumuşak silinen
      * satırı dışarıda bırakan ek koşul — yalnız DNS/Port'ta {@code deleted_at} var (2026-09-27; diğer türler kalıcı
      * silinir). Silinmiş izleme palet sonucunda görünmez; duraklatılmış görünür (diğer türlerle aynı).
+     * İKİNCİ okuyucu: {@link AlertKeyOwnershipService} (alarm anahtarı → sahip takım; bakım/teyit kapıları) —
+     * yeni tür eklerken ikisi de buradan beslenir.
      */
     record Kind(String table, String targetCol, String tab, String liveFilter) {
         Kind(String table, String targetCol, String tab) { this(table, targetCol, tab, null); }

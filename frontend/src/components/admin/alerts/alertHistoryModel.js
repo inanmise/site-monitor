@@ -291,3 +291,15 @@ export function outsideActScope(a, { nocCanWrite = false, globalViewer = false, 
   const mine = new Set(myTeamIds.map(String))
   return ![a.team_id, a.sy_team_id, a.ug_team_id].some((x) => x != null && mine.has(String(x)))
 }
+
+/**
+ * Sahiplen / Çöz / Tekrar bildir neden kapalı? (2026-09-28) — `null` = açık; aksi halde neden anahtarı:
+ * `'perm'` rolün `alerts.actions` izni yok (sunucunun `can_act`'ı; ör. AUDIT denetçi), `'permNoc'` aynı durumda 7/24
+ * operatörü (AUDIT + `noc_calls.write`: yalnız arama kaydı girer), `'team'` operatör başka takımın uyarısında
+ * ({@link outsideActScope}). `canAct` yanıtta yoksa (eski sunucu / gömülü kullanım) `true` sayılır — davranış değişmez.
+ */
+export function actBlockReason(a, { canAct = true, nocCanWrite = false, globalViewer = false, myTeamIds = null } = {}) {
+  if (!a) return null
+  if (canAct === false) return nocCanWrite ? 'permNoc' : 'perm'
+  return outsideActScope(a, { nocCanWrite, globalViewer, myTeamIds }) ? 'team' : null
+}

@@ -81,16 +81,27 @@ public class LoginIssueMailService {
         saveLog(reportId, refCode, CLIENT_ERROR_ADMIN, adminTo, null, res, force);
     }
 
-    /** Kullanıcı-tetiklemeli sorun bildirimi (USER_REPORT) — sistem yöneticisine. */
+    /** Kullanıcı-tetiklemeli sorun bildirimi (USER_REPORT) — sistem yöneticisine. Etkisiz eski imza. */
     @Async("loginIssueMailExecutor")
     public void dispatchUserReport(Long reportId, String refCode, String adminTo, String username, String reporterEmail,
                                    String category, String message, String errorText, String linkedReference,
                                    String tabKey, String appVersion, List<InlineImage> images,
                                    String clientIp, String userAgent, String reportedAt) {
+        dispatchUserReport(reportId, refCode, adminTo, username, reporterEmail, category, message, errorText,
+                linkedReference, tabKey, appVersion, images, clientIp, userAgent, reportedAt, null, null);
+    }
+
+    /** Kullanıcı-tetiklemeli sorun bildirimi + çoklu etki (2026-09-28): maile "Yaşanan Sorunlar" satırı düşer. */
+    @Async("loginIssueMailExecutor")
+    public void dispatchUserReport(Long reportId, String refCode, String adminTo, String username, String reporterEmail,
+                                   String category, String message, String errorText, String linkedReference,
+                                   String tabKey, String appVersion, List<InlineImage> images,
+                                   String clientIp, String userAgent, String reportedAt,
+                                   String impacts, String impactOther) {
         boolean force = forceEmail();
         LoginIssueMailResult res = send(() -> emailService.sendUserIssueReport(
                 adminTo, refCode, username, reporterEmail, category, message, errorText, linkedReference,
-                tabKey, appVersion, images, clientIp, userAgent, reportedAt, force));
+                tabKey, appVersion, images, clientIp, userAgent, reportedAt, force, impacts, impactOther));
         log.info("Sorun bildirimi {} admin maili → {} ({})", refCode, adminTo, res.status());
         saveLog(reportId, refCode, USER_REPORT_ADMIN, adminTo, null, res, force);
     }

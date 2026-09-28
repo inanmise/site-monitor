@@ -40,6 +40,7 @@ import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
@@ -205,8 +206,11 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     api.monitoring.monitorDefaults?.()?.then(r => { if (r?.success) setDefaults(r.data?.ping) })
   }, [])
 
-  // E-posta CTA deep-link: ?monitor=<id> → ilgili monitörün detayını aç (bir kez).
-  useMonitorDeepLink(monitors, openDetail)
+  // Derin bağlantı ?monitor=<id> (e-posta CTA, 7/24 Kapsamı): TAM listeden açar; yoksa uyarır (hooks/useMonitorDeepLink)
+  useMonitorDeepLink(monitors, openDetail, {
+    loaded: !loading && !loadError, onNotFound: () => toast.error(t('deepLink.notFound')),
+    onEdit: openEdit, canEdit: canManageRow, nocType: 'PING',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
+  })
 
   function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
   function closeDetail() { setSelected(null) }
@@ -276,6 +280,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       await load(); setSaving(false)
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('ping.saved')); closeEdit()
+      // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi değişen kart eski sonucu göstermesin. Liste
+      // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
+      if (shouldCheckAfterSave('ping', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -679,7 +686,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
           {pager.pageItems.map(m => (
             /* Kart sunumu ping/PingMonitorCard'da (MonitorCard ailesi, stretched button). Sayfaya ait kablolama
                yuva olarak geçer: toplu seçim kutusu (seçim kümesi burada) ve eylemler (yetki + işleyiciler burada). */
-            <PingMonitorCard key={m.id} monitor={m} density={density} onOpen={() => openDetail(m)}
+            <PingMonitorCard key={m.id} monitor={m} density={density} running={isRunning(m.id)} onOpen={() => openDetail(m)}
               spark={sparks[String(m.id)]} sla={sla.data[String(m.id)]} slaTarget={sla.target} slaDays={sla.days}
               select={canManageRow(m) && (
                 <Checkbox className={CARD_CHECK} checked={bulkSel.has(m.id)} onCheckedChange={() => toggleBulk(m.id)} aria-label={t('bulk.selectOneFor', m.host)} />

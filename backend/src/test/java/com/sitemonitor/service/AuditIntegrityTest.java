@@ -34,7 +34,7 @@ class AuditIntegrityTest {
         // NewDeviceNotifier eklendi (E1): denetim kaydinin YAN ETKISI, zincirin parcasi DEGIL —
         // mock yeterli, bu test hash zincirini dogruluyor.
         svc = new AuditService(repo, mock(GeoIpService.class), mock(NewDeviceNotifier.class),
-                mock(ClientIpResolver.class));
+                mock(ClientIpResolver.class), mock(AuditGeoEnricher.class));
     }
 
     @Test

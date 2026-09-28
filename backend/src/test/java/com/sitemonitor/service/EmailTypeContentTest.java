@@ -177,6 +177,29 @@ class EmailTypeContentTest {
     }
 
     @Test
+    @DisplayName("alan adı aktarım talebi (2026-09-28): rozet ve satır 'Alan adı aktarımı' (ham kod DOMAIN_TRANSFER görünmez), satır adı 'Talep Türü'")
+    void userIssueReport_domainTransfer() {
+        String html = svc.buildUserIssueHtml("USR-2", "kullanici.a", "a@example.com", "DOMAIN_TRANSFER",
+                "Alan adı aktarım talebi" + System.lineSeparator() + "Alan adı: shop.example.com", null, null, "inventory", "20.87.0",
+                List.of(), "10.0.0.1", "Mozilla/5.0", "2026-09-28T07:00:00");
+        assertThat(html).contains("Alan adı aktarımı").contains("Talep Türü").doesNotContain("DOMAIN_TRANSFER");
+    }
+
+    @Test
+    @DisplayName("çoklu etki (2026-09-28): 'Yaşanan Sorunlar' satırı Türkçe etiketlerle, kanonik sırada; 'Diğer' metni KAÇIŞLI; etkisiz raporda satır yok")
+    void userIssueReport_impacts() {
+        String html = svc.buildUserIssueHtml("USR-3", "kullanici.a", "a@example.com", "ANNOYANCE", "Pano yavaş", null,
+                null, "dashboard", "20.87.0", List.of(), "10.0.0.1", "Mozilla/5.0", "2026-09-28T07:00:00",
+                "LOGIN,SLOW,OTHER", "<b>VPN</b> açıkken");
+        assertThat(html).contains("Yaşanan Sorunlar").contains("Giriş yapamıyor / oturumu düşüyor").contains("Uygulama yavaş")
+                .contains("Diğer: &lt;b&gt;VPN&lt;/b&gt; açıkken").doesNotContain("<b>VPN</b>").doesNotContain("LOGIN,SLOW");
+        assertThat(html.indexOf("Giriş yapamıyor")).isLessThan(html.indexOf("Uygulama yavaş"));
+        String plain = svc.buildUserIssueHtml("USR-4", "kullanici.a", "a@example.com", "BLOCKER", "m", null,
+                null, null, null, List.of(), "10.0.0.1", "UA", "2026-09-28T07:00:00");
+        assertThat(plain).doesNotContain("Yaşanan Sorunlar");
+    }
+
+    @Test
     @DisplayName("günlük özet: dönem + sayı + her bildirim satırı (referans / kullanıcı / özet)")
     void issueDigest() {
         String html = svc.buildIssueDigestHtml(List.of(

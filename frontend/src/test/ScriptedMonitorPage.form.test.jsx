@@ -566,6 +566,36 @@ describe('ScriptedMonitorPage — form, taslak ve sürümler', () => {
       expect(within(smokeMsg.closest('[data-slot="alert"]')).getByRole('button', { name: /^Kapat$|^Close$/ })).toBeInTheDocument()
     })
 
+    /**
+     * Regresyon taraması FE4: `triggerScriptedCheck` withStatus taşımıyordu → request() 429'u gövdeye yazmıyor, bandın
+     * bekleme süresi dalı HİÇ çalışmıyordu (kullanıcı sunucunun "çok sık" metnini HATA tostu olarak görüyordu).
+     * Uç GERÇEK istemciden geçer (yalnız fetch sahte) — istemci ile sayfa arasındaki sözleşme birlikte sınanır.
+     */
+    it('doğrulama koşumu bekleme süresine (429) takılırsa bant "az önce çalıştırıldı" der — hata tostu YOK', async () => {
+      const real = await vi.importActual('../api/client')
+      const COOLDOWN = 'Bu monitör için çok sık manuel çalıştırma; 20 sn bekleyin.'
+      const fetchMock = vi.fn(async (url) => (String(url).endsWith(`/monitoring/scripted/${MON.id}/check`)
+        ? { ok: false, status: 429, json: async () => ({ success: false, error: COOLDOWN }) }
+        : { ok: true, status: 200, json: async () => ({ success: true, data: {} }) }))
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const { container } = await renderPage()
+        api.monitoring.updateScriptedMonitor.mockResolvedValue({
+          success: true, data: { id: MON.id, script_version: '1.0.3' },   // sürüm ARTTI → doğrulama koşumu
+        })
+        api.monitoring.triggerScriptedCheck.mockImplementation((id) => real.api.monitoring.triggerScriptedCheck(id))
+
+        fireEvent.click(within(container).getByRole('button', { name: /^llm-test — (Düzenle|Edit)$/i }))
+        fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+
+        await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/monitoring/scripted/${MON.id}/check`, expect.objectContaining({ method: 'POST' })))
+        expect(await screen.findByText(/ran a moment ago|az önce çalıştırıldığı/)).toBeInTheDocument()
+        expect(screen.queryByText(COOLDOWN)).toBeNull()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
     it('YALNIZ AYAR kaydında (sürüm değişmedi) doğrulama koşumu tetiklenMEZ', async () => {
       const { container } = await renderPage()
       api.monitoring.updateScriptedMonitor.mockResolvedValue({

@@ -61,9 +61,9 @@ const confirmDialog = async (re) => {
   return dlg
 }
 
-function setup(rows = ALL, role = 'ADMIN') {
+function setup(rows = ALL, role = 'ADMIN', globalAdmin = role === 'ADMIN') {
   api.monitoring.maintenance.list.mockResolvedValue(ok(rows))
-  return render(<MaintenanceWindowsPage systemRole={role} teamId={1} teamName="Takım A" />)
+  return render(<MaintenanceWindowsPage systemRole={role} teamId={1} teamName="Takım A" globalAdmin={globalAdmin} />)
 }
 
 beforeEach(() => {
@@ -312,6 +312,14 @@ describe('MaintenanceWindowsPage — düzenleyici (ModalShell)', () => {
     expect(alert).toHaveTextContent('Bu bakım penceresini yönetme yetkiniz yok')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(api.monitoring.maintenance.list).toHaveBeenCalledTimes(1)
+  })
+
+  it('global olmayan yönetici "Tüm monitörler" kutusunu görmez (sunucu yalnız global yöneticiye izin verir — 2026-09-28)', async () => {
+    setup(ALL, 'TEAM_ADMIN', false)
+    await screen.findByText('Ödeme gece bakımı')
+    fireEvent.click(screen.getByRole('button', { name: /^(Quick window|Hızlı pencere)$/ }))
+    const quick = await screen.findByRole('dialog')
+    expect(within(quick).queryByRole('checkbox', { name: /All monitors|Tüm monitörler/ })).toBeNull()
   })
 
   it('hızlı pencere: süre ön ayarı + "tüm monitörler" → quick ucu; hedefsiz başlatma engellenir', async () => {

@@ -28,6 +28,12 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
      *  o satır soft-delete ise daha yeni aktif kopya görünmez kalıyor, üçüncü kopya oluşuyordu.) */
     boolean existsByHostAndPortAndActiveTrue(String host, int port);
     boolean existsByHostAndPortAndActiveTrueAndIdNot(String host, int port, Long id);
+    /**
+     * Mükerrer İLETİSİ (2026-09-28): host:port kurulum genelinde tekil (takımlar arası) — engelleyen satırın SAHİBİ
+     * takımı iletide adıyla söylenir. KARAR yukarıdaki exists* sorgularında kalır; bunlar yalnız sahibi bulur.
+     */
+    List<PortMonitor> findByHostAndPortAndActiveTrue(String host, int port);
+    List<PortMonitor> findByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(String host, int port);
 
     /** [teamId, grup adı, sayı] — TAKIM-bazlı grup listesi (boş/null hariç); satır çekmeden DB-side GROUP BY. */
     // Silinmiş standalone satır grup sayısına girmez (2026-09-27) — yoksa görünmeyen izleme grubu "dolu" gösterirdi.

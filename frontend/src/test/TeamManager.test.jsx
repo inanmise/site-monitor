@@ -91,12 +91,13 @@ describe('TeamManager — business-card members', () => {
     await waitFor(() => expect(api.admin.getTeamUsers).toHaveBeenCalledWith(1))
     await waitFor(() => expect(document.querySelector('[role="dialog"]')).not.toBeNull())
     await waitFor(() => expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull())
-    // Label-value fields are rendered with i18n labels and raw values inside the card
+    // Satır yalnız beyaz-liste alanlarını çizer (2026-09-28 yeniden tasarım): yönetim yükleyicisi tam entity verse de
+    // sicil (employee_id) ve sistem rolü üye penceresinde GÖRÜNMEZ — ayrıntı Kullanıcı Düzenle penceresinde.
     const card = document.querySelector('[data-slot="team-member-card"]')
     expect(card.textContent).toContain('Ali V')
-    expect(card.textContent).toContain('ali')
-    expect(card.textContent).toContain('12345')
     expect(card.textContent).toContain('ali@example.com')
+    expect(card.textContent).not.toContain('12345')
+    expect(card.querySelector('[data-role="ADMIN"]')).toBeNull()
   })
 
   it('üst yeniden render üye modalını YENİDEN YÜKLEMEZ (loadMembers kimliği sabit — useCallback)', async () => {

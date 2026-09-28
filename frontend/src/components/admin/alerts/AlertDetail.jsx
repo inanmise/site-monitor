@@ -24,7 +24,7 @@ import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, RepeatBadge,
-  SendFailedBadge, WhyOpenChips,
+  SendFailedBadge, WhyOpenChips, ActBlockedNote,
 } from './AlertBadges.jsx'
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
 
@@ -143,8 +143,8 @@ export function AlertDetailBody({
           </Button>
         )}
         <AlertSourceLink alert={a} className="h-9 pointer-coarse:h-10" />
-        {/* 7/24 operatörü, başka takımın uyarısı: sahiplen/çöz/tekrar bildir yok (sunucu 403) — nedeni yazılır */}
-        {open && actBlocked && <p data-slot="alert-act-blocked" className="basis-full text-xs text-muted-foreground">{t('alh.actOtherTeam')}</p>}
+        {/* Sahiplen/çöz/tekrar bildir kapalı (7/24 operatörü başka takımın uyarısında ya da alerts.actions izni yok) — nedeni yazılır */}
+        {open && actBlocked && <ActBlockedNote reason={actBlocked === true ? 'team' : actBlocked} />}
         <CopyLinkButton variant="outline" className="h-9 pointer-coarse:h-10" url={alertLink(a)} />
       </div>
 

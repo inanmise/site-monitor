@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     List<DnsMonitor> findByActiveTrue();
     List<DnsMonitor> findAllByOrderByNameAsc();
+    /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams): alan adının TÜM DNS satırları (kayıt tipleri, envanter-türevi + standalone). */
+    List<DnsMonitor> findByDomain(String domain);
     /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
     long countByStandaloneTrueAndActiveTrue();
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);

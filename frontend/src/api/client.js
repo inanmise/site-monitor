@@ -4,6 +4,7 @@
 import { dateLocale, LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { toUtc, localDayKey } from '../utils/localDay.js'
 import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCoverageEvent.js'
+import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventoryEvent.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur. */
@@ -128,6 +129,8 @@ async function request(path, options = {}) {
   if (withStatus && !res.ok && plain && json.status === undefined) json.status = res.status
   // 7/24 kapsamını değiştiren başarılı yazma → önbellekli yüzeyler (Pano şeridi, form seçenekleri) tazelensin
   if (res.ok && !(plain && json.success === false) && isNocCoverageWrite(path, opts)) announceNocCoverageChange()
+  // Yeni kart doğuran başarılı yazma (ekle/aktar/geri yükle) → Genel Bakış o alan adının verisi gelene dek kısa aralıklarla tazelesin
+  if (res.ok && !(plain && json.success === false)) announceInventoryAdded(inventoryAddedDomain(path, opts, json))
   return json
 }
 
@@ -608,8 +611,9 @@ export const api = {
     createPlatform: (body) => request('/admin/platforms', { method: 'POST', body: JSON.stringify(body) }),
     updatePlatform: (id, body) => request('/admin/platforms/' + id, { method: 'PUT', body: JSON.stringify(body) }),
     deletePlatform: (id) => request('/admin/platforms/' + id, { method: 'DELETE' }),
-    addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item) }),
-    updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item) }),
+    // withStatus (2026-09-28): hata gövdesi HTTP durumunu taşır — form 409'u satır içi gösterir (DOMAIN_EXISTS ayrıca `code` ile)
+    addInventory: (item) => request('/admin/inventory', { method: 'POST', body: JSON.stringify(item), withStatus: true }),
+    updateInventory: (id, item) => request(`/admin/inventory/${id}`, { method: 'PUT', body: JSON.stringify(item), withStatus: true }),
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
     restoreInventory: (id) => request(`/admin/inventory/${id}/restore`, { method: 'POST' }),
     // Kalıcı sil (geri alınamaz) — yalnız admin. Envanter + o domain'in kontrol geçmişi.
@@ -717,6 +721,7 @@ export const api = {
       if (params.status) qs.set('status', params.status)
       if (params.source) qs.set('source', params.source)
       if (params.category) qs.set('category', params.category)
+      if (params.impact) qs.set('impact', params.impact)   // "Ne yaşıyorsunuz?" etki süzgeci (2026-09-28)
       if (params.q) qs.set('q', params.q)
       if (params.since) qs.set('since', params.since)
       if (params.until) qs.set('until', params.until)
@@ -1143,7 +1148,8 @@ export const api = {
     incidents: {
       list: (params = {}) => {
         const q = new URLSearchParams()
-        for (const k of ['status', 'rootCause', 'q', 'since', 'until', 'sort', 'dir', 'page', 'size']) {
+        // scope: mine | others | all (2026-09-28, org geneli salt okunur olaylar; varsayılan mine gönderilmez)
+        for (const k of ['status', 'rootCause', 'q', 'since', 'until', 'sort', 'dir', 'page', 'size', 'scope']) {
           if (params[k] != null && params[k] !== '') q.set(k, params[k])
         }
         const qs = q.toString()
@@ -1286,7 +1292,8 @@ export const api = {
     createScriptedMonitor: (data) => request('/monitoring/scripted', { method: 'POST', body: JSON.stringify(data) }),
     updateScriptedMonitor: (id, data) => request(`/monitoring/scripted/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteScriptedMonitor: (id) => request(`/monitoring/scripted/${id}`, { method: 'DELETE' }),
-    triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST' }),
+    // withStatus: kayıt sonrası doğrulama bandı bekleme süresini (429) hata tostundan AYIRIR (ScriptedMonitorPage.runSmokeCheck)
+    triggerScriptedCheck:  (id) => request(`/monitoring/scripted/${id}/check`, { method: 'POST', withStatus: true }),
     testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data) }),
     // Bağlantı teşhisi: aynı hedefe vekil/CA kombinasyonlarıyla k6 sondası — "Java çekiyor,
     // k6 çekmiyor" ayrımını ÖLÇER. İzleme havuzunu tüketmez (ayrı semafor), bacaklar sırayla koşar.

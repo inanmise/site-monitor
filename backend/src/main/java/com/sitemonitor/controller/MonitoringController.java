@@ -757,6 +757,47 @@ public class MonitoringController {
     }
 
     /**
+     * Port ve DNS mükerrer kapıları TAKIMLAR ARASIDIR (2026-09-28 incelemesi; diğer yedi tür takım başınadır):
+     * host:port ve (alan adı, kayıt tipi) kurulum genelinde tekil. Engelleyen izlemenin SAHİBİ takımı iletide
+     * ADIYLA söylenir — envanter mükerrer 409'uyla aynı ilke, kullanıcı kime başvuracağını bilsin. KARAR değişmez;
+     * sahibi çözülemezse çağıran eski iletiyi kullanır ({@code null}).
+     */
+    private String teamNameOf(Long teamId) {
+        return teamId == null ? null : teamRepo.findById(teamId).map(Team::getName).orElse(null);
+    }
+
+    /** host:port mükerrer iletisi — aktif engelleyen önce, yoksa duraklatılmış standalone; {@code excludeId} (düzenlenen) hariç. */
+    private String portDuplicateMsg(String host, int port, Long excludeId, String fallback) {
+        String owner = java.util.stream.Stream.concat(
+                        portMonitorRepo.findByHostAndPortAndActiveTrue(host, port).stream(),
+                        portMonitorRepo.findByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(host, port).stream())
+                .filter(r -> excludeId == null || !excludeId.equals(r.getId()))
+                .map(r -> teamNameOf(effectiveTeam(r.getHost(), r.getStandalone(), r.getTeamId())))
+                .filter(Objects::nonNull).findFirst().orElse(null);
+        if (owner == null) return fallback;
+        return com.sitemonitor.util.Msg.t(
+                "Bu host:port zaten '" + owner + "' ekibi tarafından izleniyor; mükerrer port izlemesi oluşturulamaz. "
+                        + "İzlemenin sizin ekibinizde olması gerekiyorsa o ekiple ya da bir global yöneticiyle görüşün.",
+                "This host:port is already monitored by the '" + owner + "' team; a duplicate port monitor can't be created. "
+                        + "If the monitor should belong to your team, contact that team or a global administrator.");
+    }
+
+    /** (alan adı, kayıt tipi) mükerrer iletisi — standalone DNS izlemesinin takımı kendi alanıdır. */
+    private String dnsDuplicateMsg(DnsMonitor clash, String fallback) {
+        String owner = teamNameOf(clash.getTeamId());
+        if (owner == null) return fallback;
+        return Boolean.FALSE.equals(clash.getActive())
+                ? com.sitemonitor.util.Msg.t(
+                    "Bu (domain, kayıt tipi) için '" + owner + "' ekibinin duraklatılmış bir izlemesi var; yenisini eklemek yerine onu sürdürün (ekibiniz değilse o ekiple görüşün).",
+                    "There's a paused monitor for this (domain, record type) belonging to the '" + owner + "' team; resume it instead of adding a new one (if it isn't your team, contact that team).")
+                : com.sitemonitor.util.Msg.t(
+                    "Bu (domain, kayıt tipi) zaten '" + owner + "' ekibi tarafından izleniyor; mükerrer DNS monitörü oluşturulamaz. "
+                            + "İzlemenin sizin ekibinizde olması gerekiyorsa o ekiple ya da bir global yöneticiyle görüşün.",
+                    "This (domain, record type) is already monitored by the '" + owner + "' team; a duplicate DNS monitor can't be created. "
+                            + "If the monitor should belong to your team, contact that team or a global administrator.");
+    }
+
+    /**
      * Duraklatma (active true→false) açık alarmları SESSİZCE kapatır — envanterin
      * {@code closeAlertsOnDeactivate} eşleniği. Dokuz izleme türünde yoktu: sweep'ler
      * {@code findByActiveTrue} yüklediğinden duraklatılan monitörün ne kurtarması ne re-alert'i
@@ -860,6 +901,9 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.group", "edit");
         String newName = body.get("new_name") == null ? "" : body.get("new_name").toString();
         int affected = monitoringGroupService.rename(id, newName, session);   // 403/409/400 GlobalExceptionHandler'dan
+        // F3 (2026-09-28): "cert" türü certRepo.renameGroupForTeam ile envanteri yeniden yazar — sertifika kartları
+        // (cert-latest, 300 sn) eski grup adıyla kalıyordu. Başka bean'in public metodu → proxy üzerinden işler.
+        certificateService.evictAllCaches();
         return ok(Map.of("affected", affected));
     }
 
@@ -1447,12 +1491,12 @@ public class MonitoringController {
         // yeni aktif kopya guard'a görünmüyor, üçüncü aktif kopya oluşuyordu (iki kontrol, iki alarm
         // akışı). "Herhangi bir aktif var mı?" sorusu doğrudan DB'de.
         if (portMonitorRepo.existsByHostAndPortAndActiveTrue(host, port))
-            return badRequest("Bu host:port zaten izleniyor");
+            return badRequest(portDuplicateMsg(host, port, null, "Bu host:port zaten izleniyor"));   // sahibi takım adıyla (2026-09-28)
         // DURAKLATILMIŞ standalone kopya da engeldir (2026-09-27): artık listede görünüyor; ikinci satır açmak yerine
         // kullanıcı onu sürdürmeli. SİLİNMİŞ satır engel DEĞİLDİR → yeni satır açılır (silinen izleme kendi
         // geçmişiyle silinmiş kalır; standalone'da uq_pm_host_port yok, ikinci satır DB'ce serbest).
         if (portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNull(host, port))
-            return badRequest("Bu host:port için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün");
+            return badRequest(portDuplicateMsg(host, port, null, "Bu host:port için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün"));
         Long teamId = resolveWriteTeam(session, body);
         if (teamId == null)
             return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
@@ -1518,7 +1562,7 @@ public class MonitoringController {
                 boolean dup = portMonitorRepo.existsByHostAndPortAndActiveTrueAndIdNot(m.getHost(), m.getPort(), id)
                         || portMonitorRepo.existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNullAndIdNot(
                                 m.getHost(), m.getPort(), id);   // duraklatılmış standalone kopya da (2026-09-27)
-                if (dup) return badRequest("Bu host:port zaten izleniyor");
+                if (dup) return badRequest(portDuplicateMsg(m.getHost(), m.getPort(), id, "Bu host:port zaten izleniyor"));
             }
             if (body.get("protocol")        != null) m.setProtocol(normalizePortType(body.get("protocol")));
             if (body.containsKey("expect"))    m.setExpect(blank(body.get("expect")) ? null : body.get("expect").toString().trim());
@@ -1920,9 +1964,9 @@ public class MonitoringController {
         // oluşturma künyesi) — geçmiş aynı id'de kesintisiz kalır.
         DnsMonitor live = dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(domain, recordType)
                 .orElse(null);
-        if (live != null) return badRequest(Boolean.TRUE.equals(live.getActive())
+        if (live != null) return badRequest(dnsDuplicateMsg(live, Boolean.TRUE.equals(live.getActive())   // sahibi takım adıyla (2026-09-28)
                 ? "Bu (domain, kayıt tipi) için zaten bir izleme var; mükerrer DNS monitörü oluşturulamaz."
-                : "Bu (domain, kayıt tipi) için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün.");
+                : "Bu (domain, kayıt tipi) için duraklatılmış bir izleme var; yenisini eklemek yerine onu sürdürün."));
         DnsMonitor deleted = dnsMonitorRepo
                 .findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNotNullOrderByIdDesc(domain, recordType)
                 .orElse(null);
@@ -2007,10 +2051,11 @@ public class MonitoringController {
                     String finalType = body.get("recordType") != null
                             ? ((String) body.get("recordType")).trim().toUpperCase() : m.getRecordType();
                     // (domain, kayıt tipi) mükerrer guard — yalnız standalone (envanter-türevinde domain envanterle bağlı)
-                    if (Boolean.TRUE.equals(m.getStandalone())
-                            && dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(newDomain, finalType)
-                                 .filter(x -> !x.getId().equals(id)).isPresent())
-                        return badRequest("Bu (domain, kayıt tipi) için zaten bir monitör var");
+                    DnsMonitor clash = Boolean.TRUE.equals(m.getStandalone())
+                            ? dnsMonitorRepo.findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(newDomain, finalType)
+                                 .filter(x -> !x.getId().equals(id)).orElse(null)
+                            : null;
+                    if (clash != null) return badRequest(dnsDuplicateMsg(clash, "Bu (domain, kayıt tipi) için zaten bir monitör var"));
                     // Domain DEĞİŞTİ → eski domain'in açık DNS alarmlarını sessizce kapat: aksi halde recovery yeni
                     // domain'e döner, eski-domain alarmı öksüz kalır ve asla resolve edilmez (takılı alarm).
                     escalationService.resolveOpenAlertsSilently(m.getDomain(), DNS_ALERT_TYPES, "Sistem (domain değişti)");
@@ -3188,14 +3233,39 @@ public class MonitoringController {
         return item;
     }
 
+    /** Alarm anahtarı → görüş takımları (teyit süzgeci, A4). İsteğe bağlı enjeksiyon (inventoryVisibility deseni):
+     *  @WebMvcTest diliminde bean yoksa global olmayan görüntüleyiciye liste BOŞ döner — kapalı-güvenli. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AlertKeyOwnershipService alertKeyOwnership;
+
     /** Canlı teyit zincirleri — "Teyit denemesi X/N" (tüm izleme türleri; domain= ile filtrelenebilir).
-     *  Detay modalları 30sn'de bir poll eder; yazma yok, in-memory durumun anlık görüntüsü. */
+     *  Detay modalları 30sn'de bir poll eder; yazma yok, in-memory durumun anlık görüntüsü.
+     *  KAPSAM (2026-09-28, A4): zincirler bellekte takımsız tutulur ve uç onları süzmeden döndürüyordu —
+     *  {@code monitoring.read} taşıyan HERKES her takımın o an düşen hedeflerini görüyordu. Global görüntüleyici
+     *  (admin/AUDIT) hepsini, diğerleri yalnız anahtarı görüş kapsamındaki bir takıma ait zincirleri görür
+     *  (anahtar → takım: {@link com.sitemonitor.service.AlertKeyOwnershipService}, envanterin UG takımı dâhil).
+     *  Boş listede sahiplik sorgusu KOŞMAZ — 30 sn'lik yoklamanın olağan hâli bedava kalır. */
     @GetMapping("/confirmations")
     public ResponseEntity<Map<String, Object>> confirmations(
             @RequestParam(required = false) String domain, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        return ok(monitoringOutageService.activeConfirmations(
-                domain != null && !domain.isBlank() ? domain.trim() : null));
+        List<Map<String, Object>> rows = monitoringOutageService.activeConfirmations(
+                domain != null && !domain.isBlank() ? domain.trim() : null);
+        if (rows == null || rows.isEmpty() || SessionScope.isGlobalViewer(session)) return ok(rows == null ? List.of() : rows);
+        Map<String, Set<Long>> viewers;
+        try {
+            Set<String> keys = new HashSet<>();
+            for (Map<String, Object> r : rows) if (r.get("domain") != null) keys.add(r.get("domain").toString());
+            viewers = alertKeyOwnership == null ? Map.of() : alertKeyOwnership.viewerTeams(keys);
+        } catch (Exception e) {
+            log.debug("Teyit süzgeci sahiplik çözümü düştü — kapalı-güvenli boş liste: {}", e.toString());
+            viewers = Map.of();
+        }
+        Map<String, Set<Long>> v = viewers;
+        return ok(rows.stream()
+                .filter(r -> r.get("domain") != null && v.getOrDefault(r.get("domain").toString(), Set.of()).stream()
+                        .anyMatch(t -> SessionScope.canView(session, t)))
+                .toList());
     }
 
     // ── Sayfa Bütünlüğü (Page Integrity) Monitors — 9. tür (serbest-form) ─────

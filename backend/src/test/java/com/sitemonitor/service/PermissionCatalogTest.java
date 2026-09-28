@@ -55,6 +55,8 @@ class PermissionCatalogTest {
         for (PermissionCatalog.Resource r : PermissionCatalog.ALL) {
             Map<String, Boolean> actions = audit.get(r.key);
             if (actions == null) continue;
+            // TEK bilinçli istisna listesi (7/24 arama kaydı, 2026-09-28) — içeriği aşağıdaki testte birebir pinli.
+            if (PermissionCatalog.AUDIT_WRITE_GRANTS.contains(r.key)) continue;
             assertThat(actions.get(PermissionCatalog.EDIT))
                     .as("AUDIT salt-okunurdur ama %s/edit AÇIK", r.key)
                     .isNotEqualTo(true);
@@ -150,5 +152,26 @@ class PermissionCatalogTest {
         Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
         assertThat(audit.get("monitoring.scripted").get("edit")).isFalse();
         assertThat(audit.get("monitoring.scripted").get("execute")).isFalse();
+    }
+
+    @Test
+    @DisplayName("2026-09-28: AUDIT (7/24 izleme ekibi) varsayılan olarak ARAMA KAYDI girer (noc_calls.write) — ama onay/çözüm yok")
+    void auditGetsNocCallWriteButNoAlertActions() {
+        // Kullanıcı kararı: "İzleme ekibi üyelerine AUDIT yetkisi altından noc_calls.write tanımlanacak."
+        // İstisna listesi BİREBİR pinli — gerekçesiz genişleme (AUDIT'e başka bir yazma eylemi) burada kırılır.
+        assertThat(PermissionCatalog.AUDIT_WRITE_GRANTS).containsExactly("noc_calls.write");
+
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+        assertThat(audit.get("noc_calls.write").get("edit")).isTrue();
+        assertThat(audit.get("alerts.read").get("view")).isTrue();
+        // Salt-okunurluğun geri kalanı: olaya/uyarıya müdahale YOK
+        assertThat(audit.get("alerts.actions").get("execute")).isFalse();
+        assertThat(audit.get("incidents.manage").get("edit")).isFalse();
+        assertThat(audit.get("incidents.delete").get("execute")).isFalse();
+
+        // Diğer roller: TEAM_ADMIN/USER'a VERİLMEZ (izin TÜM takımların uyarılarını gösterir); ADMIN satırı her şeyi taşır
+        assertThat(PermissionCatalog.defaultsFor("TEAM_ADMIN").get("noc_calls.write").get("edit")).isFalse();
+        assertThat(PermissionCatalog.defaultsFor("USER").get("noc_calls.write").get("edit")).isFalse();
+        assertThat(PermissionCatalog.defaultsFor("ADMIN").get("noc_calls.write").get("edit")).isTrue();
     }
 }

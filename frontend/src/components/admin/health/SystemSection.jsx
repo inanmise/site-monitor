@@ -4,6 +4,7 @@ import { formatPercent } from '../../../i18n/dateLocale.js'
 import { ProgressBar } from '../../ui/Progress.jsx'
 import MiniChart from '../MiniChart'
 import ToneBadge from '../ToneBadge.jsx'
+import { EnvBadge } from '../releases/DeployBadges.jsx'
 import { HEALTH_THRESHOLDS, MEMORY_PCT, formatDurationShort } from './healthModel.js'
 import { CARD_GRID, CHART_GRID, ERR_T, OK_T, WARN_T, KvList, SectionError, SubTitle, SysCard } from './HealthParts.jsx'
 
@@ -29,7 +30,7 @@ export default function SystemSection({ t, health, metrics, metricsError, onRetr
     <div className="flex flex-col gap-4">
       <div className={CARD_GRID}>
         <SysCard icon={Package} iconClass="text-primary" title={t('health.buildTitle')} cardKey="build"
-          right={build?.environment && <ToneBadge tone="info" className="font-semibold uppercase">{build.environment}</ToneBadge>}>
+          right={build?.environment && <EnvBadge env={build.environment} />}>
           <KvList>
             <dt>{t('sys.buildVersion')}</dt>
             <dd className={mono}>{build?.version ? `v${build.version}` : '—'}</dd>

@@ -1,8 +1,9 @@
-import { CircleDot, Hourglass, CheckCircle2, Bug, LogIn, MessageSquareText, OctagonAlert, Frown, Lightbulb } from 'lucide-react'
+import { CircleDot, Hourglass, CheckCircle2, Bug, LogIn, MessageSquareText, OctagonAlert, Frown, Lightbulb, ArrowRightLeft } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
-import { statusKey, sourceKey } from './issuesModel.js'
+import { statusKey, sourceKey, impactLabel, impactsOf } from './issuesModel.js'
+import { IMPACT_ICONS } from './impactIcons.js'
 
 /**
  * Sorun Bildirimleri'nin küçük, tekrar eden rozetleri — durum, kaynak, önem, okunmamış işareti. Hepsi shadcn Badge;
@@ -46,6 +47,8 @@ const CATEGORY_STYLE = {
   BLOCKER:    { Icon: OctagonAlert, key: 'issue.catBlocker', cls: 'border-orange-500/35 bg-orange-500/10 text-orange-700 dark:text-orange-300' },
   ANNOYANCE:  { Icon: Frown,        key: 'issue.catAnnoyance', cls: 'border-border bg-muted text-foreground/80' },
   SUGGESTION: { Icon: Lightbulb,    key: 'issue.catSuggestion', cls: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
+  // Alan adı aktarım talebi (2026-09-28) — envanter mükerrer kaydından "Aktarım talebi oluştur"
+  DOMAIN_TRANSFER: { Icon: ArrowRightLeft, key: 'issue.catDomainTransfer', cls: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300' },
 }
 
 export function CategoryBadge({ category, className }) {
@@ -57,6 +60,40 @@ export function CategoryBadge({ category, className }) {
       className={cn('gap-1 font-medium whitespace-nowrap', s.cls, className)}>
       <s.Icon aria-hidden="true" />{t(s.key)}
     </Badge>
+  )
+}
+
+/**
+ * Etki çipleri (2026-09-28, "Ne yaşıyorsunuz?"). `compact` (liste satırı / kart): kısa etiketle en çok 2 çip + "+N daha"
+ * (kalanların adları görünür metin olarak ekran okuyucuya da gider); ayrıntıda tümü tam cümleyle, "Diğer" serbest
+ * metniyle. Etkisi olmayan (eski) kayıt hiçbir şey çizmez.
+ */
+export function ImpactChips({ row, compact = false, className }) {
+  const t = useT()
+  const list = impactsOf(row)
+  if (!list.length) return null
+  const shown = compact ? list.slice(0, 2) : list
+  const rest = list.slice(shown.length)
+  return (
+    <span data-slot="issue-impacts" className={cn('inline-flex min-w-0 flex-wrap items-center gap-1', className)}>
+      {shown.map((c) => {
+        const Icon = IMPACT_ICONS[c]
+        const label = c === 'OTHER' && row?.impactOther && !compact ? t('issues.impactOther', row.impactOther) : impactLabel(c, t, compact)
+        return (
+          <Badge key={c} variant="outline" data-impact={c}
+            className="h-auto max-w-full gap-1 font-normal whitespace-normal text-foreground/80 [overflow-wrap:anywhere]">
+            {Icon && <Icon aria-hidden="true" />}{label}
+          </Badge>
+        )
+      })}
+      {rest.length > 0 && (
+        <Badge variant="outline" data-slot="issue-impacts-more" className="font-normal text-muted-foreground"
+          title={rest.map((c) => impactLabel(c, t, true)).join(', ')}>
+          <span aria-hidden="true">{t('issues.impactMore', rest.length)}</span>
+          <span className="sr-only">{rest.map((c) => impactLabel(c, t, true)).join(', ')}</span>
+        </Badge>
+      )}
+    </span>
   )
 }
 

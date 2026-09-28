@@ -111,6 +111,23 @@ class InventoryInsightControllerTest {
     }
 
     @Test
+    @DisplayName("içe aktarma (2026-09-28): başka takımın kaydına çarpan satır team_id + team_name TAŞIR (snake_case); diğer satırlarda anahtar HİÇ yok")
+    void import_rowCarriesOwnerTeamOnlyWhenSet() throws Exception {
+        when(importService.plan(anyList(), any(), eq("admin"), any()))
+                .thenReturn(new InventoryImportService.Result(true, 1, 0, 1, 0, List.of(
+                        new InventoryImportService.RowResult(2, "a.example.com", "create", null, List.of("domain")),
+                        new InventoryImportService.RowResult(3, "b.example.com", "skip", "duplicate_other_team", List.of(), 9L, "Takım B"))));
+        mvc.perform(post("/api/admin/inventory/import").session(admin()).contentType("application/json")
+                        .content("{\"rows\":[{\"domain\":\"a.example.com\"},{\"domain\":\"b.example.com\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[0].team_id").doesNotExist())
+                .andExpect(jsonPath("$.data.rows[0].team_name").doesNotExist())
+                .andExpect(jsonPath("$.data.rows[1].reason").value("duplicate_other_team"))
+                .andExpect(jsonPath("$.data.rows[1].team_id").value(9))
+                .andExpect(jsonPath("$.data.rows[1].team_name").value("Takım B"));
+    }
+
+    @Test
     @DisplayName("içe aktarma: dry_run=false → commit + DOMAIN_IMPORT denetimi (sayımlar ve domainler)")
     void import_commitAudits() throws Exception {
         when(importService.commit(anyList(), any(), eq("admin"), any()))

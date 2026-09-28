@@ -95,6 +95,14 @@ describe('Issue Reports — yönetici görünümü', () => {
     expect(document.querySelector('[data-slot="issue-reports"]')).toHaveAttribute('data-audience', 'user')
   })
 
+  it('kapsamlı müdür (scopedAdmin): matris izni olsa da kullanıcı görünümü — yönetici listesi çağrılmaz, görünüm anahtarı yok', async () => {
+    render(<LoginIssueReports scopedAdmin />)
+    await waitFor(() => expect(api.issueReports.mine).toHaveBeenCalled())
+    expect(api.admin.getLoginIssues).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'All reports' })).toBeNull()
+    expect(document.querySelector('[data-slot="issue-reports"]')).toHaveAttribute('data-audience', 'user')
+  })
+
   it('liste: sunucu sayfası + sayaç kartları; bildiren sütunu; çözülme zamanı (Istanbul) durum altında', async () => {
     render(<LoginIssueReports />)
     expect(await screen.findByText('LIR-2026-000005')).toBeInTheDocument()
@@ -153,6 +161,21 @@ describe('Issue Reports — yönetici görünümü', () => {
     const byUser = dlg.querySelector('[data-slot="issue-comment"][data-by-reporter="true"]')
     expect(within(byUser).getByText('N12345')).toBeInTheDocument()
     expect(within(dlg.querySelector('[data-slot="issue-conversation"]')).getByText(/Report opened by N12345/)).toBeInTheDocument()
+  })
+
+  it('çoklu etki (2026-09-28): liste satırında kısa çipler; ayrıntıda "Reported problems" tam cümleyle + Diğer metni; Etki süzgeci sunucuya', async () => {
+    api.admin.getLoginIssues.mockResolvedValue(listOk({ data: [{ ...sampleRow, impacts: ['SLOW', 'LOGIN', 'NO_ALERTS'] }] }))
+    api.admin.getLoginIssue.mockResolvedValueOnce({ success: true, data: { ...sampleDetail, impacts: ['LOGIN', 'OTHER'], impactOther: 'VPN açıkken' } })
+    render(<LoginIssueReports />)
+    await screen.findByText('LIR-2026-000005')
+    const row = document.querySelector('[data-slot="issue-row"]')
+    expect([...row.querySelectorAll('[data-impact]')].map((c) => c.textContent)).toEqual(['Sign-in / session', 'Slowness'])
+    expect(row.querySelector('[data-slot="issue-impacts-more"]').textContent).toContain('+1 more')
+    const dlg = await openDetail()
+    const box = dlg.querySelector('[data-slot="issue-detail-impacts"]')
+    expect(box.textContent).toContain('Reported problems')
+    expect([...box.querySelectorAll('[data-impact]')].map((c) => c.textContent))
+      .toEqual(["I can't sign in, or I keep getting signed out", 'Something else: VPN açıkken'])
   })
 
   it('çözüm notu zorunlu: boş notla "Confirm — Resolve" API çağırmaz, satır içi hata; notla doğru gövde', async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
-import { Bug, Send, Mail, ArrowRight, RotateCcw } from 'lucide-react'
+import { Bug, Send, Mail, ArrowRight, RotateCcw, ArrowRightLeft } from 'lucide-react'
 import { api, getRecentFailures } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
@@ -13,7 +13,10 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { Textarea } from '@/components/shadcn/textarea'
-import { ReportSection, CategoryCards, TechnicalDetails, PrivacyNote, ReportSuccess, CharCounter, PHONE_FULLSCREEN } from './issues/report/ReportParts.jsx'
+import { Badge } from '@/components/shadcn/badge'
+import TeamBadge from './ui/TeamBadge.jsx'
+import { composeTransferRequest, JUSTIFICATION_MAX } from './inventory/domainConflictModel.js'
+import { ReportSection, CategoryCards, ImpactPicker, TechnicalDetails, PrivacyNote, ReportSuccess, CharCounter, PHONE_FULLSCREEN } from './issues/report/ReportParts.jsx'
 import ScreenshotField from './issues/report/ScreenshotField.jsx'
 import { MAX_MESSAGE, EMAIL_RE, browserLabel, processImageFiles, imagesFromClipboard, reportHref, reportIdOf } from './issues/report/reportModel.js'
 
@@ -29,13 +32,22 @@ import { MAX_MESSAGE, EMAIL_RE, browserLabel, processImageFiles, imagesFromClipb
  * düşmez. Doğrulama satır içi (gönderimde; hatalı alana odak). Hata: yazılanlar korunur, "Tekrar dene".
  * Başarı: referans (kopyala) + sırada ne var + "Bildirimimi görüntüle" (derin bağlantı `ir_id`).
  * Telefonda tam ekran, altlık sabit (ModalShell scrollBody). Props sözleşmesi değişmedi.
+ *
+ * <p>`domainTransfer` (2026-09-28, isteğe bağlı): envanterde başka ekipte kayıtlı alan adının AKTARIM TALEBİ. Pencere
+ * aynı akışı kullanır ama bölüm 1 salt-okunur özet (alan adı, mevcut / istenen ekip) + zorunlu "Gerekçe" olur; önem
+ * kartları ve ekran görüntüsü bölümü çizilmez. Gönderimde tür `DOMAIN_TRANSFER`, ileti `composeTransferRequest` —
+ * talep global yöneticilerin Sorun Bildirimleri ekranına bu türle düşer (tür süzgeci). Şekil:
+ * `{ domain, inventoryId, fromTeam:{id,name}, toTeam:{id,name}, deleted }`.
  */
-export default function IssueReportModal({ open, onClose, errorText = '', linkedReference = '', onSubmitted }) {
+export default function IssueReportModal({ open, onClose, errorText = '', linkedReference = '', onSubmitted, domainTransfer = null }) {
   const t = useT()
+  const transfer = domainTransfer?.domain ? domainTransfer : null
   const { lang } = useLanguage()
   const [me, setMe] = useState(null)
   const [message, setMessage] = useState('')
   const [category, setCategory] = useState('')
+  const [impacts, setImpacts] = useState([])            // "Ne yaşıyorsunuz?" çoklu etki (2026-09-28), kanonik sıra
+  const [impactOther, setImpactOther] = useState('')    // "Diğer" kısa metni (yalnız OTHER seçiliyken gönderilir)
   const [email, setEmail] = useState('')
   const [saveEmail, setSaveEmail] = useState(true)
   const [images, setImages] = useState([])          // data-URL listesi
@@ -48,7 +60,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const counterId = useId()
 
   function reset() {
-    setMessage(''); setCategory(''); setEmail(''); setImages([]); setImageNotice('')
+    setMessage(''); setCategory(''); setImpacts([]); setImpactOther(''); setEmail(''); setImages([]); setImageNotice('')
     setErrors({}); setFormError(''); setReference('')
   }
 
@@ -68,7 +80,8 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
   const theme = document.documentElement.getAttribute('data-theme') || 'light'
   const screenSize = `${window.screen?.width || 0}x${window.screen?.height || 0}`
   const failed = getRecentFailures()
-  const dirty = !!(message.trim() || images.length)
+  const dirty = !!(message.trim() || images.length || impacts.length)
+  const maxMessage = transfer ? JUSTIFICATION_MAX : MAX_MESSAGE
 
   async function addFiles(fileList) {
     const { urls, notices } = await processImageFiles(fileList, images.length, t)
@@ -84,7 +97,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
 
   function validate() {
     const next = {}
-    if (!message.trim()) next.message = t('issue.msgRequired')
+    if (!message.trim()) next.message = transfer ? t('dupx.reqWhyRequired') : t('issue.msgRequired')
     if (!profileEmail) {
       if (!email.trim()) next.email = t('issue.emailRequired')
       else if (!EMAIL_RE.test(email.trim())) next.email = t('issue.emailInvalid')
@@ -103,8 +116,11 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
     setSending(true)
     try {
       const res = await api.sendIssueReport({
-        message: message.trim(),
-        category: category || undefined,
+        message: transfer ? composeTransferRequest(transfer, message, t) : message.trim(),
+        category: transfer ? 'DOMAIN_TRANSFER' : (category || undefined),
+        // Etkiler aktarım talebinde sorulmaz; "Diğer" metni yalnız OTHER seçiliyken (sunucu da aynı kuralı uygular)
+        impacts: !transfer && impacts.length ? impacts : undefined,
+        impactOther: !transfer && impacts.includes('OTHER') && impactOther.trim() ? impactOther.trim() : undefined,
         email: profileEmail ? undefined : email.trim(),
         saveEmailToProfile: profileEmail ? undefined : saveEmail,
         errorText: errorText || undefined,
@@ -187,7 +203,7 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
     )
 
   return (
-    <ModalShell open={open} onClose={onClose} busy={sending} title={t('issue.title')} icon={Bug}
+    <ModalShell open={open} onClose={onClose} busy={sending} title={transfer ? t('dupx.reqTitle') : t('issue.title')} icon={transfer ? ArrowRightLeft : Bug}
       closeLabel={t('issue.close')} size="lg" scrollBody footer={footer} className={PHONE_FULLSCREEN}
       dismissOnBackdrop={!dirty || !!reference}>
       {/* Dropzone dışına bırakılan dosya tarayıcıyı o dosyaya yönlendirir ve form kaybolur — gövde genelinde yutulur.
@@ -199,17 +215,18 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
           <ReportSuccess reference={reference} steps={nextSteps} />
         ) : (
           <>
-            <p className="m-0 text-sm text-muted-foreground">{errorText ? t('irf.introCrash') : t('irf.intro')}</p>
+            <p className="m-0 text-sm text-muted-foreground">{transfer ? t('dupx.reqIntro') : errorText ? t('irf.introCrash') : t('irf.intro')}</p>
 
-            <ReportSection n={1} title={t('irf.secWhat')}>
-              <Field label={t('issue.describe')} required error={errors.message} className="mb-0">
+            <ReportSection n={1} title={transfer ? t('dupx.reqSec') : t('irf.secWhat')}>
+              {transfer && <TransferSummary transfer={transfer} t={t} />}
+              <Field label={transfer ? t('dupx.reqWhy') : t('issue.describe')} required error={errors.message} className="mb-0">
                 {({ id, describedBy, invalid }) => (
                   <>
                     <Textarea id={id} data-irf="irf-message" aria-describedby={[describedBy, counterId].filter(Boolean).join(' ')} aria-invalid={invalid}
-                      className="max-h-72 min-h-28 resize-y" rows={5} maxLength={MAX_MESSAGE}
-                      value={message} placeholder={t('issue.describePh')}
+                      className="max-h-72 min-h-28 resize-y" rows={transfer ? 4 : 5} maxLength={maxMessage}
+                      value={message} placeholder={transfer ? t('dupx.reqWhyPh') : t('issue.describePh')}
                       onChange={(e) => setMessage(e.target.value)} />
-                    <div className="mt-1 flex justify-end"><CharCounter id={counterId} value={message} max={MAX_MESSAGE} /></div>
+                    <div className="mt-1 flex justify-end"><CharCounter id={counterId} value={message} max={maxMessage} /></div>
                   </>
                 )}
               </Field>
@@ -221,17 +238,30 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
               )}
             </ReportSection>
 
-            <ReportSection n={2} title={t('irf.secImpact')} optional>
-              <CategoryCards value={category} onChange={setCategory} disabled={sending} />
-            </ReportSection>
+            {/* Aktarım talebinde önem ve ekran görüntüsü sorulmaz — tür sabit (DOMAIN_TRANSFER), bağlam özette. */}
+            {!transfer && (
+              <ReportSection n={2} title={t('irf.secImpact')} optional>
+                {/* "Ne yaşıyorsunuz?" (çoklu) + "Ne kadar etkiliyor?" (tekli önem) — 2026-09-28 zenginleştirme */}
+                <div data-slot="report-impacts" className="flex min-w-0 flex-col gap-2">
+                  <p className="m-0 text-sm font-medium">{t('irf.impactsLabel')} <span className="text-xs font-normal text-muted-foreground">{t('irf.impactsHint')}</span></p>
+                  <ImpactPicker value={impacts} onChange={setImpacts} other={impactOther} onOther={setImpactOther} disabled={sending} />
+                </div>
+                <div data-slot="report-severity" className="flex min-w-0 flex-col gap-2">
+                  <p className="m-0 text-sm font-medium">{t('irf.severityLabel')}</p>
+                  <CategoryCards value={category} onChange={setCategory} disabled={sending} />
+                </div>
+              </ReportSection>
+            )}
 
-            <ReportSection n={3} title={t('irf.secShots')} hint={t('irf.shotsHint')} optional>
-              <ScreenshotField images={images} onFiles={addFiles} disabled={sending}
-                onRemove={(i) => { setImages((prev) => prev.filter((_, k) => k !== i)); setImageNotice('') }}
-                notice={imageNotice} onDismissNotice={() => setImageNotice('')} />
-            </ReportSection>
+            {!transfer && (
+              <ReportSection n={3} title={t('irf.secShots')} hint={t('irf.shotsHint')} optional>
+                <ScreenshotField images={images} onFiles={addFiles} disabled={sending}
+                  onRemove={(i) => { setImages((prev) => prev.filter((_, k) => k !== i)); setImageNotice('') }}
+                  notice={imageNotice} onDismissNotice={() => setImageNotice('')} />
+              </ReportSection>
+            )}
 
-            <ReportSection n={4} title={t('irf.secContact')}>
+            <ReportSection n={transfer ? 2 : 4} title={t('irf.secContact')}>
               {profileEmail ? (
                 <p className="m-0 flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
                   <Mail aria-hidden="true" className="size-4 shrink-0" />
@@ -271,5 +301,28 @@ export default function IssueReportModal({ open, onClose, errorText = '', linked
         )}
       </div>
     </ModalShell>
+  )
+}
+
+/**
+ * Aktarım talebinin salt-okunur özeti (2026-09-28): talep türü, alan adı, mevcut ve istenen ekip (TeamBadge — dokununca
+ * üyeler), çöp kutusu notu. Telefonda etiket üstte / değer altta (tek sütun); sm+ iki sütun.
+ */
+function TransferSummary({ transfer, t }) {
+  const row = 'grid min-w-0 grid-cols-1 gap-0.5 sm:grid-cols-[10rem_1fr] sm:items-center sm:gap-3'
+  const dt = 'text-xs font-semibold text-muted-foreground sm:text-sm sm:font-normal'
+  const team = (tm) => (tm?.name
+    ? <TeamBadge teamId={tm.id} teamName={tm.name} />
+    : <span className="text-sm text-muted-foreground">{t('dupx.noTeam')}</span>)
+  return (
+    <dl data-slot="transfer-summary" className="m-0 flex min-w-0 flex-col gap-2 rounded-md border bg-muted/40 px-3 py-2.5 text-sm">
+      <div className={row}><dt className={dt}>{t('dupx.reqType')}</dt>
+        <dd className="m-0"><Badge variant="secondary" data-slot="transfer-type">{t('issue.catDomainTransfer')}</Badge></dd></div>
+      <div className={row}><dt className={dt}>{t('dupx.reqDomain')}</dt>
+        <dd className="m-0 min-w-0 font-mono text-[13px] font-semibold [overflow-wrap:anywhere]">{transfer.domain}</dd></div>
+      <div className={row}><dt className={dt}>{t('dupx.reqFrom')}</dt><dd className="m-0 min-w-0">{team(transfer.fromTeam)}</dd></div>
+      <div className={row}><dt className={dt}>{t('dupx.reqTo')}</dt><dd className="m-0 min-w-0">{team(transfer.toTeam)}</dd></div>
+      {transfer.deleted && <p className="m-0 text-xs text-amber-700 dark:text-amber-300">{t('dupx.reqBin')}</p>}
+    </dl>
   )
 }

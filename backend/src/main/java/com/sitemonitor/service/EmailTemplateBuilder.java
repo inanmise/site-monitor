@@ -192,8 +192,7 @@ public class EmailTemplateBuilder {
         Integer days = m.daysRemaining();
         Tone tone = urgencyTone(days, m.level());
         String expiryIso = firstNonNull(strCtx(m.ctx(), "expiry_date"), strCtx(m.ctx(), "not_after"));
-        String href = liveBaseUrl() + "/?tab=" + tabFor(m.alertType())
-                + (m.domain() != null ? "&domain=" + urlenc(m.domain()) : "");
+        String href = liveBaseUrl() + alertQuery(m.alertType(), m.domain(), m.ctx());
         String checkedAt = strCtx(m.ctx(), "checked_at");
         String summary = shortSummary(m);
 
@@ -304,9 +303,8 @@ public class EmailTemplateBuilder {
         } else {
             for (int i = 0; i < steps.size(); i++) sb.append(i + 1).append(". ").append(steps.get(i)).append('\n');
         }
-        String cta = appSettings.getString("site.monitor.app.base-url", appBaseUrl);
-        sb.append(cta).append("/?tab=").append(tabFor(m.alertType()))
-          .append(m.domain() != null ? "&domain=" + urlenc(m.domain()) : "").append('\n');
+        // HTML ile aynı taban (sondaki / kırpılır, boşsa ""); eskiden ham ayar "//?tab=" üretebiliyordu.
+        sb.append(liveBaseUrl()).append(alertQuery(m.alertType(), m.domain(), m.ctx())).append('\n');
         // HTML/metin paritesi: olay aksiyon linkleri metin sürümde de bulunur (kimlik yoksa "").
         sb.append(MailCta.incidentActionText(liveBaseUrl(), m.ctx() == null ? null : m.ctx().get("alert_event_id")));
         sb.append("\n— Site Monitor ").append(subsystemLabel(m.alertType()));
@@ -333,7 +331,7 @@ public class EmailTemplateBuilder {
     public String buildResolvedHtml(String domain, String alertType, String resolvedBy, String resolvedAt,
                                     String createdAt, Map<String, Object> ctx, String teamNames) {
         String d = esc(domain);
-        String href = liveBaseUrl() + "/?tab=" + tabFor(alertType) + (domain != null ? "&domain=" + urlenc(domain) : "");
+        String href = liveBaseUrl() + alertQuery(alertType, domain, ctx);
 
         boolean domainType = isDomain(alertType);
         String expiryIso = ctx == null ? null
@@ -498,6 +496,8 @@ public class EmailTemplateBuilder {
         if (durHuman != null) sb.append("\nAlarm Süresi: ").append(durHuman);
         if (resolvedAt != null) sb.append("\nÇözülme: ").append(formatHuman(resolvedAt));
         sb.append("\nÇözen: ").append(resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)");
+        // HTML/metin paritesi: HTML'deki "Site Monitor'de Görüntüle" düğmesinin metin karşılığı (2026-09-28).
+        sb.append("\nSite Monitor'de Görüntüle: ").append(liveBaseUrl()).append(alertQuery(alertType, domain, ctx));
         // HTML/metin paritesi: olay aksiyon linkleri (kimlik yoksa "").
         sb.append(MailCta.incidentActionText(liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id")));
         return sb.toString();
@@ -1012,5 +1012,37 @@ public class EmailTemplateBuilder {
     }
     private static String urlenc(String s) {
         return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Uyarı bağlantısının sorgu dizesi: {@code ?tab=<sekme>[&domain=<alan>][&open=cert]}. Yalnız SERTİFİKA alarmında
+     * ({@link EscalationService#CERT_ALERT_TYPES}) {@code open=cert} Pano'da süzmekle kalmaz, alanın SERTİFİKA
+     * PENCERESİNİ açar (frontend {@code hooks/useCertDeepLink.js}; tek seferlik) — 2026-09-28.
+     *
+     * <p>HTTP ailesi ({@code HTTP_*}) {@link #tabFor}'da ayrı dal olmadığından panoya düşüyor, bağlantı URL'yi alan adı
+     * sanıp panoyu süzüyordu (regresyon taraması 2026-09-28). Bağlantı artık HTTP sekmesinde izlemenin kendisini açar
+     * ({@code &monitor=<id>}, bağlamda varsa). {@code tabFor}/{@code isCert} bilinçli olarak DEĞİŞMEDİ (şablon içeriği).
+     */
+    static String alertQuery(String alertType, String domain) { return alertQuery(alertType, domain, null); }
+
+    static String alertQuery(String alertType, String domain, Map<String, Object> ctx) {
+        if (alertType != null && alertType.startsWith("HTTP_")) {
+            Long id = monitorIdOf(ctx);
+            return "/?tab=http" + (id != null ? "&monitor=" + id : "");
+        }
+        String tab = tabFor(alertType);
+        if (domain == null) return "/?tab=" + tab;
+        boolean certAlert = alertType != null && EscalationService.CERT_ALERT_TYPES.contains(alertType);
+        return "/?tab=" + tab + "&domain=" + urlenc(domain) + (certAlert ? "&open=cert" : "");
+    }
+
+    private static Long monitorIdOf(Map<String, Object> ctx) {
+        Object v = ctx == null ? null : ctx.get("monitor_id");
+        if (v instanceof Number n) return n.longValue();
+        if (v != null) {
+            String t = String.valueOf(v).trim();
+            if (t.matches("[0-9]{1,18}")) return Long.parseLong(t);
+        }
+        return null;
     }
 }

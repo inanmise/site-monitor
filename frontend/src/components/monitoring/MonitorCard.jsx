@@ -1,10 +1,11 @@
 import { createContext, forwardRef, useContext } from 'react'
-import { AlertTriangle, Clock, Pause } from 'lucide-react'
+import { AlertTriangle, Clock, Hourglass, Pause } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/shadcn/card'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 import { cn } from '@/lib/utils'
 
 /**
@@ -24,7 +25,7 @@ import { cn } from '@/lib/utils'
  * ve alt çubuk SARAR (eylemler sığmazsa kendi satırına iner), dokunmatik işaretçide (`pointer-coarse`) kopyala
  * düğmesi ve seçim kutusu 40 px dokunma alanı alır, kopyala düğmesi soluk kalmaz (hover yok).
  *
- * <p>Test kancaları: kök `data-slot="card"` + `data-status` (up|down|warn|unknown) + `data-alarm` + `data-inactive`;
+ * <p>Test kancaları: kök `data-slot="card"` + `data-status` (up|down|warn|unknown) + `data-alarm` + `data-inactive` + `data-running`;
  * başlık düğmesi `[data-monitor-open]` (shadcn Button; adı `mon.openDetailFor`).
  */
 
@@ -54,23 +55,28 @@ const STATUSES = new Set(['up', 'down', 'warn', 'unknown'])
  * olduğunu sayfa ayrıca prop geçmeden bilir: "Duraklatıldı" rozeti ve hızlı "Sürdür" düğmesi böylece HER izleme
  * sayfasında varsayılan (kullanıcı isteği 2026-09-26).
  */
-const MonitorCardContext = createContext({ inactive: false, density: 'rich' })
+const MonitorCardContext = createContext({ inactive: false, density: 'rich', running: false })
 export const useMonitorCard = () => useContext(MonitorCardContext)
 
 /**
  * Kart yoğunluğu (2026-09-27): `density` = 'rich' (varsayılan, tam kart) | 'compact' (temel bilgiler). Kök
  * `data-density` taşır; alt parçalar `useMonitorCard().density` ile okur. Yalnız Zengin'de görünecek bölümler
  * {@link MonitorCardRich} içine konur. Sayfa tarafı: `useCardDensity(sayfa)` + `ui/CardDensityToggle`.
+ *
+ * <p>`running` (2026-09-28): bu izleme ŞU AN kontrol ediliyor (sayfanın `useRunningChecks().isRunning(id)` — eylem
+ * düğmesine verilen değerin AYNISI). Kök `data-running` taşır; hiç sonucu olmayan kartın bekleme satırı
+ * ({@link MonitorPendingText}) bununla "İlk kontrol yapılıyor…" der.
  */
-export function MonitorCard({ status = 'unknown', alarm = false, inactive = false, density = 'rich', className, children, ...rest }) {
+export function MonitorCard({ status = 'unknown', alarm = false, inactive = false, density = 'rich', running = false, className, children, ...rest }) {
   const key = STATUSES.has(status) ? status : 'unknown'
   const dens = density === 'compact' ? 'compact' : 'rich'
   return (
-    <MonitorCardContext.Provider value={{ inactive, density: dens }}>
+    <MonitorCardContext.Provider value={{ inactive, density: dens, running: !!running }}>
     <Card
       data-status={key}
       data-alarm={alarm ? 'true' : undefined}
       data-inactive={inactive ? 'true' : undefined}
+      data-running={running ? 'true' : undefined}
       data-density={dens}
       className={cn(
         'group/mcard relative min-w-0 gap-0 overflow-hidden rounded-xl px-4 pt-4 pb-3 shadow-none sm:px-5 sm:pt-[18px] sm:pb-3.5',
@@ -103,6 +109,56 @@ export function MonitorCardRich({ className, children }) {
   const { density } = useMonitorCard()
   if (density !== 'rich' || children == null || children === false) return null
   return <div data-slot="monitor-card-rich" className={cn('min-w-0', className)}>{children}</div>
+}
+
+/**
+ * HİÇ SONUCU OLMAYAN kartın bekleme metni (2026-09-28, kullanıcı bildirimi: "Test et → başarılı → Kaydet; açılan kartta
+ * veriler yansımıyor, boş bir görünüm oluyor"). Kayıttan hemen sonra sayfa kartın kendi "Şimdi kontrol et" yolunu
+ * çağırır; o kontrol sürerken (kart bağlamında `running`) kum saati yerine dönen gösterge + "İlk kontrol yapılıyor…",
+ * değilse türün KENDİ bekleme metni (`idle` — "İlk kontrol bekleniyor", "İlk koşusu bekleniyor" …) ve ikonu. Kontrol
+ * başlatılamadıysa (yetki / ağ) kart böylece boş kalmaz, bekleyen durumu söyler; zamanlayıcı ilk turunda yine koşar.
+ *
+ * <p>Kartlar kendi yuvasını (`data-slot`), kutusunu ve bekleme metnini KORUR; yalnız ikon + metin buradan gelir → dokuz
+ * türde aynı iki durum. Test kancası: koşarken `data-slot="monitor-first-check"`.
+ *
+ * @param {string} idle            koşmuyorken yazılacak türün bekleme metni
+ * @param {Function|null} icon     koşmuyorken ikon (varsayılan kum saati; `null` = ikonsuz — metin tek başına)
+ * @param {string} iconClassName   ikon boyutu (kartın satır ölçeğine uysun)
+ * @param {number} spinnerSize     dönen göstergenin px boyutu (ikonla aynı)
+ */
+export function MonitorPendingText({ idle, icon: Icon = Hourglass, iconClassName = 'size-3.5 shrink-0', spinnerSize = 14 }) {
+  const t = useT()
+  const { running } = useMonitorCard()
+  if (running) {
+    return (
+      <span data-slot="monitor-first-check" className="inline-flex min-w-0 items-center gap-1.5">
+        <Spinner size={spinnerSize} inline decorative />
+        <span className="min-w-0 truncate">{t('mon.firstCheckRunning')}</span>
+      </span>
+    )
+  }
+  return <>{Icon && <Icon aria-hidden="true" className={iconClassName} />}{idle}</>
+}
+
+/**
+ * Bekleme satırı KUTUSU — kendi bekleme öğesi olmayan kartlar için (Ping, Sayfa Hızı): Zengin'de kesik kenarlı soluk kutu,
+ * Kompakt'ta tek sade satır (HTTP kartının "İlk kontrol bekleniyor" satırıyla aynı görünüm). İçerik {@link MonitorPendingText}.
+ *
+ * @param {string} slot     test kancası (`data-slot`)
+ * @param {string} idle     koşmuyorken metin (varsayılan `mon.firstCheckPending`)
+ * @param {boolean} compact Kompakt görünüm satırı
+ */
+export function MonitorCardPending({ slot = 'monitor-pending', idle, compact = false, className }) {
+  const t = useT()
+  return (
+    <p data-slot={slot} data-compact={compact ? 'true' : undefined}
+      className={cn(compact
+        ? 'mt-2 mb-2 flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground'
+        : 'mb-2.5 flex min-w-0 items-center gap-1.5 rounded-lg border border-dashed bg-muted/40 px-2.5 py-2 text-xs font-medium text-muted-foreground dark:bg-muted/20',
+      className)}>
+      <MonitorPendingText idle={idle ?? t('mon.firstCheckPending')} />
+    </p>
+  )
 }
 
 /** Üst bölge: durum satırı + başlık. */

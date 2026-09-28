@@ -2784,4 +2784,245 @@ class EscalationServiceTest {
         service.resolveMonitoringAlertsForDomain(domain, "PING_DOWN");
         verify(alertEventRepo).markResolvedIfOpen(eq(501L), any(), any());          // takıma gitmiş → normal yol
     }
+
+    // ── 2026-09-28 yayın öncesi tarama: sertifika sweep'i E9 / E10 / E11 ─────────────────────────
+
+    /** Takım A (damga, 4) ve Takım B (envanterin YENİ takımı, 9) — e-posta adresleriyle ayırt edilir. */
+    private void teamsAandB() {
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
+        a.setId(4L); a.setName("Takım A"); a.setEmail("takim-a@example.com");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team();
+        b.setId(9L); b.setName("Takım B"); b.setEmail("takim-b@example.com");
+        when(teamRepo.findById(4L)).thenReturn(Optional.of(a));
+        when(teamRepo.findById(9L)).thenReturn(Optional.of(b));
+    }
+
+    /** Envanter kaydı SONRADAN Takım B'ye (9) devredilmiş. */
+    private void inventoryMovedToTeamB(String domain) {
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain(domain); inv.setTeamId(9L); inv.setActive(true);
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(inv));
+    }
+
+    private AlertEvent stampedCertAlert(String domain, String level, Integer days) {
+        AlertEvent e = existingOpenAlert(domain, "EXPIRY", level, false);
+        e.setId(900L);
+        e.setTeamId(4L);                 // DAMGA: alarm Takım A'dayken açıldı
+        e.setDaysRemaining(days);
+        return e;
+    }
+
+    @Test
+    @DisplayName("E10: sertifika RE-ALERT'i damgalı takıma gider — envanter sonradan Takım B'ye devredilse de")
+    void certReAlert_usesStampedTeam_notMovedInventoryTeam() {
+        String domain = "moved.example.com";
+        teamsAandB();
+        inventoryMovedToTeamB(domain);
+        AlertEvent open = stampedCertAlert(domain, "CRITICAL", 5);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(to.capture(), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+        assertThat(to.getValue()).contains("takim-a@example.com").doesNotContain("takim-b@example.com");
+        verify(contactRepo).findByTeamIdAndActiveTrueOrderByRoleAsc(4L);
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(9L);
+        verify(userPushService).enqueueAlert(eq(900L), eq("DAILY_REALERT"), eq(4L), any(), any());
+    }
+
+    @Test
+    @DisplayName("E10: sertifika ESCALATION'ı damgalı takıma gider — envanter sonradan Takım B'ye devredilse de")
+    void certEscalation_usesStampedTeam_notMovedInventoryTeam() {
+        String domain = "moved-esc.example.com";
+        teamsAandB();
+        inventoryMovedToTeamB(domain);
+        AlertEvent open = stampedCertAlert(domain, "WARNING", 25);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(expiryResult(domain, 5, true)));   // → KRİTİK terfi
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(to.capture(), anyString(), anyString(), any(), eq("CRITICAL"), any(), any(), any());
+        assertThat(to.getValue()).contains("takim-a@example.com").doesNotContain("takim-b@example.com");
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(9L);
+        verify(userPushService).enqueueAlert(eq(900L), eq("ESCALATION"), eq(4L), any(), any());
+    }
+
+    @Test
+    @DisplayName("E10: açılış catch-up'ı da damgalı takımı kullanır (envanterin canlı takımını değil)")
+    void catchUp_usesStampedTeam_notMovedInventoryTeam() {
+        String domain = "moved-catchup.example.com";
+        com.sitemonitor.model.SmtpSettings noPacing = new com.sitemonitor.model.SmtpSettings();
+        noPacing.setInterDomainDelayMs(0);
+        when(smtpSettings.getOrDefaults()).thenReturn(noPacing);
+        teamsAandB();
+        inventoryMovedToTeamB(domain);
+        AlertEvent open = stampedCertAlert(domain, "CRITICAL", 5);
+        open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.catchUpMissedDailyAlerts();
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(to.capture(), contains("[RE-ALERT]"), anyString(), any(), any(), any(), any(), any());
+        assertThat(to.getValue()).contains("takim-a@example.com").doesNotContain("takim-b@example.com");
+        verify(contactRepo, never()).findByTeamIdAndActiveTrueOrderByRoleAsc(9L);
+        verify(userPushService).enqueueAlert(eq(900L), eq("DAILY_REALERT"), eq(4L), any(), any());
+    }
+
+    @Test
+    @DisplayName("E11: KRİTİK (5 gün) alarmın re-alert vakti geçici timeout'a denk gelirse ERTELENİR — olayın hiçbir alanı değişmez")
+    void reAlert_transientError_onVerifiedCriticalAlert_isPostponedUntouched() {
+        String domain = "flaky-critical.example.com";
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "CRITICAL", false);
+        open.setDaysRemaining(5);
+        open.setMessage("KRİTİK: " + domain + " adresindeki sertifikanın süresi 5 gün içinde doluyor.");
+        String lastReAlert = ISO.format(Instant.now().minus(25, ChronoUnit.HOURS));   // re-alert vakti GELDİ
+        open.setLastReAlertAt(lastReAlert);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
+
+        service.processResults(List.of(errorResult(domain, "NETWORK")));   // tek seferlik zaman aşımı
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+        assertThat(open.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(open.getDaysRemaining()).isEqualTo(5);
+        assertThat(open.getMessage()).contains("5 gün");
+        assertThat(open.getLastReAlertAt()).as("doğru re-alert 24 saat kaymasın").isEqualTo(lastReAlert);
+        assertThat(open.getRealertCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("E11: re-alert alıcı seviyesi olayın seviyesinin ALTINA inmez (KRİTİK olay, bu tur YÜKSEK hesaplasa da)")
+    void reAlert_recipientLevel_neverBelowEventLevel() {
+        String domain = "sticky-critical.example.com";
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "CRITICAL", false);   // SSL hatasıyla KRİTİK açılmış (gün yok)
+        open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc())
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING"), contact("mudur@test.com", "MANAGER", "CRITICAL")));
+        when(contactRepo.findByMinAlertLevelInAndActiveTrue(List.of("WARNING", "HIGH")))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+
+        service.processResults(List.of(expiryResult(domain, 10, true)));   // doğrulanmış 10 gün → YÜKSEK
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendAlert(to.capture(), contains("[RE-ALERT]"), anyString(), eq(domain), eq("CRITICAL"),
+                eq("EXPIRY"), eq(10), any());
+        assertThat(to.getValue()).as("müdür düşmemeli").contains("mudur@test.com");
+        assertThat(open.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(open.getMessage()).startsWith("KRİTİK").contains("10 gün");
+    }
+
+    @Test
+    @DisplayName("E11 sınırı: alarmın KENDİSİ 'erişilemedi' alarmıysa (gün yok) süren hata günlük hatırlatmayı KESMEZ")
+    void reAlert_unreachabilityAlert_stillRemindsWhileUnreachable() {
+        String domain = "still-unreachable.example.com";
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "WARNING", false);   // NETWORK hatasıyla açılmış
+        open.setLastReAlertAt(ISO.format(Instant.now().minus(25, ChronoUnit.HOURS)));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+
+        service.processResults(List.of(errorResult(domain, "NETWORK")));
+
+        verify(emailService).sendAlert(any(String[].class), contains("[RE-ALERT]"), anyString(), eq(domain), eq("WARNING"),
+                eq("EXPIRY"), isNull(), any());
+    }
+
+    @Test
+    @DisplayName("E9: ilk bildirimi YARIDA kalmış sertifika alarmı (lastReAlertAt null) sonraki turda INITIAL olarak gider")
+    void certAlert_interruptedInitial_isSentAsInitial() {
+        String domain = "interrupted.example.com";
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        open.setId(901L);
+        open.setDaysRemaining(25);
+        open.setCreatedAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));   // createdAt'e düşülse 23 saat daha susardı
+        open.setLastReAlertAt(null);                                              // ...çünkü gönderim hiç tamamlanmadı
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(emailService).sendAlert(any(String[].class), not(contains("[RE-ALERT]")), anyString(), eq(domain),
+                eq("WARNING"), eq("EXPIRY"), eq(25), any());
+        verify(userPushService).enqueueAlert(eq(901L), eq("INITIAL"), any(), any(), any());
+        assertThat(open.getLastReAlertAt()).as("damga atılır → sonraki tur tekrar göndermez").isNotNull();
+        assertThat(open.getRealertCount()).as("INITIAL bir re-alert sayılmaz").isZero();
+        assertThat(open.getNotifiedContacts()).contains("po@test.com");
+
+        // Aynı olay bir sonraki turda: damgalı → sessiz (çift INITIAL yok)
+        org.mockito.Mockito.clearInvocations(emailService, userPushService);
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("E9: INITIAL gönderimi SÜRERKEN (olay grace'ten genç) paralel tur ikinci INITIAL göndermez")
+    void certAlert_initialInFlight_isNotDoubleSent() {
+        String domain = "inflight.example.com";
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "WARNING", false);
+        open.setCreatedAt(ISO.format(Instant.now()));   // az önce kaydedildi, gönderim hâlâ sürüyor olabilir
+        open.setLastReAlertAt(null);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        when(contactRepo.findByMinAlertLevelAndActiveTrue("WARNING")).thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+
+        service.processResults(List.of(expiryResult(domain, 25, true)));
+
+        verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(), any(), any(), any(), any(), any());
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("E9: açılış catch-up'ı yarıda kalmış ilk bildirimi INITIAL olarak BİR kez gönderir")
+    void catchUp_interruptedInitial_sentOnceAsInitial() {
+        String domain = "interrupted-catchup.example.com";
+        com.sitemonitor.model.SmtpSettings noPacing = new com.sitemonitor.model.SmtpSettings();
+        noPacing.setInterDomainDelayMs(0);
+        when(smtpSettings.getOrDefaults()).thenReturn(noPacing);
+        AlertEvent open = existingOpenAlert(domain, "EXPIRY", "CRITICAL", false);
+        open.setId(902L);
+        open.setDaysRemaining(5);
+        open.setCreatedAt(ISO.format(Instant.now().minus(1, ChronoUnit.HOURS)));
+        open.setLastReAlertAt(null);
+        when(alertEventRepo.findByResolvedFalseAndAcknowledgedFalseOrderByCreatedAtDesc()).thenReturn(List.of(open));
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(contactRepo.findByActiveTrueOrderByRoleAsc()).thenReturn(List.of(contact("mudur@test.com", "MANAGER", "CRITICAL")));
+
+        service.catchUpMissedDailyAlerts();
+        service.catchUpMissedDailyAlerts();   // ikinci açılış/çağrı: damgalı → sessiz
+
+        verify(emailService, times(1)).sendAlert(any(String[].class), not(contains("[RE-ALERT]")), anyString(), eq(domain),
+                eq("CRITICAL"), eq("EXPIRY"), eq(5), any());
+        verify(userPushService, times(1)).enqueueAlert(eq(902L), eq("INITIAL"), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), eq("DAILY_REALERT"), any(), any(), any());
+        assertThat(open.getLastReAlertAt()).isNotNull();
+        assertThat(open.getRealertCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("E9 saf kural: damga varsa false; damgasız + grace'ten eski → true; damgasız + taze → false")
+    void initialNotificationMissing_rule() {
+        Instant now = Instant.parse("2026-09-28T12:00:00Z");
+        AlertEvent e = new AlertEvent();
+        e.setCreatedAt(ISO.format(now.minus(EscalationService.INITIAL_SEND_GRACE).minusSeconds(1)));
+        assertThat(EscalationService.initialNotificationMissing(e, ISO.format(now))).isTrue();
+        e.setCreatedAt(ISO.format(now.minus(EscalationService.INITIAL_SEND_GRACE).plusSeconds(1)));
+        assertThat(EscalationService.initialNotificationMissing(e, ISO.format(now))).isFalse();
+        e.setCreatedAt(ISO.format(now.minus(1, ChronoUnit.MINUTES)));   // gönderim sürüyor olabilir → henüz "yarıda" değil
+        assertThat(EscalationService.initialNotificationMissing(e, ISO.format(now))).isFalse();
+        e.setLastReAlertAt(ISO.format(now.minus(3, ChronoUnit.DAYS)));
+        e.setCreatedAt(ISO.format(now.minus(3, ChronoUnit.DAYS)));
+        assertThat(EscalationService.initialNotificationMissing(e, ISO.format(now))).isFalse();
+    }
 }

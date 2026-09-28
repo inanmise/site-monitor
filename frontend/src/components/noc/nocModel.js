@@ -7,6 +7,7 @@
  * Sözlük: "kapsanan" (covered) = izleme aktif VE `noc_notify` VE tür etkin VE en az bir aktif hedef grup var.
  * Kapsanmama nedeni (`reason`) sunucudan gelir: MONITOR_OFF | TYPE_DISABLED | NO_ACTIVE_GROUP | PAUSED.
  */
+import { DEEP_OPEN, DEEP_OPEN_PARAM, tabDeepLink } from '../../utils/monitorDeepLink.js'
 
 /** Tür anahtarları — sözleşmedeki sıra (Ayarlar anahtarları ve tür başına kapsam bu sırayla çizilir). */
 export const NOC_TYPES = ['SSL', 'PING', 'HTTP', 'KEYWORD', 'PAGE', 'PAGESPEED', 'SCRIPTED', 'DNS', 'PORT', 'DOMAIN']
@@ -29,7 +30,7 @@ export const NO_TEAM = '__none__'
 /** Kapsam kutucukları (süzgeç) — `n_status`. */
 export const STATUS_KEYS = ['covered', 'not_covered', 'paused']
 
-/** Tür → izleme sekmesi (derin bağlantı `?tab=<sekme>&monitor=<id>`). SSL sertifika envanteridir: Pano araması. */
+/** Tür → izleme sekmesi (derin bağlantı `?tab=<sekme>&monitor=<id>`). SSL sertifika envanteridir: Pano + sertifika penceresi. */
 export const NOC_TYPE_TAB = {
   PING: 'ping', HTTP: 'http', KEYWORD: 'keyword', PAGE: 'page', PAGESPEED: 'pagespeed',
   SCRIPTED: 'scripted', DNS: 'dns', PORT: 'port', DOMAIN: 'domain',
@@ -316,14 +317,31 @@ export function canEditItem(it, { systemRole, globalAdmin, myTeamIds = [] } = {}
   return it?.team_id != null && myTeamIds.some((id) => String(id) === String(it.team_id))
 }
 
-/** Satırın açılacağı yer: { tab, params } — SSL → Pano araması, Sentetik → yalnız sekme (derin bağlantı yok). */
-export function openTargetOf(it) {
+/**
+ * Satırın açılacağı yer: { tab, params } — izlemeyi KARTINA tıklamakla aynı pencerede açar (2026-09-28):
+ *  - dokuz izleme türü (Sentetik dâhil): `?tab=<tür>&monitor=<id>` → detay penceresi (hooks/useMonitorDeepLink);
+ *  - SSL: `?tab=dashboard&domain=<alan>&open=cert` → Pano'da sertifika penceresi (hooks/useCertDeepLink); `domain`
+ *    Pano'yu da süzer.
+ * `action: 'noc'` ("7/24 ayarını düzenle"): `open=noc` — düzenleme formu, 7/24 alanına kaydırılmış (yetkisizde pencere).
+ * Parametre sırası derin bağlantı metnini belirler (tabDeepLink sırayı korur).
+ */
+export function openTargetOf(it, { action = null } = {}) {
   if (!it) return null
-  // SSL: Pano araması ALAN ADIYLA (`name`) — `target` 443 dışı portta `host:8443` olur ve aramada eşleşmez
-  if (it.type === 'SSL') return { tab: 'dashboard', params: { domain: it.name || String(it.target || '').replace(/:[0-9]+$/, '') } }
+  const open = action === DEEP_OPEN.NOC ? DEEP_OPEN.NOC : null
+  // SSL: ALAN ADIYLA (`name`) — `target` 443 dışı portta `host:8443` olur ve ne aramada ne pencerede eşleşir
+  if (it.type === 'SSL') {
+    const domain = it.name || String(it.target || '').replace(/:[0-9]+$/, '')
+    return { tab: 'dashboard', params: { domain, [DEEP_OPEN_PARAM]: open || DEEP_OPEN.CERT } }
+  }
   const tab = NOC_TYPE_TAB[it.type]
-  if (!tab) return null
-  return tab === 'scripted' ? { tab, params: undefined } : { tab, params: { monitor: it.id } }
+  if (!tab || it.id == null) return null
+  return { tab, params: open ? { monitor: it.id, [DEEP_OPEN_PARAM]: open } : { monitor: it.id } }
+}
+
+/** Satırın PAYLAŞILABİLİR mutlak bağlantısı (`<a href>` + "Bağlantıyı kopyala") — openTargetOf ile aynı hedef. */
+export function deepLinkOf(it, opts) {
+  const target = openTargetOf(it, opts)
+  return target ? tabDeepLink(target.tab, target.params) : null
 }
 
 /** Pano şeridi sayısı: aktif ama kapsanmayan izlemeler (satırlar varsa satırlardan, yoksa özetten). */

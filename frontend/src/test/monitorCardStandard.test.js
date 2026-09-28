@@ -154,6 +154,34 @@ describe('izleme listesi kart standardı', () => {
     expect(missing).toEqual([])
   })
 
+  /**
+   * KAYIT SONRASI İLK / TAZE KONTROL STANDARDI (2026-09-28, kullanıcı bildirimi: "Test et → başarılı → Kaydet; açılan
+   * kartta veriler yansımıyor, boş bir görünüm oluyor"). Dokuz sayfa da kaydın ardından kartın KENDİ "Şimdi kontrol et"
+   * yolunu paylaşılan karardan (`utils/checkAfterSave` → shouldCheckAfterSave('<tür>')) geçirerek çağırır ve kartına
+   * `running={isRunning(m.id)}` verir; kart modülü onu MonitorCard'a iletir (hiç sonucu yokken "İlk kontrol yapılıyor…").
+   * Bir sayfa bu halkalardan birini atlarsa o türde kart yine kayıttan sonra boş kalır — derleme ve diğer testler yeşil.
+   */
+  it('dokuz sayfa kayıttan sonra ilk / taze kontrolü paylaşılan karardan başlatır ve kart `running` alır', () => {
+    const KIND = {
+      PingMonitorPage: 'ping', DnsMonitorPage: 'dns', DomainMonitorPage: 'domain', HttpMonitorPage: 'http', KeywordMonitorPage: 'keyword',
+      PageMonitorPage: 'page', PageSpeedMonitorPage: 'pagespeed', PortMonitorPage: 'port', ScriptedMonitorPage: 'scripted',
+    }
+    const missing = []
+    for (const p of MONITOR_PAGES) {
+      const src = read(p)
+      const kind = KIND[p]
+      if (!/import \{[^}]*\bshouldCheckAfterSave\b[^}]*\} from '\.\.\/utils\/checkAfterSave\.js'/.test(src)) missing.push(`${p} → import checkAfterSave`)
+      if (!new RegExp(`shouldCheckAfterSave\\('${kind}',`).test(src)) missing.push(`${p} → shouldCheckAfterSave('${kind}', …)`)
+      // Kararın ardından GERÇEKTEN başlatılır: ya paylaşılan ateşle-unut ya da (Sentetik) doğrulama bandı yolu.
+      if (!/startCheckAfterSave\(checkNow,/.test(src)) missing.push(`${p} → startCheckAfterSave(checkNow, …)`)
+      const card = path.basename(CARD_MODULES[p][0])
+      if (!new RegExp(`<${card}\\b[^>]*?\\brunning=\\{isRunning\\(m\\.id\\)\\}`).test(src)) missing.push(`${p} → <${card} running={isRunning(m.id)}>`)
+      if (!/<MonitorCard\b[^>]*\brunning=\{running\}/.test(read(CARD_MODULES[p][0]))) missing.push(`${CARD_MODULES[p][0]} → <MonitorCard running={running}>`)
+    }
+    expect(Object.keys(KIND).sort(), 'tür eşlemesi dokuz sayfanın tamamı').toEqual([...MONITOR_PAGES].sort())
+    expect(missing).toEqual([])
+  })
+
   it('durum sınıfı paylaşılan sözlükten seçilir (uydurma sınıf = tarayıcı varsayılanı)', () => {
     // 'warn' senaryo izlemesine ozel MESRU dorduncu durum (kismi gecis) ve App.css:2892'de
     // TANIMLI. Listeye alinmasi, uydurma bir sinifin gozden kacmasina izin vermez.

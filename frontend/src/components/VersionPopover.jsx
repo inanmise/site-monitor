@@ -5,6 +5,7 @@ import { useT } from '../i18n/index.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import CopyableRef from './ui/CopyableRef.jsx'
 import { fmtDuration, groupChanges, bumpIcon } from '../utils/releaseUi.js'
+import { EnvBadge } from './admin/releases/DeployBadges.jsx'   // ortak ortam rozeti ("unknown" → açıklamalı)
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Separator } from '@/components/shadcn/separator'
@@ -97,7 +98,7 @@ export default function VersionPopover({ appVersion, previousSeen = '', onNaviga
             {live?.since
               ? <>
                   {formatDateSec(live.since)}
-                  <Badge variant="secondary" className="ml-1.5 text-[10px] uppercase">{data.environment}</Badge>
+                  <EnvBadge env={data.environment} className="ml-1.5 text-[10px]" />
                   {live.kind && <Badge variant="outline" className={cn('ml-1.5 text-[10px]', KIND_TONE[live.kind])}>{kindLabel(live.kind)}</Badge>}
                   {data.releaseLagSeconds != null && data.releaseLagSeconds >= 60 && (
                     <span className="text-muted-foreground"> · {t('version.lag', fmtDuration(data.releaseLagSeconds, units, t('version.justNow')))}</span>
@@ -109,7 +110,8 @@ export default function VersionPopover({ appVersion, previousSeen = '', onNaviga
           <dt><GitCommit /> {t('version.commit')}</dt>
           <dd>
             {data.commitShort
-              ? <CopyableRef value={data.commit} copyLabel={t('version.copy')} copiedLabel={t('version.copied')} />
+              /* Kısa commit gösterilir, kopya tam SHA (2026-09-27: 40 karakter pencereden taşıyordu) */
+              ? <CopyableRef value={data.commit} display={data.commitShort} copyLabel={t('version.copy')} copiedLabel={t('version.copied')} />
               : '—'}
           </dd>
 
@@ -139,7 +141,7 @@ export default function VersionPopover({ appVersion, previousSeen = '', onNaviga
             {groupChanges(rel.changes, 3).slice(0, 1).flatMap(g => g.items).map(c => (
               <li key={c.sha || c.subject} className="flex items-baseline gap-1.5">
                 <Badge variant="secondary" className={cn('shrink-0 px-1.5 text-[10px]', CHG_TONE[c.type])}>{c.type}</Badge>
-                <span>{c.scope ? <span className="text-muted-foreground">{c.scope}: </span> : null}{c.subject}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">{c.scope ? <span className="text-muted-foreground">{c.scope}: </span> : null}{c.subject}</span>
               </li>
             ))}
           </ul>

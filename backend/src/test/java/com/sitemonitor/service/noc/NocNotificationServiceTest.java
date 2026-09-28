@@ -486,4 +486,20 @@ class NocNotificationServiceTest {
         verify(snap, times(5)).forAlert(any(), any(), any());
         assertThat(mailsSent()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("7/24 e-postası: SSL bağlantısı sertifika penceresini açar (open=cert); erişilebilirlik ve diğer türler açmaz")
+    void monitorUrl_sslOpensCertificateWindow() {
+        var ssl = new NocMonitorDirectory.Row(NocType.SSL, 7, "www.example.com", "www.example.com", 10L, null,
+                true, true, null, false);
+        assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.SSL, ssl, "CHAIN_BROKEN"))
+                .isEqualTo("http://cm.local/?tab=dashboard&domain=www.example.com&open=cert");
+        assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.SSL, ssl,
+                com.sitemonitor.service.EscalationService.TYPE_ACCESSIBILITY))
+                .isEqualTo("http://cm.local/?tab=status&domain=www.example.com");
+        var http = new NocMonitorDirectory.Row(NocType.HTTP, 9, "api", "https://api.example.com", 10L, null,
+                true, true, null, false);
+        assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.HTTP, http, "HTTP_DOWN"))
+                .isEqualTo("http://cm.local/?tab=http&monitor=9");
+    }
 }

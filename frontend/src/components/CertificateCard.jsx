@@ -5,7 +5,7 @@ import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CopyButton from './ui/CopyButton.jsx'
 import { CARD_COPY, MonitorCardContent, MonitorCardFooter, MonitorCardHeader } from './monitoring/MonitorCard.jsx'
 import {
-  CertActions, CertCheckedAt, CertErrorNote, CertHero, CertIssuerLine, CertMeta, CertNotices, CertPlanChip, CertReasons,
+  CertActions, CertCheckedAt, CertErrorNote, CertExtrasPending, CertHero, CertIssuerLine, CertMeta, CertNotices, CertPlanChip, CertReasons,
   CertStatusBadge, CertTierBadge,
 } from './certcard/CertCardParts.jsx'
 import {
@@ -62,7 +62,9 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
                                           // Zengin görünüm (2026-09-19): /card-extras bloğu; extra yoksa kompakt
                                           extra, onOpenHealth, onConfirmRenewal, onPlanRenewal, confirming = false,
                                           // "Şu an" şeridi (2026-09-19): her iki görünümde; live = {uptime, alert, renewal?}
-                                          live }) {
+                                          live,
+                                          // Yeni eklenen alan adı ilk kontrol + kart eki bekleniyor (App, 2026-09-28): boşluk yerine bekleme durumu
+                                          warming = false, extrasPending = false }) {
   const t = useT()
   const tone = certTone(cert)
   const validity = validityOf(cert)
@@ -137,6 +139,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
           <CertificateCardExtras cert={cert} extra={extra} reasons={reasons} onOpenHealth={onOpenHealth}
             onConfirmRenewal={onConfirmRenewal} onEditContacts={onEditContacts} confirming={confirming} onOpenShared={onOpenShared} />
         )}
+        {!extra && extrasPending && <CertExtrasPending />}
       </MonitorCardContent>
 
       {/* mt-auto: ızgara satırındaki kartlar aynı boya uzar — alt çubuk kısa kartta da en altta hizalı kalır. */}
@@ -144,7 +147,7 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
         <CertActions cert={cert} plan={plan} onCheckNow={onCheckNow} onEdit={onEdit} onDuplicate={onDuplicate}
           onDelete={onDelete} onPlanRenewal={onPlanRenewal} checking={checking} deleting={deleting} />
       }>
-        <CertCheckedAt at={cert.checked_at} />
+        <CertCheckedAt at={cert.checked_at} warming={warming} />
       </MonitorCardFooter>
     </Card>
   )

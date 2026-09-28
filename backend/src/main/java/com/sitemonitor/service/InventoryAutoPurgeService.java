@@ -83,7 +83,7 @@ public class InventoryAutoPurgeService {
         }
     }
 
-    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice"}, allEntries = true)
+    @CacheEvict(value = {"cert-latest", "cert-warnings", "cert-stats", "renewal-advice", "card-extras", "domain-team-names"}, allEntries = true)
     @Transactional
     public Result purgeOlderThan(int days) {
         String cutoff = ISO.format(Instant.now().minus(days, ChronoUnit.DAYS));

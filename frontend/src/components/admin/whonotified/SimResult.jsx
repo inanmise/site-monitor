@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Activity, Award, BellRing, Info, Mail, UserPlus, Users, UserX, Webhook } from 'lucide-react'
+import { Activity, Award, BellOff, BellRing, Info, Mail, UserPlus, Users, UserX, Webhook } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import MonitorStatsBar from '../../MonitorStatsBar.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -11,7 +11,9 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardContent } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-import { EmailCard, ExcludedList, LevelBadge, PushCard, WebhookCard } from './ChannelCards.jsx'
+import { EmailCard, ExcludedList, LevelBadge, WebhookCard } from './ChannelCards.jsx'
+import NocNote from './NocNote.jsx'
+import { PushCard } from './PushDecisions.jsx'
 import { buildView } from './whoNotifiedModel.js'
 
 /** Kart/bölüme kaydır + odak (özet kutucukları "listeye git" eylemidir, süzgeç değil). */
@@ -28,22 +30,33 @@ function reveal(el) {
  * Kök `@container`: kanal kartları kap ≥ 896 px'te (@4xl) iki sütun, altında tek sütun (768 tablette kenar çubuğu
  * açıkken içerik ~440 px — pencere değil kap ölçülür).
  */
-export default function SimResult({ data, level, kind, isAdmin, refreshing = false, onNavigate, navParams }) {
+export default function SimResult({ data, level, kind, refreshing = false, onNavigate, navParams }) {
   const t = useT()
   const view = buildView(data)
   const [excludedOpen, setExcludedOpen] = useState(false)
+  const [pushFilter, setPushFilter] = useState('all')
   const emailRef = useRef(null)
   const pushRef = useRef(null)
   const webhookRef = useRef(null)
   const excludedRef = useRef(null)
-  const showPush = !!isAdmin
-  const pushTile = showPush && view.push.available
-  const { counts } = view
+  const { counts, push } = view
+  // Push kutucukları: görünürlüğü SUNUCU verir (push_access) — sistem rolünden tahmin edilmez (kapsamlı müdür tuzağı).
+  const pushFull = push.access === 'FULL' && push.available && !push.error
+  const pushSelf = push.access === 'SELF' && push.available && !push.error
+  const selfValue = push.self ? (push.self.receives ? t('wn.selfYes') : t('wn.selfNo')) : '—'
 
   const tile = (key, Icon, label, value, cls, onClick, sub) => ({ key, Icon, label, value, cls, onClick, sub, tip: t('wn.tileTip', label, value) })
+  const showPushList = (f) => { setPushFilter(f); setTimeout(() => reveal(pushRef.current), 0) }
+  const pushTiles = pushFull ? [
+    tile('push', BellRing, t('wn.tilePushYes'), counts.push, counts.push > 0 ? 'valid' : 'total', () => showPushList('yes'), t('wn.tilePushOf', push.total)),
+    tile('pushNot', BellOff, t('wn.tilePushNo'), counts.pushNot, counts.pushNot > 0 ? 'warning' : 'total', () => showPushList('no')),
+  ] : pushSelf ? [
+    tile('push', push.self?.receives ? BellRing : BellOff, t('wn.tilePushSelf'), selfValue,
+      push.self?.receives ? 'valid' : 'warning', () => reveal(pushRef.current)),
+  ] : []
   const items = [
     tile('email', Mail, t('wn.tileEmail'), counts.email, counts.email > 0 ? 'valid' : 'error', () => reveal(emailRef.current)),
-    ...(pushTile ? [tile('push', BellRing, t('wn.tilePush'), counts.push, 'total', () => reveal(pushRef.current), t('wn.tilePushOf', view.push.total))] : []),
+    ...pushTiles,
     tile('webhook', Webhook, t('wn.tileWebhook'), counts.webhook, 'total', () => reveal(webhookRef.current)),
     tile('excluded', UserX, t('wn.tileExcluded'), counts.excluded, counts.excluded > 0 ? 'warning' : 'total', () => {
       setExcludedOpen(true)
@@ -64,9 +77,11 @@ export default function SimResult({ data, level, kind, isAdmin, refreshing = fal
         {refreshing && <Spinner size={14} label={t('sim.loading')} />}
       </div>
       <p data-slot="wn-live" aria-live="polite" className="sr-only">
-        {refreshing ? '' : pushTile
-          ? t('wn.srSummary', counts.email, counts.push, counts.webhook, counts.excluded)
-          : t('wn.srSummaryNoPush', counts.email, counts.webhook, counts.excluded)}
+        {refreshing ? '' : pushFull
+          ? t('wn.srSummaryPush', counts.email, counts.push, counts.pushNot, counts.webhook, counts.excluded)
+          : pushSelf
+            ? t('wn.srSummarySelf', counts.email, counts.webhook, t(push.self?.receives ? 'wn.srSelfYes' : 'wn.srSelfNo'), counts.excluded)
+            : t('wn.srSummaryNoPush', counts.email, counts.webhook, counts.excluded)}
       </p>
 
       <MonitorStatsBar items={items} activeFilter={null} onStatClick={() => {}} />
@@ -91,8 +106,13 @@ export default function SimResult({ data, level, kind, isAdmin, refreshing = fal
 
       <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-2">
         <EmailCard view={view} level={data?.level || level} cardRef={emailRef} />
-        {showPush && <PushCard view={view} cardRef={pushRef} />}
-        <WebhookCard view={view} cardRef={webhookRef} className={showPush ? '@4xl:col-span-2' : undefined} />
+        <WebhookCard view={view} cardRef={webhookRef} />
+        {/* Push kartı HER rolde çizilir: satırlar (FULL/SELF) ya da neden görünmediği (NONE) — tam genişlik */}
+        <PushCard view={view} level={data?.level || level} cardRef={pushRef} className="@4xl:col-span-2"
+          filter={pushFilter} onFilterChange={setPushFilter} onNavigate={onNavigate} />
+        {data?.team_id != null && (
+          <NocNote teamId={data.team_id} kind={kind} level={data?.level || level} className="@4xl:col-span-2" />
+        )}
       </div>
 
       <div ref={excludedRef} data-slot="wn-excluded" tabIndex={-1} className="scroll-mt-4 outline-none">

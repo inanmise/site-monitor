@@ -198,4 +198,58 @@ class PermissionServiceTest {
 
         verify(repo, never()).save(any(PermissionGrant.class));
     }
+
+    // ── 2026-09-28: AUDIT (7/24 izleme ekibi) → noc_calls.write varsayılanı ──────────────────
+    //
+    // Yükseltmede üç kurulum durumu var ve üçü de burada pinli:
+    //  (1) v20.87.0 çalışmış kurulum: satır VAR, allowed=false, updated_by='system' → AÇILIR.
+    //  (2) Yönetici satırı elle değiştirmiş (kapatmış ya da açıp kapatmış): updated_by = kişi → DOKUNULMAZ.
+    //  (3) Satır hiç yok (v20.87.0 öncesinden doğrudan yükseltme): seedMissingDefaults katalogdan AÇIK ekler.
+
+    @Test
+    @DisplayName("AUDIT noc_calls.write: v20.87.0'ın tohumladığı KAPALI (system) satır yükseltmede AÇILIR")
+    void policyUpgrade_auditNocCallsWrite_flipsSeededRow() {
+        var row = grantBy("AUDIT", "noc_calls.write", "edit", false, "system");
+        when(repo.findByRoleAndResourceKeyAndAction(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(repo.findByRoleAndResourceKeyAndAction("AUDIT", "noc_calls.write", "edit")).thenReturn(Optional.of(row));
+
+        service.applyPolicyUpgrades();
+
+        assertThat(row.getAllowed()).isTrue();
+        assertThat(row.getUpdatedBy()).isEqualTo("system");   // yükseltme insan kararı gibi görünmez
+        verify(repo).save(row);
+    }
+
+    @Test
+    @DisplayName("AUDIT noc_calls.write: yönetici elle KAPATTIYSA yükseltme dokunmaz (her açılışta kavga yok)")
+    void policyUpgrade_auditNocCallsWrite_respectsAdminDecision() {
+        var row = grantBy("AUDIT", "noc_calls.write", "edit", false, "yonetici.a");
+        when(repo.findByRoleAndResourceKeyAndAction(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(repo.findByRoleAndResourceKeyAndAction("AUDIT", "noc_calls.write", "edit")).thenReturn(Optional.of(row));
+
+        service.applyPolicyUpgrades();
+
+        assertThat(row.getAllowed()).isFalse();
+        verify(repo, never()).save(any(PermissionGrant.class));
+    }
+
+    @Test
+    @DisplayName("AUDIT noc_calls.write: satırı hiç olmayan kurulumda seedMissingDefaults AÇIK ekler (alerts.actions eklenmez)")
+    void seedMissing_auditNocCallsWrite_addedOpen() {
+        when(repo.findByRoleAndResourceKeyAndAction(anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new PermissionGrant()));
+        when(repo.findByRoleAndResourceKeyAndAction("AUDIT", "noc_calls.write", "edit")).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.seedMissingDefaults();
+
+        ArgumentCaptor<PermissionGrant> cap = ArgumentCaptor.forClass(PermissionGrant.class);
+        verify(repo, times(1)).save(cap.capture());
+        PermissionGrant saved = cap.getValue();
+        assertThat(saved.getRole()).isEqualTo("AUDIT");
+        assertThat(saved.getResourceKey()).isEqualTo("noc_calls.write");
+        assertThat(saved.getAction()).isEqualTo("edit");
+        assertThat(saved.getAllowed()).isTrue();
+        assertThat(saved.getUpdatedBy()).isEqualTo("system");
+    }
 }

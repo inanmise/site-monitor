@@ -586,10 +586,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       {/* usersById BİLEREK verilmez: verilince üye kartları üyelerden yukarı 2 kademe yönetim zinciri
           yürüyüp müdürü ve onun müdürünü ÜYE ızgarasına ekliyordu — takımda olmayan Kullanıcı X "takımın
           içinde" görünüyordu (prod hatası 2026-09-26). Müdür, üye kartında ALAN olarak (managerLabelFor)
-          ve satırdaki "Takım Müdürü" sütununda ayrı durur. */}
+          ve satırdaki "Takım Müdürü" sütununda ayrı durur. `teamManager` = o sütunla AYNI kayıt (tüm kullanıcılardan
+          türetilir); pencere başlığındaki Takım Müdürü çipi sütunla çelişmesin (2026-09-28 yeniden tasarım). */}
       <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
         canManage={canManage} onEditUser={setEditingUser} loadMembers={loadTeamMembers}
-        managerLabelFor={managerLabelFor} refreshKey={membersNonce} />
+        managerLabelFor={managerLabelFor} refreshKey={membersNonce}
+        teamManager={membersTeam ? teamManagerEntry(membersTeam) : undefined} />
       <UserEditModal
         user={editingUser}
         teams={teams}

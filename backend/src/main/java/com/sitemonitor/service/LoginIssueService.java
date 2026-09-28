@@ -56,9 +56,19 @@ public class LoginIssueService {
     /** Ayrıştırılmış görsel — data-URL prefix'i çıkarılmış ham base64. */
     public record ParsedImage(String contentType, String base64) {}
 
-    /** Kaynak + otomatik bağlam meta'sı — LOGIN akışı için {@link #META_LOGIN} yeterli. */
+    /**
+     * Kaynak + otomatik bağlam meta'sı — LOGIN akışı için {@link #META_LOGIN} yeterli. {@code impacts} /
+     * {@code impactOther} (2026-09-28): oturum içi bildirimin çoklu etki seçimi ({@link #normalizeImpacts} çıktısı).
+     */
     public record ReportMeta(String source, String category, String appVersion, String screenSize,
-                             String tabKey, String autoContextJson, String linkedReference) {}
+                             String tabKey, String autoContextJson, String linkedReference,
+                             String impacts, String impactOther) {
+        /** Etkisiz imza — LOGIN / CLIENT_ERROR / otomatik kayıtlar (eski çağıranlar değişmez). */
+        public ReportMeta(String source, String category, String appVersion, String screenSize,
+                          String tabKey, String autoContextJson, String linkedReference) {
+            this(source, category, appVersion, screenSize, tabKey, autoContextJson, linkedReference, null, null);
+        }
+    }
     public static final ReportMeta META_LOGIN = new ReportMeta("LOGIN", null, null, null, null, null, null);
 
     /** Public "sorun bildir" akışından kalıcı kayıt (resimlerle) — kaynak LOGIN. Geriye dönük imza. */
@@ -91,6 +101,8 @@ public class LoginIssueService {
             r.setTabKey(trimTo(meta.tabKey(), 50));
             r.setAutoContextJson(blankToNull(meta.autoContextJson()));
             r.setLinkedReference(trimTo(meta.linkedReference(), 30));
+            r.setImpacts(blankToNull(meta.impacts()));
+            r.setImpactOther(blankToNull(meta.impactOther()));
         }
         LoginIssueReport saved = reportRepo.save(r);
         if (images != null) {
@@ -257,11 +269,72 @@ public class LoginIssueService {
 
     /** Geçerli kaynaklar — dışarıdan gelen filtre değeri bu kümede değilse yok sayılır. */
     public static final Set<String> SOURCES = Set.of("LOGIN", "CLIENT_ERROR", "USER_REPORT");
-    /** Kullanıcı önem algısı seçenekleri (USER_REPORT). */
-    public static final Set<String> CATEGORIES = Set.of("BLOCKER", "ANNOYANCE", "SUGGESTION");
+    /**
+     * Kullanıcı önem algısı seçenekleri (USER_REPORT) + talep türü {@code DOMAIN_TRANSFER} (2026-09-28): envanterde
+     * başka ekipte kayıtlı alan adının aktarım talebi — mükerrer kayıt 409'undaki "Aktarım talebi oluştur" bu türle
+     * gönderir; Sorun Bildirimleri ekranı bu türe göre süzülebilir.
+     */
+    public static final Set<String> CATEGORIES = Set.of("BLOCKER", "ANNOYANCE", "SUGGESTION", "DOMAIN_TRANSFER");
+
+    /**
+     * "Ne yaşıyorsunuz?" etki kodları (2026-09-28) — KANONİK sıra (en sık görülenden). Önemden ayrı ve çoklu seçilir;
+     * arayüz etiketleri {@code issue.impact.<KOD>}, e-posta etiketleri {@code EmailNotificationService.labelForImpact}.
+     */
+    public static final List<String> IMPACTS = List.of("LOGIN", "PAGE_NOT_LOADING", "SLOW", "WRONG_DATA", "SAVE_ERROR",
+            "NO_ALERTS", "FALSE_ALERTS", "ACCESS", "MOBILE", "REPORT_EXPORT", "FEATURE_REQUEST", "OTHER");
+    /** "Diğer" serbest metninin üst sınırı. */
+    public static final int IMPACT_OTHER_MAX = 200;
+
+    /**
+     * İstemcinin etki listesini doğrular ve saklama biçimine çevirir: yalnız {@link #IMPACTS} kodları (bilinmeyen kod
+     * → IllegalArgumentException = 400), tekilleştirilmiş, KANONİK sırada, virgülle birleşik. Yok / boş → null.
+     */
+    public static String normalizeImpacts(Object raw) {
+        if (raw == null) return null;
+        if (!(raw instanceof java.util.Collection<?> list) || list.size() > IMPACTS.size() * 2) {
+            throw new IllegalArgumentException("Geçersiz etki değeri");
+        }
+        Set<String> chosen = new java.util.HashSet<>();
+        for (Object o : list) {
+            String code = o == null ? "" : o.toString().trim().toUpperCase(java.util.Locale.ROOT);
+            if (!IMPACTS.contains(code)) throw new IllegalArgumentException("Geçersiz etki değeri");
+            chosen.add(code);
+        }
+        if (chosen.isEmpty()) return null;
+        return String.join(",", IMPACTS.stream().filter(chosen::contains).toList());
+    }
+
+    /**
+     * "Diğer" metni — YALNIZ etkilerde OTHER varsa saklanır. Kontrol ve biçim (görünmez / yön değiştiren) karakterleri
+     * boşluğa çevrilir, ardışık boşluk sadeleşir; {@link #IMPACT_OTHER_MAX} aşılırsa 400.
+     */
+    public static String sanitizeImpactOther(Object raw, String impactsCsv) {
+        if (raw == null || !impactList(impactsCsv).contains("OTHER")) return null;
+        StringBuilder sb = new StringBuilder();
+        for (char c : raw.toString().toCharArray()) {
+            sb.append(Character.isISOControl(c) || Character.getType(c) == Character.FORMAT ? ' ' : c);
+        }
+        String s = sb.toString().trim().replaceAll(" {2,}", " ");
+        if (s.isEmpty()) return null;
+        if (s.length() > IMPACT_OTHER_MAX) throw new IllegalArgumentException("Alan uzunluk sınırı aşıldı");
+        return s;
+    }
+
+    /** Saklanan CSV → kod listesi (yanıtlar için; bilinmeyen kalıntı kod düşer); null → boş liste. */
+    public static List<String> impactList(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        return java.util.Arrays.stream(csv.split(",")).map(String::trim).filter(IMPACTS::contains).toList();
+    }
 
     @Transactional(readOnly = true)
     public Page<LoginIssueReport> list(String status, String source, String category,
+                                       String q, String since, String until, int page, int size) {
+        return list(status, source, category, null, q, since, until, page, size);
+    }
+
+    /** Etki süzgeçli liste (2026-09-28): {@code impact} tek kod — kaydın etki kümesinde olan (geçersiz kod → yok sayılır). */
+    @Transactional(readOnly = true)
+    public Page<LoginIssueReport> list(String status, String source, String category, String impact,
                                        String q, String since, String until, int page, int size) {
         // NOT: Set.of(...).contains(null) NPE atar → önce null kontrolü (status yoksa "tümü").
         String st = (status != null && STATUSES.contains(status)) ? status : null;
@@ -270,7 +343,9 @@ public class LoginIssueService {
         // q → "%küçükharf%" (message + errorText + username LIKE); boş → null (filtre kapalı). IncidentService deseni.
         String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
         Pageable pageable = PageRequest.of(Math.max(0, page), clampSize(size));
-        return reportRepo.findFiltered(st, src, cat, like, blankToNull(since), blankToNull(until), pageable);
+        // Etki CSV'sinde TAM kod eşleşmesi: iki uca virgül eklenmiş kümede ",KOD," aranır (SLOW ≠ SLOWNESS).
+        String imp = (impact != null && IMPACTS.contains(impact)) ? "%," + impact + ",%" : null;
+        return reportRepo.findFiltered(st, src, cat, imp, like, blankToNull(since), blankToNull(until), pageable);
     }
 
     @Transactional(readOnly = true)

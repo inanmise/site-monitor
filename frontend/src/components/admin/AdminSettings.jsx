@@ -269,7 +269,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'loginanomaly' && <LoginAnomalySettings />}
           {active === 'ldap' && <LdapSettings />}
           {active === 'domaindiag' && <DomainDiagnostics />}
-          {active === 'retention' && <RetentionSettings />}
+          {active === 'retention' && <RetentionSettings readOnly={!globalAdmin} />}
           {active === 'database' && <DatabaseInfo />}
           {active === 'secrets' && <SecretTools />}
           </>}

@@ -671,7 +671,9 @@ public class NocNotificationService {
         if (base == null || base.isEmpty() || row == null) return null;
         if (type == NocType.SSL) {
             String tab = EscalationService.TYPE_ACCESSIBILITY.equals(alertType) ? "status" : type.tab;
-            return base + "/?tab=" + tab + "&domain=" + URLEncoder.encode(row.name(), StandardCharsets.UTF_8);
+            // Sertifika uyarısı: open=cert → Pano'da alanın sertifika penceresi açılır (7/24 Kapsamı satırıyla aynı hedef).
+            return base + "/?tab=" + tab + "&domain=" + URLEncoder.encode(row.name(), StandardCharsets.UTF_8)
+                    + ("dashboard".equals(tab) ? "&open=cert" : "");
         }
         return base + "/?tab=" + type.tab + "&monitor=" + row.id();
     }

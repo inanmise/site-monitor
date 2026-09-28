@@ -1,8 +1,13 @@
 import { useId, useState } from 'react'
-import { ChevronDown, CheckCircle2, ShieldCheck, OctagonAlert, Frown, Lightbulb, Info, X } from 'lucide-react'
+import { ChevronDown, CheckCircle2, ShieldCheck, OctagonAlert, Frown, Lightbulb, Info, X, Check } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import CopyableRef from '../../ui/CopyableRef.jsx'
+import Field from '../../ui/Field.jsx'
+import { IMPACTS, IMPACT_OTHER_MAX } from '../issuesModel.js'
+import { IMPACT_ICONS } from '../impactIcons.js'
 import { Button } from '@/components/shadcn/button'
+import { Input } from '@/components/shadcn/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
 import { FieldSet, FieldLegend, FieldDescription, FieldLabel, Field as ShField, FieldContent, FieldTitle } from '@/components/shadcn/field'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -44,12 +49,14 @@ const CATS = [
 ]
 
 /**
- * Önem — üç seçim kartı (telefonda alt alta, geniş ekranda üç sütun). Seçim opsiyoneldir: seçiliyken
- * "Seçimi temizle" düğmesi çıkar (radyo kendiliğinden boşaltılamaz). `value` '' = belirtilmedi.
+ * Önem ("Ne kadar etkiliyor?") — KOMPAKT tekli seçim (2026-09-28): üç çip (ikon + başlık + radyo), telefonda alt alta
+ * (≥40 px), geniş ekranda tek satır; SEÇİLENİN açıklaması altta görünür metin (ipucuna saklanmaz). Seçim opsiyoneldir:
+ * seçiliyken "Seçimi temizle" düğmesi çıkar (radyo kendiliğinden boşaltılamaz). `value` '' = belirtilmedi.
  */
 export function CategoryCards({ value, onChange, disabled = false }) {
   const t = useT()
   const base = useId()
+  const selected = CATS.find((c) => c.value === value)
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <RadioGroup value={value || ''} onValueChange={onChange} disabled={disabled} aria-label={t('issue.category')}
@@ -58,22 +65,58 @@ export function CategoryCards({ value, onChange, disabled = false }) {
           const id = `${base}-${c.value}`
           return (
             <FieldLabel key={c.value} htmlFor={id} className="cursor-pointer">
-              <ShField orientation="horizontal" className="items-start gap-3 p-3!">
-                <c.Icon aria-hidden="true" className={cn('mt-0.5 size-5 shrink-0', c.ink)} />
-                <FieldContent className="gap-0.5">
+              <ShField orientation="horizontal" className="min-h-10 items-center gap-2 px-3! py-2!">
+                <c.Icon aria-hidden="true" className={cn('size-4 shrink-0', c.ink)} />
+                <FieldContent className="gap-0">
                   <FieldTitle className="text-sm">{t(c.title)}</FieldTitle>
-                  <FieldDescription className="text-xs leading-snug">{t(c.desc)}</FieldDescription>
                 </FieldContent>
-                <RadioGroupItem value={c.value} id={id} className="mt-0.5" />
+                <RadioGroupItem value={c.value} id={id} />
               </ShField>
             </FieldLabel>
           )
         })}
       </RadioGroup>
+      {selected && <FieldDescription data-slot="issue-category-desc" className="m-0 text-xs">{t(selected.desc)}</FieldDescription>}
       {value && (
         <Button type="button" variant="link" size="xs" className="h-auto self-start px-0 text-muted-foreground" onClick={() => onChange('')} disabled={disabled}>
           <X aria-hidden="true" />{t('irf.catClear')}
         </Button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * "Ne yaşıyorsunuz?" — ÇOKLU seçim çipleri (2026-09-28): en sık görülen 12 durum (ikon + tam cümle), shadcn ToggleGroup
+ * `type="multiple"` (her çip `aria-pressed`). Telefonda tek sütun tam genişlik (≥40 px dokunma), sm+ iki sütun. Seçim
+ * kanonik sırada döner (IMPACTS). "Diğer" seçilince kısa serbest metin (≤200, sunucuyla aynı sınır).
+ */
+export function ImpactPicker({ value = [], onChange, other = '', onOther, disabled = false }) {
+  const t = useT()
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <ToggleGroup type="multiple" variant="outline" spacing={2} value={value} disabled={disabled}
+        onValueChange={(v) => onChange(IMPACTS.filter((c) => v.includes(c)))} role="group" aria-label={t('irf.impactsLabel')}
+        data-slot="issue-impact-picker" className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
+        {IMPACTS.map((c) => {
+          const Icon = IMPACT_ICONS[c]
+          return (
+            <ToggleGroupItem key={c} value={c} data-impact={c}
+              className="group/impact h-auto min-h-10 w-full justify-start gap-2 py-2 text-left font-normal whitespace-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-foreground">
+              <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-data-[state=on]/impact:text-primary" />
+              <span className="min-w-0 flex-1">{t('issue.impact.' + c)}</span>
+              <Check aria-hidden="true" className="size-4 shrink-0 text-primary opacity-0 group-data-[state=on]/impact:opacity-100" />
+            </ToggleGroupItem>
+          )
+        })}
+      </ToggleGroup>
+      {value.includes('OTHER') && (
+        <Field label={t('irf.impactOtherLabel')} className="mb-0">
+          {({ id, describedBy }) => (
+            <Input id={id} aria-describedby={describedBy} value={other} maxLength={IMPACT_OTHER_MAX} disabled={disabled}
+              placeholder={t('irf.impactOtherPh')} onChange={(e) => onOther(e.target.value)} />
+          )}
+        </Field>
       )}
     </div>
   )
