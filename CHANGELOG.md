@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.90.0] — 2026-09-28
+
 ### Added
 - **Alarm Geçmişi — tarih aralığı kipi:** "Tümü" görünümünde tarih süzgecine "Aralıkta açılanlar" (varsayılan) ya da
   "Aralıkta aktif olanlar" (aralığın herhangi bir anında açık olan alarmlar, `range=active`) seçimi eklendi. Etkin kip
@@ -1633,7 +1635,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.89.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.90.0...HEAD
+[20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0
 [20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0
 [20.88.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.88.0
 [20.87.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.87.0
