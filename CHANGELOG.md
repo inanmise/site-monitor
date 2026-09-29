@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.91.0] — 2026-09-29
+
 ### Changed
 - ⚠ Davranış — **Elle kontrol alarm tetiklemez:** "Şimdi kontrol et" (tekil ve toplu, tüm izleme türleri) artık alarm
   açmaz; eskalasyon, yeniden uyarı ve alarm fırtınası tetiklemez; alan adı eşik hatırlatması göndermez ve sentetik
@@ -1724,7 +1726,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.90.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.91.0...HEAD
+[20.91.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.91.0
 [20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0
 [20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0
 [20.88.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.88.0
