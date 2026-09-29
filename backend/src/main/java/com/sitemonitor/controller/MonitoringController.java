@@ -929,6 +929,21 @@ public class MonitoringController {
         return null;
     }
 
+    /**
+     * Liste satırlarına {@code can_check} (2026-09-29): bu oturum bu izlemeyi ELLE KONTROL edebilir mi — tetik ucunun
+     * ({@code POST …/{id}/check}) kapısıyla AYNI kural ({@link SessionScope#canOperateTeam}, satırın ETKİN takımı
+     * {@code team_id}). Arayüz toplu "Şimdi Kontrol Et (N)" sayacını ve kuyruğunu buna göre kurar: kapsamlı yönetici (AD
+     * ADMIN, rol dizesi "ADMIN" ama takım kapsamlı) görebildiği ama çalıştıramadığı satırı (ör. UG takımı olarak gördüğü
+     * envanter-türevi Port/DNS) sayıya katmaz ve 403 yemez. Kural yalnız burada; arayüz rol dizesinden türetmez.
+     */
+    private static List<Map<String, Object>> withCheckFlag(HttpSession session, List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            Object t = row.get("team_id");
+            row.put("can_check", SessionScope.canOperateTeam(session, t instanceof Number n ? n.longValue() : null));
+        }
+        return rows;
+    }
+
     /** Serbest-form izleme (keyword/ping) üzerinde yazma/çalıştırma kapsamı:
      *  global admin → her takım; TEAM_ADMIN → yönetim kapsamındaki takımlar; USER → kendi takımı. */
     private boolean canOperateTeam(HttpSession session, Long teamId) {
@@ -1014,10 +1029,30 @@ public class MonitoringController {
      * koşuyor, açık olay alarm geçmişi/olaylar/haftalık kesinti rollup'ında süresi büyüyerek
      * SONSUZA kadar açık kalıyordu.
      */
-    private void closeAlertsOnPause(Boolean wasActive, Object nextActive, String key, Set<String> types) {
+    private void closeAlertsOnPause(Boolean wasActive, Object nextActive, String key, Set<String> types,
+                                    Map<String, Object> ownerCtx) {
         if (Boolean.TRUE.equals(wasActive) && Boolean.FALSE.equals(nextActive) && key != null) {
-            escalationService.resolveOpenAlertsSilently(key, types, "Sistem (izleme duraklatıldı)");
+            escalationService.resolveOpenAlertsSilently(key, types, "Sistem (izleme duraklatıldı)", ownerCtx);
         }
+    }
+
+    /**
+     * D-b1 (2026-09-29): izlemenin sahiplik bağlamı — sweep kalemlerinin yazdığıyla aynı ({@code monitor_id}; bağımsız
+     * izlemede {@code team_id} / {@code standalone}). Silme / duraklatma / anahtar değişikliği yalnız BU izlemenin olayını
+     * kapatır ({@link EscalationService#resolveOpenAlertsSilently(String, java.util.Collection, String, Map)}); aynı
+     * anahtardaki başka takımın olayı açık kalır.
+     */
+    private static Map<String, Object> ownerCtx(Long monitorId, Long teamId, Boolean standalone) {
+        Map<String, Object> c = new java.util.HashMap<>();
+        if (monitorId != null) c.put("monitor_id", monitorId);
+        if (teamId != null) c.put("team_id", teamId);
+        if (Boolean.TRUE.equals(standalone)) c.put("standalone", true);
+        return c;
+    }
+
+    /** Port/DNS: takım damgası YALNIZ bağımsız izlemede (SchedulerService.alarmTeamOf ile aynı kural). */
+    private static Map<String, Object> ownerCtxDual(Long monitorId, Boolean standalone, Long teamId) {
+        return ownerCtx(monitorId, Boolean.TRUE.equals(standalone) ? teamId : null, standalone);
     }
 
     /** Oluştururken hedef takımı çözer: global admin istediğini (veya takımsız) atar; diğerleri
@@ -1701,7 +1736,7 @@ public class MonitoringController {
             PortCheck latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost())));
         }
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/port")
@@ -1798,7 +1833,7 @@ public class MonitoringController {
                 if (!blank(body.get("sendData"))) requireAdmin(session);   // ham payload → yalnız admin (iç-servis SSRF payload'u)
                 m.setSendData(blank(body.get("sendData")) ? null : body.get("sendData").toString());
             }
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PORT_DOWN, EscalationService.TYPE_PORT_SLOW), ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
@@ -1901,10 +1936,10 @@ public class MonitoringController {
             check.setCheckedAt(now);
             portCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
-            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
-            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
-            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
+            // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
+            // kuralından geçirir. Toplu "Şimdi Kontrol Et" eskiden bu yolla teyit zinciri + alarm + kuruluş geneli fırtına
+            // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             schedulerService.evaluatePortNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichPort(m, check, certificateService.domainTeamNameMap(), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PORT_DOWN).orElse(null)));
@@ -2160,7 +2195,7 @@ public class MonitoringController {
             DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain())));
         }
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     /** DNS sayfasından STANDALONE (sertifikadan bağımsız) monitör oluşturur. monitoring.crud yetkili
@@ -2286,12 +2321,13 @@ public class MonitoringController {
                     if (clash != null) return badRequest(dnsDuplicateMsg(clash, "Bu (domain, kayıt tipi) için zaten bir monitör var"));
                     // Domain DEĞİŞTİ → eski domain'in açık DNS alarmlarını sessizce kapat: aksi halde recovery yeni
                     // domain'e döner, eski-domain alarmı öksüz kalır ve asla resolve edilmez (takılı alarm).
-                    escalationService.resolveOpenAlertsSilently(m.getDomain(), DNS_ALERT_TYPES, "Sistem (domain değişti)");
+                    escalationService.resolveOpenAlertsSilently(m.getDomain(), DNS_ALERT_TYPES, "Sistem (domain değişti)",
+                            ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));   // D-b1: yalnız bu izlemenin olayı
                 }
                 m.setDomain(newDomain);
             }
             if (body.get("recordType")      != null) m.setRecordType(((String) body.get("recordType")).toUpperCase());
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), DNS_ALERT_TYPES);
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), DNS_ALERT_TYPES, ownerCtxDual(m.getId(), m.getStandalone(), m.getTeamId()));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
@@ -2452,18 +2488,33 @@ public class MonitoringController {
             record.setMonitorId(m.getId());
             record.setRecordType(m.getRecordType());
             record.setValue(valueStr);
-            record.setChanged(kind == DnsCheckerService.ChangeKind.CHANGED);
-            record.setRotated(kind == DnsCheckerService.ChangeKind.ROTATED);
+            // ELLE kayıt DEĞİŞİKLİK OLAYI SAYILMAZ (2026-09-29, D-9): değişiklik olayı (ve DNS_CHANGED alarmı) zamanlanmış
+            // turun işidir — elle kayıt changed/rotated işaretleseydi aynı değişiklik geçmişte, "Sadece Değişenler"
+            // süzgecinde, histogramda ve haftalık sayımda İKİ kez görünürdü. Görülen fark previous_value'da kalır.
+            if (kind != DnsCheckerService.ChangeKind.NONE)
+                log.info("Elle DNS kontrolü değişiklik gördü (olay zamanlanmış turda kaydedilir): {} {} — '{}' → '{}'",
+                        m.getRecordType(), m.getDomain(), prevValue, valueStr);
+            record.setChanged(false);
+            record.setRotated(false);
             record.setPreviousValue(prevValue);
             record.setCheckedAt(now);
             record.setTtl(r.get("ttl") instanceof Number n ? n.longValue() : null);
             record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
+            // ELLE kayıt (2026-09-29): geçmişte görünür, ama zamanlanmış değişiklik tespitinin TABANI olmaz — aksi hâlde
+            // bu kontrolün gördüğü yeni değer sweep'in DNS_CHANGED algısını kalıcı olarak yutardı.
+            record.setManual(true);
             dnsRecordRepo.save(record);
             auditService.recordAction("MONITOR_TRIGGER", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // ...ve ARDINDAN zamanlayiciyla AYNI degerlendirme hatti ASENKRON baslar
-            // (birincil cozumleme-hatasi alarmi: dogrulama denemeleri + kurtarma sayaci).
+            // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
+            // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
+            // kuralından geçirir. Toplu "Şimdi Kontrol Et" eskiden bu yolla teyit zinciri + alarm + kuruluş geneli fırtına
+            // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             schedulerService.evaluateDnsNow(m, r);   // AYNI sonuç — ikinci çözümleme YOK
-            return ok(enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain())));
+            Map<String, Object> out = enrichDns(m, record, certificateService.domainTeamNameMap(), teamNameMap(), openDnsAlarm(m.getDomain()));
+            // Yanıt bu kontrolün GÖRDÜĞÜNÜ söyler (koşum tablosunun "Değişti" sütunu); kalıcı satır olay sayılmaz (D-9).
+            out.put("changed", kind == DnsCheckerService.ChangeKind.CHANGED);
+            out.put("rotated", kind == DnsCheckerService.ChangeKind.ROTATED);
+            return ok(out);
         }).orElse(notFound("DNS monitor not found"));
     }
 
@@ -2573,7 +2624,7 @@ public class MonitoringController {
                 EscalationService.TYPE_KEYWORD);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()), admin)).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/keyword")
@@ -2658,7 +2709,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW, EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_KEYWORD, EscalationService.TYPE_KEYWORD_SLOW, EscalationService.TYPE_KEYWORD_SSL, EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
@@ -2691,7 +2742,8 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
-                    Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)");
+                    Set.of(EscalationService.TYPE_KEYWORD), "Sistem (izleme silindi)",
+                    ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1: yalnız bu izlemenin olayı
             keywordMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             activityLog.recordLifecycle(ActivityLogService.KEYWORD, m.getId(), m.getName(),
                     m.getUrl(), m.getTeamId(), "DELETED", actor(session));
@@ -2759,8 +2811,10 @@ public class MonitoringController {
             res.setCheckedAt(ISO.format(Instant.now()));
             keywordResultRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // ...ve ARDINDAN zamanlayiciyla AYNI degerlendirme hatti ASENKRON baslar
-            // (dogrulama denemeleri + kurtarma sayaci).
+            // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
+            // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
+            // kuralından geçirir. Toplu "Şimdi Kontrol Et" eskiden bu yolla teyit zinciri + alarm + kuruluş geneli fırtına
+            // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             schedulerService.evaluateKeywordNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichKeyword(m, res, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_KEYWORD).orElse(null),
@@ -3139,7 +3193,7 @@ public class MonitoringController {
                 EscalationService.TYPE_HTTP_DOWN);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichHttp(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/http")
@@ -3210,7 +3264,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
@@ -3242,7 +3296,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             httpMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.HTTP, m.getId(), m.getName(),
                     m.getUrl(), m.getTeamId(), "DELETED", actor(session));
@@ -3303,10 +3357,10 @@ public class MonitoringController {
             res.setCheckedAt(ISO.format(Instant.now()));
             httpCheckRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
-            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
-            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
-            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
+            // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
+            // kuralından geçirir. Toplu "Şimdi Kontrol Et" eskiden bu yolla teyit zinciri + alarm + kuruluş geneli fırtına
+            // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             // Senkron beklenemez: doğrulama varsayılan 3 × 30 sn sürer.
             schedulerService.evaluateHttpNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichHttp(m, res, teamNameMap(),
@@ -3513,7 +3567,7 @@ public class MonitoringController {
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPage(m, latest.get(m.getId()), teams,
                         down.getOrDefault(m.getUrl(), integ.get(m.getUrl())))).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/page")
@@ -3574,7 +3628,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
@@ -3606,7 +3660,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pageMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.PAGE, m.getId(), m.getName(),
                     m.getUrl(), m.getTeamId(), "DELETED", actor(session));
@@ -3684,9 +3738,8 @@ public class MonitoringController {
             pageManualTriggerAt.put(id, nowMs);
             Map<String, Object> pageResult = schedulerService.triggerPageCheck(m);   // tam kontrol + persist
             auditService.recordAction("MONITOR_TRIGGER", session, "PAGE_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
-            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
-            // başlatıyor ve iki permit yiyordu.
+            // Elle değerlendirme (manual=true — 2026-09-29: alarm AÇMAZ, yalnız kapanış uzlaştırması) aynı sonuçla
+            // yapılır; ayrı bir kontrol koşulmaz (sentetikte triggerScriptedCheckAsync içinde — ikinci k6 koşumu YOK).
             schedulerService.evaluatePageNow(m, pageResult);   // AYNI sonuç — ikinci TAM TARAMA yok
             return ok(enrichPage(m, pageCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGE_DOWN)
@@ -3777,7 +3830,7 @@ public class MonitoringController {
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPageSpeed(m, latest.get(m.getId()), teams,
                         down.getOrDefault(m.getUrl(), slow.get(m.getUrl())), admin)).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/pagespeed")
@@ -3830,7 +3883,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))    m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -3860,7 +3913,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
                     Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             // Ölçüm serisi ve kaynak kırılımı da gider — yoksa aynı id yeniden kullanıldığında
             // yeni izlemeye eski izlemenin geçmişi yapışırdı.
             pageSpeedResourceRepo.deleteByMonitorId(m.getId());
@@ -3938,9 +3991,8 @@ public class MonitoringController {
             pageSpeedManualTriggerAt.put(id, nowMs);
             Map<String, Object> speedResult = schedulerService.triggerPageSpeedCheck(m);   // tam ölçüm + persist
             auditService.recordAction("MONITOR_TRIGGER", session, "PAGESPEED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
-            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
-            // başlatıyor ve iki permit yiyordu.
+            // Elle değerlendirme (manual=true — 2026-09-29: alarm AÇMAZ, yalnız kapanış uzlaştırması) aynı sonuçla
+            // yapılır; ayrı bir kontrol koşulmaz (sentetikte triggerScriptedCheckAsync içinde — ikinci k6 koşumu YOK).
             schedulerService.evaluatePageSpeedNow(m, speedResult);   // AYNI sonuç — ikinci ölçüm yok
             return ok(enrichPageSpeed(m, pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openPageSpeedAlarm(m.getUrl()), SessionScope.isGlobalAdmin(session)));
@@ -4382,7 +4434,7 @@ public class MonitoringController {
                     return item;
                 }).toList();
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("monitors", result);
+        out.put("monitors", withCheckFlag(session, result));
         out.put("k6_available", scriptedChecker.isAvailable());
         out.put("k6_version", scriptedChecker.version());
         // Vekilin ETKİN durumu — "AUTO seçtim, demek ki vekilden geçiyor" varsayımı yanlış olabiliyor:
@@ -4492,7 +4544,7 @@ public class MonitoringController {
                     m.setDisabledReason(null);
                     m.setDisabledAt(null);
                 }
-                closeAlertsOnPause(m.getActive(), body.get("active"), m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW));
+                closeAlertsOnPause(m.getActive(), body.get("active"), m.getName(), Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW), ownerCtx(m.getId(), m.getTeamId(), null));
                 m.setActive(b);
             }
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
@@ -4714,7 +4766,7 @@ public class MonitoringController {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getName(),
                     Set.of(EscalationService.TYPE_SCRIPTED_FAIL, EscalationService.TYPE_SCRIPTED_SLOW),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             scriptedMonitorRepo.delete(m);
             // Taslaklar monitörle birlikte düşer (öksüz taslak "devam et" şeridinde hayalet üretirdi).
             // Sürüm geçmişi BİLİNÇLİ olarak silinmez: silinen bir monitörün script'i denetim değeri
@@ -4792,9 +4844,8 @@ public class MonitoringController {
             }
             scriptedManualTriggerAt.put(id, nowMs);
             auditService.recordAction("MONITOR_TRIGGER", session, "SCRIPTED_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // Değerlendirme (doğrulama denemeleri → alarm) koşumun KENDİ içinde yapılır
-            // (triggerScriptedCheckAsync): ayrı bir evaluate* çağrısı ikinci bir k6 koşumu
-            // başlatıyor ve iki permit yiyordu.
+            // Elle değerlendirme (manual=true — 2026-09-29: alarm AÇMAZ, yalnız kapanış uzlaştırması) aynı sonuçla
+            // yapılır; ayrı bir kontrol koşulmaz (sentetikte triggerScriptedCheckAsync içinde — ikinci k6 koşumu YOK).
 
             // Kontrol istek thread'inin DIŞINDA koşar; burada yalnız SINIRLI süre beklenir.
             // Senaryo kontrolü script timeout'u kadar sürebiliyor (tavan 180 sn) ve senkron
@@ -4802,7 +4853,9 @@ public class MonitoringController {
             // koşup kaydediliyor. Hızlı script'lerde (çoğunluk) davranış aynı kalsın diye tamamen
             // asenkron da yapılmadı — kısa bekleme sonucu yine anında döndürür.
             var fut = schedulerService.triggerScriptedCheckAsync(m);
-            int waitSecs = Math.max(1, appSettings.getInt("site.monitor.scripted.manual-wait-seconds", 25));
+            // Anahtar checker ile ORTAK: elle koşumun sıra beklemesi bundan kısa tutulur → "yürütülmedi" buraya yetişir (O-b3).
+            int waitSecs = Math.max(1, appSettings.getInt(com.sitemonitor.service.ScriptedCheckerService.MANUAL_WAIT_KEY,
+                    com.sitemonitor.service.ScriptedCheckerService.MANUAL_WAIT_DEFAULT_SEC));
             boolean queued = false;
             String skippedReason = null;
             try {
@@ -4824,7 +4877,13 @@ public class MonitoringController {
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
             if (queued) out.put("queued", true);
-            if (skippedReason != null) { out.put("skipped", true); out.put("skipped_reason", skippedReason); }
+            if (skippedReason != null) {
+                out.put("skipped", true);
+                out.put("skipped_reason", skippedReason);
+                // Elle k6 kotası doluysa (D-10) arayüz sebebi kendi dilinde söyler (sunucu metni yalnız Türkçe yedek).
+                if (com.sitemonitor.service.ScriptedCheckerService.MANUAL_POOL_BUSY.equals(skippedReason))
+                    out.put("skipped_code", "MANUAL_POOL_BUSY");
+            }
             return ok(out);
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
@@ -5300,7 +5359,7 @@ public class MonitoringController {
         List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
                 .filter(m -> SessionScope.canView(session, m.getTeamId()))
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/domain")
@@ -5358,7 +5417,7 @@ public class MonitoringController {
             if (body.containsKey("teamId")) m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getDomain(), Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN, EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED, EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, EscalationService.TYPE_DOMAINMON_BLACKLIST), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyDomainFields(m, body);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -5397,7 +5456,7 @@ public class MonitoringController {
             escalationService.resolveOpenAlertsSilently(m.getDomain(),
                     Set.of(EscalationService.TYPE_DOMAINMON_EXPIRY, EscalationService.TYPE_DOMAINMON_UNKNOWN,
                            EscalationService.TYPE_DOMAINMON_STATUS, EscalationService.TYPE_DOMAINMON_CHANGED),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             if (domainReminderRepo != null) domainReminderRepo.deleteByMonitorId(m.getId());   // hatırlatma izleri de gider (2026-09-22)
             domainMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.DOMAIN, m.getId(), m.getName(),
@@ -5544,11 +5603,12 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
-            Map<String, Object> r = domainChecker.check(m);   // DomainCheck persist eder
-            if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler (2026-09-22, E)
+            Map<String, Object> r = domainChecker.checkManual(m);   // DomainCheck persist eder (manual=true — zamanlanmış değişiklik tabanı olmaz)
+            // Eşik HATIRLATMASI elle kontrolde DEĞERLENDİRİLMEZ (2026-09-29, 2026-09-22 E kararının yerine): elle kontrol
+            // yalnız gözlemdir, e-posta/push üretmez. Hatırlatmayı günlük ve kritik ikinci zamanlanmış kontrol gönderir.
             if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır (H)
-            // Manuel kontrol de alarm üretsin/çözsün (sweep'in günlük checkDue geciktirmesini bekleme):
-            // WARNING/CRITICAL/UNKNOWN görülürse alarm + e-posta anında; düzeldiyse açık alarm kapanır.
+            // Elle kontrol ALARM AÇMAZ (2026-09-29): yalnız kapanış uzlaştırması — yenilenen alan adının açık alarmı
+            // kapanabilir; WARNING/CRITICAL/UNKNOWN alarmı sonraki zamanlanmış turun işidir (evaluateDomainAlarmsNow).
             try { schedulerService.evaluateDomainAlarmsNow(m, r); }
             catch (Exception e) { log.warn("Manuel domain alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
             auditService.recordAction("MONITOR_TRIGGER", session, "DOMAIN_MONITOR", String.valueOf(m.getId()), m.getName(), null);
@@ -5573,7 +5633,7 @@ public class MonitoringController {
                 // degerlendirmesi tetikler — yazma/calistirma yetkisi ister.
                 if (!canOperateTeam(session, m.getTeamId()))
                     return forbidden("Bu izleme üzerinde canlı sorgu yetkiniz yok");
-                Map<String, Object> r = domainChecker.check(m);   // taze RDAP/WHOIS + persist
+                Map<String, Object> r = domainChecker.checkManual(m);   // taze RDAP/WHOIS + persist (manual=true, 2026-09-29)
                 try { schedulerService.evaluateDomainAlarmsNow(m, r); }
                 catch (Exception e) { log.warn("Registration live alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
             }
@@ -5735,7 +5795,7 @@ public class MonitoringController {
                 EscalationService.TYPE_PING_DOWN);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPing(m, latest.get(m.getId()), teams, alarms.get(m.getHost()))).toList();
-        return ok(result);
+        return ok(withCheckFlag(session, result));
     }
 
     @PostMapping("/ping")
@@ -5805,7 +5865,7 @@ public class MonitoringController {
                     // ile arar, "domain=eskiHost" alarmı öksüz kalır ve asla resolve edilmez (BUG: takılı PING_DOWN).
                     escalationService.resolveOpenAlertsSilently(m.getHost(),
                             Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
-                            "Sistem (host değişti)");
+                            "Sistem (host değişti)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
                 }
                 m.setHost(newHost);
             }
@@ -5816,7 +5876,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getHost(), Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.get("notifyEmail")   instanceof Boolean b) m.setNotifyEmail(b);
             if (body.get("notifyWebhook")   instanceof Boolean b) m.setNotifyWebhook(b);
@@ -5852,7 +5912,7 @@ public class MonitoringController {
             // Silme kaynaklı kapanma: açık alarmı sessizce resolved'a geçir (çözüldü maili YOK).
             escalationService.resolveOpenAlertsSilently(m.getHost(),
                     Set.of(EscalationService.TYPE_PING_DOWN, EscalationService.TYPE_PING_SLOW),
-                    "Sistem (izleme silindi)");
+                    "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             pingMonitorRepo.delete(m);   // hard delete — "Sil" listeden kaldırır ("Aktif" toggle ayrı)
             activityLog.recordLifecycle(ActivityLogService.PING, m.getId(), m.getName(),
                     m.getHost(), m.getTeamId(), "DELETED", actor(session));
@@ -5910,10 +5970,10 @@ public class MonitoringController {
             check.setCheckedAt(ISO.format(Instant.now()));
             pingCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
-            // ...ve ARDINDAN zamanlayıcıyla AYNI değerlendirme hattı ASENKRON başlar: hata
-            // doğrulama denemelerinden geçer, teyit edilirse alarm açılır; düzelme kurtarma
-            // sayacından geçer. Eskiden manuel çalıştırma tek kontrol yapıp bırakıyordu —
-            // ekranda "hata" görünüyor ama alarm hiç açılmıyordu (iki farklı gerçek).
+            // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
+            // ALARM AÇMAZ, eskalasyon / yeniden uyarı / fırtına tetiklemez — yalnız sağlıklı sonuç açık alarmı kapanış
+            // kuralından geçirir. Toplu "Şimdi Kontrol Et" eskiden bu yolla teyit zinciri + alarm + kuruluş geneli fırtına
+            // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             schedulerService.evaluatePingNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
             return ok(enrichPing(m, check, teamNameMap(),
                     alertEventRepo.findOpenAlert(m.getHost(), EscalationService.TYPE_PING_DOWN).orElse(null)));

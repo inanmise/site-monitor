@@ -15,9 +15,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * MANUEL "ÇALIŞTIR" BAĞLANTI KAPISI.
  *
- * <p>Manuel çalıştırma eskiden tek kontrol yapıp bırakıyordu: ekranda "hata" görünüyor ama alarm
- * hiç açılmıyordu — iki farklı gerçek. Artık dokuz izleme türünde de zamanlayıcıyla AYNI
- * değerlendirme hattına giriyor.
+ * <p>Manuel çalıştırma dokuz izleme türünde de zamanlayıcıyla AYNI kalem kurucusunu (ctx) paylaşarak
+ * değerlendirme hattına girer. 2026-09-29 ürün kararı: bu hat elle kontrolde {@code manual=true} ile çalışır ve
+ * ALARM AÇMAZ — yalnız sağlıklı sonuç açık alarmı kapanış kuralından geçirir (kapılar: {@code ManualCheckNoAlarmTest},
+ * {@code ManualCheckWiringTest}). Eskiden bu bağlantı alarm da açıyordu; toplu kontrol kuruluş geneli fırtına üretti.
  *
  * <p><b>Asıl risk kopyalamaydı:</b> her türün alarm bağlamı (ctx) sweep döngülerinin içinde
  * kuruluyordu. Manuel yol kendi ctx'ini kursaydı bir anahtar — {@code team_id} ya da
@@ -59,7 +60,7 @@ class ManualEvaluationWiringTest {
     }
 
     @Test
-    @DisplayName("her tetik ucu manuel değerlendirmeyi ÇAĞIRIR — yoksa alarm hiç açılmaz")
+    @DisplayName("her tetik ucu manuel değerlendirmeyi ÇAĞIRIR — yoksa sağlıklı elle kontrol açık alarmı kapatamaz")
     void allEntriesCalledFromController() throws Exception {
         String src = read(CONTROLLER);
         String sched = read(SCHEDULER);
@@ -104,6 +105,15 @@ class ManualEvaluationWiringTest {
             String body = src.substring(at, Math.min(src.length(), at + 1200));
             int end = body.indexOf("\n    }");
             if (end > 0) body = body.substring(0, end);
+            // Elle giriş İŞARETLİ bir iç yardımcıya devredebilir (2026-09-29: evaluateDomainAlarmsNow →
+            // evaluateDomainAlarms(m, r, true); zamanlanmış kritik ikinci kontrol aynı gövdeyi İŞARETSİZ kullanır).
+            // Kopya denetimi o yardımcının gövdesinde yapılır — devretmek kapıyı atlatmaz.
+            if (body.contains("evaluateDomainAlarms(m, r, true)")) {
+                int h = src.indexOf("private void evaluateDomainAlarms(");
+                body = h < 0 ? "" : src.substring(h, Math.min(src.length(), h + 1600));
+                int hEnd = body.indexOf("\n    }");
+                if (hEnd > 0) body = body.substring(0, hEnd);
+            }
             boolean reuses = body.contains("SweepItem(m, ") || body.contains("SweepItems(m, ")
                     || body.contains("dnsFailureSweepItem(") || body.contains("addDomainSweepItems(");
             if (body.contains("new MonitoringOutageService.SweepItem(") || !reuses) offenders.add(e);

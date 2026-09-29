@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Long> {
     List<DomainMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     List<DomainMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
     List<DomainMonitor> findByDomain(String domain);

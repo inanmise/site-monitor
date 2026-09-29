@@ -625,7 +625,8 @@ class SchedulerServiceTest {
 
         Map<String, Object> v = scheduler.pingSlowVerdict(pingMon(), 900L, null);
 
-        assertThat(v.get("status")).isEqualTo("up");
+        // D-7 (2026-09-29): sessiz = "skipped" (ne alarm ne kapanış); eskiden "up" açık yavaşlık alarmını kapatıyordu
+        assertThat(v.get("status")).isEqualTo("skipped");
         assertThat(v).doesNotContainKey("limit_ms");
     }
 
@@ -634,7 +635,7 @@ class SchedulerServiceTest {
     void pingSlow_noMeasurementStaysSilent() {
         Map<String, Object> v = scheduler.pingSlowVerdict(pingMon(), null, null);
 
-        assertThat(v.get("status")).isEqualTo("up");
+        assertThat(v.get("status")).isEqualTo("skipped");   // D-7: ölçüm yok = kanıt yok (alarm da kapanış da yok)
         // Taban cizgisi sorgusu hic kosmamali: olcum yokken kiyaslanacak bir sey de yok.
         verify(pingCheckRepo, never()).slowBaseline(anyLong(), anyString(), anyString());
     }
@@ -655,7 +656,7 @@ class SchedulerServiceTest {
         when(pingCheckRepo.slowBaseline(eq(7L), anyString(), anyString()))
                 .thenThrow(new RuntimeException("db kapali"));
 
-        assertThat(scheduler.pingSlowVerdict(pingMon(), 900L, null).get("status")).isEqualTo("up");
+        assertThat(scheduler.pingSlowVerdict(pingMon(), 900L, null).get("status")).isEqualTo("skipped");   // D-7
     }
 
     @Test
@@ -725,7 +726,7 @@ class SchedulerServiceTest {
         // 1) Başarılı sorgu + son başarılı kayıt farklı (ayrık) → CHANGED
         com.sitemonitor.model.DnsRecord prevOk = new com.sitemonitor.model.DnsRecord();
         prevOk.setValue("5.6.7.8");
-        when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(7L, ""))
+        when(dnsRecordRepo.findLatestScheduledSuccessful(7L))
                 .thenReturn(java.util.Optional.of(prevOk));
         when(dnsCheckerService.check("x.example.com", "A"))
                 .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4")));
@@ -760,8 +761,7 @@ class SchedulerServiceTest {
         verify(dnsRecordRepo).save(recCaptor.capture());
         assertThat(recCaptor.getValue().getChanged()).isFalse();
         // Başarısız sorguda son-başarılı-kayıt lookup'ı bile yapılmaz
-        verify(dnsRecordRepo, org.mockito.Mockito.never())
-                .findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(anyLong(), anyString());
+        verify(dnsRecordRepo, org.mockito.Mockito.never()).findLatestScheduledSuccessful(anyLong());
     }
 
     @Test
@@ -794,6 +794,48 @@ class SchedulerServiceTest {
     }
 
     @Test
+    @DisplayName("D-b2: DNS_SLOW / DNS_UNEXPECTED / DNS_INCONSISTENT / DNS_CHANGED kalemleri izleme kimliğini (monitor_id) taşır; "
+            + "yeniden ölçümde ad çözülemezse SLOW/UNEXPECTED 'skipped' (D-b4)")
+    @SuppressWarnings("unchecked")
+    void runDnsChecks_allItemsCarryMonitorId_andUnresolvableRecheckSkipped() {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(44L); m.setDomain("id.example.com"); m.setRecordType("A"); m.setStandalone(true); m.setTeamId(9L);
+        m.setExpectedValue("192.0.2.1"); m.setPropagationCheck(true); m.setSlowThresholdMs(100);
+        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        com.sitemonitor.model.DnsRecord prevOk = new com.sitemonitor.model.DnsRecord();
+        prevOk.setValue("192.0.2.1");
+        when(dnsRecordRepo.findLatestScheduledSuccessful(44L)).thenReturn(java.util.Optional.of(prevOk));
+        when(dnsCheckerService.check("id.example.com", "A"))
+                .thenReturn(Map.of("success", true, "values", List.of("198.51.100.7"), "response_ms", 900L));
+        when(dnsCheckerService.checkPropagation(eq("id.example.com"), eq("A"), anyList()))
+                .thenReturn(Map.of("inconsistent", true, "per_resolver", Map.of("8.8.8.8", "a", "1.1.1.1", "b")));
+
+        scheduler.runDnsChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> slow = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.DnsChange>> changes = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> unexp = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.SweepItem>> inc = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleDnsSweep(anyList(), slow.capture(), changes.capture(), unexp.capture(), inc.capture());
+        assertThat(slow.getValue().get(0).ctxExtra()).containsEntry("monitor_id", 44L);
+        assertThat(unexp.getValue().get(0).ctxExtra()).containsEntry("monitor_id", 44L);
+        assertThat(inc.getValue().get(0).ctxExtra()).containsEntry("monitor_id", 44L);
+        assertThat(changes.getValue().get(0).monitorId()).isEqualTo(44L);
+        assertThat(MonitoringOutageService.changeCtx(changes.getValue().get(0))).containsEntry("monitor_id", 44L);
+
+        when(dnsCheckerService.check("id.example.com", "A")).thenReturn(Map.of("success", false, "error", "SERVFAIL"));
+        assertThat(slow.getValue().get(0).recheck().get().get("status")).as("süre ölçülemedi ≠ hızlandı").isEqualTo("skipped");
+        assertThat(unexp.getValue().get(0).recheck().get().get("status")).as("değer ölçülemedi ≠ beklenene döndü").isEqualTo("skipped");
+        // D-c1: DNS_CHANGED teyidinde ad çözülemezse değişiklik "geçici" SAYILMAZ (tur tabanı ilerledi — iptal = kalıcı kayıp)
+        assertThat(changes.getValue().get(0).recheck().get().get("status"))
+                .as("çözülememek geri dönüş kanıtı değil").isEqualTo("down");
+        when(dnsCheckerService.check("id.example.com", "A"))
+                .thenReturn(Map.of("success", true, "values", List.of("192.0.2.1")));
+        assertThat(changes.getValue().get(0).recheck().get().get("status")).as("tabana döndü → geçici").isEqualTo("up");
+    }
+
+    @Test
     @DisplayName("O1/D8: bağımsız DNS monitörünün DEĞİŞİKLİĞİ DnsChange'e standalone işaretiyle çıkar; bağlamda işaret kalır — takımı BOŞ olsa da")
     void runDnsChecks_standaloneChange_carriesStandaloneMark() {
         when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
@@ -802,7 +844,7 @@ class SchedulerServiceTest {
         when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
         com.sitemonitor.model.DnsRecord prevOk = new com.sitemonitor.model.DnsRecord();
         prevOk.setValue("5.6.7.8");
-        when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(43L, "")).thenReturn(java.util.Optional.of(prevOk));
+        when(dnsRecordRepo.findLatestScheduledSuccessful(43L)).thenReturn(java.util.Optional.of(prevOk));
         when(dnsCheckerService.check("s.example.com", "A"))
                 .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4"), "response_ms", 5L));
 
@@ -971,7 +1013,7 @@ class SchedulerServiceTest {
      * her kurulumun TAMAMINI sahte alarma boğardı.
      */
     @Test
-    @DisplayName("UNKNOWN kilit ve UNKNOWN kara liste ALARM ÜRETMEZ (up=true)")
+    @DisplayName("UNKNOWN kilit ve UNKNOWN kara liste ALARM ÜRETMEZ — O-5 (2026-09-29): açık alarmı da KAPATMAZ (kalem yok)")
     void unknownProtectionSignalsDoNotAlarm() {
         com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
         when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
@@ -980,8 +1022,9 @@ class SchedulerServiceTest {
 
         scheduler.runCriticalDomainChecks();
 
-        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK).get(0).up()).isTrue();
-        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST).get(0).up()).isTrue();
+        // Doğrulanamadı = ne sorun ne sağlık: kalem üretilmez (eskiden up=true → açık alarm kanıtsız kapanıyordu).
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK)).isEmpty();
+        assertThat(captureSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST)).isEmpty();
     }
 
     @Test
@@ -1370,7 +1413,7 @@ class SchedulerServiceTest {
     }
 
     @Test
-    @DisplayName("Sentetik sweep: DUSEN kosum SLOW alarmi ACMAZ (tek olayda iki alarm bagirmasin)")
+    @DisplayName("Sentetik sweep: DUSEN kosum SLOW alarmi ACMAZ (tek olayda iki alarm bagirmasin) — O-2: ve KAPATMAZ (kalem yok)")
     void scriptedSweep_failedRunDoesNotAlsoRaiseSlow() throws Exception {
         var m = scriptedMon(11L, "dusen-senaryo");
         m.setSlowResponseEnabled(true);
@@ -1387,9 +1430,9 @@ class SchedulerServiceTest {
         int failIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_FAIL);
         int slowIdx = type.getAllValues().indexOf(EscalationService.TYPE_SCRIPTED_SLOW);
         var failItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(failIdx).get(0);
-        var slowItem = (MonitoringOutageService.SweepItem) items.getAllValues().get(slowIdx).get(0);
         assertThat(failItem.up()).isFalse();      // kesinti alarmi bunu anlatir
-        assertThat(slowItem.up()).isTrue();       // yavaslik alarmi ustune ikinci kez bagirmaz
+        // yavaslik alarmi ustune ikinci kez bagirmaz; sure olculemedigi icin "saglikli" da sayilmaz (O-2)
+        assertThat(items.getAllValues().get(slowIdx)).isEmpty();
     }
 
     // ── runWithSchedulerLock: dağıtık kilidin BIRAKILMASI ────────────────────────
@@ -1998,5 +2041,141 @@ class SchedulerServiceTest {
         scheduler.checkSingleDomainAsync("new.example.com", 443, false, null);
         verify(certService).saveResult(any());
         verify(escalationService, never()).processResults(any());
+    }
+
+    // ── K1/K5 sertifika eşleniği (prod 2026-09-29): alarm işleme atlanan turda KAPANIŞ yine çalışır ──────────
+
+    private void certSweepFixture(Map<String, Map<String, Object>> resultsByDomain) {
+        ReflectionTestUtils.setField(scheduler, "networkMinErrors", 3);
+        ReflectionTestUtils.setField(scheduler, "networkErrorRateThreshold", 0.50);
+        java.util.List<CertificateInventory> inv = new java.util.ArrayList<>();
+        for (String d : resultsByDomain.keySet()) {
+            CertificateInventory i = new CertificateInventory();
+            i.setDomain(d);
+            i.setPort(443);
+            inv.add(i);
+        }
+        lenient().when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(inv);
+        lenient().when(checkerService.checkAsync(anyString(), anyInt(), anyBoolean(), any(), any()))
+                .thenAnswer(i -> java.util.concurrent.CompletableFuture.completedFuture(resultsByDomain.get((String) i.getArgument(0))));
+    }
+
+    private static Map<String, Object> certResult(String domain, String status, String errorClass) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("domain", domain);
+        m.put("status", status);
+        if (errorClass != null) m.put("error_class", errorClass);
+        return m;
+    }
+
+    @Test
+    @DisplayName("K1 (sertifika): ağ kesintisi şüphesinde alarm işleme atlanır AMA doğrulanmış sonuçların kapanış uzlaştırması çalışır")
+    void certSweep_suspectedOutage_stillReconcilesClosures() {
+        Map<String, Map<String, Object>> r = new java.util.LinkedHashMap<>();
+        r.put("a.example.com", certResult("a.example.com", "error", "NETWORK"));
+        r.put("b.example.com", certResult("b.example.com", "error", "NETWORK"));
+        r.put("c.example.com", certResult("c.example.com", "error", "DNS"));
+        r.put("ok.example.com", certResult("ok.example.com", "valid", null));
+        certSweepFixture(r);
+
+        scheduler.runCheck();
+
+        verify(escalationService, never()).processResults(any());
+        verify(escalationService).resolveVerifiedStaleCertAlerts(org.mockito.ArgumentMatchers.argThat(l -> l.size() == 4));
+    }
+
+    @Test
+    @DisplayName("K5 (sertifika): expiry.alert-enabled=false iken açılış yok, kapanış uzlaştırması çalışır; açıkken normal hat (uzlaştırma çağrılmaz)")
+    void certSweep_alertsDisabled_reconcilesClosuresOnly() {
+        Map<String, Map<String, Object>> r = new java.util.LinkedHashMap<>();
+        r.put("ok.example.com", certResult("ok.example.com", "valid", null));
+        certSweepFixture(r);
+        lenient().when(appSettings.getBoolean(org.mockito.ArgumentMatchers.eq("site.monitor.expiry.alert-enabled"), anyBoolean())).thenReturn(false);
+
+        scheduler.runCheck();
+        verify(escalationService, never()).processResults(any());
+        verify(escalationService).resolveVerifiedStaleCertAlerts(anyList());
+
+        org.mockito.Mockito.clearInvocations(escalationService);
+        lenient().when(appSettings.getBoolean(org.mockito.ArgumentMatchers.eq("site.monitor.expiry.alert-enabled"), anyBoolean())).thenReturn(true);
+        scheduler.runCheck();
+        verify(escalationService).processResults(anyList());
+        verify(escalationService, never()).resolveVerifiedStaleCertAlerts(anyList());
+    }
+
+    // ── Elle kontrol sweep kararlarını TÜKETMEZ (2026-09-29) ─────────────────────────────────
+
+    @Test
+    @DisplayName("Q4: DNS sweep değişiklik TABANINI yalnız zamanlanmış kayıttan okur — elle kaydın yeni değeri DNS_CHANGED'i yutmaz")
+    void runDnsChecks_baselineIgnoresManualRecords() {
+        com.sitemonitor.model.CertificateInventory inv = new com.sitemonitor.model.CertificateInventory();
+        inv.setDomain("m.example.com");
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv));
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(44L); m.setDomain("m.example.com"); m.setRecordType("A");
+        when(dnsMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        // Veritabanı gibi: EN YENİ başarılı kayıt elle kontrolün yazdığı YENİ değer; son ZAMANLANMIŞ kayıt eski değer.
+        com.sitemonitor.model.DnsRecord manualNew = new com.sitemonitor.model.DnsRecord();
+        manualNew.setValue("1.2.3.4"); manualNew.setManual(true);
+        com.sitemonitor.model.DnsRecord scheduledOld = new com.sitemonitor.model.DnsRecord();
+        scheduledOld.setValue("5.6.7.8");
+        // lenient: sweep bu sorguyu HİÇ çağırmamalı — tuzak stub (eski kod burayı kullanıp değişikliği yutardı).
+        org.mockito.Mockito.lenient().when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(44L, "")).thenReturn(java.util.Optional.of(manualNew));
+        when(dnsRecordRepo.findLatestScheduledSuccessful(44L)).thenReturn(java.util.Optional.of(scheduledOld));
+        when(dnsCheckerService.check("m.example.com", "A"))
+                .thenReturn(Map.of("success", true, "values", List.of("1.2.3.4"), "response_ms", 5L));
+
+        scheduler.runDnsChecks();
+
+        org.mockito.ArgumentCaptor<List<MonitoringOutageService.DnsChange>> changes = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(monitoringOutageService).handleDnsSweep(anyList(), anyList(), changes.capture(), anyList(), anyList());
+        assertThat(changes.getValue()).as("elle kontrol değişikliği gördükten sonra da sweep değişikliği algılamalı").hasSize(1);
+        assertThat(changes.getValue().get(0).previousValue()).isEqualTo("5.6.7.8");
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec = org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        assertThat(rec.getValue().getManual()).as("zamanlanmış kayıt elle işaretlenmez").isNotEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    @DisplayName("Q3: elle senaryo koşumu kayda manual=true yazar ve anomali guard'ına ELLE diye geçer; zamanlanmış koşum manual=false")
+    void recheckScripted_marksManual_andPassesFlagToGuard() {
+        ScriptedAnomalyGuard guard = org.mockito.Mockito.mock(ScriptedAnomalyGuard.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler, "scriptedAnomalyGuard", guard);
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(9L); m.setName("Senaryo A"); m.setTeamId(1L); m.setActive(true);
+        var phases = new ScriptedCheckerService.Phases(null, null, null, null, null, null, null, null, null, null);
+        ScriptedCheckerService.ScriptedResult res = new ScriptedCheckerService.ScriptedResult(
+                "TIMEOUT", false, 60_000L, 1, 0, 1, null, null, null, null, null, "request timeout", false, phases);
+        when(scriptedCheckerService.run(m)).thenReturn(res);
+        when(scriptedCheckerService.runManual(m)).thenReturn(res);   // D-10: elle koşum elle kotadan
+
+        scheduler.recheckScripted(m, true);
+        scheduler.recheckScripted(m, false);
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.ScriptedCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.ScriptedCheck.class);
+        verify(scriptedCheckRepo, org.mockito.Mockito.times(2)).save(saved.capture());
+        assertThat(saved.getAllValues().get(0).getManual()).isTrue();
+        assertThat(saved.getAllValues().get(1).getManual()).isFalse();
+        verify(guard).evaluate(m, res, true);
+        verify(guard).evaluate(m, res, false);
+    }
+
+    @Test
+    @DisplayName("K-1 ikizi: alan adı teyit/kurtarma YENİDEN KONTROLÜ taban dışı satır yazar (checkRecheck) — zamanlanmış değişiklik tabanını ilerletmez")
+    void domainRecheck_isOutOfBand_doesNotAdvanceBaseline() {
+        com.sitemonitor.model.DomainMonitor m = activeDomain(1L, "example.com", 7L);
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of(latestCheck(1L, 3)));
+        when(domainMonitorRepo.findByActiveTrue()).thenReturn(List.of(m));
+        when(domainCheckerService.check(m)).thenReturn(checkResult("UNKNOWN", 3));
+        when(domainCheckerService.checkRecheck(m)).thenReturn(checkResult("OK", 3));
+
+        scheduler.runCriticalDomainChecks();
+        List<MonitoringOutageService.SweepItem> unknown = captureSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN);
+        assertThat(unknown).hasSize(1);
+        unknown.get(0).recheck().get();   // teyit zincirinin yeniden kontrolü
+
+        verify(domainCheckerService, org.mockito.Mockito.times(1)).check(m);   // yalnız zamanlanmış tur
+        verify(domainCheckerService).checkRecheck(m);
     }
 }

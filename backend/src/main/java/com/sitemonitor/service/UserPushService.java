@@ -613,6 +613,16 @@ public class UserPushService {
      */
     public Map<String, Object> enqueueStormNotice(Long stormId, Long teamId, String stormTrigger, String alertLevel,
                                                   List<AlertEvent> members, String message) {
+        return enqueueStormNotice(stormId, null, teamId, stormTrigger, alertLevel, members, message);
+    }
+
+    /**
+     * @param legacyStormId üyeleri eski (kuruluş geneli) fırtınadan SESSİZCE taşınmış takım fırtınasında o eski fırtına
+     *                      (2026-09-29, O-3 / D-b6): takım açılış push'unu ESKİ kimlikle aldı — çözümün "önceden alanlar"
+     *                      listesi onu da sayar, yoksa "düştü"yü alan "düzeldi"yi alamazdı ({@code SKIPPED_NO_PRIOR})
+     */
+    public Map<String, Object> enqueueStormNotice(Long stormId, Long legacyStormId, Long teamId, String stormTrigger,
+                                                  String alertLevel, List<AlertEvent> members, String message) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         try {
@@ -622,6 +632,11 @@ public class UserPushService {
             String trigger = resolve ? "STORM_RESOLVED" : "STORM";
             String dedupeKey = stormDedupeKey(stormId, stormTrigger);
             List<String> prior = resolve ? priorStormRecipients(stormId, teamId) : List.of();
+            if (resolve && legacyStormId != null) {
+                List<String> merged = new ArrayList<>(prior);
+                for (String u : priorStormRecipients(legacyStormId, teamId)) if (!merged.contains(u)) merged.add(u);
+                prior = merged;
+            }
             String block = resolve && prior.isEmpty() ? "SKIPPED_NO_PRIOR"
                     : stormBlockReason(stormTrigger, teamId, alertLevel, members);
             if (block == null) {
@@ -1250,11 +1265,9 @@ public class UserPushService {
     }
 
     String buildMessage(AlertEvent event, String trigger, Map<String, Object> ctx) {
-        String levelTr = switch (event.getAlertLevel() == null ? "" : event.getAlertLevel()) {
-            case "CRITICAL" -> "KRİTİK";
-            case "HIGH" -> "YÜKSEK";
-            default -> "UYARI";
-        };
+        // D-b14 (2026-09-29): TEK seviye sözlüğü (e-posta konusu/rozeti, ileti gövdesi, 7/24 postası ile aynı) —
+        // eskiden INFO/LOW burada "UYARI", e-postada "BİLGİ" yazıyordu.
+        String levelTr = EscalationService.levelWordTr(event.getAlertLevel());
         Map<String, String> vals = new LinkedHashMap<>();
         vals.put("seviye", levelTr);
         vals.put("ad", nz(event.getDomain(), "-"));

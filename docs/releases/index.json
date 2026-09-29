@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-28T20:54:30Z",
+  "generatedAt": "2026-09-29T15:36:17Z",
   "repo": "inanmise/site-monitor",
-  "count": 688,
+  "count": 689,
   "releases": [
+    {
+      "version": "20.91.0",
+      "tag": "v20.91.0",
+      "releasedAt": "2026-09-29T15:36:09Z",
+      "commit": "7d1390b3e7c45c2531ab4bf4dc38e93067ee6761",
+      "prevVersion": "20.90.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7d1390b3",
+          "subject": "hayalet alarmların kapanması, elle kontrolün alarm/fırtına tetiklememesi ve takım bazında fırtına"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.90.0",
       "tag": "v20.90.0",

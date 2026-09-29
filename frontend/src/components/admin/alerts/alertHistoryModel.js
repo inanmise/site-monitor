@@ -223,6 +223,14 @@ export function fmtStamp(iso, locale) {
   } catch { return iso }
 }
 
+/**
+ * Kendiliğinden KAPANMAYAN alarm türleri (değişiklik alarmları — backend: DNS_CHANGED / DOMAINMON_CHANGED otomatik
+ * kapanış hattına girmez). Geri kalan her tür kaynağı art arda sağlıklı kontrol verince kapanır; "Neden hâlâ açık?"
+ * paneli bu ayrımı gösterir (2026-09-29: sağlıklı izlemede asılı kalan alarm, onay/bildirim çiplerinden okunamıyordu).
+ */
+export const MANUAL_CLOSE_TYPES = new Set(['DNS_CHANGED', 'DOMAINMON_CHANGED'])
+export const closesAutomatically = (type) => !!type && !MANUAL_CLOSE_TYPES.has(String(type))
+
 /** Alarm tipi → izleme sekmesi; sertifika tipleri (EXPIRY, CHAIN_BROKEN…) null döner. */
 const TYPE_TAB = [
   [/^HTTP_/, 'http'], [/^DNS_/, 'dns'], [/^PORT_/, 'port'], [/^PING_/, 'ping'], [/^KEYWORD/, 'keyword'],

@@ -10,16 +10,18 @@ import { formatBytes } from '../../utils/formatBytes.js'
  *
  * <p>Üçü DAHA DÜŞÜK ve sayılar keyfi değil:
  * <ul>
- *   <li>{@code scripted: 2} — sunucudaki k6 süreç havuzu {@code site.monitor.scripted.pool-size}
- *       ve varsayılanı 2. Altı ile koşulursa fazlası {@code skipped} dönerdi; kullanıcı
- *       monitörlerini bozuk sanardı. Tavan havuzu AŞMAMALI.</li>
+ *   <li>{@code scripted: 1} — sunucudaki k6 süreç havuzu {@code site.monitor.scripted.pool-size}
+ *       (varsayılan 2) ve elle koşumlar bunun en çok {@code pool − 1} = 1 iznini kullanır (2026-09-29,
+ *       D-10: son izin zamanlanmış kontrollere kalır). Fazlası kotayı bekler; sıra beklemesi ucun
+ *       beklemesinden kısa tutulduğu için yetişemeyen "havuz dolu → atlandı" döner (O-b3). Tavan elle
+ *       kotayı AŞMAMALI — aşarsa uzun senaryolarda kontrollerin bir kısmı boşuna atlanır.</li>
  *   <li>{@code page/pagespeed: 3} — tek kontrol ana sayfayı ve onlarca alt kaynağı çekiyor;
  *       altı paralel koşum tek pod'un giden bağlantılarını doldurur.</li>
  * </ul>
  */
 export const CHECK_CONCURRENCY_BY_TYPE = {
   http: 6, domain: 6, port: 6, dns: 6, keyword: 6, ping: 6,
-  page: 3, pagespeed: 3, scripted: 2,
+  page: 3, pagespeed: 3, scripted: 1,
 }
 
 const num = (v) => (v == null ? '—' : v)

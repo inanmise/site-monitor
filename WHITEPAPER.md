@@ -663,14 +663,18 @@ Bir alarmı onayladığınızda günlük tekrar bildirimleri durur; ancak alarm 
 
 Kısa bir pencerede çok sayıda monitör birden düştüğünde (ör. ortak bir ağ segmenti koptu) her monitör için ayrı e-posta almak istemezsiniz. Sistem doğrulanmış kesintileri izler: kapsam için aktif bir fırtına varsa yeni alarm ona eklenir, eşik aşıldığında bireysel bildirimler tek toplu bildirime terfi eder. Olay kayıtları monitör başına yazılmaya devam eder — geçmiş ve uptime yüzdesi etkilenmez; yalnız bildirim gruplanır. Fırtına dağıldığında tek toplu düzelme bildirimi gider.
 
+**Fırtına takım bazındadır (2026-09-29).** Eşik, zaman penceresi sayımı ve kök neden yalnız alarmın **sahibi takımın** kendi izlemelerinden hesaplanır. Eşik **farklı hedef** (host) sayısıyla karşılaştırılır: aynı host'un erişim, port ve DNS alarmları tek hedeftir; yüzde biriminde eşik en az 3 hedeftir, böylece küçük bir takımda tek host arızası fırtına sayılmaz. Toplu bildirim (e-posta, kişi push'u, webhook) yalnız o takıma gider. Başka bir takımın arızaları sizin fırtınanıza eklenmez, sizinkiler de onlarınkine; kuruluş genelinde "Tüm monitörler" başlıklı bir fırtına bildirimi yoktur. Her takım bildirimde yalnız kendi sayısını, adını ve izlemelerini görür. Fırtına push'u, üyelerinin en yüksek alarm seviyesiyle çözümlenir — yani tek tek alarmların ulaşacağından daha geniş bir kitleye (örneğin yalnız kritik alarmları alan kademelere) gitmez. Takımı olmayan (sahipsiz) bir alarm hiçbir fırtınaya girmez. 7/24 İzleme Ekibi yalnız izlemesinde 7/24 bildirimi açıkça seçilmiş üyeler için ayrı toplu posta alır.
+
+**Elle kontrol fırtına ve alarm üretmez.** İzleme sayfalarındaki "Şimdi kontrol et" (tekil ya da toplu "Şimdi Kontrol Et (N)") yalnız sonucu kaydeder: yeni alarm açmaz, eskalasyon, yeniden uyarı ya da fırtına tetiklemez, açık alarmın bildirim sayaçlarını ilerletmez. Sonuç sağlıklıysa açık alarm normal kurtarma kuralıyla kapanabilir (çözüm bildirimi yalnız açılışta bildirim almış kişilere gider). Başarısız bir elle kontrolün alarmı, bir sonraki zamanlanmış kontrolün olağan doğrulama kurallarıyla açılır. Elle kontrol ayrıca alan adı eşik hatırlatması göndermez, sentetik izlemenin anomali korumasını tetiklemez (izlemeyi kapatmaz) ve DNS ya da alan adı kaydı (nameserver, kayıt kuruluşu, EPP, DNSSEC) değişiklik algısını tüketmez: zamanlanmış kontrol yeni değeri kendi tabanına göre yine "değişti" olarak görür ve alarmı o açar. Alan adının Kayıt sekmesi açılışta kayıtlı bilgiyi gösterir; canlı sorgu yalnız "Yenile" ile yapılır. Toplu kontrol yalnız sizin çalıştırma yetkiniz olan izlemeleri kapsar; kapsamlı bir yönetici başka takımın izlemesini çalıştıramaz.
+
 Özellik varsayılan açıktır ve **Ayarlar → Fırtına** bölümünden yönetilir:
 
 | Ayar | Ne yapar |
 |---|---|
-| Eşik birimi | `COUNT` (adet) ya da `PERCENT` (izlenen kümenin yüzdesi) |
+| Eşik birimi | `COUNT` (adet) ya da `PERCENT` (takımın aktif izlemelerinin yüzdesi) |
 | Eşik değeri | Fırtına ilan edilmesi için gereken eşzamanlı kesinti sayısı/oranı |
 | Pencere (dakika) | Kesintilerin "aynı anda" sayılacağı zaman aralığı |
-| Grup bazlı | Açıksa fırtına monitör grubu içinde değerlendirilir; farklı grupların kesintileri birbirine karışmaz |
+| Grup bazlı | Açıksa fırtına takımın her monitör grubunda ayrı değerlendirilir; farklı grupların kesintileri birbirine karışmaz |
 | Saklama (gün) | Kapanmış fırtına kayıtlarının tutulma süresi |
 
 Yalnızca "düştü" sınıfı alarm tipleri sayılır — vade uyarısı gibi zamana bağlı alarmlar fırtına oluşturmaz.

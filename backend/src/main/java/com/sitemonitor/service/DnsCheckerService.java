@@ -394,7 +394,26 @@ public class DnsCheckerService {
         ctx.put("old_values", splitLines(r.getPreviousValue()));
         ctx.put("new_values", splitLines(r.getValue()));
         ctx.put("changed_at", r.getCheckedAt());
+        if (r.getMonitorId() != null) ctx.put("monitor_id", r.getMonitorId());   // D-b2: kaydın izlemesi (derin link + sahiplik)
         return ctx;
+    }
+
+    /**
+     * D-b2: açık DNS_CHANGED olayı için son changed kaydı — olayı AÇAN izlemenin ({@code openerMonitorId}) kaydı; yoksa
+     * (eski olay / kayıt budanmış) alan adının son kaydı. Aynı alan adında birden çok DNS izlemesi (ör. A ve MX, farklı
+     * takımlar) varken alan adı düzeyindeki sorgu başka izlemenin değişikliğini anlatabiliyordu.
+     */
+    public static com.sitemonitor.model.DnsRecord lastChangedRecord(
+            com.sitemonitor.repository.DnsRecordRepository repo, String domain, Long openerMonitorId) {
+        if (openerMonitorId != null) {
+            try {
+                var rows = repo.findChangedByMonitorId(openerMonitorId, org.springframework.data.domain.PageRequest.of(0, 1));
+                if (rows != null && !rows.isEmpty()) return rows.get(0);
+            } catch (Exception e) {
+                log.debug("DNS_CHANGED izleme kaydı okunamadı: {} — {}", openerMonitorId, e.getMessage());
+            }
+        }
+        return lastChangedRecord(repo, domain);
     }
 
     /** Domain'in son changed=true kaydı (yoksa/hata halinde null) — changeCtxOf ile birlikte kullanılır. */

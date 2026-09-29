@@ -1657,21 +1657,18 @@ export const TR = {
 
   // ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" (yalnız admin) ──
   'storm.title':          'Alarm Fırtınası Koruması',
-  'storm.desc':           'Kısa bir zaman penceresinde çok sayıda monitör birden düştüğünde (paylaşılan sunucu / ağ / veri merkezi kesintisi), bireysel alarm seli yerine TEK toplu bildirim gönderilir. Toparlanınca tek bir toplu "çözüldü" e-postası gider.',
+  'storm.desc':           'Bir takımın izlemelerinden çoğu kısa bir pencerede birden düştüğünde (paylaşılan sunucu / ağ / veri merkezi kesintisi), bireysel alarm seli yerine o takıma TEK toplu bildirim gönderilir. Toparlanınca tek bir toplu "çözüldü" bildirimi gider. Her takım ayrı değerlendirilir; elle kontrol ("Şimdi kontrol et") fırtına oluşturmaz.',
   'storm.enabled':        'Alarm fırtınası korumasını etkinleştir',
   'storm.enabledHint':    'Açıkken yalnız GERÇEK sel (eşik aşımı) toplanır; normal tek-monitör alarmı gecikmeden bireysel gider. Kapatırsanız her arıza bugünkü gibi ayrı ayrı alarmlanır.',
   'storm.disabledWarn':   'Alarm fırtınası koruması KAPALI — çok sayıda monitör birden düşse bile her biri için ayrı e-posta gönderilir.',
   'storm.thresholdTitle': 'Monitör Eşiği',
-  'storm.thresholdDesc':  'Zaman penceresinde bu kadar monitör birden düşünce fırtına moduna geçilir.',
-  'storm.unitCount':      'Monitör sayısı',
-  'storm.unitPercent':    'Tüm monitörlerin %’si',
-  'storm.pctPreview':     '≈ {2} monitör (%{0} × {1} aktif monitör) düşünce tetiklenir.',
-  'storm.countHint':      'En az 2 monitör birden düşünce tetiklenir.',
+  'storm.thresholdDesc':  'Zaman penceresinde takımın bu kadar farklı hedefi (host) birden düşünce fırtına moduna geçilir. Aynı host\'un birden çok alarm türü tek hedef sayılır.',
+  'storm.unitCount':      'Farklı hedef (host) sayısı',
+  'storm.countHint':      'En az 2 farklı hedef birden düşünce tetiklenir.',
   'storm.windowTitle':    'Zaman Penceresi',
   'storm.windowDesc':     'Eşiğin bu süre içinde aşılması bir fırtına sayılır.',
   'storm.windowValue':    '{0} dakika',
   'storm.perGroup':       'Monitör gruplarına göre fırtına',
-  'storm.perGroupHint':   'Açıkken her monitör grubu ayrı değerlendirilir (bir gruptaki sel, başka gruptaki ilgisiz arızayla birleşmez). Kapalıyken tüm monitörler tek havuzdur (account-wide).',
   'storm.save':           'Kaydet',
   'storm.saved':          'Alarm fırtınası ayarları kaydedildi',
 
@@ -3350,6 +3347,14 @@ export const TR = {
   'tbl.statusHigh':'Yüksek',
   'tbl.statusError':   'Hata',
   'check.noneInScope':  'Seçilen kapsamda kontrol edilecek izleme yok.',
+  'check.manualNote': 'Elle kontrol sonucu kaydeder: yeni alarm açmaz, alarm fırtınası ya da yeniden uyarı tetiklemez. Sonuç sağlıklıysa açık alarm kapanabilir ve çözüm bildirimi gider. Yalnız çalıştırma yetkiniz olan kayıtlar listelenir.',
+  'check.poolBusySkipped': 'k6 havuzu dolu olduğu için {0} kontrol atlandı — yürütülmedi, kayıt oluşmadı; bu izlemelerde görünen sonuç eski. Zamanlanmış kontroller sürüyor; birazdan yeniden deneyin.',
+  'storm.teamScopeNote': 'Fırtına her takım için ayrı değerlendirilir: eşik yalnız o takımın kendi izlemelerinde sayılır ve toplu bildirim yalnız o takıma gider. Başka bir takımın arızaları sizin fırtınanıza eklenmez; kuruluş geneli fırtına bildirimi yoktur.',
+  'storm.unitPercentTeam': 'Takımın izlemelerinin %’si',
+  'storm.pctPreviewTeam': 'Her takım için ayrı hesaplanır: takımın aktif izlemelerinde yüzde {0} oranı (en az 3 farklı hedef). Örnek: {1} aktif izlemede ≈ {2} hedef.',
+  'storm.perGroupHintTeam': 'Açıkken her takımın her monitör grubu ayrı değerlendirilir (bir gruptaki sel, başka gruptaki ilgisiz arızayla birleşmez). Kapalıyken takımın tüm izlemeleri tek havuzdur. Her iki durumda da takımlar birbirinden bağımsızdır.',
+  'alh.whyStorm': 'Fırtına bildirimine devredildi',
+  'alh.whyStormTip': 'Bu alarm bir alarm fırtınasının üyesi: bireysel e-posta/push yerine takımın tek toplu fırtına bildirimi gönderilir; o bildirim bu alarmın sayaçlarına yazılmaz.',
 
   'modal.detailsTab':  'Sertifika Detayları',
   'modal.alertsTab':   'Alarm Geçmişi',
@@ -10144,6 +10149,10 @@ export const TR = {
   'alh.whyPushTip': 'Gönderildi {0} · başarısız {1} · atlandı {2}',
   'alh.whyPushNone': 'push: kayıt yok',
   'alh.whyNobody': 'kimseye ulaşmadı — alıcı kuralını kontrol edin',
+  'alh.whyAuto': 'kontroller düzelince kendiliğinden kapanır',
+  'alh.whyAutoTip': 'Bu alarm, kaynağı art arda sağlıklı kontrol verdiğinde kendiliğinden kapanır; onay ya da kime bildirim gittiği kapanışı etkilemez. Aynı hedefi izleyen takımınızın başka bir izlemesi hâlâ düşükse alarm açık kalır; bu türün bildirimleri kapatılırsa alarm bildirimsiz kapanır. İzleme uzun süredir sağlıklı görünüyorsa alarmı elle çözebilirsiniz.',
+  'alh.whyManual': 'yalnız elle kapanır',
+  'alh.whyManualTip': 'Değişiklik alarmları kendiliğinden kapanmaz: değişikliği doğrulayıp alarmı elle çözün.',
   // 7/24 arama kaydı (2026-09-27) — uyarının üzerinden kim, ne zaman arandı, sonuç, not
   'nocCall.title': '7/24 Arama Kayıtları',
   'nocCall.logCall': 'Arama kaydet',
@@ -10827,6 +10836,7 @@ export const TR = {
   'scripted.scriptRequired': 'Script zorunlu', 'scripted.testError': 'Test başarısız', 'scripted.triggerError': 'Çalıştırılamadı',
   'scripted.triggerQueued': 'Çalıştırma başlatıldı — script uzun sürüyor, sonuç hazır olunca listeye ve Kontrol Geçmişi bölümüne kendiliğinden düşecek.',
   'scripted.triggerSkipped': 'Kontrol yürütülemedi, kayıt oluşmadı: {0} · Hedefte bir sorun olduğu anlamına GELMEZ — k6 kapasitesi doludur. Birkaç dakika sonra yeniden deneyin.',
+  'scripted.manualPoolBusy': 'k6 havuzunun elle kontrol payı şu an dolu — zamanlanmış kontrollerin kesintisiz sürmesi için havuzun bir kısmı her zaman onlara ayrılır',
   'scripted.colStatus': 'Durum', 'scripted.lastDuration': 'Son süre', 'scripted.checks': 'Doğrulama', 'scripted.history': 'Kontrol Geçmişi',
   'scripted.colTime': 'Zaman', 'scripted.colDuration': 'Süre', 'scripted.noHistory': 'Kayıt yok', 'scripted.checkDetail': 'Kontrol Detayı',
   'scripted.selectCheck': 'Detay için soldaki tablodan bir kontrol seçin.', 'scripted.output': 'Çıktı (maskeli stdout/stderr)',
@@ -12787,7 +12797,7 @@ export const TR = {
   'help.set.site.monitor.scripted.manual-cooldown-seconds':
     'Ne işe yarar: Kayıtlı bir senaryonun elle çalıştırılmaları arasındaki en az bekleme.\nFaydası: Üst üste tıklama k6 havuzunu doldurup zamanlanmış koşumları bekletmez.\nÖnerilen değer: 20 saniye (varsayılan). Script uzun sürüyorsa 60.',
   'help.set.site.monitor.scripted.manual-wait-seconds':
-    'Ne işe yarar: Elle çalıştırmada arayüzün sonucu kaç saniye bekleyeceği; aşılırsa koşum arka planda sürer.\nFaydası: Uzun bir senaryo tarayıcıyı kilitlemez; sonuç geldiğinde listede görünür.\nÖnerilen değer: 25 saniye (varsayılan). Vekil sunucu (proxy) zaman aşımınızın altında kalmalıdır.',
+    'Ne işe yarar: Elle çalıştırmada arayüzün sonucu kaç saniye bekleyeceği; aşılırsa koşum arka planda sürer. Sıra beklemesi bu sürenin 5 saniye altında tutulur: k6 havuzunun elle kontrol payı o sürede boşalmazsa kontrol yürütülmez ve arayüz bunu hemen söyler.\nFaydası: Uzun bir senaryo tarayıcıyı kilitlemez; sonuç geldiğinde listede görünür.\nÖnerilen değer: 25 saniye (varsayılan). Vekil sunucu (proxy) zaman aşımınızın altında kalmalıdır.',
   'help.set.site.monitor.scripted.max-procs':
     'Ne işe yarar: k6 alt sürecinin kullanabileceği işlemci sayısı (Go çalışma zamanının GOMAXPROCS değeri).\nFaydası: Tek bir senaryo sunucunun tüm çekirdeklerini kaplayıp diğer kontrolleri yavaşlatamaz.\nÖnerilen değer: 1 (varsayılan). 0 ya da boş değer sınırı kaldırır; tek pod kurulumda tavsiye edilmez.',
   'help.set.site.monitor.scripted.max-requests-per-run':
@@ -12833,13 +12843,13 @@ export const TR = {
   'help.set.site.monitor.storm.enabled':
     'Ne işe yarar: Alarm fırtınası bastırmasını açar: kısa sürede çok monitör düşerse bireysel alarmlar TEK toplu bildirime indirgenir.\nFaydası: Omurga arızasında yüzlerce mail yerine tek, okunabilir özet gider.\nÖnerilen değer: true (varsayılan). Kapatmak, geniş kesintide posta kutularının dolması demektir.',
   'help.set.site.monitor.storm.per-group':
-    'Ne işe yarar: Fırtına sayımını tüm envanter yerine izleme grubu bazında yapar.\nFaydası: Bir uygulamanın çökmesi, ilgisiz grupların alarmlarını bastırmaz.\nÖnerilen değer: Monitörler anlamlı gruplara ayrılmışsa true; tek büyük havuz varsa false (varsayılan).',
+    'Ne işe yarar: Fırtına sayımını takımın tüm izlemeleri yerine takımın her izleme grubunda ayrı yapar (fırtına her durumda takım bazındadır; başka takımın arızaları sayılmaz).\nFaydası: Bir uygulamanın çökmesi, aynı takımın ilgisiz gruplarındaki alarmları bastırmaz.\nÖnerilen değer: Takımın izlemeleri anlamlı gruplara ayrılmışsa true; takım başına tek havuz yeterliyse false (varsayılan).',
   'help.set.site.monitor.storm.retention-days':
     'Ne işe yarar: Alarm fırtınası olay kayıtlarının saklama süresi.\nFaydası: Geçmiş fırtınalar eşik ayarını doğrulamak için elde kalır.\nÖnerilen değer: 365 gün (varsayılan). Hacmi düşük bir tablodur, kısaltmanın kazancı azdır.',
   'help.set.site.monitor.storm.threshold-unit':
-    'Ne işe yarar: Fırtına eşiğinin sabit SAYI ile mi yoksa aktif monitörlerin YÜZDESİ ile mi ölçüleceği.\nFaydası: Yüzde, monitör sayısı büyüdükçe eşiği kendiliğinden ölçekler.\nÖnerilen değer: Küçük ve sabit bir envanterde COUNT (varsayılan); envanter sürekli büyüyorsa PERCENT.',
+    'Ne işe yarar: Fırtına eşiğinin sabit SAYI ile mi yoksa takımın aktif izlemelerinin YÜZDESİ ile mi ölçüleceği (yüzde her takımın kendi izleme sayısından hesaplanır).\nFaydası: Yüzde, eşiği her takımın büyüklüğüne göre kendiliğinden ölçekler.\nÖnerilen değer: Takımların izleme sayıları küçük ve benzerse COUNT (varsayılan); takım büyüklükleri çok farklıysa PERCENT.',
   'help.set.site.monitor.storm.threshold-value':
-    'Ne işe yarar: Pencere içinde kaç monitör (ya da yüzde kaçı) düşerse fırtına sayılacağı.\nFaydası: Doğru ayarlandığında gerçek olaylar tek bildirime iner, tekil arızalar normal akar.\nÖnerilen değer: COUNT için 5 (varsayılan, en az 2); PERCENT için 10-25 arası. Çok düşük değer sıradan arızaları da toplar.',
+    'Ne işe yarar: Pencere içinde takımın kaç farklı hedefi (ya da izlemelerinin yüzde kaçı) düşerse fırtına sayılacağı; aynı host\'un birden çok alarm türü tek hedeftir.\nFaydası: Doğru ayarlandığında gerçek olaylar tek bildirime iner, tekil arızalar normal akar.\nÖnerilen değer: COUNT için 5 (varsayılan, en az 2); PERCENT için 10-25 arası (yüzde ne olursa olsun en az 3 hedef). Çok düşük değer sıradan arızaları da toplar.',
   'help.set.site.monitor.storm.window-minutes':
     'Ne işe yarar: Eşiğin içinde sayıldığı kayan zaman penceresi.\nFaydası: Aynı anda olan arızalar birleşir, gün içine yayılan bağımsız arızalar birleşmez.\nÖnerilen değer: 5 dakika (varsayılan); izinli aralık 1-15. Kısa pencere gerçek fırtınaları kaçırır, uzun pencere ilgisiz arızaları birleştirir.',
   'help.set.site.monitor.system-admin.email':
@@ -14640,21 +14650,18 @@ export const EN = {
 
   // ── Alert Storm settings — "Alert Settings" (admin only) ──
   'storm.title':          'Alert Storm Protection',
-  'storm.desc':           'When many monitors go down at once within a short window (a shared server / network / datacenter outage), a SINGLE aggregated notification is sent instead of an alert flood. One aggregated "resolved" email is sent once things recover.',
+  'storm.desc':           'When many of a team\'s monitors go down at once within a short window (a shared server, network or data centre outage), that team gets a SINGLE summary notification instead of a flood of alerts, and one summary "resolved" notification once things recover. Each team is assessed on its own, and a manual check ("Check now") never starts a storm.',
   'storm.enabled':        'Enable alert storm protection',
   'storm.enabledHint':    'When on, only a REAL flood (threshold crossed) is grouped; a normal single-monitor alert still goes out individually with no delay. Turn off to alert every failure separately, as today.',
   'storm.disabledWarn':   'Alert storm protection is OFF — even if many monitors go down at once, a separate email is sent for each.',
   'storm.thresholdTitle': 'Monitor Threshold',
-  'storm.thresholdDesc':  'Storm mode kicks in when this many monitors go down together within the time window.',
-  'storm.unitCount':      'Number of monitors',
-  'storm.unitPercent':    '% of all monitors',
-  'storm.pctPreview':     '≈ {2} monitors (triggered at {0}% × {1} active monitors).',
-  'storm.countHint':      'Triggers when at least 2 monitors go down together.',
+  'storm.thresholdDesc':  'Storm mode kicks in when this many of a team\'s different targets (hosts) go down together within the time window. Several alert types on the same host count as one target.',
+  'storm.unitCount':      'Number of different targets (hosts)',
+  'storm.countHint':      'Triggers when at least 2 different targets go down together.',
   'storm.windowTitle':    'Time Window',
   'storm.windowDesc':     'Crossing the threshold within this span counts as a storm.',
   'storm.windowValue':    '{0} minutes',
   'storm.perGroup':       'Alert storm based on monitor groups',
-  'storm.perGroupHint':   'When on, each monitor group is evaluated separately (a flood in one group is not merged with unrelated failures in another). When off, all monitors are one pool (account-wide).',
   'storm.save':           'Save',
   'storm.saved':          'Alert storm settings saved',
 
@@ -16333,6 +16340,14 @@ export const EN = {
   'tbl.statusHigh':'High',
   'tbl.statusError':   'Error',
   'check.noneInScope':  'No monitors to check in the selected scope.',
+  'check.manualNote': 'A manual check records the result: it won\'t raise a new alert, start an alert storm or send a re-alert. If the result is healthy, an open alert can close and a resolution notice is sent. Only the items you\'re allowed to run are listed.',
+  'check.poolBusySkipped': 'Checks skipped because the k6 pool was full: {0} — they weren\'t run and nothing was recorded, so those monitors still show their earlier result. Scheduled checks carry on as normal; try again shortly.',
+  'storm.teamScopeNote': 'Storms are assessed separately for each team: the threshold only counts that team\'s own monitors and the summary notification goes to that team alone. Another team\'s failures are never added to yours, and there is no organisation-wide storm notification.',
+  'storm.unitPercentTeam': '% of the team\'s monitors',
+  'storm.pctPreviewTeam': 'Worked out separately for each team: {0}% of the team\'s active monitors (at least 3 different targets). For example, with {1} active monitors ≈ {2} targets.',
+  'storm.perGroupHintTeam': 'When on, each monitor group within a team is assessed separately (a flood in one group isn\'t merged with unrelated failures in another). When off, all of a team\'s monitors form one pool. Either way, teams are always kept separate.',
+  'alh.whyStorm': 'Handed over to the storm notification',
+  'alh.whyStormTip': 'This alert is part of an alert storm: rather than an individual email or push, the team gets a single storm summary, which isn\'t counted against this alert.',
 
   'modal.detailsTab':  'Certificate Details',
   'modal.alertsTab':   'Alert History',
@@ -23113,6 +23128,10 @@ export const EN = {
   'alh.whyPushTip': 'Sent {0} · failed {1} · skipped {2}',
   'alh.whyPushNone': 'push: no record',
   'alh.whyNobody': 'reached nobody — check the recipient rules',
+  'alh.whyAuto': 'closes by itself once checks pass again',
+  'alh.whyAutoTip': 'This alert closes on its own once its source passes several checks in a row; acknowledging it, or who was notified, makes no difference to that. It stays open while another of your team’s monitors on the same target is still failing, and it closes without a notification if alerts for this type are switched off. If the monitor has looked healthy for a while, you can resolve the alert by hand.',
+  'alh.whyManual': 'closes only when resolved by hand',
+  'alh.whyManualTip': 'Change alerts don’t close on their own: check the change, then resolve the alert by hand.',
   // 24/7 call log (2026-09-27) — who was called about an alert, when, the outcome and a note
   'nocCall.title': '24/7 call log',
   'nocCall.logCall': 'Log a call',
@@ -23787,6 +23806,7 @@ export const EN = {
   'scripted.scriptRequired': 'Script is required', 'scripted.testError': 'Test failed', 'scripted.triggerError': 'Could not run',
   'scripted.triggerQueued': 'Run started — the script is slow; the result will appear in the list and Check History on its own once it finishes.',
   'scripted.triggerSkipped': 'The check could not run and no record was written: {0} · This does NOT mean the target is unhealthy — k6 capacity is saturated. Try again in a few minutes.',
+  'scripted.manualPoolBusy': 'the k6 pool\'s share for manual checks is busy right now — part of the pool is always kept free so scheduled checks keep running',
   'scripted.colStatus': 'Status', 'scripted.lastDuration': 'Last duration', 'scripted.checks': 'Checks', 'scripted.history': 'Check History',
   'scripted.colTime': 'Time', 'scripted.colDuration': 'Duration', 'scripted.noHistory': 'No records', 'scripted.checkDetail': 'Check Detail',
   'scripted.selectCheck': 'Select a check from the table on the left for details.', 'scripted.output': 'Output (masked stdout/stderr)',
@@ -25746,7 +25766,7 @@ export const EN = {
   'help.set.site.monitor.scripted.manual-cooldown-seconds':
     'What it does: The minimum wait between manual runs of a saved scenario.\nBenefit: Repeated clicking cannot fill the k6 pool and delay the scheduled runs.\nRecommended: 20 seconds (the default), or 60 for long-running scripts.',
   'help.set.site.monitor.scripted.manual-wait-seconds':
-    'What it does: How long the interface waits for a manual run before letting it continue in the background.\nBenefit: A long scenario does not lock up the browser; the result appears in the list when it is ready.\nRecommended: 25 seconds (the default). Keep it below your proxy\'s timeout.',
+    'What it does: How long the interface waits for a manual run before letting it continue in the background. Queuing is kept 5 seconds shorter than this: if the k6 pool\'s share for manual checks does not free up in time, the check is not run and the interface says so straight away.\nBenefit: A long scenario does not lock up the browser; the result appears in the list when it is ready.\nRecommended: 25 seconds (the default). Keep it below your proxy\'s timeout.',
   'help.set.site.monitor.scripted.max-procs':
     'What it does: Limits how many processor cores the k6 subprocess may use (the Go runtime\'s GOMAXPROCS).\nBenefit: A single scenario cannot claim every core and slow the other checks down.\nRecommended: 1 (the default). Zero or an empty value removes the limit, which is not advisable on a single pod.',
   'help.set.site.monitor.scripted.max-requests-per-run':
@@ -25792,13 +25812,13 @@ export const EN = {
   'help.set.site.monitor.storm.enabled':
     'What it does: Enables alert storm suppression: when many monitors fail in a short window, the individual alerts collapse into one bundled notification.\nBenefit: A backbone failure sends one readable summary instead of hundreds of emails.\nRecommended: true (the default). Turning it off means flooded mailboxes during a wide outage.',
   'help.set.site.monitor.storm.per-group':
-    'What it does: Counts storms per monitor group rather than across the whole estate.\nBenefit: One application collapsing does not suppress alerts from unrelated groups.\nRecommended: true where monitors are organised into meaningful groups; false (the default) for one large pool.',
+    'What it does: Counts storms separately for each of a team\'s monitor groups rather than across all of that team\'s monitors (storms are always per team; another team\'s failures are never counted).\nBenefit: One application collapsing doesn\'t suppress alerts from unrelated groups in the same team.\nRecommended: true where a team\'s monitors are organised into meaningful groups; false (the default) where one pool per team is enough.',
   'help.set.site.monitor.storm.retention-days':
     'What it does: How long alert storm event records are kept.\nBenefit: Past storms remain available for tuning the threshold.\nRecommended: 365 days (the default). It is a low-volume table, so shortening it gains little.',
   'help.set.site.monitor.storm.threshold-unit':
-    'What it does: Chooses whether the storm threshold is a fixed count or a percentage of active monitors.\nBenefit: A percentage scales the threshold on its own as the estate grows.\nRecommended: COUNT (the default) for a small, stable estate; PERCENT where the estate keeps growing.',
+    'What it does: Chooses whether the storm threshold is a fixed count or a percentage of the team\'s active monitors (the percentage is worked out from each team\'s own monitors).\nBenefit: A percentage scales the threshold to the size of each team on its own.\nRecommended: COUNT (the default) where teams have a small, similar number of monitors; PERCENT where team sizes vary widely.',
   'help.set.site.monitor.storm.threshold-value':
-    'What it does: How many monitors — or what percentage of them — must fail within the window to count as a storm.\nBenefit: Set well, real incidents collapse into one notification while isolated faults flow normally.\nRecommended: 5 for COUNT (the default, minimum 2); 10-25 for PERCENT. Too low and ordinary faults get bundled too.',
+    'What it does: How many of a team\'s different targets — or what percentage of its monitors — must fail within the window to count as a storm; several alert types on the same host count as one target.\nBenefit: Set well, real incidents collapse into one notification while isolated faults flow normally.\nRecommended: 5 for COUNT (the default, minimum 2); 10-25 for PERCENT (never fewer than 3 targets, whatever the percentage). Too low and ordinary faults get bundled too.',
   'help.set.site.monitor.storm.window-minutes':
     'What it does: The rolling time window within which the threshold is counted.\nBenefit: Failures that happen together are grouped, while unrelated faults spread across the day are not.\nRecommended: 5 minutes (the default), within an allowed 1-15. A short window misses real storms; a long one groups unrelated faults.',
   'help.set.site.monitor.system-admin.email':

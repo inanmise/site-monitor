@@ -491,6 +491,30 @@ class NocNotificationServiceTest {
     }
 
     @Test
+    @DisplayName("O-3 (D-b6): eski fırtınadan SESSİZCE taşınan takım fırtınası 7/24'e YENİ açılış postası atmaz (tik + günlük tekrar); sonradan katılan güncellemeyle gider")
+    void legacyMovedStorm_noNewOpeningPost() {
+        svc.clock = java.time.Clock.fixed(java.time.Instant.parse("2026-01-10T21:04:00Z"), java.time.ZoneOffset.UTC);
+        AlertEvent a = alert(91, "PORT_DOWN", "CRITICAL", "h91.example.com");
+        AlertEvent b = alert(92, "PORT_DOWN", "CRITICAL", "h92.example.com");
+        monitor(NocType.PORT, 91, true, true, null);
+        monitor(NocType.PORT, 92, true, true, null);
+        svc.onStormDispatched(storm(40), List.of(a, b), "Tüm izlemeler", "Port Kesintisi");   // ESKİ (kuruluş geneli) fırtına
+        assertThat(mailsSent()).isEqualTo(1);
+
+        AlertStorm team = storm(41);
+        team.setLegacyStormId(40L);                                                            // üyeler sessizce taşındı
+        svc.onStormTick(team, List.of(a, b), "Takım A", "Port Kesintisi");
+        svc.onStormDispatched(team, List.of(a, b), "Takım A", "Port Kesintisi");               // günlük toplu tekrar
+        assertThat(mailsSent()).as("taşınan üyeler 7/24'e eski fırtınayla zaten bildirildi").isEqualTo(1);
+
+        AlertEvent c = alert(93, "PORT_DOWN", "CRITICAL", "h93.example.com");                  // taşımadan SONRA katıldı
+        monitor(NocType.PORT, 93, true, true, null);
+        svc.onStormTick(team, List.of(a, b, c), "Takım A", "Port Kesintisi");
+        assertThat(mailsSent()).isEqualTo(2);
+        assertThat(lastSubject()).isEqualTo(NocMailComposer.stormUpdateSubject(1));
+    }
+
+    @Test
     @DisplayName("fırtına değerlendirmesi başına TEK anlık görüntü: üye başına dizin sorgusu yok")
     void singleSnapshotPerStormEvaluation() {
         List<AlertEvent> members = new ArrayList<>();

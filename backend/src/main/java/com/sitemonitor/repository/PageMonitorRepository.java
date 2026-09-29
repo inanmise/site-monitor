@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface PageMonitorRepository extends JpaRepository<PageMonitor, Long> {
     List<PageMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
 
     /**
      * Bu domain için AKTİF bir sayfa izlemesi var mı — sertifika sağlığındaki "karışık içerik"

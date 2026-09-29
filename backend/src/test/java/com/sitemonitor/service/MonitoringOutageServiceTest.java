@@ -233,6 +233,92 @@ class MonitoringOutageServiceTest {
     }
 
     @Test
+    @DisplayName("D-b2: günlük re-alert olayı AÇAN izlemenin kaydını kullanır — aynı alan adındaki başka DNS izlemesinin değişikliğini değil")
+    void dnsChanged_dailyReAlert_usesOpenersRecord() {
+        AlertEvent open = openAlert("two.example.com", EscalationService.TYPE_DNS_CHANGED);
+        open.setContextJson("{\"monitor_id\":11}");
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        DnsRecord mine = new DnsRecord();
+        mine.setMonitorId(11L); mine.setRecordType("A"); mine.setPreviousValue("1.1.1.1"); mine.setValue("2.2.2.2");
+        mine.setCheckedAt("2026-06-10T09:00:00");
+        DnsRecord other = new DnsRecord();
+        other.setMonitorId(12L); other.setRecordType("MX"); other.setPreviousValue("mx1.example.com"); other.setValue("mx2.example.com");
+        other.setCheckedAt("2026-06-10T10:00:00");
+        when(dnsRecordRepo.findChangedByMonitorId(eq(11L), any(Pageable.class))).thenReturn(List.of(mine));
+        when(dnsRecordRepo.findChangedByDomain(eq("two.example.com"), any(Pageable.class))).thenReturn(List.of(other));
+        // #12 BAŞKA SAHİBİN (B takımının bağımsız) izlemesi — onun değişikliği kendi takımına olaysız bildirimle gider (O-c2)
+        com.sitemonitor.model.DnsMonitor foreign = new com.sitemonitor.model.DnsMonitor();
+        foreign.setId(12L); foreign.setStandalone(true); foreign.setTeamId(9L);
+        when(dnsMonitorRepo.findById(12L)).thenReturn(java.util.Optional.of(foreign));
+
+        service.handleDnsSweep(
+                List.of(item(EscalationService.TYPE_DNS_FAILURE, "two.example.com", "A", true,
+                        Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(), List.of(), List.of(), List.of());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(escalationService).processConfirmedOutage(
+                eq("two.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), ctx.capture());
+        assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("2.2.2.2"));
+        assertThat(ctx.getValue()).containsEntry("record_type", "A").containsEntry("monitor_id", 11L);
+    }
+
+    @Test
+    @DisplayName("O-c2: AYNI SAHİBİN ikinci izlemesinin daha YENİ değişikliği günlük yeniden uyarıda anlatılır (açanın kaydının arkasında kaybolmaz)")
+    void dnsChanged_dailyReAlert_sameOwnerNewerSiblingChangeIsTold() {
+        AlertEvent open = openAlert("pair.example.com", EscalationService.TYPE_DNS_CHANGED);
+        open.setContextJson("{\"monitor_id\":11}");   // envanter türevi (takım damgası yok) → sahip INV
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        DnsRecord mine = new DnsRecord();
+        mine.setMonitorId(11L); mine.setRecordType("A"); mine.setPreviousValue("1.1.1.1"); mine.setValue("2.2.2.2");
+        mine.setCheckedAt("2026-06-10T09:00:00");
+        DnsRecord sibling = new DnsRecord();
+        sibling.setMonitorId(12L); sibling.setRecordType("NS"); sibling.setPreviousValue("ns1.example.net"); sibling.setValue("ns9.example.org");
+        sibling.setCheckedAt("2026-06-10T10:00:00");
+        when(dnsRecordRepo.findChangedByMonitorId(eq(11L), any(Pageable.class))).thenReturn(List.of(mine));
+        when(dnsRecordRepo.findChangedByDomain(eq("pair.example.com"), any(Pageable.class))).thenReturn(List.of(sibling));
+        com.sitemonitor.model.DnsMonitor sib = new com.sitemonitor.model.DnsMonitor();
+        sib.setId(12L); sib.setStandalone(false);   // aynı sahip (envanter türevi)
+        when(dnsMonitorRepo.findById(12L)).thenReturn(java.util.Optional.of(sib));
+
+        service.handleDnsSweep(
+                List.of(item(EscalationService.TYPE_DNS_FAILURE, "pair.example.com", "A", true,
+                        Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(), List.of(), List.of(), List.of());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(escalationService).processConfirmedOutage(
+                eq("pair.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), ctx.capture());
+        assertThat(ctx.getValue()).containsEntry("record_type", "NS");
+        assertThat(ctx.getValue().get("new_values")).isEqualTo(List.of("ns9.example.org"));
+        assertThat(ctx.getValue()).as("kayıt açanın değil → kimlik taşınmaz (sahiplik kapısı eski davranış)")
+                .doesNotContainKey("monitor_id");
+    }
+
+    @Test
+    @DisplayName("D-b2: açanı bilinmeyen ESKİ olayda re-alert bağlamı izleme kimliği TAŞIMAZ (sahiplik bilinmez → eski davranış)")
+    void dnsChanged_dailyReAlert_legacyEvent_noMonitorId() {
+        AlertEvent open = openAlert("legacy.example.com", EscalationService.TYPE_DNS_CHANGED);
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of(open));
+        DnsRecord row = new DnsRecord();
+        row.setMonitorId(12L); row.setRecordType("A"); row.setValue("2.2.2.2"); row.setCheckedAt("2026-06-10T09:00:00");
+        when(dnsRecordRepo.findChangedByDomain(eq("legacy.example.com"), any(Pageable.class))).thenReturn(List.of(row));
+
+        service.handleDnsSweep(
+                List.of(item(EscalationService.TYPE_DNS_FAILURE, "legacy.example.com", "A", true,
+                        Map.of("record_type", "A"), MonitoringOutageServiceTest::up)),
+                List.of(), List.of(), List.of(), List.of());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctx = ArgumentCaptor.forClass(Map.class);
+        verify(escalationService).processConfirmedOutage(
+                eq("legacy.example.com"), eq(EscalationService.TYPE_DNS_CHANGED), anyString(), ctx.capture());
+        assertThat(ctx.getValue()).doesNotContainKey("monitor_id");
+    }
+
+    @Test
     @DisplayName("DNS_CHANGED günlük re-alert: monitörde değişiklik alarmı KAPALI → re-alert atlanır")
     void dnsChanged_dailyReAlert_suppressedWhenAlertDisabled() {
         AlertEvent open = openAlert("muted.example.com", EscalationService.TYPE_DNS_CHANGED);

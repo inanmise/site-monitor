@@ -89,14 +89,19 @@ export default function StormSettings() {
     return <LoadingBlock label={t('settings.loading')} className="justify-start px-0 py-6" />
   }
 
-  // Yüzde önizlemesi: ceil(value/100 × total), taban 2 (sunucu ile aynı round kuralı).
-  const pctPreview = Math.max(2, Math.ceil((Number(value) || 0) / 100 * total))
-  const unitLabel = t('storm.unitCount') + ' / ' + t('storm.unitPercent')
+  // Yüzde önizlemesi: ceil(value/100 × total), taban 2 (sunucu ile aynı round kuralı). 2026-09-29: fırtına TAKIM
+  // BAZINDA değerlendirilir — yüzde her takımın KENDİ aktif izlemelerinden; buradaki kuruluş toplamı yalnız bir örnektir.
+  // Yüzde kipinde mutlak taban 3 farklı hedef (O-4, sunucu StormService.PERCENT_MIN_TARGETS ile aynı).
+  const pctPreview = Math.max(3, Math.ceil((Number(value) || 0) / 100 * total))
+  const unitLabel = t('storm.unitCount') + ' / ' + t('storm.unitPercentTeam')
 
   return (
     <div className={SETTINGS_STACK} data-testid="storm-settings">
       <SettingsHeader icon={CloudLightning} description={t('storm.desc')}
         title={<>{t('storm.title')} <Badge variant="warning" className="font-bold tracking-wider">BETA</Badge></>} />
+
+      {/* Takım yalıtımı (ürün kararı 2026-09-29): eşik takım kümesinde, bildirim yalnız o takıma */}
+      <AlertBanner tone="info" className="mb-0">{t('storm.teamScopeNote')}</AlertBanner>
 
       {/* Master toggle */}
       <MasterToggleCard checked={enabled} onChange={setEnabled} label={t('storm.enabled')}
@@ -115,12 +120,12 @@ export default function StormSettings() {
               onChange={(e) => setValue(e.target.value === '' ? '' : Number(e.target.value))} />
             <NativeSelect value={unit} aria-label={unitLabel} onChange={(e) => setUnit(e.target.value)}>
               <NativeSelectOption value="COUNT">{t('storm.unitCount')}</NativeSelectOption>
-              <NativeSelectOption value="PERCENT">{t('storm.unitPercent')}</NativeSelectOption>
+              <NativeSelectOption value="PERCENT">{t('storm.unitPercentTeam')}</NativeSelectOption>
             </NativeSelect>
             <HelpTip helpKey="help.set.site.monitor.storm.threshold-unit" label={unitLabel} />
           </div>
           <p className="text-xs text-muted-foreground">
-            {unit === 'PERCENT' ? t('storm.pctPreview', value || 0, total, pctPreview) : t('storm.countHint')}
+            {unit === 'PERCENT' ? t('storm.pctPreviewTeam', value || 0, total, pctPreview) : t('storm.countHint')}
           </p>
         </SettingsSection>
 
@@ -147,7 +152,7 @@ export default function StormSettings() {
         <CardContent className="flex flex-col gap-2 px-4 sm:px-6">
           <ToggleRow checked={perGroup} onChange={setPerGroup} label={t('storm.perGroup')}
             helpKey="help.set.site.monitor.storm.per-group" />
-          <p className="text-xs text-muted-foreground">{t('storm.perGroupHint')}</p>
+          <p className="text-xs text-muted-foreground">{t('storm.perGroupHintTeam')}</p>
         </CardContent>
       </Card>
 

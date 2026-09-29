@@ -131,7 +131,7 @@ class ScriptedAnomalyGuardTest {
     @Test
     @DisplayName("5 ardışık zaman aşımı kapatır")
     void fullTimeoutStreakDisables() {
-        when(checkRepo.findRecentByMonitorId(7L, 5))
+        when(checkRepo.findRecentScheduledByMonitorId(7L, 5))
                 .thenReturn(checks("TIMEOUT", "TIMEOUT", "TIMEOUT", "TIMEOUT", "TIMEOUT"));
 
         String reason = guard.evaluate(monitor, result("TIMEOUT", 1L));
@@ -143,7 +143,7 @@ class ScriptedAnomalyGuardTest {
     @Test
     @DisplayName("seri kırıksa kapatmaz — geçici ağ dalgalanması izlemeyi durdurmamalı")
     void brokenStreakDoesNotDisable() {
-        when(checkRepo.findRecentByMonitorId(7L, 5))
+        when(checkRepo.findRecentScheduledByMonitorId(7L, 5))
                 .thenReturn(checks("TIMEOUT", "TIMEOUT", "PASS", "TIMEOUT", "TIMEOUT"));
 
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
@@ -153,7 +153,7 @@ class ScriptedAnomalyGuardTest {
     @Test
     @DisplayName("pencere DOLMADAN kapatmaz — 3 kaydı olan yeni monitör 5'lik eşiği geçmiş sayılmaz")
     void partialHistoryDoesNotDisable() {
-        when(checkRepo.findRecentByMonitorId(7L, 5)).thenReturn(checks("TIMEOUT", "TIMEOUT", "TIMEOUT"));
+        when(checkRepo.findRecentScheduledByMonitorId(7L, 5)).thenReturn(checks("TIMEOUT", "TIMEOUT", "TIMEOUT"));
 
         assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L))).isNull();
         verify(monitorRepo, never()).save(any());
@@ -163,7 +163,7 @@ class ScriptedAnomalyGuardTest {
     @DisplayName("son koşum zaman aşımı DEĞİLSE geçmiş hiç sorgulanmaz (her koşumda fazladan sorgu yok)")
     void nonTimeoutRunSkipsHistoryQuery() {
         assertThat(guard.evaluate(monitor, result("PASS", 5L))).isNull();
-        verify(checkRepo, never()).findRecentByMonitorId(anyLong(), anyInt());
+        verify(checkRepo, never()).findRecentScheduledByMonitorId(anyLong(), anyInt());
     }
 
     // ── Kapatmama garantileri ───────────────────────────────────────────────────────────────
@@ -286,5 +286,28 @@ class ScriptedAnomalyGuardTest {
         verify(emailService).sendAlert(any(String[].class), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), ctx.capture());
         assertThat(ctx.getValue()).isEmpty();
+    }
+
+    // ── Elle koşum guard'ı TETİKLEMEZ (ürün kararı 2026-09-29) ───────────────────────────────
+
+    @Test
+    @DisplayName("Q3: ELLE koşum — ağır ihlal ya da tam zaman aşımı serisi olsa bile izleme KAPATILMAZ, bildirim/sorgu YOK")
+    void manualRun_neverDisables() {
+        when(checkRepo.findRecentScheduledByMonitorId(7L, 5))
+                .thenReturn(checks("TIMEOUT", "TIMEOUT", "TIMEOUT", "TIMEOUT", "TIMEOUT"));
+
+        assertThat(guard.evaluate(monitor, result("PASS", 5000L), true)).isNull();     // istek tavanı aşımı
+        assertThat(guard.evaluate(monitor, result("TIMEOUT", 1L), true)).isNull();     // seri dolu
+
+        verify(monitorRepo, never()).save(any());
+        verify(checkRepo, never()).findRecentScheduledByMonitorId(anyLong(), anyInt());
+        org.mockito.Mockito.verifyNoInteractions(emailService);
+    }
+
+    @Test
+    @DisplayName("Q3: zamanlanmış koşum 2-argümanlı ve manual=false çağrıda AYNI davranır (kapatma sürer)")
+    void scheduledRun_stillDisables() {
+        assertThat(guard.evaluate(monitor, result("PASS", 5000L), false)).isNotNull();
+        verify(monitorRepo).save(any());
     }
 }

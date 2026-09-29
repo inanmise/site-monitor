@@ -183,7 +183,7 @@ final class EmailSamples {
                 map("expiry_date", "2026-10-08T12:37:46Z", "registrar", "Örnek Registrar Ltd. Şti.", "source", "RDAP",
                         "status_codes", "client transfer prohibited, client delete prohibited, redemptionPeriod",
                         "nameservers", "ns1.example.com, ns2.example.com", "team_name", "Takım A"));
-        alert("alert-domain-status", "[Site Monitor] ORTA · example.org — alan adı durum kodu",
+        alert("alert-domain-status", "[Site Monitor] UYARI · example.org — alan adı durum kodu",
                 "Alan adında kısıtlayıcı bir EPP durum kodu tespit edildi.", "example.org", "WARNING", "DOMAINMON_STATUS", null,
                 map("status_codes", "clientHold", "registrar", "Örnek Registrar", "team_name", "Takım A"));
         StringBuilder rows = new StringBuilder();
@@ -218,6 +218,11 @@ final class EmailSamples {
                         "team_name", "Takım A", "alert_event_id", 4242L));
         alert("alert-port-down", "[Site Monitor KRİTİK] db.example.com — Port Kesintisi", "KRİTİK: db.example.com:5432 yanıt vermiyor.",
                 "db.example.com", "CRITICAL", "PORT_DOWN", null,
+                map("port", 5432, "protocol", "TCP", "first_failure_at", "2026-09-26T07:00:00", "confirm_attempt_count", 3,
+                        "confirm_delay_ms", 30000L, "confirm_attempts", attempts(3, "Connection refused"), "monitor_id", 12, "team_name", "Takım A"));
+        // O-b1 (2026-09-29): UYARI seviyeli izleme alarmı — rozet ve "Seviye" satırı olayın seviyesini yazar (eskiden sabit "KRİTİK").
+        alert("alert-port-down-warning", "[Site Monitor] UYARI · db.example.com — Port Kesintisi", "UYARI: db.example.com:5432 yanıt vermiyor.",
+                "db.example.com", "WARNING", "PORT_DOWN", null,
                 map("port", 5432, "protocol", "TCP", "first_failure_at", "2026-09-26T07:00:00", "confirm_attempt_count", 3,
                         "confirm_delay_ms", 30000L, "confirm_attempts", attempts(3, "Connection refused"), "monitor_id", 12, "team_name", "Takım A"));
         alert("alert-dns-failure", "[Site Monitor KRİTİK] mail.example.com — DNS Çözümleme Hatası", "KRİTİK: MX kaydı çözülemiyor.",
@@ -290,6 +295,12 @@ final class EmailSamples {
                 "2026-09-26T07:00:00", targets, 28);
         add("storm-alert", "storm", "[Site Monitor 🌩 ALARM FIRTINASI] 40 monitör", html,
                 svc.buildStormAlertText(40, "Takım A · Erişilebilirlik", "Ortak alt ağ", "2026-09-26T07:00:00", targets, 28), "critical");
+        // D-c7 (2026-09-29): UYARI seviyeli üyelerin fırtınası — rozet, kutu ve "Seviye" satırı üyelerin en yüksek seviyesi.
+        add("storm-alert-warning", "storm", "[Site Monitor 🌩 ALARM FIRTINASI] 5 monitör",
+                svc.buildStormAlertHtml(5, "Takım A · Sentetik", "Sentetik Test Başarısız", "2026-09-26T07:00:00",
+                        targets.subList(0, 5), 0, "WARNING"),
+                svc.buildStormAlertText(5, "Takım A · Sentetik", "Sentetik Test Başarısız", "2026-09-26T07:00:00",
+                        targets.subList(0, 5), 0, "WARNING"), "warning");
         List<String> still = List.of("host3.example.com", "host7.example.com");
         String rec = svc.buildStormRecoveryHtml(38, 2, "Takım A · Erişilebilirlik", "2026-09-26T07:00:00", "2026-09-26T07:48:00",
                 targets, 26, still);

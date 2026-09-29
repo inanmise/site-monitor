@@ -8,7 +8,7 @@ import ToneBadge from '../ToneBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { levelClass, alertHref, alertSourceTab } from './alertHistoryModel.js'
+import { levelClass, alertHref, alertSourceTab, closesAutomatically } from './alertHistoryModel.js'
 
 /**
  * Alarm Geçmişi'nin küçük, tekrar eden rozetleri — Olaylar konsolu (incidents/IncidentBadges) ile AYNI görsel dil:
@@ -163,17 +163,30 @@ export function AlertResolvedBy({ by, className }) {
 /**
  * "Neden hâlâ açık?" çipleri (2026-09-12, #16): onay durumu, GERÇEK e-posta gönderim sayısı (notification_logs —
  * kademe kontağı listesi DEĞİL, 2026-09-17), push gönderildi/başarısız ve hiç ulaşmadıysa kırmızı uyarı.
- * Test kancası: `data-why` (role="group").
+ * 2026-09-29: İLK çip kapanış kuralı — otomatik kapanan türde "kontroller düzelince kendiliğinden kapanır", değişiklik
+ * alarmında "yalnız elle kapanır". Eskiden panel yalnız onay/bildirim gösteriyordu; sağlıklı izlemede asılı kalan alarmda
+ * "kimseye ulaşmadı" çipi alarmın açık kalma NEDENİ gibi okunuyordu (bildirim, kapanışı etkilemez).
+ * Test kancası: `data-why` (role="group"), kapanış çipi `data-why-close` + `data-auto`.
+ * 2026-09-29 (fırtına): alarm bir alarm fırtınasının ÜYESİYSE (`storm_id`) bireysel e-posta/push bilinçli olarak
+ * gönderilmez — bildirim takımın TEK toplu fırtına postasına devredilir ve bu alarma yazılmaz. Sayaçlar 0 olduğu için
+ * "kimseye ulaşmadı" (kırmızı) çipi yanıltıcıydı; üyede onun yerine "Fırtına bildirimine devredildi" (bilgi) görünür.
+ * Test kancası `data-why-storm`.
  */
 export function WhyOpenChips({ alert: a, push, className }) {
   const t = useT()
   const sent = push?.sent ?? 0, failed = push?.failed ?? 0, skipped = push?.skipped ?? 0
   const mailSent = Number(a?.email_sent_count ?? 0), mailFailed = Number(a?.email_failed_count ?? 0)
-  const nobody = mailSent === 0 && sent === 0
+  const stormMember = a?.storm_id != null
+  const nobody = mailSent === 0 && sent === 0 && !stormMember
+  const auto = closesAutomatically(a?.alert_type)
   const chip = 'rounded-full font-normal'
   return (
     <div data-why="" role="group" aria-label={t('alh.whyOpen')} className={cn('flex min-w-0 flex-wrap items-center gap-1.5 text-[0.78em]', className)}>
       <span className="text-[0.9em] font-bold tracking-wide text-muted-foreground uppercase">{t('alh.whyOpen')}</span>
+      <ToneBadge tone={auto ? 'info' : 'warning'} className={chip} data-why-close="" data-auto={auto ? 'true' : 'false'}
+        title={t(auto ? 'alh.whyAutoTip' : 'alh.whyManualTip')}>
+        {t(auto ? 'alh.whyAuto' : 'alh.whyManual')}
+      </ToneBadge>
       <ToneBadge tone={a.acknowledged ? 'success' : 'warning'} className={chip}>
         {a.acknowledged ? t('alh.whyAcked', a.acknowledged_by || '—') : t('alh.whyUnacked')}
       </ToneBadge>
@@ -185,6 +198,9 @@ export function WhyOpenChips({ alert: a, push, className }) {
       <ToneBadge tone={failed > 0 ? 'danger' : sent > 0 ? 'neutral' : 'muted'} className={chip} title={push ? t('alh.whyPushTip', sent, failed, skipped) : undefined}>
         {push ? t('alh.whyPush', sent, failed) : t('alh.whyPushNone')}
       </ToneBadge>
+      {stormMember && (
+        <ToneBadge tone="info" className={chip} data-why-storm="" title={t('alh.whyStormTip')}>{t('alh.whyStorm')}</ToneBadge>
+      )}
       {nobody && <ToneBadge tone="danger" className={chip}>{t('alh.whyNobody')}</ToneBadge>}
     </div>
   )

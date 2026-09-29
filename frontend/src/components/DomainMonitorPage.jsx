@@ -140,7 +140,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
-  const canCheckRow = canManageRow
+  // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
+  // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
+  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   // Toplu seçim — dokuz izleme sayfasının STANDARDI (2026-09-26 kullanıcı bildirimi: Alan Adı sayfasında kart sol üstten
   // seçilemiyor, toplu Duraklat/Sürdür/takım/grup/sil yoktu). Yalnız yönetebildiği satırlar seçilebilir (Http ile aynı).
@@ -902,7 +904,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               actions={canManageRow(m) && (
                 <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
                   running={isRunning(m.id)}
-                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                   checkTitle={t('dom.check')} editTitle={t('dom.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('dom.delete')}
@@ -929,7 +931,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
               resuming={isResuming(selected.id)}
               running={isRunning(selected.id)}
-              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
               checkTitle={t('dom.check')}
               onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
               editTitle={t('dom.edit')}
@@ -948,7 +950,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               planı bloğu, özet (registrar/kaynak/son kontrol/sıklık/eşikler + Şimdi kontrol et), bitiş bilinmiyorsa neden +
               sonraki adımlar (Sorun Tanıla), koruma + EPP çipleri. Eski düz DetailSummary satırının yerine; yetki kapıları kartla aynı. */}
           <DomainDetailHeader monitor={selected} running={isRunning(selected.id)}
-            onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+            onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
             onPlanRenewal={canManageRow(selected) ? () => setPlanRow(selected) : undefined}
             onDiagnose={isAdmin ? () => diagnose(selected) : undefined} />
           <DetailDivider />

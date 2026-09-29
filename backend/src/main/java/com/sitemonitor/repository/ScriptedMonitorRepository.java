@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface ScriptedMonitorRepository extends JpaRepository<ScriptedMonitor, Long> {
     List<ScriptedMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     List<ScriptedMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams) — Notlar sekmesinin hedef anahtarı izleme ADI. */
     List<ScriptedMonitor> findByName(String name);

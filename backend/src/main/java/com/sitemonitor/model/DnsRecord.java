@@ -63,4 +63,12 @@ public class DnsRecord {
     /** JSON object with SOA fields (primary_ns, admin_email, serial, refresh, retry, expire, minimum_ttl). */
     @Column(name = "soa_info", columnDefinition = "TEXT")
     private String soaInfo;
+
+    /**
+     * ELLE kontrol kaydı mı ("Şimdi kontrol et", 2026-09-29) — NULL/false = zamanlanmış. Geçmişte ikisi de görünür;
+     * zamanlanmış değişiklik tespitinin TABANI yalnız zamanlanmış kayıtlardan okunur
+     * ({@code DnsRecordRepository.findLatestScheduledSuccessful}) — elle kontrol DNS_CHANGED algısını tüketmez.
+     */
+    @Column(name = "manual")
+    private Boolean manual;
 }

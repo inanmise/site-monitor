@@ -108,7 +108,9 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const canManageRow = (m) => isAdmin || isOwnTeam(m)                    // düzenle + kontrol (kendi takımı)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
-  const canCheckRow = canManageRow
+  // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
+  // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
+  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
@@ -818,7 +820,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               actions={canManageRow(m) && (
                 <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
                   running={isRunning(m.id)}
-                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                   checkTitle={t('keyword.check')} editTitle={t('keyword.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('keyword.delete')} />
@@ -840,7 +842,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
               resuming={isResuming(selected.id)}
               running={isRunning(selected.id)}
-              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
               checkTitle={t('keyword.check')}
               onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
               editTitle={t('keyword.edit')}

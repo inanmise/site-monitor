@@ -1244,11 +1244,11 @@ public class EmailNotificationService {
     MailDoc.Mail alertMail(String subject, String message, String domain, String level, String alertType,
                            Integer daysRemaining, Map<String, Object> ctx) {
         if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
-            return outageAlertDoc(message, domain, alertType, ctx).build();
+            return outageAlertDoc(message, domain, alertType, level, ctx).build();
         }
-        if ("KEYWORD".equals(alertType)) return keywordAlertDoc(message, domain, ctx).build();
-        if ("PING_DOWN".equals(alertType)) return pingAlertDoc(message, domain, ctx).build();
-        if ("DNS_CHANGED".equals(alertType)) return dnsChangedDoc(message, domain, ctx).build();
+        if ("KEYWORD".equals(alertType)) return keywordAlertDoc(message, domain, level, ctx).build();
+        if ("PING_DOWN".equals(alertType)) return pingAlertDoc(message, domain, level, ctx).build();
+        if ("DNS_CHANGED".equals(alertType)) return dnsChangedDoc(message, domain, level, ctx).build();
         if (domain == null) {
             // Ton konu metninden TAHMİN EDİLMEZ (eski "KRİTİK geçiyor mu" taraması); seviye açıkça verilir.
             Tone tone = EmailTemplateBuilder.severityTone(level);
@@ -1277,10 +1277,10 @@ public class EmailNotificationService {
     MailDoc.Mail resolutionMail(String domain, String alertType, String alertLevel, Integer daysRemaining,
                                 String resolvedBy, String resolvedAt, String createdAt, Map<String, Object> ctx,
                                 String teamNames, UptimeSummary uptime) {
-        if ("KEYWORD".equals(alertType)) return keywordResolvedDoc(domain, ctx, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
-        if ("PING_DOWN".equals(alertType)) return pingResolvedDoc(domain, ctx, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
+        if ("KEYWORD".equals(alertType)) return keywordResolvedDoc(domain, ctx, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
+        if ("PING_DOWN".equals(alertType)) return pingResolvedDoc(domain, ctx, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames, uptime).build();
         if ((alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) || "DNS_CHANGED".equals(alertType)) {
-            return monitoringResolvedDoc(domain, alertType, resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx).build();
+            return monitoringResolvedDoc(domain, alertType, alertLevel, resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx).build();
         }
         // domain + sertifika → "çözüldü" (yenilenen bitiş/registrar bağlamıyla zenginleştirilir)
         return new MailDoc.Mail(
@@ -1359,7 +1359,7 @@ public class EmailNotificationService {
      * first_failure_at, last_error, confirm_attempts, confirm_delay_ms, confirm_attempt_count).
      * "Tekrar Bildir" yolu eksik context geçirebileceğinden TÜM okumalar null-toleranslıdır.
      */
-    private MailDoc outageAlertDoc(String message, String domain, String alertType, Map<String, Object> ctx) {
+    private MailDoc outageAlertDoc(String message, String domain, String alertType, String level, Map<String, Object> ctx) {
         String kicker = switch (alertType) {
             case "PORT_DOWN"   -> "Port İzleme";
             case "DNS_FAILURE" -> "DNS İzleme";
@@ -1391,12 +1391,12 @@ public class EmailNotificationService {
                 : nzs(domain) + (!port.isEmpty() ? ":" + port : "");
         List<Map<String, Object>> attempts = attempts(ctx);
 
-        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + endpoint)
+        MailDoc d = MailDoc.create("[Site Monitor] " + EmailTemplateBuilder.severityLabel(level) + " · " + endpoint)
                 .preheader(heroTitle + " — " + endpoint)
                 .kicker(kicker);
-        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline(typeTrLabel));
+        d.badges(EmailTemplateBuilder.severityBadge(level), Badge.outline(typeTrLabel));
         d.title(endpoint, null);
-        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
+        d.alert(EmailTemplateBuilder.severityTone(level), heroTitle, message);   // D-c8: kutu tonu seviyeden (UYARI mavi)
 
         List<Row> rows = new ArrayList<>();
         rows.add(Row.of("Uç Nokta", endpoint));
@@ -1405,7 +1405,7 @@ public class EmailNotificationService {
         if (!firstFailureAt.isEmpty()) rows.add(Row.of("İlk Hata", formatIsoFull(firstFailureAt)));
         if (!lastError.isEmpty()) rows.add(Row.of("Son Hata", lastError.length() > 90 ? lastError.substring(0, 90) + "…" : lastError));
         rows.add(verificationRow(ctx, attempts, "deneme başarısız"));
-        rows.add(new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"));
+        rows.add(levelRow(level));
         rows.add(new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor"));
         d.keyValue("Kesinti Bilgileri", rows);
         attemptTable(d, attempts, "yanıt yok");
@@ -1455,7 +1455,7 @@ public class EmailNotificationService {
     // ── İzleme çözümü — ACCESSIBILITY / PORT_DOWN / DNS_FAILURE / DNS_CHANGED ──
 
     /** İzleme çözüm belgesi — süre createdAt→resolvedAt'ten hesaplanır; etiketler tipe göre. */
-    private MailDoc monitoringResolvedDoc(String domain, String alertType, String resolvedBy,
+    private MailDoc monitoringResolvedDoc(String domain, String alertType, String level, String resolvedBy,
                                           String resolvedAt, String createdAt,
                                           String teamNames, UptimeSummary uptime,
                                           Map<String, Object> ctx) {
@@ -1481,8 +1481,6 @@ public class EmailNotificationService {
             case "DNS_CHANGED" -> "DNS Değişikliği";
             default            -> "Erişim Kesintisi";
         };
-        String levelTrLabel = dnsChanged ? "YÜKSEK" : "KRİTİK";
-        Tone levelTone = dnsChanged ? Tone.WARNING : Tone.DESTRUCTIVE;
         String durationLabel = dnsChanged ? "Alarm Süresi" : "Toplam Kesinti Süresi";
         // Kesinti başlangıç→bitiş net çifti (StatusCake gibi); DNS-changed'de "alarm" terminolojisi korunur.
         String startLabel = dnsChanged ? "Alarm Başlangıcı" : "Kesinti Başlangıcı";
@@ -1504,11 +1502,22 @@ public class EmailNotificationService {
                 Row.of(startLabel, fmtOrDash(formatIstanbul(createdAt))),
                 new Row(durationLabel, MailKit.strong(duration, Tone.SUCCESS.strong), duration),
                 Row.of("Alarm Tipi", typeTrLabel),
-                new Row("Seviye", MailKit.strong(levelTrLabel, levelTone.strong), levelTrLabel)));
+                levelRow(level)));
         uptimeSummary(d, uptime);
         MailCta.appendIncidentActions(d, liveBaseUrl(), ctx == null ? null : ctx.get("alert_event_id"));
         d.footerWhy(teamNames).footerMeta("Site Monitor", "Bildirim: " + nowStamp());
         return d;
+    }
+
+    /**
+     * O-b1 / D-2 (2026-09-29): "Seviye" satırı alarmın GERÇEK seviyesinden — tek sözlük
+     * {@link EscalationService#levelWordTr} (rozetle, konuyla, ileti gövdesiyle ve push ile aynı sözcük). Eskiden
+     * izleme e-postalarında sabit "KRİTİK" (DNS değişikliğinde "YÜKSEK") yazıyordu; WARNING alarmda gövde "UYARI:"
+     * derken rozet ve bu satır "KRİTİK" diyordu.
+     */
+    private static Row levelRow(String level) {
+        String w = EmailTemplateBuilder.severityLabel(level);
+        return new Row("Seviye", MailKit.strong(w, EmailTemplateBuilder.severityTone(level).strong), w);
     }
 
     /** Erişilebilirlik özeti (son 24s/7g uptime% + kesinti sayısı) — veri yoksa hiç eklenmez. */
@@ -1542,8 +1551,15 @@ public class EmailNotificationService {
     /** Fırtına alarmının düz-metin karşılığı (multipart/alternative ikinci partı). */
     public String buildStormAlertText(int monitorCount, String scopeLabel, String rootCauseLabel,
                                       String startedAt, List<String> sampleTargets, int truncatedExtra) {
+        return buildStormAlertText(monitorCount, scopeLabel, rootCauseLabel, startedAt, sampleTargets, truncatedExtra, "CRITICAL");
+    }
+
+    /** D-c7: HTML partıyla aynı seviye sözcüğü. */
+    public String buildStormAlertText(int monitorCount, String scopeLabel, String rootCauseLabel,
+                                      String startedAt, List<String> sampleTargets, int truncatedExtra, String level) {
         StringBuilder sb = new StringBuilder();
         sb.append("ALARM FIRTINASI — ").append(monitorCount).append(" monitör birden erişilemez").append(NL).append(NL);
+        sb.append("Seviye: ").append(EmailTemplateBuilder.severityLabel(level)).append(NL);
         sb.append("Kapsam: ").append(nz(scopeLabel)).append(NL);
         sb.append("Ortak kök-neden: ").append(nz(rootCauseLabel)).append(NL);
         sb.append("Başlangıç: ").append(fmtOrDash(formatIstanbul(startedAt))).append(NL);
@@ -1603,19 +1619,31 @@ public class EmailNotificationService {
      */
     public String buildStormAlertHtml(int monitorCount, String scopeLabel, String rootCauseLabel,
                                       String startedAt, List<String> sampleTargets, int truncatedExtra) {
+        return buildStormAlertHtml(monitorCount, scopeLabel, rootCauseLabel, startedAt, sampleTargets, truncatedExtra, "CRITICAL");
+    }
+
+    /**
+     * D-c7 (2026-09-29): {@code level} = fırtına seviyesi (üyelerin EN YÜKSEK seviyesi — push ile aynı,
+     * {@code StormService.stormPushLevel}). Rozet, uyarı kutusu ve "Seviye" satırı tek sözlükten ({@code levelWordTr});
+     * eskiden rozet sabit "KRİTİK"ti — UYARI üyeli fırtınada push "UYARI", e-posta "KRİTİK" diyordu.
+     */
+    public String buildStormAlertHtml(int monitorCount, String scopeLabel, String rootCauseLabel,
+                                      String startedAt, List<String> sampleTargets, int truncatedExtra, String level) {
+        Tone tone = EmailTemplateBuilder.severityTone(level);
         MailDoc d = MailDoc.create("[Site Monitor] Alarm fırtınası — " + monitorCount + " monitör birden erişilemez")
                 .preheader(monitorCount + " monitör birden erişilemez — olası ortak kesinti")
                 .kicker("İzleme");
-        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("Alarm Fırtınası"));
+        d.badges(EmailTemplateBuilder.severityBadge(level), Badge.outline("Alarm Fırtınası"));
         d.title("Alarm fırtınası", monitorCount + " monitör birden erişilemez.");
-        d.alert(Tone.DESTRUCTIVE, "Olası ortak kesinti",
+        d.alert(tone, "Olası ortak kesinti",
                 "Kısa bir zaman penceresinde çok sayıda monitör birden erişilemez oldu — olası paylaşılan sunucu / ağ / veri merkezi kesintisi. "
                 + "Bireysel alarmlar bu TEK toplu bildirimde gruplandı; sorunlar giderildikçe tek bir toplu \"çözüldü\" e-postası gönderilecektir.");
         d.keyValue("Fırtına Özeti", MailDoc.rows(
                 Row.of("Kapsam", scopeLabel),
                 Row.of("Ortak Kök-Neden", rootCauseLabel),
                 Row.of("Başlangıç", fmtOrDash(formatIstanbul(startedAt))),
-                new Row("Etkilenen Monitör", MailKit.strong(String.valueOf(monitorCount), Tone.DESTRUCTIVE.strong), String.valueOf(monitorCount))));
+                levelRow(level),
+                new Row("Etkilenen Monitör", MailKit.strong(String.valueOf(monitorCount), tone.strong), String.valueOf(monitorCount))));
         d.heading("Etkilenen Monitörler");
         d.bullets(targetItems(sampleTargets, truncatedExtra));
         d.button(stormCtaUrl(), "Olayları Aç →");
@@ -1679,7 +1707,7 @@ public class EmailNotificationService {
     }
 
     /** Keyword izleme alarmı — adet/operatör koşulu alanları. */
-    private MailDoc keywordAlertDoc(String message, String url, Map<String, Object> ctx) {
+    private MailDoc keywordAlertDoc(String message, String url, String level, Map<String, Object> ctx) {
         String keyword   = ctxStr(ctx, "keyword");
         String operator  = ctxStr(ctx, "operator"); if (operator.isEmpty()) operator = "GTE";
         int threshold = ctx != null && ctx.get("match_count") instanceof Number mn ? mn.intValue() : 1;
@@ -1694,12 +1722,12 @@ public class EmailNotificationService {
         List<Map<String, Object>> attempts = attempts(ctx);
         String heroTitle = absent ? "İstenmeyen İfade Bulundu" : "Koşul Sağlanmadı";
 
-        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + nzs(url))
+        MailDoc d = MailDoc.create("[Site Monitor] " + EmailTemplateBuilder.severityLabel(level) + " · " + nzs(url))
                 .preheader(heroTitle + " — " + nzs(url))
                 .kicker("İçerik (Keyword) İzleme");
-        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("İçerik Doğrulama"));
+        d.badges(EmailTemplateBuilder.severityBadge(level), Badge.outline("İçerik Doğrulama"));
         d.title(nzs(url), null);
-        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
+        d.alert(EmailTemplateBuilder.severityTone(level), heroTitle, message);   // D-c8: kutu tonu seviyeden (UYARI mavi)
 
         List<Row> left = new ArrayList<>();
         left.add(new Row("Adres", endpointHtml(url), nzs(url)));
@@ -1718,7 +1746,7 @@ public class EmailNotificationService {
         d.keyValue("Doğrulama Özeti", MailDoc.rows(
                 new Row("Kelime durumu", MailKit.strong(wordStatus, Tone.DESTRUCTIVE.strong), wordStatus),
                 verificationRow(ctx, attempts, "başarısız"),
-                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"),
+                levelRow(level),
                 new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor")));
         attemptTable(d, attempts, "doğrulanamadı");
         if (absent && !snippet.isEmpty()) d.pre("Eşleşme Bağlamı", "…" + snippet + "…");
@@ -1730,7 +1758,7 @@ public class EmailNotificationService {
     }
 
     /** Ping (ICMP) izleme alarmı — erişilebilirlik alanları. */
-    private MailDoc pingAlertDoc(String message, String host, Map<String, Object> ctx) {
+    private MailDoc pingAlertDoc(String message, String host, String level, Map<String, Object> ctx) {
         boolean na = "true".equalsIgnoreCase(ctxStr(ctx, "na"));
         String ipVersion  = ctxStr(ctx, "ip_version");
         String packetLoss = ctxStr(ctx, "packet_loss");
@@ -1741,12 +1769,12 @@ public class EmailNotificationService {
         List<Map<String, Object>> attempts = attempts(ctx);
         String heroTitle = na ? "ICMP Kullanılamıyor" : "Host Yanıt Vermiyor";
 
-        MailDoc d = MailDoc.create("[Site Monitor] KRİTİK · " + nzs(host))
+        MailDoc d = MailDoc.create("[Site Monitor] " + EmailTemplateBuilder.severityLabel(level) + " · " + nzs(host))
                 .preheader(heroTitle + " — " + nzs(host))
                 .kicker("Ping (ICMP) İzleme");
-        d.badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.outline("Erişilebilirlik (Ping)"));
+        d.badges(EmailTemplateBuilder.severityBadge(level), Badge.outline("Erişilebilirlik (Ping)"));
         d.title(nzs(host), null);
-        d.alert(Tone.DESTRUCTIVE, heroTitle, message);
+        d.alert(EmailTemplateBuilder.severityTone(level), heroTitle, message);   // D-c8: kutu tonu seviyeden (UYARI mavi)
 
         List<Row> left = new ArrayList<>();
         left.add(Row.of("Host", host));
@@ -1762,7 +1790,7 @@ public class EmailNotificationService {
         d.keyValue("Doğrulama Özeti", MailDoc.rows(
                 new Row("Ping durumu", MailKit.strong(pingStatus, Tone.DESTRUCTIVE.strong), pingStatus),
                 verificationRow(ctx, attempts, "başarısız"),
-                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK"),
+                levelRow(level),
                 new Row("İzleme", MailKit.strong("Devam ediyor", Tone.SUCCESS.strong), "Devam ediyor")));
         attemptTable(d, attempts, "doğrulanamadı");
         d.note("Host yeniden yanıt verdiğinde bu alarm otomatik kapatılır ve çözüm e-postası gönderilir.");
@@ -1774,7 +1802,7 @@ public class EmailNotificationService {
 
     /** Ortak çözüm belgesi — keyword/ping kimliğiyle. */
     private MailDoc typedResolvedDoc(String domain, String kicker, String heroLine, String typeTrLabel,
-                                     List<Row> detailRows, String ctaUrl,
+                                     String level, List<Row> detailRows, String ctaUrl,
                                      String resolvedBy, String resolvedAt, String createdAt,
                                      String teamNames, UptimeSummary uptime, Map<String, Object> ctx) {
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (otomatik)";
@@ -1794,7 +1822,7 @@ public class EmailNotificationService {
                 Row.of("Kesinti Başlangıcı", fmtOrDash(formatIstanbul(createdAt))),
                 new Row("Toplam Kesinti Süresi", MailKit.strong(duration, Tone.SUCCESS.strong), duration),
                 Row.of("Alarm Tipi", typeTrLabel),
-                new Row("Seviye", MailKit.strong("KRİTİK", Tone.DESTRUCTIVE.strong), "KRİTİK")));
+                levelRow(level)));
         if (detailRows != null && !detailRows.isEmpty()) d.keyValue("Çözülen Alarm Detayı", detailRows);
         uptimeSummary(d, uptime);
         d.button(ctaUrl, "Monitörü Aç →");
@@ -1803,7 +1831,7 @@ public class EmailNotificationService {
         return d;
     }
 
-    private MailDoc keywordResolvedDoc(String url, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+    private MailDoc keywordResolvedDoc(String url, Map<String, Object> ctx, String level, String resolvedBy, String resolvedAt,
                                        String createdAt, String teamNames, UptimeSummary uptime) {
         List<Row> rows = new ArrayList<>();
         if (ctx != null) {
@@ -1816,10 +1844,10 @@ public class EmailNotificationService {
             if (!occ.isEmpty()) rows.add(Row.of("Alarm anı bulunan", occ + " kez"));
         }
         return typedResolvedDoc(url, "İçerik (Keyword) İzleme", "İçerik Doğrulaması Yeniden Başarılı", "İçerik Doğrulama",
-                rows, monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
+                level, rows, monitorCtaUrl("keyword", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
     }
 
-    private MailDoc pingResolvedDoc(String host, Map<String, Object> ctx, String resolvedBy, String resolvedAt,
+    private MailDoc pingResolvedDoc(String host, Map<String, Object> ctx, String level, String resolvedBy, String resolvedAt,
                                     String createdAt, String teamNames, UptimeSummary uptime) {
         List<Row> rows = new ArrayList<>();
         if (ctx != null) {
@@ -1828,7 +1856,7 @@ public class EmailNotificationService {
             if (!ipv.isEmpty() && !"auto".equals(ipv)) rows.add(Row.of("IP sürümü", ipv.toUpperCase(java.util.Locale.ROOT)));
         }
         return typedResolvedDoc(host, "Ping (ICMP) İzleme", "Host Yeniden Yanıt Veriyor", "Erişilebilirlik (Ping)",
-                rows, monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
+                level, rows, monitorCtaUrl("ping", ctx), resolvedBy, resolvedAt, createdAt, teamNames, uptime, ctx);
     }
 
     // ── DNS kayıt değişikliği ────────────────────────────────────────────────
@@ -1843,7 +1871,7 @@ public class EmailNotificationService {
      * denemeleri bölümü yoktur (değişiklik başarılı sorgudan pozitif gözlemdir); alarm otomatik
      * kapanmaz. ctx okumaları null-toleranslıdır ("Tekrar Bildir" yolu eksik context geçirebilir).
      */
-    private MailDoc dnsChangedDoc(String message, String domain, Map<String, Object> ctx) {
+    private MailDoc dnsChangedDoc(String message, String domain, String level, Map<String, Object> ctx) {
         String recordType = ctxStr(ctx, "record_type");
         String changedAt  = ctxStr(ctx, "changed_at");
         List<String> oldValues = ctxList(ctx, "old_values");
@@ -1851,10 +1879,10 @@ public class EmailNotificationService {
         String lead = (!recordType.isEmpty() ? recordType + " kaydı" : "")
                 + (!changedAt.isEmpty() ? (recordType.isEmpty() ? "" : " · ") + "Tespit zamanı: " + formatIsoFull(changedAt) : "");
 
-        MailDoc d = MailDoc.create("[Site Monitor] YÜKSEK · " + nzs(domain) + " — DNS değişikliği")
+        MailDoc d = MailDoc.create("[Site Monitor] " + EmailTemplateBuilder.severityLabel(level) + " · " + nzs(domain) + " — DNS değişikliği")
                 .preheader("DNS kaydı değişti — " + nzs(domain))
                 .kicker("DNS İzleme");
-        d.badges(Badge.tint("YÜKSEK", Tone.WARNING), Badge.outline("DNS Değişikliği"));
+        d.badges(EmailTemplateBuilder.severityBadge(level), Badge.outline("DNS Değişikliği"));
         d.title(nzs(domain), lead.isBlank() ? null : lead);
         d.alert(Tone.WARNING, "DNS Kaydı Değişti", message);
         d.heading("Değişiklik");

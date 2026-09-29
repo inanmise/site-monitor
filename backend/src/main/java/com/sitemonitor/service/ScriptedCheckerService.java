@@ -52,6 +52,26 @@ public class ScriptedCheckerService {
     private static final int ABS_MAX_TIMEOUT = 180;   // mutlak tavan (sn)
 
     private Semaphore permits;
+    /**
+     * ELLE koşum kotası (2026-09-29, D-10): elle koşumlar ({@link #runManual}) aynı anda en çok {@code pool-size − 1}
+     * izin kullanır → zamanlanmış koşumlara HER ZAMAN en az bir izin kalır. Eskiden toplu "Şimdi Kontrol Et" (arayüz
+     * eşzamanlılığı 2) varsayılan havuzun (2) iki iznini de koşum boyunca tutabiliyor, zamanlanmış koşumlar izin
+     * bekleyip SKIPPED'e düşüyor ve o pencerede gerçek bir kesintinin alarmı gecikiyordu. Tek izinli havuzda elle koşum
+     * yalnız havuz o an TAMAMEN boşken, kısa beklemeyle çalışır.
+     */
+    private Semaphore manualSlots;
+    private int poolSize = 1;
+    /** Tek izinli havuzda elle koşumun havuzun boşalmasını bekleme payı (sn). */
+    static final int MANUAL_SINGLE_POOL_WAIT_SEC = 2;
+    /** Elle tetik ucunun sonucu bekleme süresi — uç ({@code MonitoringController.triggerScripted}) ile TEK anahtar. */
+    public static final String MANUAL_WAIT_KEY = "site.monitor.scripted.manual-wait-seconds";
+    public static final int MANUAL_WAIT_DEFAULT_SEC = 25;
+    /** Elle koşumun sıra beklemesi ucun beklemesinden en az bu kadar KISA (sn) — "yürütülmedi" yanıtı uca yetişir. */
+    static final int MANUAL_REPORT_MARGIN_SEC = 5;
+    /** Elle koşum kotası dolu — kontrol YÜRÜTÜLMEDİ (SKIPPED); arayüz bunu i18n iletisiyle gösterir. */
+    public static final String MANUAL_POOL_BUSY = "k6 havuzunun elle kontrol payı dolu — zamanlanmış kontrollere yer bırakıldı; birazdan yeniden deneyin";
+    /** Elle kökenli iş (ör. elle kontrolün başlattığı kurtarma zinciri) bu iş parçacığında elle kotadan mı koşar. */
+    private static final ThreadLocal<Boolean> MANUAL_QUOTA = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private ExecutorService execPool;
     private final AtomicInteger active = new AtomicInteger();
     private final AtomicInteger queued = new AtomicInteger();
@@ -92,6 +112,8 @@ public class ScriptedCheckerService {
     public void init() {
         int pool = Math.max(1, appSettings.getInt("site.monitor.scripted.pool-size", 2));
         permits = new Semaphore(pool);
+        poolSize = pool;
+        manualSlots = new Semaphore(Math.max(1, pool - 1));   // pool=1: tek elle koşum, o da yalnız havuz boşken
         execPool = Executors.newVirtualThreadPerTaskExecutor();
         Gauge.builder("scripted.k6.active", active, AtomicInteger::get)
                 .description("Şu an çalışan k6 alt süreç sayısı").register(registry);
@@ -572,10 +594,89 @@ public class ScriptedCheckerService {
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
-    /** Kaydedilmiş monitör (scheduler/manuel). */
+    /**
+     * Kaydedilmiş monitör — zamanlanmış teyit/kurtarma yeniden kontrolleri. Çağıran iş parçacığı elle kotadaysa
+     * ({@link #withManualQuota}: elle kontrolün başlattığı zincir) {@link #runManual} yoluna gider.
+     */
     public ScriptedResult run(ScriptedMonitor m) {
+        // Elle kökenli kurtarma zinciri: sıra BEKLEMEZ (D-b11) — kota/havuz doluysa hemen SKIPPED; zincir biter, ardışık
+        // sayaç korunur, sonraki zamanlanmış tur sürer. Beklese 2 iş parçacıklı kurtarma yürütücüsünü tıkardı.
+        if (Boolean.TRUE.equals(MANUAL_QUOTA.get())) return runManual(m, 0);
         return runGuarded(m.getScript(), parseEnv(m.getEnvJson(), true), clampTimeout(m.getTimeoutSeconds()),
                 proxyUseFor(m.getUseProxy()));
+    }
+
+    /**
+     * ELLE koşum ("Şimdi kontrol et", 2026-09-29, D-10): havuzun SON iznini almaz (bkz. {@link #manualSlots}).
+     * Kota dolarsa ya da havuz sıra bütçesi ({@link #manualQueueWaitSeconds}) içinde boşalmazsa {@link #MANUAL_POOL_BUSY}
+     * ile SKIPPED döner (kayıt yok).
+     */
+    public ScriptedResult runManual(ScriptedMonitor m) {
+        return runManual(m, manualQueueWaitSeconds(clampTimeout(m.getTimeoutSeconds())));
+    }
+
+    /**
+     * Elle koşumun sıra (kota + izin) bekleme BÜTÇESİ (sn) — ucun beklemesinden {@link #MANUAL_REPORT_MARGIN_SEC} KISA
+     * (O-b3). Eskiden kota beklemesi {@code timeout + 30} sn'ydi (en az 35), uç ise 25 sn bekliyordu: kota doluyken
+     * kullanıcı "başlatıldı — sonuç listeye düşecek" görüyor, koşum sonra SESSİZCE SKIPPED oluyordu (toplu sentetik
+     * kontrolde onlarca izleme için ESKİ sonuç "yeni" sanılıyordu). Artık "yürütülmedi" yanıtı uca HER ZAMAN yetişir.
+     */
+    int manualQueueWaitSeconds(int timeoutSec) {
+        int endpointWait = Math.max(1, appSettings.getInt(MANUAL_WAIT_KEY, MANUAL_WAIT_DEFAULT_SEC));
+        return Math.max(0, Math.min(endpointWait - MANUAL_REPORT_MARGIN_SEC, timeoutSec + PERMIT_WAIT_MARGIN_SEC));
+    }
+
+    private ScriptedResult runManual(ScriptedMonitor m, int queueWaitSec) {
+        int timeoutSec = clampTimeout(m.getTimeoutSeconds());
+        List<EnvVar> env = parseEnv(m.getEnvJson(), true);
+        ProxyUse viaProxy = proxyUseFor(m.getUseProxy());
+        if (!k6Available) return err("k6 bulunamadı — Sentetik İzleme devre dışı");
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(queueWaitSec);
+        boolean slot = false, acquired = false;
+        queued.incrementAndGet();
+        boolean dequeued = false;
+        try {
+            slot = manualSlots.tryAcquire(queueWaitSec, TimeUnit.SECONDS);
+            if (slot) {
+                // Kota beklemesiyle AYNI bütçeden (toplam sıra beklemesi bütçeyi aşmaz). Tek izinli havuzda ayrıca kısa:
+                // yalnız havuz o an boşsa — zamanlanmış koşumu kuyrukta geçmez.
+                long leftNs = Math.max(0, deadline - System.nanoTime());
+                if (poolSize <= 1) leftNs = Math.min(leftNs, TimeUnit.SECONDS.toNanos(MANUAL_SINGLE_POOL_WAIT_SEC));
+                acquired = permits.tryAcquire(leftNs, TimeUnit.NANOSECONDS);
+            }
+            queued.decrementAndGet();
+            dequeued = true;
+            if (!slot || !acquired) return err(MANUAL_POOL_BUSY);
+            active.incrementAndGet();
+            try {
+                return runProcess(m.getScript(), env, timeoutSec, viaProxy);
+            } finally {
+                active.decrementAndGet();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return err("kesintiye uğradı");
+        } finally {
+            if (!dequeued) queued.decrementAndGet();
+            if (acquired) permits.release();
+            if (slot) manualSlots.release();
+        }
+    }
+
+    /** {@code work}'ü bu iş parçacığında ELLE kotadan koşturur — elle kontrolün başlattığı kurtarma zinciri (D-10). */
+    public static <T> T withManualQuota(java.util.function.Supplier<T> work) {
+        Boolean prev = MANUAL_QUOTA.get();
+        MANUAL_QUOTA.set(Boolean.TRUE);
+        try {
+            return work.get();
+        } finally {
+            MANUAL_QUOTA.set(prev);
+        }
+    }
+
+    /** Bu iş parçacığı şu an elle kotada mı (elle kökenli kayıt işareti için). */
+    public static boolean manualQuotaActive() {
+        return Boolean.TRUE.equals(MANUAL_QUOTA.get());
     }
 
     /** Scheduler fan-out: ayrı executor'a submit → scheduler thread'i bloklanmaz. */
@@ -813,7 +914,7 @@ public class ScriptedCheckerService {
             queued.decrementAndGet();
             if (!acquired) return err("k6 havuzu dolu — kontrol atlandı (sıra beklemesi aşıldı)");
             active.incrementAndGet();
-            return execute(script, env, timeoutSec, viaProxy);
+            return runProcess(script, env, timeoutSec, viaProxy);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             queued.decrementAndGet();
@@ -824,6 +925,11 @@ public class ScriptedCheckerService {
     }
 
     // ── Çalıştırma ───────────────────────────────────────────────────────────
+
+    /** İzin alındıktan sonraki k6 koşumu — izleme havuzunun TEK yürütme noktası (paket-özel: kota testi süreci taklit eder). */
+    ScriptedResult runProcess(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
+        return execute(script, env, timeoutSec, viaProxy);
+    }
 
     /**
      * k6'yı çalıştırır ve sonucu yorumlar.

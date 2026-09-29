@@ -143,7 +143,7 @@ class DomainCheckerServiceTest {
     void lockAlertOffLeavesStatusClean() {
         lenient().when(whois.anySourceEnabled()).thenReturn(false);
         when(rdap.lookup(eq("test.com"), any())).thenReturn(rdapOk(FUTURE, List.of("ok")));
-        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+        when(checkRepo.findLatestScheduledWithData(anyLong()))
                 .thenReturn(java.util.Optional.empty());
 
         com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
@@ -164,7 +164,7 @@ class DomainCheckerServiceTest {
     void blacklistDisabledIsSkipped() {
         lenient().when(whois.anySourceEnabled()).thenReturn(false);
         when(rdap.lookup(eq("example.org"), any())).thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited")));
-        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+        when(checkRepo.findLatestScheduledWithData(anyLong()))
                 .thenReturn(java.util.Optional.empty());
 
         com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
@@ -190,7 +190,7 @@ class DomainCheckerServiceTest {
         prev.setNameservers("ns1.example.com");
         prev.setStatusCodes("clientTransferProhibited");
         prev.setDnssec("signed");
-        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+        when(checkRepo.findLatestScheduledWithData(anyLong()))
                 .thenReturn(java.util.Optional.of(prev));
 
         com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
@@ -358,5 +358,108 @@ class DomainCheckerServiceTest {
         Map<String, Object> r = svc.test("example.com", 30, 7);
         assertThat(r.get("status")).isEqualTo("CRITICAL");
         assertThat((Integer) r.get("days_remaining")).isNegative();
+    }
+
+    // ── K-1 (2026-09-29): elle kontrol DOMAINMON_CHANGED tabanını TÜKETMEZ ─────────────────────
+
+    private com.sitemonitor.model.DomainCheck row(String ns, Boolean manual) {
+        com.sitemonitor.model.DomainCheck c = new com.sitemonitor.model.DomainCheck();
+        c.setRegistrar("Test Registrar");
+        c.setNameservers(ns);
+        c.setStatusCodes("clientTransferProhibited");
+        c.setManual(manual);
+        return c;
+    }
+
+    @Test
+    @DisplayName("K-1: zamanlanmış tur tabanı YALNIZ zamanlanmış satır — elle kontrol yeni nameserver'ı görmüş olsa da tur DEĞİŞİKLİĞİ algılar; satır manual=false")
+    void scheduledCheck_baselineIgnoresManualRow() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        Map<String, Object> now = new HashMap<>(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        now.put("nameservers", List.of("ns9.example.org"));   // ELE GEÇİRME imzası: nameserver seti değişti
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(now);
+        // Veritabanı gibi: en yeni veri satırı ELLE kontrolün yazdığı yeni set; son ZAMANLANMIŞ satır eski set.
+        lenient().when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.of(row("ns9.example.org", true)));
+        when(checkRepo.findLatestScheduledWithData(anyLong())).thenReturn(java.util.Optional.of(row("ns1.example.com", null)));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(11L); m.setDomain("example.com");
+
+        Map<String, Object> r = svc.check(m);
+
+        assertThat(r.get("changed")).as("elle kontrol değişikliği gördükten sonra zamanlanmış tur yine algılamalı").isEqualTo(true);
+        assertThat(String.valueOf(r.get("change_detail"))).contains("nameserver");
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainCheck.class);
+        org.mockito.Mockito.verify(checkRepo).save(saved.capture());
+        assertThat(saved.getValue().getManual()).isFalse();
+        assertThat(saved.getValue().getChanged()).as("zamanlanmış satır değişikliği KALICILAŞTIRIR").isTrue();
+    }
+
+    @Test
+    @DisplayName("D-b10: elle kontrol değişikliği YANITTA gösterir ama satıra changed=false yazar — aynı değişiklik geçmişte iki kez 'değişti' olmaz")
+    void manualCheck_showsChange_butPersistsUnchanged() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        Map<String, Object> now = new HashMap<>(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        now.put("nameservers", List.of("ns9.example.org"));
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(now);
+        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.of(row("ns1.example.com", null)));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(14L); m.setDomain("example.com");
+
+        Map<String, Object> r = svc.checkManual(m);
+
+        assertThat(r.get("changed")).as("kullanıcı gördüğü farkı yanıtta alır").isEqualTo(true);
+        assertThat(String.valueOf(r.get("change_detail"))).contains("nameserver");
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainCheck.class);
+        org.mockito.Mockito.verify(checkRepo).save(saved.capture());
+        assertThat(saved.getValue().getChanged()).as("elle satır 'değişti' kaydı üretmez").isFalse();
+        assertThat(saved.getValue().getChangeDetail()).isNull();
+    }
+
+    @Test
+    @DisplayName("K-1: elle kontrol satırı manual=true yazılır; kendi gösterimi son veri satırına göredir (zamanlanmış taban sorgulanmaz)")
+    void manualCheck_marksRowManual() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.of(row("ns1.example.com", null)));
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(12L); m.setDomain("example.com");
+
+        svc.checkManual(m);
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainCheck.class);
+        org.mockito.Mockito.verify(checkRepo).save(saved.capture());
+        assertThat(saved.getValue().getManual()).isTrue();
+        org.mockito.Mockito.verify(checkRepo, org.mockito.Mockito.never()).findLatestScheduledWithData(anyLong());
+    }
+
+    @Test
+    @DisplayName("K-1 ikizi: yeniden kontrol satırı manual=true (taban dışı) yazılır; etkinlik günlüğünde ELLE görünmez")
+    void recheck_marksRowOutOfBand_butNotUserManual() {
+        lenient().when(whois.anySourceEnabled()).thenReturn(false);
+        when(rdap.lookup(eq("example.com"), any())).thenReturn(rdapOk(FUTURE, List.of("clientTransferProhibited")));
+        lenient().when(checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(anyLong(), anyString()))
+                .thenReturn(java.util.Optional.empty());
+
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(13L); m.setDomain("example.com");
+
+        svc.checkRecheck(m);
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainCheck> saved =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainCheck.class);
+        org.mockito.Mockito.verify(checkRepo).save(saved.capture());
+        assertThat(saved.getValue().getManual()).isTrue();
+        org.mockito.Mockito.verify(checkRepo, org.mockito.Mockito.never()).findLatestScheduledWithData(anyLong());
+        org.mockito.Mockito.verify(activityLog).recordCheck(anyString(), eq(13L), any(), any(), any(),
+                eq(false), eq("scheduler"), any());
     }
 }

@@ -80,7 +80,7 @@ public class EmailTemplateBuilder {
                             Integer daysRemaining, Map<String, Object> ctx, String teamName) {}
 
     // ── Severity / aciliyet ────────────────────────────────────────────────────
-    /** Önem → ton: KRİTİK kırmızı, YÜKSEK amber, ORTA mavi, BİLGİ nötr. */
+    /** Önem → ton: KRİTİK kırmızı, YÜKSEK amber, UYARI mavi, BİLGİ nötr. */
     static Tone severityTone(String level) {
         if (level == null) return Tone.INFO;
         return switch (level.toUpperCase(Locale.ROOT)) {
@@ -90,14 +90,13 @@ public class EmailTemplateBuilder {
             default -> Tone.INFO;   // WARNING/MEDIUM
         };
     }
+    /**
+     * Önem sözcüğü — TEK sözlük {@link EscalationService#levelWordTr} (D-2, 2026-09-29): WARNING e-posta konusu,
+     * rozeti, ileti gövdesi, push ve arayüz rozetinde aynı sözcük ("UYARI"). Eskiden burada "ORTA" yazıyordu; aynı
+     * e-postada rozet "ORTA", gövde "UYARI:" çelişiyordu.
+     */
     static String severityLabel(String level) {
-        if (level == null) return "ORTA";
-        return switch (level.toUpperCase(Locale.ROOT)) {
-            case "CRITICAL" -> "KRİTİK";
-            case "HIGH" -> "YÜKSEK";
-            case "INFO", "LOW" -> "BİLGİ";
-            default -> "ORTA";
-        };
+        return EscalationService.levelWordTr(level);
     }
     /** Önem rozeti — KRİTİK dolu kırmızı, diğerleri tonlu. */
     static Badge severityBadge(String level) {

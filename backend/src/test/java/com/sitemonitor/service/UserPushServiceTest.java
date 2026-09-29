@@ -1303,6 +1303,27 @@ class UserPushServiceTest {
     }
 
     @Test
+    @DisplayName("O-3 (D-b6): eski fırtınadan taşınan takım fırtınasının çözümü, açılışı ESKİ fırtınayla alanlara gider — SKIPPED_NO_PRIOR değil")
+    void stormResolve_countsLegacyStormOpenRecipients() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına
+        when(deliveryRepo.findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc("storm:12:", 5L, "SENT"))
+                .thenReturn(List.of());                                                // yeni fırtınanın kendi açılışı YOK (sessiz taşıma)
+        when(deliveryRepo.findByDedupeKeyStartingWithAndTeamIdAndStatusOrderByIdAsc("storm:9:", 5L, "SENT"))
+                .thenReturn(List.of(stormSent("N00007")));                             // açılış eski fırtınayla gitti
+        when(resolver.resolvePrior(List.of("N00007"))).thenReturn(List.of(
+                new UserPushRecipientResolver.Recipient("N00007", "Yönetici", null)));
+
+        Map<String, Object> out = service.enqueueStormNotice(12L, 9L, 5L, "RESOLVE", "HIGH",
+                List.of(stormMember(1L, "HTTP_DOWN", null)), "3 monitör kurtarıldı");
+
+        assertThat(out.get("queued")).isEqualTo(1);
+        assertThat(savedRows()).singleElement().satisfies(d -> {
+            assertThat(d.getUsername()).isEqualTo("N00007");
+            assertThat(d.getDedupeKey()).isEqualTo("storm-resolved:12");
+        });
+    }
+
+    @Test
     @DisplayName("P13: açılışı kimseye gitmemiş fırtınanın çözümü de gitmez — SKIPPED_NO_PRIOR (simetri kuralı)")
     void stormResolve_withoutPriorSent_isSkipped() {
         when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());   // yalnız yazılanı sına

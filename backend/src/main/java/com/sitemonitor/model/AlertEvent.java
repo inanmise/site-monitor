@@ -88,6 +88,15 @@ public class AlertEvent {
     @Column(columnDefinition = "TEXT")
     private String resolvedNote;
 
+    /**
+     * SESSİZ kapanış işareti (O-b2, 2026-09-29): izleme silindi / duraklatıldı / türün bildirimleri kapatıldı / envanter
+     * pasifleşti gibi "kurtulmadı, susturuldu" kapanışlarında TRUE. Fırtına çözümü bu üyeleri "kurtarıldı" SAYMAZ (toplu
+     * "N monitör kurtarıldı" e-postası/push'u/webhook'u/7-24'ü üretmez). NULL = normal kapanış (eski satırlar dâhil).
+     * Metin eşleştirmesi (resolvedBy) yerine açık kolon. Nullable — ddl-auto + idempotent patch güvenli.
+     */
+    @Column(name = "resolved_silently")
+    private Boolean resolvedSilently;
+
     private String createdAt;
     private String lastReAlertAt;
 

@@ -85,7 +85,8 @@ export default function MonitorCardActions({
         </Button>
       )}
       <CheckRunningStrip running={running} />
-      <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} rowLabel={rowLabel} className={TOUCH} />
+      {/* onCheck yoksa (satır çalıştırılamaz — sunucu `can_check`, 2026-09-29) düğme HİÇ çizilmez: basılıp 403 yiyen düğme yok */}
+      {onCheck && <CheckNowButton running={running} disabled={checkDisabled} onClick={onCheck} title={checkTitle} rowLabel={rowLabel} className={TOUCH} />}
       <SimpleTooltip content={editTitle}>
         <Button type="button" variant="outline" size="icon-sm" className={cn(MON_ACT, TOUCH, MON_ACT_TONE.edit, phoneHidden)}
           onClick={onEdit} aria-label={named(editTitle)}><Pencil size={13} aria-hidden="true" /></Button>

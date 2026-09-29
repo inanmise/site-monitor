@@ -286,6 +286,7 @@ public class NocNotificationService {
             String key = "storm:" + storm.getId() + ":" + NocDelivery.OPEN;
             Optional<NocDelivery> prev = deliveries.findByDedupeKey(key);
             if (prev.isPresent() && blocking(prev.get())) return;
+            if (prev.isEmpty() && blocking(legacyOpen(storm))) return;   // O-3 sessiz taşıma: açılış eski fırtınayla gitti
             NocConfigService.Config cfg = config.get();
             List<StormMember> eligible = eligibleStormMembers(downMembers, cfg);
             if (eligible.isEmpty()) return;
@@ -303,14 +304,16 @@ public class NocNotificationService {
             Map<Long, NocMailComposer.TeamBlock> blocks = teamBlocks(eligible);
             List<NocMailComposer.Member> lines = memberLines(eligible, blocks, base);
             String coverage = base.isEmpty() ? null : base + "/?tab=noc";
+            // D-c7 (2026-09-29): fırtına seviyesi = üyelerin EN YÜKSEK seviyesi (takım e-postası / push / webhook ile aynı).
+            String level = com.sitemonitor.service.StormService.stormPushLevel(downMembers);
             MailDoc.Mail mail = NocMailComposer.storm(downMembers.size(), scopeLabel, rootCause, storm.getCreatedAt(),
-                    lines, new ArrayList<>(blocks.values()), cfg.callInstructions(), coverage, targets.groupNames());
-            String subject = NocMailComposer.stormSubject(downMembers.size());
-            String status = send(targets.emails(), subject, mail, com.sitemonitor.service.BrandMailAssets.variantForLevel("CRITICAL"));
+                    lines, new ArrayList<>(blocks.values()), cfg.callInstructions(), coverage, targets.groupNames(), level);
+            String subject = NocMailComposer.stormSubject(downMembers.size(), level);
+            String status = send(targets.emails(), subject, mail, com.sitemonitor.service.BrandMailAssets.variantForLevel(level));
             finish(d, status, null, null, null, targets, subject);
             writeLog(eligible.get(0).event().getId(), targets, subject,
                     NocMailComposer.storm(downMembers.size(), scopeLabel, rootCause, storm.getCreatedAt(), lines,
-                            redacted(blocks), cfg.callInstructions(), coverage, targets.groupNames()).html(),
+                            redacted(blocks), cfg.callInstructions(), coverage, targets.groupNames(), level).html(),
                     status, TRIGGER_STORM);
             if (sent(status)) {
                 // Üyelerin açılışı fırtına e-postasıyla GİTTİ: tek başına açılış tekrar gitmez, sonradan tek başına
@@ -329,6 +332,15 @@ public class NocNotificationService {
     }
 
     /**
+     * Üyeleri eski (kuruluş geneli) fırtınadan SESSİZCE taşınmış takım fırtınasında (2026-09-29, O-3 / D-b6) o eski
+     * fırtınanın 7/24 açılış kaydı; diğerlerinde null. Takım fırtınasının açılışı yerine sayılır.
+     */
+    private NocDelivery legacyOpen(AlertStorm storm) {
+        if (storm == null || storm.getLegacyStormId() == null) return null;
+        return deliveries.findByDedupeKey("storm:" + storm.getLegacyStormId() + ":" + NocDelivery.OPEN).orElse(null);
+    }
+
+    /**
      * Fırtına yaşam döngüsü tik'i ({@code StormService.lifecycleOne}, fırtına SÜRERKEN). İki iş:
      * <ol>
      *   <li>Fırtınanın NOC açılışı HENÜZ gitmediyse (açılışta kapsanan üye yoktu) ve artık kapsanan bir üye varsa
@@ -343,6 +355,9 @@ public class NocNotificationService {
         try {
             if (storm == null || storm.getId() == null || activeMembers == null || activeMembers.isEmpty()) return;
             NocDelivery open = deliveries.findByDedupeKey("storm:" + storm.getId() + ":" + NocDelivery.OPEN).orElse(null);
+            // O-3 sessiz taşıma (D-b6): açılış ESKİ fırtınayla gittiyse yeni "FIRTINA" açılış postası YOK — taşınan üyeler
+            // 7/24'e zaten bildirildi (alert:<id>:OPEN izi); yalnız sonradan katılanlar aşağıdaki toplu güncellemeyle gider.
+            if (open == null) open = legacyOpen(storm);
             if (open == null || !sent(open.getStatus())) {
                 if (open == null || !blocking(open)) onStormDispatched(storm, activeMembers, scopeLabel, rootCause);
                 return;
@@ -375,14 +390,15 @@ public class NocNotificationService {
             Map<Long, NocMailComposer.TeamBlock> blocks = teamBlocks(fresh);
             List<NocMailComposer.Member> lines = memberLines(fresh, blocks, base);
             String coverage = base.isEmpty() ? null : base + "/?tab=noc";
+            String level = com.sitemonitor.service.StormService.stormPushLevel(activeMembers);   // D-c7
             MailDoc.Mail mail = NocMailComposer.stormUpdate(activeMembers.size(), scopeLabel, storm.getCreatedAt(), lines,
-                    new ArrayList<>(blocks.values()), cfg.callInstructions(), coverage, targets.groupNames());
-            String subject = NocMailComposer.stormUpdateSubject(fresh.size());
-            String status = send(targets.emails(), subject, mail, com.sitemonitor.service.BrandMailAssets.variantForLevel("CRITICAL"));
+                    new ArrayList<>(blocks.values()), cfg.callInstructions(), coverage, targets.groupNames(), level);
+            String subject = NocMailComposer.stormUpdateSubject(fresh.size(), level);
+            String status = send(targets.emails(), subject, mail, com.sitemonitor.service.BrandMailAssets.variantForLevel(level));
             finish(d, status, null, null, null, targets, subject);
             writeLog(fresh.get(0).event().getId(), targets, subject,
                     NocMailComposer.stormUpdate(activeMembers.size(), scopeLabel, storm.getCreatedAt(), lines,
-                            redacted(blocks), cfg.callInstructions(), coverage, targets.groupNames()).html(),
+                            redacted(blocks), cfg.callInstructions(), coverage, targets.groupNames(), level).html(),
                     status, TRIGGER_STORM_UPDATE);
             if (sent(status)) {
                 for (StormMember m : fresh) {

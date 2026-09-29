@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface KeywordMonitorRepository extends JpaRepository<KeywordMonitor, Long> {
     List<KeywordMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     List<KeywordMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
     List<KeywordMonitor> findByUrl(String url);

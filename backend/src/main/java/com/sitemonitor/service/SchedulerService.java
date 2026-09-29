@@ -556,6 +556,9 @@ public class SchedulerService {
         // açılış yeniden dener.
         patch("ALTER TABLE port_monitors ADD COLUMN deleted_at VARCHAR(30)");
         patch("ALTER TABLE dns_monitors ADD COLUMN deleted_at VARCHAR(30)");
+        // O-b2 (2026-09-29): sessiz kapanış işareti — fırtına çözümü "susturulan" üyeyi "kurtuldu" saymasın.
+        // Nullable (NULL = normal kapanış); ddl-auto da ekler ama açık, idempotent yama proje geleneği.
+        patch("ALTER TABLE alert_events ADD COLUMN resolved_silently BOOLEAN");
         if (standaloneDeletionBackfill != null) {
             try {
                 standaloneDeletionBackfill.applyOnce();
@@ -721,6 +724,11 @@ public class SchedulerService {
         // Koşumun HANGİ script sürümüyle yapıldığı — sürüm↔arıza korelasyonu bu alan olmadan
         // kurulamıyordu (Sürümler sekmesi ile Kontrol Geçmişi ayrı ayrı bakılıyordu).
         patch("ALTER TABLE scripted_checks ADD COLUMN script_version VARCHAR(20)");
+        // Elle kontrol işareti (2026-09-29, elle kontrol alarm/fırtına/anomali tetiklemez): NULL = zamanlanmış (eski
+        // satırlar). DNS tarafında değişiklik tabanı, sentetikte anomali serisi YALNIZ zamanlanmış kayıtlardan okunur.
+        patch("ALTER TABLE scripted_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE dns_records ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE domain_checks ADD COLUMN manual BOOLEAN");   // DOMAINMON_CHANGED tabanı yalnız zamanlanmış satırlardan
         // Script'in güncel sürüm etiketi; geçmiş ayrı tabloda (scripted_script_versions, entity'den doğar).
         patch("ALTER TABLE scripted_monitors ADD COLUMN script_version VARCHAR(20)");
         // SCRIPTED_SLOW (opt-in yavaş koşum alarmı) — port/keyword'deki alan adlarıyla aynı.
@@ -1074,6 +1082,8 @@ public class SchedulerService {
         // Scope-başına-tek-aktif storm — atomik terfi (INSERT … ON CONFLICT DO NOTHING) bu kısmi UNIQUE indekse dayanır.
         patch("CREATE UNIQUE INDEX IF NOT EXISTS ux_alert_storms_active ON alert_storms(scope_key) WHERE resolved = false");
         patch("CREATE INDEX IF NOT EXISTS idx_as_resolved ON alert_storms(resolved)");
+        // O-3 geçişi (2026-09-29): eski fırtınadan sessizce taşınan takım fırtınası → eski kimlik (çözüm push'u / 7-24 açılışı).
+        patch("ALTER TABLE alert_storms ADD COLUMN legacy_storm_id BIGINT");
         // Pencere-içi açık DOWN eş sayımı (StormService.evaluate) — resolved + alert_type + created_at aralığı.
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_scan ON alert_events(resolved, alert_type, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_id ON alert_events(storm_id)");
@@ -2149,6 +2159,9 @@ public class SchedulerService {
                             networkErrors, results.size(), String.format("%.2f", networkErrorRate));
                     if (pendingAdminAlertEmail.get()) trySendAdminAlert();
                 }
+                // K1 (2026-09-29): kesinti şüphesi YENİ alarmı durdurur, doğrulanmış sağlıklı sonucun açık alarmını
+                // kapatmayı DEĞİL — aksi hâlde kesinti sürdükçe düzelen alan adlarının alarmları da açık kalıyordu.
+                resolveVerifiedCertAlertsQuietly(results);
             } else {
                 if (networkOutageActive.compareAndSet(true, false)) {
                     String resolvedAt = ISO.format(Instant.now());
@@ -2158,9 +2171,12 @@ public class SchedulerService {
                     trySendAdminResolved();
                 }
                 if (pendingAdminResolvedEmail.get()) trySendAdminResolved();
-                // Cert/domain expiry izleme kapalıysa cert alarmları işlenmez (SSL kontrol + durum güncellemesi sürer).
+                // Cert/domain expiry izleme kapalıysa cert alarmları işlenmez (SSL kontrol + durum güncellemesi sürer);
+                // K5 (2026-09-29): açık sertifika alarmları yine de düzelince kapanır (yeni alarm/yeniden uyarı yok).
                 if (appSettings.getBoolean("site.monitor.expiry.alert-enabled", true)) {
                     escalationService.processResults(results);
+                } else {
+                    resolveVerifiedCertAlertsQuietly(results);
                 }
             }
 
@@ -2178,6 +2194,16 @@ public class SchedulerService {
             lastRunId.set(currentRunId.get());
             currentRunId.set("");
             releaseSchedulerLock("cert-check");
+        }
+    }
+
+    /** Sertifika alarmlarının yalnız KAPANIŞ uzlaştırması (kesinti şüphesi / kapalı bildirim) — hatası sweep'i kırmaz. */
+    private void resolveVerifiedCertAlertsQuietly(List<Map<String, Object>> results) {
+        try {
+            int n = escalationService.resolveVerifiedStaleCertAlerts(results);
+            if (n > 0) log.info("Sertifika kapanış uzlaştırması: {} alan adında düzelen alarmlar kapatıldı (alarm işleme atlanmış turda)", n);
+        } catch (Exception e) {
+            log.warn("Sertifika kapanış uzlaştırması başarısız: {}", e.getMessage());
         }
     }
 
@@ -2855,7 +2881,8 @@ public class SchedulerService {
                 // ctxExtra: port/protocol + per-monitor teyit/recovery override'ları (ping/keyword ile aynı → tunable + aktif recovery)
                 // Hata fırlatan monitör item üretmez — yanlış all-up resolve olmaz
                 sweep.add(portSweepItem(m, r));
-                // PORT_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/erişim-hatası → sentetik up = lingering kurtar)
+                // PORT_SLOW: yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up = asılı alarmı kapat;
+                // ölçülemedi / erişim hatası → kalem YOK — D-7, aşağıda)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
                 slowCtx.put("port", m.getPort());
                 slowCtx.put("protocol", m.getProtocol() != null ? m.getProtocol() : "TCP");
@@ -2870,9 +2897,12 @@ public class SchedulerService {
                 slowCtx.put("threshold_ms", slowTh);
                 Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
                 if (respMs != null) slowCtx.put("response_ms", respMs);
-                boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled())
-                        && r.get("error") == null && respMs != null && respMs > slowTh;
-                slowSweep.add(new MonitoringOutageService.SweepItem(
+                boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
+                // D-7 (2026-09-29): port kapalı / erişim hatası / süre yok = ÖLÇÜLEMEDİ, "sağlıklı" DEĞİL → kalem üretilmez
+                // (açık yavaşlık alarmı port düşükken "ÇÖZÜLDÜ" diye kapanmaz). Özellik kapalıysa sentetik "up" sürer.
+                boolean measured = "up".equals(r.get("status")) && r.get("error") == null && respMs != null;
+                boolean slowDown = slowEnabled && measured && respMs > slowTh;
+                if (!slowEnabled || measured) slowSweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_PORT_SLOW, m.getHost(),
                         respMs != null ? respMs + " ms" : "slow",
                         !slowDown, null,
@@ -2918,7 +2948,8 @@ public class SchedulerService {
     }
 
     /** Yavaş yanıt yeniden-ölçümü (PORT_SLOW confirm/recovery re-check'i) — taze check, PortCheck PERSIST ETMEZ.
-     *  {"status":"up"|"down","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı/erişim-hatası/kapalı port → up. */
+     *  {"status":"up"|"down"|"skipped","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı → up;
+     *  erişim hatası / kapalı port / süre yok → "skipped" (D-7: ölçülemedi = kanıt yok; teyit/kurtarma zinciri saymaz). */
     private Map<String, Object> evalPortSlow(PortMonitor m) {
         Map<String, Object> out = new LinkedHashMap<>();
         int th = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
@@ -2927,8 +2958,11 @@ public class SchedulerService {
         Map<String, Object> r = portCheckerService.check(m);
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);
-        boolean slow = r.get("error") == null && Boolean.TRUE.equals(r.get("open")) && ms != null && ms > th;
-        out.put("status", slow ? "down" : "up");
+        if (r.get("error") != null || !Boolean.TRUE.equals(r.get("open")) || ms == null) {
+            out.put("status", "skipped");
+            return out;
+        }
+        out.put("status", ms > th ? "down" : "up");
         return out;
     }
 
@@ -2976,7 +3010,8 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(keywordSweepItem(m, r));
-                // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; kapalı/ölçülemedi/HTTP-hatası → sentetik up = lingering kurtar)
+                // KEYWORD_SLOW: yanıt süresi eşiği (opsiyonel; özellik KAPALI → sentetik up = asılı alarmı kapat;
+                // ölçülemedi / HTTP hatası → kalem YOK — D-7, aşağıda)
                 Map<String, Object> slowCtx = new LinkedHashMap<>();
                 slowCtx.put("url", m.getUrl());
                 slowCtx.put("monitor_id", m.getId());
@@ -2990,9 +3025,12 @@ public class SchedulerService {
                 slowCtx.put("threshold_ms", slowTh);
                 Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
                 if (respMs != null) slowCtx.put("response_ms", respMs);
-                boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled())
-                        && r.get("error") == null && respMs != null && respMs > slowTh;
-                slowSweep.add(new MonitoringOutageService.SweepItem(
+                boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
+                // D-7 (2026-09-29): HTTP hatası / süre yok = ÖLÇÜLEMEDİ → kalem yok (eskiden "up" sayılıp açık yavaşlık
+                // alarmını hedef düşükken kapatıyordu). Özellik kapalıysa sentetik "up" asılı alarmı kapatmaya devam eder.
+                boolean measured = r.get("error") == null && respMs != null;
+                boolean slowDown = slowEnabled && measured && respMs > slowTh;
+                if (!slowEnabled || measured) slowSweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_KEYWORD_SLOW, m.getUrl(),
                         respMs != null ? respMs + " ms" : "slow",
                         !slowDown, null,
@@ -3183,7 +3221,8 @@ public class SchedulerService {
     }
 
     /**
-     * Manuel "Çalıştır" — DNS'in BİRİNCİL alarmını (çözümleme hatası) zamanlayıcıyla AYNI hatta sokar.
+     * Manuel "Çalıştır" — DNS'in BİRİNCİL alarmını (çözümleme hatası) {@code manual=true} ile değerlendirir: elle
+     * kontrol alarm AÇMAZ, yalnız düzelen çözümlemenin açık alarmı kapanabilir (2026-09-29).
      *
      * <p>Yavaş/beklenmeyen-değer/tutarsızlık alarmları KAPSAM DIŞI: her birinin kendi özel teyit
      * ayarı var (ör. yavaş için 3×60 sn) ve manuel yola taşınmaları ayrı bir ürün kararıdır;
@@ -3246,11 +3285,12 @@ public class SchedulerService {
     }
 
     /**
-     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı. Bu dört türde tek-monitör
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI kalem kurucusu. Bu dört türde tek-monitör
      * sweep kurucusu ZATEN vardı; ctx kopyalanmaz, olduğu gibi yeniden kullanılır — aksi halde
      * bir anahtar eksik kalıp alarm sessizce yanlış takıma giderdi.
      *
-     * <p>ASENKRON: doğrulama varsayılan 3 × 30 sn sürer. manual=true → toplu-kesinti bastırması atlanır.
+     * <p>{@code manual=true} (2026-09-29): elle kontrol ALARM AÇMAZ — yalnız kapanış uzlaştırması
+     * (bkz. {@code MonitoringOutageService.handleSweepResults}).
      */
     @Async("certCheckExecutor")
     public void evaluatePageNow(com.sitemonitor.model.PageMonitor m, Map<String, Object> checkResult) {
@@ -3283,11 +3323,26 @@ public class SchedulerService {
         try {
             List<MonitoringOutageService.SweepItem> fail = new ArrayList<>(), slow = new ArrayList<>();
             addScriptedSweepItems(m, checkResult, fail, slow);
-            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, fail, true);
-            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, slow, true);
+            // Elle kontrolün başlatabileceği kurtarma zincirinin yeniden koşumları ELLE k6 kotasından (D-10).
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_FAIL, onManualK6Quota(fail), true);
+            monitoringOutageService.handleSweepResults(EscalationService.TYPE_SCRIPTED_SLOW, onManualK6Quota(slow), true);
         } catch (Exception e) {
             log.warn("Manuel senaryo değerlendirmesi başarısız {}: {}", m.getName(), e.getMessage());
         }
+    }
+
+    /**
+     * Kalemlerin yeniden kontrol tedarikçisini ELLE k6 kotasına sarar (2026-09-29, D-10): elle kontrolün başlattığı
+     * kurtarma zinciri havuzun son iznini almaz, zamanlanmış koşumlar aç kalmaz. Kalemin kendisi aynen korunur.
+     */
+    private static List<MonitoringOutageService.SweepItem> onManualK6Quota(List<MonitoringOutageService.SweepItem> items) {
+        List<MonitoringOutageService.SweepItem> out = new ArrayList<>(items.size());
+        for (MonitoringOutageService.SweepItem it : items) {
+            java.util.function.Supplier<Map<String, Object>> r = it.recheck();
+            out.add(new MonitoringOutageService.SweepItem(it.alertType(), it.domain(), it.detail(), it.up(), it.error(),
+                    it.ctxExtra(), r == null ? null : () -> ScriptedCheckerService.withManualQuota(r)));
+        }
+        return out;
     }
 
     /**
@@ -3316,8 +3371,8 @@ public class SchedulerService {
     }
 
     /**
-     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı (doğrulama + kurtarma).
-     * ASENKRON: doğrulama varsayılan 3 × 30 sn sürer. manual=true → toplu-kesinti bastırması atlanır.
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI kalem kurucusu; {@code manual=true} (2026-09-29): elle kontrol
+     * ALARM AÇMAZ, yalnız sağlıklı sonuç açık alarmı kapanış uzlaştırmasından geçirir.
      */
     @Async("certCheckExecutor")
     public void evaluatePortNow(PortMonitor m, Map<String, Object> rawCheckResult) {
@@ -3339,9 +3394,11 @@ public class SchedulerService {
      * aynısını yapmak işe yaramaz: aynı eşik yerel bir sunucuda (2 ms) her dalgalanmada öter,
      * denizaşırı bir host'ta (180 ms) hiç ötmez. Taban çizgisi host başına kendiliğinden oluşur.
      *
-     * <p><b>Sessiz kalınan haller</b> (hepsi "up" döner, yani alarm YOK):
+     * <p><b>Sessiz kalınan haller</b> — alarm YOK. D-7 (2026-09-29): özellik kapalıyken "up" (asılı alarmı kapatır);
+     * aşağıdaki ÖLÇÜLEMEYEN hallerde "skipped" (ne alarm ne kapanış — eskiden "up" dönüp açık yavaşlık alarmını host
+     * DOWN iken "ÇÖZÜLDÜ" diye kapatıyordu):
      * <ul>
-     *   <li>özellik kapalı (opt-in),</li>
+     *   <li>özellik kapalı (opt-in) — "up",</li>
      *   <li>ölçüm yok — host DOWN ya da ICMP kapalı: erişilemezlik PING_DOWN'ın işi, aynı olayı
      *       iki alarmla anlatmak kullanıcıyı ikinci bildirimle cezalandırır,</li>
      *   <li>taban çizgisi yetersiz ({@code SLOW_BASELINE_MIN_SAMPLES} altında örnek): tek ölçümlük
@@ -3363,8 +3420,12 @@ public class SchedulerService {
         out.put("threshold_percent", pct);
         out.put("baseline_window_minutes", win);
         if (rttMs != null) out.put("rtt_ms", rttMs);
-        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled()) || rttMs == null) {
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) {
             out.put("status", "up");
+            return out;
+        }
+        if (rttMs == null) {   // D-7: ölçüm yok (host DOWN / ICMP kapalı) → kanıt yok
+            out.put("status", "skipped");
             return out;
         }
         Instant now = Instant.now();
@@ -3382,12 +3443,12 @@ public class SchedulerService {
         } catch (Exception e) {
             // Taban çizgisi okunamadıysa SESSİZ kal: ölçemediğimiz bir şey için alarm üretmeyiz.
             log.warn("Ping taban çizgisi okunamadı ({}): {}", m.getHost(), e.getMessage());
-            out.put("status", "up");
+            out.put("status", "skipped");   // D-7: kıyaslanamadı → kanıt yok
             return out;
         }
         out.put("baseline_samples", samples);
         if (avg == null || avg <= 0 || samples < SLOW_BASELINE_MIN_SAMPLES) {
-            out.put("status", "up");
+            out.put("status", "skipped");   // D-7: taban çizgisi yetersiz → kanıt yok
             return out;
         }
         long limit = Math.round(avg * (1 + pct / 100.0));
@@ -3398,11 +3459,13 @@ public class SchedulerService {
     }
 
     /** Yavaşlık değerlendirme öğesi — PING_DOWN öğesinin kardeşi. Teyit/kurtarma re-check'i taze
-     *  ölçüm alır ve ping_checks'e YAZMAZ (port deseninin aynısı: teyit turu tabanı kaydırmasın). */
+     *  ölçüm alır ve ping_checks'e YAZMAZ (port deseninin aynısı: teyit turu tabanı kaydırmasın).
+     *  D-7 (2026-09-29): hüküm "skipped" (ölçülemedi) ise {@code null} — kalem ÜRETİLMEZ, çağıran atlar. */
     private MonitoringOutageService.SweepItem pingSlowSweepItem(PingMonitor m, Map<String, Object> r) {
         Long rtt = r.get("rtt_ms") instanceof Number n ? n.longValue() : null;
         boolean measured = "up".equals(r.get("status")) && !Boolean.TRUE.equals(r.get("na"));
         Map<String, Object> v = pingSlowVerdict(m, measured ? rtt : null, (String) r.get("checked_at"));
+        if ("skipped".equals(v.get("status"))) return null;
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("monitor_name", m.getName());
         ctx.put("host", m.getHost());
@@ -3468,10 +3531,11 @@ public class SchedulerService {
             Map<String, Object> r = pingOutcome(rawCheckResult);
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_PING_DOWN, List.of(pingSweepItem(m, r)), true);
-            // Manuel "Çalıştır" da yavaşlığı değerlendirir: sweep ile manuel yolun ayrışması,
-            // kullanıcının elle koşturduğu kontrolde alarmın açılmaması/kapanmaması demekti.
+            // Manuel "Çalıştır" yavaşlığı da değerlendirir — yalnız KAPANIŞ için (2026-09-29: elle kontrol
+            // alarm açmaz); hızlanan hedefin açık yavaşlık alarmı elle kontrolde de kapanabilir.
+            MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, r);   // D-7: ölçülemediyse null
             monitoringOutageService.handleSweepResults(
-                    EscalationService.TYPE_PING_SLOW, List.of(pingSlowSweepItem(m, r)), true);
+                    EscalationService.TYPE_PING_SLOW, slowItem == null ? List.of() : List.of(slowItem), true);
         } catch (Exception e) {
             log.warn("Manuel ping değerlendirmesi başarısız {}: {}", m.getHost(), e.getMessage());
         }
@@ -3505,13 +3569,14 @@ public class SchedulerService {
     }
 
     /**
-     * Manuel "Çalıştır" — zamanlayıcıyla AYNI değerlendirme hattı: hata doğrulama denemelerinden
-     * geçer, teyit edilirse alarm AÇILIR; düzelme kurtarma sayacından geçer.
+     * Manuel "Çalıştır" — zamanlayıcıyla AYNI kalem kurucusu, {@code manual=true} ile.
      *
-     * <p>ASENKRON olmak zorunda: doğrulama varsayılan 3 × 30 sn sürer, HTTP isteği o kadar
-     * bekleyemez. Uç hemen döner, kart "çalışıyor" durumunu gösterir.
+     * <p><b>Elle kontrol ALARM AÇMAZ (ürün kararı 2026-09-29).</b> Eskiden hata doğrulama denemelerinden geçip
+     * teyit edilince alarm AÇIYORDU; toplu "Şimdi Kontrol Et" bu yolla kuruluş geneli fırtına üretti. Artık yalnız
+     * kapanış uzlaştırması: düzelme kurtarma kuralından geçer, DOWN yalnız kurtarma penceresini sıfırlar. Yeni alarm
+     * sonraki zamanlanmış sweep'in normal teyit kurallarıyla açılır.
      *
-     * <p>{@code manual=true} → toplu-kesinti bastırması atlanır (bkz. handleSweepResults).
+     * <p>ASENKRON: kurtarma zinciri (aktif doğrulama) HTTP isteğini bekletmesin.
      */
     @Async("certCheckExecutor")
     public void evaluateHttpNow(HttpMonitor m, Map<String, Object> rawCheckResult) {
@@ -3672,12 +3737,83 @@ public class SchedulerService {
                                 || Boolean.TRUE.equals(p.get("main_up")) ? "up" : "down"); }));
         Map<String, Object> integ = new LinkedHashMap<>(ctx);
         integ.put("detail", pageIntegrityDetail(r));
+        // D-7 (2026-09-29): bütünlük ÖLÇÜLEMEDİYSE kalem ÜRETİLMEZ (ne açar ne kapatır ne sayacı sıfırlar):
+        //  (a) ana sayfa alınamadı (yapılandırma hatası hariç) — kaynaklar hiç taranmadı; eskiden "up" sayılıp açık
+        //      bütünlük alarmını sayfa çökükken "ÇÖZÜLDÜ" diye kapatıyordu;
+        //  (b) SITE_CRAWL izlemesinde yalnız ANA sayfaya bakan tur (60 sn sweep / elle kontrol) "temiz" dediğinde —
+        //      ana sayfanın temiz olması sitenin temiz olduğunu kanıtlamaz; günlük crawl'ın açtığı alarmı bu tur
+        //      kapatıyordu. Ana sayfada BULUNAN sorun yine kanıttır (DOWN kalemi üretilir).
+        //
+        // O-b4 (2026-09-29) — KAYNAK-duyarlı teyit/kapanış. Bulgu kalemi kaynağını taşır (integrity_scope: HOME = ana
+        // sayfa turu, CRAWL = günlük derin tarama; CRAWL'da problem_pages = sorunlu kaynak sayfalar, tavanlı) ve alarm
+        // bağlamına yazılır. Yeniden ölçüm o kaynağa bakar: derin bulgu → sorunlu sayfalar; ana sayfa bulgusu → ana
+        // sayfa. Crawl izlemesinde ana sayfa temizse kalem YALNIZ açık alarm ana sayfa kaynaklıysa üretilir (aynı kaynak
+        // kanıtı); crawl kaynaklı alarm için ana sayfa temizliği kanıt değildir (D-7 kuralı korunur).
+        boolean crawlMonitor = "SITE_CRAWL".equalsIgnoreCase(m.getMode());
+        boolean crawlCheck = "SITE_CRAWL".equalsIgnoreCase(String.valueOf(r.get("check_mode")));
+        boolean integrityMeasured = cfgError || Boolean.TRUE.equals(r.get("main_up"));
+        if (!integrityMeasured) return;
+        integ.put("integrity_scope", crawlCheck ? "CRAWL" : "HOME");
+        List<String> problemPages = crawlCheck && !integrityUp ? stringList(r.get("problem_pages")) : List.of();
+        if (!problemPages.isEmpty()) integ.put("problem_pages", problemPages);
+        java.util.function.Supplier<Map<String, Object>> homeRecheck = () -> {
+            Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
+            if (Boolean.TRUE.equals(p.get("config_error"))) return Map.of("status", "up");
+            if (!Boolean.TRUE.equals(p.get("main_up"))) return Map.of("status", "skipped");
+            return Map.of("status", Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down");
+        };
+        java.util.function.Supplier<Map<String, Object>> recheck;
+        if (cfgError) {
+            recheck = homeRecheck;
+        } else if (!integrityUp) {
+            // Bulgu: kaynağı yeniden ölç (derin → sorunlu sayfalar; ana sayfa → ana sayfa).
+            recheck = problemPages.isEmpty() ? homeRecheck : () -> recheckIntegrityPages(m, problemPages);
+        } else if (!crawlMonitor) {
+            recheck = homeRecheck;   // SINGLE_PAGE izlemesi: ana sayfa kapsamın tamamı
+        } else if (crawlCheck) {
+            // Tam crawl temiz → kurtarma doğrulaması açık alarmın KAYNAĞINA bakar (tembel: yalnız zincir koşunca okunur).
+            recheck = () -> {
+                List<String> openPages = openIntegrityProblemPages(m);
+                return openPages.isEmpty() ? homeRecheck.get() : recheckIntegrityPages(m, openPages);
+            };
+        } else {
+            // Crawl izlemesinde yalnız ana sayfa turu temiz: yalnız ANA SAYFA kaynaklı açık alarmın kanıtıdır.
+            if (!"HOME".equals(openIntegrityScope(m))) return;
+            recheck = homeRecheck;
+        }
         integritySweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGE_INTEGRITY, m.getUrl(), pageIntegrityDetail(r),
-                integrityUp, integrityUp ? null : pageIntegrityDetail(r), chanCtx(integ, m),
-                () -> { Map<String, Object> p = recheckPage(m, false, "SINGLE_PAGE");
-                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
-                                || Boolean.TRUE.equals(p.get("integrity_up")) ? "up" : "down"); }));
+                integrityUp, integrityUp ? null : pageIntegrityDetail(r), chanCtx(integ, m), recheck));
+    }
+
+    /** O-b4: açık PAGE_INTEGRITY alarmının bağlamı (yoksa null) — kaynak-duyarlı kapanış kararı için. */
+    private Map<String, Object> openIntegrityContext(com.sitemonitor.model.PageMonitor m) {
+        try {
+            return escalationService.openAlertContext(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY);
+        } catch (Exception e) {
+            log.debug("Açık bütünlük alarmı bağlamı okunamadı {}: {}", m.getUrl(), e.getMessage());
+            return null;
+        }
+    }
+
+    /** Açık bütünlük alarmının kaynağı: "HOME" / "CRAWL"; alarm yoksa ya da eski (kaynaksız) alarmsa null. */
+    private String openIntegrityScope(com.sitemonitor.model.PageMonitor m) {
+        Map<String, Object> c = openIntegrityContext(m);
+        Object s = c == null ? null : c.get("integrity_scope");
+        return s == null ? null : String.valueOf(s);
+    }
+
+    /** Açık CRAWL kaynaklı bütünlük alarmının sorunlu sayfaları; yoksa boş (→ ana sayfa doğrulaması, eski davranış). */
+    private List<String> openIntegrityProblemPages(com.sitemonitor.model.PageMonitor m) {
+        Map<String, Object> c = openIntegrityContext(m);
+        if (c == null || !"CRAWL".equals(String.valueOf(c.get("integrity_scope")))) return List.of();
+        return stringList(c.get("problem_pages"));
+    }
+
+    private static List<String> stringList(Object v) {
+        if (!(v instanceof java.util.Collection<?> c)) return List.of();
+        return c.stream().filter(java.util.Objects::nonNull).map(String::valueOf)
+                .filter(s -> !s.isBlank()).distinct().limit(INTEGRITY_RECHECK_MAX_PAGES).toList();
     }
 
     private static String pageIntegrityDetail(Map<String, Object> r) {
@@ -3707,18 +3843,17 @@ public class SchedulerService {
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
         // TIMEOUT, MIXED_CONTENT gibi AYRI kovaya alınır → monitör başına alertTimeout toggle'ı ile geçitlenir.
-        boolean anyFirstAlarm = false, anyThirdAlarm = false, anyMixedAlarm = false, anyTimeoutAlarm = false;
-        for (PageCheckerService.ResourceIssue i : res.issues()) {
-            if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) continue;
-            if ("MIXED_CONTENT".equals(i.issueType())) { anyMixedAlarm = true; continue; }
-            if ("TIMEOUT".equals(i.issueType()))       { anyTimeoutAlarm = true; continue; }
-            if (i.firstParty()) anyFirstAlarm = true; else anyThirdAlarm = true;
-        }
-        boolean alertThird = Boolean.TRUE.equals(m.getAlertThirdParty());
-        boolean alertMixed = !Boolean.FALSE.equals(m.getAlertMixedContent());   // varsayılan true (mevcut davranış)
         boolean alertTimeout = !Boolean.FALSE.equals(m.getAlertTimeout());       // varsayılan true (mevcut davranış)
-        boolean alarmWorthy = (alertMixed && anyMixedAlarm) || (alertTimeout && anyTimeoutAlarm)
-                            || anyFirstAlarm || (alertThird && anyThirdAlarm);
+        // O-b4: bulgunun KAYNAK sayfaları (alarm-uygun sorunların bulunduğu sayfalar, tavanlı) — teyit/kurtarma yeniden
+        // ölçümü bulgunun kaynağına bakar (derin crawl bulgusu ana sayfayla "geçici" sayılmasın).
+        boolean alarmWorthy = false;
+        java.util.LinkedHashSet<String> problemPages = new java.util.LinkedHashSet<>();
+        for (PageCheckerService.ResourceIssue i : res.issues()) {
+            if (!issueAlarmWorthy(m, i)) continue;
+            alarmWorthy = true;
+            if (problemPages.size() < INTEGRITY_RECHECK_MAX_PAGES)
+                problemPages.add(i.sourcePage() != null && !i.sourcePage().isBlank() ? i.sourcePage() : m.getUrl());
+        }
         boolean mainUp = res.mainReachable();
         boolean integrityUp = !mainUp || !alarmWorthy;   // ana sayfa down iken ayrı bütünlük alarmı üretme
 
@@ -3813,6 +3948,7 @@ public class SchedulerService {
         out.put("status", pageStatus);
         out.put("main_up", mainUp);
         out.put("integrity_up", integrityUp);
+        out.put("check_mode", effectiveMode);   // D-7: bütünlük hükmünün kapsamı (SINGLE_PAGE ana sayfa / SITE_CRAWL site)
         // Yapılandırma hatası (şemasız/host'suz URL): kontrol kaydı + hata mesajı yazılır ama ALARM AÇILMAZ
         // (addPageSweepItems bu bayrakla up=true üretir) — kesinti değil, düzeltmesi kullanıcı elindedir.
         if ("CONFIG_ERROR".equals(res.status())) out.put("config_error", true);
@@ -3824,7 +3960,60 @@ public class SchedulerService {
         out.put("mixed_content_count", res.mixedContentCount());
         if (problemList != null) out.put("problem_resources", problemList);
         if (problemRows != null) { out.put("problem_rows", problemRows); out.put("problem_total", problemTotal); }
+        if (mainUp && !problemPages.isEmpty()) out.put("problem_pages", new ArrayList<>(problemPages));
         return out;
+    }
+
+    /** O-b4: bir bütünlük bulgusunun teyit/kurtarma yeniden ölçümünde bakılan AZAMİ kaynak sayfa (tek pod maliyet tavanı). */
+    static final int INTEGRITY_RECHECK_MAX_PAGES = 5;
+
+    /**
+     * Tek sorun alarm-uygun mu? countsForAlarm (BLOCKED/SLOW hiç; LINK yalnız 404/410; alt-kaynak broken/timeout) + izleme
+     * anahtarları: MIXED_CONTENT alertMixedContent (varsayılan açık), TIMEOUT alertTimeout (varsayılan açık), üçüncü taraf
+     * yalnız alertThirdParty ile. Tam tur ({@link #recheckPage}) ve kaynak yeniden ölçümü ({@link #recheckIntegrityPages})
+     * AYNI kuralı kullanır.
+     */
+    private static boolean issueAlarmWorthy(com.sitemonitor.model.PageMonitor m, PageCheckerService.ResourceIssue i) {
+        if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) return false;
+        if ("MIXED_CONTENT".equals(i.issueType())) return !Boolean.FALSE.equals(m.getAlertMixedContent());
+        if ("TIMEOUT".equals(i.issueType()))       return !Boolean.FALSE.equals(m.getAlertTimeout());
+        return i.firstParty() || Boolean.TRUE.equals(m.getAlertThirdParty());
+    }
+
+    /**
+     * O-b4 (2026-09-29): SITE_CRAWL bulgusunun KAYNAK sayfalarını yeniden ölçer — teyit ve kurtarma kanıtı bulgunun
+     * geldiği yerden alınır. Eskiden derin bulgu (ör. /urunler sayfasındaki kırık görsel) teyit zincirinde yalnız ANA
+     * sayfayla yeniden ölçülüyor, ana sayfa temiz olduğundan "geçici dalgalanma" sayılıyor ve alarm HİÇ açılmıyordu.
+     *
+     * <p>Kaydetmez (page_checks / etkinlik yazmaz — kısmi ölçüm izlemenin son kontrol satırını bozmasın). En fazla
+     * {@link #INTEGRITY_RECHECK_MAX_PAGES} sayfa, her biri SINGLE_PAGE (sayfa + kaynakları), izlemenin zaman aşımı ve
+     * wall-clock tavanıyla. Hüküm: herhangi bir sayfada alarm-uygun sorun → "down"; hepsi ölçüldü ve temiz → "up";
+     * sayfa kaldırıldıysa (404/410) o kaynağın bulgusu artık sunulmuyor → temiz sayılır; ölçülemeyen sayfa (zaman aşımı,
+     * 5xx, engelli) varsa ve sorun bulunmadıysa → "skipped" (ölçülemedi ≠ sağlıklı).
+     */
+    private Map<String, Object> recheckIntegrityPages(com.sitemonitor.model.PageMonitor m, List<String> pages) {
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 4000;
+        int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
+        int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
+        int maxCheckSec = appSettings.getInt("site.monitor.page.max-check-seconds", 120);
+        int unmeasured = 0;
+        for (String page : pages.stream().filter(java.util.Objects::nonNull).distinct()
+                .limit(INTEGRITY_RECHECK_MAX_PAGES).toList()) {
+            PageCheckerService.PageCheckResult res = pageCheckerService.check(
+                    page, "SINGLE_PAGE", timeout, slow, conc, m.getExcludePatterns(),
+                    0, 1, maxCheckSec, viaProxyFor(page, m.getUseProxy()));
+            if (res == null || "CONFIG_ERROR".equals(res.status())) { unmeasured++; continue; }
+            if (!res.mainReachable()) {
+                Integer hs = res.httpStatus();
+                if (hs == null || (hs != 404 && hs != 410)) unmeasured++;   // 404/410 = kaynak sayfa kaldırıldı
+                continue;
+            }
+            for (PageCheckerService.ResourceIssue i : res.issues()) {
+                if (issueAlarmWorthy(m, i)) return Map.of("status", "down", "error", "kaynak sayfada sorun sürüyor: " + page);
+            }
+        }
+        return unmeasured > 0 ? Map.of("status", "skipped", "error", unmeasured + " kaynak sayfa ölçülemedi")
+                              : Map.of("status", "up");
     }
 
     /** Manuel tetik (controller) — H1: DAİMA SINGLE_PAGE. Inline SITE_CRAWL request thread'ini dakikalarca
@@ -3919,8 +4108,11 @@ public class SchedulerService {
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("reachable")) ? "up" : "down"); }));
 
-        // Sayfa alınamıyorken AYRI bir yavaşlık alarmı üretme (withinThresholds yukarıda !up ile true'lanır):
-        // çökmüş bir sayfayı "yavaş" diye ikinci kez raporlamak gürültüdür.
+        // Sayfa alınamıyorken AYRI bir yavaşlık alarmı üretme: çökmüş bir sayfayı "yavaş" diye ikinci kez raporlamak
+        // gürültüdür. D-7 (2026-09-29): ama "alınamadı" SAĞLIKLI da DEĞİLDİR — eskiden SLOW kalemi "up" sayılıp açık
+        // yavaşlık alarmını sayfa çökükken "ÇÖZÜLDÜ" diye kapatıyordu. Artık ölçüm yoksa kalem ÜRETİLMEZ; yeniden ölçüm
+        // "skipped" döner. Yapılandırma hatası sentetik "up" ile asılı alarmı kapatmaya devam eder.
+        if (!cfgError && !up) return;
         String slowDetail = pageSpeedBreachDetail(r);
         Map<String, Object> slowCtx = new LinkedHashMap<>(ctx);
         slowCtx.put("detail", slowDetail);
@@ -3928,9 +4120,9 @@ public class SchedulerService {
                 EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), slowDetail,
                 withinThresholds, withinThresholds ? null : slowDetail, chanCtx(slowCtx, m),
                 () -> { Map<String, Object> p = recheckPageSpeed(m, false);
-                        return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
-                                || !Boolean.TRUE.equals(p.get("reachable"))
-                                || Boolean.TRUE.equals(p.get("within_thresholds")) ? "up" : "down"); }));
+                        if (Boolean.TRUE.equals(p.get("config_error"))) return Map.of("status", "up");
+                        if (!Boolean.TRUE.equals(p.get("reachable"))) return Map.of("status", "skipped");
+                        return Map.of("status", Boolean.TRUE.equals(p.get("within_thresholds")) ? "up" : "down"); }));
     }
 
     /** Aşılan eşikleri okunur tek satıra çevirir (e-posta konusu ve alarm detayı). */
@@ -4230,9 +4422,10 @@ public class SchedulerService {
                         return Map.of("status", Boolean.TRUE.equals(p.get("up")) ? "up" : "down"); }));
 
         // ── SCRIPTED_SLOW (opt-in) ───────────────────────────────────────────────────────────
-        // Kapaliysa/olculemediyse/kosum DUSTUYSE sentetik "up" uretilir: boylece daha once acilmis
-        // bir SLOW alarmi asili kalmaz. Dusen kosumda sure zaten anlamsizdir (timeout'ta tavan
-        // degeri olcerdik) — o durumu SCRIPTED_FAIL anlatir, SLOW ikinci kez bagirmaz.
+        // Ozellik KAPALIYSA sentetik "up" uretilir: boylece daha once acilmis bir SLOW alarmi asili kalmaz.
+        // Ozellik aciksa ve kosum DUSTUYSE ya da sure yoksa kalem HIC uretilmez (O-2, asagida) — "olculemedi"
+        // saglikli sayilmaz. Dusen kosumda sure anlamsizdir (timeout'ta tavan degeri olcerdik); o durumu
+        // SCRIPTED_FAIL anlatir, SLOW ikinci kez bagirmaz.
         Map<String, Object> slowCtx = new LinkedHashMap<>(ctx);
         int slowTh = slowThresholdFor(m);
         slowCtx.put("threshold_ms", slowTh);
@@ -4240,7 +4433,12 @@ public class SchedulerService {
         // alarm ctx'inde ise sentetigin dilinde "duration_ms" olarak tasinir.
         Long durMs = r.get("response_ms") instanceof Number dn ? dn.longValue() : null;
         if (durMs != null) slowCtx.put("duration_ms", durMs);
-        boolean slowDown = Boolean.TRUE.equals(m.getSlowResponseEnabled()) && up && durMs != null && durMs > slowTh;
+        boolean slowEnabled = Boolean.TRUE.equals(m.getSlowResponseEnabled());
+        // O-2 (2026-09-29): "ölçülemedi" SAĞLIKLI DEĞİLDİR. Özellik açıkken koşum düştüyse (süre anlamsız) ya da süre
+        // yoksa SLOW kalemi ÜRETİLMEZ — ne sayacı artırır ne sıfırlar; açık SLOW alarmı, FAIL alarmının sürdüğü sırada
+        // kanıtsız "ÇÖZÜLDÜ" diye kapanmaz. Özellik kapalıysa sentetik "up" (asılı kalmış alarmı kapatır) aynen sürer.
+        if (slowEnabled && (!up || durMs == null)) return;
+        boolean slowDown = slowEnabled && up && durMs != null && durMs > slowTh;
         slowSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_SCRIPTED_SLOW, m.getName(),
                 durMs != null ? durMs + " ms" : "slow",
@@ -4260,7 +4458,8 @@ public class SchedulerService {
      * <p>Uc cevap uretir, ikisi degil: kontrol yurutulemediyse (k6 havuzu dolu / k6 yok)
      * {@code "skipped"} doner ve teyit zinciri kanit saymaz. "down" desek havuz darligi sahte bir
      * yavaslik TEYIT ederdi; "up" desek gercek bir yavaslamayi sessizce kapatirdi.
-     * Alarmi kapali monitor ve DUSEN kosum → "up" (SLOW, FAIL'in uzerine ikinci alarm acmaz).
+     * Alarmi kapali monitor → "up". DUSEN kosum → "skipped" (O-2, 2026-09-29: sure anlamsiz = kanit yok; eskiden
+     * "up" donup kurtarma zincirinde acik SLOW alarmini senaryo FAIL iken kapatiyordu).
      */
     private Map<String, Object> evalScriptedSlow(com.sitemonitor.model.ScriptedMonitor m) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -4275,14 +4474,21 @@ public class SchedulerService {
         }
         Long ms = p.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("duration_ms", ms);
-        boolean slow = Boolean.TRUE.equals(p.get("up")) && ms != null && ms > th;
-        out.put("status", slow ? "down" : "up");
+        if (!Boolean.TRUE.equals(p.get("up")) || ms == null) {   // O-2: dusen/olculemeyen kosum → kanit yok
+            out.put("status", "skipped");
+            out.put("error", "koşum başarısız — süre ölçülemedi");
+            return out;
+        }
+        out.put("status", ms > th ? "down" : "up");
         return out;
     }
 
     /** k6'yı çalıştır + ScriptedCheck yaz + activity + out map. (Manuel tetik + SweepItem recheck lambda kullanır.) */
     public Map<String, Object> recheckScripted(com.sitemonitor.model.ScriptedMonitor m, boolean manual) {
-        return persistScripted(m, scriptedCheckerService.run(m), manual);
+        // D-10 (2026-09-29): elle koşum ve elle kontrolün başlattığı kurtarma zinciri ELLE k6 kotasından koşar
+        // (havuzun son izni zamanlanmış koşumlara kalır); zincirin satırları da elle kökenli işaretlenir.
+        boolean manualOrigin = manual || ScriptedCheckerService.manualQuotaActive();
+        return persistScripted(m, manual ? scriptedCheckerService.runManual(m) : scriptedCheckerService.run(m), manualOrigin);
     }
 
     private Map<String, Object> persistScripted(com.sitemonitor.model.ScriptedMonitor m,
@@ -4324,6 +4530,7 @@ public class SchedulerService {
             c.setChecksJson(res.checksJson());
             c.setOutputTail(res.outputTail());
             c.setError(res.error());
+            c.setManual(manual);   // 2026-09-29: anomali serisi yalnız zamanlanmış koşumları sayar
             c.setViaProxy(res.viaProxy());
             c.setScriptVersion(m.getScriptVersion());
             var ph = res.phases();
@@ -4365,14 +4572,14 @@ public class SchedulerService {
 
         // ── L3: anomali guard'ı — KAYIT YAZILDIKTAN SONRA ────────────────────────────────
         // Sıra önemli: guard ardışık zaman aşımı serisini `scripted_checks` üzerinden okuyor,
-        // yani bu koşumun satırı DB'de olmalı. Kapatma gerçekleştiyse manuel tetikleyen kullanıcı
-        // sebebi yanıtta görsün — arka planda sessizce kapanmasın.
+        // yani bu koşumun satırı DB'de olmalı. ELLE koşum guard'ı TETİKLEMEZ (2026-09-29): izlemeyi
+        // kapatma + KRİTİK bildirim yalnız zamanlanmış koşumlardan (bkz. ScriptedAnomalyGuard.evaluate).
         // Guard bir GÜVENLİK AĞI'dır, kontrol hattının bir parçası değil: buradaki bir arıza
         // koşumun kaydedilmesini ya da sweep sonucunun üretilmesini ASLA engellememeli.
         // (Guard'ın kendi içi de sessiz; bu ikinci kemer enjeksiyonun hiç yapılmadığı yolları
         // da kapsıyor — aksi halde tek bir null bütün senaryo sweep'ini sessizce düşürürdü.)
         try {
-            String disabled = scriptedAnomalyGuard == null ? null : scriptedAnomalyGuard.evaluate(m, res);
+            String disabled = scriptedAnomalyGuard == null ? null : scriptedAnomalyGuard.evaluate(m, res, manual);
             if (disabled != null) {
                 out.put("disabled", true);
                 out.put("disabled_reason", disabled);
@@ -4501,7 +4708,14 @@ public class SchedulerService {
                 // İKİ süreç, iki ScriptedCheck satırı, iki permit. Yarışta recheckScripted "skipped"
                 // dönünce teyit zinciri "kanıt yok ⇒ iptal" deyip alarmı sessizce düşürüyordu.
                 // Uç kısa bekleme sonunda zaman aşımına düşse bile alarm değerlendirmesi kaybolmaz.
-                evaluateScriptedNow(m, r);
+                // O-2 (2026-09-29): koşum YÜRÜTÜLEMEDİYSE (k6 havuzu dolu / k6 yok) değerlendirme YOK — zamanlanmış
+                // sweep'in kuralı (SKIPPED kaleme girmez). Eskiden FAIL kalemi DOWN sayılıyor (sahte kardeş gözlemi)
+                // ve SLOW kalemi "sağlıklı" sayılıp açık SCRIPTED_SLOW alarmını kanıtsız kapatabiliyordu.
+                if (Boolean.TRUE.equals(r.get("skipped"))) {
+                    log.info("Elle senaryo koşumu yürütülemedi — alarm değerlendirmesi atlandı: {} — {}", m.getName(), r.get("error"));
+                } else {
+                    evaluateScriptedNow(m, r);
+                }
                 return r;
             } catch (RuntimeException e) {
                 log.error("Manuel senaryo kontrolü başarısız (monitor={} id={})", m.getName(), m.getId(), e);
@@ -4705,7 +4919,8 @@ public class SchedulerService {
     }
 
     /** Yavaş yanıt yeniden-ölçümü (KEYWORD_SLOW confirm/recovery re-check'i) — taze fetch, KeywordResult PERSIST ETMEZ.
-     *  {"status":"up"|"down","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı/HTTP-hatası → up. */
+     *  {"status":"up"|"down"|"skipped","response_ms"?,"threshold_ms"} döner. slowResponseEnabled kapalı → up;
+     *  HTTP hatası / süre yok → "skipped" (D-7: yavaşlık ölçülemedi = kanıt yok). */
     private Map<String, Object> evalKeywordSlow(KeywordMonitor m) {
         Map<String, Object> out = new LinkedHashMap<>();
         int th = m.getSlowThresholdMs() != null ? m.getSlowThresholdMs() : 3000;
@@ -4716,8 +4931,11 @@ public class SchedulerService {
                 Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
         Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
         if (ms != null) out.put("response_ms", ms);
-        boolean slow = r.get("error") == null && ms != null && ms > th;   // HTTP hatası → yavaşlık değerlendirilemez → up
-        out.put("status", slow ? "down" : "up");
+        if (r.get("error") != null || ms == null) {   // HTTP hatası → yavaşlık değerlendirilemez → kanıt yok
+            out.put("status", "skipped");
+            return out;
+        }
+        out.put("status", ms > th ? "down" : "up");
         return out;
     }
 
@@ -4876,7 +5094,7 @@ public class SchedulerService {
     //    Amaç: kritik bir domain gün içinde YENİLENİRSE (bitiş uzarsa) açık DOMAINMON_EXPIRY alarmı ertesi sabahki
     //    sweep'i beklemeden aynı gün (16:00) otomatik kapansın; durum taze kalsın.
     //    Ayrı scheduler_lock anahtarı ("domain-critical-sweep") ile HA'da tek pod çalışır — günlük "domain-sweep" ile çakışmaz.
-    //    evaluateDomainAlarmsNow reAlert dedupe'unu koruduğundan HÂLÂ kritik domain için İKİNCİ bir bildirim ÜRETMEZ:
+    //    evaluateDomainAlarms (zamanlanmış kip) reAlert dedupe'unu koruduğundan HÂLÂ kritik domain için İKİNCİ bir bildirim ÜRETMEZ:
     //    yalnız durumu günceller / yenilenmişse alarmı kapatır.
     @Scheduled(cron = "${site.monitor.domain.critical-check-cron:0 0 16 * * *}", zone = "Europe/Istanbul")
     public void runCriticalDomainChecks() {
@@ -4914,9 +5132,9 @@ public class SchedulerService {
         for (DomainMonitor m : monitors) {
             try {
                 Map<String, Object> r = domainCheckerService.check(m);   // yeni domain_checks satırı persist eder
-                if (domainReminders != null) domainReminders.evaluate(m, r);   // elle kontrol de eşik hatırlatmasını tetikler
+                if (domainReminders != null) domainReminders.evaluate(m, r);   // zamanlanmış tur eşik hatırlatmasını değerlendirir (elle kontrol DEĞİL, 2026-09-29)
                 if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);   // yenileme görüldüyse plan kapanır
-                evaluateDomainAlarmsNow(m, r);                           // yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
+                evaluateDomainAlarms(m, r, false);                       // ZAMANLANMIŞ tur: yenilendiyse EXPIRY alarmı kapanır; hâlâ kritikse reAlert dedupe → yeni bildirim YOK
                 Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
                 int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
                 if (days != null && days > warn) renewed++;
@@ -4990,44 +5208,78 @@ public class SchedulerService {
         unknownSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_UNKNOWN, m, r, !"UNKNOWN".equals(status), null));   // izleme seviyesi
         // EXPIRY — gün eşiği. Seviye kartın DURUMU ile HİZALI olmalı (DomainCheckerService: days≤crit→CRITICAL,
         // crit<days≤warn→WARNING); aksi halde 25 günlük (WARNING durumundaki) bir monitör mailde "YÜKSEK" görünür.
+        // O-5 (2026-09-29): "doğrulanamadı" ≠ "düzeldi". Veri yoksa (RDAP/WHOIS düştü → status UNKNOWN, gün null)
+        // EXPIRY/STATUS kalemi ÜRETİLMEZ — ne açar ne kapatır ne sayacı sıfırlar. Eskiden gün null → "up" sayılıyor,
+        // tek bir RDAP zaman aşımı KRİTİK EXPIRY/STATUS alarmını "✅ ÇÖZÜLDÜ" diye kapatıyor, sonraki başarılı sorgu
+        // yeni INITIAL açıyordu (flap + çift bildirim). Körlüğü DOMAINMON_UNKNOWN anlatır.
+        boolean hasData = !"UNKNOWN".equals(status);
         boolean expiryDown = days != null && days <= warn;
         String expiryLevel = (days != null && (days < 0 || days <= crit)) ? "CRITICAL" : "WARNING";
-        expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
-        // STATUS — EPP kodları
-        statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
-                !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
+        if (hasData && days != null)
+            expirySweep.add(domainItem(EscalationService.TYPE_DOMAINMON_EXPIRY, m, r, !expiryDown, expiryLevel));
+        // STATUS — EPP kodları. D-b5 (2026-09-29): WHOIS/.tr yedeğinde BOŞ statü listesi "kod yok" değil "okunamadı"dır —
+        // kalem üretilmez (açık STATUS alarmı kanıtsız kapanmaz). RDAP'ta liste standarttır (boş = kod yok, ölçülü).
+        if (eppStatusMeasured(r))
+            statusSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_STATUS, m, r,
+                    !(eppCritical || eppWarn), eppCritical ? "CRITICAL" : "HIGH"));
         // CHANGED — yalnız değişimde (up gönderilmez → manuel ack'e kadar açık; hijack sinyali)
         if (changed && !Boolean.FALSE.equals(m.getChangeAlert()))
             changedSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_CHANGED, m, r, false, null));   // izleme seviyesi (2026-09-19)
-        // TRANSFER_LOCK — YALNIZ kesin "NONE" alarm üretir. UNKNOWN (WHOIS/.tr, veri yok) up
-        // sayılır: kilidi doğrulayamamak, kilit olmadığı anlamına GELMEZ.
-        lockSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, m, r,
-                !(isLockMissing(r) && !Boolean.FALSE.equals(m.getTransferLockAlert())), null));
-        // BLACKLIST — yalnız LISTED alarm üretir; UNKNOWN/SKIPPED up. Doğrulanamayan bir
-        // sorgudan alarm üretmek, kurumsal resolver kısıtında tüm envanteri sahte alarma boğardı.
-        blacklistSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_BLACKLIST, m, r,
-                !DnsblCheckerService.LISTED.equals(r.get("blacklist_status")), null));
+        // TRANSFER_LOCK — YALNIZ kesin "NONE" alarm üretir. UNKNOWN (WHOIS/.tr, veri yok) alarm üretmez: kilidi
+        // doğrulayamamak, kilit olmadığı anlamına GELMEZ — ama kilidin VAR olduğu anlamına da gelmez (O-5): UNKNOWN'da
+        // kalem ÜRETİLMEZ (açık alarm kanıtsız kapanmaz). Anahtar kapalıysa sentetik "up" asılı alarmı kapatır.
+        boolean lockAlertOn = !Boolean.FALSE.equals(m.getTransferLockAlert());
+        if (!lockAlertOn || !"UNKNOWN".equals(String.valueOf(r.get("transfer_lock"))))
+            lockSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, m, r,
+                    !(isLockMissing(r) && lockAlertOn), null));
+        // BLACKLIST — yalnız LISTED alarm üretir. Doğrulanamayan bir sorgudan alarm üretmek, kurumsal resolver
+        // kısıtında tüm envanteri sahte alarma boğardı. O-5: UNKNOWN (sorgu başarısız) kalem ÜRETMEZ — açık kara liste
+        // alarmı kanıtsız kapanmaz; SKIPPED (özellik kapalı / liste yok) sentetik "up" ile asılı alarmı kapatır.
+        Object bl = r.get("blacklist_status");
+        if (!DnsblCheckerService.UNKNOWN.equals(bl))
+            blacklistSweep.add(domainItem(EscalationService.TYPE_DOMAINMON_BLACKLIST, m, r,
+                    !DnsblCheckerService.LISTED.equals(bl), null));
     }
 
     /**
-     * Manuel "Şimdi Kontrol Et" sonrası TEK domain için alarm değerlendirmesi — günlük sweep ile AYNI mantık.
-     * Neden gerekli: sweep her domaini {@code checkDue} ile ~günde 1 kez işler; kullanıcı bir domaini elle kontrol
-     * edip WARNING/CRITICAL/UNKNOWN görürse alarm/e-posta günlük slota kadar gecikmesin, ANINDA üretilsin.
-     * {@code r} = domainCheckerService.check(m) sonucu (aynı sonuç tekrar kontrol edilmez).
+     * Elle "Şimdi Kontrol Et" (ve Kayıt sekmesinin canlı sorgusu) sonrası TEK domain için değerlendirme — {@code r} =
+     * domainCheckerService.check(m) sonucu (aynı sonuç tekrar kontrol edilmez).
+     *
+     * <p><b>Elle kontrol ALARM AÇMAZ (ürün kararı 2026-09-29).</b> Eskiden bu giriş sweep ile AYNI (işaretsiz) hatta
+     * giriyor, WARNING/CRITICAL/UNKNOWN görülünce alarm + e-posta anında üretiyordu; dokuz türün TEK işaretsiz elle
+     * girişiydi. Artık yalnız kapanış uzlaştırması işler (yenilenen alan adının açık alarmı kapanabilir); yeni alarm,
+     * yeniden uyarı ve fırtına sonraki zamanlanmış sweep'in işidir. Zamanlanmış kritik ikinci kontrol
+     * ({@link #runCriticalDomainChecks}) işaretsiz {@link #evaluateDomainAlarms} yolunu kullanır.
      */
     public void evaluateDomainAlarmsNow(DomainMonitor m, Map<String, Object> r) {
+        evaluateDomainAlarms(m, r, true);
+    }
+
+    /** Tek domain alarm değerlendirmesi — {@code manual=true} elle kontrol (yalnız kapanış), false zamanlanmış tur. */
+    private void evaluateDomainAlarms(DomainMonitor m, Map<String, Object> r, boolean manual) {
         if (m == null || r == null) return;
         if (!appSettings.getBoolean("site.monitor.domain.alert-enabled", true)) return;
         List<MonitoringOutageService.SweepItem> unknown = new ArrayList<>(), expiry = new ArrayList<>(),
                 status = new ArrayList<>(), changed = new ArrayList<>(),
                 lock = new ArrayList<>(), blacklist = new ArrayList<>();
         addDomainSweepItems(m, r, unknown, expiry, status, changed, lock, blacklist);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknown);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expiry);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, status);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changed);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, lock);
-        handleDomainSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST, blacklist);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_UNKNOWN, unknown, manual);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_EXPIRY, expiry, manual);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_STATUS, status, manual);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_CHANGED, changed, manual);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK, lock, manual);
+        handleDomainSweep(EscalationService.TYPE_DOMAINMON_BLACKLIST, blacklist, manual);
+    }
+
+    /**
+     * D-b5: EPP statüsü ÖLÇÜLDÜ mü? Sorgu veri döndürdüyse (status ≠ UNKNOWN) ve kaynak RDAP ailesiyse (RDAP / RDAP_REGISTRY
+     * / RDAP_ORG — statü listesi standarttır, boş liste = kod yok) ya da liste doluysa. WHOIS/.tr yedeğinde boş liste
+     * "okunamadı"dır: ne alarm açar ne kapatır.
+     */
+    private static boolean eppStatusMeasured(Map<String, Object> r) {
+        if ("UNKNOWN".equals(String.valueOf(r.get("status")))) return false;
+        if (String.valueOf(r.get("source")).toUpperCase(java.util.Locale.ROOT).startsWith("RDAP")) return true;
+        return r.get("status_codes") instanceof List<?> l && !l.isEmpty();
     }
 
     /** Kilit KESİN yok mu? UNKNOWN (WHOIS/.tr, veri yok) alarm üretmez — kural: doğrulanamadı ≠ yok. */
@@ -5036,7 +5288,14 @@ public class SchedulerService {
     }
 
     private void handleDomainSweep(String type, List<MonitoringOutageService.SweepItem> sweep) {
-        try { monitoringOutageService.handleSweepResults(type, sweep); }
+        handleDomainSweep(type, sweep, false);
+    }
+
+    private void handleDomainSweep(String type, List<MonitoringOutageService.SweepItem> sweep, boolean manual) {
+        try {
+            if (manual) monitoringOutageService.handleSweepResults(type, sweep, true);
+            else monitoringOutageService.handleSweepResults(type, sweep);
+        }
         catch (Exception e) { log.warn("Domain outage processing failed [{}]: {}", type, e.getMessage()); }
     }
 
@@ -5087,24 +5346,36 @@ public class SchedulerService {
     }
 
     private Map<String, Object> recheckDomainFor(DomainMonitor m, String type) {
-        Map<String, Object> r = domainCheckerService.check(m);
+        // Teyit/kurtarma yeniden kontrolü zamanlanmış değişiklik TABANI olmaz (2026-09-29): satır taban dışı yazılır —
+        // aksi hâlde UNKNOWN teyidi sırasında görülen bir değişiklik sonraki turda yutulurdu (DOMAINMON_CHANGED açılmazdı).
+        Map<String, Object> r = domainCheckerService.checkRecheck(m);
         String status = String.valueOf(r.get("status"));
         Integer days = r.get("days_remaining") instanceof Number n ? n.intValue() : null;
         int warn = m.getWarningDays() != null ? m.getWarningDays() : 30;
-        boolean up = switch (type) {
-            case EscalationService.TYPE_DOMAINMON_UNKNOWN -> !"UNKNOWN".equals(status);
-            case EscalationService.TYPE_DOMAINMON_EXPIRY  -> !(days != null && days <= warn);
-            case EscalationService.TYPE_DOMAINMON_STATUS  -> !(Boolean.TRUE.equals(r.get("epp_critical")) || Boolean.TRUE.equals(r.get("epp_warn")));
-            // Yeni tipler BURAYA da yazılmalı: default -> true onları sessizce "düzeldi" sayar
+        boolean hasData = !"UNKNOWN".equals(status);
+        boolean lockAlertOn = !Boolean.FALSE.equals(m.getTransferLockAlert());
+        // D-b4 (2026-09-29): yeniden kontrol VERİ getirmediyse hüküm "skipped" (null) — sweep kalemi kuralının (O-5/D-b5)
+        // aynası. Eskiden gün yok → EXPIRY "up", boş WHOIS statüsü → STATUS "up", kilit/kara liste UNKNOWN → "up"
+        // sayılıyor; kurtarma zinciri açık alarmı tek bir RDAP zaman aşımıyla "ÇÖZÜLDÜ" diye kapatabiliyordu.
+        String verdict;   // "up" | "down" | "skipped" (ölçülemedi)
+        switch (type) {
+            case EscalationService.TYPE_DOMAINMON_UNKNOWN -> verdict = hasData ? "up" : "down";
+            case EscalationService.TYPE_DOMAINMON_EXPIRY -> verdict = (!hasData || days == null) ? "skipped"
+                    : (days <= warn ? "down" : "up");
+            case EscalationService.TYPE_DOMAINMON_STATUS -> verdict = !eppStatusMeasured(r) ? "skipped"
+                    : (Boolean.TRUE.equals(r.get("epp_critical")) || Boolean.TRUE.equals(r.get("epp_warn")) ? "down" : "up");
+            // Yeni tipler BURAYA da yazılmalı: default -> "up" onları sessizce "düzeldi" sayar
             // ve alarm hiç açılmazdı.
-            case EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK ->
-                    !(isLockMissing(r) && !Boolean.FALSE.equals(m.getTransferLockAlert()));
-            case EscalationService.TYPE_DOMAINMON_BLACKLIST ->
-                    !DnsblCheckerService.LISTED.equals(r.get("blacklist_status"));
-            default -> true;
-        };
+            case EscalationService.TYPE_DOMAINMON_TRANSFER_LOCK -> verdict = !lockAlertOn ? "up"
+                    : "UNKNOWN".equals(String.valueOf(r.get("transfer_lock"))) ? "skipped"
+                    : (isLockMissing(r) ? "down" : "up");
+            case EscalationService.TYPE_DOMAINMON_BLACKLIST -> verdict =
+                    DnsblCheckerService.UNKNOWN.equals(r.get("blacklist_status")) ? "skipped"
+                    : (DnsblCheckerService.LISTED.equals(r.get("blacklist_status")) ? "down" : "up");
+            default -> verdict = "up";
+        }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", up ? "up" : "down");
+        out.put("status", verdict);
         out.put("error", r.get("error"));
         return out;
     }
@@ -5156,7 +5427,8 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(pingSweepItem(m, r));
-                slowSweep.add(pingSlowSweepItem(m, r));
+                MonitoringOutageService.SweepItem slowItem = pingSlowSweepItem(m, r);   // D-7: ölçülemediyse null
+                if (slowItem != null) slowSweep.add(slowItem);
                 checked++;
             } catch (Exception e) {
                 log.warn("Ping check failed for {}: {}", m.getHost(), e.getMessage());
@@ -5290,8 +5562,11 @@ public class SchedulerService {
                 // Değişiklik tespiti SADECE başarılı sorguda ve son BAŞARILI
                 // kayda karşı yapılır — aksi halde dolu→boş(hata) geçişi sahte
                 // CHANGED üretir (DNS_FAILURE her seferinde DNS_CHANGED'i tetiklerdi).
+                // Taban YALNIZ ZAMANLANMIŞ kayıtlardan (2026-09-29): elle kontrol yeni değeri kaydediyordu ve sweep
+                // onu taban alınca değişikliği "yok" sayıyordu — tek bir "Şimdi kontrol et" DNS_CHANGED alarmını
+                // KALICI olarak yutuyordu. Elle kontrol alarm açmaz; değişikliği sweep kendi kurallarıyla alarmlar.
                 DnsRecord prevOk = success
-                        ? dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(m.getId(), "").orElse(null)
+                        ? dnsRecordRepo.findLatestScheduledSuccessful(m.getId()).orElse(null)
                         : null;
                 String prevValue = prevOk != null ? prevOk.getValue() : null;
                 DnsCheckerService.ChangeKind kind = success
@@ -5324,6 +5599,7 @@ public class SchedulerService {
                     boolean slow = responseMs > effSlow;
                     Map<String, Object> slowCtx = new LinkedHashMap<>();
                     slowCtx.put("record_type", m.getRecordType());
+                    slowCtx.put("monitor_id", m.getId());   // D-b2: sahiplik (Y-1) + kardeş gözlemi + e-posta derin linki
                     slowCtx.put("response_ms", responseMs);
                     slowCtx.put("slow_threshold_ms", effSlow);
                     slowCtx.put("monitor_confirm_attempts", slowConfirmAttempts);
@@ -5342,6 +5618,7 @@ public class SchedulerService {
                     List<String> unexpected = DnsCheckerService.unexpectedValues(m.getExpectedValue(), values);
                     Map<String, Object> unexpCtx = new LinkedHashMap<>();
                     unexpCtx.put("record_type", m.getRecordType());
+                    unexpCtx.put("monitor_id", m.getId());   // D-b2
                     unexpCtx.put("unexpected_values", unexpected);
                     unexpCtx.put("expected_values", DnsCheckerService.splitLines(m.getExpectedValue()));
                     if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) unexpCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) unexpCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
@@ -5368,7 +5645,8 @@ public class SchedulerService {
                                 m.getNotificationGroupId(),
                                 () -> recheckDnsChanged(m, prevValue),
                                 m.getNotifyEmail(), m.getNotifyWebhook(),   // kanal bayrakları diğer 8 kalemle parite
-                                Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null));   // O1: bağımsız işareti
+                                Boolean.TRUE.equals(m.getStandalone()) ? Boolean.TRUE : null,   // O1: bağımsız işareti
+                                m.getId()));   // D-b2: olayı açan izleme (sahiplik + günlük yeniden uyarı kaydı)
                     } else {
                         log.info("DNS change suppressed for {} {} ({}): was='{}' now='{}'",
                                 m.getRecordType(), m.getDomain(),
@@ -5391,6 +5669,7 @@ public class SchedulerService {
                             .map(en -> en.getKey() + "→" + en.getValue()).collect(Collectors.joining(" | "));
                     Map<String, Object> incCtx = new LinkedHashMap<>();
                     incCtx.put("record_type", m.getRecordType());
+                    incCtx.put("monitor_id", m.getId());   // D-b2
                     incCtx.put("resolver_detail", detail);
                     if (alarmTeamOf(m.getStandalone(), m.getTeamId()) != null) incCtx.put("team_id", m.getTeamId()); if (Boolean.TRUE.equals(m.getStandalone())) incCtx.put("standalone", true);   // yalnız bağımsız → alarm takıma
                     if (m.getNotificationGroupId() != null) incCtx.put("notification_group_id", m.getNotificationGroupId());
@@ -5423,14 +5702,15 @@ public class SchedulerService {
     }
 
     /** DNS_SLOW teyit re-check'i: çözüm başarılı ama hâlâ yavaş (response_ms > eşik) ise "down" (teyit sürer);
-     *  hızlandıysa ya da çözülemiyorsa "up" (slow alarmı üretilmez/kapanır — başarısızlık DNS_FAILURE'ın işi). */
+     *  hızlandıysa "up". Çözülemiyorsa "skipped" (D-b4, 2026-09-29): süre ÖLÇÜLEMEDİ — eskiden "up" sayılıp kurtarma
+     *  zinciri yavaşlık alarmını ad çözülemezken "ÇÖZÜLDÜ" diye kapatıyordu; başarısızlık DNS_FAILURE'ın işi. */
     private Map<String, Object> recheckDnsSlow(DnsMonitor m, int thresholdMs) {
         Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
         boolean success = Boolean.TRUE.equals(r.get("success"));
         long responseMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : 0L;
         boolean slow = success && responseMs > thresholdMs;
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", slow ? "down" : "up");
+        out.put("status", !success ? "skipped" : slow ? "down" : "up");
         out.put("error", slow ? responseMs + " ms" : (String) r.get("error"));
         return out;
     }
@@ -5447,13 +5727,18 @@ public class SchedulerService {
                 && DnsCheckerService.detectChange(baseline, String.join("\n", values))
                    == DnsCheckerService.ChangeKind.CHANGED;
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", stillChanged ? "down" : "up");
-        out.put("error", stillChanged ? "changed" : null);
+        // D-c1 (2026-09-29): değişiklik BAŞARILI bir sorguyla gözlemlendi; teyitte ad ÇÖZÜLEMEMESİ geri dönüş kanıtı değildir
+        // (ad sunucusu geçişlerinde geçici SERVFAIL tam da bu anlarda olur). Eskiden "up" = "geçici dalgalanma" sayılıp
+        // zincir iptal ediliyordu; tur tabanı yeni değere geçtiği için değişiklik bir daha algılanmıyor, DNS_CHANGED KALICI
+        // yutuluyordu. "skipped" de zinciri iptal eder (aynı kayıp) → çözülemeyen deneme "sürüyor" (down) sayılır.
+        out.put("status", !success || stillChanged ? "down" : "up");
+        out.put("error", !success ? "çözümlenemedi (değişiklik gözlemi korunur)" : stillChanged ? "changed" : null);
         return out;
     }
 
-    /** DNS_UNEXPECTED teyit re-check'i: canlı sonuçta hâlâ BEKLENMEYEN değer varsa "down" (alarm sürer);
-     *  değer beklenene dönmüşse ya da çözülemiyorsa "up" (alarm kapanır — başarısızlık DNS_FAILURE'ın işi). */
+    /** DNS_UNEXPECTED teyit re-check'i: canlı sonuçta hâlâ BEKLENMEYEN değer varsa "down" (alarm sürer); değer
+     *  beklenene dönmüşse "up". Çözülemiyorsa "skipped" (D-b4): değer ÖLÇÜLEMEDİ — eskiden "up" sayılıp olası ele
+     *  geçirme alarmı ad çözülemezken kapanıyordu; başarısızlık DNS_FAILURE'ın işi. */
     private Map<String, Object> recheckDnsUnexpected(DnsMonitor m) {
         Map<String, Object> r = dnsCheckerService.check(m.getDomain(), m.getRecordType());
         boolean success = Boolean.TRUE.equals(r.get("success"));
@@ -5461,7 +5746,7 @@ public class SchedulerService {
         List<String> values = (List<String>) r.getOrDefault("values", List.of());
         List<String> unexpected = success ? DnsCheckerService.unexpectedValues(m.getExpectedValue(), values) : List.of();
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("status", !unexpected.isEmpty() ? "down" : "up");
+        out.put("status", !success ? "skipped" : !unexpected.isEmpty() ? "down" : "up");
         out.put("error", unexpected.isEmpty() ? null : String.join(", ", unexpected));
         return out;
     }

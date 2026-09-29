@@ -214,6 +214,10 @@ describe('DomainRegistrationTab — veri akışı', () => {
     api.monitoring.getDomainReminders.mockRejectedValue(new Error('ağ'))
     const onLiveRecord = vi.fn()
     render(<DomainRegistrationTab monitor={{ id: 7, domain: 'example.com' }} onLiveRecord={onLiveRecord} />)
+    // K-1 (2026-09-29): açılış kayıtlı bilgi okur (canlı sorgu YOK) → onLiveRecord açılışta çağrılmaz; Yenile canlı sorgular.
+    await waitFor(() => expect(api.monitoring.getDomainRegistration).toHaveBeenCalledWith(7, { live: false }))
+    expect(onLiveRecord).not.toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: /^(Yenile|Refresh)$/ }))
     await waitFor(() => expect(onLiveRecord).toHaveBeenCalledWith(rdap))
     expect(api.monitoring.getDomainRegistration).toHaveBeenCalledWith(7, { live: true })
     expect(await screen.findByText('Couldn’t load the reminders.')).toBeInTheDocument()
@@ -221,12 +225,13 @@ describe('DomainRegistrationTab — veri akışı', () => {
   })
 
   it('anlık sorgu başarısız → kayıtlı bilgi, onLiveRecord ÇAĞRILMAZ; ikisi de başarısız → hata + Yeniden dene', async () => {
-    api.monitoring.getDomainRegistration
-      .mockResolvedValueOnce({ success: false, error: '403' })
-      .mockResolvedValueOnce({ success: true, data: rdap })
+    // Argümana göre (StrictMode açılış efektini iki kez koşturabilir): canlı sorgu 403, kayıtlı bilgi var.
+    api.monitoring.getDomainRegistration.mockImplementation((_id, opts) =>
+      Promise.resolve(opts?.live ? { success: false, error: '403' } : { success: true, data: rdap }))
     api.monitoring.getDomainReminders.mockResolvedValue({ success: true, data: rem })
     const onLiveRecord = vi.fn()
     const { unmount } = render(<DomainRegistrationTab monitor={{ id: 7, domain: 'example.com' }} onLiveRecord={onLiveRecord} />)
+    fireEvent.click(await screen.findByRole('button', { name: /^(Yenile|Refresh)$/ }))
     expect(await screen.findByText(/Live query failed/)).toBeInTheDocument()
     expect(onLiveRecord).not.toHaveBeenCalled()
     unmount()
@@ -236,7 +241,9 @@ describe('DomainRegistrationTab — veri akışı', () => {
     render(<DomainRegistrationTab monitor={{ id: 7, domain: 'example.com' }} />)
     const alert = await screen.findByText('Could not load registration')
     expect(alert.closest('[data-slot="alert"]')).toHaveAttribute('data-tone', 'danger')
+    // Açılış artık yalnız kayıtlı bilgiyi okur (yedek sorgu yok); Yeniden dene EK bir okuma yapmalı.
+    const before = api.monitoring.getDomainRegistration.mock.calls.length
     fireEvent.click(screen.getByRole('button', { name: /^(retry|yeniden dene)$/i }))
-    await waitFor(() => expect(api.monitoring.getDomainRegistration.mock.calls.length).toBeGreaterThanOrEqual(3))
+    await waitFor(() => expect(api.monitoring.getDomainRegistration.mock.calls.length).toBeGreaterThan(before))
   })
 })

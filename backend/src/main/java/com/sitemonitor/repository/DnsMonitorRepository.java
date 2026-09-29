@@ -16,6 +16,8 @@ public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
     List<DnsMonitor> findByDomain(String domain);
     /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
     long countByStandaloneTrueAndActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByStandaloneTrueAndActiveTrueAndTeamId(Long teamId);
     Optional<DnsMonitor> findFirstByDomainOrderByIdAsc(String domain);
     /** Liste ucu (2026-09-27): SİLİNMEMİŞ standalone satırlar — duraklatılmışlar DÂHİL (bkz. PortMonitorRepository). */
     List<DnsMonitor> findByStandaloneTrueAndDeletedAtIsNull();
