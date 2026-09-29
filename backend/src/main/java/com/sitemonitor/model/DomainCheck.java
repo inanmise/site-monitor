@@ -107,6 +107,17 @@ public class DomainCheck {
 
     private String error;
 
+    /**
+     * ZAMANLANMIŞ TUR DIŞI satır mı (2026-09-29): elle kontrol, Kayıt sekmesinin canlı sorgusu ya da teyit / kurtarma
+     * yeniden kontrolü — NULL/false = zamanlanmış tur. Geçmişte ikisi
+     * de görünür; DOMAINMON_CHANGED için zamanlanmış değişiklik TABANI yalnız zamanlanmış satırlardan okunur
+     * ({@code DomainCheckRepository.findLatestScheduledWithData}). Aksi hâlde elle kontrolün gördüğü nameserver /
+     * registrar / EPP / DNSSEC değişikliği sonraki zamanlanmış turda "zaten bilinen" sayılır ve alarm HİÇ açılmazdı
+     * (elle kontrol alarm açmaz).
+     */
+    @Column(name = "manual")
+    private Boolean manual;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

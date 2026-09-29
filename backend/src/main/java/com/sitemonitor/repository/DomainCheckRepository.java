@@ -38,6 +38,14 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
     /** Son BAŞARILI kontrol (kaynak NONE değil) — değişiklik tespiti bunun registrar/NS/status'una karşı çalışır. */
     Optional<DomainCheck> findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(Long monitorId, String source);
 
+    /**
+     * Zamanlanmış DOMAINMON_CHANGED tespitinin TABANI (2026-09-29): veri taşıyan ({@code source <> 'NONE'}) ve ELLE
+     * OLMAYAN en yeni satır — DNS'teki {@code DnsRecordRepository.findLatestScheduledSuccessful} eşleniği.
+     */
+    @Query("SELECT d FROM DomainCheck d WHERE d.monitorId = :monitorId AND d.source <> 'NONE' "
+            + "AND (d.manual IS NULL OR d.manual = false) ORDER BY d.checkedAt DESC LIMIT 1")
+    Optional<DomainCheck> findLatestScheduledWithData(@Param("monitorId") Long monitorId);
+
     /** History detay listesi — SQL-LIMIT'li: en yeni :limit satır. */
     @Query("SELECT r FROM DomainCheck r WHERE r.monitorId = :id ORDER BY r.checkedAt DESC LIMIT :limit")
     List<DomainCheck> findRecentByMonitorId(@Param("id") Long id, @Param("limit") int limit);

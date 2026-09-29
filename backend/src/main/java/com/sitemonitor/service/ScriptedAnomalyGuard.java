@@ -78,6 +78,17 @@ public class ScriptedAnomalyGuard {
      * @return kapatıldıysa sebep, aksi halde null (çağıran isterse kullanıcıya iletir)
      */
     public String evaluate(ScriptedMonitor m, ScriptedCheckerService.ScriptedResult res) {
+        return evaluate(m, res, false);
+    }
+
+    /**
+     * @param manual ELLE koşum mu ("Şimdi kontrol et"). Ürün kararı 2026-09-29: elle kontrol yalnız gözlemdir — izlemeyi
+     *               KAPATMAZ ve takıma KRİTİK push/e-posta ATMAZ. Toplu elle kontrolde k6 havuzu (varsayılan 2 permit)
+     *               sıkışır ve koşumlar zaman aşımına düşebilir; bunlar guard'ı tetikleyip sağlıklı izlemeyi kapatıyordu.
+     *               Guard yalnız zamanlanmış koşumlarda çalışır ve seriyi yalnız zamanlanmış kayıtlardan sayar.
+     */
+    public String evaluate(ScriptedMonitor m, ScriptedCheckerService.ScriptedResult res, boolean manual) {
+        if (manual) return null;
         if (!enabled() || m == null || m.getId() == null || res == null) return null;
         // Zaten kapalıysa tekrar kapatma: aynı e-posta her manuel tetikte yeniden giderdi.
         if (Boolean.FALSE.equals(m.getActive())) return null;
@@ -110,7 +121,8 @@ public class ScriptedAnomalyGuard {
         int limit = timeoutStreakLimit();
         if (limit <= 0 || !"TIMEOUT".equals(res.status())) return null;
 
-        List<com.sitemonitor.model.ScriptedCheck> recent = checkRepo.findRecentByMonitorId(m.getId(), limit);
+        // Yalnız ZAMANLANMIŞ koşumlar sayılır (2026-09-29): araya giren elle koşumlar ne seriyi uzatır ne kırar.
+        List<com.sitemonitor.model.ScriptedCheck> recent = checkRepo.findRecentScheduledByMonitorId(m.getId(), limit);
         // Seri ancak TAM DOLU pencerede sayılır: 3 kaydı olan yeni bir monitör 5'lik eşiği geçmiş
         // sayılmamalı (aksi halde ilk üç zaman aşımı izlemeyi kapatırdı).
         if (recent == null || recent.size() < limit) return null;

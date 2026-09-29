@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface PingMonitorRepository extends JpaRepository<PingMonitor, Long> {
     List<PingMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     List<PingMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams). */
     List<PingMonitor> findByHost(String host);

@@ -107,7 +107,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // kaydının kendisini zaten yönetebiliyordu — fazladan admin şartının koruyucu değeri yoktu.
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = tek tek de çalıştırılabilen satırlar; kartın ▶ düğmesiyle aynı yüzey.
-  const canCheckRow = canManageRow
+  // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
+  // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
+  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   // Silme SEMANTİĞİ hâlâ standalone'a göre ayrışır (standalone → gerçek silme; envanter-türevi →
   // pasifleştirme, envanter senkronu yeniden açabilir); ayrışan yalnız DAVRANIŞ, yetki değil.
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
@@ -791,7 +793,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               actions={canManageRow(m) && (
                 <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.domain}
                   running={isRunning(m.id)}
-                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                   checkTitle={t('dns.check')} editTitle={t('dns.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id}
@@ -810,7 +812,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           status={statusKey(detailMonitor)} badge={statusBadge(detailMonitor)}
           canManage={canManageRow(detailMonitor)}
           running={isRunning(detailMonitor.id)}
-          onCheck={canManageRow(detailMonitor) ? () => checkNow(detailMonitor) : undefined}
+          onCheck={canCheckRow(detailMonitor) ? () => checkNow(detailMonitor) : undefined}
           onEdit={canManageRow(detailMonitor) ? () => openEdit(detailMonitor) : undefined}
           onDuplicate={canManageRow(detailMonitor) ? () => openDuplicate(detailMonitor) : undefined}
           onDelete={canDeleteRow(detailMonitor) ? () => deleteMonitor(detailMonitor) : undefined}

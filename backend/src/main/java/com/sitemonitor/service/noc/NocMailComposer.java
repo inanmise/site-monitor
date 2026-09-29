@@ -16,7 +16,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * 7/24 İzleme Ekibi (NOC) e-postaları — YALNIZ {@link MailDoc}/{@link MailKit} ile (Outlook-güvenli, mobil duyarlı,
@@ -103,13 +102,9 @@ public final class NocMailComposer {
 
     // ── Konu satırları ──────────────────────────────────────────────────────
 
+    /** Seviye sözcüğü — TEK sözlük {@code EscalationService.levelWordTr} (D-2, 2026-09-29: WARNING → "UYARI", eskiden "ORTA"). */
     public static String levelTr(String level) {
-        return switch (level == null ? "" : level.toUpperCase(Locale.ROOT)) {
-            case "CRITICAL" -> "KRİTİK";
-            case "HIGH" -> "YÜKSEK";
-            case "INFO", "LOW" -> "BİLGİ";
-            default -> "ORTA";
-        };
+        return com.sitemonitor.service.EscalationService.levelWordTr(level);
     }
 
     /** {@code [Site Monitor] [7/24] <SEVİYE> — <hedef> — <Takım>} (sözleşme §5). */
@@ -124,7 +119,18 @@ public final class NocMailComposer {
     }
 
     public static String stormSubject(int count) {
-        return "[Site Monitor] [7/24] KRİTİK — ALARM FIRTINASI — " + count + " izleme erişilemez";
+        return stormSubject(count, "CRITICAL");
+    }
+
+    /** D-c7 (2026-09-29): fırtına seviyesi = üyelerin EN YÜKSEK seviyesi (push ile aynı — {@code StormService.stormPushLevel}). */
+    public static String stormSubject(int count, String level) {
+        return "[Site Monitor] [7/24] " + levelTr(level) + " — ALARM FIRTINASI — " + count + " izleme erişilemez";
+    }
+
+    /** Seviye rozeti — tekil açılışla ({@link #open}) aynı ton kuralı. */
+    private static Badge levelBadge(String level) {
+        return "CRITICAL".equalsIgnoreCase(level) ? Badge.solid(levelTr(level), Tone.DESTRUCTIVE)
+                : Badge.tint(levelTr(level), "HIGH".equalsIgnoreCase(level) ? Tone.WARNING : Tone.INFO);
     }
 
     public static String stormResolvedSubject(int recovered) {
@@ -202,10 +208,18 @@ public final class NocMailComposer {
     public static MailDoc.Mail storm(int totalDown, String scopeLabel, String rootCause, String since,
                                      List<Member> members, List<TeamBlock> teams, String callInstructions,
                                      String coverageUrl, List<String> groupNames) {
-        MailDoc d = MailDoc.create(stormSubject(totalDown))
+        return storm(totalDown, scopeLabel, rootCause, since, members, teams, callInstructions, coverageUrl, groupNames,
+                "CRITICAL");
+    }
+
+    /** D-c7: {@code level} = fırtına seviyesi (üyelerin en yükseği) — konu ve rozet sabit "KRİTİK" değil. */
+    public static MailDoc.Mail storm(int totalDown, String scopeLabel, String rootCause, String since,
+                                     List<Member> members, List<TeamBlock> teams, String callInstructions,
+                                     String coverageUrl, List<String> groupNames, String level) {
+        MailDoc d = MailDoc.create(stormSubject(totalDown, level))
                 .preheader(totalDown + " izleme aynı anda erişilemez. Etkilenen takımların arama listeleri aşağıda.")
                 .kicker(KICKER)
-                .badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.tint("7/24", Tone.INFO), Badge.outline("Alarm fırtınası"))
+                .badges(levelBadge(level), Badge.tint("7/24", Tone.INFO), Badge.outline("Alarm fırtınası"))
                 .title(totalDown + " izleme aynı anda erişilemez",
                         "Toplu kesinti: tek tek alarm yerine bu özet gönderildi. Takımları aşağıdaki sırayla arayın.");
         d.keyValue(MailDoc.rows(
@@ -223,7 +237,12 @@ public final class NocMailComposer {
     }
 
     public static String stormUpdateSubject(int newCount) {
-        return "[Site Monitor] [7/24] KRİTİK — ALARM FIRTINASI GÜNCELLEMESİ — " + newCount + " yeni izleme erişilemez";
+        return stormUpdateSubject(newCount, "CRITICAL");
+    }
+
+    public static String stormUpdateSubject(int newCount, String level) {
+        return "[Site Monitor] [7/24] " + levelTr(level) + " — ALARM FIRTINASI GÜNCELLEMESİ — " + newCount
+                + " yeni izleme erişilemez";
     }
 
     /**
@@ -234,10 +253,16 @@ public final class NocMailComposer {
     public static MailDoc.Mail stormUpdate(int totalDown, String scopeLabel, String since, List<Member> members,
                                            List<TeamBlock> teams, String callInstructions, String coverageUrl,
                                            List<String> groupNames) {
-        MailDoc d = MailDoc.create(stormUpdateSubject(members.size()))
+        return stormUpdate(totalDown, scopeLabel, since, members, teams, callInstructions, coverageUrl, groupNames, "CRITICAL");
+    }
+
+    public static MailDoc.Mail stormUpdate(int totalDown, String scopeLabel, String since, List<Member> members,
+                                           List<TeamBlock> teams, String callInstructions, String coverageUrl,
+                                           List<String> groupNames, String level) {
+        MailDoc d = MailDoc.create(stormUpdateSubject(members.size(), level))
                 .preheader(members.size() + " izleme daha erişilemez (fırtına sürüyor). Arama listeleri aşağıda.")
                 .kicker(KICKER)
-                .badges(Badge.solid("KRİTİK", Tone.DESTRUCTIVE), Badge.tint("7/24", Tone.INFO), Badge.outline("Fırtına güncellemesi"))
+                .badges(levelBadge(level), Badge.tint("7/24", Tone.INFO), Badge.outline("Fırtına güncellemesi"))
                 .title(members.size() + " yeni izleme erişilemez",
                         "Toplu kesinti sürüyor ve bu izlemeler önceki e-postadan SONRA düştü. Takımları aşağıdaki sırayla arayın.");
         d.keyValue(MailDoc.rows(

@@ -173,7 +173,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const canManageRow = (m) => isAdmin || isOwnTeam(m)
   // Toplu kontrolün adayı = kullanıcının TEK TEK de çalıştırabileceği satırlar. Yeni bir izin
   // kuralı UYDURULMUYOR; kartın ▶ düğmesiyle birebir aynı yüzey.
-  const canCheckRow = canManageRow
+  // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
+  // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
+  const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
@@ -1010,7 +1012,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               actions={canManageRow(m) && (
                 <MonitorCardActions onResume={() => resume(m)} resuming={isResuming(m.id)} rowLabel={m.url}
                   running={isRunning(m.id)}
-                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canCheckRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                   checkTitle={t('pspd.check')} editTitle={t('pspd.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('pspd.delete')} />
@@ -1032,7 +1034,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
               resuming={isResuming(selected.id)}
               running={isRunning(selected.id)}
-              onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+              onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
               checkTitle={t('pspd.check')}
               onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
               editTitle={t('pspd.edit')}

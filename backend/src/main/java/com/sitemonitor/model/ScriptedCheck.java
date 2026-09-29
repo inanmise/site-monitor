@@ -107,6 +107,15 @@ public class ScriptedCheck {
     @Column(name = "script_version", length = 20)
     private String scriptVersion;
 
+    /**
+     * ELLE koşum mu ("Şimdi kontrol et", 2026-09-29) — NULL/false = zamanlanmış. Kontrol geçmişi ve uptime serisi
+     * iki türü de sayar (elle sonuç da kaydedilir); anomali guard'ının ardışık zaman aşımı serisi YALNIZ zamanlanmış
+     * koşumları sayar ({@code ScriptedCheckRepository.findRecentScheduledByMonitorId}) — toplu elle kontrolde
+     * sıkışan k6 havuzunun ürettiği zaman aşımları izlemeyi kapatıp takıma KRİTİK push atmasın.
+     */
+    @Column(name = "manual")
+    private Boolean manual;
+
     @Column(name = "checked_at")
     private String checkedAt;
 }

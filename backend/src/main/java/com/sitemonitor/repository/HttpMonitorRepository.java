@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface HttpMonitorRepository extends JpaRepository<HttpMonitor, Long> {
     List<HttpMonitor> findByActiveTrue();
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     List<HttpMonitor> findAllByOrderByNameAsc();
     /** Rehber & Notlar hedef yetkisi (MonitorTargetTeams): bu URL'i izleyen HER izleme (takımlar arası aynı URL olabilir). */
     List<HttpMonitor> findByUrl(String url);

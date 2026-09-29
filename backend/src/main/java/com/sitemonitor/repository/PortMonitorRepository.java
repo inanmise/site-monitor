@@ -22,6 +22,8 @@ public interface PortMonitorRepository extends JpaRepository<PortMonitor, Long> 
     boolean existsByHostAndPortAndStandaloneTrueAndActiveFalseAndDeletedAtIsNullAndIdNot(String host, int port, Long id);
     /** Storm denominatörü — cert-türevi (envanter) satırları çift saymamak için yalnız standalone aktifler. */
     long countByStandaloneTrueAndActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByStandaloneTrueAndActiveTrueAndTeamId(Long teamId);
     List<PortMonitor> findAllByOrderByNameAsc();
     Optional<PortMonitor> findFirstByHostAndPortOrderByIdAsc(String host, int port);
     /** Mükerrer guard'ı: HERHANGİ bir aktif satır var mı? (findFirst…ByIdAsc en ESKİ satırı döndürüyor;

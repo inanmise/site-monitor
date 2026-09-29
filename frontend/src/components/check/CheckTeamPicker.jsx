@@ -3,6 +3,7 @@ import { Users, Play } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
+import AlertBanner from '../ui/AlertBanner.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Field, FieldLabel } from '@/components/shadcn/field'
@@ -132,6 +133,10 @@ export default function CheckTeamPicker({
         </Button>
       </>}>
       <p className="mb-3 text-[13px] text-muted-foreground">{descText || t('app.checkTeamDesc')}</p>
+      {/* Elle kontrol yalnız GÖZLEMDİR (ürün kararı 2026-09-29): yeni alarm, fırtına ve bildirim üretmez. Toplu koşumu
+          başlatan kişi bunu BAŞLAMADAN görsün — prod olayında toplu kontrol kuruluş geneli fırtına push'una dönmüştü.
+          Liste yalnız çalıştırma yetkisi olan izlemeleri içerir (sunucu `can_check`). Test kancası: alert + data-tone=info. */}
+      <AlertBanner tone="info">{t('check.manualNote')}</AlertBanner>
 
       {buckets.length === 0 ? (
         <StatusBlock tone="neutral" description={emptyText || t('app.checkTeamEmpty')} className="py-4 md:py-4" />

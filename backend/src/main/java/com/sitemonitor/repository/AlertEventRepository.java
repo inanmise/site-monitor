@@ -74,7 +74,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                                                @Param("from") String from, @Param("to") String to);
 
     // ── Alarm fırtınası (storm) sorguları ──────────────────────────────────────
-    /** Pencere-içi açık DOWN incident'ler (account-wide scope) — terfi eşiği sayımı + üye geri-bağlama.
+    /** Pencere-içi açık DOWN incident'ler (kuruluş geneli; StormService TAKIMA süzer, 2026-09-29) — terfi eşiği sayımı + üye geri-bağlama.
      *  idx_ae_storm_scan(resolved, alert_type, created_at) tarafından beslenir; created_at sabit-genişlik ISO → sözlüksel aralık. */
     @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false AND e.alertType IN :types AND e.createdAt >= :since")
     List<AlertEvent> findOpenDownSince(@Param("types") Collection<String> types, @Param("since") String since);
@@ -117,6 +117,29 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = null WHERE e.id = :id AND e.resolved = false")
     int unlinkFromStorm(@Param("id") Long id);
+
+    /**
+     * Eski (kuruluş geneli) fırtına üyesini takımının fırtınasına TAŞI (2026-09-29, O-3) — yalnız hâlâ AÇIK ve hâlâ eski
+     * fırtınaya bağlı satırda (koşullu, atomik). {@code lastReAlertAt} korunur: üye fırtına postasıyla zaten bildirildi.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.stormId = :toStormId WHERE e.id = :id AND e.resolved = false AND e.stormId = :fromStormId")
+    int moveToStormIfOpen(@Param("id") Long id, @Param("fromStormId") Long fromStormId, @Param("toStormId") Long toStormId);
+
+    /**
+     * Eski fırtına üyesini fırtınadan çöz ama "BİLDİRİLDİ" say (2026-09-29, O-3): {@link #unlinkFromStorm}'un tersine
+     * {@code lastReAlertAt} sıfırlanmaz, fırtınanın son toplu bildirim anına damgalanır → sonraki tur "yarım kalmış ilk
+     * bildirim" diye TEK TEK INITIAL göndermez; bireysel günlük yeniden uyarı kadansı o andan sürer. Yalnız hâlâ ESKİ
+     * fırtınaya bağlı satırda (D-b7): üst üste binen ikinci emeklilik koşusu, birincinin takım fırtınasına taşıdığı
+     * üyeyi fırtınadan KOPARMAZ.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.stormId = null, e.lastReAlertAt = :notifiedAt "
+            + "WHERE e.id = :id AND e.resolved = false AND e.stormId = :fromStormId")
+    int releaseFromStormAsNotified(@Param("id") Long id, @Param("fromStormId") Long fromStormId,
+                                   @Param("notifiedAt") String notifiedAt);
 
     @Query("""
             SELECT a FROM AlertEvent a

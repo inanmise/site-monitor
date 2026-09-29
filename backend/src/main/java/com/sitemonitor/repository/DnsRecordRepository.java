@@ -68,6 +68,14 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
      *  değil son geçerli değerle kıyaslanır ("" geçilir). */
     Optional<DnsRecord> findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(Long monitorId, String value);
 
+    /**
+     * Zamanlanmış değişiklik tespitinin TABANI (2026-09-29): son BAŞARILI (değeri boş olmayan) ve ELLE OLMAYAN kayıt.
+     * Elle kontrol kaydı (manual=true) taban olsaydı sweep yeni değeri "zaten bilinen" sayar, DNS_CHANGED hiç açılmazdı.
+     */
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :monitorId AND r.value <> '' "
+            + "AND (r.manual IS NULL OR r.manual = false) ORDER BY r.checkedAt DESC LIMIT 1")
+    Optional<DnsRecord> findLatestScheduledSuccessful(@Param("monitorId") Long monitorId);
+
     /** Domain'in son changed=true kaydı — DNS_CHANGED günlük re-alert context'i
      *  için (PageRequest.of(0,1) ile çağrılır). */
     @Query("""
@@ -77,6 +85,11 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
              ORDER BY r.checkedAt DESC
             """)
     List<DnsRecord> findChangedByDomain(@Param("domain") String domain, Pageable pageable);
+
+    /** İzlemenin son changed=true kaydı (D-b2) — DNS_CHANGED günlük yeniden uyarısı olayı AÇAN izlemenin kaydını
+     *  kullanır (aynı alan adında birden çok DNS izlemesi varsa başkasının değişikliği anlatılmasın). */
+    @Query("SELECT r FROM DnsRecord r WHERE r.changed = true AND r.monitorId = :monitorId ORDER BY r.checkedAt DESC")
+    List<DnsRecord> findChangedByMonitorId(@Param("monitorId") Long monitorId, Pageable pageable);
 
     /** Yanıt-süresi grafiği için ham veri: [checked_at, response_ms (null olabilir), başarı-bayrağı] — aralık + cap.
      *  DNS'te up/down bool yok → başarı = değer dolu (boş value = çözümleme başarısız). buildResponseSeries ile paylaşımlı. */

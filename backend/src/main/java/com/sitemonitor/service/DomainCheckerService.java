@@ -49,28 +49,56 @@ public class DomainCheckerService {
     /** EPP uyarı: WARNING. */
     static final Set<String> EPP_WARN = Set.of("autorenewperiod", "pendingrenew");
 
-    /** İzleme/manuel kontrol — kontrol + persist + değişiklik tespiti. */
+    /** ZAMANLANMIŞ tur kontrolü — kontrol + persist + değişiklik tespiti (taban: son zamanlanmış veri satırı). */
     public Map<String, Object> check(DomainMonitor m) {
+        return check(m, false, false);
+    }
+
+    /**
+     * ELLE kontrol ("Şimdi kontrol et") ve Kayıt sekmesinin canlı sorgusu (2026-09-29). Sonuç kaydedilir ve geçmişte
+     * görünür ({@code manual=true}); ama zamanlanmış DOMAINMON_CHANGED tabanı OLMAZ — elle kontrol alarm açmadığı için
+     * gördüğü değişikliği sonraki zamanlanmış tur yine "değişti" olarak algılar ve alarmı o açar.
+     */
+    public Map<String, Object> checkManual(DomainMonitor m) {
+        return check(m, true, true);
+    }
+
+    /**
+     * Teyit / kurtarma YENİDEN KONTROLÜ ({@code SchedulerService.recheckDomainFor}, 2026-09-29). Otomatiktir (etkinlik
+     * günlüğünde zamanlanmış görünür) ama zamanlanmış TUR gözlemi değildir: satır {@code manual=true} (taban dışı) yazılır.
+     * Eskiden bu satırlar değişiklik tabanını ilerletiyordu — UNKNOWN teyidi sırasında (30 sn arayla) veri geri gelip bir
+     * nameserver/registrar/DNSSEC değişikliği görülürse sonraki tur onu "zaten bilinen" sayıyor, DOMAINMON_CHANGED hiç
+     * açılmıyordu (K-1'in ikizi). Geçmiş ve gösterim etkilenmez.
+     */
+    public Map<String, Object> checkRecheck(DomainMonitor m) {
+        return check(m, true, false);
+    }
+
+    /**
+     * @param outOfBand satır zamanlanmış değişiklik TABANI olmasın mı ({@code domain_checks.manual=true})
+     * @param userManual etkinlik günlüğüne "elle" olarak mı yazılsın (yalnız kullanıcı tetiği)
+     */
+    private Map<String, Object> check(DomainMonitor m, boolean outOfBand, boolean userManual) {
         Map<String, Object> r = evaluate(m.getDomain(), m.getWarningDays() != null ? m.getWarningDays() : 30,
-                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs(), m);
+                m.getCriticalDays() != null ? m.getCriticalDays() : 7, m.getId(), m.getCheckTimeoutMs(), m, outOfBand);
         activityLog.recordCheck(ActivityLogService.DOMAIN, m.getId(), m.getName(),
-                m.getDomain(), m.getTeamId(), false, "scheduler", r);
+                m.getDomain(), m.getTeamId(), userManual, userManual ? "manual" : "scheduler", r);
         return r;
     }
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
     public Map<String, Object> test(String domainInput, int warningDays, int criticalDays) {
-        return evaluate(domainInput, warningDays, criticalDays, null, null, null);
+        return evaluate(domainInput, warningDays, criticalDays, null, null, null, false);
     }
 
     /** @param m kayıtlı izleme (koruma anahtarları için); {@code null} = kaydetmeden deneme */
     private Map<String, Object> evaluate(String input, int warningDays, int criticalDays, Long monitorId,
-                                         Integer timeoutMs, DomainMonitor m) {
+                                         Integer timeoutMs, DomainMonitor m, boolean manual) {
         String checkedAt = ISO.format(Instant.now());
         String reg = psl.registrableDomain(input);
         if (reg == null || reg.isBlank()) {
             Map<String, Object> out = unknownResult(input, "geçersiz/çözümlenemeyen domain", checkedAt);
-            persist(monitorId, out, false);
+            persist(monitorId, out, false, manual);
             return out;
         }
 
@@ -142,7 +170,12 @@ public class DomainCheckerService {
         String changeDetail = null;
         String blacklistDelta = null;
         if (monitorId != null && hasData) {
-            var prevOpt = checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(monitorId, "NONE");
+            // Zamanlanmış tur tabanı YALNIZ zamanlanmış satırlardan (2026-09-29): elle satır taban olsaydı elle kontrolün
+            // gördüğü değişiklik zamanlanmış turda kaybolurdu (DOMAINMON_CHANGED kalıcı yutulurdu). Elle kontrolün kendi
+            // "değişti" gösterimi (yanıt + geçmiş) son veri satırına göredir — alarm üretmez.
+            var prevOpt = manual
+                    ? checkRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(monitorId, "NONE")
+                    : checkRepo.findLatestScheduledWithData(monitorId);
             if (prevOpt.isPresent()) {
                 DomainCheck prev = prevOpt.get();
                 StringBuilder ch = new StringBuilder();
@@ -195,11 +228,14 @@ public class DomainCheckerService {
         out.put("blacklist_hits", bl.hits());
         out.put("error", info.get("error"));
         out.put("checked_at", checkedAt);
-        persist(monitorId, out, changed);
+        // Taban dışı (elle / Kayıt sekmesi / yeniden ölçüm) satır "değişti"yi KALICILAŞTIRMAZ (D-b10, DNS D-9 deseni):
+        // aynı değişiklik sonraki zamanlanmış turda da "değişti" olur → geçmiş grafiğinde iki gün / iki kayıt görünürdü.
+        // Gördüğü fark yalnız yanıtta ({@code changed}/{@code change_detail}) döner.
+        persist(monitorId, out, changed && !manual, manual);
         return out;
     }
 
-    private void persist(Long monitorId, Map<String, Object> out, boolean changed) {
+    private void persist(Long monitorId, Map<String, Object> out, boolean changed, boolean manual) {
         if (monitorId == null) return;
         try {
             DomainCheck dc = new DomainCheck();
@@ -220,13 +256,14 @@ public class DomainCheckerService {
             dc.setHostnames(join(asList(out.get("hostnames"))));
             dc.setNsResolves((Boolean) out.get("ns_resolves"));
             dc.setChanged(changed);
-            dc.setChangeDetail((String) out.get("change_detail"));
+            dc.setChangeDetail(changed ? (String) out.get("change_detail") : null);
             dc.setTransferLock((String) out.get("transfer_lock"));
             dc.setBlacklistStatus((String) out.get("blacklist_status"));
             dc.setBlacklistDetail((String) out.get("blacklist_detail"));
             dc.setRawSummary(summary(out));
             dc.setError((String) out.get("error"));
             dc.setCheckedAt((String) out.get("checked_at"));
+            dc.setManual(manual);
             checkRepo.save(dc);
         } catch (Exception e) {
             log.warn("Domain kaydı yazılamadı: {} — {}", out.get("domain"), e.getMessage());

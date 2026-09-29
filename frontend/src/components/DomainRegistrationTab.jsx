@@ -12,8 +12,12 @@ import DomainRegistrationPanel from './domain/detail/DomainRegistrationPanel.jsx
  * `domain/detail/DomainRegistrationPanel` (shadcn bölümleri: kayıt kuruluşu, tarihler zaman çizelgesi, ad sunucuları
  * ve DNS, koruma, EPP kodları, hatırlatmalar, kayıt verisi JSON); veri sözleşmesi DEĞİŞMEDİ:
  *
- * <p>Açılışta anlık sorgu (`live=true`: dış RDAP/WHOIS + kayıt + alarm değerlendirmesi — yazma/çalıştırma yetkisi
- * ister). Başarısızsa (yetki, ağ, kaynak) DB'deki son bilgiye düşülür ve "anlık sorgu başarısız" uyarısı gösterilir.
+ * <p>Açılışta SON KAYDEDİLEN bilgi okunur (`live=false`, yan etkisiz). Anlık sorgu (`live=true`: dış RDAP/WHOIS + elle
+ * kayıt + yalnız kapanış değerlendirmesi — yazma/çalıştırma yetkisi ister) YALNIZ kullanıcı "Yenile"ye basınca yapılır
+ * (2026-09-29, K-1): sekmeyi açmak eskiden canlı sorgu yapıyordu ve o elle kayıt DOMAINMON_CHANGED tabanını tüketip
+ * nameserver/registrar/DNSSEC değişikliği alarmını yutabiliyordu (sunucu artık elle kaydı `manual=true` işaretler;
+ * açılışta sorgu da yok). Anlık sorgu başarısızsa (yetki, ağ, kaynak) DB'deki son bilgiye düşülür ve "anlık sorgu
+ * başarısız" uyarısı gösterilir.
  *
  * <p>`onLiveRecord` (isteğe bağlı): anlık sorgu BAŞARIYLA döndüğünde taze satır (enrichDomain biçimi — liste satırıyla
  * aynı) sayfaya verilir; sayfa açık detayın başlığını ve kartı günceller (başlık "son kontrol 3 gün önce" derken sekme
@@ -58,7 +62,7 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
     }
   }, [id, t])
 
-  useEffect(() => { load(true) }, [load])
+  useEffect(() => { load(false) }, [load])   // açılış: kayıtlı bilgi (canlı sorgu yalnız "Yenile" ile)
   useEffect(() => {
     let alive = true
     setRemError(false)
@@ -76,7 +80,7 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
   if (err && !reg) {
     return (
       <AlertBanner tone="danger" title={t('dreg.error')}
-        actions={<Button type="button" variant="secondary" size="sm" onClick={() => load(true)}>{t('hist.retry')}</Button>}>
+        actions={<Button type="button" variant="secondary" size="sm" onClick={() => load(false)}>{t('hist.retry')}</Button>}>
         {err !== t('dreg.error') ? err : null}
       </AlertBanner>
     )

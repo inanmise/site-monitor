@@ -15,6 +15,95 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- ⚠ Davranış — **Elle kontrol alarm tetiklemez:** "Şimdi kontrol et" (tekil ve toplu, tüm izleme türleri) artık alarm
+  açmaz; eskalasyon, yeniden uyarı ve alarm fırtınası tetiklemez; alan adı eşik hatırlatması göndermez ve sentetik
+  izlemenin anomali korumasını (izlemeyi kapatma + KRİTİK bildirim) tetiklemez — ardışık zaman aşımı serisi yalnız
+  zamanlanmış koşumları sayar. Yalnız sonucu kaydeder, sağlıklı çıkarsa açık alarmı kapatabilir; yeni alarm sonraki
+  zamanlanmış kontrolün normal doğrulama kurallarıyla açılır. (Prod olayı: toplu "Şimdi Kontrol Et" hayalet açık
+  alarmları tetikleyip kuruluş geneli fırtına push'u üretti.) Yeni boş bırakılabilir kolonlar `scripted_checks.manual`,
+  `dns_records.manual` (idempotent şema yamasıyla; eski satırlar zamanlanmış sayılır).
+- ⚠ Davranış — **Alarm fırtınası takım bazında:** eşik (sayı ya da takımın kendi etkin izlemelerinin yüzdesi), sayım,
+  kök neden ve bildirim (e-posta, push, webhook) yalnız o takımın kendi izlemelerinden gelir ve yalnız o takıma gider;
+  "Tüm monitörler" etiketli kuruluş geneli fırtına bildirimi kaldırıldı, açık eski fırtınalar otomatik dağıtılır. Bir
+  takımın fırtınası başka takımın alarmını yutmaz. Fırtına push'u sabit KRİTİK yerine üyelerin en yüksek seviyesiyle gider
+  (WARNING fırtınası müdür / bölüm başkanı / C-level kademelerine yayılmaz).
+- ⚠ Davranış — **Fırtına eşiği farklı hedef (host) sayısıyla ölçülür:** aynı host'un erişim, port, DNS ve HTTP alarmları tek
+  hedef sayılır; yüzde biriminde en az 3 hedef gerekir (küçük takımda tek host arızası artık fırtına sayılıp bireysel
+  alarmları bastırmaz). Yükseltmeden kalan eski "Tüm monitörler" fırtınası açılıştan 15 dakika sonra
+  (`site.monitor.storm.legacy-retire-grace-minutes`) takım bazında emekliye ayrılır: hâlâ düşük üyeler eşiği aşan takımda
+  sessizce takım fırtınasına taşınır, aşmayanlarda "bildirildi" sayılır — üyeler tek tek yeniden bildirim üretmez; çözüm
+  bildirimi yalnız sahibi takıma gider (çözüm push'u eski fırtınanın açılış push'unu almış kişilere de ulaşır; 7/24'e yeni
+  "FIRTINA" açılış postası gitmez). Fırtına ayarındaki eşik birimi etiketi "Farklı hedef (host) sayısı".
+- ⚠ Davranış — Elle sentetik kontroller (tekil ve toplu "Şimdi Kontrol Et" ile bunların başlattığı kurtarma denetimleri)
+  k6 havuzunun son iznini kullanmaz (varsayılan havuz 2 → aynı anda 1 elle koşum; tek izinli havuzda elle kontrol yalnız
+  havuz boşken çalışır); toplu elle kontrol sırasında zamanlanmış izleme aç kalmaz. Elle kontrol havuzda yer açılmasını en
+  çok, ekranın sonucu beklediği süreden 5 sn kısa bekler; yer açılmazsa kontrol yürütülmez ve bu hemen ekranda söylenir
+  ("başlatıldı" deyip sessizce atlanmaz). Toplu kontrolde havuz dolu olduğu için atlanan kontrol sayısı ilerleme
+  penceresinde gösterilir; sentetik toplu kontrol kontrolleri tek tek koşturur.
+- Toplu "Şimdi Kontrol Et (N)" sayısı ve kuyruğu yalnız çalıştırma yetkiniz olan izlemeleri içerir (sunucudan `can_check`);
+  seçim penceresi elle kontrolün alarm üretmediğini söyler. Alarm Geçmişi'nde fırtına üyesi alarm "kimseye ulaşmadı"
+  yerine "Fırtına bildirimine devredildi" gösterir.
+
+### Fixed
+- ⚠ Davranış — **Alan adı değişiklik alarmı yutuluyordu:** alan adının elle "Şimdi kontrol et"i ve Kayıt sekmesinin
+  canlı sorgusu yazdıkları satırla zamanlanmış değişiklik tabanını ilerletiyordu (bu sürümdeki elle kontrol değişikliğiyle
+  birlikte nameserver / kayıt kuruluşu / EPP / DNSSEC değişikliği hiç alarm olmuyordu). Artık elle satırlar
+  (`domain_checks.manual`, boş bırakılabilir, idempotent yama) taban dışıdır; değişikliği sonraki zamanlanmış kontrol
+  algılayıp alarmı açar. Kayıt sekmesi açılışta kayıtlı bilgiyi gösterir, canlı sorgu yalnız "Yenile" ile. Elle DNS ve
+  alan adı kontrolleri gördükleri değişikliği yalnız ekranda gösterir; geçmişte aynı değişiklik iki kez "değişti" olarak
+  görünmez. Kapsamlı yöneticiler çalıştıramadıkları izlemelerde tekil "Şimdi
+  kontrol et" düğmesini de görmez; elle kontrol notu sağlıklı sonucun açık alarmı kapatabileceğini belirtir. Alan adı
+  izlemesinin teyit / kurtarma yeniden kontrolleri de tabanı ilerletmez (sorgu hatası teyidi sırasında görülen değişiklik
+  yutulmaz).
+- ⚠ Davranış — **Aynı hedefi izleyen başka takımın düşük izlemesi** artık sizin alarmınızı açık tutmaz ve onun arızası
+  için yeniden uyarı size gelmez; o izlemenin alarmı kendi takımına açılır (olay anahtarı alan adı|tür paylaşımında sahip
+  ayrımı).
+- "Şimdi kontrol et"e art arda basmak alarmı saniyeler içinde kapatmaz (elle sağlıklı sonuç kapanışa ancak kurtarma
+  aralığıyla sayılır). Yürütülemeyen ya da veri getirmeyen kontroller (k6 havuzu dolu, düşen koşumun süresi, RDAP / WHOIS /
+  kara liste hatası) artık "düzeldi" sayılmaz ve açık alarmı kapatmaz (alan adı alarmlarının kapan-aç döngüsü bitti).
+- Hedef düşükken ya da ölçüm alınamadığında (port kapalı, HTTP hatası, ping yanıtsız / taban yetersiz, sayfa yüklenemedi)
+  açık yavaşlık alarmları (PORT / KEYWORD / PING / PAGESPEED_SLOW) ve sayfa bütünlüğü alarmları artık "ÇÖZÜLDÜ" diye
+  kapanmaz. DNS yavaşlık / beklenmeyen değer ve alan adı yeniden kontrollerinde "ölçülemedi" "düzeldi" sayılmaz; WHOIS'teki
+  boş EPP listesi STATUS alarmını kapatmaz.
+- **Sayfa Bütünlüğü (site tarama):** derin tarama bulgusu artık alarm açar (önceden teyitte yalnız ana sayfa yeniden
+  ölçülüp "geçici" sayılıyordu); teyit ve kurtarma bulgunun kaynak sayfalarını (en çok 5) yeniden ölçer; ana sayfa
+  kaynaklı alarm ana sayfa temizlenince kapanır, derin tarama kaynaklı alarmda ana sayfanın temiz olması kanıt sayılmaz.
+- Bildirimleri kapalı türün açık alarmları sessizce kapanır (türün bildirimleri kapatıldığında da — ayar kaydından sonra
+  arka planda; elle kapanan DNS / alan adı değişiklik alarmlarına dokunmaz); kapanış bildirimi gönderilmez. Fırtına
+  çözümü susturulan üyeleri (izleme silindi / duraklatıldı / host değişti, tür bildirimleri kapatıldı) "kurtarıldı"
+  saymaz; hepsi susturulduysa toplu çözüm e-postası, push, webhook ve 7/24 bildirimi gitmez. Bakım penceresinde GERÇEKTEN
+  düzelen üye ise kurtarılmış sayılır ve toplu "fırtına sona erdi" çözümü gider.
+- **DNS değişikliği:** bir alan adında açık DNS_CHANGED alarmı varken başka bir DNS izlemesinin gördüğü değişiklik
+  yutulmaz — o izlemenin kendi takımına ayrı bildirim (e-posta / webhook) olarak gider, başka takıma gitmez; aynı takımın
+  günlük yeniden uyarısı en yeni değişikliği anlatır. Teyit sırasında ad geçici olarak çözülemezse değişiklik "geçici"
+  sayılıp atlanmaz.
+- **Seviye sözcüğü tüm kanallarda aynı:** izleme alarm ve çözüm e-postalarında (erişim, port, DNS, içerik, ping, DNS
+  değişikliği) rozet ve "Seviye" satırı olayın gerçek seviyesini yazar (UYARI / YÜKSEK / KRİTİK — sabit "KRİTİK"
+  yazıyordu); e-posta konusu, 7/24 postası, push ve arayüz de aynı sözlükten ("ORTA" demiyor). Alarm fırtınası e-postası,
+  webhook'u ve 7/24 fırtına postası da sabit "KRİTİK" yerine üyelerin en yüksek seviyesini yazar. UYARI seviyeli izleme
+  e-postalarında uyarı kutusu kırmızı değil, seviye tonunda. Kapı testi tüm türleri üç seviyede ileti / e-posta / çözüm
+  e-postası / push ve fırtına kanalları için denetler.
+- Duraklatma, silme ve host değişikliği yalnız o izlemenin açtığı alarmı kapatır (aynı hedefi izleyen başka takımın açık
+  alarmına dokunmaz); DNS yavaşlık / beklenmeyen / tutarsızlık / değişiklik alarmları da sahip ayrımına katılır.
+- Elle DNS kontrolünün gördüğü kayıt değişikliği, zamanlanmış kontrolün DNS_CHANGED alarmını kalıcı olarak yutuyordu
+  (sweep değişiklik tabanı artık son zamanlanmış başarılı kayıt). Fırtına ayarları, yardım metinleri ve beyaz kâğıt
+  (TR/EN, PDF) takım yalıtımını ve elle kontrol kuralını anlatır.
+- ⚠ Davranış — **İzleme sağlıklıya döndüğü hâlde açık kalan ("hayalet") alarmlar:** toplu kesinti bastırması (turdaki
+  hedeflerin ≥ %50'si ve en az 3'ü ağ hatasıyla düşükse) yalnız yeni alarmı değil KURTARMAYI da kesiyordu; türün
+  bildirimleri kapalıyken açık alarmlar donuyordu; bellekteki kurtarma zinciri takılırsa sonraki her sağlıklı tur
+  "zaten sürüyor" deyip atlıyordu (en az v20.0.0'dan beri). Artık bastırma ve kapalı bildirim yalnız yeni alarmı,
+  teyidi ve yeniden uyarıyı durdurur; her sağlıklı kontrol ardışık sayaca girer ve N ardışık sağlıklı tur alarmı kapatır
+  (atomik, idempotent; takılı zincir bekçisi); aynı host / adı paylaşan başka izleme hâlâ düşükse alarm açık kalır.
+  Birikmiş hayalet alarmlar yükseltmeden sonraki ilk sağlıklı turlarda normal çözüm yoluyla kapanır (çözüm e-postası
+  takıma, çözüm push'u yalnız açılış push'unu almış kişilere). Sertifika alarmları ağ kesintisi şüphesinde ve sertifika
+  bildirimleri kapalıyken de kapanır. (Kapanış anı `resolved_at` olarak yazıldığından o döneme ait alarm tabanlı
+  erişilebilirlik geriye dönük düzelmez.)
+- İzleme alarm iletileri seviyeyi sabit yazıyordu (UYARI rozetli alarmda "KRİTİK: … portuna erişilemiyor"); ileti artık
+  alarmın gerçek seviyesiyle başlar (UYARI / YÜKSEK / KRİTİK). Alan adı süre-bitişi UYARI iletisi "ORTA:" yerine "UYARI:".
+- Alarm Geçmişi → "Neden hâlâ açık?" paneli artık kapanış kuralını da gösterir ("kontroller düzelince kendiliğinden
+  kapanır" / "yalnız elle kapanır" — DNS / alan adı değişikliği); "kimseye ulaşmadı" çipi açık kalma nedeni gibi okunmaz.
+
 ## [20.90.0] — 2026-09-28
 
 ### Added

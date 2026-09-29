@@ -98,6 +98,8 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
     await openFromCard()
     expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('20')
     fireEvent.mouseDown(within(dialog()).getByRole('tab', { name: /domain kaydı|registration/i }), { button: 0 })
+    // K-1 (2026-09-29): sekmeyi açmak canlı sorgu yapmaz — kullanıcı "Yenile"ye basar.
+    fireEvent.click(await within(dialog()).findByRole('button', { name: /^(Yenile|Refresh)$/ }))
     await waitFor(() => expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('19'))
     expect(header().querySelector('[data-slot="domain-detail-checked"]')).toHaveTextContent('just now')
   })

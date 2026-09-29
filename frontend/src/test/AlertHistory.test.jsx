@@ -757,6 +757,38 @@ describe('AlertHistory — "neden hâlâ açık?" çipleri (2026-09-12, #16)', (
     expect(whys[1].textContent).toMatch(/email: 3 sent · 1 failed/)
     expect(whys[1].textContent).not.toMatch(/reached nobody/)
   })
+
+  // 2026-09-29 (prod): sağlıklı Port izlemesinde asılı kalan UYARI alarmı — panel yalnız onay/bildirim gösterdiği için
+  // "kimseye ulaşmadı" çipi açık kalma NEDENİ gibi okunuyordu. İlk çip artık kapanış kuralını söyler.
+  it('ilk çip kapanış kuralı: otomatik kapanan türde "closes by itself", değişiklik alarmında "only by hand"', async () => {
+    vi.clearAllMocks()
+    api.admin.getAlerts.mockResolvedValue({
+      success: true,
+      data: [
+        { ...closedAlert, id: 401, domain: 'app.example.com', alert_type: 'PORT_DOWN', alert_level: 'WARNING', resolved: false,
+          acknowledged: true, acknowledged_by: 'ops', notified_contacts: '[]', email_sent_count: 0, email_failed_count: 0 },
+        { ...closedAlert, id: 402, domain: 'dns.example.com', alert_type: 'DNS_CHANGED', alert_level: 'HIGH', resolved: false,
+          acknowledged: false, notified_contacts: '[]', email_sent_count: 1, email_failed_count: 0 },
+      ],
+      total: 2, page: 0, size: 20,
+    })
+    render(<AlertHistory />)
+    await waitFor(() => expect(screen.getByText('dns.example.com')).toBeDefined())
+    const whys = document.querySelectorAll('[data-alert-card] [data-why]')
+    expect(whys.length).toBe(2)
+    const autoChip = whys[0].querySelector('[data-why-close]')
+    expect(autoChip.getAttribute('data-auto')).toBe('true')
+    expect(autoChip.textContent).toBe('closes by itself once checks pass again')
+    expect(autoChip.getAttribute('title')).toMatch(/acknowledging it, or who was notified, makes no difference/)
+    // D-3: istisnalar da söylenir (aynı takımın kardeş izlemesi düşükse açık kalır; tür kapalıysa bildirimsiz kapanır)
+    expect(autoChip.getAttribute('title')).toMatch(/stays open while another of your team’s monitors .* still failing/)
+    expect(autoChip.getAttribute('title')).toMatch(/closes without a notification if alerts for this type are switched off/)
+    // Çip ilk sırada: onay/bildirim çiplerinden ÖNCE okunur
+    expect(whys[0].querySelectorAll('[data-slot="badge"], [data-why-close]')[0]).toBe(autoChip)
+    const manualChip = whys[1].querySelector('[data-why-close]')
+    expect(manualChip.getAttribute('data-auto')).toBe('false')
+    expect(manualChip.textContent).toBe('closes only when resolved by hand')
+  })
 })
 
 /**

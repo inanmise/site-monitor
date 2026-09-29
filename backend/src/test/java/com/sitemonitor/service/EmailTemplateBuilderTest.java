@@ -115,11 +115,14 @@ class EmailTemplateBuilderTest {
     }
 
     @Test
-    @DisplayName("severity etiketleri (KRİTİK/YÜKSEK/ORTA/BİLGİ) korunur; rozet metninde görünür")
+    @DisplayName("severity etiketleri (KRİTİK/YÜKSEK/UYARI/BİLGİ) — D-2: WARNING tek sözlükte UYARI (eski ORTA); rozet metninde görünür")
     void severity() {
         assertThat(EmailTemplateBuilder.severityLabel("CRITICAL")).isEqualTo("KRİTİK");
         assertThat(EmailTemplateBuilder.severityLabel("HIGH")).isEqualTo("YÜKSEK");
-        assertThat(EmailTemplateBuilder.severityLabel("WARNING")).isEqualTo("ORTA");
+        assertThat(EmailTemplateBuilder.severityLabel("WARNING")).isEqualTo("UYARI");
+        assertThat(EmailTemplateBuilder.severityLabel(null)).isEqualTo("UYARI");
+        assertThat(EmailTemplateBuilder.severityLabel("WARNING")).isEqualTo(EscalationService.levelWordTr("WARNING"));
+        assertThat(com.sitemonitor.service.noc.NocMailComposer.levelTr("WARNING")).as("7/24 postası aynı sözlük").isEqualTo("UYARI");
         assertThat(EmailTemplateBuilder.severityLabel("INFO")).isEqualTo("BİLGİ");
         assertThat(b.buildHtml(domainMail("CRITICAL", 3))).contains("KRİTİK");
         assertThat(b.buildHtml(domainMail("HIGH", 25))).contains("YÜKSEK");

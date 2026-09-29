@@ -110,12 +110,12 @@ class StormServiceTest {
     }
 
     @Test
-    @DisplayName("computeThreshold PERCENT round edge — %10 × 5 monitör → ceil(0.5)=1 → max(2,1)=2")
+    @DisplayName("computeThreshold PERCENT round edge — %10 × 5 monitör → ceil(0.5)=1 → YÜZDE tabanı 3 (O-4, 2026-09-29)")
     void threshold_percent_rounding_edge() {
         when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("PERCENT");
         when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(10);
         stubTotalMonitors(5, 0, 0, 0, 0, 0, 0);   // toplam 5 aktif monitör
-        assertThat(storm.computeThreshold()).isEqualTo(2);
+        assertThat(storm.computeThreshold()).isEqualTo(StormService.PERCENT_MIN_TARGETS);
     }
 
     @Test
@@ -161,13 +161,13 @@ class StormServiceTest {
     @DisplayName("Eşik altı → SEND_INDIVIDUAL (sel değil)")
     void evaluate_belowThreshold_sendsIndividual() {
         enabledAccountWide();
-        when(stormRepo.findByScopeKeyAndResolvedFalse("ACCOUNT")).thenReturn(Optional.empty());
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7")).thenReturn(Optional.empty());
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L)));   // 2 < eşik 3
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
         assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SEND_INDIVIDUAL);
-        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
+        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -176,13 +176,15 @@ class StormServiceTest {
         when(appSettings.getBoolean(eq(StormService.KEY_ENABLED), anyBoolean())).thenReturn(true);
         when(appSettings.getBoolean(eq(StormService.KEY_PER_GROUP), anyBoolean())).thenReturn(false);
         AlertStorm active = storm(100L);
-        when(stormRepo.findByScopeKeyAndResolvedFalse("ACCOUNT")).thenReturn(Optional.of(active));
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7")).thenReturn(Optional.of(active));
 
         AlertEvent e = down(9, EscalationService.TYPE_PORT_DOWN, 7L);
         assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
         assertThat(e.getStormId()).isEqualTo(100L);
-        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
-        verify(stormRepo).save(active);   // memberCount bump
+        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
+        // memberCount bump — KOŞULLU atomik UPDATE (D-14); okunan varlığın tamamı yazılmaz (çözülmüş fırtına dirilmez)
+        verify(jdbcTemplate).update(startsWith("UPDATE alert_storms SET member_count"), eq(100L));
+        verify(stormRepo, never()).save(active);
     }
 
     @Test
@@ -191,7 +193,7 @@ class StormServiceTest {
         enabledAccountWide();
         AlertStorm created = storm(200L);
         // 1. çağrı (aktif kontrol) empty, 2. çağrı (insert sonrası) storm
-        when(stormRepo.findByScopeKeyAndResolvedFalse("ACCOUNT"))
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7"))
                 .thenReturn(Optional.empty()).thenReturn(Optional.of(created));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
@@ -204,7 +206,7 @@ class StormServiceTest {
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
         assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
         assertThat(e.getStormId()).isEqualTo(200L);
-        verify(emailService, times(1)).buildStormAlertHtml(eq(3), any(), any(), any(), any(), anyInt());
+        verify(emailService, times(1)).buildStormAlertHtml(eq(3), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -212,7 +214,7 @@ class StormServiceTest {
     void evaluate_promote_loser_noDuplicateAlert() {
         enabledAccountWide();
         AlertStorm existing = storm(201L);
-        when(stormRepo.findByScopeKeyAndResolvedFalse("ACCOUNT"))
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7"))
                 .thenReturn(Optional.empty()).thenReturn(Optional.of(existing));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
@@ -223,7 +225,7 @@ class StormServiceTest {
 
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
         assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
-        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
+        verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -232,7 +234,7 @@ class StormServiceTest {
         enabledAccountWide();
         AlertStorm created = storm(300L);
         // 1. çağrının aktif-kontrolü empty; sonrası hep aktif storm (post-insert + sonraki çağrıların aktif-kontrolü)
-        when(stormRepo.findByScopeKeyAndResolvedFalse("ACCOUNT"))
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7"))
                 .thenReturn(Optional.empty()).thenReturn(Optional.of(created));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
@@ -247,7 +249,7 @@ class StormServiceTest {
             assertThat(storm.evaluate(e, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
         }
         // 5 arıza → yalnız 1 toplu alarm (ilk terfi); kalan 4 attach oldu
-        verify(emailService, times(1)).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
+        verify(emailService, times(1)).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -264,8 +266,8 @@ class StormServiceTest {
         when(httpRepo.findFirstByUrlOrderByIdAsc(anyString())).thenReturn(Optional.of(mon));
 
         AlertStorm created = storm(400L);
-        created.setScopeKey("G");
-        when(stormRepo.findByScopeKeyAndResolvedFalse("G"))
+        created.setScopeKey("TEAM:7|GROUP:G");   // takım yalıtımı (2026-09-29): grup kapsamı takımın içinde
+        when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7|GROUP:G"))
                 .thenReturn(Optional.empty()).thenReturn(Optional.of(created));
         // DB, tetikleyenin group_name'i henüz commit edilmediğinden onu HARİÇ döner (yalnız 1 diğer üye).
         when(alertEventRepo.findOpenDownSinceInGroup(anyCollection(), anyString(), eq("G")))
@@ -283,8 +285,8 @@ class StormServiceTest {
     private AlertStorm storm(long id) {
         AlertStorm s = new AlertStorm();
         s.setId(id);
-        s.setScopeKey("ACCOUNT");
-        s.setScopeType("ACCOUNT");
+        s.setScopeKey("TEAM:7");   // 2026-09-29: kapsam takım (kuruluş geneli ACCOUNT artık üretilmez)
+        s.setScopeType("TEAM");
         s.setResolved(false);
         s.setCreatedAt("2026-07-10T09:00:00");
         return s;
@@ -364,7 +366,7 @@ class StormServiceTest {
         when(inventoryRepo.countByActiveTrue()).thenThrow(new RuntimeException("db yok"));
 
         assertThat(storm.totalActiveMonitors()).isZero();
-        assertThat(storm.computeThreshold()).isEqualTo(2);   // taban: 1 arızada fırtına ilan edilmez
+        assertThat(storm.computeThreshold()).isEqualTo(StormService.PERCENT_MIN_TARGETS);   // taban: az hedefte fırtına ilan edilmez
     }
 
     @Test
@@ -431,6 +433,31 @@ class StormServiceTest {
      * düşüyor, toplu kesinti e-postasına TÜM takımların müdürlerini ekliyordu. Depo VERİTABANI GİBİ cevaplar
      * (süzgeçsiz sorgu herkesi döndürür) — eski kod burada B'nin müdürünü ve takımsız kişiyi ekler → kırmızı.
      */
+    @Test
+    @DisplayName("D-c7: fırtına e-postası ve webhook'u seviyeyi üyelerin EN YÜKSEK seviyesinden yazar (push ile aynı) — sabit KRİTİK değil")
+    void stormAlert_levelIsHighestMemberLevel_emailAndWebhook() {
+        teamWithEmail(7L);
+        com.sitemonitor.model.EscalationContact aHook = new com.sitemonitor.model.EscalationContact();
+        aHook.setId(20L); aHook.setTeamId(7L); aHook.setEmail("nobetci-a@example.com"); aHook.setRole("ENGINEER");
+        aHook.setMinAlertLevel("WARNING"); aHook.setActive(true);
+        aHook.setWebhookUrl("https://hooks.example.com/services/T1/A1/takim-a"); aHook.setWebhookType("TEAMS");
+        // Seviye başına kişi sorgusu (EscalationContactScope.forLevel): WARNING → tek seviye, HIGH → HIGH kümesi.
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(7L), anyString())).thenReturn(List.of(aHook));
+        when(contactRepo.findByTeamIdAndMinAlertLevelInAndActiveTrue(eq(7L), any())).thenReturn(List.of(aHook));
+        when(inventoryRepo.findByDomain(anyString())).thenReturn(java.util.Optional.empty());
+        AlertEvent w1 = down(1, EscalationService.TYPE_ACCESSIBILITY, 7L); w1.setAlertLevel("WARNING");
+        AlertEvent w2 = down(2, EscalationService.TYPE_ACCESSIBILITY, 7L); w2.setAlertLevel("HIGH");
+        AlertEvent w3 = down(3, EscalationService.TYPE_ACCESSIBILITY, 7L); w3.setAlertLevel("WARNING");
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(storm, "sendStormAlert",
+                storm(201L), List.of(w1, w2, w3), "INITIAL");
+
+        verify(emailService).buildStormAlertHtml(eq(3), any(), any(), any(), any(), anyInt(), eq("HIGH"));
+        verify(emailService).buildStormAlertText(eq(3), any(), any(), any(), any(), anyInt(), eq("HIGH"));
+        verify(webhookService).send(eq("TEAMS"), eq("https://hooks.example.com/services/T1/A1/takim-a"), anyString(), anyString(), eq("HIGH"));
+        assertThat(StormService.stormPushLevel(List.of(w1, w2, w3))).isEqualTo("HIGH");
+    }
+
     @Test
     @DisplayName("Fırtına: kontaksız A takımının KRİTİK üyesi → A'nın dağıtımında B'nin müdürü / takımsız kişi / webhook YOK; sahipsiz üye dağıtıma girmez")
     @SuppressWarnings("unchecked")
@@ -586,7 +613,7 @@ class StormServiceTest {
     }
 
     @Test
-    @DisplayName("Y11: ACCOUNT kapsamlı fırtınada her takım YALNIZ kendi host'larını görür")
+    @DisplayName("Y11: çok takımlı üye listesinde (eski kapsam dağıtımı / SY+UG) her takım YALNIZ kendi host'larını ve KENDİ sayısını görür")
     void storm_perTeamTargetsDoNotLeakAcrossTeams() {
         wireObjectMapper();
         com.sitemonitor.model.Team a = new com.sitemonitor.model.Team();
@@ -602,9 +629,10 @@ class StormServiceTest {
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(
                 storm, "sendStormAlert", storm(300L), java.util.List.of(m7, m8), "INITIAL");
 
-        // Takım A'nın mailindeki liste yalnız host1, Takım B'ninki yalnız host2 olmalı.
+        // Takım A'nın mailindeki liste yalnız host1, Takım B'ninki yalnız host2 olmalı. Sayı da takım kapsamlı (1):
+        // 2026-09-29'dan önce başlıktaki sayı hesap geneliydi (2) — "Tüm monitörler" sızıntısının sayı yarısı.
         org.mockito.ArgumentCaptor<java.util.List<String>> targets = org.mockito.ArgumentCaptor.captor();
-        verify(emailService, times(2)).buildStormAlertHtml(eq(2), any(), any(), any(), targets.capture(), anyInt());
+        verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), targets.capture(), anyInt(), any());
         assertThat(targets.getAllValues().get(0)).containsExactly("host1.example.com");
         assertThat(targets.getAllValues().get(1)).containsExactly("host2.example.com");
     }
@@ -623,7 +651,7 @@ class StormServiceTest {
 
         // Bireysel yol bu damgayı okuyup maili atlıyordu; fırtına yolu contextJson'a hiç bakmıyordu.
         verify(emailService, org.mockito.Mockito.never())
-                .buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt());
+                .buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
         // Kanal bağımsızlığı: mail bastırması push'u SUSTURMAZ.
         verify(push, times(1)).enqueueStormNotice(eq(301L), eq(7L), eq("INITIAL"), any(), any(), any());
     }
@@ -649,7 +677,7 @@ class StormServiceTest {
                 storm, "sendStormAlert", storm(320L), java.util.List.of(m), "INITIAL");
 
         // E-posta iki takıma da gider (bireysel e-posta da UG'ye gider) …
-        verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), any(), anyInt());
+        verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), any(), anyInt(), any());
         // … push yalnız SY takımına: push çözümleyicisi SY takım-kapsamlıdır, bireysel push UG'ye hiç gitmez.
         verify(push, times(1)).enqueueStormNotice(eq(320L), eq(7L), eq("INITIAL"), any(), any(), anyString());
         verify(push, never()).enqueueStormNotice(anyLong(), eq(8L), any(), any(), any(), any());
@@ -680,7 +708,7 @@ class StormServiceTest {
         when(alertEventRepo.findByStormIdAndResolvedFalse(302L)).thenReturn(java.util.List.of(stillDown));
         when(alertEventRepo.findByStormId(302L)).thenReturn(java.util.List.of(stillDown, recovered));
 
-        org.springframework.test.util.ReflectionTestUtils.invokeMethod(storm, "disband", st);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(storm, "disband", st, "özellik kapatıldı");
 
         // Eskiden disband yalnız hâlâ-down üyeleri geri bağlayıp storm'u sessizce kapatıyordu:
         // kurtulan üyelerin bireysel çözüm maili zaten bastırılmış olduğu için o takımlar
@@ -785,9 +813,9 @@ class StormServiceTest {
 
         // Her takımın listesi 1 host; kırpılan YOK. Sayaç hesap genelinden (2) türetilince
         // tek monitörü düşmüş takımın maili "ve 1 monitör daha" diyordu — okuyan bunu KENDİ
-        // ikinci monitörü sanıyor. Hesap-geneli toplam yalnız başlıkta kalır (ilk argüman: 2).
+        // ikinci monitörü sanıyor. 2026-09-29: başlık sayısı da takım kapsamlı (ilk argüman: 1).
         org.mockito.ArgumentCaptor<Integer> extra = org.mockito.ArgumentCaptor.captor();
-        verify(emailService, times(2)).buildStormAlertHtml(eq(2), any(), any(), any(), any(), extra.capture());
+        verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), any(), extra.capture(), any());
         assertThat(extra.getAllValues()).containsExactly(0, 0);
     }
 
@@ -812,5 +840,44 @@ class StormServiceTest {
         // Takım A'nın hiç down monitörü kalmadı: maili "hâlâ erişilemeyen: 1" DEMEMELİ.
         verify(emailService, times(1)).buildStormRecoveryHtml(
                 eq(1), eq(0), any(), any(), any(), any(), anyInt(), any());
+    }
+
+    // ── Takım yalıtımı (2026-09-29): YÜZDE eşiği takımın KENDİ filosundan ────────────────
+
+    @Test
+    @DisplayName("Takım paydası: YÜZDE eşiği YALNIZ takımın on kaynaktaki aktif izlemelerinden (kuruluş filosu değil)")
+    void percentThreshold_usesTeamDenominator_allTenSources() {
+        injectFieldRepos();
+        when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("PERCENT");
+        when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(50);
+        stubTotalMonitors(60, 10, 10, 10, 0, 5, 5);   // kuruluş: 100 izleme (ağırlık başka takımlarda)
+        // Takım 7: on kaynağın HER BİRİNDE 1 izleme → 10. Bir kaynak unutulursa 9 çıkar ve kapı ADIYLA kırılır.
+        when(inventoryRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(httpRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(keywordRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(pingRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(domainRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(portRepo.countByStandaloneTrueAndActiveTrueAndTeamId(7L)).thenReturn(1L);
+        when(dnsRepo.countByStandaloneTrueAndActiveTrueAndTeamId(7L)).thenReturn(1L);
+        when(pageRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(scriptedRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(pageSpeedRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+
+        assertThat(storm.totalActiveMonitorsForTeam(7L)).as("takım paydası on kaynağın toplamı").isEqualTo(10L);
+        assertThat(storm.computeThreshold(7L)).isEqualTo(5);    // %50 × 10 (takım)
+        assertThat(storm.computeThreshold()).isEqualTo(50);     // ayar ekranı önizlemesi: %50 × 100 (kuruluş)
+    }
+
+    @Test
+    @DisplayName("Kapsam anahtarı: TEAM:<id> / TEAM:<id>|GROUP:<grup>; eski ACCOUNT ve takımsız grup anahtarı takım kapsamlı SAYILMAZ")
+    void teamScopeKey_roundTrip_andLegacyDetection() {
+        assertThat(StormService.teamScopeKey(7L, null)).isEqualTo("TEAM:7");
+        assertThat(StormService.teamScopeKey(7L, "Ödeme")).isEqualTo("TEAM:7|GROUP:Ödeme");
+        assertThat(StormService.teamOfScope("TEAM:7|GROUP:Ödeme")).isEqualTo(7L);
+        assertThat(StormService.teamOfScope("ACCOUNT")).isNull();
+        assertThat(StormService.teamOfScope("Ödeme")).isNull();          // 2026-09-29 öncesi grup anahtarı
+        String longKey = StormService.teamScopeKey(7L, "G".repeat(400));
+        assertThat(longKey).hasSizeLessThanOrEqualTo(200).startsWith("TEAM:7|GROUP:");   // kolon VARCHAR(200)
+        assertThat(StormService.teamOfScope(longKey)).isEqualTo(7L);
     }
 }

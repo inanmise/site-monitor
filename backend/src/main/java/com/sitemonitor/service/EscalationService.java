@@ -220,6 +220,48 @@ public class EscalationService {
                    // PAGESPEED_SLOW bilinçli DIŞARIDA: yavaşlık kesinti değildir, storm sayımına girmemeli.
                    TYPE_PAGE_DOWN, TYPE_SCRIPTED_FAIL, TYPE_PAGESPEED_DOWN);
 
+    /**
+     * Sertifika sweep'inin YALNIZ KAPANIŞ yolu (prod 2026-09-29, K1'in sertifika eşleniği).
+     *
+     * <p>Ağ kesintisi şüphesinde (≥%50 ağ-sınıfı hata) ya da sertifika alarmları kapalıyken
+     * ({@code expiry.alert-enabled=false}) SchedulerService {@link #processResults}'u tümüyle atlıyordu: yeni alarm
+     * açılmaması doğru, ama DOĞRULANMIŞ (status≠error) sonucu artık sorun göstermeyen alan adının açık sertifika alarmı
+     * da kapanmıyordu. Burada processResults'taki kapanış kuralının AYNISI uygulanır (bu turda üretilmeyen sertifika
+     * türleri kapanır; status=error hiçbir şeyi doğrulamadığı için dokunulmaz); açılış, eskalasyon, yeniden uyarı YOK.
+     *
+     * @return kapanış değerlendirilen alan adı sayısı
+     */
+    public int resolveVerifiedStaleCertAlerts(List<Map<String, Object>> results) {
+        if (results == null || results.isEmpty()) return 0;
+        List<String> verified = results.stream()
+                .filter(r -> r.get("domain") != null && !"error".equals(r.get("status")))
+                .map(r -> (String) r.get("domain")).distinct().toList();
+        if (verified.isEmpty()) return 0;
+        Set<String> openCertKeys = alertEventRepo.findOpenByDomainIn(verified).stream()
+                .filter(e -> CERT_ALERT_TYPES.contains(e.getAlertType()))
+                .map(e -> e.getDomain() + "|" + e.getAlertType()).collect(java.util.stream.Collectors.toSet());
+        Set<String> withOpenCert = openCertKeys.stream().map(k -> k.substring(0, k.lastIndexOf('|')))
+                .collect(java.util.stream.Collectors.toSet());
+        // D-1 (2026-09-29): sertifika alarm bildirimleri KAPALIYSA kapanış da SESSİZ (e-posta/webhook/7-24 yok; push
+        // simetrisi resolveOpenAlertsSilently'de korunur). Kesinti şüphesinde (bildirimler açık) normal çözüm yolu.
+        boolean silent = !appSettings.getBoolean("site.monitor.expiry.alert-enabled", true);
+        int n = 0;
+        for (Map<String, Object> result : results) {
+            String domain = (String) result.get("domain");
+            if (domain == null || "error".equals(result.get("status")) || !withOpenCert.contains(domain)) continue;
+            try {
+                Set<String> stale = new LinkedHashSet<>(CERT_ALERT_TYPES);
+                stale.removeAll(determineAlertTypes(result));
+                if (stale.isEmpty()) continue;
+                closeStaleCertTypes(domain, stale, result, silent, t -> openCertKeys.contains(domain + "|" + t));
+                n++;
+            } catch (Exception e) {
+                log.warn("Sertifika kapanış uzlaştırması atlandı: {} — {}", domain, e.getMessage());
+            }
+        }
+        return n;
+    }
+
     public void processResults(List<Map<String, Object>> results) {
         // Tier bazlı eşik (2026-09-20): tablo BİR kez okunur, alan başına envanter tier'ıyla çözülür.
         ThresholdResolution thresholds = ThresholdResolution.load(thresholdRepo, defaultThreshold());
@@ -265,7 +307,8 @@ public class EscalationService {
             // sayılıp "✅ sorun giderildi" maili+push'uyla kapanıyor, bir sonraki temiz turda INITIAL
             // olarak yeniden açılıyordu (tek zaman aşımı = dört mail + bir yalancı yeşil).
             boolean unverified = "error".equals(result.get("status"));
-            if (!stale.isEmpty() && !unverified) resolveOpenAlertsForDomain(domain, stale);
+            if (!stale.isEmpty() && !unverified)
+                closeStaleCertTypes(domain, stale, result, false, t -> openAlertByKey.containsKey(domain + "|" + t));
             if (alertTypes.isEmpty()) continue;
 
             for (String alertType : alertTypes) {
@@ -718,8 +761,11 @@ public class EscalationService {
             if (isDomainMon(alertType)) {
                 certContext = reconstructDomainContext(domain);
             } else if (TYPE_DNS_CHANGED.equals(alertType)) {
+                // D-b2: olayı AÇAN izlemenin kaydı (günlük yeniden uyarıyla aynı seçim).
+                Long opener = alertEventId == null ? null
+                        : alertEventRepo.findById(alertEventId).map(EscalationService::contextMonitorId).orElse(null);
                 certContext = DnsCheckerService.changeCtxOf(
-                        DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain));
+                        DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain, opener));
                 if (certContext.isEmpty()) certContext = null;
             } else if (MONITORING_ALERT_TYPES.contains(alertType)) {
                 certContext = null;
@@ -862,10 +908,10 @@ public class EscalationService {
                 List<String> silent = new ArrayList<>(types);
                 silent.removeAll(notified);
                 if (!silent.isEmpty())
-                    resolveOpenAlertsSilently(domain, silent, "Sistem (bakım penceresi — sessiz kapanış)");
+                    resolveOpenAlertsQuietlyRecovered(domain, silent, "Sistem (bakım penceresi — sessiz kapanış)");   // O-c1
                 types = notified;
             } else {
-                resolveOpenAlertsSilently(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");
+                resolveOpenAlertsQuietlyRecovered(domain, types, "Sistem (bakım penceresi — sessiz kapanış)");   // O-c1
                 return;
             }
         }
@@ -921,13 +967,48 @@ public class EscalationService {
      * geçmişinde resolved (kapalı) görünür, resolvedBy = silme nedenidir.
      */
     public void resolveOpenAlertsSilently(String domain, Collection<String> types, String resolvedBy) {
+        resolveOpenAlertsSilently(domain, types, resolvedBy, null);
+    }
+
+    /**
+     * D-b1 (Y-1 kardeşi, 2026-09-29): İZLEMEYE ÖZGÜ sessiz kapanış — silme / duraklatma / anahtar (host, alan adı)
+     * değişikliği YALNIZ bu izlemenin olayını kapatır. Anahtar (alan adı + tür) takımlar ve izlemeler arasında
+     * paylaşılabilir; eskiden bir takımın izlemesini silmek ya da duraklatmak AYNI anahtardaki başka takımın açık olayını
+     * da sessizce kapatıyordu (o takım "düzeldi" sanıyor, kesinti sürüyordu). {@code ownerCtx} = izlemenin sahiplik
+     * bağlamı ({@code monitor_id}, bağımsızsa {@code team_id} / {@code standalone}); null → eski davranış (tümü).
+     * Kural {@link #closableBy}.
+     */
+    public void resolveOpenAlertsSilently(String domain, Collection<String> types, String resolvedBy,
+                                          Map<String, Object> ownerCtx) {
+        closeQuietly(domain, types, resolvedBy, ownerCtx, true);
+    }
+
+    /**
+     * O-c1 (2026-09-29): bakım penceresinde GERÇEKTEN düzelen alarmın sessiz kapanışı — e-posta yok (bakım sessizliği) ama
+     * {@code resolvedSilently} İŞARETSİZ: alarm susturulmadı, kurtuldu. Fırtına üyesiyse toplu "fırtına sona erdi" çözümü
+     * onu "kurtarıldı" sayar (O-b2'nin sessiz-üye süzgeci yalnız susturma nedenlerini — silindi / duraklatıldı / host
+     * değişti / tür bildirimleri kapalı — hedefler). Eskiden bakım dalı da işaret yazıyor, bakımda düzelen fırtınanın çözüm
+     * e-postası / push'u / webhook'u / 7-24 ÇÖZÜLDÜ postası hiç gitmiyordu.
+     */
+    void resolveOpenAlertsQuietlyRecovered(String domain, Collection<String> types, String resolvedBy) {
+        closeQuietly(domain, types, resolvedBy, null, false);
+    }
+
+    private void closeQuietly(String domain, Collection<String> types, String resolvedBy,
+                              Map<String, Object> ownerCtx, boolean markSilenced) {
         if (domain == null || types == null || types.isEmpty()) return;
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "Sistem (izleme silindi)";
         List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(domain, types);
         for (AlertEvent event : openAlerts) {
+            if (ownerCtx != null && !closableBy(event, ownerCtx)) {
+                log.info("Sessiz kapanış atlandı: {} [{}] #{} başka izlemenin/sahibin olayı ({}) — kendi kurtarma yolu kapatır",
+                        domain, event.getAlertType(), event.getId(), by);
+                continue;
+            }
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy(by);
+            if (markSilenced) event.setResolvedSilently(true);   // O-b2: fırtına çözümü bunu "kurtarıldı" saymaz (O-c1: bakımda değil)
             AlertEvent saved = alertEventRepo.save(event);   // mail YOK — sendResolutionNotification çağrılmaz
             // Push AÇILIŞTA gittiyse çözümü de gitsin (simetri kuralı enqueueResolve içinde): bakım
             // penceresinde kurtarma / silme / duraklatma mail'siz kapanır ama telefon "DÜZELDİ"yi
@@ -935,6 +1016,31 @@ public class EscalationService {
             enqueueResolvePushQuietly(saved != null ? saved : event);
             log.info("✅ Alarm sessizce kapatıldı (izleme silindi, mail yok): {} [{}]", domain, event.getAlertType());
         }
+    }
+
+    /**
+     * D-b1: bu izleme ({@code ownerCtx}) olayı silme/duraklatma ile kapatabilir mi? Olayı AÇAN izleme biliniyorsa
+     * yalnız o izleme kapatır (aynı takımın kardeş izlemesi de dâhil başkası kapatamaz — kardeş kendi kurtarmasıyla
+     * kapatır). Açan bilinmiyorsa (eski olay, kimliksiz bağlam) sahiplik anahtarı aynıysa ({@link #sameOwner}).
+     */
+    /**
+     * O-c2: bu DNS_CHANGED bağlamı açık olayı AÇANDAN BAŞKA bir izlemenin taze değişikliği mi? Bağlam izleme kimliği
+     * taşımıyorsa (günlük yeniden uyarı — kayıt açanın değilse kimlik düşürülür) hayır. Açan biliniyorsa kimlik farkı;
+     * bilinmiyorsa (eski olay) sahiplik anahtarı farkı.
+     */
+    static boolean isOtherMonitorsChange(AlertEvent e, Map<String, Object> ctx) {
+        Object mid = ctx == null ? null : ctx.get("monitor_id");
+        if (!(mid instanceof Number n)) return false;
+        Long opener = contextMonitorId(e);
+        if (opener != null) return opener != n.longValue();
+        return !sameOwner(e, TYPE_DNS_CHANGED, ctx);
+    }
+
+    static boolean closableBy(AlertEvent e, Map<String, Object> ownerCtx) {
+        Object mid = ownerCtx == null ? null : ownerCtx.get("monitor_id");
+        Long opener = contextMonitorId(e);
+        if (opener != null && mid instanceof Number n) return opener == n.longValue();
+        return sameOwner(e, e.getAlertType(), ownerCtx);
     }
 
     /** Sessiz kapanışlarda çözüm push'u — push katmanı hatası kapanışı ASLA geri almasın. */
@@ -1192,6 +1298,32 @@ public class EscalationService {
 
         } else {
             AlertEvent event = existing.get();
+            // Y-1 (2026-09-29): anahtar (alan adı + tür) takımlar arasında paylaşılabilir — bağımsız + envanter türevi
+            // aynı host, iki takımın aynı URL'si, iki takımda aynı adlı senaryo. Açık olay BAŞKA bir sahibin (takım /
+            // envanter) izlemesine aitse bu bağlamın arızası o olayın yeniden uyarısı / terfisi / telafisi OLAMAZ:
+            // bildirim yanlış takıma gider, ileti yabancı izlemenin bağlamından kurulurdu. Bu izlemenin alarmı, açık
+            // olay kapandıktan sonraki ilk DOWN turunda kendi takımıyla açılır. Bağlam izleme kimliği taşımıyorsa
+            // (DNS_CHANGED yeniden uyarısı) sahiplik bilinmez → eski davranış.
+            // O-c2 (2026-09-29): DNS_CHANGED kenar tetiklidir (değişiklik tek turda görülür, tur tabanı ilerler — bir daha
+            // algılanmaz) ve elle kapanır (açık olay günlerce durur). Açık olayı BAŞKA bir izleme açtıysa bu izlemenin taze
+            // değişikliği aşağıdaki sahiplik kapısında sessizce düşüyor ve KALICI yutuluyordu (aynı takımda bile). Değişiklik
+            // olayları her değişikliği bildirir: olaya dokunmadan, bağlamın SAHİBİNE (bağımsızsa kendi takımı, envanter
+            // türeviyse envanterin takımı — yukarıda çözüldü) olaysız tekil bildirim gider; başka takıma sızma yok.
+            if (TYPE_DNS_CHANGED.equals(alertType) && isOtherMonitorsChange(event, outageContext)) {
+                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
+                        message, "", null, "INITIAL", null, outageContext);
+                log.warn("DNS değişikliği bildirildi (açık olay #{} başka izlemenin — olaysız tekil bildirim, bağlamın sahibine "
+                        + "{}): {} izleme {}", event.getId(), ownerKeyOf(alertType, outageContext), domain,
+                        outageContext.get("monitor_id"));
+                return;
+            }
+            if (!sameOwner(event, alertType, outageContext)) {
+                log.info("Açık olay başka sahibin izlemesine ait — bu bağlam yeniden uyarı üretmez: {} [{}] olay={} "
+                        + "(olay sahibi {}, bağlam sahibi {})", domain, alertType, event.getId(),
+                        ownerKeyOf(event), ownerKeyOf(alertType, outageContext));
+                return;
+            }
             // O5: alarm AÇIKKEN monitör başka takıma atanırsa çözüm bildirimi event.teamId'den
             // gider (damga) — re-alert canlı ctx'ten giderse iki yol FARKLI takıma düşer.
             // Üç yol da (ilk/re-alert/çözüm) aynı damgayı kullansın; ctx yalnız damga boşken.
@@ -1295,9 +1427,42 @@ public class EscalationService {
         // acknowledged açık alarm → sessiz (expiry semantiğiyle aynı)
     }
 
-    /** İzleme alarm mesajı — ctx alanları varsa zenginleştirilir, yoksa buildMessage'a düşer. */
+    /** Alarm seviyesinin Türkçe sözcüğü — Alarm Geçmişi rozeti ve push metniyle aynı (UYARI / YÜKSEK / KRİTİK / BİLGİ). */
+    public static String levelWordTr(String level) {
+        return switch (level == null ? "" : level.toUpperCase(java.util.Locale.ROOT)) {
+            case "CRITICAL" -> "KRİTİK";
+            case "HIGH" -> "YÜKSEK";
+            case "INFO", "LOW" -> "BİLGİ";
+            default -> "UYARI";
+        };
+    }
+
+    private static final java.util.regex.Pattern LEADING_LEVEL_WORD = java.util.regex.Pattern.compile(
+            "^(KRİTİK|YÜKSEK|UYARI|ORTA|BİLGİ)\\s*:\\s*");
+
+    /**
+     * İzleme alarm iletisinin baştaki seviye sözcüğünü alarmın GERÇEK seviyesine çevirir (prod 2026-09-29).
+     *
+     * <p>İleti şablonları seviyeyi SABİT yazıyordu ("KRİTİK: … portuna erişilemiyor", "YÜKSEK: … DNS kaydı değişti");
+     * 2026-09-19'dan beri izleme alarmları varsayılan WARNING açıldığı için Alarm Geçmişi aynı satırda "UYARI" rozeti
+     * ile "KRİTİK:" metnini yan yana gösteriyordu (e-posta konusu ve push ise seviyeden türediği için doğruydu). Kural
+     * TEK yerde: şablon başındaki etiket ne olursa olsun seviyeden yeniden yazılır. Yalnız izleme türlerine uygulanır;
+     * sertifika iletilerinin seviye dışı etiketleri (DAĞITIM EKSİK / ZİNCİR SORUNU) ve kendi kademeleri değişmez.
+     */
+    static String withLevelWord(String message, String alertLevel) {
+        if (message == null) return null;
+        java.util.regex.Matcher m = LEADING_LEVEL_WORD.matcher(message);
+        return m.find() ? levelWordTr(alertLevel) + ": " + message.substring(m.end()) : message;
+    }
+
+    /** İzleme alarm mesajı — ctx alanları varsa zenginleştirilir, yoksa buildMessage'a düşer. Seviye sözcüğü seviyeden. */
     private String monitoringMessage(String domain, String alertType, String alertLevel,
                                      Map<String, Object> ctx) {
+        return withLevelWord(monitoringMessageBody(domain, alertType, alertLevel, ctx), alertLevel);
+    }
+
+    private String monitoringMessageBody(String domain, String alertType, String alertLevel,
+                                         Map<String, Object> ctx) {
         if (ctx == null || ctx.isEmpty()) return buildMessage(domain, alertType, alertLevel, null);
         switch (alertType) {
             case TYPE_PORT_DOWN -> {
@@ -1499,8 +1664,8 @@ public class EscalationService {
                 Object days = ctx.get("days");
                 Object exp = ctx.get("expiry_date");
                 Object reg = ctx.get("registrar");
-                // D7: iki kollu etiket WARNING'de "YÜKSEK" yazıyordu; rozet ise "ORTA" → aynı
-                // mailde çelişki. Üç kollu.
+                // D7: iki kollu etiket WARNING'de "YÜKSEK" yazıyordu → çelişki. Baştaki etiket artık
+                // monitoringMessage → withLevelWord ile seviyeden yeniden yazılır (WARNING → "UYARI").
                 return ("CRITICAL".equals(alertLevel) ? "KRİTİK"
                         : "HIGH".equals(alertLevel) ? "YÜKSEK" : "ORTA") + ": " + dom + " alan adının kaydı" +
                         (days != null ? " " + days + " gün içinde doluyor" : " dolmak üzere") +
@@ -1594,6 +1759,7 @@ public class EscalationService {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy(resolvedBy);
+            event.setResolvedSilently(true);   // O-b2: envanter silindi/pasifleşti — kurtulmadı, susturuldu
             AlertEvent saved = alertEventRepo.save(event);
             enqueueResolvePushQuietly(saved != null ? saved : event);   // resolveOpenAlertsSilently ile aynı gerekçe
             log.info("Alarm kapatıldı ({}): {} [{}]", reason, domain, event.getAlertType());
@@ -1613,6 +1779,7 @@ public class EscalationService {
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("inventory_delete");
+            event.setResolvedSilently(true);   // O-b2
             alertEventRepo.save(event);
             log.info("Startup catch-up: closed stale alarm {} [{}] for soft-deleted domain {}",
                     event.getId(), event.getAlertType(), event.getDomain());
@@ -1867,6 +2034,48 @@ public class EscalationService {
      *
      * <p>Ayarlar yalnız ALARM ÜRETİMİNİ yönetir; rozet ve sağlık satırları koşulsuz doğruyu söyler.
      */
+    /**
+     * Bu turda artık üretilmeyen sertifika türlerini kapatır. D-7 (2026-09-29): bayrağı HÂLÂ duran ama alarm türü AYARDAN
+     * kapatılmış (HOSTNAME_MISMATCH / UNTRUSTED_CA) tür "✅ sorun giderildi" diye DEĞİL, SESSİZCE kapanır — sorun
+     * giderilmedi, yalnız alarmı istenmiyor. {@code silentAll}: sertifika bildirimleri tümden kapalı (D-1).
+     */
+    private void closeStaleCertTypes(String domain, Set<String> stale, Map<String, Object> result, boolean silentAll,
+                                     java.util.function.Predicate<String> hasOpen) {
+        Set<String> quiet = new LinkedHashSet<>();
+        if (silentAll) quiet.addAll(stale);
+        else for (String t : settingDisabledCertTypes(result)) if (stale.contains(t)) quiet.add(t);
+        Set<String> loud = new LinkedHashSet<>(stale);
+        loud.removeAll(quiet);
+        // D-b17 (tek pod maliyeti): "ayardan kapalı" sessiz küme D-7 ile alan adı başına İKİNCİ bir sorgu ekledi — güvenilmeyen
+        // CA alarmı varsayılan kapalı ve kurumsal CA paketi boşken iç host'ların tamamı bayraklı olduğundan her turda yüzlerce
+        // boş sorgu. Turun başındaki toplu açık-alarm haritasında AÇIK olmayan tür için kapanış sorgusu atılmaz.
+        if (!silentAll && hasOpen != null) quiet.removeIf(t -> !hasOpen.test(t));
+        if (!quiet.isEmpty()) resolveOpenAlertsSilently(domain, quiet, silentAll
+                ? "Sistem (otomatik — sertifika alarm bildirimleri kapalı)"
+                : "Sistem (alarm türü ayardan kapatıldı — sorun sürüyor olabilir)");
+        if (!loud.isEmpty()) resolveOpenAlertsForDomain(domain, loud);
+    }
+
+    /** Güvenlik bayrağı sonuçta DURAN ama alarmı ayardan KAPALI sertifika türleri (D-7). */
+    private Set<String> settingDisabledCertTypes(Map<String, Object> result) {
+        java.util.List<String> flags = securityFlagsOf(result);
+        Set<String> out = new LinkedHashSet<>();
+        if (flags.contains(CertificateHealthRules.FLAG_HOSTNAME_MISMATCH)
+                && !appSettings.getBoolean(SETTING_ALERT_HOSTNAME_MISMATCH, true)) out.add(TYPE_HOSTNAME_MISMATCH);
+        if (flags.contains(CertificateHealthRules.FLAG_UNTRUSTED_CA)
+                && !appSettings.getBoolean(SETTING_ALERT_UNTRUSTED, false)) out.add(TYPE_UNTRUSTED_CA);
+        return out;
+    }
+
+    private static java.util.List<String> securityFlagsOf(Map<String, Object> result) {
+        Object sanRaw = result.get("san");
+        java.util.List<String> san = sanRaw instanceof java.util.List<?> l
+                ? l.stream().filter(java.util.Objects::nonNull).map(String::valueOf).toList()
+                : java.util.List.of();
+        return CertificateHealthRules.securityFlags(
+                (String) result.get("domain"), san, (String) result.get("trust_status"));
+    }
+
     private String securityAlertType(Map<String, Object> result) {
         Object sanRaw = result.get("san");
         java.util.List<String> san = sanRaw instanceof java.util.List<?> l
@@ -2084,13 +2293,10 @@ public class EscalationService {
         }
         certContext = enrichedCtx;
 
-        // 2. Subject — "[Site Monitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi)
-        String levelTr = switch (level != null ? level : "") {
-            case "CRITICAL"   -> "KRİTİK";
-            case "HIGH"       -> "YÜKSEK";
-            case "INFO", "LOW" -> "BİLGİ";
-            default           -> "ORTA";
-        };
+        // 2. Subject — "[Site Monitor] SEVERITY · domain · özet" (executive format; EmailTemplateBuilder ile aynı severity etiketi).
+        // D-2 (2026-09-29): TEK seviye sözlüğü levelWordTr — WARNING konu/rozet/gövde/push/arayüzde "UYARI" (eskiden
+        // konu ve rozet "ORTA", gövde ve arayüz "UYARI" diyordu).
+        String levelTr = levelWordTr(level);
         String typeTr = switch (alertType != null ? alertType : "") {
             case "REVOKED"          -> "İptal Edildi";
             case "MISMATCH"         -> "Dağıtım Eksik";
@@ -2470,6 +2676,12 @@ public class EscalationService {
     }
 
     private String buildMessage(String domain, String alertType, String alertLevel, Integer days) {
+        String body = buildMessageBody(domain, alertType, alertLevel, days);
+        // İzleme türlerinde seviye sözcüğü seviyeden (withLevelWord); sertifika iletileri olduğu gibi.
+        return alertType != null && MONITORING_ALERT_TYPES.contains(alertType) ? withLevelWord(body, alertLevel) : body;
+    }
+
+    private String buildMessageBody(String domain, String alertType, String alertLevel, Integer days) {
         return switch (alertType) {
             case TYPE_ACCESSIBILITY -> "KRİTİK: " + domain +
                     " adresine erişilemiyor. Ardışık doğrulama denemeleri başarısız oldu — " +
@@ -2677,7 +2889,10 @@ public class EscalationService {
                                  // şablon firstNonNull(error, last_error) okuyor. last_error yedeği
                                  // satırı ayakta tutuyordu ama birincil anahtar hiç snapshot'a
                                  // girmiyordu; "error" daha zengin olduğunda bilgi kaybediliyordu.
-                                 "duration_ms", "failed_checks", "error");
+                                 "duration_ms", "failed_checks", "error",
+                                 // O-b4: sayfa bütünlüğü bulgusunun KAYNAĞI (HOME / CRAWL) ve crawl'daki sorunlu
+                                 // sayfalar — kurtarma doğrulaması aynı kaynağı yeniden ölçer (SchedulerService).
+                                 "integrity_scope", "problem_pages");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;
@@ -2693,6 +2908,17 @@ public class EscalationService {
     private Map<String, Object> deserializeContext(String json) {
         if (json == null || json.isBlank()) return null;
         try { return objectMapper.readValue(json, Map.class); } catch (Exception e) { return null; }
+    }
+
+    /**
+     * O-b4: bu anahtarın (alan adı + tür) EN YENİ açık alarmının alarm-anı bağlamı; açık alarm yoksa null, bağlamsız
+     * (eski) alarmda boş harita. Kaynak-duyarlı kapanış kararı için (sayfa bütünlüğü — SchedulerService). Salt okuma.
+     */
+    public Map<String, Object> openAlertContext(String domain, String alertType) {
+        return alertEventRepo.findOpenAlert(domain, alertType).map(e -> {
+            Map<String, Object> c = deserializeContext(e.getContextJson());
+            return c != null ? c : Map.<String, Object>of();
+        }).orElse(null);
     }
 
     /** Takımı cert envanterinden DEĞİL AlertEvent.teamId'den (alarm anında damgalanan) bulunan standalone izleme tipi mi?
@@ -2761,6 +2987,55 @@ public class EscalationService {
         } catch (Exception ignore) {
             return false;   // bozuk bağlam: tip listesine düş
         }
+    }
+
+    // ── Y-1 (2026-09-29): paylaşılan anahtarda SAHİPLİK ─────────────────────────────────────────
+
+    /**
+     * Bir izleme bağlamının sahiplik anahtarı: bağımsız izleme (tür listesi ya da bağlam işareti) → {@code "T:<takım>"}
+     * (takımı boş bağımsız satırda {@code "T:null"}); envanter türevi (Port/DNS türev satırı, ACCESSIBILITY) →
+     * {@code "INV"} — takımı alan adı → envanterden çözülür. Aynı anahtarı (alan adı + tür) paylaşan iki izlemenin aynı
+     * olayı "sahiplenip sahiplenemeyeceği" buna bakar.
+     */
+    public static String ownerKeyOf(String alertType, Map<String, Object> ctx) {
+        if (!isStandalone(alertType, ctx)) return "INV";
+        Object t = ctx == null ? null : ctx.get("team_id");
+        return "T:" + (t instanceof Number n ? n.longValue() : null);
+    }
+
+    /** Açık olayın sahiplik anahtarı — bağımsız olayda takım damgası, aksi hâlde {@code "INV"}. */
+    public static String ownerKeyOf(AlertEvent e) {
+        if (e == null) return null;
+        return isStandaloneEvent(e) ? "T:" + e.getTeamId() : "INV";
+    }
+
+    /** Olayı AÇAN izlemenin kimliği (bağlam anlık görüntüsündeki {@code monitor_id}) — yoksa null. */
+    @SuppressWarnings("unchecked")
+    public static Long contextMonitorId(AlertEvent e) {
+        String json = e == null ? null : e.getContextJson();
+        if (json == null || json.isBlank()) return null;
+        try {
+            Object v = CTX_JSON.readValue(json, Map.class).get("monitor_id");
+            return v instanceof Number n ? n.longValue() : null;
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    /**
+     * Bu bağlam (izleme sonucu) açık olayın SAHİBİ mi? Bağlam izleme kimliği taşımıyorsa sahiplik bilinemez → true
+     * (eski davranış; DNS_CHANGED yeniden uyarısı, kimliksiz ACCESSIBILITY). Olayı açan izlemenin kendisiyse → true
+     * (izleme olay açıkken başka takıma taşınmış olsa bile kendi olayının sahibidir). Aksi hâlde sahiplik anahtarları
+     * aynı olmalı: aynı takımın iki izlemesi (ör. aynı host'ta 443 ve 8443) aynı olayı paylaşır; başka takımınki ya da
+     * bağımsız ↔ envanter türevi paylaşmaz.
+     */
+    public static boolean sameOwner(AlertEvent e, String alertType, Map<String, Object> ctx) {
+        if (e == null) return true;
+        Object mid = ctx == null ? null : ctx.get("monitor_id");
+        if (!(mid instanceof Number n)) return true;
+        Long opener = contextMonitorId(e);
+        if (opener != null && opener == n.longValue()) return true;
+        return java.util.Objects.equals(ownerKeyOf(e), ownerKeyOf(alertType, ctx));
     }
 
     /**

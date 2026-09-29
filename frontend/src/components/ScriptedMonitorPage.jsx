@@ -328,7 +328,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const canManageRow = (m) => k6.canManage && (isAdmin || isOwnTeam(m))
   // k6 kurulu değilse aday YOK → düğme hiç çizilmez; kartın checkDisabled={!k6.available}
   // kapısıyla aynı sonuç, basılıp 4xx yiyen bir düğme gösterilmiyor.
-  const canCheckRow = (m) => k6.available && canManageRow(m)
+  // 2026-09-29: + sunucunun satır bayrağı `can_check` (tetik ucunun kapısıyla AYNI kural — kapsamlı yönetici görebildiği
+  // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
+  // Tekil ▶ / detay "Çalıştır" / tanılama: sunucu `can_check` false ise çizilmez (k6 yoksa düğme görünür ama pasif).
+  const canRunRow = (m) => canManageRow(m) && m?.can_check !== false
+  const canCheckRow = (m) => k6.available && canRunRow(m)
+  // Atlanan koşumun sebebi: elle k6 kotası doluysa (D-10, 2026-09-29) arayüz dilinde; değilse sunucunun iletisi.
+  const skippedReasonOf = (d) => (d?.skipped_code === 'MANUAL_POOL_BUSY' ? t('scripted.manualPoolBusy') : (d?.skipped_reason || ''))
   const canDeleteRow = (m) => k6.canManage && (isAdmin || (isTeamAdmin && isOwnTeam(m)))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
@@ -942,7 +948,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     // undefined: aynı izleme ZATEN koşuyor (kart düğmesi / toplu koşum) — sonucu arkada gelir.
     if (r === undefined) { setSmoke({ state: 'queued' }); return }
     const data = r.data || {}
-    if (data.skipped) setSmoke({ state: 'skipped', reason: data.skipped_reason || '' })
+    if (data.skipped) setSmoke({ state: 'skipped', reason: skippedReasonOf(data) })
     else if (r.ok && data.queued) setSmoke({ state: 'queued' })
     else if (r.ok) {
       setSmoke(null)
@@ -1046,7 +1052,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // yazılmadı. Satırı güncellemek kullanıcıya ESKİ sonucu "yeni" gibi gösterirdi; sebebi
         // söylüyoruz. Uyarı tonunda: hedefte bir sorun YOK, kapasite darlığı var.
         if (res.data?.skipped) {
-          const msg = t('scripted.triggerSkipped', res.data.skipped_reason || '')
+          const msg = t('scripted.triggerSkipped', skippedReasonOf(res.data))
           if (!silent) toast.info(msg, 6000)
           // Atlanan koşum BAŞARISIZ sayılır: kontrol hiç yürüttürülmedi, satır bunu söylemeli.
           return { ok: false, data: res.data, error: msg }
@@ -1196,7 +1202,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               actions={canManageRow(m) && (
                 <MonitorCardActions rowLabel={m.name}
                   running={isRunning(m.id)} checkDisabled={!k6.available}
-                  onCheck={() => checkNow(m)} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
+                  onCheck={canRunRow(m) ? () => checkNow(m) : undefined} onEdit={() => openEdit(m)} onDuplicate={() => openDuplicate(m)}
                   checkTitle={t('scripted.runNow')} editTitle={t('scripted.edit')}
                   onDelete={canDeleteRow(m) ? () => deleteMonitor(m) : undefined}
                   deleting={deleting === m.id} deleteTitle={t('scripted.delete')}
@@ -1222,7 +1228,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
               <MonitorModalActions
                 running={isRunning(selected.id)}
                 checkDisabled={!k6.available}
-                onCheck={canManageRow(selected) ? () => checkNow(selected) : undefined}
+                onCheck={canRunRow(selected) ? () => checkNow(selected) : undefined}
                 checkTitle={t('scripted.runNow')}
                 onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
                 editTitle={t('scripted.edit')}
@@ -1357,7 +1363,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
 
             <TabsContent value="alerts"><AlertHistory domain={selected.name} types={alertTypesFor('scripted')} /></TabsContent>
 
-            <TabsContent value="diag"><DiagTab t={t} monitor={selected} canRun={canManageRow(selected)} /></TabsContent>
+            <TabsContent value="diag"><DiagTab t={t} monitor={selected} canRun={canRunRow(selected)} /></TabsContent>
 
             <TabsContent value="versions">
               <ScriptedVersionsTab t={t} monitor={selected} canEdit={canManageRow(selected)}

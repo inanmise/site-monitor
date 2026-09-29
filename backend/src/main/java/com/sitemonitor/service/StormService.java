@@ -54,6 +54,14 @@ import java.util.Set;
  *
  * <p><b>Feature-flag default AÇIK</b> ({@code site.monitor.storm.enabled}); admin "Alert Settings"ten kapatabilir.
  * Kapalıyken {@link #evaluate} ilk satırda {@code SEND_INDIVIDUAL} döner → mevcut alarm davranışı bit-bit aynı.
+ *
+ * <p><b>TAKIM YALITIMI (ürün kararı 2026-09-29, prod olayı).</b> Fırtına TAKIM BAZINDA değerlendirilir: kapsam
+ * anahtarı {@code TEAM:<id>} (grup kipinde {@code TEAM:<id>|GROUP:<grup>}); eşik (SAYI ya da takımın aktif
+ * izlemelerinin YÜZDESİ), pencere sayımı, kök-neden ve bildirim (e-posta + push + webhook) yalnız alarmın SAHİBİ
+ * takımın kümesinden. Kuruluş geneli ({@code ACCOUNT}, "Tüm monitörler") fırtına YOK — eskisi yaşam döngüsünde
+ * dağıtılır. Her takım dağıtımı yalnız KENDİ üyelerinin sayısını, adını ve kök-nedenini görür; fırtına push'u
+ * bireysel alarmdan geniş kitleye (seviye yükseltmesiyle) gitmez ({@link #stormPushLevel}). 7/24 (NOC) izlemede açık
+ * onayla (izleme başına {@code noc_notify}) kapsanan üyeler için ayrı kanaldır — kuralı değişmedi.
  */
 @Slf4j
 @Service
@@ -122,10 +130,35 @@ public class StormService {
     public static final String KEY_WINDOW    = "site.monitor.storm.window-minutes";
     public static final String KEY_PER_GROUP = "site.monitor.storm.per-group";
 
+    /** 2026-09-29 öncesinin kuruluş geneli kapsamı — artık üretilmez; aktif kalan eskisi yaşam döngüsünde dağıtılır. */
     static final String SCOPE_ACCOUNT = "ACCOUNT";
     static final String UNGROUPED     = "__UNGROUPED__";
+    /** Takım kapsamlı fırtına anahtarı: {@code TEAM:<takımId>} ya da grup kipinde {@code TEAM:<takımId>|GROUP:<grup>}. */
+    static final String TEAM_SCOPE_PREFIX     = "TEAM:";
+    static final String GROUP_SCOPE_SEP       = "|GROUP:";
+    static final String SCOPE_TYPE_TEAM       = "TEAM";
+    static final String SCOPE_TYPE_TEAM_GROUP = "TEAM_GROUP";
+    /** alert_storms.scope_key kolon genişliği (SchedulerService DDL'i VARCHAR(200)). */
+    private static final int SCOPE_KEY_MAX = 200;
     /** Bir "storm" için gereken minimum monitör tabanı — 1'lik storm anlamsız. */
     static final int MIN_THRESHOLD = 2;
+    /**
+     * YÜZDE kipinde mutlak taban (2026-09-29, O-4): payda artık takımın kendi izlemeleri olduğundan küçük takımda yüzde
+     * 1–2'ye iniyordu; tek bir host düşünce aynı pencerede ACCESSIBILITY + PORT_DOWN (+ DNS) açılıp "fırtına" sayılıyor ve
+     * bireysel alarmlar bastırılıyordu. Fırtına = ÇOK HEDEF birden; yüzde ne derse desin en az bu kadar farklı hedef.
+     */
+    static final int PERCENT_MIN_TARGETS = 3;
+
+    /**
+     * Eski (2026-09-29 öncesi kuruluş geneli) fırtınanın emekliye ayrılması uygulama açılışından bu süre SONRA (O-3):
+     * ilk izleme turları hayalet üyeleri fırtına AKTİFKEN kapatsın (bireysel "ÇÖZÜLDÜ" yerine tek toplu çözüm) ve kalan
+     * üyeler takım bazında yeniden değerlendirilsin. Süre boyunca eski fırtına ETKİSİZDİR (toplu tekrar / 7-24 tik yok).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.storm.legacy-retire-grace-minutes:15}")
+    long legacyRetireGraceMinutes = 15;
+
+    /** Açılış anı (ms) — eski fırtına emeklilik penceresinin başlangıcı; test ileri alabilsin diye paket-özel. */
+    long startedAtMs = System.currentTimeMillis();
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -136,6 +169,8 @@ public class StormService {
     // Toplam-aktif-monitör cache (denominatör) — her kesintide saymamak için (~60sn TTL).
     private volatile long cachedTotal = 0;
     private volatile long cachedTotalAt = 0;
+    /** Takım başına payda önbelleği (YÜZDE eşiği takım kümesinde, 2026-09-29): takımId → {toplam, damga ms}. */
+    private final Map<Long, long[]> teamTotalCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     // ── Karar hunisi ────────────────────────────────────────────────────────────
 
@@ -152,17 +187,22 @@ public class StormService {
             return StormAction.SEND_INDIVIDUAL;   // yalnız gerçek DOWN tipleri storm'a girer
         }
 
+        // TAKIM YALITIMI (2026-09-29): eskiden kapsam ACCOUNT'tu (tüm takımlar TEK sayaç) — bir takımın arızaları eşiği
+        // aşınca "N monitör birden erişilemez · Tüm monitörler" bildirimi üyesi olan HER takıma gidiyor, fırtına sürerken
+        // başka takımın yeni alarmı da o fırtınaya bağlanıp bireysel bildirimi yutuluyordu. Artık kapsam alarmın SAHİBİ
+        // takımıdır. Sahipsiz alarm fırtınaya girmez — bireysel hat karar verir (sahipsiz kayıt = bildirim yok).
+        Long teamId = event.getTeamId();
+        if (teamId == null) return StormAction.SEND_INDIVIDUAL;
+
         boolean perGroup = appSettings.getBoolean(KEY_PER_GROUP, false);
-        String scopeKey, scopeType;
+        String group = null;
         if (perGroup) {
-            String group = resolveGroup(event, ctx);   // lazy — yalnız per-group modda repo lookup
-            scopeKey  = (group != null && !group.isBlank()) ? group : UNGROUPED;
-            scopeType = "GROUP";
-            event.setGroupName(scopeKey);               // sayım grup filtresi + toplu recovery için damgala
-        } else {
-            scopeKey = SCOPE_ACCOUNT;
-            scopeType = "ACCOUNT";
+            String g = resolveGroup(event, ctx);   // lazy — yalnız per-group modda repo lookup
+            group = (g != null && !g.isBlank()) ? g : UNGROUPED;
+            event.setGroupName(group);             // sayım grup filtresi + toplu recovery için damgala
         }
+        String scopeKey = teamScopeKey(teamId, group);
+        String scopeType = perGroup ? SCOPE_TYPE_TEAM_GROUP : SCOPE_TYPE_TEAM;
 
         try {
             // 1) Scope'un aktif storm'u var mı → bağla (attach), bireysel gönderme.
@@ -178,17 +218,23 @@ public class StormService {
 
             // 2) Pencere-içi açık DOWN eş sayısı ≥ eşik mi → terfi; değilse normal bireysel (sıfır gecikme).
             String since = windowSince();
-            List<AlertEvent> peers = new ArrayList<>(perGroup
-                    ? alertEventRepo.findOpenDownSinceInGroup(EscalationService.DOWN_ALERT_TYPES, since, scopeKey)
-                    : alertEventRepo.findOpenDownSince(EscalationService.DOWN_ALERT_TYPES, since));
+            // Pencere sorgusu kuruluş genelidir (pencere 1–15 dk, küme küçük); TAKIM süzgeci burada — başka takımın açık
+            // DOWN'ı bu takımın sayacına, üye listesine ve kök-nedenine GİRMEZ.
+            List<AlertEvent> peers = new ArrayList<>();
+            for (AlertEvent p : perGroup
+                    ? alertEventRepo.findOpenDownSinceInGroup(EscalationService.DOWN_ALERT_TYPES, since, group)
+                    : alertEventRepo.findOpenDownSince(EscalationService.DOWN_ALERT_TYPES, since)) {
+                if (p != null && teamId.equals(p.getTeamId())) peers.add(p);
+            }
             // Tetikleyen event, tanımı gereği scope'ta açık bir DOWN'dır; ancak per-group modda group_name'i henüz
             // commit edilmemiş olabileceğinden sorgu onu HARİÇ tutabilir → eşik off-by-one'ı (per-group N+1 gerektirirdi).
             // Sayıma ve üye listesine mutlaka dahil et (M1). linkPeers zaten skipId ile onu atlar (çağıran kaydeder).
             if (event.getId() == null || peers.stream().noneMatch(p -> event.getId().equals(p.getId()))) {
                 peers.add(event);
             }
-            int threshold = computeThreshold();
-            if (peers.size() < threshold) return StormAction.SEND_INDIVIDUAL;
+            int threshold = computeThreshold(teamId);
+            // Eşik FARKLI HEDEF sayısıyla (O-4): aynı host'un ACCESSIBILITY + PORT_DOWN + DNS_FAILURE alarmları tek hedeftir.
+            if (distinctTargets(peers) < threshold) return StormAction.SEND_INDIVIDUAL;
 
             // 3) Atomik terfi — scope-başına-tek-aktif UNIQUE; kazanan (rows==1) toplu alarm gönderir.
             boolean created = insertStormIfAbsent(scopeKey, scopeType, peers);
@@ -245,7 +291,14 @@ public class StormService {
         try {
             for (AlertStorm storm : active) {
                 try {
-                    if (!enabled) { disband(storm); continue; }   // toggle-off: geri-bağla, sessiz kapat
+                    if (!enabled) { disband(storm, "özellik kapatıldı"); continue; }   // toggle-off: geri-bağla, sessiz kapat
+                    // 2026-09-29 öncesinin kuruluş geneli (ACCOUNT) / takımsız grup fırtınası: takım yalıtımında karşılığı
+                    // yok. Sürseydi günlük toplu tekrarı "Tüm monitörler" etiketiyle üyesi olan her takıma giderdi. İlk
+                    // izleme turlarına kadar ETKİSİZ bekler (tekrar/7-24 yok), sonra takım bazında emekliye ayrılır (O-3).
+                    if (!isTeamScoped(storm)) {
+                        if (legacyRetireDue()) retireLegacy(storm);
+                        continue;
+                    }
                     lifecycleOne(storm);
                 } catch (Exception e) {
                     log.warn("Storm yaşam döngüsü hatası #{}: {}", storm.getId(), e.getMessage());
@@ -258,10 +311,11 @@ public class StormService {
 
     private void lifecycleOne(AlertStorm storm) {
         List<AlertEvent> members = alertEventRepo.findByStormId(storm.getId());
-        long activeDown = members.stream().filter(m -> !Boolean.TRUE.equals(m.getResolved())).count();
+        // Histerezis de FARKLI HEDEF sayısıyla (O-4) — açılış kuralıyla aynı ölçü.
+        long activeDown = distinctTargets(members.stream().filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList());
         storm.setMemberCount(members.size());
 
-        int threshold = computeThreshold();
+        int threshold = computeThreshold(teamOfScope(storm.getScopeKey()));
         int resolveFloor = Math.max(MIN_THRESHOLD, (threshold + 1) / 2);   // histerezis: eşiğin altı → flapping'i önler
 
         if (activeDown < resolveFloor) {
@@ -311,8 +365,8 @@ public class StormService {
                 storm.getId(), recovered.size(), stillDown.size());
     }
 
-    /** Toggle KAPALI iken aktif storm'u zarifçe dağıt: üyeleri geri-bağla (bireysele dön), sessiz kapat. */
-    private void disband(AlertStorm storm) {
+    /** Aktif storm'u zarifçe dağıt (özellik kapatıldı / eski kapsam): üyeleri geri-bağla (bireysele dön), kapat. */
+    private void disband(AlertStorm storm, String reason) {
         List<AlertEvent> stillDown = alertEventRepo.findByStormIdAndResolvedFalse(storm.getId());
         // Fırtına aktifken KURTULAN üyelerin bireysel çözüm maili bilinçli bastırılıyor
         // (EscalationService:734-747: "TEK toplu recovery, fırtına dağıldığında storm sweep'inden
@@ -333,21 +387,140 @@ public class StormService {
         storm.setResolvedAt(now());
         stormRepo.save(storm);
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
-        log.info("🌩 Storm #{} kapatıldı (özellik kapatıldı) — {} kurtulan için toplu çözüm gitti, "
-                + "{} üye bireysel alarmlamaya döndü", storm.getId(), recovered.size(), stillDown.size());
+        log.info("🌩 Storm #{} kapatıldı ({}) — {} kurtulan için toplu çözüm gitti, "
+                + "{} üye bireysel alarmlamaya döndü", storm.getId(), reason, recovered.size(), stillDown.size());
+    }
+
+    /** Eski kapsamlı fırtınanın emeklilik penceresi doldu mu (açılış + {@link #legacyRetireGraceMinutes}). */
+    boolean legacyRetireDue() {
+        return System.currentTimeMillis() - startedAtMs >= Math.max(0, legacyRetireGraceMinutes) * 60_000L;
+    }
+
+    /**
+     * Eski (kuruluş geneli) fırtınayı TAKIM BAZINDA emekliye ayırır (2026-09-29, O-3).
+     *
+     * <p>Eskiden {@link #disband} ediliyordu: hâlâ-down üyeler {@code lastReAlertAt=null} ile çözülüyor ve ilk turda HER
+     * biri tek tek INITIAL e-posta + push üretiyordu (bir takımda 10 üye = 10 alarm), hayalet üyeler de fırtına artık aktif
+     * olmadığı için tek tek "ÇÖZÜLDÜ" alıyordu. Şimdi: hâlâ-down üyeler sahibi takım (+ grup kipinde grup) başına toplanır;
+     * takım eşiği FARKLI HEDEF sayısıyla aşılıyorsa üyeler o takımın fırtınasına SESSİZCE taşınır (açılış postası YOK —
+     * takım bu üyeler için eski fırtınanın postasını zaten aldı; toplu tekrar kadansı o andan sürer); aşılmıyorsa üyeler
+     * "BİLDİRİLDİ" damgasıyla çözülür (tekrar INITIAL yok, bireysel günlük tekrar kadansı). Sahipsiz üye de bildirimsiz
+     * çözülür. Kurtulan üyelerin TEK toplu çözümü {@link #sendStormRecovery} ile yalnız kurtulanı olan takıma ve yalnız
+     * kendi üyeleriyle gider; çözüm push'u o takımda açılışı ALMIŞ olanlara (takım süzgeçli önceki alıcılar) — başka
+     * takıma ASLA.
+     */
+    private void retireLegacy(AlertStorm legacy) {
+        List<AlertEvent> members = alertEventRepo.findByStormId(legacy.getId());
+        List<AlertEvent> stillDown = new ArrayList<>();   // kurtulanlar SONDA yeniden okunur (D-b7a)
+        for (AlertEvent m : members) if (!Boolean.TRUE.equals(m.getResolved())) stillDown.add(m);
+        String notifiedAt = legacy.getLastReAlertAt() != null ? legacy.getLastReAlertAt()
+                : legacy.getCreatedAt() != null ? legacy.getCreatedAt() : now();
+        boolean perGroup = appSettings.getBoolean(KEY_PER_GROUP, false);
+
+        Map<String, List<AlertEvent>> byScope = new LinkedHashMap<>();
+        List<AlertEvent> ownerless = new ArrayList<>();
+        for (AlertEvent m : stillDown) {
+            if (m.getTeamId() == null) { ownerless.add(m); continue; }
+            String g = !perGroup ? null
+                    : (m.getGroupName() != null && !m.getGroupName().isBlank() ? m.getGroupName() : UNGROUPED);
+            byScope.computeIfAbsent(teamScopeKey(m.getTeamId(), g), k -> new ArrayList<>()).add(m);
+        }
+        int moved = 0, released = 0;
+        for (Map.Entry<String, List<AlertEvent>> e : byScope.entrySet()) {
+            String key = e.getKey();
+            List<AlertEvent> ms = e.getValue();
+            AlertStorm target = null;
+            if (distinctTargets(ms) >= computeThreshold(teamOfScope(key))) {
+                boolean created = insertStormIfAbsent(key,
+                        key.contains(GROUP_SCOPE_SEP) ? SCOPE_TYPE_TEAM_GROUP : SCOPE_TYPE_TEAM, ms);
+                target = stormRepo.findByScopeKeyAndResolvedFalse(key).orElse(null);
+                if (target != null && created) {
+                    target.setLastReAlertAt(notifiedAt);   // toplu tekrar kadansı eski postadan sürer (erken tekrar yok)
+                    // Açılış push'u / 7-24 postası ESKİ fırtınanın kimliğiyle gitti: çözüm push'unun "önceden alanlar"
+                    // listesi ve 7/24 açılış kaydı bunu da sayar (D-b6) — sessiz taşıma 7/24'e yeni açılış postası atmaz.
+                    target.setLegacyStormId(legacy.getId());
+                    stormRepo.save(target);
+                }
+            }
+            for (AlertEvent m : ms) {
+                if (target != null && alertEventRepo.moveToStormIfOpen(m.getId(), legacy.getId(), target.getId()) == 1) moved++;
+                else { alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++; }
+            }
+        }
+        for (AlertEvent m : ownerless) { alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++; }
+
+        legacy.setResolved(true);
+        legacy.setResolvedAt(now());
+        stormRepo.save(legacy);
+        // D-b7(a) (2026-09-29): kurtulanlar işlemin SONUNDA yeniden okunur. Üye listesi baştan okunduktan sonra, taşıma /
+        // çözme sürerken izleme turu bir üyeyi çözebilir: bireysel çözüm e-postası "fırtına aktif" diye bastırılmıştı, üye
+        // ise baştaki okumada "hâlâ düşük" göründüğü için kurtulanlara girmiyordu → hiçbir çözüm bildirimi gitmiyordu.
+        // Taşıma ve çözme yalnız AÇIK satırda koştuğundan geç çözülen üye eski fırtınaya bağlı kalır ve burada görünür.
+        // Fırtına kapandıktan SONRA çözülen üye bireysel çözüm yolundan gider (isActive=false) — çift bildirim olmasın diye
+        // yalnız kapanış anına kadar çözülenler sayılır. Sessiz kapanan üye sendStormRecovery'de ayrıca elenir (O-b2).
+        String closedAt = legacy.getResolvedAt();
+        List<AlertEvent> recoveredNow = new ArrayList<>();
+        for (AlertEvent m : alertEventRepo.findByStormId(legacy.getId())) {
+            if (!Boolean.TRUE.equals(m.getResolved())) continue;
+            if (m.getResolvedAt() != null && closedAt != null && m.getResolvedAt().compareTo(closedAt) > 0) continue;
+            recoveredNow.add(m);
+        }
+        Set<Long> recoveredIds = new java.util.HashSet<>();
+        for (AlertEvent m : recoveredNow) if (m.getId() != null) recoveredIds.add(m.getId());
+        List<AlertEvent> downNow = stillDown.stream().filter(m -> m.getId() == null || !recoveredIds.contains(m.getId())).toList();
+        if (!recoveredNow.isEmpty()) sendStormRecovery(legacy, recoveredNow, downNow);
+        log.info("🌩 Eski kapsamlı fırtına #{} emekliye ayrıldı ({}) — {} üye takım fırtınasına taşındı, {} üye bildirildi "
+                        + "sayılıp çözüldü, {} kurtulan için takım bazlı toplu çözüm",
+                legacy.getId(), legacy.getScopeKey(), moved, released, recoveredNow.size());
+    }
+
+    /**
+     * Farklı HEDEF sayısı (2026-09-29, O-4): fırtına "çok hedef birden" demektir. Aynı host'un birden çok alarm türü
+     * (ACCESSIBILITY + PORT_DOWN + DNS_FAILURE, aynı host'taki HTTP/İçerik URL'leri) tek hedef sayılır. Hedef = URL'nin
+     * host'u, değilse alarmın alan adı/adı (küçük harf).
+     */
+    static int distinctTargets(java.util.Collection<AlertEvent> events) {
+        Set<String> keys = new java.util.HashSet<>();
+        if (events != null) for (AlertEvent e : events) if (e != null) keys.add(targetKey(e));
+        return keys.size();
+    }
+
+    static String targetKey(AlertEvent e) {
+        String d = e.getDomain() == null ? "" : e.getDomain().trim();
+        int scheme = d.indexOf("://");
+        if (scheme > 0) {
+            String rest = d.substring(scheme + 3);
+            int end = rest.length();
+            for (char c : new char[]{'/', '?', '#'}) { int i = rest.indexOf(c); if (i >= 0 && i < end) end = i; }
+            String hostPort = rest.substring(0, end);
+            int at = hostPort.lastIndexOf('@');
+            if (at >= 0) hostPort = hostPort.substring(at + 1);
+            int colon = hostPort.startsWith("[") ? hostPort.indexOf("]:") + 1 : hostPort.lastIndexOf(':');
+            d = colon > 0 ? hostPort.substring(0, colon) : hostPort;
+        }
+        return d.toLowerCase(java.util.Locale.ROOT);
     }
 
     // ── Eşik / pencere / denominatör ──────────────────────────────────────────────
 
-    /** Eşik: COUNT → max(2, value); PERCENT → max(2, ceil(value/100 × toplamAktifMonitör)).
-     *  Round kuralı: ceil + taban 2 (edge: %10 × 5 monitör = ceil(0.5)=1 → max(2,1)=2). */
+    /** Eşik (FARKLI HEDEF sayısı): COUNT → max(2, value); PERCENT → max(3, ceil(value/100 × toplamAktifMonitör)).
+     *  Round kuralı: ceil + taban (edge: %10 × 5 monitör = ceil(0.5)=1 → max(3,1)=3 — O-4).
+     *  Kuruluş toplamıyla — yalnız ayar ekranı önizlemesi; fırtına kararı {@link #computeThreshold(Long)} kullanır. */
     public int computeThreshold() {
+        return computeThreshold(null);
+    }
+
+    /**
+     * Takım kapsamlı eşik (2026-09-29): YÜZDE paydası YALNIZ o takımın aktif izlemeleri — başka takımın filosu bu
+     * takımın eşiğini büyütüp küçültmez. {@code teamId == null} → kuruluş toplamı (ayar ekranı önizlemesi).
+     */
+    public int computeThreshold(Long teamId) {
         String unit = appSettings.getString(KEY_UNIT, "COUNT");
         int value = appSettings.getInt(KEY_VALUE, 5);
         if ("PERCENT".equalsIgnoreCase(unit)) {
-            long total = totalActiveMonitors();
+            long total = teamId == null ? totalActiveMonitors() : totalActiveMonitorsForTeam(teamId);
             int t = (int) Math.ceil((value / 100.0) * total);
-            return Math.max(MIN_THRESHOLD, t);
+            return Math.max(PERCENT_MIN_TARGETS, t);   // O-4: küçük takımda yüzde 1–2'ye inmesin
         }
         return Math.max(MIN_THRESHOLD, value);
     }
@@ -386,6 +559,36 @@ public class StormService {
         return total;
     }
 
+    /**
+     * Bir takımın aktif izleme sayısı — {@link #totalActiveMonitors} ile AYNI on kaynak (payda kapısı
+     * {@code StormServiceTest.everyStormMemberTypeHasADenominatorSource}), yalnız o takımın satırları. Envanter-türevi
+     * Port/DNS çift sayılmasın diye (kuruluş paydasındaki gibi) yalnız bağımsız satırlar; envanter satırı SY takımıyla.
+     * 60 sn önbellekli (takım başına).
+     */
+    public long totalActiveMonitorsForTeam(Long teamId) {
+        if (teamId == null) return totalActiveMonitors();
+        long nowMs = System.currentTimeMillis();
+        long[] c = teamTotalCache.get(teamId);
+        if (c != null && nowMs - c[1] < 60_000) return c[0];
+        long total;
+        try {
+            total = inventoryRepo.countByTeamIdAndActiveTrue(teamId)
+                    + httpRepo.countByTeamIdAndActiveTrue(teamId)
+                    + keywordRepo.countByTeamIdAndActiveTrue(teamId)
+                    + pingRepo.countByTeamIdAndActiveTrue(teamId)
+                    + domainRepo.countByTeamIdAndActiveTrue(teamId)
+                    + portRepo.countByStandaloneTrueAndActiveTrueAndTeamId(teamId)
+                    + dnsRepo.countByStandaloneTrueAndActiveTrueAndTeamId(teamId)
+                    + (pageRepo != null ? pageRepo.countByTeamIdAndActiveTrue(teamId) : 0)
+                    + (scriptedRepo != null ? scriptedRepo.countByTeamIdAndActiveTrue(teamId) : 0)
+                    + (pageSpeedRepo != null ? pageSpeedRepo.countByTeamIdAndActiveTrue(teamId) : 0);
+        } catch (Exception e) {
+            return c != null ? c[0] : 0;
+        }
+        teamTotalCache.put(teamId, new long[]{total, nowMs});
+        return total;
+    }
+
     // ── Terfi / bağlama yardımcıları ──────────────────────────────────────────────
 
     /** Scope-başına-tek-aktif kısmi UNIQUE indekse dayalı atomik terfi. rows==1 → biz oluşturduk (kazanan). */
@@ -413,10 +616,18 @@ public class StormService {
         }
     }
 
+    /**
+     * Üye sayacı — KOŞULLU atomik UPDATE (2026-09-29, D-14). Eskiden okunan varlığın tamamı kaydediliyordu: kilitsiz
+     * {@code evaluate} ile kilitli {@code lifecycleSweep} yarışırsa çözülmüş fırtına {@code resolved=false} ile geri
+     * yazılabiliyor, ikinci toplu çözüm postası gidebiliyordu.
+     */
     private void bumpMemberCount(AlertStorm storm) {
-        int c = storm.getMemberCount() != null ? storm.getMemberCount() : 0;
-        storm.setMemberCount(c + 1);
-        stormRepo.save(storm);
+        try {
+            jdbcTemplate.update("UPDATE alert_storms SET member_count = COALESCE(member_count, 0) + 1 "
+                    + "WHERE id = ? AND resolved = false", storm.getId());
+        } catch (Exception e) {
+            log.debug("Storm #{} üye sayacı güncellenemedi: {}", storm.getId(), e.getMessage());
+        }
     }
 
     private String commonRootCause(List<AlertEvent> peers) {
@@ -473,13 +684,7 @@ public class StormService {
     private void sendStormAlert(AlertStorm storm, List<AlertEvent> downMembers, String trigger) {
         try {
             List<TeamDispatch> dispatches = resolveDispatches(downMembers);
-            String scopeLabel = scopeLabel(storm);
-            String rootCauseLabel = rootCauseLabel(storm.getRootCause());
             String prefix = "DAILY_REALERT".equals(trigger) ? "[RE-ALERT] " : "";
-            String subject = prefix + "[Site Monitor 🌩 ALARM FIRTINASI] "
-                    + downMembers.size() + " monitör birden erişilemez"
-                    + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
-            String whText = downMembers.size() + " monitör birden erişilemez (" + scopeLabel + "). Kök-neden: " + rootCauseLabel + ".";
 
             Set<String> teamNames = new LinkedHashSet<>();
             Map<String, String> sentWebhooks = new LinkedHashMap<>();
@@ -487,20 +692,26 @@ public class StormService {
 
             for (TeamDispatch d : dispatches) {
                 if (d.teamName() != null) teamNames.add(d.teamName());
-                // Listeler TAKIMA ÖZEL: her takım yalnız kendi monitörlerini görür. Toplam sayı
-                // (hesap geneli) başlıkta kalır — sızıntı host ADLARINDAYDI, sayıda değil.
+                // TAKIM YALITIMI (2026-09-29): sayı, kapsam etiketi, kök-neden ve liste YALNIZ bu takımın üyelerinden.
+                // Eskiden sayı hesap geneliydi ve etiket "Tüm monitörler"di: bir üyesi olan her takım kuruluşun toplam
+                // arızasını kendi krizi sanıyordu (prod push'u: "15 monitör birden erişilemez - Tüm monitörler").
+                // "+ N monitör daha" da takımın kendi üyelerinden (B6).
+                int count = d.members().size();
+                String label = dispatchLabel(d, storm);
+                String rootCauseLabel = rootCauseLabel(commonRootCause(d.members()));
+                String subject = prefix + "[Site Monitor 🌩 ALARM FIRTINASI] " + count + " monitör birden erişilemez — " + label;
+                String whText = count + " monitör birden erişilemez (" + label + "). Kök-neden: " + rootCauseLabel + ".";
                 List<String> targets = sampleTargets(d.members());
-                // "+ N monitör daha" TAKIMIN KENDİ üyelerinden türer. Hesap-geneli sayıdan
-                // türetilince tek monitörü düşmüş bir takımın maili "a.example ... ve 39 monitör
-                // daha" diyordu; okuyan bunu kendi 39 monitörü sanıp gereksiz kriz başlatıyordu.
-                // Hesap-geneli toplam başlıkta/konuda kalır (yukarıdaki not).
-                int extra = Math.max(0, d.members().size() - targets.size());
+                int extra = Math.max(0, count - targets.size());
+                // D-c7 (2026-09-29): fırtına seviyesi = takımın üyelerinin EN YÜKSEK seviyesi — push ({@link #stormPushLevel})
+                // ile aynı kural ve tek sözlük; e-posta rozeti ve webhook eskiden sabit "KRİTİK"/"CRITICAL"di.
+                String level = stormPushLevel(d.members());
 
                 if (!d.emails().isEmpty()) {
                     String html = emailService.buildStormAlertHtml(
-                            downMembers.size(), scopeLabel, rootCauseLabel, storm.getCreatedAt(), targets, extra);
+                            count, label, rootCauseLabel, storm.getCreatedAt(), targets, extra, level);
                     String text = emailService.buildStormAlertText(
-                            downMembers.size(), scopeLabel, rootCauseLabel, storm.getCreatedAt(), targets, extra);
+                            count, label, rootCauseLabel, storm.getCreatedAt(), targets, extra, level);
                     emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                     anyEmail = true;
                 }
@@ -508,13 +719,12 @@ public class StormService {
                 // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz. Kanal kapıları
                 // (takım/tür/izleme bayrağı/sessiz saat/tekrar ayarı) ve günlük tekrar anahtarı UserPushService'te.
                 enqueueStormPush(storm, d, trigger,
-                        downMembers.size() + " monitör birden erişilemez — " + scopeLabel
-                                + " · kök-neden: " + rootCauseLabel);
+                        count + " monitör birden erişilemez — " + label + " · kök-neden: " + rootCauseLabel);
 
                 // Webhook (Teams/Slack) — URL bazında dedup: aynı kanal iki kez mesaj almasın.
                 for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
                     if (sentWebhooks.putIfAbsent(w.getKey(), w.getValue()) != null) continue;
-                    try { webhookService.send(w.getValue(), w.getKey(), subject, whText, "CRITICAL"); }
+                    try { webhookService.send(w.getValue(), w.getKey(), subject, whText, level); }
                     catch (Exception ex) {
                         // Fırtına en kritik olaydır; teslim hatası DEBUG'da (prod=INFO) hiçbir yere
                         // yazılmıyordu. Adres maskelenir — webhook URL'inin kendisi kimlik bilgisidir.
@@ -525,9 +735,10 @@ public class StormService {
             }
             if (!anyEmail) log.warn("Storm #{} toplu alarm — alıcı yok, e-posta atlandı", storm.getId());
 
-            // 7/24: takım e-postalarından BAĞIMSIZ; fırtına başına tek NOC e-postası (tekilleştirme serviste).
+            // 7/24: takım e-postalarından BAĞIMSIZ; fırtına başına tek NOC e-postası (tekilleştirme serviste). Yalnız
+            // izlemede açık onay (noc_notify) verilmiş üyeler — takım yalıtımında fırtına zaten tek takımın kümesidir.
             if (nocNotifications != null) {
-                try { nocNotifications.onStormDispatched(storm, downMembers, scopeLabel, rootCauseLabel); }
+                try { nocNotifications.onStormDispatched(storm, downMembers, scopeLabel(storm), rootCauseLabel(storm.getRootCause())); }
                 catch (Exception ex) { log.warn("Storm #{} 7/24 bildirimi atlandı: {}", storm.getId(), ex.toString()); }
             }
 
@@ -541,11 +752,24 @@ public class StormService {
     }
 
     /**
-     * Fırtına push seviyesi — açılış, tekrar ve ÇÖZÜM aynı seviyede (2026-09-28). Çözüm eskiden "INFO" gidiyordu;
-     * push alıcıları seviyeyle çözüldüğünden asgari seviyesi INFO'nun üstündeki gruplar "N monitör düştü"yü alıp
-     * "düzeldi"yi hiç almıyordu (çözüm alıcıları artık açılışı alanlardır — UserPushService.enqueueStormNotice).
+     * Fırtına push seviyesi = takımın fırtına üyelerinin EN YÜKSEK alarm seviyesi (2026-09-29; eskiden sabit CRITICAL).
+     *
+     * <p>Push alıcıları seviyeyle çözülür (rol grubu asgari seviyesi: Yönetici HIGH+, Bölüm Başkanı / C-Level CRITICAL).
+     * İzleme alarmları varsayılan WARNING açılır; fırtına sabit CRITICAL gidince bireysel alarmı HİÇ almayacak kademeler
+     * de fırtına push'unu alıyordu — prod olayında 15 WARNING sentetik arıza takımların tüm kademelerine push oldu.
+     * Fırtına yalnız BİLDİRİMİ gruplar; kitlesi bireysel alarmlarınkinden geniş olamaz. Açılış, tekrar ve çözüm aynı
+     * kuralla (2026-09-28 simetrisi korunur; çözüm alıcıları zaten açılışı alanlardır — resolvePrior).
      */
-    static final String STORM_PUSH_LEVEL = "CRITICAL";
+    public static String stormPushLevel(List<AlertEvent> members) {
+        int rank = 0;
+        if (members != null) {
+            for (AlertEvent m : members) {
+                String lvl = m == null || m.getAlertLevel() == null ? null : m.getAlertLevel().toUpperCase(java.util.Locale.ROOT);
+                rank = Math.max(rank, UserPushRecipientResolver.levelValue(lvl));
+            }
+        }
+        return rank >= 3 ? "CRITICAL" : rank == 2 ? "HIGH" : "WARNING";
+    }
 
     /**
      * Fırtına push'u — teslim hatası bildirimin geri kalanını ASLA düşürmesin.
@@ -558,23 +782,33 @@ public class StormService {
     private void enqueueStormPush(AlertStorm storm, TeamDispatch d, String stormTrigger, String message) {
         if (userPushService == null || d.teamId() == null || d.pushMembers().isEmpty()) return;
         try {
-            userPushService.enqueueStormNotice(storm.getId(), d.teamId(), stormTrigger, STORM_PUSH_LEVEL,
-                    d.pushMembers(), message);
+            if (storm.getLegacyStormId() == null)
+                userPushService.enqueueStormNotice(storm.getId(), d.teamId(), stormTrigger, stormPushLevel(d.pushMembers()),
+                        d.pushMembers(), message);
+            else   // O-3 sessiz taşıma: açılış push'u eski fırtınayla gitti — çözüm onun alıcılarını da sayar (D-b6)
+                userPushService.enqueueStormNotice(storm.getId(), storm.getLegacyStormId(), d.teamId(), stormTrigger,
+                        stormPushLevel(d.pushMembers()), d.pushMembers(), message);
         } catch (Exception e) {
             log.warn("Storm push'u gönderilemedi (takım {}): {}", d.teamId(), e.toString());
         }
     }
 
-    private void sendStormRecovery(AlertStorm storm, List<AlertEvent> recovered, List<AlertEvent> stillDown) {
+    private void sendStormRecovery(AlertStorm storm, List<AlertEvent> recoveredIn, List<AlertEvent> stillDown) {
+        // O-b2 (2026-09-29): SESSİZ kapanan üye (izleme silindi / duraklatıldı / türün bildirimleri kapatıldı / envanter
+        // pasif) KURTULMADI, susturuldu — toplu "N monitör kurtarıldı" e-postası/push'u/webhook'u/7-24 çözümü ONU saymaz.
+        // Tek giriş noktası: resolveStorm, disband ve eski fırtınanın emekliye ayrılması buradan geçer. Kurtulan üyelerin
+        // TAMAMI sessiz kapandıysa fırtına bildirimsiz kapanır.
+        List<AlertEvent> recovered = recoveredIn.stream().filter(e -> !Boolean.TRUE.equals(e.getResolvedSilently())).toList();
+        if (recovered.isEmpty()) {
+            log.info("🌩 Storm #{}: kurtulan üyelerin tamamı sessiz kapandı ({} üye) — toplu çözüm bildirimi gönderilmedi",
+                    storm.getId(), recoveredIn.size());
+            return;
+        }
         try {
             // Recovery alıcıları = tüm etkilenen üyeler (kurtulan + hâlâ-down) → herkes durumu görsün.
             List<AlertEvent> all = new ArrayList<>(recovered);
             all.addAll(stillDown);
             List<TeamDispatch> dispatches = resolveDispatches(all);
-            String scopeLabel = scopeLabel(storm);
-            String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
-                    + recovered.size() + " monitör kurtarıldı"
-                    + ("ACCOUNT".equalsIgnoreCase(storm.getScopeType()) ? "" : " — " + scopeLabel);
 
             Set<Long> recoveredIds = new java.util.HashSet<>();
             for (AlertEvent e : recovered) if (e.getId() != null) recoveredIds.add(e.getId());
@@ -588,6 +822,13 @@ public class StormService {
                     if (m.getId() != null && recoveredIds.contains(m.getId())) mineRecovered.add(m);
                     else mineStillDown.add(m);
                 }
+                // TAKIM YALITIMI (2026-09-29): hiçbir üyesi kurtulmamış takıma "fırtına sona erdi" gitmez — eskiden
+                // hesap geneli "N monitör kurtarıldı" sayısıyla gidiyordu. Hâlâ-down üyeleri fırtınadan çözülür ve
+                // bireysel alarm hattına döner (hiçbir şey sessizce kaybolmaz).
+                if (mineRecovered.isEmpty()) continue;
+                String scopeLabel = dispatchLabel(d, storm);
+                String subject = "[Site Monitor ✅ ÇÖZÜLDÜ] Alarm fırtınası sona erdi — "
+                        + mineRecovered.size() + " monitör kurtarıldı — " + scopeLabel;
                 List<String> targets = sampleTargets(mineRecovered);
                 int extra = Math.max(0, mineRecovered.size() - targets.size());   // takım kapsamlı (bkz. alarm yolu)
                 // Hâlâ-down üyeler ADLARIYLA listelenir: eskiden yalnız sayı ("2 hâlâ izlemede")
@@ -599,22 +840,22 @@ public class StormService {
                     // webhook partı (aşağıda) zaten mineStillDown kullanıyordu — e-posta hesap
                     // geneli sayı geçtiği için aynı olay iki kanalda farklı rakam veriyordu.
                     String html = emailService.buildStormRecoveryHtml(
-                            recovered.size(), mineStillDown.size(), scopeLabel,
+                            mineRecovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
                     String text = emailService.buildStormRecoveryText(
-                            recovered.size(), mineStillDown.size(), scopeLabel,
+                            mineRecovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
                     emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                 }
 
                 enqueueStormPush(storm, d, "RESOLVE",
-                        recovered.size() + " monitör kurtarıldı — " + scopeLabel
+                        mineRecovered.size() + " monitör kurtarıldı — " + scopeLabel
                                 + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()));
 
                 // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
                 // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
                 // hiç almıyordu. Kanal, olayın yalnız yarısını anlatıyordu.
-                String whText = recovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
+                String whText = mineRecovered.size() + " monitör kurtarıldı (" + scopeLabel + ")."
                         + (mineStillDown.isEmpty() ? "" : " Hâlâ erişilemeyen: " + mineStillDown.size()
                             + " (" + String.join(", ", stillDownTargets) + ").");
                 for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
@@ -783,9 +1024,55 @@ public class StormService {
         return out;
     }
 
+    /**
+     * Fırtınanın kapsam etiketi (7/24 postası) — sahibi takımın ADI (+ grup kipinde grup). "Tüm monitörler" YOK
+     * (2026-09-29). Eski (takımsız) kapsam yalnız dağıtılırken görülür.
+     */
     private String scopeLabel(AlertStorm storm) {
-        if ("ACCOUNT".equalsIgnoreCase(storm.getScopeType())) return "Tüm monitörler";
-        return UNGROUPED.equals(storm.getScopeKey()) ? "Grupsuz" : storm.getScopeKey();
+        Long teamId = teamOfScope(storm.getScopeKey());
+        if (teamId == null) return "Eski fırtına kapsamı (" + storm.getScopeKey() + ")";
+        String team = teamRepo.findById(teamId).map(t -> t.getName())
+                .filter(n -> n != null && !n.isBlank()).map(String::trim).orElse("Takım #" + teamId);
+        String group = groupOfScope(storm.getScopeKey());
+        return group == null ? team : team + " · " + (UNGROUPED.equals(group) ? "Grupsuz" : group);
+    }
+
+    /** Bir takım dağıtımının kapsam etiketi — O takımın adı (+ grup kipinde üyelerin grubu). Başka takımın adı YOK. */
+    private static String dispatchLabel(TeamDispatch d, AlertStorm storm) {
+        String team = d.teamName() != null ? d.teamName() : "Takım #" + d.teamId();
+        if (!SCOPE_TYPE_TEAM_GROUP.equals(storm.getScopeType())) return team;
+        for (AlertEvent m : d.members()) {
+            String g = m.getGroupName();
+            if (g != null && !g.isBlank()) return team + " · " + (UNGROUPED.equals(g) ? "Grupsuz" : g);
+        }
+        return team;
+    }
+
+    /** Takım kapsamlı anahtar; kolon (200) taşarsa kırpılır + özet eklenir (aynı grup her zaman aynı anahtar). */
+    static String teamScopeKey(Long teamId, String group) {
+        String key = TEAM_SCOPE_PREFIX + teamId + (group != null ? GROUP_SCOPE_SEP + group : "");
+        if (key.length() <= SCOPE_KEY_MAX) return key;
+        String digest = Integer.toHexString(key.hashCode());
+        return key.substring(0, SCOPE_KEY_MAX - digest.length() - 1) + "#" + digest;
+    }
+
+    /** Anahtardaki takım kimliği; eski (ACCOUNT / takımsız grup) anahtarda null. */
+    static Long teamOfScope(String scopeKey) {
+        if (scopeKey == null || !scopeKey.startsWith(TEAM_SCOPE_PREFIX)) return null;
+        int i = TEAM_SCOPE_PREFIX.length(), j = i;
+        while (j < scopeKey.length() && Character.isDigit(scopeKey.charAt(j))) j++;
+        if (j == i) return null;
+        try { return Long.valueOf(scopeKey.substring(i, j)); } catch (NumberFormatException e) { return null; }
+    }
+
+    private static String groupOfScope(String scopeKey) {
+        int at = scopeKey == null ? -1 : scopeKey.indexOf(GROUP_SCOPE_SEP);
+        return at < 0 ? null : scopeKey.substring(at + GROUP_SCOPE_SEP.length());
+    }
+
+    /** Takım kapsamlı (2026-09-29 sonrası) fırtına mı — değilse yaşam döngüsü onu dağıtır. */
+    static boolean isTeamScoped(AlertStorm storm) {
+        return storm != null && teamOfScope(storm.getScopeKey()) != null;
     }
 
     /**

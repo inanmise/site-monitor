@@ -10,8 +10,10 @@ import lombok.NoArgsConstructor;
  * altındaki incident'ler (AlertEvent) per-monitör kaydedilmeye devam eder (geçmiş/uptime etkilenmez);
  * bağ {@code AlertEvent.stormId} ile kurulur ("storm X'in parçası").
  *
- * Scope: account-wide (scopeKey="ACCOUNT") ya da monitör grubu (scopeKey=grup adı) — ayardaki
- * "Alert storm based on monitor groups" toggle'ı belirler. Aynı scope için AYNI ANDA en fazla bir
+ * Scope (2026-09-29, takım yalıtımı): TAKIM ({@code scopeKey="TEAM:<takımId>"}) ya da takımın monitör grubu
+ * ({@code "TEAM:<takımId>|GROUP:<grup>"}) — ayardaki "Alert storm based on monitor groups" toggle'ı grubu belirler.
+ * Eski kuruluş geneli ("ACCOUNT") / takımsız grup kapsamı artık üretilmez; aktif kalanı StormService dağıtır.
+ * Aynı scope için AYNI ANDA en fazla bir
  * aktif (resolved=false) storm olabilir; bu, {@code ux_alert_storms_active} kısmi UNIQUE indeksiyle
  * (scope_key WHERE resolved=false) DB seviyesinde garanti edilir → eşzamanlı terfi denemeleri
  * INSERT … ON CONFLICT ile tek kazanana düşer (idempotent, çift alarm yok).
@@ -35,11 +37,11 @@ public class AlertStorm {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** "ACCOUNT" (account-wide) veya monitör grubu adı (per-group modda). */
+    /** "TEAM:<takımId>" ya da "TEAM:<takımId>|GROUP:<grup>" (2026-09-29); eski kayıtlarda "ACCOUNT" / grup adı. */
     @Column(nullable = false)
     private String scopeKey;
 
-    /** ACCOUNT | GROUP */
+    /** TEAM | TEAM_GROUP (eski kayıtlarda ACCOUNT | GROUP) */
     private String scopeType;
 
     @Column(nullable = false)
@@ -63,4 +65,12 @@ public class AlertStorm {
 
     /** Son toplu (aggregate) bildirim anı — günlük re-alert kadansı için (aynı-UTC-gün kuralı). */
     private String lastReAlertAt;
+
+    /**
+     * Üyeleri eski (kuruluş geneli) fırtınadan SESSİZCE taşınarak kurulan takım fırtınasında o eski fırtınanın kimliği
+     * (2026-09-29, O-3 geçişi); diğerlerinde null. Takım bu üyelerin açılış push'unu / 7-24 postasını ESKİ fırtınayla
+     * aldı: çözüm push'unun "önceden alanlar" listesi ve 7/24 açılış kaydı eski kimliği de sayar (yeniden açılış yok,
+     * "düştü"yü alan "düzeldi"yi de alır).
+     */
+    private Long legacyStormId;
 }

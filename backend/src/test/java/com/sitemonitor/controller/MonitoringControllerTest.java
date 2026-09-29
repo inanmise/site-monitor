@@ -1580,8 +1580,8 @@ class MonitoringControllerTest {
     @DisplayName("normalizeMonitorName: URL → host; serbest metin dokunulmaz; trim uygulanır")
     void normalizeMonitorName_urlToHost_freeTextKept() {
         org.assertj.core.api.Assertions.assertThat(
-                MonitoringController.normalizeMonitorName("https://www.wingscard.com.tr/"))
-                .isEqualTo("www.wingscard.com.tr");
+                MonitoringController.normalizeMonitorName("https://www.kurum-a.example.com/"))
+                .isEqualTo("www.kurum-a.example.com");
         org.assertj.core.api.Assertions.assertThat(
                 MonitoringController.normalizeMonitorName("http://x.example.com/path?q=1"))
                 .isEqualTo("x.example.com");
@@ -1789,7 +1789,7 @@ class MonitoringControllerTest {
     }
 
     // ── Şemasız URL sahte alarmı (2026-08-04) — giriş normalizasyonu ──
-    // "www.axess.com.tr" kaydedilebiliyordu; kontrol motoru host çıkaramadığı için sonuç DOWN oluyor
+    // "www.kurum-b.example.com" kaydedilebiliyordu; kontrol motoru host çıkaramadığı için sonuç DOWN oluyor
     // ve takıma KRİTİK "sayfa yüklenemiyor" e-postası gidiyordu. Artık girişte https:// ekleniyor.
 
     @Test
@@ -1801,23 +1801,23 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"  www.axess.com.tr  \",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"  www.kurum-b.example.com  \",\"teamId\":1}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
+                .andExpect(jsonPath("$.data.url").value("https://www.kurum-b.example.com"));
 
         org.mockito.ArgumentCaptor<com.sitemonitor.model.PageMonitor> cap =
                 org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PageMonitor.class);
         verify(pageMonitorRepo).save(cap.capture());
-        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUrl()).isEqualTo("https://www.axess.com.tr");
+        org.assertj.core.api.Assertions.assertThat(cap.getValue().getUrl()).isEqualTo("https://www.kurum-b.example.com");
     }
 
     @Test
     @DisplayName("POST /page: mükerrer kontrolü NORMALİZE edilmiş URL ile yapılır → 400, kayıt yok")
     void createPage_duplicateAfterNormalize_returns400() throws Exception {
-        when(pageMonitorRepo.existsDuplicate(eq("https://www.axess.com.tr"), any(), any())).thenReturn(true);
+        when(pageMonitorRepo.existsDuplicate(eq("https://www.kurum-b.example.com"), any(), any())).thenReturn(true);
         mvc.perform(post("/api/monitoring/page").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.axess.com.tr\",\"teamId\":1}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.kurum-b.example.com\",\"teamId\":1}"))
                 .andExpect(status().isBadRequest());
         verify(pageMonitorRepo, never()).save(any());
     }
@@ -1842,9 +1842,9 @@ class MonitoringControllerTest {
 
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.axess.com.tr\",\"teamId\":3}"))
+                        .content("{\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"www.kurum-b.example.com\",\"teamId\":3}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.url").value("https://www.axess.com.tr"));
+                .andExpect(jsonPath("$.data.url").value("https://www.kurum-b.example.com"));
 
         // İç servis 443'te olmayabilir → kullanıcının açık http:// tercihi asla https'e taşınmaz.
         mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
@@ -1882,10 +1882,10 @@ class MonitoringControllerTest {
                         "OK", true, 200, 12L, 3, 0, 0, 0, 1, null, null, null, List.of()));
         mvc.perform(post("/api/monitoring/page/test").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"url\":\"www.axess.com.tr\"}"))
+                        .content("{\"url\":\"www.kurum-b.example.com\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.via").value("direct"));   // vekil bileşeni test bağlamında yok → doğrudan
-        verify(pageChecker).test(eq("https://www.axess.com.tr"), org.mockito.ArgumentMatchers.anyInt(), eq(false));
+        verify(pageChecker).test(eq("https://www.kurum-b.example.com"), org.mockito.ArgumentMatchers.anyInt(), eq(false));
     }
 
     // ═══════════ Kontrol Geçmişi v2 — kontrat + izolasyon + clamp + CSV ═══════════
@@ -4064,7 +4064,8 @@ class MonitoringControllerTest {
                 .content("{\"active\":false}"))
                 .andExpect(status().isOk());
 
-        verify(escalationService).resolveOpenAlertsSilently(eq("https://pause.example.com/"), anySet(), contains("duraklat"));
+        verify(escalationService).resolveOpenAlertsSilently(eq("https://pause.example.com/"), anySet(), contains("duraklat"),
+                argThat(c -> c != null && Long.valueOf(1L).equals(c.get("monitor_id"))));   // D-b1: yalnız bu izlemenin olayı
     }
 
     @Test
@@ -4080,7 +4081,7 @@ class MonitoringControllerTest {
                 .content("{\"active\":true}"))
                 .andExpect(status().isOk());
 
-        verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any());
+        verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any(), any());
     }
 
     @Test
@@ -4349,16 +4350,19 @@ class MonitoringControllerTest {
     }
 
     @Test
-    @DisplayName("POST /domain/{id}/check: elle kontrol de hatırlatma değerlendirmesini tetikler")
-    void domainCheck_evaluatesReminders() throws Exception {
+    @DisplayName("POST /domain/{id}/check: elle kontrol eşik HATIRLATMASINI TETİKLEMEZ (2026-09-29; hatırlatma zamanlanmış turun işi)")
+    void domainCheck_doesNotEvaluateReminders() throws Exception {
         com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
         m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(1L); m.setActive(true);
         when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
         java.util.Map<String, Object> r = new java.util.HashMap<>(java.util.Map.of("status", "OK", "days_remaining", 12, "expiry_date", "2026-10-04T00:00:00Z"));
-        when(domainChecker.check(any())).thenReturn(r);
+        when(domainChecker.checkManual(any())).thenReturn(r);
 
         mvc.perform(post("/api/monitoring/domain/7/check").session(session("ADMIN"))).andExpect(status().isOk());
-        verify(domainReminders).evaluate(eq(m), eq(r));
+        // K-1: elle yol ELLE kontrol çağırır (manual=true satır) — zamanlanmış tabanı tüketen check() DEĞİL.
+        verify(domainChecker, never()).check(any());
+        verify(domainReminders, never()).evaluate(any(), any());
+        verify(schedulerService).evaluateDomainAlarmsNow(eq(m), eq(r));   // elle değerlendirme (yalnız kapanış) yine koşar
     }
 
     // ── Yenileme planı (2026-09-22, madde H) ──────────────────────────────────────────
@@ -4757,5 +4761,122 @@ class MonitoringControllerTest {
         mvc.perform(get("/api/monitoring/confirmations").session(sessionScoped(5L)))
                 .andExpect(status().isOk());
         verify(alertKeyOwnership, never()).viewerTeams(any());
+    }
+
+    // ══ Elle kontrol kapsamı (2026-09-29 prod olayı): liste satırının can_check bayrağı ═══════════════════════
+
+    private static com.sitemonitor.model.HttpMonitor httpMon(long id, long teamId) {
+        com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(id); m.setName("İzleme " + id); m.setUrl("https://h" + id + ".example.com"); m.setTeamId(teamId); m.setActive(true);
+        return m;
+    }
+
+    @Test
+    @DisplayName("Liste can_check: tetik ucunun kapısıyla AYNI kural — kapsamlı müdür yönettiği takımda true, gördüğü ama yönetmediği takımda false (ve o satırın tetiği 403)")
+    void listHttp_canCheckMirrorsTriggerGate_scopedAdmin() throws Exception {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L)));
+        when(httpMonitorRepo.findById(2L)).thenReturn(java.util.Optional.of(httpMon(2L, 3L)));
+        MockHttpSession mudur = session("ADMIN");                      // AD müdürü: rol ADMIN ama takım kapsamlı
+        mudur.setAttribute("viewTeamIds", List.of(2L, 3L));
+        mudur.setAttribute("manageTeamIds", List.of(2L));
+        mudur.setAttribute("teamId", 2L);
+
+        mvc.perform(get("/api/monitoring/http").session(mudur))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[1].can_check").value(false));
+        // Bayrak ile uç ayrışmaz: false işaretli satırın elle kontrolü sunucuda da reddedilir.
+        mvc.perform(post("/api/monitoring/http/2/check").session(mudur))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("Liste can_check: global yönetici her satırda true; salt okur (AUDIT) her satırda false")
+    void listHttp_canCheck_globalAdminAndAuditor() throws Exception {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L)));
+        mvc.perform(get("/api/monitoring/http").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[1].can_check").value(true));
+        mvc.perform(get("/api/monitoring/http").session(session("AUDIT")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(false))
+                .andExpect(jsonPath("$.data[1].can_check").value(false));
+    }
+
+    @Test
+    @DisplayName("Q4: POST /dns/{id}/check elle kaydı manual=true işaretler — zamanlanmış değişiklik tabanı olmaz")
+    void triggerDns_marksRecordManual() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(9L); m.setDomain("d.example.com"); m.setRecordType("A"); m.setTeamId(1L); m.setStandalone(true); m.setActive(true);
+        when(dnsMonitorRepo.findById(9L)).thenReturn(Optional.of(m));
+        when(dnsChecker.check("d.example.com", "A")).thenReturn(java.util.Map.of("success", true, "values", List.of("1.2.3.4")));
+        when(dnsRecordRepo.save(any(com.sitemonitor.model.DnsRecord.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/dns/9/check").session(session("ADMIN"))).andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        org.assertj.core.api.Assertions.assertThat(rec.getValue().getManual()).isTrue();
+    }
+
+    @Test
+    @DisplayName("K-1: Kayıt sekmesi live=true canlı sorgusu ELLE kontrol yapar (manual=true) — zamanlanmış tabanı tüketmez; live=false hiç sorgulamaz")
+    void domainRegistration_liveUsesManualCheck() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(8L); m.setDomain("b.example.com"); m.setTeamId(1L); m.setActive(true);
+        when(domainMonitorRepo.findById(8L)).thenReturn(Optional.of(m));
+        when(domainChecker.checkManual(any())).thenReturn(new java.util.HashMap<>(java.util.Map.of("status", "OK")));
+
+        mvc.perform(get("/api/monitoring/domain/8/registration").session(session("ADMIN"))).andExpect(status().isOk());
+        verify(domainChecker, never()).checkManual(any());
+        verify(domainChecker, never()).check(any());
+
+        mvc.perform(get("/api/monitoring/domain/8/registration").param("live", "true").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        verify(domainChecker).checkManual(m);
+        verify(domainChecker, never()).check(any());
+    }
+
+    @Test
+    @DisplayName("D-9: elle DNS kontrolü değişiklik görse de kalıcı satır DEĞİŞİKLİK OLAYI sayılmaz (changed/rotated=false, önceki değer kalır); yanıt gördüğünü söyler")
+    void triggerDns_manualRowIsNotAChangeEvent() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(10L); m.setDomain("c.example.com"); m.setRecordType("A"); m.setTeamId(1L); m.setStandalone(true); m.setActive(true);
+        when(dnsMonitorRepo.findById(10L)).thenReturn(Optional.of(m));
+        com.sitemonitor.model.DnsRecord prev = new com.sitemonitor.model.DnsRecord();
+        prev.setValue("5.6.7.8");
+        when(dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(10L, "")).thenReturn(Optional.of(prev));
+        when(dnsChecker.check("c.example.com", "A")).thenReturn(java.util.Map.of("success", true, "values", List.of("1.2.3.4")));
+        when(dnsRecordRepo.save(any(com.sitemonitor.model.DnsRecord.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/dns/10/check").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changed").value(true));
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        org.assertj.core.api.Assertions.assertThat(rec.getValue().getChanged()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(rec.getValue().getRotated()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(rec.getValue().getPreviousValue()).isEqualTo("5.6.7.8");
+    }
+
+    @Test
+    @DisplayName("D-10: elle k6 kotası doluysa POST /scripted/{id}/check skipped + skipped_code=MANUAL_POOL_BUSY döner (arayüz kendi dilinde söyler)")
+    void triggerScripted_manualPoolBusy_hasCode() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(21L); m.setName("Senaryo A"); m.setTeamId(1L); m.setActive(true);
+        when(scriptedMonitorRepo.findById(21L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> r = new java.util.HashMap<>();
+        r.put("skipped", true);
+        r.put("error", com.sitemonitor.service.ScriptedCheckerService.MANUAL_POOL_BUSY);
+        when(schedulerService.triggerScriptedCheckAsync(any())).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(r));
+
+        mvc.perform(post("/api/monitoring/scripted/21/check").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.skipped").value(true))
+                .andExpect(jsonPath("$.data.skipped_code").value("MANUAL_POOL_BUSY"));
     }
 }

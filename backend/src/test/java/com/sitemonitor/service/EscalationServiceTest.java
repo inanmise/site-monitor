@@ -1275,7 +1275,7 @@ class EscalationServiceTest {
 
         // Mail yalnız takım/UYARI alıcısına; müdür alıcı listesinde yok, seviye UYARI
         ArgumentCaptor<String[]> toCap = ArgumentCaptor.forClass(String[].class);
-        verify(emailService).sendAlert(toCap.capture(), contains("[Site Monitor] ORTA · " + domain), anyString(),
+        verify(emailService).sendAlert(toCap.capture(), contains("[Site Monitor] UYARI · " + domain), anyString(),
                 eq(domain), eq("WARNING"), eq("EXPIRY"), isNull(), any());
         assertThat(toCap.getValue()).containsExactly("takim@test.com");
         assertThat(toCap.getValue()).doesNotContain("mudur@test.com");
@@ -2379,16 +2379,41 @@ class EscalationServiceTest {
         when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
                 .thenReturn(List.of());
         when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        // D-b17: sessiz küme yalnız turun toplu haritasında AÇIK olan tür için sorgulanır — burada UNTRUSTED_CA açık.
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(existingOpenAlert(domain, EscalationService.TYPE_UNTRUSTED_CA, "WARNING", false)));
 
         service.processResults(List.of(insecureAndExpiringResult(domain)));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Collection<String>> types = ArgumentCaptor.forClass(Collection.class);
-        verify(alertEventRepo).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), types.capture());
+        // D-7 (2026-09-29): güvenilmeyen-CA bayrağı DURUYOR ama alarmı ayarda kapalı (varsayılan) → o tür SESSİZ kapanış
+        // kümesinde, kalanlar normal çözüm kümesinde — iki sorgu.
+        verify(alertEventRepo, times(2)).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), types.capture());
+        java.util.Set<String> all = new java.util.HashSet<>();
+        types.getAllValues().forEach(all::addAll);
         // Üretilen iki tip kapatma kümesinde OLMAMALI; kalan cert tipleri kapatılmalı.
-        assertThat(types.getValue())
+        assertThat(all)
                 .doesNotContain(EscalationService.TYPE_HOSTNAME_MISMATCH, "EXPIRY")
                 .contains("REVOKED", "CHAIN_BROKEN", "MISMATCH", EscalationService.TYPE_UNTRUSTED_CA);
+        assertThat(types.getAllValues()).as("ayardan kapalı tür ayrı (sessiz) kümede")
+                .anySatisfy(c -> assertThat(c).containsExactly(EscalationService.TYPE_UNTRUSTED_CA));
+    }
+
+    @Test
+    @DisplayName("D-b17: ayardan kapalı türün AÇIK alarmı yoksa ikinci (sessiz) kapanış sorgusu ATILMAZ — alan adı başına tek sorgu")
+    void staleQuietType_withoutOpenAlarm_noExtraQuery() {
+        String domain = "guvensiz-ic-host.example.com";
+        when(alertEventRepo.findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), anyCollection()))
+                .thenReturn(List.of());
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        service.processResults(List.of(insecureAndExpiringResult(domain)));   // toplu harita boş (setUp varsayılanı)
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<String>> types = ArgumentCaptor.forClass(Collection.class);
+        verify(alertEventRepo, times(1)).findByDomainAndAlertTypeInAndResolvedFalse(eq(domain), types.capture());
+        assertThat(types.getValue()).doesNotContain(EscalationService.TYPE_UNTRUSTED_CA);
     }
 
     // ── Bulgu 12: süre-DIŞI alarmda "N GÜN KALDI" yazılmaz ────────────────────

@@ -91,8 +91,9 @@ const TD = 'px-3 py-1.5 text-right'
  * @param {Function} nameOf  (row) => string — ilk veri kolonunun metni
  * @param {Function} [errorOf]  (row) => string|null — varsayılan: row.error || row.data?.error
  * @param {Array} columns  [{key, label, thClassName?, tdClassName?: string|(row)=>string, render: (row)=>node}]
+ * @param {import('react').ReactNode} [notice]  özet şeridinin altında koşum geneli bildirim (ör. "havuz dolu → N atlandı")
  */
-export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, columns = [], title, onClose, onCancel }) {
+export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, columns = [], title, notice, onClose, onCancel }) {
   const t = useT()
   const listRef = useRef(null)
   const [now, setNow] = useState(() => Date.now())
@@ -156,6 +157,7 @@ export default function CheckRunShell({ run, nameHeader, nameOf, errorOf, column
         <span className="inline-flex items-center gap-1.5">{t('app.checkSummaryTime', fmtDur(elapsedMs))}</span>
         {run.teamLabel && <span className="ml-auto max-w-[42%] truncate font-semibold">{run.teamLabel}</span>}
       </div>
+      {notice}
 
       {/* Kaydırma bu kapta (ref: akış); shadcn Table'ın kendi kabı taşmayı ona bırakır ki başlık yapışsın. */}
       <div ref={listRef}

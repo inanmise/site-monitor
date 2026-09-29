@@ -29,6 +29,8 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     Optional<CertificateInventory> findFirstByDomainIgnoreCaseOrderByIdAsc(String domain);
     boolean existsByTeamIdAndActiveTrue(Long teamId);
     long countByActiveTrue();
+    /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
+    long countByTeamIdAndActiveTrue(Long teamId);
     /** Sahipsiz (takımsız) aktif alanlar — yapılandırma sağlığı kartı (2026-09-12). */
     long countByActiveTrueAndTeamIdIsNull();
 

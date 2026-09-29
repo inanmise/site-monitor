@@ -534,14 +534,18 @@ Acknowledging an alert stops the daily reminders. It does **not** close the aler
 
 When a lot of monitors fail at once — a shared network segment goes down, say — you do not want an email per monitor. Site Monitor tracks confirmed outages: if there is an active storm for the scope, new alerts join it, and once the threshold is crossed individual notifications are promoted into a single bulk notification. Individual alert records are still written per monitor, so history and uptime percentages are unaffected; only the notification is grouped. When the storm clears, one bulk recovery notice goes out.
 
+**Storms are assessed per team (29 September 2026).** The threshold, the window count and the root cause are worked out only from the monitors of the team that **owns** the alert. The threshold is compared with the number of **different targets** (hosts): the availability, port and DNS alerts of one host count as a single target, and with a percentage threshold at least 3 targets are needed, so a single host failing in a small team is never treated as a storm. The summary notification (email, personal push and webhook) goes to that team alone. Another team's failures are never added to your storm, nor yours to theirs, and there is no organisation-wide "All monitors" storm notification. Each team sees only its own count, name and monitors. A storm push is resolved at the highest alert level among its members, so it never reaches a wider audience than the individual alerts would have (for instance, tiers that only receive critical alerts). An alert with no owning team never joins a storm. The 24/7 Monitoring Team receives a separate summary only for members whose monitor has 24/7 notifications explicitly switched on.
+
+**A manual check never raises an alert or a storm.** "Check now" on the monitor pages (a single monitor, or the bulk "Check Now (N)") only records the result: it won't open a new alert, escalate, re-alert or start a storm, and it doesn't advance an open alert's notification counters. If the result is healthy, an open alert can close under the normal recovery rule (the resolution notice goes only to people who were notified when it opened). If a manual check fails, the alert is raised by the next scheduled check under the usual confirmation rules. A manual check also won't send a domain threshold reminder, won't trip the synthetic monitor anomaly guard (it never switches a monitor off) and doesn't use up change detection for DNS or domain registration data (nameservers, registrar, EPP, DNSSEC): the scheduled check still sees the new value as a change against its own baseline and raises the alert. A domain's Registration tab shows the stored data when it opens; a live lookup only runs when you press "Refresh". A bulk check only covers monitors you're allowed to run; a team-scoped administrator can't run another team's monitors.
+
 The feature is on by default and managed from **Settings → Storm**:
 
 | Setting | What it controls |
 |---|---|
-| Threshold unit | A count, or a percentage of the monitored set |
+| Threshold unit | A count, or a percentage of the team's active monitors |
 | Threshold value | How many simultaneous outages declare a storm |
 | Window (minutes) | How close together outages have to be to count as simultaneous |
-| Per group | Whether storms are evaluated within a monitor group rather than globally |
+| Per group | Whether storms are evaluated within each of a team's monitor groups rather than across all of the team's monitors |
 | Retention (days) | How long closed storm records are kept |
 
 Only "down"-class alert types are counted, so time-based alerts such as expiry warnings never create a storm.
