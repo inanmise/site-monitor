@@ -97,9 +97,13 @@ describe('CheckHistoryTab — isteğe bağlı yuvalar (geriye uyumlu)', () => {
 
   it('renderAbove genişletilmiş ctx alır (eski { preset, range } alanları yerinde — Alan Adı eğilimi)', async () => {
     const got = []
+    // Zarf BIR kez uretilir: envelope() her cagrida Date.now() okur; CI'da yavas render saniye sinirini asinca
+    // ikinci cagrinin `from` degeri 1 sn kayip test titriyordu (2026-09-30).
+    const env = envelope()
+    api.monitoring.getCheckHistory.mockResolvedValue(env)
     render(base({ presets: [7, 30], defaultPreset: 30, renderAbove: (ctx) => { got.push(ctx); return <p>above-{String(ctx.preset)}</p> } }))
     await screen.findByText('above-30')
-    await waitFor(() => expect(got.at(-1).range).toEqual(envelope().data.range))
+    await waitFor(() => expect(got.at(-1).range).toEqual(env.data.range))
     expect(typeof got.at(-1).setCustomRange).toBe('function')
     expect(got.at(-1).presets).toEqual([7, 30])
   })

@@ -67,7 +67,9 @@
 
 /* Dikey kaydırma çubuğu için yer HEP ayrılır (2026-09-30): içerik uzayıp çubuk belirince sayfa genişliği değişmiyor —
    Genel Bakış istatistik paneli (ölçülü sütunlar) ve kart ızgaraları çubuk gelip giderken titremiyor. */
-html { scrollbar-gutter: stable; }
+@media (min-width: 640px) { html { scrollbar-gutter: stable; } }
+/* Telefonda (< 640 px) kapali: mobil tarayicilarda cubuk zaten ustte yuzer (yer kaplamaz); masaustu Chromium'un 390 px
+   emulasyonunda ise sabit oluk (15 px) tam-genislik Sheet/pencereleri daraltiyordu (CI inbox-panel: 375 != 390). */
 
 /* shadcn: Inter (pakete gömülü — kurum ağında dış istek yok), yumuşatılmış yazı */
 body { font-family: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6;
