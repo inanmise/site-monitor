@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.92.0] — 2026-09-30
+
 ### Fixed
 - **Genel Bakış istatistikleri açılırken titreme:** dikey kaydırma çubuğu belirip paneli daraltınca ölçülü sütun tabanı
   yeniden hesaplanıyor, kartlar yeniden akıp çubuğu gizliyor ve döngü titreşiyordu — `html { scrollbar-gutter: stable }` +
@@ -1817,7 +1819,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.91.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.92.0...HEAD
+[20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
 [20.91.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.91.0
 [20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0
 [20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0

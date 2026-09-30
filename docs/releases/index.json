@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-29T15:36:17Z",
+  "generatedAt": "2026-09-30T20:06:05Z",
   "repo": "inanmise/site-monitor",
-  "count": 689,
+  "count": 690,
   "releases": [
+    {
+      "version": "20.92.0",
+      "tag": "v20.92.0",
+      "releasedAt": "2026-09-30T20:05:58Z",
+      "commit": "d90309ad7eec0429fa2fb7a13030f1b8c3eb147b",
+      "prevVersion": "20.91.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d90309ad",
+          "subject": "kaydırma çubuğu oluğu yalnız ≥ 640 px'te (telefon Sheet'i daralmasın) ve CheckHistoryTab slots testindeki saniye kayması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "ae57bf4e",
+          "subject": "fırtınaya devredilen sessiz alarmların izi ve ömür sınırı, İzleme Panosu, menü alarm rozetleri, alan altı form doğrulama ve 29.09 hata taraması düzeltmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.91.0",
       "tag": "v20.91.0",
