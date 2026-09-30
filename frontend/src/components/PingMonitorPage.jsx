@@ -6,6 +6,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
@@ -112,6 +113,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [selected, setSelected] = useState(null)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -252,10 +254,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   function closeEdit() { setModal(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
-    if (!form.host.trim()) return
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      host: !form.host.trim() && t('mon.fieldRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const payload = {
@@ -533,10 +538,10 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       {dupSource && <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>}
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField full label={t('ping.host')} required hint={dupHost ? t('ping.dupHostWarn') : undefined} hintTone="warn">
+        <FormField full label={t('ping.host')} required {...fe.fieldProps('host')} hint={dupHost ? t('ping.dupHostWarn') : undefined} hintTone="warn">
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+              onChange={e => { setForm(f => ({ ...f, host: e.target.value })); fe.clear('host') }} />
           )}
         </FormField>
         <FormField label={t('ping.ipVersion')}>
@@ -551,14 +556,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         <FormField label={t('ping.name')}>
           {({ id }) => <Input id={id} value={form.name} placeholder={form.host} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
         </FormField>
-        <FormField label={t('ping.team')} required>
+        <FormField label={t('ping.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('ping.noTeam')} disabled />}
         </FormField>
-        <FormField label={t('ping.group')} required>
+        <FormField label={t('ping.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('ping.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('ping.noGroup')} />
           )}
@@ -575,8 +580,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
         {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('mon.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
         <FormField label={t('ping.timeout')}>
           {({ id }) => <Input id={id} type="number" value={form.timeoutMs} onChange={e => setForm(f => ({ ...f, timeoutMs: Number(e.target.value) }))} />}

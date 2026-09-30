@@ -147,12 +147,16 @@ public class LdapMembershipService {
             m.put("detail", s != null ? s.getDetail() : null);
             m.put("supported_by_ad", supported);
             m.put("on_resync", locked ? "KEEP_LOCKED" : supported ? "KEEP" : "REMOVE");
+            // Girişte budama AYARA bağlı (A1-D1): ayar kapalıyken LDAP kaynaklı üyelik de KEEP — gerçek girişle
+            // (LdapProvisioningService.applyTeams) aynı dal; eskiden tahmin ayarı okumuyordu.
             m.put("on_login", locked ? "KEEP_LOCKED" : supported ? "KEEP"
                     : !derived.isEmpty() ? "REMOVE"
-                    : UserTeamSource.LDAP_SOURCES.contains(source) ? "REMOVE" : "KEEP");
+                    : UserTeamSource.LDAP_SOURCES.contains(source) && provisioning.pruneUnsupportedTeams() ? "REMOVE" : "KEEP");
             rows.add(m);
         }
         out.put("memberships", rows);
+        // Elle kilitli AD alanları (2026-09-29): "AD ile karşılaştır" bu alanların eşitlemede ATLANACAĞINI söyler.
+        out.put("locked_fields", com.sitemonitor.model.LdapFieldLocks.keys(u.getLockedFields()));
         List<Map<String, Object>> toAdd = new ArrayList<>();
         for (Map<String, Object> d : derivedRows) {
             Object id = d.get("team_id");

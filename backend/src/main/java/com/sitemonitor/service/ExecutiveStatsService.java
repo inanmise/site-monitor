@@ -181,9 +181,17 @@ public class ExecutiveStatsService {
             for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
                 if (!visible(e, canViewTeam, visibleDomains) || e.getCreatedAt() == null || e.getCreatedAt().compareTo(since) < 0) continue;
                 opened++;
-                if (Boolean.TRUE.equals(e.getResolved()) && e.getResolvedAt() != null && e.getResolvedAt().compareTo(since) >= 0) resolved++;
             }
         } catch (Exception e) { log.debug("changes: alarm sorgusu düştü: {}", e.toString()); }
+        // A5 D-3 (2026-09-29): "çözülen" pencerede ÇÖZÜLEN alarmlardır — açılış tarihinden bağımsız (10 gün önce açılıp dün
+        // çözülen alarm sayılır). Sessiz kapanış (D-7: silindi/duraklatıldı/envanter pasif) kurtarma değildir, sayılmaz.
+        try {
+            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
+                if (!visible(e, canViewTeam, visibleDomains) || !Boolean.TRUE.equals(e.getResolved())) continue;
+                if (Boolean.TRUE.equals(e.getResolvedSilently())) continue;
+                resolved++;
+            }
+        } catch (Exception e) { log.debug("changes: çözülen alarm sorgusu düştü: {}", e.toString()); }
         out.put("added", added); out.put("removed", removed); out.put("renewed", renewed);
         out.put("alerts_opened", opened); out.put("alerts_resolved", resolved);
         return out;

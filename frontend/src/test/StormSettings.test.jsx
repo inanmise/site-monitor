@@ -18,7 +18,7 @@ import { api } from '../api/client'
 
 const cfg = {
   enabled: true, threshold_unit: 'COUNT', threshold_value: 5,
-  window_minutes: 5, per_group: false, total_active_monitors: 42, effective_threshold: 5,
+  window_minutes: 5, per_group: false, quiet_minutes: 30, total_active_monitors: 42, effective_threshold: 5,
 }
 
 describe('StormSettings', () => {
@@ -28,7 +28,7 @@ describe('StormSettings', () => {
     api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })
     render(<StormSettings />)
     await waitFor(() => expect(api.monitoring.storm.getSettings).toHaveBeenCalled())
-    const num = await screen.findByRole('spinbutton')       // eşik sayı input'u
+    const num = (await screen.findAllByRole('spinbutton'))[0]   // eşik sayı input'u (ikincisi sessiz pencere, 2026-09-30)
     expect(num).toHaveValue(5)
     const toggles = screen.getAllByRole('switch')            // [enabled, per_group] — shadcn Switch
     expect(toggles[0]).toBeChecked()                         // enabled=true
@@ -43,7 +43,7 @@ describe('StormSettings', () => {
     api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })
     api.monitoring.storm.saveSettings.mockResolvedValue({ success: true, data: cfg })
     const { container } = render(<StormSettings />)
-    await screen.findByRole('spinbutton')
+    await screen.findAllByRole('spinbutton')
     expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).toBeNull()
     fireEvent.click(screen.getAllByRole('switch')[0])
     expect(container.querySelector('[data-slot="alert"][data-tone="warning"]')).not.toBeNull()
@@ -69,11 +69,38 @@ describe('StormSettings', () => {
     ))
   })
 
+  /**
+   * 2026-09-30 (prod olayı): fırtına ömür sınırı — sessiz pencere alanı yüklenir, hazır değer düğmesiyle değişir,
+   * kayda gider; aralık dışı değer (2 dk) sunucuya gitmeden reddedilir.
+   */
+  it('sessiz pencere: yüklenen değer görünür, hazır değer düğmesi payload\'a gider, aralık dışı değer kaydı durdurur', async () => {
+    api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })
+    api.monitoring.storm.saveSettings.mockResolvedValue({ success: true, data: { ...cfg, quiet_minutes: 60 } })
+    render(<StormSettings />)
+    const quiet = await screen.findByRole('spinbutton', { name: /sessiz pencere|quiet window/i })
+    expect(quiet).toHaveValue(30)
+    // Hazır değer 60 dk — aria-pressed ile seçili
+    const preset60 = screen.getByRole('button', { name: /^60 (dk|min)$/ })
+    fireEvent.click(preset60)
+    expect(quiet).toHaveValue(60)
+    expect(preset60).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.storm.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ quiet_minutes: 60 })))
+
+    // Aralık dışı (2 dk): istemci doğrulaması — saveSettings yeniden ÇAĞRILMAZ
+    api.monitoring.storm.saveSettings.mockClear()
+    fireEvent.change(quiet, { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(api.monitoring.storm.saveSettings).not.toHaveBeenCalled()
+  })
+
   it('boş durumda API hatası toast atar, çökmez', async () => {
     api.monitoring.storm.getSettings.mockResolvedValue({ success: false, error: 'boom' })
     render(<StormSettings />)
     await waitFor(() => expect(api.monitoring.storm.getSettings).toHaveBeenCalled())
     // yükleme başarısız → yine de kontroller varsayılanlarla render olur (çökme yok)
-    expect(await screen.findByRole('spinbutton')).toBeInTheDocument()
+    expect((await screen.findAllByRole('spinbutton'))[0]).toBeInTheDocument()
   })
 })

@@ -784,18 +784,27 @@ class UserServiceTest {
         verify(userRepo).save(u);
     }
 
+    /**
+     * A1-Y1 (2026-09-29): {@code orgRole == null} artık "DOKUNMA" demektir (kısmi güncelleme — üye ekle/çıkar ve toplu
+     * aktif/pasif null geçer; eskiden org rolü silinip kilitleniyordu). Temizlemek isteyen BOŞ dize gönderir.
+     */
     @Test
-    @DisplayName("updateUser: null orgRole → clears field")
-    void updateUser_nullOrgRole_clearsField() {
+    @DisplayName("updateUser: null orgRole → dokunmaz (rol ve kilit aynen); boş dize → temizler ve kilitler")
+    void updateUser_nullOrgRole_untouched_blankClears() {
         AppUser u = user("alice", "hash");
         u.setId(1L);
         u.setOrgRole("CLEVEL");
+        u.setOrgRoleLocked(false);
         when(userRepo.findById(1L)).thenReturn(Optional.of(u));
 
         service.updateUser(1L, null, null, null, null, null, null, null);
+        assertThat(u.getOrgRole()).isEqualTo("CLEVEL");
+        assertThat(u.getOrgRoleLocked()).isFalse();
 
+        service.updateUser(1L, null, null, null, null, null, null, "");
         assertThat(u.getOrgRole()).isNull();
-        verify(userRepo).save(u);
+        assertThat(u.getOrgRoleLocked()).isTrue();
+        verify(userRepo, times(2)).save(u);
     }
 
     @Test

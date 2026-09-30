@@ -20,6 +20,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
   'via', 'dq',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
   'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
   'scope',       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli) + Olaylar kapsamı mine|others|all (2026-09-28)
+  'src',         // Alarm Geçmişi kategori süzgeci (İzleme menüsü rozetleri, 2026-09-30)
   'open']        // UYGULAMA düzeyi tek seferlik "vardığında aç" (cert | noc — utils/monitorDeepLink.js DEEP_OPEN_PARAM, 2026-09-28); tüketilince silinir
 
 /**
@@ -31,7 +32,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
  * kullanıcı başka bir sekmeye geçip geri döndüğünde kendisinin kurmadığı bir filtreyle
  * karşılaşıyor, boş listeyi "kayıt yok" sanıyordu.
  */
-export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_', 'm_', 'p_', 'g_', 'ir_', 'wa_', 'n_', 'ih_', 'st_', 'ch_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar · m_: SMTP Gönderim Logu · p_: Webhook Push Gönderim Logu · g_: Yönetim Paneli (alt sekme + süzgeçler) · ir_: Sorun Bildirimleri (ir_id açık rapor, ir_view yönetici sekmesi, ir_status süzgeç) · wa_: Dikkat Gerektiren Sertifikalar (wa_why/wa_q/wa_team/wa_tier/wa_sort/wa_view/wa_page/wa_ps) · n_: 7/24 Kapsamı (n_q/n_team/n_type/n_reason/n_status/n_ct/n_page/n_ps) · ih_: Olay & Hata Geçmişi (ih_q/ih_sev/ih_st/ih_cat/ih_ch/ih_team/ih_from/ih_to/ih_sla/ih_open/ih_preset + açık ayrıntı ih_id) · st_: İstatistikler (st_k/st_q/st_iss/st_team/st_tier/st_lvl/st_sort/st_mx/st_mxall/st_page/st_ps) · ch_: İzleme Değişiklikleri (ch_q/ch_kind/ch_ev/ch_actor/ch_team/ch_res/ch_range/ch_from/ch_to/ch_page/ch_ps + açık ayrıntı ch_id)
+export const PAGE_STATE_PREFIXES = ['a_', 'r_', 'd_', 'i_', 'f_', 'u_', 'c_', 'w_', 'm_', 'p_', 'g_', 'ir_', 'wa_', 'n_', 'ih_', 'st_', 'ch_', 'mo_']   // a_: Denetim Kaydı · r_: Veri Saklama koşum listesi · d_: Dağıtım geçmişi · i_: Envanter süzgeçleri · f_: Vade takvimi süzgeçleri · u_: Sistem Sağlığı kullanıcı etkinliği · c_: Tüm Sertifikalar tablosu · w_: Haftalık Raporlar · m_: SMTP Gönderim Logu · p_: Webhook Push Gönderim Logu · g_: Yönetim Paneli (alt sekme + süzgeçler) · ir_: Sorun Bildirimleri (ir_id açık rapor, ir_view yönetici sekmesi, ir_status süzgeç) · wa_: Dikkat Gerektiren Sertifikalar (wa_why/wa_q/wa_team/wa_tier/wa_sort/wa_view/wa_page/wa_ps) · n_: 7/24 Kapsamı (n_q/n_team/n_type/n_reason/n_status/n_ct/n_page/n_ps) · ih_: Olay & Hata Geçmişi (ih_q/ih_sev/ih_st/ih_cat/ih_ch/ih_team/ih_from/ih_to/ih_sla/ih_open/ih_preset + açık ayrıntı ih_id) · st_: İstatistikler (st_k/st_q/st_iss/st_team/st_tier/st_lvl/st_sort/st_mx/st_mxall/st_page/st_ps) · mo_: İzleme Panosu (mo_win/mo_type/mo_status/mo_team/mo_q, 2026-09-30) · ch_: İzleme Değişiklikleri (ch_q/ch_kind/ch_ev/ch_actor/ch_team/ch_res/ch_range/ch_from/ch_to/ch_page/ch_ps + açık ayrıntı ch_id)
 
 /** Mount'ta URL'den string param okur (useState initializer'ında kullanılır — flicker yok). */
 export function readUrlParam(key, fallback = null) {

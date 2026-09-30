@@ -106,7 +106,9 @@ export function isPlainHttp(url) {
 export function requestChips(m) {
   const chips = []
   if (isPlainHttp(m?.url)) chips.push({ key: 'plain' })
-  if (isCustomExpected(m)) chips.push({ key: 'expected', value: expectedOf(m) })
+  // Beklenen durum kodu HER ZAMAN görünür (2026-09-30, kullanıcı: bazı kartlarda var bazılarında yok — karışıklık);
+  // varsayılan aralık nötr tonda, elle değiştirilmişse vurgulu (`custom`).
+  chips.push({ key: 'expected', value: expectedOf(m), custom: isCustomExpected(m) })
   if (m?.follow_redirects === false) chips.push({ key: 'redirects' })
   if (m?.verify_ssl) chips.push({ key: 'strictTls' })
   const tlsErrors = !!m?.check_ssl_errors

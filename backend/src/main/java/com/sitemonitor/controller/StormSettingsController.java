@@ -48,6 +48,7 @@ public class StormSettingsController {
         data.put("threshold_value", settingsService.getInt(StormService.KEY_VALUE, 5));
         data.put("window_minutes",  settingsService.getInt(StormService.KEY_WINDOW, 5));
         data.put("per_group",       settingsService.getBoolean(StormService.KEY_PER_GROUP, false));
+        data.put("quiet_minutes",   stormService.quietMinutes());   // 2026-09-30: fırtına ömür sınırı (kırpılmış efektif değer)
         // UI önizlemesi: yüzde → yaklaşık monitör sayısı gösterebilsin.
         data.put("total_active_monitors", stormService.totalActiveMonitors());
         data.put("effective_threshold",   stormService.computeThreshold());
@@ -64,6 +65,8 @@ public class StormSettingsController {
         int     value    = asInt(body.get("threshold_value"), 5);
         int     window   = asInt(body.get("window_minutes"), 5);
         boolean perGroup = asBool(body.get("per_group"), false);
+        // 2026-09-30: gövdede yoksa DOKUNULMAZ (eski istemci / kısmi kayıt) — mevcut ayar korunur.
+        Integer quiet    = body.get("quiet_minutes") == null ? null : asInt(body.get("quiet_minutes"), StormService.QUIET_DEFAULT);
 
         // ── Sunucu-tarafı aralık doğrulaması ──
         if (!"COUNT".equals(unit) && !"PERCENT".equals(unit)) {
@@ -75,6 +78,11 @@ public class StormSettingsController {
             if (value < 2) throw new IllegalArgumentException(Msg.t("Sayı eşiği en az 2 olmalı (1'lik storm anlamsız)", "Count threshold must be at least 2 (a storm of 1 is meaningless)"));
         }
         if (window < 1 || window > 15) throw new IllegalArgumentException(Msg.t("Zaman penceresi 1–15 dakika aralığında olmalı", "Time window must be between 1 and 15 minutes"));
+        if (quiet != null && (quiet < StormService.QUIET_MIN || quiet > StormService.QUIET_MAX)) {
+            throw new IllegalArgumentException(Msg.t(
+                    "Sessiz pencere " + StormService.QUIET_MIN + "–" + StormService.QUIET_MAX + " dakika aralığında olmalı",
+                    "Quiet window must be between " + StormService.QUIET_MIN + " and " + StormService.QUIET_MAX + " minutes"));
+        }
 
         Map<String, Object> values = new LinkedHashMap<>();
         values.put(StormService.KEY_ENABLED,   String.valueOf(enabled));
@@ -82,11 +90,12 @@ public class StormSettingsController {
         values.put(StormService.KEY_VALUE,     String.valueOf(value));
         values.put(StormService.KEY_WINDOW,    String.valueOf(window));
         values.put(StormService.KEY_PER_GROUP, String.valueOf(perGroup));
+        if (quiet != null) values.put(StormService.KEY_QUIET, String.valueOf(quiet));
         settingsService.save(Map.of("values", values), actor(session));
 
         auditService.recordAction("STORM_SETTINGS_SAVE", session, request, "SETTINGS", "storm",
                 "{\"enabled\":" + enabled + ",\"unit\":\"" + unit + "\",\"value\":" + value
-                        + ",\"window\":" + window + ",\"per_group\":" + perGroup + "}");
+                        + ",\"window\":" + window + ",\"per_group\":" + perGroup + ",\"quiet\":" + quiet + "}");
 
         return getSettings(session);   // güncel efektif değerleri (effective_threshold dahil) geri döndür
     }

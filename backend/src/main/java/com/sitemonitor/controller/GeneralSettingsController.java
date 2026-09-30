@@ -5,6 +5,7 @@ import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.BuildInfo;
 import com.sitemonitor.service.PermissionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -55,12 +56,22 @@ public class GeneralSettingsController {
                 ? (Map<String, Object>) m : Map.of();
         Map<String, Object> before = new java.util.LinkedHashMap<>();
         for (String k : values.keySet()) before.put(k, settingsService.getString(k, null));
+        // Ortam adı: ham diff override'ı gösterir (boş → prod); denetim ETKİN adı da taşısın
+        // (otomatik "unknown" → "prod") — sürüm penceresinde görülen değişiklik budur (2026-09-29).
+        BuildInfo.EnvName envBefore = values.containsKey(BuildInfo.ENV_KEY) ? settingsService.environmentName() : null;
 
         settingsService.save(body, actor(session));
 
+        String detail = AuditDetail.of("keys", values.size());
+        BuildInfo.EnvName envAfter = envBefore != null ? settingsService.environmentName() : null;
+        if (envAfter != null && !envAfter.name().equals(envBefore.name())) {
+            detail = AuditDetail.of("keys", values.size(),
+                    "environment", envBefore.name() + " → " + envAfter.name(),
+                    "environmentSource", envBefore.source().wire() + " → " + envAfter.source().wire());
+        }
         // Hassas anahtarların değeri AuditDiff tarafından maskelenir (tek kara-liste).
         auditService.recordAction("GENERAL_SETTINGS_SAVE", session, request,
-                "SETTINGS", "general", AuditDetail.of("keys", values.size()),
+                "SETTINGS", "general", detail,
                 AuditDiff.diff(before, values));
         return ok(Map.of(
                 "data", settingsService.getCatalogForClient(),

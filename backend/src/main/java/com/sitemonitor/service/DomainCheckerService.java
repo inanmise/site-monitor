@@ -329,7 +329,18 @@ public class DomainCheckerService {
         return sb.toString();
     }
 
-    /** ISO tarihten bugüne kalan tam gün (negatif = geçmiş). Parse edilemezse null. */
+    /** Kurum takvimi — yalnız-tarih bitişlerin gün farkı bu dilimde alınır (frontend {@code localDay.daysFromToday} eşleniği). */
+    static final java.time.ZoneId ORG_ZONE = java.time.ZoneId.of("Europe/Istanbul");
+
+    /**
+     * ISO tarihten bugüne kalan tam gün (negatif = geçmiş). Parse edilemezse null.
+     *
+     * <p>A5 O-5 (2026-09-29): WHOIS/.tr web-whois çoğunlukla YALNIZ TARİH döner ({@code yyyy-MM-dd}). O değer bir zaman
+     * damgası değil takvim günüdür: eskiden UTC gece yarısına çevrilip {@code floorDiv} alınıyor, "2026-10-01" bitişi
+     * 30 Eylül 10:00 İstanbul'da 0 gün, 1 Ekim sabahı −1 gün ("dün doldu") çıkıyordu — kritik eşiği bir gün erken, hatırlatma
+     * takvimden bir gün kaymış. Yalnız-tarih → kurum gününe göre TAKVİM GÜNÜ farkı (bugün 0, yarın 1); saatli damgada
+     * (RDAP) {@code floorDiv} kalır (CertificateCheckerService ile aynı kural).
+     */
     static Integer daysUntil(String iso) {
         if (iso == null || iso.isBlank()) return null;
         try {
@@ -337,7 +348,10 @@ public class DomainCheckerService {
             try { when = OffsetDateTime.parse(iso).toInstant(); }
             catch (Exception e1) {
                 try { when = Instant.parse(iso); }
-                catch (Exception e2) { when = LocalDate.parse(iso.substring(0, 10)).atStartOfDay(ZoneOffset.UTC).toInstant(); }
+                catch (Exception e2) {
+                    LocalDate day = LocalDate.parse(iso.substring(0, 10));
+                    return (int) ChronoUnit.DAYS.between(LocalDate.now(ORG_ZONE), day);
+                }
             }
             // D5: ChronoUnit.DAYS sıfıra doğru kırpar — dolalı <24 saat olmuş domain 0 gün
             // gösterirdi. floorDiv negatifi korur (CertificateCheckerService ile aynı kural).

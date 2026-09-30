@@ -80,7 +80,9 @@ public class UserActivityService {
      *  yeniden çalıştırmaz (audit_log ölçeklenince önemli). Auth SystemController'da kalır. */
     @org.springframework.cache.annotation.Cacheable("user-activity-overview")
     public Map<String, Object> getOverview() {
-        String since7d = ISO.format(Instant.now().minusSeconds(7 * DAY_SECONDS));
+        // A5 D-2 (2026-09-29): pencere = günlük serinin İLK kovasının başlangıcı (İstanbul takvim günü) — kayan "şimdi − 7 gün"
+        // ile kova toplamı ≠ özet toplamı oluyordu (ilk kovadan önceki saatler özete giriyor, seriden düşüyordu).
+        String since7d = tsOf(bucketStarts(Gran.DAY).get(0));
         List<AuditLog> window = auditLogRepo.findLoginEventsSince(LOGIN_TYPES, since7d);
         Map<Long, String> teamNames = teamNameMap();
         Map<String, AppUser> usersByName = usersByName();   // username → AppUser (ad/soyad/resim drill-down için)
@@ -151,7 +153,7 @@ public class UserActivityService {
 
     // ── Summary ────────────────────────────────────────────────────────────────
     private Map<String, Object> buildSummary(List<AuditLog> window, int activeCount, Map<String, AppUser> usersByName) {
-        String s24 = ISO.format(Instant.now().minusSeconds(DAY_SECONDS));
+        String s24 = tsOf(bucketStarts(Gran.HOUR).get(0));   // A5 D-2: 24 saatlik özet = saatlik serinin ilk kovasından
         long s24Logins = 0, s24Failed = 0, s24Anom = 0;
         long d7Logins = 0, d7Failed = 0, d7Anom = 0;
         Set<String> users24 = new HashSet<>();

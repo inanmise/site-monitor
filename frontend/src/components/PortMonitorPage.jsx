@@ -8,6 +8,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
@@ -139,6 +140,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [histReload, setHistReload] = useState(0)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
@@ -283,10 +285,13 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   function closeEdit() { setModal(null); setDupSource(null); setChangeNote('') }
 
   async function save() {
-    if (!form.host.trim() || !form.port) { setSaveError(t('port.hostRequired')); return }
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      host: (!form.host.trim() || !form.port) && t('port.hostRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true); setSaveError(null)
     try {
       const payload = {
@@ -553,10 +558,10 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField label={t('port.host')} required>
+        <FormField label={t('port.host')} required {...fe.fieldProps('host')}>
           {({ id }) => (
             <Input id={id} value={form.host} placeholder="1.2.3.4 / host.example.com" autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, host: e.target.value }))} />
+              onChange={e => { setForm(f => ({ ...f, host: e.target.value })); fe.clear('host') }} />
           )}
         </FormField>
         <FormField label={t('port.port')} required>
@@ -603,14 +608,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
             effective={modal && typeof modal === 'object' && modal.proxy_effective ? { via: modal.proxy_effective, source: modal.proxy_source, bypassed: modal.proxy_bypassed, mode: modal.use_proxy } : null} />
         </LabelSlot>
         <PortProxyNotes t={t} mode={form.useProxy} protocol={form.protocol} port={form.port} info={proxyInfo} />
-        <FormField label={t('port.team')} required>
+        <FormField label={t('port.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
         </FormField>
-        <FormField label={t('port.group')} required>
+        <FormField label={t('port.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('port.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('port.noGroup')} />
           )}
@@ -627,8 +632,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
         {/* Etiketler */}
-        <FormSection title={t('port.tagsTitle')} required hint={t('port.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('port.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('port.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('port.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('port.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         {/* IP sürümü */}

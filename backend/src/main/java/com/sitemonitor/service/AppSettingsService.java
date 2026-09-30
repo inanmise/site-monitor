@@ -116,6 +116,19 @@ public class AppSettingsService {
         return out;
     }
 
+    /** Yalnız DB override'ı (ekrandan kaydedilmiş değer); yoksa null — env/property'ye düşmez. */
+    public String getOverride(String key) {
+        return overrides.get(key);
+    }
+
+    /**
+     * Etkin ortam adı + kaynağı (Ayarlar → Genel Ayarlar → Ortam adı, 2026-09-29). Öncelik ve biçim kuralı
+     * {@link BuildInfo#resolveEnvironment} içinde TEK yerde; bu servis yalnız override'ı ve property'yi verir.
+     */
+    public BuildInfo.EnvName environmentName() {
+        return BuildInfo.resolveEnvironment(overrides.get(BuildInfo.ENV_KEY), environment);
+    }
+
     /** Override varsa onu, yoksa Environment'taki property (varsayılan) değerini döner. */
     private String resolve(String key) {
         String o = overrides.get(key);
@@ -151,6 +164,13 @@ public class AppSettingsService {
             m.put("global_only", globalOnly);
             m.put("read_only", globalOnly && scoped);
             if (!s.enumOptions().isEmpty()) m.put("options", s.enumOptions());
+            // Ortam adı: boşken otomatik değer (local/unknown) katalogdan görünmez — ekran "geçerli değer +
+            // kaynağı" rozetini kaydeden pod'un gerçeğinden çizsin (sürüm penceresiyle aynı çözüm).
+            if (BuildInfo.ENV_KEY.equals(s.key())) {
+                BuildInfo.EnvName env = environmentName();
+                m.put("effective", env.name());
+                m.put("effective_source", env.source().wire());
+            }
             out.add(m);
         }
         return out;
@@ -254,6 +274,13 @@ public class AppSettingsService {
 
     private void validate(AppSettingsCatalog.Setting s, String val) {
         if (val == null || val.isEmpty()) return; // boş = override kaldır (varsayılana dön)
+        // Ortam adı dağıtım geçmişinin anahtarı, metrik etiketi ve rozet metni: serbest metin değil.
+        // Sessizce küçültülmez — kaydedilen değer denetimdeki değerle birebir aynı kalsın.
+        if (BuildInfo.ENV_KEY.equals(s.key()) && !BuildInfo.ENV_NAME.matcher(val).matches()) {
+            throw new IllegalArgumentException(Msg.t(
+                    "Ortam adı geçersiz: yalnız küçük harf, rakam ve '-' kullanılabilir (en fazla 40 karakter)",
+                    "Invalid environment name: use lower-case letters, digits and '-' only (40 characters at most)"));
+        }
         switch (s.type()) {
             case INT -> {
                 try { Integer.parseInt(val); }

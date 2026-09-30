@@ -15,6 +15,8 @@ import { cn } from '@/lib/utils'
 const CACHE_MS = 60_000
 let cache = { at: 0, data: null }
 export function _resetVersionCache() { cache = { at: 0, data: null } }
+/** Sunucudaki sürüm/ortam bilgisi değişti (ör. Genel Ayarlar → Ortam adı kaydedildi): pencere bir sonraki açılışta tazelensin. */
+export function invalidateVersionCache() { cache = { at: 0, data: null } }
 
 async function loadVersion() {
   if (cache.data && Date.now() - cache.at < CACHE_MS) return cache.data

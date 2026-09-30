@@ -89,6 +89,21 @@ public class MaintenanceService {
 
     /** Pencere şu an aktifse bitiş anı, değilse null — {@link #isActiveAt} ile aynı occurrence kuralı. */
     public Instant activeEndAt(MaintenanceWindow w, Instant now) {
+        return activeOccurrenceEnd(w, now);
+    }
+
+    /** Süre üst sınırı (dakika) — 30 gün = global yöneticinin rol tavanı ({@code MaintenanceController.MAX_MINUTES_GLOBAL});
+     *  kapsamlı yazar 7 günle sınırlıdır ve kapı controller'dadır. Motor yalnız aşırı eski/elle yazılmış değeri kırpar. */
+    public static final int MAX_DURATION_MINUTES = 30 * 24 * 60;
+
+    /**
+     * TEK occurrence motoru (A5 Y-1, 2026-09-29): {@link #isActiveAt} ve {@link #activeEndAt} aynı kuralı paylaşır. Tekrarlayan
+     * pencerede aday günler yalnız "bugün + dün" DEĞİL; süre 24 saati aşıyorsa {@code dur/1440 + 1} gün geriye kadar taranır —
+     * eskiden Cuma 18:00'de başlayan 62 saatlik hafta sonu penceresi Pazar 00:00'dan sonra "aktif değil" sayılıyor, sweep
+     * bakımdaki hedefe yanlış alarm açıyor ve erişilebilirlik raporu bakımı hariç tutamıyordu.
+     * @return aktifse oluşumun bitiş anı, değilse null
+     */
+    private Instant activeOccurrenceEnd(MaintenanceWindow w, Instant now) {
         if (!Boolean.TRUE.equals(w.getActive())) return null;
         Instant anchor = parse(w.getStartAt());
         if (anchor == null) return null;
@@ -103,7 +118,9 @@ public class MaintenanceService {
         LocalTime tod = anchorZ.toLocalTime();
         LocalDate anchorDate = anchorZ.toLocalDate();
         LocalDate today = now.atZone(zone).toLocalDate();
-        for (LocalDate d : List.of(today.minusDays(1), today)) {
+        int back = (int) (dur / 1440) + 1;   // ≤24 sa → dün + bugün (gece yarısını aşan pencere); daha uzun → süre kadar geriye
+        for (int i = back; i >= 0; i--) {
+            LocalDate d = today.minusDays(i);
             if (d.isBefore(anchorDate) || !matchesRecurrence(w, rec, d)) continue;
             Instant start = ZonedDateTime.of(d, tod, zone).toInstant();
             Instant end = start.plus(Duration.ofMinutes(dur));
@@ -121,28 +138,9 @@ public class MaintenanceService {
     }
 
     // ── Occurrence engine (DST-güvenli) ──────────────────────────────────────
-    /** Verilen anda pencere aktif mi (paused ise her zaman false). */
+    /** Verilen anda pencere aktif mi (paused ise her zaman false) — {@link #activeEndAt} ile AYNI motor (A5 Y-1). */
     public boolean isActiveAt(MaintenanceWindow w, Instant now) {
-        if (!Boolean.TRUE.equals(w.getActive())) return false;
-        Instant anchor = parse(w.getStartAt());
-        if (anchor == null) return false;
-        long dur = durMin(w);
-        ZoneId zone = zoneOf(w);
-        String rec = rec(w);
-        if ("NONE".equals(rec)) {
-            return !now.isBefore(anchor) && now.isBefore(anchor.plus(Duration.ofMinutes(dur)));
-        }
-        ZonedDateTime anchorZ = anchor.atZone(zone);
-        LocalTime tod = anchorZ.toLocalTime();
-        LocalDate anchorDate = anchorZ.toLocalDate();
-        LocalDate today = now.atZone(zone).toLocalDate();
-        // bugün + dün (gece-yarısını aşan pencereler için)
-        for (LocalDate d : List.of(today.minusDays(1), today)) {
-            if (d.isBefore(anchorDate) || !matchesRecurrence(w, rec, d)) continue;
-            Instant start = ZonedDateTime.of(d, tod, zone).toInstant();
-            if (!now.isBefore(start) && now.isBefore(start.plus(Duration.ofMinutes(dur)))) return true;
-        }
-        return false;
+        return activeOccurrenceEnd(w, now) != null;
     }
 
     private boolean matchesRecurrence(MaintenanceWindow w, String rec, LocalDate d) {
@@ -222,7 +220,10 @@ public class MaintenanceService {
     }
 
     private static String rec(MaintenanceWindow w) { return w.getRecurrence() == null ? "NONE" : w.getRecurrence(); }
-    private static long durMin(MaintenanceWindow w) { return Math.max(1, w.getDurationMinutes() == null ? 60 : w.getDurationMinutes()); }
+    /** 1..{@link #MAX_DURATION_MINUTES} dakika (kayıtta daha büyük bir değer varsa motor tavanda kırpar — controller da reddeder). */
+    private static long durMin(MaintenanceWindow w) {
+        return Math.min(MAX_DURATION_MINUTES, Math.max(1, w.getDurationMinutes() == null ? 60 : w.getDurationMinutes()));
+    }
 
     private ZoneId zoneOf(MaintenanceWindow w) {
         try { return ZoneId.of(w.getTimezone() == null ? "Europe/Istanbul" : w.getTimezone()); }

@@ -65,7 +65,7 @@ public class AlertNoiseService {
         Map<String, int[]> byType = new LinkedHashMap<>();                // tip → [toplam, kritik]
         Map<String, Integer> byLevel = new LinkedHashMap<>();
         double resolvedMinutesSum = 0;
-        int resolvedTotal = 0, offHours = 0, stillOpen = 0;
+        int resolvedTotal = 0, offHours = 0, stillOpen = 0, silenced = 0;
         int total = 0, critical = 0;
         for (AlertEvent e : events) {
             total++;
@@ -75,6 +75,10 @@ public class AlertNoiseService {
             tc[0]++;
             if ("CRITICAL".equalsIgnoreCase(e.getAlertLevel())) tc[1]++;
             if (!Boolean.TRUE.equals(e.getResolved())) stillOpen++;
+            // D-7 / D-c11 (2026-09-29): sessiz kapanış (silindi / duraklatıldı / envanter pasif / tür bildirimi kapalı)
+            // kurtarma değildir — çözülme oranına, MTTR'a ve flap ortalamasına girmez; ayrı "silenced" kovasında sayılır.
+            boolean silent = Boolean.TRUE.equals(e.getResolved()) && Boolean.TRUE.equals(e.getResolvedSilently());
+            if (silent) silenced++;
             String key = (e.getDomain() == null ? "?" : e.getDomain()) + "|" + e.getAlertType();
             int[] c = perTarget.computeIfAbsent(key, k -> new int[2]);
             c[0]++;
@@ -88,7 +92,7 @@ public class AlertNoiseService {
                 boolean weekend = z.getDayOfWeek().getValue() >= 6;
                 if (weekend || z.getHour() >= 18 || z.getHour() < 9) offHours++;
                 Instant resolved = parse(e.getResolvedAt());
-                if (Boolean.TRUE.equals(e.getResolved()) && resolved != null && resolved.isAfter(created)) {
+                if (!silent && Boolean.TRUE.equals(e.getResolved()) && resolved != null && resolved.isAfter(created)) {
                     c[1]++;
                     resolvedTotal++;
                     resolvedMinutesSum += (resolved.toEpochMilli() - created.toEpochMilli()) / 60000.0;
@@ -154,6 +158,7 @@ public class AlertNoiseService {
         out.put("by_type", types.subList(0, Math.min(TOP, types.size())));
         out.put("by_level", byLevel);
         out.put("still_open", stillOpen);
+        out.put("silenced_total", silenced);   // D-7: sessiz kapanışlar (kurtarma değil) — MTTR/çözülme dışı
         out.put("resolved_total", resolvedTotal);
         out.put("resolved_pct", total == 0 ? 0 : Math.round(1000.0 * resolvedTotal / total) / 10.0);
         out.put("mttr_minutes", resolvedTotal == 0 ? null : Math.round(resolvedMinutesSum / resolvedTotal * 10) / 10.0);

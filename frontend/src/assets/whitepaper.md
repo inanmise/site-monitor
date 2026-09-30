@@ -1831,7 +1831,7 @@ Yaklaşık 180 anahtar **Yönetim → Ayarlar** ekranından, uygulama çalışı
 
 | Grup | Ne yönetir |
 |---|---|
-| `general` | Uygulama taban adresi, sistem yöneticisi e-postası, CORS kaynakları, sorun bildirimi ve istemci hata toplama anahtarları |
+| `general` | Uygulama taban adresi, sistem yöneticisi e-postası, CORS kaynakları, sorun bildirimi ve istemci hata toplama anahtarları, ortam adı (sürüm penceresi, dağıtım geçmişi ve Grafana etiketi; boşsa Helm `APP_ENVIRONMENT`, o da yoksa otomatik) |
 | `security` | Kurumsal CA paketi (`trust.ca-bundle-pem`) ve otomatik CA sabitleme |
 | `branding` | Uygulama adı, sekme başlığı, giriş ekranı metinleri, ana renk, logo, duyuru bandı |
 | `monitoring` | Tür bazında alarm açma/kapama, iç ve loopback hedeflere izin, DNS çözümleyicileri ve zaman aşımları, RDAP/WHOIS adresleri, sayfa tarama sınırları |

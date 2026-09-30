@@ -176,6 +176,10 @@ class StormServiceTest {
         when(appSettings.getBoolean(eq(StormService.KEY_ENABLED), anyBoolean())).thenReturn(true);
         when(appSettings.getBoolean(eq(StormService.KEY_PER_GROUP), anyBoolean())).thenReturn(false);
         AlertStorm active = storm(100L);
+        // 2026-09-30: fırtına TAZE olmalı (son üye katılımı sessiz pencere içinde) — mühürlü fırtına yeni üye almaz
+        // (StormSealingTest); eski fikstürün 2026-07 tarihli fırtınası artık "patlama bitmiş" sayılır.
+        active.setLastMemberAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minusSeconds(60)));
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:7")).thenReturn(Optional.of(active));
 
         AlertEvent e = down(9, EscalationService.TYPE_PORT_DOWN, 7L);
@@ -183,7 +187,7 @@ class StormServiceTest {
         assertThat(e.getStormId()).isEqualTo(100L);
         verify(emailService, never()).buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
         // memberCount bump — KOŞULLU atomik UPDATE (D-14); okunan varlığın tamamı yazılmaz (çözülmüş fırtına dirilmez)
-        verify(jdbcTemplate).update(startsWith("UPDATE alert_storms SET member_count"), eq(100L));
+        verify(jdbcTemplate).update(startsWith("UPDATE alert_storms SET member_count"), anyString(), eq(100L));   // last_member_at + id (2026-09-30)
         verify(stormRepo, never()).save(active);
     }
 
@@ -199,7 +203,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));   // 3 >= eşik 3
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);   // biz oluşturduk (kazanan)
 
         teamWithEmail(7L);
@@ -220,7 +224,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(0);   // başka worker kazandı
 
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
@@ -240,7 +244,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
 
         teamWithEmail(7L);
@@ -272,7 +276,7 @@ class StormServiceTest {
         // DB, tetikleyenin group_name'i henüz commit edilmediğinden onu HARİÇ döner (yalnız 1 diğer üye).
         when(alertEventRepo.findOpenDownSinceInGroup(anyCollection(), anyString(), eq("G")))
                 .thenReturn(List.of(down(2, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
 
         AlertEvent current = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
@@ -289,6 +293,9 @@ class StormServiceTest {
         s.setScopeType("TEAM");
         s.setResolved(false);
         s.setCreatedAt("2026-07-10T09:00:00");
+        // 2026-09-30: fikstür TAZE fırtına (son üye katılımı az önce) — mühürlü fırtına davranışı StormSealingTest'te.
+        s.setLastMemberAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now().minusSeconds(30)));
         return s;
     }
 

@@ -40,6 +40,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.cors.allowed-origins",         "general",    Type.CSV),
         new Setting("site.monitor.login-issues.enabled",         "general",    Type.BOOL),
         new Setting("site.monitor.deploy.notify.enabled",        "general",    Type.BOOL),   // E3: dağıtım e-postası/push (opt-in)
+        // Ortam adı (2026-09-29, kullanıcı isteği): Spring özelliğiyle AYNI anahtar (${APP_ENVIRONMENT:}) — DB satırı
+        // env'i ezer (log seviyesi deseni). Öncelik DB > APP_ENVIRONMENT > otomatik (local/unknown); BuildInfo canlı
+        // okur, biçim [a-z0-9-]{1,40} AppSettingsService.validate'te. Sürüm penceresi, dağıtım geçmişi (kayıtlar ortam
+        // adına göre tutulur — DeploymentHistoryService.syncEnvironment), Prometheus etiketi. GLOBAL_ONLY (aşağıda).
+        // Anahtar LİTERAL yazılır (BuildInfo.ENV_KEY ile aynı): ön yüz etiket/yardım kapıları kataloğu dize olarak tarar.
+        new Setting("site.monitor.environment",                  "general",    Type.STRING),
         // ErrorBoundary otomatik çökme bildirimi (kayıt + admin maili) — varsayılan AÇIK.
         new Setting("site.monitor.client-errors.enabled",        "general",    Type.BOOL),
         // Sorun bildirimlerinde tekil admin maili yerine günlük özet — varsayılan KAPALI.
@@ -292,6 +298,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.storm.threshold-value",        "storm",      Type.INT),
         new Setting("site.monitor.storm.window-minutes",         "storm",      Type.INT),
         new Setting("site.monitor.storm.per-group",              "storm",      Type.BOOL),
+        // 2026-09-30: fırtına ömür sınırı — son üye katılımından bu kadar dakika sonra yeni üye gelmediyse fırtına
+        // mühürlenir ve kapanır (kalıcı başarısız üyeler fırtınayı süresiz açık tutup yeni alarmları yutmasın).
+        new Setting("site.monitor.storm.quiet-minutes",          "storm",      Type.INT),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         // Yeni cihazdan giriş bilgi e-postası (E1). Varsayılan KAPALI: kurumsal kurulumda
@@ -430,6 +439,9 @@ public final class AppSettingsCatalog {
      *       verisini siler/korur — sistem geneli ayar. Müdür eskiden yasal saklamayı kapatıp süreleri tabana çekerek
      *       her takımın geçmişini kalıcı sildirebiliyordu. Liste {@code RetentionCatalog}'dan TÜRETİLİR: yeni politika
      *       eklenince kapı kendiliğinden kapsar.</li>
+     *   <li>Ortam adı ({@link BuildInfo#ENV_KEY}, 2026-09-29): kurulumun TÜMÜNÜ adlandırır — sürüm penceresi, dağıtım
+     *       geçmişinin ortam anahtarı (koşan kaydı yeni ada taşır) ve Prometheus/Grafana {@code environment} etiketi.
+     *       Takım kapsamlı bir müdür bütün kurulumun kimliğini değiştiremez.</li>
      * </ul>
      * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
      * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
@@ -456,7 +468,8 @@ public final class AppSettingsCatalog {
         "site.monitor.incidents.visible-to-all",
         "site.monitor.ldap.manager-attributes",
         "site.monitor.ldap.prune-unsupported-teams",
-        "site.monitor.ldap.manager-refresh-hours"
+        "site.monitor.ldap.manager-refresh-hours",
+        "site.monitor.environment"
     ));
 
     /**

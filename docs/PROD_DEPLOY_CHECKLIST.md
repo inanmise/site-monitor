@@ -225,6 +225,9 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
       `maximum-pool-size = 30`, `NO_PROXY` dolu, vekil host dolu, "RDAP istemcisi proxy üzerinden" satırı,
       `site.monitor.secret-key = configured`, `LOG_LEVEL = DEBUG`, sürüm = `$VERSION`.
 - [ ] Nav sürüm çipi `$VERSION`; Sistem Sağlığı → Sürüm & Dağıtım'da `env=prod` ve yeni helm revizyonu.
+      Ortam adı önceliği: Ayarlar → Genel Ayarlar → **Ortam adı** (DB, boş değilse) > Helm `config.environmentName`
+      (`APP_ENVIRONMENT`) > otomatik (pod'da `unknown`); `env=prod` görünmüyorsa önce o alana bakın — oradaki değer
+      Helm değerini ezer, boşaltınca Helm değerine döner (yeniden başlatma gerekmez).
 - [ ] Şema yamaları: `kubectl logs -n "$NS" "$DEPLOY" | grep -E 'Schema patch (applied|skipped)'` —
       `applied` bu sürümün eklediklerini listeler; `skipped` satırları (DEBUG'ta görünür) tek tek okunur,
       beklenmeyen bir SQL hatası varsa geri almayı düşünün.

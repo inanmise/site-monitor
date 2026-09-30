@@ -18,6 +18,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
@@ -202,6 +203,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const resCheckIdRef = useRef(resCheckId)
   resCheckIdRef.current = resCheckId
   const [modal, setModal] = useState(null)
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)
   const [form, setForm] = useState(emptyForm)
@@ -433,10 +435,13 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   }
 
   async function save() {
-    if (!form.url.trim()) return
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      url: !form.url.trim() && t('mon.fieldRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const payload = payloadFromForm()
@@ -711,10 +716,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField full label={t('pspd.url')} required hint={t('pspd.urlHint')}>
+        <FormField full label={t('pspd.url')} required {...fe.fieldProps('url')} hint={t('pspd.urlHint')}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, url: e.target.value })); fe.clear('url') }}
               onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
           )}
         </FormField>
@@ -723,14 +728,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
             <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           )}
         </FormField>
-        <FormField label={t('pspd.team')} required>
+        <FormField label={t('pspd.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('pspd.noTeam')} disabled />}
         </FormField>
-        <FormField full label={t('pspd.group')} required>
+        <FormField full label={t('pspd.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('pspd.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('pspd.noGroup')} />
           )}
@@ -772,8 +777,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
         </FormSection>
 
         {/* Etiketler */}
-        <FormSection title={t('pspd.tagsTitle')} required>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('pspd.tagsTitle')} required {...fe.fieldProps('tags')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('pspd.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         {/* ── Gelişmiş ── (shadcn Collapsible; kapalıyken içerik DOM'da yok — eski koşullu çizimle aynı) */}

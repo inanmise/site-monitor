@@ -118,7 +118,7 @@ describe('Alarm fırtınası ayarları — takım yalıtımı notu', () => {
       total_active_monitors: 40, effective_threshold: 8,
     } })
     render(<StormSettings />)
-    await screen.findByRole('spinbutton')
+    await screen.findAllByRole('spinbutton')
     expect(screen.getByText(/her takım için ayrı değerlendirilir|assessed separately for each team/)).toBeInTheDocument()
     expect(screen.queryByText(/Tüm monitörlerin|% of all monitors/)).toBeNull()
     expect(screen.getByRole('option', { name: /Takımın izlemelerinin|of the team's monitors/ })).toBeInTheDocument()

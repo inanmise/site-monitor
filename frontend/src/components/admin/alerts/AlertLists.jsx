@@ -18,7 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
-  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote,
+  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge,
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
 import { NocCallIndicator } from './NocCallLog.jsx'
@@ -102,6 +102,7 @@ export function OpenAlertCard({
         <MaintenanceBadge target={a.domain} />
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />
+        <StormBadge stormId={a.storm_id} />
         {a.days_remaining != null && (
           <Badge variant="outline" className="rounded-full border-destructive/30 bg-destructive/10 font-bold text-destructive">{t('alh.days', a.days_remaining)}</Badge>
         )}

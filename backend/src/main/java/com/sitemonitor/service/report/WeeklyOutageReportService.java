@@ -106,10 +106,28 @@ public class WeeklyOutageReportService {
             String acknowledgedBy, String acknowledgedAt, String resolvedBy,
             String acknowledgedNote, String resolvedNote,
             long notifySent, long notifyFailed, boolean maintenanceOverlap, Long stormId,
-            String message) {
+            String message, boolean resolvedSilently) {
+
+        /** Geriye uyumlu 22-alan kurucu (sessiz kapanış bilinmiyor = normal kapanış). */
+        public OutageRow(Long alertId, String monitorType, String alertType, String target, String level,
+                         String startedAt, String endedAt, boolean stillOpen, boolean carriedOver,
+                         long durationMin, long weekDurationMin, long weekStartOffsetMin,
+                         String acknowledgedBy, String acknowledgedAt, String resolvedBy,
+                         String acknowledgedNote, String resolvedNote,
+                         long notifySent, long notifyFailed, boolean maintenanceOverlap, Long stormId, String message) {
+            this(alertId, monitorType, alertType, target, level, startedAt, endedAt, stillOpen, carriedOver, durationMin,
+                    weekDurationMin, weekStartOffsetMin, acknowledgedBy, acknowledgedAt, resolvedBy, acknowledgedNote,
+                    resolvedNote, notifySent, notifyFailed, maintenanceOverlap, stormId, message, false);
+        }
 
         /** Hiç bildirim gitmemiş ya da gönderimi başarısız olmuş — kimseye ulaşmamış olabilir. */
         public boolean notifyGap() { return notifySent == 0; }
+
+        /**
+         * D-7 / D-c11 (2026-09-29): GERÇEK kurtarma mı — kapalı ve sessiz kapanış DEĞİL (izleme silindi / duraklatıldı /
+         * envanter pasif / tür bildirimi kapalı = susturuldu, kurtulmadı). MTTR ve "çözülen" sayımı yalnız bunları alır.
+         */
+        public boolean recovered() { return !stillOpen && !resolvedSilently; }
     }
 
     /** İzleme türü başına gruplanmış kesinti satırları. */
@@ -307,7 +325,8 @@ public class WeeklyOutageReportService {
                 n[0], n[1],
                 overlapsMaintenance(e.getDomain(), start, windows),
                 e.getStormId(),
-                e.getMessage());
+                e.getMessage(),
+                Boolean.TRUE.equals(e.getResolvedSilently()));   // D-7: sessiz kapanış MTTR'a girmez
     }
 
     /**

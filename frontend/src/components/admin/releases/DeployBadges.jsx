@@ -71,7 +71,9 @@ export function SourceBadge({ source, className }) {
 }
 
 /**
- * Ortam rozeti (Sürüm & Dağıtım, sürüm penceresi, Sistem Sağlığı "Uygulama" kartı — hepsi bu bileşen). Sunucu ortam adını Helm `config.environmentName` (APP_ENVIRONMENT) ayarından okur; ayar boşsa pod'da
+ * Ortam rozeti (Sürüm & Dağıtım, sürüm penceresi, Sistem Sağlığı "Uygulama" kartı, Genel Ayarlar → Ortam adı — hepsi bu
+ * bileşen). Sunucu ortam adını önce Genel Ayarlar'daki "Ortam adı" ayarından (2026-09-29), yoksa Helm
+ * `config.environmentName` (APP_ENVIRONMENT) değerinden okur; ikisi de boşsa pod'da
  * "unknown", pod dışında "local" döner (BuildInfo). Ham "unknown" kullanıcıya bir şey söylemiyordu (2026-09-27,
  * kullanıcı: "neden unknown yazıyor?") → çevrilmiş etiket + nedenini ve çözümünü anlatan ipucu.
  */

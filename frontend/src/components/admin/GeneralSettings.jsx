@@ -7,6 +7,8 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import { SETTINGS_STACK, helpLabel, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
+import EnvironmentNameField, { ENV_KEY, isValidEnvName } from './EnvironmentNameField.jsx'
+import { invalidateVersionCache } from '../VersionPopover.jsx'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Switch } from '@/components/shadcn/switch'
@@ -59,16 +61,25 @@ export default function GeneralSettings({ focusKey = null }) {
   }
 
   function set(key, val) { setEdited((e) => ({ ...e, [key]: val })) }
-  function valueOf(it) { return edited[it.key] ?? (it.value ?? '') }
+  // Ortam adı: kutu YALNIZ ekrandan kaydedilmiş değeri gösterir — katalog `value`'su override yokken Helm
+  // varsayılanına düşer; kutuda görünse "boş = Helm değeri" sözü yalan olurdu (Helm değeri ipucunda + rozette).
+  function valueOf(it) {
+    if (it.key === ENV_KEY) return edited[it.key] ?? (it.overridden ? (it.value ?? '') : '')
+    return edited[it.key] ?? (it.value ?? '')
+  }
 
   async function save() {
     if (Object.keys(edited).length === 0) { toast.success(t('settings.saved')); return }
+    // Ortam adı biçimi anında denetlenir (sunucu da 400 ile reddeder) — hatalı değer gönderilmez.
+    if (ENV_KEY in edited && !isValidEnvName(String(edited[ENV_KEY] ?? ''))) { toast.error(t('general.env.invalid')); return }
     setSaving(true)
     try {
       const res = await api.admin.saveGeneralSettings({ values: edited })
       if (res?.success) {
         toast.success(res.message || t('settings.saved'))
         setItems(res.data || [])
+        // Ortam adı değiştiyse sol üstteki sürüm penceresi bir sonraki açılışta yeni adı göstersin (60 sn önbellek).
+        if (ENV_KEY in edited) invalidateVersionCache()
         setEdited({})
       } else {
         toast.error(res?.error || t('settings.saveError'))
@@ -78,11 +89,17 @@ export default function GeneralSettings({ focusKey = null }) {
     }
   }
 
-  function renderInput(it, { id, describedBy }) {
+  function renderInput(it, { id, describedBy, invalid }) {
     const v = valueOf(it)
     // read_only: sunucu, kapsamlı müdür (AD ADMIN) için GLOBAL_ONLY kalemleri işaretler — kilit
     // yalnız görsel; AppSettingsService.save aynı anahtarı 403 ile reddeder.
     const ro = !!it.read_only
+    if (it.key === ENV_KEY) {
+      return (
+        <EnvironmentNameField id={id} describedBy={describedBy} invalid={invalid} value={v} disabled={ro}
+          onChange={(nv) => set(it.key, nv)} effective={it.effective} source={it.effective_source} />
+      )
+    }
     if (it.type === 'BOOL') {
       const on = String(v) === 'true'
       return (
@@ -172,10 +189,12 @@ export default function GeneralSettings({ focusKey = null }) {
                 + (it.type === 'TEXT' ? ' xl:col-span-2' : '')}>
               <Field label={helpLabel(t('general.lbl.' + it.key), 'help.set.' + it.key)}
                 className="mb-3 [&>[data-slot=native-select-wrapper]]:w-full"
+                error={it.key === ENV_KEY && !isValidEnvName(String(valueOf(it))) ? t('general.env.invalid') : undefined}
                 hint={<>
                   <code className="font-mono">{it.key}</code>
                   {it.default != null && it.default !== ''
                     ? ' · ' + t('general.defaultHint', it.default) : ''}
+                  {it.key === ENV_KEY ? ' · ' + t('general.env.emptyHint') : ''}
                   {it.read_only ? ' · ' + t('general.globalOnlyHint') : ''}
                 </>}>
                 {(bind) => renderInput(it, bind)}

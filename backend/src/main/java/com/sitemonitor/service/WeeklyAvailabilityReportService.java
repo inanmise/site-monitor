@@ -468,6 +468,11 @@ public class WeeklyAvailabilityReportService {
      * çözüm, dakika; AlertNoiseService'teki tanımla aynı); tür başına alarm süresi = o türün alarmlarının HAFTAYA DÜŞEN
      * dakikalarının toplamı (çakışanlar ayrı sayılır — e-postada böyle yazılır). Alarm listesi {@code longest}
      * (haftaya düşen süreye göre sıralı, PDF'in "en uzun" tablosuyla aynı).
+     *
+     * <p>D-7 / D-c11 (2026-09-29): SESSİZ kapanan alarm ({@code resolved_silently} — izleme silindi / duraklatıldı / envanter
+     * pasif / tür bildirimi kapalı) kurtarma DEĞİLDİR: "çözülen" sayısına ve MTTR paydasına girmez ({@code OutageRow.recovered}).
+     * Not: takılı kurtarma sonrası uzlaştırmayla kapanan hayalet alarmın {@code resolved_at}'i kapanış anıdır (gerçek
+     * iyileşme anı değil); geçmiş satırlar düzeltilemez — MTTR "otomatik uzlaştırmayla kapananlar dâhil" okunmalı.
      */
     static com.sitemonitor.service.mail.WeeklyAvailabilityMail.Alarms alarmsOf(WeeklyOutageReportService.WeeklyOutageData o) {
         long resolvedMinutes = 0;
@@ -475,7 +480,7 @@ public class WeeklyAvailabilityReportService {
         Map<String, Long> minutesByType = new HashMap<>();
         for (WeeklyOutageReportService.TypeGroup g : o.groups()) {
             for (WeeklyOutageReportService.OutageRow r : g.rows()) {
-                if (!r.stillOpen()) { resolvedMinutes += r.durationMin(); resolved++; }
+                if (r.recovered()) { resolvedMinutes += r.durationMin(); resolved++; }
                 if (r.monitorType() != null) minutesByType.merge(r.monitorType(), r.weekDurationMin(), Long::sum);
             }
         }

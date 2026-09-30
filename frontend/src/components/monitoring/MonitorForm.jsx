@@ -1,7 +1,7 @@
 import { useId } from 'react'
 import ModalShell from '../ui/ModalShell.jsx'
 import ModalScrollHint from '../ui/ModalScrollHint.jsx'
-import Field from '../ui/Field.jsx'
+import Field, { FieldError } from '../ui/Field.jsx'
 import { CheckRunningStrip } from '../ui/CheckRunning.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { UsersRound } from 'lucide-react'
@@ -140,11 +140,16 @@ export function RequiredMark() {
  * ÜSTÜNE oturtur (Tailwind preflight yok) — başlık kutunun kenarını keserdi. Aynı anlam `role="group"`
  * + `aria-labelledby` ile verilir; görünüm shadcn Field ailesinin (FieldTitle/FieldDescription).
  */
-export function FormSection({ title, icon: Icon, required = false, hint, action, boxed = true, className, children }) {
+export function FormSection({ title, icon: Icon, required = false, hint, action, boxed = true, name, error, className, children }) {
   const titleId = useId()
+  const errorId = useId()
   return (
-    <div role="group" aria-labelledby={titleId} data-slot="form-section"
-      className={cn('flex min-w-0 flex-col gap-2 sm:col-span-2', boxed && 'rounded-lg border bg-muted/30 px-3.5 py-3', className)}>
+    // `name`/`error` (2026-09-30): bölüm de doğrulama hatası taşıyabilir (Etiketler) — kırmızı kenar + hata metni altta,
+    // `data-field` ile ilk hatalı alana kaydırma (utils/formErrors). `aria-describedby` bölüm grubunda.
+    <div role="group" aria-labelledby={titleId} aria-describedby={error ? errorId : undefined} data-slot="form-section"
+      data-field={name || undefined} data-invalid={error ? true : undefined}
+      className={cn('flex min-w-0 flex-col gap-2 sm:col-span-2', boxed && 'rounded-lg border bg-muted/30 px-3.5 py-3',
+        error && 'border-destructive/60 ring-1 ring-destructive/30', className)}>
       <div className="flex w-full flex-wrap items-center gap-1.5">
         <FieldTitle id={titleId} className="w-auto gap-1.5 font-semibold">
           {Icon && <Icon size={15} aria-hidden="true" className="shrink-0" />}
@@ -155,6 +160,7 @@ export function FormSection({ title, icon: Icon, required = false, hint, action,
       </div>
       {hint && <FieldDescription className="text-xs">{hint}</FieldDescription>}
       {children}
+      {error && <FieldError id={errorId}>{error}</FieldError>}
     </div>
   )
 }

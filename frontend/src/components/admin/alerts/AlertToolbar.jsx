@@ -25,6 +25,11 @@ import {
 
 /** Radix radyo öğesi değeri boş dize olamaz → "Tümü" için sabit belirteç. */
 const ALL = '__all__'
+/** Kategori süzgeci (URL `src`) → menüdeki izleme türü adı (İzleme menüsü rozetleri, 2026-09-30). */
+const SRC_NAV_KEY = {
+  http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon', keyword: 'nav.keyword',
+  page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', cert: 'nav.groupCertificates',
+}
 const QUICK = [{ key: '24h', days: 1 }, { key: '7d', days: 7 }, { key: '30d', days: 30 }, { key: '90d', days: 90 }]
 
 /**
@@ -183,6 +188,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
 
   const labelFor = (f) => {
     switch (f.key) {
+      case 'src': return t('alh.chip.src', t(SRC_NAV_KEY[f.value] || 'nav.groupMonitoring'))
       case 'type': return alertTypeLabel(t, f.value)
       case 'level': return t(`alh.level.${String(f.value).toLowerCase()}`)
       case 'ack': return f.value === 'ack' ? t('alh.ackOnly') : t('alh.unackedOnly')

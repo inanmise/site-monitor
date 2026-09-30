@@ -26,6 +26,27 @@ public class TodayPanelController {
     private final TodayPanelService todayPanelService;
     private final com.sitemonitor.service.InboxService inboxService;
     private final com.sitemonitor.service.PermissionService permissionService;
+    private final com.sitemonitor.service.OpenAlertsSummaryService openAlertsSummary;
+    /** 7/24 operatörü tüm alarmları görür (AdminController.seesAllAlerts ile aynı) — alan enjeksiyonu, null-güvenli. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
+
+    /**
+     * İzleme menüsü rozetleri (2026-09-30): {@code GET /api/me/open-alerts} — görüş kapsamındaki açık alarmların izleme
+     * türü başına özeti. Alarm Geçmişi'ni açamayan kullanıcı ({@code alerts.read/view} yok) boş özet alır — rozet
+     * gidemeyeceği bir sayfayı işaret etmesin.
+     */
+    @GetMapping("/open-alerts")
+    public ResponseEntity<Map<String, Object>> openAlerts(HttpSession session) {
+        boolean visible = permissionService.allows(session, "alerts.read", "view");
+        boolean seesAll = SessionScope.isGlobalViewer(session) || (nocCallLog != null && nocCallLog.seesAllAlerts(session));
+        Map<String, Object> data = visible
+                ? openAlertsSummary.build(seesAll, SessionScope.viewTeamIds(session))
+                : openAlertsSummary.build(false, List.of());
+        Map<String, Object> out = new java.util.LinkedHashMap<>(data);
+        out.put("visible", visible);
+        return ResponseEntity.ok(Map.of("success", true, "data", out));
+    }
 
     @GetMapping("/today")
     public ResponseEntity<Map<String, Object>> today(@org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean full,

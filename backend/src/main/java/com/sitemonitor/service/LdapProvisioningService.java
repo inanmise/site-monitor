@@ -2,6 +2,7 @@ package com.sitemonitor.service;
 
 import com.sitemonitor.model.AppUser;
 import com.sitemonitor.model.EscalationContact;
+import com.sitemonitor.model.LdapFieldLocks;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.model.UserTeamSource;
 import com.sitemonitor.repository.AppUserRepository;
@@ -124,28 +125,33 @@ public class LdapProvisioningService {
         List<Long> teamsBefore = isNew ? List.of() : ownTeams(u);
         String mgrSicilBefore = u.getManagerSicil();
         Long mgrIdBefore = u.getManagerId();
+        String emailBefore = u.getEmail();
+        String displayNameBefore = u.getDisplayName();
         if (isNew) {
             u.setUsername(uname);
             u.setPasswordHash(null);     // AD users keep no app password
             u.setAuthSource("LDAP");
             u.setActive(true);
             u.setCreatedAt(now);
+        } else {
+            clearLocalCredential(u);     // A1-Y3 güvenli geçiş: LDAP satırında yerel parola izi kalmaz
         }
 
-        // ── Profile fields ──
-        u.setEmail(str(attrs, "mail"));
-        u.setEmployeeId(str(attrs, "cn"));                 // Sicil No
-        u.setFirstName(str(attrs, "givenName"));
-        u.setLastName(str(attrs, "sn"));
-        u.setDisplayName(orElse(str(attrs, "displayName"), uname));
-        u.setTitle(str(attrs, "title"));
-        u.setPhone(str(attrs, "mobile"));
-        u.setDepartment(str(attrs, "department"));
-        u.setCompanyLevel(str(attrs, "description"));
-        u.setPhotoBase64(stripBase64Prefix(str(attrs, "thumbnailPhoto")));
+        // ── Profile fields — yöneticinin elle değiştirdiği (kilitli) alan EZİLMEZ (ürün kararı 2026-09-29) ──
+        Set<String> locked = LdapFieldLocks.of(u);
+        if (!locked.contains(LdapFieldLocks.EMAIL))         u.setEmail(str(attrs, "mail"));
+        if (!locked.contains(LdapFieldLocks.EMPLOYEE_ID))   u.setEmployeeId(str(attrs, "cn"));                 // Sicil No
+        if (!locked.contains(LdapFieldLocks.FIRST_NAME))    u.setFirstName(str(attrs, "givenName"));
+        if (!locked.contains(LdapFieldLocks.LAST_NAME))     u.setLastName(str(attrs, "sn"));
+        if (!locked.contains(LdapFieldLocks.DISPLAY_NAME))  u.setDisplayName(orElse(str(attrs, "displayName"), uname));
+        if (!locked.contains(LdapFieldLocks.TITLE))         u.setTitle(str(attrs, "title"));
+        if (!locked.contains(LdapFieldLocks.PHONE))         u.setPhone(str(attrs, "mobile"));
+        if (!locked.contains(LdapFieldLocks.DEPARTMENT))    u.setDepartment(str(attrs, "department"));
+        if (!locked.contains(LdapFieldLocks.COMPANY_LEVEL)) u.setCompanyLevel(str(attrs, "description"));
+        u.setPhotoBase64(stripBase64Prefix(str(attrs, "thumbnailPhoto")));   // fotoğraf elle düzenlenemez → kilit yok
 
         // ── Müdürlük (extensionAttribute5 = "ID;Name") ──
-        applyMudurluk(u, str(attrs, "extensionAttribute5"));
+        if (!locked.contains(LdapFieldLocks.MUDURLUK)) applyMudurluk(u, str(attrs, "extensionAttribute5"));
 
         boolean isPo = containsCi(str(attrs, "company"), "PRODUCT OWNER");
         applyOrgRole(u, isPo);                             // PO > D6->MANAGER > D7->BOLUM_BASKANI > TECH (kilitliyse dokunmaz)
@@ -170,8 +176,8 @@ public class LdapProvisioningService {
         // ── Manager (extensionAttribute4 / manager → CN=sicil) ──
         // 2026-09-10: müdür KAYDI özyinelemeli yoldan (resolveManager=false) gelince de kendi müdür
         // sicili yazılır ve DB'de zaten varsa bağlanır — yalnız AD'ye gidip bir üst kademeyi
-        // PROVİZYON etmez (sonsuz zincir yok).
-        resolveManagerLink(u, attrs, resolveManager);
+        // PROVİZYON etmez (sonsuz zincir yok). Müdür alanı elle kilitliyse sicil+bağ hiç dokunulmaz.
+        if (!locked.contains(LdapFieldLocks.MANAGER)) resolveManagerLink(u, attrs, resolveManager);
         if (resolveManager) {
             // Takım↔müdür ilişkisi kurulduysa, müdürü otomatik MANAGER eskalasyon
             // kontağı yap (min seviye HIGH). Varsayılan KAPALI — yalnız
@@ -181,9 +187,36 @@ public class LdapProvisioningService {
 
         u.setUpdatedAt(now);
         AppUser saved = userRepo.save(u);
+        // A1-O2: AD'de e-posta/ad değiştiyse user_id bağlı eskalasyon kişileri de tazelenir (yönetici yolu ile aynı yardımcı).
+        if (!isNew && (!Objects.equals(emailBefore, saved.getEmail()) || !Objects.equals(displayNameBefore, saved.getDisplayName()))) {
+            int n = UserContactSync.sync(contactRepo, saved);
+            if (n > 0) log.info("LDAP girişi: {} eskalasyon kişisi kullanıcı satırından tazelendi (user={})", n, uname);
+        }
         SyncResult result = new SyncResult(saved, isNew, teamsBefore, ownTeams(saved), mgrSicilBefore, mgrIdBefore);
         if (mode != Mode.ADMIN_RESYNC) auditLdapChange(result, mode, via);
         return result;
+    }
+
+    /**
+     * LDAP satırında yerel kimlik bilgisi izi bırakmaz (2026-09-29, A1-Y3 güvenli geçiş): eskiden yönetici "parola
+     * sıfırla"yı AD hesabına da uygulayabiliyor; geçici hash + zorunlu değişim + 24 saatlik son kullanma AD girişini
+     * TEMP_PASSWORD_EXPIRED ile reddediyor, o arada tüm /api/** 403 oluyordu. Kişi AD ile kimliğini kanıtladığı anda
+     * bu üçü temizlenir; açılış yaması ({@code applySchemaPatches}) aynı temizliği bekleyen satırlara uygular.
+     */
+    private static void clearLocalCredential(AppUser u) {
+        boolean dirty = u.getPasswordHash() != null || Boolean.TRUE.equals(u.getMustChangePassword())
+                || u.getTempPasswordExpiresAt() != null;
+        if (!dirty) return;
+        log.warn("LDAP hesabında yerel parola izi temizlendi (user={}, mustChange={}, tempExpires={})",
+                u.getUsername(), u.getMustChangePassword(), u.getTempPasswordExpiresAt());
+        u.setPasswordHash(null);
+        u.setMustChangePassword(false);
+        u.setTempPasswordExpiresAt(null);
+    }
+
+    /** Girişte AD'nin artık desteklemediği LDAP kaynaklı üyelik budansın mı ({@value #PRUNE_KEY}) — tanı ekranı da bunu okur (A1-D1). */
+    public boolean pruneUnsupportedTeams() {
+        return appSettings.getBoolean(PRUNE_KEY, true);
     }
 
     /**
@@ -287,7 +320,7 @@ public class LdapProvisioningService {
             next = new LinkedHashSet<>(resolved.keySet());
         } else if (mode == Mode.ADMIN_RESYNC) {
             next = new LinkedHashSet<>();
-        } else if (appSettings.getBoolean(PRUNE_KEY, true)) {
+        } else if (pruneUnsupportedTeams()) {
             Map<Long, UserTeamSource> src = teamSources.sourcesOf(u.getId());
             next = new LinkedHashSet<>();
             for (Long t : current) {

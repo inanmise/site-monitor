@@ -284,6 +284,9 @@ public class MaintenanceController {
         if (body.containsKey("targets")) w.setTargetsJson(serializeTargets(body.get("targets")));
         if (!blank(body.get("timezone"))) w.setTimezone(body.get("timezone").toString().trim());
         if (!blank(body.get("startAt"))) w.setStartAt(body.get("startAt").toString().trim());
+        // Tavan burada KIRPILMAZ: rol tavanı (7 gün kapsamlı / 30 gün global) aşağıdaki doğrulama 400 ile reddeder;
+        // kırpma o kapıyı deliyordu (2026-09-30). Motor tarafı (MaintenanceService.MAX_DURATION_MINUTES = 30 gün) yalnız
+        // eski/elle yazılmış aşırı değere karşı savunmadır.
         if (body.get("durationMinutes") instanceof Number n) w.setDurationMinutes(Math.max(1, n.intValue()));
         if (!blank(body.get("recurrence"))) {
             String r = body.get("recurrence").toString().trim().toUpperCase();

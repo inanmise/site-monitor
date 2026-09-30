@@ -81,7 +81,16 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
       const cols = balancedColumns(width, gap, count)
       // Taban `floor` ile: kesirli pay altı kartı beş sütuna sarabilirdi; kalan pikselleri flex-grow dağıtır.
       const next = cols > 0 ? { cols, basis: Math.floor((width - (cols - 1) * gap) / cols) } : null
-      setLayout((prev) => (prev?.cols === next?.cols && prev?.basis === next?.basis ? prev : next))
+      // HİSTEREZİS (2026-09-30, kullanıcı: "istatistiklere tıklayınca titreşim"): bölüm açılınca sayfa uzuyor, dikey
+      // kaydırma çubuğu belirip paneli birkaç piksel daraltıyor, ölçüm yeni taban üretiyor, kartlar yeniden akıp
+      // yüksekliği değiştiriyor, çubuk kaybolup geri geliyordu — ResizeObserver ↔ yerleşim döngüsü. Sütun sayısı
+      // aynıyken 8 px'in altındaki taban farkı yok sayılır (flex-grow kalanı zaten dağıtır); html'de scrollbar-gutter
+      // stable (App.css) döngünün diğer yarısını keser.
+      setLayout((prev) => {
+        if (prev?.cols === next?.cols && prev?.basis === next?.basis) return prev
+        if (prev && next && prev.cols === next.cols && Math.abs(prev.basis - next.basis) < 8) return prev
+        return next
+      })
     }
     measure()
     const ro = new ResizeObserver(measure)

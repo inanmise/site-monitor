@@ -148,14 +148,23 @@ public class MonitoringOutageService {
                             String previousValue, String newValue, String detectedAt, Long teamId,
                             Long notificationGroupId,
                             Supplier<Map<String, Object>> recheck,
-                            Boolean notifyEmail, Boolean notifyWebhook, Boolean standalone, Long monitorId) {
+                            Boolean notifyEmail, Boolean notifyWebhook, Boolean standalone, Long monitorId,
+                            String alertLevel) {
+        /** Geriye uyumlu 12-arg kurucu (izlemenin seçili seviyesi bilinmiyor → WARNING; Y-A3-2 öncesi çağıranlar). */
+        public DnsChange(String domain, String recordType, String previousValue, String newValue,
+                         String detectedAt, Long teamId, Long notificationGroupId,
+                         Supplier<Map<String, Object>> recheck, Boolean notifyEmail, Boolean notifyWebhook,
+                         Boolean standalone, Long monitorId) {
+            this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck,
+                    notifyEmail, notifyWebhook, standalone, monitorId, null);
+        }
         /** Geriye uyumlu 11-arg kurucu (izleme kimliği bilinmiyor — D-b2 öncesi çağıranlar). */
         public DnsChange(String domain, String recordType, String previousValue, String newValue,
                          String detectedAt, Long teamId, Long notificationGroupId,
                          Supplier<Map<String, Object>> recheck, Boolean notifyEmail, Boolean notifyWebhook,
                          Boolean standalone) {
             this(domain, recordType, previousValue, newValue, detectedAt, teamId, notificationGroupId, recheck,
-                    notifyEmail, notifyWebhook, standalone, null);
+                    notifyEmail, notifyWebhook, standalone, null, null);
         }
         /** Geriye uyumlu 10-arg kurucu (bağımsızlık bilinmiyor = işaret yok). */
         public DnsChange(String domain, String recordType, String previousValue, String newValue,
@@ -520,11 +529,19 @@ public class MonitoringOutageService {
             return;
         }
         List<SweepItem> ownerDown = new ArrayList<>(), up = new ArrayList<>();
-        int foreignDown = 0;
+        int foreignDown = 0, foreignUp = 0;
         for (SweepItem it : domainItems) {
+            // O-A3-1 (2026-09-29): Y-1'in KURTARMA yönü — başka sahibin UP kalemi bu olayın kurtarma kanıtı DEĞİLDİR
+            // (ne sayaç artırır ne zincir başlatır). Eskiden yalnız DOWN dalı sahibe bakıyordu: yeniden başlatma sonrası
+            // (kardeş gözlem haritası boş) B takımının sağlıklı turu A'nın olayını "✅ ÇÖZÜLDÜ" diye kapatıyor, A'nın
+            // sonraki DOWN turu yeni INITIAL açıyordu. Kimliksiz kalem (envanter ACCESSIBILITY) sahip sayılır.
+            if (!isOwnerItem(it, openEvent)) { if (it.up()) foreignUp++; else foreignDown++; continue; }
             if (it.up()) up.add(it);
-            else if (isOwnerItem(it, openEvent)) ownerDown.add(it);
-            else foreignDown++;
+            else ownerDown.add(it);
+        }
+        if (foreignUp > 0) {
+            log.debug("{} [{}]: {} kalem başka sahibin izlemesi ve UP — açık olayın (#{}) kurtarma kanıtı sayılmaz",
+                    domain, alertType, foreignUp, openEvent.getId());
         }
         if (!ownerDown.isEmpty()) {
             // Kesinti SÜRÜYOR — recovery penceresini SIFIRLA (pasif + aktif) + günlük re-alert yolu.
@@ -594,8 +611,9 @@ public class MonitoringOutageService {
                 List<SweepItem> up = new ArrayList<>();
                 boolean ownerDown = false;
                 for (SweepItem it : entry.getValue()) {
+                    if (!isOwnerItem(it, ev)) continue;   // O-A3-1: yabancı sahibin kalemi (UP ya da DOWN) olayı etkilemez
                     if (it.up()) up.add(it);
-                    else if (isOwnerItem(it, ev)) ownerDown = true;
+                    else ownerDown = true;
                 }
                 if (ownerDown) {
                     resetRecoveryCount(rkey);
@@ -684,7 +702,7 @@ public class MonitoringOutageService {
                 log.info("Recovery tamamlandı: {} [{}] — {}/{} ardışık başarılı kontrol, alarm kapatılıyor",
                         domain, alertType, up, required);
             }
-            closeAlarm(alertType, domain);
+            closeAlarm(alertType, domain, configErrorReason(upItems));   // D-A3-6: yapılandırma hatası → sessiz
             return;
         }
         if (recIntervalMs != null) {
@@ -702,12 +720,66 @@ public class MonitoringOutageService {
      * push simetrisi resolveOpenAlertsSilently'de korunur).
      */
     private void closeAlarm(String alertType, String domain) {
-        if (alertEnabled(alertType)) {
+        closeAlarm(alertType, domain, null);
+    }
+
+    /** Sweep bağlamı anahtarı: kalem yapılandırma hatasından (URL'de host yok vb.) sentetik "up" — kesinti DEĞİL, kurtarma da DEĞİL. */
+    public static final String CTX_CONFIG_ERROR = "config_error";
+
+    /** D-A3-6: kalemlerden biri yapılandırma hatası sentetik "up"ı ise sessiz kapanış gerekçesi, değilse null. */
+    private static String configErrorReason(List<SweepItem> items) {
+        if (items == null) return null;
+        for (SweepItem it : items) {
+            if (it != null && it.ctxExtra() != null && Boolean.TRUE.equals(it.ctxExtra().get(CTX_CONFIG_ERROR)))
+                return "Sistem (yapılandırma hatası — izleme düzeltilmeli, hedef doğrulanmadı)";
+        }
+        return null;
+    }
+
+    /**
+     * D-A3-6 (2026-09-29): yapılandırma hatasından gelen sentetik "up" kalemi (URL'de host yok → kontrol hiç yapılmadı)
+     * açık alarmı SESSİZCE kapatır — yorumlar "sessizce kapanır" derken kalem normal çözüm yolundan geçip "✅ ÇÖZÜLDÜ —
+     * sorun giderildi" e-postası + push'u üretiyordu; oysa hedef doğrulanmadı, izleme bozuk yapılandırıldı.
+     * {@code resolvedSilently} işareti: fırtına çözümü bunu "kurtarıldı" saymaz, raporlar MTTR'a katmaz.
+     */
+    private void closeAlarm(String alertType, String domain, String silentReason) {
+        if (silentReason != null) {
+            withLock(alertType, domain, () -> escalationService.resolveOpenAlertsSilently(domain, Set.of(alertType), silentReason));
+        } else if (alertEnabled(alertType)) {
             withLock(alertType, domain, () -> escalationService.resolveMonitoringAlertsForDomain(domain, alertType));
         } else {
             withLock(alertType, domain, () -> escalationService.resolveOpenAlertsSilently(domain, Set.of(alertType),
                     "Sistem (otomatik — bu türün alarm bildirimleri kapalı)"));
         }
+    }
+
+    // ── O-A3-5: bakım penceresinde açılan değişiklik alarmlarının ertelenmiş ilk bildirimi ─────────────────────────────
+
+    /**
+     * Bakım penceresinde açılmış (ilk bildirimi hiç gitmemiş) DNS_CHANGED / DOMAINMON_CHANGED olaylarının INITIAL'ını pencere
+     * bitince TEK sefer gönderir. Karar {@code EscalationService.processConfirmedOutage}'da: bakım sürüyorsa yine bastırır,
+     * gönderince {@code lastReAlertAt} damgalanır. Alan adı+tür kilidi ile tek yazar (çok pod). DNS günlük yeniden uyarı
+     * döngüsü DNS_CHANGED için aynı yolu zaten işletir; alan adı izlemesinin böyle bir döngüsü olmadığından bu tik gerekir.
+     * @return bildirim denemesi yapılan olay sayısı
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${site.monitor.maintenance.deferred-change-alert-ms:60000}", initialDelayString = "90000")
+    public void notifyChangeAlertsDeferredByMaintenanceTick() {
+        try { notifyChangeAlertsDeferredByMaintenance(); }
+        catch (Exception e) { log.warn("Bakım sonrası değişiklik alarmı bildirimi atlandı: {}", e.getMessage()); }
+    }
+
+    int notifyChangeAlertsDeferredByMaintenance() {
+        List<AlertEvent> pending = alertEventRepo.findByAlertTypeInAndResolvedFalseAndLastReAlertAtIsNull(MANUAL_CLOSE_TYPES);
+        if (pending == null || pending.isEmpty()) return 0;
+        int n = 0;
+        for (AlertEvent e : pending) {
+            if (e.getDomain() == null || e.getAlertType() == null) continue;
+            if (!EscalationService.initialNotificationMissing(e, now())) continue;   // gönderim sürüyor olabilir (E9 payı)
+            withLock(e.getAlertType(), e.getDomain(), () -> escalationService.completeDeferredInitialNotification(e));
+            n++;
+        }
+        return n;
     }
 
     /** Ardışık sağlıklı sayacını ve son sayım anını birlikte sıfırlar (O-1). */
@@ -901,13 +973,13 @@ public class MonitoringOutageService {
         }
     }
 
-    /** Günlük re-alert ctx'ine monitörün kanal bayraklarını basar (açılış yolu changeCtx ile parite). */
+    /** Günlük re-alert ctx'ine monitörün kanal bayraklarını + seçili alarm seviyesini basar (açılış yolu changeCtx ile parite, Y-A3-2). */
     private Map<String, Object> withDnsChannelFlags(Map<String, Object> ctx, DnsRecord lastChanged) {
         if (lastChanged == null || lastChanged.getMonitorId() == null) return ctx;
         try {
             DnsMonitor mon = dnsMonitorRepo.findById(lastChanged.getMonitorId()).orElse(null);
             if (mon == null) return ctx;
-            return SchedulerService.chanCtx(ctx, mon.getNotifyEmail(), mon.getNotifyWebhook());
+            return SchedulerService.chanCtx(ctx, mon);
         } catch (Exception ex) {
             return ctx;
         }
@@ -996,6 +1068,15 @@ public class MonitoringOutageService {
         if (EscalationService.isScripted(item.alertType())
                 || EscalationService.TYPE_PAGESPEED_SLOW.equals(item.alertType()))
             return item.alertType() + ":" + item.domain();
+        // O-A3-4 (2026-09-29): DNS_CHANGED anahtarına İZLEME KİMLİĞİ girer — çift kaynaklı alan adında (envanter türevi +
+        // bağımsız, ya da iki takımın izlemesi) aynı tur içinde görülen aynı değişiklik iki AYRI teyit zinciri açar; eskiden
+        // ikinci sahibin zinciri "teyit zaten devam ediyor" diye düşüyor, o takımın turu değişikliği zaten kaydettiği için
+        // (taban ilerler) sinyal o takım için KALICI yutuluyordu. Teyit sonunda açık olay varsa O-c2 dalı sahibine olaysız
+        // bildirim gönderir. Kimliksiz kalem eski anahtarda kalır.
+        if (EscalationService.TYPE_DNS_CHANGED.equals(item.alertType())) {
+            Long mid = monitorIdOf(item);
+            if (mid != null) return item.alertType() + ":" + item.domain() + ":" + item.detail() + ":" + mid;
+        }
         return item.alertType() + ":" + item.domain() + ":" + item.detail();
     }
 
@@ -1124,7 +1205,7 @@ public class MonitoringOutageService {
         String key = alertType + ":" + domain;
         if (required <= 1) {
             endRecovery(key);   // tek kontrol yeterli → beklemeden kapat
-            closeAlarm(alertType, domain);
+            closeAlarm(alertType, domain, configErrorReason(items));
             return;
         }
         // Takılı zincir bekçisi (K2): kaydı olup görevi süresinde bitmeyen zincir ölü sayılır ve yenisiyle değiştirilir —
@@ -1187,7 +1268,7 @@ public class MonitoringOutageService {
                         domain, alertType, done, required);
                 endRecovery(key);
                 resetRecoveryCount(key);
-                closeAlarm(alertType, domain);
+                closeAlarm(alertType, domain, configErrorReason(items));
                 return;
             }
             recoveryExecutor.schedule(
@@ -1377,7 +1458,12 @@ public class MonitoringOutageService {
             ctx.put("notification_group_id", c.notificationGroupId());
         // Diğer sekiz sweep kalemi chanCtx'ten geçer; DNS_CHANGED geçmiyordu → monitörde "E-posta"/
         // "Webhook" kapalı olsa da değişiklik alarmı her iki kanaldan gidiyordu.
-        return SchedulerService.chanCtx(ctx, c.notifyEmail(), c.notifyWebhook());
+        Map<String, Object> out = SchedulerService.chanCtx(ctx, c.notifyEmail(), c.notifyWebhook());
+        // Y-A3-2 (2026-09-29): izlemenin SEÇİLİ alarm seviyesi de damgalanır (diğer türlerdeki chanCtx(ctx, izleme) ile
+        // parite). Eskiden DNS_CHANGED hep WARNING açılıyordu: CRITICAL seçilmiş izlemede eskalasyon kişileri, yönetici
+        // push kademesi ve 7/24 asgari seviye kapısı sessizce atlanıyordu.
+        out.putIfAbsent("alert_level", com.sitemonitor.model.MonitorAlertPrefs.effectiveLevel(c.alertLevel()));
+        return out;
     }
 
     /** Son changed kaydından re-alert ctx'i kur (kayıt yoksa boş ctx — mail generic mesaja düşer). */

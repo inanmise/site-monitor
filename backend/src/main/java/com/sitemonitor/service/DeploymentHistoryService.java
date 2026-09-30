@@ -46,7 +46,10 @@ public class DeploymentHistoryService {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").withZone(ZoneOffset.UTC);
-    private static final Pattern ENV_RE = Pattern.compile("^[a-z0-9-]{1,40}$");
+    /** Ortam adı biçimi — Genel Ayarlar'daki "Ortam adı" ayarıyla TEK desen ({@link BuildInfo#ENV_NAME}). */
+    private static final Pattern ENV_RE = BuildInfo.ENV_NAME;
+    /** {@code note} kolon boyu (DeploymentHistory). */
+    private static final int NOTE_MAX = 500;
     // 200 = ön yüz sayfalama ön ayarlarının en büyük seçeneği (Dağıtım kayıtları + Sürüm notları); 100 iken "200/sayfa"
     // seçimi sessizce 100 satır getiriyor, sayfa etiketleri kayıyor ve kayıtların bir kısmı erişilemez oluyordu (2026-09-27).
     public static final int MAX_PAGE = 200;
@@ -60,6 +63,8 @@ public class DeploymentHistoryService {
     private final boolean enabled;
 
     private volatile Long currentId;
+    /** {@link #currentId} satırının DB'deki ortam adı — canlı ad bundan ayrışınca satır taşınır ({@link #syncEnvironment}). */
+    private volatile String currentEnv;
 
     public DeploymentHistoryService(DeploymentHistoryRepository repo, BuildInfo buildInfo, ReleaseIndexService releaseIndex,
                                     JdbcTemplate jdbc, ApplicationEventPublisher events, Environment env) {
@@ -101,6 +106,7 @@ public class DeploymentHistoryService {
             d.setCreatedBy("SYSTEM");
             DeploymentHistory saved = repo.save(d);
             currentId = saved.getId();
+            currentEnv = b.environment();
             Derived mine = deriveKinds(repo.findByEnvironmentOrderByStartedAtAscIdAsc(b.environment())).stream()
                     .filter(x -> Objects.equals(x.row().getId(), saved.getId())).findFirst().orElse(null);
             Kind kind = mine != null ? mine.kind() : Kind.FIRST_SEEN;
@@ -125,11 +131,57 @@ public class DeploymentHistoryService {
         try { repo.markReady(id, now()); } catch (Exception e) { log.debug("markReady failed: {}", e.toString()); }
     }
 
-    /** Heartbeat tick'inden (60 sn) — hard-kill'de ended_at boş kalır, ekran son görülmeyi kullanır. */
+    /**
+     * Heartbeat tick'inden (60 sn) — hard-kill'de ended_at boş kalır, ekran son görülmeyi kullanır. Ortam adı
+     * taşımasının güvenlik ağı da burada: ayar olayı kaçtıysa (DB anlık erişilemedi) en geç bir tick sonra uyar.
+     */
     public void touch() {
         Long id = currentId;
         if (id == null) return;
+        syncEnvironment();
         try { repo.touch(id, now()); } catch (Exception e) { log.debug("touch failed: {}", e.toString()); }
+    }
+
+    /**
+     * Ortam adı ayarı değişti (bu pod'da kayıt ya da başka pod'un kaydı ~10 sn'lik tazelemeyle): koşan kaydı taşı.
+     * Commit'ten SONRA koşar (kaydedilmemiş bir adla geçmiş yazılmasın); tazeleme yolunda işlem olmadığı için hemen.
+     */
+    @org.springframework.transaction.event.TransactionalEventListener(fallbackExecution = true)
+    public void onSettingsChanged(AppSettingsChangedEvent ev) {
+        if (ev == null || !ev.touches(BuildInfo.ENV_KEY)) return;
+        syncEnvironment();
+    }
+
+    /**
+     * Ortam adı çalışma anında değiştiyse (Ayarlar → Genel Ayarlar) BU örneğin açık kaydını yeni ada taşır ve iz
+     * düşer (not: "Ortam adı değiştirildi: unknown → prod (zaman)"). Neden taşıma, yeni satır değil: ad bir ETİKET
+     * düzeltmesidir, süreç başka bir ortama geçmedi — yeni satır "yeniden başlatma" sayılır, sayaçları şişirir ve
+     * BOUNDED tabloya her adlandırmada satır ekler. Kapanmış geçmiş kayıtlarına dokunulmaz (eski adla kalırlar;
+     * ekran onları eski ortamın geçmişi olarak göstermeye devam eder). Sürüm geçişi DEĞİLDİR → olay yayımlanmaz.
+     * Hata yutulur (best-effort) ve {@link #currentEnv} değişmez: heartbeat yeniden dener.
+     *
+     * @return satır taşındıysa true
+     */
+    public synchronized boolean syncEnvironment() {
+        Long id = currentId;
+        String from = currentEnv;
+        if (!enabled || id == null || from == null) return false;
+        String to;
+        try { to = buildInfo.get().environment(); } catch (Exception e) { return false; }
+        if (to == null || to.isBlank() || to.equals(from)) return false;
+        try {
+            String prevNote = repo.findById(id).map(DeploymentHistory::getNote).orElse(null);
+            String trace = "Ortam adı değiştirildi: " + from + " → " + to + " (" + now() + ")";
+            String note = prevNote == null || prevNote.isBlank() ? trace : prevNote + " · " + trace;
+            if (note.length() > NOTE_MAX) note = "…" + note.substring(note.length() - (NOTE_MAX - 1));
+            int n = repo.relabelEnvironment(id, to, note);
+            currentEnv = to;
+            log.info("Deployment record #{} environment relabelled: {} -> {} (rows={})", id, from, to, n);
+            return n > 0;
+        } catch (Exception e) {
+            log.warn("Deployment record environment relabel failed ({} -> {}), will retry on heartbeat: {}", from, to, e.toString());
+            return false;
+        }
     }
 
     /** graceful | crash | failed-start */

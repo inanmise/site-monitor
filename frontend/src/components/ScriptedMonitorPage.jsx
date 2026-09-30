@@ -4,6 +4,7 @@ import { api, formatDateSec } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
@@ -291,6 +292,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
   const [density, setDensity] = useCardDensity('scripted')
   const [modal, setModal] = useState(null)      // create/edit form monitor (or {} for new)
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (server-scoped, sızıntısız)
@@ -819,10 +821,13 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   }
 
   async function save() {
-    if (!form.name.trim()) { toast.error(t('scripted.nameRequired')); return }
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName.trim()) { toast.error(t('scripted.groupRequired')); return }
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }   // etiket zorunlu (2026-09-18)
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      name: !form.name.trim() && t('scripted.nameRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName.trim() && t('scripted.groupRequired'),
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),   // etiket zorunlu (2026-09-18)
+    })) return
     // Boş/aralık dışı sayısal alan SESSİZCE kaydedilmesin (bkz. invalidNumericField).
     const bad = invalidNumericField(form)
     if (bad) { toast.error(t('scripted.numRange', t(bad.labelKey), bad.min, bad.max)); return }
@@ -1084,7 +1089,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
+    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin }} />
   )
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1661,7 +1666,7 @@ function CheckDetail({ t, check, k6Version }) {
 }
 
 // ── Create/Edit modal ────────────────────────────────────────────────────────
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -1739,10 +1744,10 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
       )}
 
       <FormGrid>
-        <FormField full label={t('scripted.name')} required>
+        <FormField full label={t('scripted.name')} required {...fe.fieldProps('name')}>
           {({ id }) => (
             <Input id={id} value={form.name} autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              onChange={e => { setForm(f => ({ ...f, name: e.target.value })); fe.clear('name') }} />
           )}
         </FormField>
         <FormField full label={t('scripted.description')}>
@@ -1751,18 +1756,18 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
           )}
         </FormField>
 
-        <FormField label={t('scripted.team')} required>
+        <FormField label={t('scripted.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))}
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }}
                 options={[{ value: '', label: t('scripted.selectTeam') }, ...teamSelectOptions]} searchThreshold={2} />
             // Kilitli kutu formun GERÇEK takımını gösterir (oturum teamName'i boşken varsayılan = tek takım).
             : <Input id={id} value={(teamSelectOptions || []).find(o => String(o.value) === String(form.teamId))?.label || teamName || t('scripted.selectTeam')} disabled />}
         </FormField>
-        <FormField label={t('scripted.group')} required>
+        <FormField label={t('scripted.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
             <SearchableSelect id={id}
               value={form.groupName}
-              onChange={v => setForm(f => ({ ...f, groupName: v }))}
+              onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={groupSelectOptions}
               creatable
               onCreate={() => {}}
@@ -1828,8 +1833,8 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, dup
         </FormField>
 
         {/* Etiketler — kanonik TagInput (diğer tiplerle parite; payload'daki tags alanını doldurur) */}
-        <FormSection title={t('scripted.tagsTitle')} required hint={t('scripted.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('scripted.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('scripted.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('scripted.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('scripted.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         {/* Script kaynağı — KAYITLI script'ler ve ŞABLONLAR ayrı gruplarda; ikisi karışmasın.

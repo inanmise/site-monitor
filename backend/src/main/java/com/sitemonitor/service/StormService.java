@@ -117,6 +117,25 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
+    /**
+     * Bildirim günlüğü (2026-09-30): fırtına e-postaları eskiden doğrudan {@code sendHtml} ile gidiyor ve
+     * {@code notification_logs}'a HİÇ yazılmıyordu — ne SMTP günlüğünde ne üye alarmın "Bildirimler" bölümünde
+     * görünüyordu; takım "hiç posta gelmedi" diyor, sistem "gönderdim" diyordu ve ikisi de kanıtsızdı. Artık her
+     * fırtına postası (açılış / günlük tekrar / çözüm) o takımın ÜYE ALARMLARININ her birine bağlı bir satır bırakır
+     * (tetik {@code STORM_INITIAL} / {@code STORM_REALERT} / {@code STORM_RESOLVE}). Alan enjeksiyonu, null-güvenli.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
+
+    /** Fırtına e-posta tetik adları — üye alarmın bildirim günlüğünde görünür; ön yüz {@code MAIL_TRIGGER} eşler. */
+    public static final String TRIGGER_STORM_INITIAL = "STORM_INITIAL";
+    public static final String TRIGGER_STORM_REALERT = "STORM_REALERT";
+    public static final String TRIGGER_STORM_RESOLVE = "STORM_RESOLVE";
+
+    /** Sessiz pencere ayarı: son üye katılımından bu kadar dakika sonra yeni üye gelmediyse fırtına mühürlenir. */
+    public static final String KEY_QUIET = "site.monitor.storm.quiet-minutes";
+    public static final int QUIET_DEFAULT = 30, QUIET_MIN = 5, QUIET_MAX = 1440;
+
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
         SEND_INDIVIDUAL,
@@ -206,9 +225,17 @@ public class StormService {
 
         try {
             // 1) Scope'un aktif storm'u var mı → bağla (attach), bireysel gönderme.
+            //    MÜHÜRLÜ fırtına (2026-09-30) yeni üye ALMAZ: son üye katılımından quiet-minutes geçtiyse patlama
+            //    bitmiştir; alarm bireysel hatta gider (yaşam döngüsü fırtınayı en geç 30 sn içinde kapatır). Eskiden
+            //    kalıcı başarısız üyeler fırtınayı süresiz açık tutuyor, takımın HER yeni DOWN alarmı sessizce yutuluyordu.
             Optional<AlertStorm> active = stormRepo.findByScopeKeyAndResolvedFalse(scopeKey);
             if (active.isPresent()) {
                 AlertStorm storm = active.get();
+                if (isSealed(storm, now())) {
+                    log.info("🌩 Storm #{} mühürlü (son üye {} — sessiz pencere {} dk doldu) — {} [{}] bireysel gönderiliyor",
+                            storm.getId(), memberClock(storm), quietMinutes(), event.getDomain(), event.getAlertType());
+                    return StormAction.SEND_INDIVIDUAL;
+                }
                 event.setStormId(storm.getId());
                 bumpMemberCount(storm);
                 log.info("🌩 Storm üyesi eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
@@ -244,6 +271,11 @@ public class StormService {
                 return StormAction.SEND_INDIVIDUAL;
             }
             AlertStorm storm = stormOpt.get();
+            if (!created && isSealed(storm, now())) {
+                // Terfi yarışını kaybettik ama bulunan fırtına eski ve mühürlü (yaşam döngüsü henüz kapatmadı): yutma.
+                log.info("🌩 Storm #{} mühürlü — {} [{}] bireysel gönderiliyor", storm.getId(), event.getDomain(), event.getAlertType());
+                return StormAction.SEND_INDIVIDUAL;
+            }
 
             // Penceredeki tüm açık DOWN üyeleri storm'a bağla (mevcut event'i çağıran kaydeder → burada atla).
             event.setStormId(storm.getId());
@@ -319,7 +351,14 @@ public class StormService {
         int resolveFloor = Math.max(MIN_THRESHOLD, (threshold + 1) / 2);   // histerezis: eşiğin altı → flapping'i önler
 
         if (activeDown < resolveFloor) {
-            resolveStorm(storm, members);
+            resolveStorm(storm, members, "histerezis tabanının altına inildi");
+            return;
+        }
+        // ÖMÜR SINIRI (2026-09-30): son üye katılımından quiet-minutes geçtiyse patlama bitmiştir — hâlâ-down üye
+        // sayısı ne olursa olsun fırtına kapanır. Kalıcı başarısız izlemeler (asla iyileşmeyen sentetik testler)
+        // fırtınayı süresiz açık tutup takımın sonraki tüm alarmlarını bildirimsiz bırakıyordu.
+        if (isSealed(storm, now())) {
+            resolveStorm(storm, members, "sessiz pencere doldu (" + quietMinutes() + " dk yeni üye yok)");
             return;
         }
         // Aktif storm sürüyor → günlük toplu re-alert (aynı-UTC-gün kuralı, bireysel re-alert'in aynası)
@@ -345,24 +384,101 @@ public class StormService {
         }
     }
 
-    /** Çözülme (histerezis tabanının altına inildi): TEK toplu recovery + hâlâ-down üyeleri geri-bağla. */
-    private void resolveStorm(AlertStorm storm, List<AlertEvent> members) {
+    /**
+     * Çözülme (histerezis tabanının altına inildi ya da sessiz pencere doldu): TEK toplu recovery + hâlâ-down üyeleri
+     * bireysel hatta döndür.
+     *
+     * <p>Hâlâ-down üye iki sınıftır (2026-09-30): fırtınanın SON toplu postasında DUYURULMUŞ olan ({@code createdAt ≤}
+     * fırtınanın {@code lastReAlertAt}'i) "bildirildi" sayılarak çözülür — günlük tekrar kadansı o postadan sürer, ikinci
+     * bir İLK bildirim gitmez; postadan SONRA katılan (hiç duyurulmamış) üye ise {@code lastReAlertAt=null} ile çözülür
+     * ve ilk turda bireysel İLK bildirimini alır. Eskiden hepsi ikinci sınıftı: duyurulmuş üyeler de yeniden İLK alıyordu.
+     */
+    private void resolveStorm(AlertStorm storm, List<AlertEvent> members, String reason) {
         List<AlertEvent> recovered = members.stream()
                 .filter(m -> Boolean.TRUE.equals(m.getResolved())).toList();
         List<AlertEvent> stillDown = members.stream()
                 .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
 
-        // Hâlâ-down üyeleri storm'dan çöz → sonraki sweep BİREYSEL alarmlar (hiçbir şey sessizce kaybolmaz).
+        String announcedAt = storm.getLastReAlertAt();
+        int announced = 0, unannounced = 0;
         for (AlertEvent e : stillDown) {
-            alertEventRepo.unlinkFromStorm(e.getId());   // koşullu — çözülmüş üyeyi diriltmeden bağı kaldır (M6)
+            if (announcedInStorm(e, announcedAt)) {
+                if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), announcedAt) == 1) announced++;
+                else alertEventRepo.unlinkFromStorm(e.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK
+            } else {
+                alertEventRepo.unlinkFromStorm(e.getId());   // koşullu — çözülmüş üyeyi diriltmeden bağı kaldır (M6)
+                unannounced++;
+            }
         }
         storm.setResolved(true);
         storm.setResolvedAt(now());
         stormRepo.save(storm);
 
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
-        log.info("🌩✅ Storm #{} çözüldü — {} kurtuldu, {} hâlâ down (bireysele döndü)",
-                storm.getId(), recovered.size(), stillDown.size());
+        log.info("🌩✅ Storm #{} çözüldü ({}) — {} kurtuldu, {} hâlâ down ({} duyurulmuş → bildirildi sayıldı, {} duyurulmamış → bireysel ilk bildirim)",
+                storm.getId(), reason, recovered.size(), stillDown.size(), announced, unannounced);
+    }
+
+    /**
+     * Fırtına postasını takımın ÜYE alarmlarının bildirim günlüğüne yazar — üye başına bir satır, aynı gövde
+     * (SMTP günlüğü ve alarm penceresi bu tablodan okur). Günlük yazımı asla gönderimi düşürmez.
+     */
+    private void logStormMail(TeamDispatch d, AlertStorm storm, String trigger, String subject, String html, String status) {
+        if (notificationLogRepo == null || d == null || d.members() == null) return;
+        String recipients = String.join(", ", d.emails());
+        String name = d.teamName() != null ? d.teamName() : "-";
+        String body = html != null ? html : "";
+        String stamp = now();
+        for (AlertEvent m : d.members()) {
+            if (m == null || m.getId() == null) continue;
+            try {
+                com.sitemonitor.model.NotificationLog entry = new com.sitemonitor.model.NotificationLog();
+                entry.setAlertEventId(m.getId());
+                entry.setSentAt(stamp);
+                entry.setRecipientName(name);
+                entry.setRecipientEmail(recipients);
+                entry.setRecipientRole("COMBINED");
+                entry.setSubject(subject);
+                entry.setMessage(body);
+                entry.setEmailStatus(status != null ? status : "SKIPPED");
+                entry.setWebhookStatus("SKIPPED");
+                entry.setTrigger(trigger);
+                entry.setEmailFrom(emailService.getEmailFrom());
+                notificationLogRepo.save(entry);
+            } catch (Exception ex) {
+                log.warn("Storm #{} bildirim günlüğü yazılamadı (olay {}): {}", storm.getId(), m.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    /** Üye, fırtınanın son toplu postasında duyurulmuş muydu — açılışı o postadan ÖNCE ise evet. */
+    static boolean announcedInStorm(AlertEvent e, String stormLastReAlertAt) {
+        if (e == null || stormLastReAlertAt == null || e.getCreatedAt() == null) return false;
+        return e.getCreatedAt().compareTo(stormLastReAlertAt) <= 0;
+    }
+
+    /** Fırtına mühürlü mü: son üye katılımından ({@code lastMemberAt}, yoksa {@code createdAt}) quiet-minutes geçti. */
+    boolean isSealed(AlertStorm storm, String nowIso) {
+        String last = memberClock(storm);
+        if (last == null) return false;
+        try {
+            java.time.LocalDateTime lastAt = java.time.LocalDateTime.parse(last, ISO_LDT);
+            java.time.LocalDateTime now = java.time.LocalDateTime.parse(nowIso, ISO_LDT);
+            return !now.isBefore(lastAt.plusMinutes(quietMinutes()));
+        } catch (Exception e) {
+            return false;   // ayrıştırılamayan damga mühür SAYILMAZ (mevcut davranış korunur)
+        }
+    }
+
+    private static String memberClock(AlertStorm storm) {
+        return storm.getLastMemberAt() != null ? storm.getLastMemberAt() : storm.getCreatedAt();
+    }
+
+    private static final DateTimeFormatter ISO_LDT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+    /** Sessiz pencere (dk) — ayar; {@value #QUIET_MIN}–{@value #QUIET_MAX} aralığına kırpılır. */
+    public int quietMinutes() {
+        return clamp(appSettings.getInt(KEY_QUIET, QUIET_DEFAULT), QUIET_MIN, QUIET_MAX);
     }
 
     /** Aktif storm'u zarifçe dağıt (özellik kapatıldı / eski kapsam): üyeleri geri-bağla (bireysele dön), kapat. */
@@ -597,9 +713,9 @@ public class StormService {
         String rootCause = commonRootCause(peers);
         try {
             int rows = jdbcTemplate.update(
-                    "INSERT INTO alert_storms(scope_key, scope_type, resolved, member_count, root_cause, created_at, last_re_alert_at) "
-                  + "VALUES(?, ?, false, ?, ?, ?, ?) ON CONFLICT (scope_key) WHERE resolved = false DO NOTHING",
-                    scopeKey, scopeType, peers.size(), rootCause, nowIso, nowIso);
+                    "INSERT INTO alert_storms(scope_key, scope_type, resolved, member_count, root_cause, created_at, last_re_alert_at, last_member_at) "
+                  + "VALUES(?, ?, false, ?, ?, ?, ?, ?) ON CONFLICT (scope_key) WHERE resolved = false DO NOTHING",
+                    scopeKey, scopeType, peers.size(), rootCause, nowIso, nowIso, nowIso);
             return rows == 1;
         } catch (Exception e) {
             log.warn("Storm terfi INSERT hatası ({}): {}", scopeKey, e.getMessage());
@@ -623,8 +739,9 @@ public class StormService {
      */
     private void bumpMemberCount(AlertStorm storm) {
         try {
-            jdbcTemplate.update("UPDATE alert_storms SET member_count = COALESCE(member_count, 0) + 1 "
-                    + "WHERE id = ? AND resolved = false", storm.getId());
+            // last_member_at: sessiz pencere saati her katılımda yeniden başlar (2026-09-30).
+            jdbcTemplate.update("UPDATE alert_storms SET member_count = COALESCE(member_count, 0) + 1, last_member_at = ? "
+                    + "WHERE id = ? AND resolved = false", now(), storm.getId());
         } catch (Exception e) {
             log.debug("Storm #{} üye sayacı güncellenemedi: {}", storm.getId(), e.getMessage());
         }
@@ -707,14 +824,20 @@ public class StormService {
                 // ile aynı kural ve tek sözlük; e-posta rozeti ve webhook eskiden sabit "KRİTİK"/"CRITICAL"di.
                 String level = stormPushLevel(d.members());
 
+                String mailStatus = "SKIPPED: alıcı yok";
+                String html = null;
                 if (!d.emails().isEmpty()) {
-                    String html = emailService.buildStormAlertHtml(
+                    html = emailService.buildStormAlertHtml(
                             count, label, rootCauseLabel, storm.getCreatedAt(), targets, extra, level);
                     String text = emailService.buildStormAlertText(
                             count, label, rootCauseLabel, storm.getCreatedAt(), targets, extra, level);
-                    emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+                    mailStatus = emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                     anyEmail = true;
                 }
+                // Üye alarmların bildirim günlüğü (2026-09-30): fırtına postası her üyenin "Bildirimler" bölümünde ve SMTP
+                // günlüğünde görünür — eskiden hiçbir kayıt yoktu.
+                logStormMail(d, storm, "DAILY_REALERT".equals(trigger) ? TRIGGER_STORM_REALERT : TRIGGER_STORM_INITIAL,
+                        subject, html, mailStatus);
 
                 // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz. Kanal kapıları
                 // (takım/tür/izleme bayrağı/sessiz saat/tekrar ayarı) ve günlük tekrar anahtarı UserPushService'te.
@@ -835,18 +958,23 @@ public class StormService {
                 // gidiyor, hangileri olduğu ne mailde ne webhook'ta söyleniyordu.
                 List<String> stillDownTargets = sampleTargets(mineStillDown);
 
+                String mailStatus = "SKIPPED: alıcı yok";
+                String html = null;
                 if (!d.emails().isEmpty()) {
                     // "Hâlâ erişilemeyen" sayacı da TAKIM kapsamlı: listenin kendisi öyle ve
                     // webhook partı (aşağıda) zaten mineStillDown kullanıyordu — e-posta hesap
                     // geneli sayı geçtiği için aynı olay iki kanalda farklı rakam veriyordu.
-                    String html = emailService.buildStormRecoveryHtml(
+                    html = emailService.buildStormRecoveryHtml(
                             mineRecovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
                     String text = emailService.buildStormRecoveryText(
                             mineRecovered.size(), mineStillDown.size(), scopeLabel,
                             storm.getCreatedAt(), storm.getResolvedAt(), targets, extra, stillDownTargets);
-                    emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
+                    mailStatus = emailService.sendHtml(d.emails().toArray(new String[0]), null, subject, html, text, List.of(), false, null);
                 }
+                // Çözüm postası yalnız KURTULAN üyelerin günlüğüne (hâlâ-down üye için bu bir çözüm değildir).
+                logStormMail(new TeamDispatch(d.teamId(), d.teamName(), d.emails(), d.webhooks(), mineRecovered, List.of()),
+                        storm, TRIGGER_STORM_RESOLVE, subject, html, mailStatus);
 
                 enqueueStormPush(storm, d, "RESOLVE",
                         mineRecovered.size() + " monitör kurtarıldı — " + scopeLabel

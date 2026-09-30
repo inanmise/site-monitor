@@ -9,7 +9,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users,
+  LifeBuoy, Search, Users, Radar,
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -18,6 +18,7 @@ import { useTour } from './tour/TourProvider.jsx'
 import NavBrand from './nav/NavBrand.jsx'
 import NavMain, { NavLeafItem } from './nav/NavMain.jsx'
 import NavUser from './nav/NavUser.jsx'
+import { useOpenAlerts } from '../hooks/useOpenAlerts.js'
 import { NAV_ITEM } from './nav/navStyles.js'
 // shadcn Sidebar (sidebar-07 "collapses to icons" deseni): marka + arama + bildirim / ana menü / kullanıcı
 import {
@@ -72,6 +73,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       // Ara başlıklar (2026-09-23): `section` taşıyan sekme, önüne tıklanmayan küçük bir başlık çizer —
       // türler cevapladıkları soruya göre: ayakta mı / adres doğru mu / sayfa doğru ve hızlı mı.
       items: [
+        // İzleme Panosu (2026-09-30): 9 türün tek ekranda durumu — bölümün ilk sırasında, ara başlıksız.
+        { id: 'monitoring', Icon: Radar,        labelKey: 'nav.monitoringOverview', show: true },
         { id: 'http',      Icon: Globe,         labelKey: 'nav.http',      show: true, section: 'nav.secAvailability' },
         { id: 'ping',      Icon: Radio,     labelKey: 'nav.ping',      show: true },
         { id: 'port',      Icon: EthernetPort,  labelKey: 'nav.port',      show: true },
@@ -188,6 +191,13 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
     if (extra === undefined) onTabChange(id); else onTabChange(id, extra)   // sürüm popover'ı ek parametre verir
     closeMobile()
   }
+  // İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki açık alarmlar, izleme türü başına; dakikada bir yoklanır.
+  const openAlerts = useOpenAlerts()
+  const goAlerts = (tabId, alertId) => {
+    const params = { view: 'open', src: tabId }
+    if (alertId != null) params.alert = String(alertId)
+    go('alerthistory', params)
+  }
   function logout() {
     writeOpenSection(null)
     closeMobile()
@@ -226,7 +236,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         {/* ── Ana menü (tek gezinme bölgesi) + ikincil menü (Yardım, ayraçla) ── */}
         <SidebarContent data-tour="nav-groups" role="navigation" aria-label={t('nav.sidebarTitle')}>
           <NavMain label={t('nav.groupPlatform')} sections={sections} activeTab={activeTab} openSection={openSection}
-            onToggle={toggleSection} onSelect={go} collapsed={collapsed} />
+            onToggle={toggleSection} onSelect={go} collapsed={collapsed}
+            alertCounts={openAlerts.visible ? openAlerts.byTab : null} onGoAlerts={goAlerts} />
           <SidebarGroup className="mt-auto pt-0">
             <SidebarSeparator className="mx-0 mb-2" />
             <SidebarGroupContent>

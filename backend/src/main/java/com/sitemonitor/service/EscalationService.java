@@ -875,11 +875,30 @@ public class EscalationService {
             return event;
         }
         String by = resolvedBy != null && !resolvedBy.isBlank() ? resolvedBy : "admin";
+        String at = now();
+        // D-A3-4 (2026-09-29): elle çözüm de ATOMİK kapıdan geçer — otomatik kapanışla aynı saniyede gelen "Çöz",
+        // yukarıdaki oku-kontrol-yaz penceresinde resolvedBy/At'i eziyor ve İKİNCİ bir çözüm e-postası (MANUAL_RESOLVE)
+        // üretiyordu. Koşullu UPDATE 0 dönerse yarışı otomatik yol kazanmış demektir: kapanmış olay olduğu gibi döner,
+        // bildirim yok (yukarıdaki idempotent kuralla aynı sonuç).
+        if (event.getId() != null && alertEventRepo.markResolvedIfOpen(event.getId(), at, by) == 0) {
+            log.info("Elle çözüm atlandı — alarm aynı anda otomatik kapandı (yarış): {} [{}] #{}",
+                    event.getDomain(), event.getAlertType(), event.getId());
+            return alertEventRepo.findById(eventId).orElse(event);
+        }
         event.setResolved(true);
-        event.setResolvedAt(now());
+        event.setResolvedAt(at);
         event.setResolvedBy(by);
         if (note != null && !note.isBlank()) event.setResolvedNote(note.trim());
         AlertEvent saved = alertEventRepo.save(event);
+        // D-A3-3 (2026-09-29): fırtına üyesi elle çözülünce de bireysel ÇÖZÜLDÜ e-postası GİTMEZ — otomatik yolla aynı
+        // kural (resolveOpenAlertsForDomain): tek toplu kurtarma fırtına dağılınca gider; aksi hâlde takım aynı üyeyi
+        // önce bireysel, sonra toplu çözümde iki kez alıyordu. Push simetrisi korunur (açılışta SENT olanlara).
+        if (saved.getStormId() != null && stormService != null && stormService.isActive(saved.getStormId())) {
+            enqueueResolvePushQuietly(saved);
+            log.info("✅ Alarm elle çözüldü (fırtına üyesi — bireysel çözüm maili yok, toplu çözüm fırtınadan): {} [{}]",
+                    saved.getDomain(), saved.getAlertType());
+            return saved;
+        }
         self.sendResolutionNotificationAsync(saved, by, "MANUAL_RESOLVE");
         return saved;
     }
@@ -1014,6 +1033,11 @@ public class EscalationService {
             // penceresinde kurtarma / silme / duraklatma mail'siz kapanır ama telefon "DÜZELDİ"yi
             // hiç görmüyordu — açık alarm bildirimi ekranda sonsuza kadar kalıyordu.
             enqueueResolvePushQuietly(saved != null ? saved : event);
+            // O-A3-3 (2026-09-29): bakım penceresinde GERÇEKTEN kurtulan alarm (işaretsiz dal) — 7/24 (NOC) ÇÖZÜLDÜ postası
+            // takımın e-postasından BAĞIMSIZDIR: açılış NOC'a gittiyse çözüm de gider (karar serviste; açılış gitmediyse
+            // hiçbir şey göndermez, çift gönderim yok). Eskiden yalnız sendResolutionNotification çağırıyordu; push-tek
+            // takımda / e-postası kapalı izlemede NOC "kesinti sürüyor" sanıyordu. Susturma (silme/duraklatma) dalı değil.
+            if (!markSilenced) notifyNocResolved(saved != null ? saved : event);
             log.info("✅ Alarm sessizce kapatıldı (izleme silindi, mail yok): {} [{}]", domain, event.getAlertType());
         }
     }
@@ -1234,6 +1258,16 @@ public class EscalationService {
         // Bakım penceresi: atanan monitör bakımdaysa alarm AÇILMAZ + hiçbir kanaldan bildirim gitmez
         // (açılış + günlük re-alert + DNS_CHANGED hepsi bu tek noktadan geçer; save + sendCombinedAlert'ten ÖNCE).
         if (maintenanceService.isUnderMaintenance(domain)) {
+            // O-A3-5 (2026-09-29, ürün kararı): KENAR TETİKLİ değişiklik alarmları (DNS_CHANGED / DOMAINMON_CHANGED) bakımda
+            // YUTULMAZ — değişiklik yalnız görüldüğü turda vardır (tur tabanı ilerler, bir daha algılanmaz) ve alan adı /
+            // NS kaydının değişmesi bakım kapsamı değildir (olası ele geçirme). Olay BİLDİRİMSİZ açılır (lastReAlertAt null
+            // = "yarım ilk bildirim"), notu "bakım penceresinde algılandı"; pencere bitince ilk turda
+            // (MonitoringOutageService.notifyChangeAlertsDeferredByMaintenance / DNS günlük yeniden uyarı döngüsü)
+            // INITIAL TEK sefer gider. Açık olay zaten varsa dokunulmaz (bakımda yeniden uyarı yok — mevcut kural).
+            if (MonitoringOutageService.MANUAL_CLOSE_TYPES.contains(alertType)) {
+                openDeferredChangeAlert(domain, alertType, alertLevel, outageContext);
+                return;
+            }
             log.debug("🔧 Bakım penceresi aktif — alarm/bildirim bastırıldı: {} [{}]", domain, alertType);
             return;
         }
@@ -1281,6 +1315,10 @@ public class EscalationService {
             if (stormAction == StormService.StormAction.SUPPRESSED) {
                 event.setLastReAlertAt(now());
                 alertEventRepo.save(event);
+                // İZ (2026-09-30, prod olayı): bu dal hiçbir kanal çalıştırmıyor ve eskiden hiçbir kayıt da bırakmıyordu —
+                // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
+                // göremiyordu. Bildirim günlüğü + push karar satırı: "bireysel bildirim fırtına #N'e devredildi".
+                recordStormSuppression(event, domainTeamId, ugTeamId);
                 log.info("🌩 İzleme alarmı storm'a eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
                         domain, alertType, event.getStormId());
             } else {
@@ -1329,6 +1367,15 @@ public class EscalationService {
             // Üç yol da (ilk/re-alert/çözüm) aynı damgayı kullansın; ctx yalnız damga boşken.
             if (event.getTeamId() != null) {
                 domainTeamId = event.getTeamId();
+            }
+            // D-A3-1 (2026-09-29): gönderim seviyesi olayın seviyesinin ALTINA inmez (sertifika yolundaki E11 kuralı).
+            // İzlemenin seviyesi alarm açıkken DÜŞÜRÜLÜRSE yeniden uyarı düşük seviyeyle ve kişisiz gidiyor, olay ve push
+            // ise yüksek seviyede kalıyordu — açılışı alan eskalasyon kişisi yeniden uyarıyı almıyordu. Terfi (yukarı)
+            // aşağıdaki dalda ayrıca ele alınır.
+            if (levelValue(alertLevel) < levelValue(event.getAlertLevel())) {
+                alertLevel = event.getAlertLevel();
+                message = monitoringMessage(domain, alertType, alertLevel, outageContext);
+                teamOnly = teamOnly(isStandalone(alertType, outageContext), alertLevel);
             }
             // Bağımsızlık OLAYDAN da okunur (2026-09-28): DNS_CHANGED günlük yeniden uyarısı bağlamı
             // reconstructChangeCtx'ten kurar ve team_id taşımaz → bağımsız bir DNS izlemesinin alarmı envanter yoluna
@@ -1427,6 +1474,56 @@ public class EscalationService {
         // acknowledged açık alarm → sessiz (expiry semantiğiyle aynı)
     }
 
+    /** Bağlam anahtarı: olay bakım penceresinde algılandı, bildirimi pencere bitince gönderildi/gönderilecek (O-A3-5). */
+    public static final String CTX_DETECTED_IN_MAINTENANCE = "detected_in_maintenance";
+
+    /**
+     * O-A3-5: bakım penceresinde görülen değişikliği BİLDİRİMSİZ olay olarak kaydeder — yalnız açık olay YOKSA. Bağlam
+     * anlık görüntüsüne {@link #CTX_DETECTED_IN_MAINTENANCE} damgası girer (ileti notu + ertelenmiş INITIAL'ın bağlamı).
+     */
+    private void openDeferredChangeAlert(String domain, String alertType, String alertLevel, Map<String, Object> outageContext) {
+        if (alertEventRepo.findOpenAlert(domain, alertType).isPresent()) {
+            log.debug("🔧 Bakım penceresi aktif — değişiklik alarmı zaten açık, bildirim bastırıldı: {} [{}]", domain, alertType);
+            return;
+        }
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        if (outageContext != null) ctx.putAll(outageContext);
+        ctx.put(CTX_DETECTED_IN_MAINTENANCE, now());
+        if (ctx.get("alert_level") instanceof String lvl && !lvl.isBlank()) alertLevel = lvl;
+        Object ctxTeam = ctx.get("team_id");
+        Long teamId = ctxTeam instanceof Number n ? n.longValue()
+                : isStandalone(alertType, ctx) ? null
+                : inventoryRepo.findByDomain(domain).map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        AlertEvent event = newEvent(domain, alertLevel, alertType, monitoringMessage(domain, alertType, alertLevel, ctx), null);
+        event.setTeamId(teamId);
+        event.setNotificationGroupId(resolveStampFromContext(ctx, domain));
+        event.setContextJson(snapshotContext(ctx));
+        event.setNotifiedContacts("[]");
+        // lastReAlertAt BİLEREK null: "ilk bildirim yarıda kaldı" dalı pencere bitince INITIAL'ı gönderir.
+        AlertEvent saved = alertEventRepo.save(event);
+        log.warn("🔧 Değişiklik alarmı bakım penceresinde açıldı (bildirim pencere bitince): {} [{}] olay #{}",
+                domain, alertType, saved == null ? null : saved.getId());
+    }
+
+    /**
+     * O-A3-5: ilk bildirimi hiç gitmemiş (bakımda açılmış) açık değişiklik olayının INITIAL'ını bağlam anlık
+     * görüntüsüyle tamamlar — bakım hâlâ sürüyorsa {@link #processConfirmedOutage} kapısı yine bastırır; gönderilince
+     * {@code lastReAlertAt} damgalanır (bir daha çağrılmaz). Çağıran kilidi tutar (MonitoringOutageService.withLock).
+     */
+    public void completeDeferredInitialNotification(AlertEvent e) {
+        if (e == null || e.getDomain() == null || e.getAlertType() == null) return;
+        if (!MonitoringOutageService.MANUAL_CLOSE_TYPES.contains(e.getAlertType())) return;
+        if (!initialNotificationMissing(e, now())) return;   // gönderim sürüyor olabilir (E9 payı) ya da zaten gitti
+        Map<String, Object> ctx = deserializeContext(e.getContextJson());
+        if (ctx == null) ctx = new LinkedHashMap<>();
+        processConfirmedOutage(e.getDomain(), e.getAlertType(),
+                e.getAlertLevel() != null ? e.getAlertLevel() : levelWordSafe(ctx), ctx);
+    }
+
+    private static String levelWordSafe(Map<String, Object> ctx) {
+        return ctx.get("alert_level") instanceof String lvl && !lvl.isBlank() ? lvl : com.sitemonitor.model.MonitorAlertPrefs.LEVEL_WARNING;
+    }
+
     /** Alarm seviyesinin Türkçe sözcüğü — Alarm Geçmişi rozeti ve push metniyle aynı (UYARI / YÜKSEK / KRİTİK / BİLGİ). */
     public static String levelWordTr(String level) {
         return switch (level == null ? "" : level.toUpperCase(java.util.Locale.ROOT)) {
@@ -1458,7 +1555,25 @@ public class EscalationService {
     /** İzleme alarm mesajı — ctx alanları varsa zenginleştirilir, yoksa buildMessage'a düşer. Seviye sözcüğü seviyeden. */
     private String monitoringMessage(String domain, String alertType, String alertLevel,
                                      Map<String, Object> ctx) {
-        return withLevelWord(monitoringMessageBody(domain, alertType, alertLevel, ctx), alertLevel);
+        String body = withLevelWord(monitoringMessageBody(domain, alertType, alertLevel, ctx), alertLevel);
+        // O-A3-5: bakım penceresinde algılanan değişiklik — olay notu (Alarm Geçmişi + e-posta gövdesi) bunu söyler.
+        Object seen = ctx == null ? null : ctx.get(CTX_DETECTED_IN_MAINTENANCE);
+        if (seen != null) {
+            body = body + " Bakım penceresinde algılandı (" + formatIstanbulShort(String.valueOf(seen))
+                    + "); bildirim pencere bitince gönderildi.";
+        }
+        return body;
+    }
+
+    /** UTC ISO damgayı "gg.aa SS:dd" (Europe/Istanbul) kısa biçime çevirir; bozuksa olduğu gibi. */
+    private static String formatIstanbulShort(String iso) {
+        try {
+            return LocalDateTime.parse(iso, LDT).atOffset(java.time.ZoneOffset.UTC)
+                    .atZoneSameInstant(java.time.ZoneId.of("Europe/Istanbul"))
+                    .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"));
+        } catch (Exception e) {
+            return iso;
+        }
     }
 
     private String monitoringMessageBody(String domain, String alertType, String alertLevel,
@@ -1754,8 +1869,9 @@ public class EscalationService {
     }
 
     private int closeOpenAlerts(String domain, String resolvedBy, String reason) {
-        List<AlertEvent> openAlerts = alertEventRepo.findByDomainAndResolvedFalse(domain);
-        for (AlertEvent event : openAlerts) {
+        int closed = 0;
+        for (AlertEvent event : alertEventRepo.findByDomainAndResolvedFalse(domain)) {
+            if (!closableByInventory(event, reason)) continue;
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy(resolvedBy);
@@ -1763,8 +1879,23 @@ public class EscalationService {
             AlertEvent saved = alertEventRepo.save(event);
             enqueueResolvePushQuietly(saved != null ? saved : event);   // resolveOpenAlertsSilently ile aynı gerekçe
             log.info("Alarm kapatıldı ({}): {} [{}]", reason, domain, event.getAlertType());
+            closed++;
         }
-        return openAlerts.size();
+        return closed;
+    }
+
+    /**
+     * Y-A3-1 (2026-09-29, D-b1'in envanter yolu): envanter silme / pasifleştirme YALNIZ envanterin KENDİ sahip anahtarındaki
+     * ({@code INV}: sertifika türleri, envanter türevi Port/DNS, ACCESSIBILITY) olayları kapatır. Alarm anahtarı (alan adı +
+     * tür) takımlar arasında paylaşılır: başka takımın BAĞIMSIZ Port/Ping/DNS/alan adı izlemesinin açık olayı (damgalı ya da
+     * tür listesiyle bağımsız) envantere ait değildir — eskiden o da "inventory_deactivate" ile sessizce kapanıyor, o takımın
+     * nöbetçisine hedef hâlâ düşükken "DÜZELDİ" push'u gidiyor ve bir sonraki turda yeni INITIAL açılıyordu.
+     */
+    static boolean closableByInventory(AlertEvent event, String reason) {
+        if (!isStandaloneEvent(event)) return true;
+        log.info("Envanter kapanışı atlandı ({}): {} [{}] #{} bağımsız izlemenin olayı (sahip {}) — kendi izlemesi kapatır",
+                reason, event.getDomain(), event.getAlertType(), event.getId(), ownerKeyOf(event));
+        return false;
     }
 
     /**
@@ -1774,8 +1905,9 @@ public class EscalationService {
      * on next application start. Silent (no resolution email), idempotent.
      */
     public int catchUpAlertsOnDeletedDomains() {
-        List<AlertEvent> stuck = alertEventRepo.findOpenAlertsOnSoftDeletedDomains();
-        for (AlertEvent event : stuck) {
+        int closed = 0;
+        for (AlertEvent event : alertEventRepo.findOpenAlertsOnSoftDeletedDomains()) {
+            if (!closableByInventory(event, "envanter silindi — açılış telafisi")) continue;   // Y-A3-1: bağımsız olay dokunulmaz
             event.setResolved(true);
             event.setResolvedAt(now());
             event.setResolvedBy("inventory_delete");
@@ -1783,12 +1915,12 @@ public class EscalationService {
             alertEventRepo.save(event);
             log.info("Startup catch-up: closed stale alarm {} [{}] for soft-deleted domain {}",
                     event.getId(), event.getAlertType(), event.getDomain());
+            closed++;
         }
-        if (!stuck.isEmpty()) {
-            log.info("Startup catch-up complete — closed {} stale alarm(s) on soft-deleted domains",
-                    stuck.size());
+        if (closed > 0) {
+            log.info("Startup catch-up complete — closed {} stale alarm(s) on soft-deleted domains", closed);
         }
-        return stuck.size();
+        return closed;
     }
 
     @Async("certCheckExecutor")
@@ -2203,6 +2335,15 @@ public class EscalationService {
         if (syTeamId == null && ugTeamId == null) {
             log.warn("Sahipsiz kayıt — bildirim gönderilmedi: olay={} alan={} tür={} seviye={} tetik={} "
                     + "(SY/UG takımı yok; e-posta, webhook, push ve 7/24 atlandı)", alertEventId, domain, alertType, level, trigger);
+            // İZ (2026-09-30): sessiz karar da günlüğe girer — alarm penceresi "takım yok" nedenini gösterir.
+            if (alertEventId != null) {
+                saveLog(alertEventId, "-", "", "", message != null ? message : "", STATUS_NO_TEAM, "SKIPPED", trigger);
+                try {
+                    alertEventRepo.findById(alertEventId).ifPresent(e -> userPushService.recordSuppressed(e, PUSH_SKIPPED_NO_TEAM));
+                } catch (Exception e) {
+                    log.warn("Sahipsiz kayıt push kararı yazılamadı (olay {}): {}", alertEventId, e.getMessage());
+                }
+            }
             return List.of();
         }
         // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
@@ -2250,10 +2391,9 @@ public class EscalationService {
             // Artık yalnız mail adımı atlanır; kontak webhook'u olan hiçbir alarm düşmez.
             if (mailDisabled) log.info("E-posta kanalı kapalı ({} [{}]) — yalnız webhook/push", domain, level);
             else log.warn("E-posta alıcısı yok ({} [{}]) — yalnız webhook/push", domain, level);
-            if (!anyContactWebhook) {
-                triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
-                return List.of();
-            }
+            // 2026-09-30: erken dönüş KALDIRILDI — akış aşağıda sürer ve atlanan e-posta da günlüğe yazılır
+            // ("SKIPPED: alıcı yok" / "SKIPPED: e-posta kanalı kapalı"). Eskiden kontak webhook'u yoksa burada
+            // dönülüyor, hiçbir satır kalmıyor, alarm penceresi "0 bildirim" gösteriyordu.
         }
 
         // 1.5. ctx zenginleştirme — şablonun timeline/takım satırları için (mevcut anahtarlar EZİLMEZ).
@@ -2376,6 +2516,10 @@ public class EscalationService {
         String emailStatus;
         if (skipMail) {
             emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok";
+            // İZ (2026-09-30): atlanan e-posta da tek satırla günlüğe girer — neden gitmediği ekranda okunur.
+            // Takım adı adresten BAĞIMSIZ (collectTeamNames yalnız adresi olan takımı sayar; burada adres yok).
+            String skipName = teamNames != null && !teamNames.isBlank() ? teamNames : ownerTeamNames(syTeamId, ugTeamId);
+            saveLog(alertEventId, skipName, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
         } else {
             emailStatus = emailService.sendAlert(
                     toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
@@ -2481,6 +2625,54 @@ public class EscalationService {
         } catch (Exception e) {
             log.warn("Bildirim logu kaydedilemedi: {}", e.getMessage());
         }
+    }
+
+    /** Bildirim günlüğü tetik adı: bireysel bildirim fırtınaya devredildi (satır, e-posta değil, KARARdır). */
+    public static final String TRIGGER_STORM_SUPPRESSED = "STORM";
+    /** Bildirim günlüğü e-posta durumu ön eki — fırtına devri. Ön yüz {@code SKIPPED:} ile başlayanı "atlandı" tonuyla çizer. */
+    public static final String STATUS_STORM_PREFIX = "SKIPPED: fırtına #";
+    public static final String STATUS_NO_TEAM = "SKIPPED: takım yok";
+    /** Push karar satırı nedenleri (2026-09-30). */
+    public static final String PUSH_SKIPPED_STORM = "SKIPPED_STORM";
+    public static final String PUSH_SKIPPED_NO_TEAM = "SKIPPED_NO_TEAM";
+
+    /**
+     * Fırtına devrinin izi (2026-09-30): olayın bildirim günlüğüne {@code STORM} tetikli, {@code SKIPPED: fırtına #N}
+     * durumlu bir satır ve push kararına {@code SKIPPED_STORM}. Bu satır "gönderilmedi"nin nedenidir; alarm
+     * penceresinin zaman çizelgesi ve Bildirimler bölümü buradan okur. Hata bildirim hattını etkilemez.
+     */
+    void recordStormSuppression(AlertEvent event, Long syTeamId, Long ugTeamId) {
+        if (event == null || event.getId() == null) return;
+        try {
+            List<String> emails = collectTeamEmails(syTeamId, ugTeamId, event.getNotificationGroupId());
+            String status = STATUS_STORM_PREFIX + (event.getStormId() != null ? event.getStormId() : "?")
+                    + " — bireysel bildirim yerine toplu fırtına bildirimi";
+            saveLog(event.getId(), ownerTeamNames(syTeamId, ugTeamId),
+                    String.join(", ", emails), "", event.getMessage() != null ? event.getMessage() : "",
+                    status, "SKIPPED", TRIGGER_STORM_SUPPRESSED);
+        } catch (Exception e) {
+            log.warn("Fırtına devri günlüğe yazılamadı (olay {}): {}", event.getId(), e.getMessage());
+        }
+        try {
+            userPushService.recordSuppressed(event, PUSH_SKIPPED_STORM);
+        } catch (Exception e) {
+            log.warn("Fırtına devri push kararı yazılamadı (olay {}): {}", event.getId(), e.getMessage());
+        }
+    }
+
+    /** Sahip takım adları — adresten BAĞIMSIZ (atlanan/devredilen bildirim satırının "alıcı" etiketi); yoksa "-". */
+    private String ownerTeamNames(Long syTeamId, Long ugTeamId) {
+        List<String> names = new ArrayList<>();
+        for (Long teamId : List.of(syTeamId != null ? syTeamId : -1L, ugTeamId != null ? ugTeamId : -1L)) {
+            if (teamId < 0) continue;
+            try {
+                teamRepo.findById(teamId).ifPresent(team -> {
+                    String name = team.getName() != null ? team.getName().trim() : "";
+                    if (!name.isBlank() && !names.contains(name)) names.add(name);
+                });
+            } catch (Exception ignore) { /* ad yalnız etiket — sorgu düşerse "-" */ }
+        }
+        return names.isEmpty() ? "-" : String.join(", ", names);
     }
 
     private void saveLog(Long alertEventId, String recipientName, String recipientEmail,

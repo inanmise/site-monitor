@@ -91,8 +91,9 @@ describe('httpCardModel — saf yardımcılar', () => {
     expect(responseView({ status: 'up', response_ms: 9000 })).toMatchObject({ tone: 'neutral', limit: null, parts: { num: '9', unit: 's' } })
   })
 
-  it('istek çipleri yalnız varsayılandan farklı ayarlarda; yöntem büyük harf, yoksa GET; beklenen kod boşluk duyarsız', () => {
-    expect(requestChips(base)).toEqual([])
+  it('istek çipleri: beklenen kod HER ZAMAN (varsayılan nötr, elle değiştirilmiş vurgulu — 2026-09-30); diğerleri yalnız varsayılandan farklıysa; yöntem büyük harf, yoksa GET', () => {
+    expect(requestChips(base)).toEqual([{ key: 'expected', value: '200-399', custom: false }])
+    expect(requestChips({ ...base, expected_status: '200-403' })).toEqual([{ key: 'expected', value: '200-403', custom: true }])
     expect(methodOf({ method: 'post' })).toBe('POST')
     expect(methodOf({})).toBe('GET')
     expect(isCustomExpected({ expected_status: ' 200 - 399 ' })).toBe(false)
@@ -101,9 +102,9 @@ describe('httpCardModel — saf yardımcılar', () => {
     const keys = (m) => requestChips({ ...base, ...m }).map((c) => (c.key === 'alerts' ? `alerts:${c.variant}` : c.key))
     expect(keys({ url: 'http://legacy.example.net/', expected_status: '201', follow_redirects: false, verify_ssl: true, check_ssl_errors: true, ssl_expiry_reminders: true }))
       .toEqual(['plain', 'expected', 'redirects', 'strictTls', 'alerts:both'])
-    expect(keys({ check_ssl_errors: true })).toEqual(['alerts:tls'])
-    expect(keys({ domain_expiry_reminders: true })).toEqual(['alerts:expiry'])
-    expect(keys({ follow_redirects: undefined })).toEqual([])   // yalnız açıkça false
+    expect(keys({ check_ssl_errors: true })).toEqual(['expected', 'alerts:tls'])
+    expect(keys({ domain_expiry_reminders: true })).toEqual(['expected', 'alerts:expiry'])
+    expect(keys({ follow_redirects: undefined })).toEqual(['expected'])   // yalnız açıkça false; beklenen kod her zaman
   })
 })
 

@@ -73,4 +73,13 @@ public class AlertStorm {
      * "düştü"yü alan "düzeldi"yi de alır).
      */
     private Long legacyStormId;
+
+    /**
+     * Son üye katılım anı — UTC ISO (2026-09-30, prod olayı: SY takımının fırtınası kalıcı başarısız 3 sentetik test
+     * yüzünden HİÇ kapanmıyor, takımın her yeni DOWN alarmı sessizce yutuluyordu). Fırtına bir PATLAMA'dır: bu andan
+     * itibaren {@code site.monitor.storm.quiet-minutes} boyunca yeni üye gelmezse fırtına MÜHÜRLENİR — yeni alarm
+     * kabul etmez ({@code StormService.evaluate} bireysel gönderir) ve yaşam döngüsü onu kapatır (hâlâ-down üyeler
+     * bireysel hatta döner). Eski satırlarda NULL → {@code createdAt} esas alınır.
+     */
+    private String lastMemberAt;
 }

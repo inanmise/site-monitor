@@ -506,6 +506,43 @@ export const PERMISSION_MATRIX = {
  * @param opts.perms  `/api/me/permissions` yanıtı ({ 'issues.login-reports': { view: true, edit: true } } gibi); varsayılan boş —
  *                    yönetici sekmeleri izin matrisi olmadan çizilir (mevcut davranış korunur).
  */
+/**
+ * İzleme Panosu mock'u (2026-09-30): MONITORS listelerinden tür özetleri + satırlar; durumlar sırayla düşük / gecikmiş /
+ * sağlıklı / duraklatılmış / bilinmiyor ki her rozet ve tonu telefon/tablet ölçümünde çizilsin.
+ */
+function overviewMock(monitors) {
+  const STATUSES = ['down', 'stale', 'up', 'paused', 'unknown', 'up']
+  const rows = []
+  const types = []
+  for (const type of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']) {
+    const list = monitors[type] || []
+    const t = { type, total: 0, active: 0, paused: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0,
+      success_rate_window: null, open_alerts: 0, open_critical: 0, resolved_window: type === 'http' ? 2 : 0, last_checked_at: null }
+    list.forEach((m, i) => {
+      const status = STATUSES[i % STATUSES.length]
+      const checks = status === 'unknown' ? 0 : 24 + i * 7
+      const failed = status === 'down' ? 6 : 0
+      const target = m.url || m.host || m.domain || m.name || `hedef-${i}`
+      rows.push({ type, id: m.id ?? i + 1, name: m.name || target, target, team_id: m.team_id ?? 1, team_name: m.team_name || 'Takım A',
+        active: status !== 'paused', deleted: false, status, last_checked_at: status === 'unknown' ? null : iso((i + 1) * 600000),
+        last_ok: status !== 'down', response_ms: status === 'unknown' ? null : 120 + i * 40,
+        last_error: status === 'down' ? 'HTTP 503 Service Unavailable' : null, interval_seconds: 300,
+        open_alerts: status === 'down' ? 1 : 0, open_alert_level: status === 'down' ? 'CRITICAL' : null, checks_window: checks, failed_window: failed })
+      t.total++; if (status === 'paused') t.paused++; else t.active++
+      if (status === 'down') { t.down++; t.open_alerts++; t.open_critical++ }
+      if (status === 'stale') t.stale++
+      if (status === 'unknown') t.unknown++
+      t.checks_window += checks; t.failed_window += failed
+      if (status !== 'unknown') t.last_checked_at = iso((i + 1) * 600000)
+    })
+    t.success_rate_window = t.checks_window > 0 ? Math.round((t.checks_window - t.failed_window) * 1000 / t.checks_window) / 10 : null
+    types.push(t)
+  }
+  const totals = { total: 0, active: 0, paused: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0, open_alerts: 0, open_critical: 0, resolved_window: 0, last_checked_at: iso(600000) }
+  for (const t of types) for (const k of Object.keys(totals)) if (typeof t[k] === 'number') totals[k] += t[k]
+  return { generated_at: iso(0), window_hours: 24, totals, types, monitors: rows }
+}
+
 export async function mockApi(page, opts = {}) {
   const { role = 'ADMIN', globalAdmin = role === 'ADMIN', teamIds = [1], monitors = MONITORS, perms = null } = opts
   await page.addInitScript(() => {
@@ -524,6 +561,17 @@ export async function mockApi(page, opts = {}) {
       }
     } else if (p === '/api/monitoring/uptime/overview') {
       body = { success: true, data: UPTIME }
+    } else if (p === '/api/monitoring/overview') {
+      // İzleme Panosu (2026-09-30): 9 tür + izleme satırları — telefon/tablet taşma ölçümü dolu verilerle
+      body = { success: true, data: overviewMock(monitors) }
+    } else if (p === '/api/me/open-alerts') {
+      // İzleme menüsü rozetleri (2026-09-30): HTTP 2 (1 kritik), Sentetik 3 uyarı
+      body = { success: true, data: { visible: true, total: 5, sampled: false, tabs: {
+        http: { count: 2, unacked: 1, levels: { critical: 1, high: 0, warning: 1, other: 0 }, items: [
+          { id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: iso(-30), team_name: 'Takım A', acknowledged: false }] },
+        scripted: { count: 3, unacked: 3, levels: { critical: 0, high: 0, warning: 3, other: 0 }, items: [
+          { id: 414, domain: 'OCPA - Response Time Anomalisi', alert_type: 'SCRIPTED_FAIL', alert_level: 'WARNING', created_at: iso(-10), team_name: 'Takım A', acknowledged: false }] },
+      } } }
     } else if (p === '/api/renewal-advice') {
       body = { success: true, data: RENEWAL_ADVICE, count: RENEWAL_ADVICE.length, timestamp: iso(0) }
     } else if (p === '/api/guide-links') {

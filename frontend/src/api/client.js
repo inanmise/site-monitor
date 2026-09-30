@@ -162,6 +162,8 @@ export const api = {
     today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),
     /** Bildirim kutusu (2026-09-12, #2) */
     inbox: () => request('/me/inbox'),
+    /** İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki açık alarmların izleme türü başına özeti. */
+    openAlerts: () => request('/me/open-alerts'),
     /** Geçmiş (2026-09-20): çözülmüş alarmlar 30 gün, sayfalı. */
     inboxHistory: (page = 0, size = 25) => request(`/me/inbox?view=history&page=${page}&size=${size}`),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
@@ -1137,6 +1139,8 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
+    /** İzleme Panosu (2026-09-30): 9 türün tek ekranda özeti + izleme satırları; pencere saat (24 | 168). */
+    getOverview: (hours = 24) => request(`/monitoring/overview?hours=${encodeURIComponent(hours)}`),
     // İzleme Grupları (TAKIM + izleme TÜRÜ bazlı) — autocomplete + yeniden adlandırma; server-side takım filtresi
     listGroups: (teamId, type) => {
       const p = new URLSearchParams()
