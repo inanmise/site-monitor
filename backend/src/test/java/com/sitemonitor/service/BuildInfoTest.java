@@ -115,4 +115,65 @@ class BuildInfoTest {
         assertThat(b.get()).isSameAs(b.get());
         assertThat(b.get().version()).isEqualTo("20.54.0");
     }
+
+    // ── Ortam adı: Genel Ayarlar > APP_ENVIRONMENT > otomatik (2026-09-29) ──────────────────────────
+
+    @Test
+    @DisplayName("öncelik: DB ayarı > APP_ENVIRONMENT > otomatik (pod'da unknown, pod dışında local)")
+    void resolveEnvironment_priority() {
+        assertThat(BuildInfo.resolveEnvironment("prod", "staging", "pod-1"))
+                .isEqualTo(new BuildInfo.EnvName("prod", BuildInfo.EnvSource.SETTING));
+        assertThat(BuildInfo.resolveEnvironment(null, "staging", "pod-1"))
+                .isEqualTo(new BuildInfo.EnvName("staging", BuildInfo.EnvSource.ENV));
+        assertThat(BuildInfo.resolveEnvironment("  ", " staging ", ""))
+                .isEqualTo(new BuildInfo.EnvName("staging", BuildInfo.EnvSource.ENV));
+        assertThat(BuildInfo.resolveEnvironment("", "", "pod-1"))
+                .isEqualTo(new BuildInfo.EnvName("unknown", BuildInfo.EnvSource.AUTO));
+        assertThat(BuildInfo.resolveEnvironment(null, null, null))
+                .isEqualTo(new BuildInfo.EnvName("local", BuildInfo.EnvSource.AUTO));
+        assertThat(BuildInfo.EnvSource.SETTING.wire()).isEqualTo("setting");
+        assertThat(BuildInfo.EnvSource.AUTO.wire()).isEqualTo("auto");
+    }
+
+    @Test
+    @DisplayName("biçimi bozuk DB değeri (elle yazılmış) yok sayılır → APP_ENVIRONMENT'e düşer")
+    void resolveEnvironment_invalidSettingIgnored() {
+        assertThat(BuildInfo.resolveEnvironment("Prod", "staging", "").name()).isEqualTo("staging");
+        assertThat(BuildInfo.resolveEnvironment("a_b", "", "pod-1").name()).isEqualTo("unknown");
+        assertThat(BuildInfo.resolveEnvironment("x".repeat(41), "dev", "").name()).isEqualTo("dev");
+        assertThat(BuildInfo.resolveEnvironment("x".repeat(40), "dev", "").source()).isEqualTo(BuildInfo.EnvSource.SETTING);
+    }
+
+    @Test
+    @DisplayName("bean CANLI: ayar değişince get() yeni adı döner, diğer alanlar aynı; boşaltınca APP_ENVIRONMENT'e döner")
+    void bean_environmentIsLive() {
+        AppSettingsService settings = org.mockito.Mockito.mock(AppSettingsService.class);
+        BuildInfo b = new BuildInfo(full());           // APP_ENVIRONMENT = prod
+        b.setSettings(settings);
+
+        BuildInfo.Snapshot first = b.get();
+        assertThat(first.environment()).isEqualTo("prod");
+        assertThat(b.environmentName().source()).isEqualTo(BuildInfo.EnvSource.ENV);
+
+        org.mockito.Mockito.when(settings.getOverride(BuildInfo.ENV_KEY)).thenReturn("staging");
+        BuildInfo.Snapshot second = b.get();
+        assertThat(second.environment()).isEqualTo("staging");
+        assertThat(b.environmentName()).isEqualTo(new BuildInfo.EnvName("staging", BuildInfo.EnvSource.SETTING));
+        assertThat(second).usingRecursiveComparison().ignoringFields("environment").isEqualTo(first);
+        assertThat(b.get()).as("ad değişmedikçe aynı örnek").isSameAs(second);
+
+        org.mockito.Mockito.when(settings.getOverride(BuildInfo.ENV_KEY)).thenReturn(null);
+        assertThat(b.get().environment()).isEqualTo("prod");
+        assertThat(b.environmentName().source()).isEqualTo(BuildInfo.EnvSource.ENV);
+    }
+
+    @Test
+    @DisplayName("ayar servisi patlarsa get() çökmez — env/otomatik değer döner")
+    void bean_settingsFailure_fallsBack() {
+        AppSettingsService settings = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(settings.getOverride(BuildInfo.ENV_KEY)).thenThrow(new IllegalStateException("boom"));
+        BuildInfo b = new BuildInfo(full());
+        b.setSettings(settings);
+        assertThat(b.get().environment()).isEqualTo("prod");
+    }
 }

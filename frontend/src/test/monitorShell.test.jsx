@@ -192,17 +192,21 @@ describe('MonitorDetailModal — detay penceresi', () => {
     errors.mockRestore()
   })
 
-  it('sekme listesi telefonda YATAY KAYAR (5–7 sekme sayfayı taşırmaz) ve kenarları soluklaşır', () => {
+  // 2026-09-30 (kullanıcı kararı): sekme listesi SARAR, yatay kaydırma ve kenar soluklaşması YOK — 7 sekme dar pencerede
+  // satır satır kırılır; pencere genişliği 1140 px'e çıktı (Sentetik detayının 7 sekmesi 960'a sığmıyordu).
+  it('sekme listesi SARAR (yatay kaydırma yok, kenar maskesi yok); pencere 1140 px', () => {
     render(
       <MonitorDetailModal onClose={() => {}} status="up" title="a.example.com" badge={null}>
-        <DetailTabs value="a" onValueChange={() => {}} tabs={[['a', 'Bir'], ['b', 'İki'], ['c', 'Üç'], ['d', 'Dört'], ['e', 'Beş'], ['f', 'Altı']]}>
+        <DetailTabs value="a" onValueChange={() => {}} tabs={[['a', 'Bir'], ['b', 'İki'], ['c', 'Üç'], ['d', 'Dört'], ['e', 'Beş'], ['f', 'Altı'], ['g', 'Yedi']]}>
           <TabsContent value="a">A</TabsContent>
         </DetailTabs>
       </MonitorDetailModal>)
     const list = screen.getByRole('tablist')
-    expect(list).toHaveClass('overflow-x-auto')
-    expect(list.className).toMatch(/max-lg:\[mask-image:/)
+    expect(list).toHaveClass('flex-wrap')
+    expect(list).not.toHaveClass('overflow-x-auto')
+    expect(list.className).not.toMatch(/mask-image/)
     expect(screen.getAllByRole('tab').every((tab) => tab.classList.contains('flex-none'))).toBe(true)
+    expect(document.querySelector('[data-slot="dialog-content"]')?.className || '').toMatch(/1140px/)
   })
 })
 

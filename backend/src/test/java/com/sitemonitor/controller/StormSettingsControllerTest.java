@@ -96,6 +96,19 @@ class StormSettingsControllerTest {
     }
 
     @Test
+    @DisplayName("PUT geçersiz sessiz pencere (2 dk, en az 5) → 400; GET quiet_minutes döner")
+    void put_invalidQuiet_400_and_get_exposesQuiet() throws Exception {
+        when(stormService.quietMinutes()).thenReturn(30);
+        mvc.perform(put("/api/monitoring/storm/settings").session(userSession("admin"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"threshold_unit\":\"COUNT\",\"threshold_value\":5,\"window_minutes\":5,\"per_group\":false,\"quiet_minutes\":2}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/monitoring/storm/settings").session(userSession("admin")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.quiet_minutes").value(30));
+    }
+
+    @Test
     @DisplayName("PUT geçersiz COUNT eşiği (1) → 400")
     void put_invalidCount_400() throws Exception {
         mvc.perform(put("/api/monitoring/storm/settings").session(userSession("admin"))

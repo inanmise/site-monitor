@@ -62,9 +62,12 @@ function RequestChip({ chip, rowLabel }) {
       chip.domainExpiry && t('http.card.hintDomainExpiry', daysText(chip.domainExpiry))].filter(Boolean).join('\n')
     : t(view.hint(), chip.value)
   const Icon = view.Icon
+  // Beklenen kod HER kartta (2026-09-30): varsayılan aralık nötr, elle değiştirilmiş vurgulu — `data-custom` test kancası.
+  const tone = chip.key === 'expected' && !chip.custom ? 'neutral' : view.tone
   return (
     <HintPopover content={hint} triggerClassName={CHIP_TRIGGER} aria-label={t('a11y.rowAction', rowLabel, label)}>
-      <Badge variant="outline" data-slot="http-chip" data-chip={chip.key} className={cn(CHIP, CHIP_TONE[view.tone])}>
+      <Badge variant="outline" data-slot="http-chip" data-chip={chip.key} data-custom={chip.key === 'expected' ? String(!!chip.custom) : undefined}
+        className={cn(CHIP, CHIP_TONE[tone])}>
         <Icon aria-hidden="true" />{label}
       </Badge>
     </HintPopover>

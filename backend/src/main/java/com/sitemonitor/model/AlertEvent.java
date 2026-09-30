@@ -122,6 +122,8 @@ public class AlertEvent {
     @Transient private Integer certTier;
     @Transient private Long    emailSentCount;
     @Transient private Long    emailFailedCount;
+    /** Kontak webhook'u (Teams/Slack) ile teslim edilen bildirim sayısı — O-A3-6: webhook-tek teslimat "kimseye ulaşmadı" değildir. */
+    @Transient private Long    webhookSentCount;
     /**
      * Aynı domain + alarm tipi için son 30 gündeki TOPLAM alarm sayısı (bu alarm dahil).
      *

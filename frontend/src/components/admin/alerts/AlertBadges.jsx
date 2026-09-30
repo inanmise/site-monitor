@@ -1,4 +1,4 @@
-import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren } from 'lucide-react'
+import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { alertTypeMeta, alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { formatDuration } from '../../../utils/incidentMeta.js'
@@ -127,6 +127,23 @@ export function SendFailedBadge({ count, className }) {
     <Badge variant="outline" data-slot="alert-send-failed"
       className={cn('gap-1 rounded-full border-destructive/30 bg-destructive/10 font-bold whitespace-nowrap text-destructive', className)} title={t('alh.sendFailedTip')}>
       <MailX aria-hidden="true" className="size-3" />{t('alh.sendFailed')}
+    </Badge>
+  )
+}
+
+/**
+ * Alarm fırtınası üyeliği rozeti (storm_id dolu) — 2026-09-30, prod olayı: fırtınaya devredilen alarmın bireysel e-postası
+ * ve push'u gitmez, takım toplu fırtına bildirimiyle haberdar edilir. Eskiden bu bağ ekranda hiç görünmüyordu ve
+ * kullanıcı "neden bildirim gelmedi" sorusunun cevabını arıyordu.
+ */
+export function StormBadge({ stormId, className }) {
+  const t = useT()
+  if (stormId == null) return null
+  return (
+    <Badge variant="outline" data-slot="alert-storm" data-storm-id={stormId}
+      className={cn('gap-1 rounded-full border-violet-500/40 bg-violet-500/10 font-semibold whitespace-nowrap text-violet-700 dark:text-violet-300', className)}
+      title={t('alh.storm.tip')}>
+      <CloudLightning aria-hidden="true" className="size-3" />{t('alh.storm.badge', stormId)}
     </Badge>
   )
 }

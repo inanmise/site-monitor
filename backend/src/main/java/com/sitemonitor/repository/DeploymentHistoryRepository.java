@@ -65,6 +65,17 @@ public interface DeploymentHistoryRepository extends JpaRepository<DeploymentHis
     @Query("UPDATE DeploymentHistory d SET d.endedAt = :at, d.endReason = :reason WHERE d.id = :id AND d.endedAt IS NULL")
     int markEnded(@Param("id") Long id, @Param("at") String at, @Param("reason") String reason);
 
+    /**
+     * Ortam adı çalışma anında değişti (Ayarlar → Genel Ayarlar, 2026-09-29): KOŞAN örneğin kendi kaydı yeni ada
+     * taşınır, iz nota düşülür ({@code DeploymentHistoryService.syncEnvironment}). Yalnız bitmemiş satır — kapanmış bir
+     * geçmiş kaydının ortamı asla yeniden yazılmaz. {@code REQUIRES_NEW}: çağıran, ayar kaydının commit'inden SONRA
+     * koşan bir {@code @TransactionalEventListener}; o fazda REQUIRED katılımı yazıyı sessizce commit'siz bırakırdı.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Modifying
+    @Query("UPDATE DeploymentHistory d SET d.environment = :env, d.note = :note WHERE d.id = :id AND d.endedAt IS NULL")
+    int relabelEnvironment(@Param("id") Long id, @Param("env") String env, @Param("note") String note);
+
     /** Yalnız MANUAL satır silinebilir (K10) — servis kaynağı doğrular, burada da güvence. */
     @Transactional
     @Modifying

@@ -8,6 +8,7 @@ import HelpTip from '../ui/HelpTip.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { SETTINGS_STACK, helpLabel, MasterToggleCard, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow } from './SettingsControls.jsx'
 import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
 import { Slider } from '@/components/shadcn/slider'
@@ -20,6 +21,10 @@ import { cn } from '@/lib/utils'
  * (StormSettingsController → AppSettingsService) gider; değişiklik CANLI yansır. Default AÇIK.
  * Çizim shadcn: SettingsHeader/MasterToggleCard/SettingsSection, Switch (ToggleRow), Input + NativeSelect, Slider.
  */
+/** Sessiz pencere sınırları — sunucu (StormService.QUIET_MIN/MAX) ile aynı; hazır değerler dakika. */
+const QUIET_MIN = 5, QUIET_MAX = 1440
+const QUIET_PRESETS = [15, 30, 60, 120]
+
 export default function StormSettings() {
   const t = useT()
   const toast = useToast()
@@ -31,6 +36,7 @@ export default function StormSettings() {
   const [value, setValue] = useState(5)
   const [windowMin, setWindowMin] = useState(5)
   const [perGroup, setPerGroup] = useState(false)
+  const [quietMin, setQuietMin] = useState(30)
   const [total, setTotal] = useState(0)
 
   useEffect(() => { load() }, [])
@@ -52,6 +58,7 @@ export default function StormSettings() {
     setValue(Number(d.threshold_value ?? 5))
     setWindowMin(Number(d.window_minutes ?? 5))
     setPerGroup(!!d.per_group)
+    setQuietMin(Number(d.quiet_minutes ?? 30))
     setTotal(Number(d.total_active_monitors ?? 0))
   }
 
@@ -63,6 +70,8 @@ export default function StormSettings() {
       return t('storm.errCount')
     }
     if (!(windowMin >= 1 && windowMin <= 15)) return t('storm.errWindow')
+    const q = Number(quietMin)
+    if (!(q >= QUIET_MIN && q <= QUIET_MAX)) return t('storm.errQuiet', QUIET_MIN, QUIET_MAX)
     return null
   }
 
@@ -77,6 +86,7 @@ export default function StormSettings() {
         threshold_value: Number(value),
         window_minutes: Number(windowMin),
         per_group: perGroup,
+        quiet_minutes: Number(quietMin),
       })
       if (res?.success) { applyData(res.data); toast.success(t('storm.saved')) }
       else toast.error(res?.error || res?.message || t('settings.saveError'))
@@ -146,6 +156,27 @@ export default function StormSettings() {
           </div>
         </SettingsSection>
       </div>
+
+      {/* Sessiz pencere — fırtına ÖMÜR SINIRI (2026-09-30): son üye katılımından bu kadar dakika sonra yeni üye gelmezse
+          fırtına mühürlenir ve kapanır; kalıcı başarısız izlemeler fırtınayı süresiz açık tutup takımın yeni alarmlarını
+          bildirimsiz bırakamaz. Sayı girişi (5–1440) + hazır değerler; 390 px'te sarar. */}
+      <SettingsSection title={helpLabel(t('storm.quietTitle'), 'help.set.site.monitor.storm.quiet-minutes')}
+        description={t('storm.quietDesc')} contentClassName="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Input type="number" inputMode="numeric" className="w-28" aria-label={t('storm.quietTitle')}
+            min={QUIET_MIN} max={QUIET_MAX} step={5} value={quietMin}
+            onChange={(e) => setQuietMin(e.target.value === '' ? '' : Number(e.target.value))} />
+          <span className="text-sm text-muted-foreground">{t('storm.quietUnit')}</span>
+          <div role="group" aria-label={t('storm.quietPresets')} className="flex flex-wrap items-center gap-1">
+            {QUIET_PRESETS.map((n) => (
+              <Button key={n} type="button" size="sm" variant={Number(quietMin) === n ? 'secondary' : 'outline'}
+                className="h-8 min-w-11 px-2 tabular-nums pointer-coarse:h-10" aria-pressed={Number(quietMin) === n}
+                onClick={() => setQuietMin(n)}>{t('storm.quietValue', n)}</Button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">{t('storm.quietHint', QUIET_MIN, QUIET_MAX)}</p>
+      </SettingsSection>
 
       {/* Per-group toggle */}
       <Card className="gap-2 py-4">

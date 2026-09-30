@@ -6,6 +6,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
@@ -127,6 +128,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [selected, setSelected] = useState(null)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -279,10 +281,13 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   }
 
   async function save() {
-    if (!form.url.trim()) return
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      url: !form.url.trim() && t('mon.fieldRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const payload = {
@@ -545,10 +550,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField full label={t('http.url')} required hint={t('http.urlHint')}>
+        <FormField full label={t('http.url')} required {...fe.fieldProps('url')} hint={t('http.urlHint')}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, url: e.target.value })); fe.clear('url') }}
               onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
           )}
         </FormField>
@@ -577,15 +582,15 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
             <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           )}
         </FormField>
-        <FormField label={t('http.team')} required>
+        <FormField label={t('http.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('http.noTeam')} disabled />}
         </FormField>
 
-        <FormField full label={t('http.group')} required>
+        <FormField full label={t('http.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('http.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('http.noGroup')} />
           )}
@@ -604,8 +609,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         <FormHint>{t('http.groupInfo')}</FormHint>
 
         {/* Etiketler */}
-        <FormSection title={t('http.tagsTitle')} required hint={t('http.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('http.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('http.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('http.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         {/* SSL + Domain kontrolleri */}

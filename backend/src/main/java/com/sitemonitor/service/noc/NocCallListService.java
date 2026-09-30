@@ -8,6 +8,7 @@ import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.repository.EscalationContactRepository;
 import com.sitemonitor.repository.NocTeamCallEntryRepository;
 import com.sitemonitor.repository.TeamRepository;
+import com.sitemonitor.service.TeamManagerResolver;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,9 +37,9 @@ import java.util.Set;
  *
  * <p><b>Liste boşsa</b> e-postada Takım Müdürü (+ telefonu) ve "arama listesi tanımlanmamış" notu yer alır.
  * Müdür çözümü: (1) takıma elle atanmış müdür ({@code Team.managerId}); (2) takımın MANAGER rollü eskalasyon
- * kişisinin e-postasıyla eşleşen aktif kullanıcı; (3) üyelerin AD müdür zinciri — {@code utils/teamManager.js}
- * kuralının sade hâli: üyelerin bağlı olduğu, kendisi takım üyesi/lideri OLMAYAN adaylardan, başka bir adayın
- * zincirinde ÜSTÜ olanlar düşer; en yakın kademe, sonra en çok doğrudan bağlı, sonra ad sırası.
+ * kişisinin e-postasıyla eşleşen aktif kullanıcı; (3) üyelerin AD müdür zinciri — {@link TeamManagerResolver}
+ * ({@code utils/teamManager.js} ile BİREBİR aynı kural; 2026-09-29'a kadar burada sadeleştirilmiş bir kopya vardı ve
+ * dört noktada sapıyordu → posta ile Takım Yönetimi farklı kişiyi gösterebiliyordu).
  */
 @Service
 @RequiredArgsConstructor
@@ -46,8 +47,6 @@ public class NocCallListService {
 
     /** Arama listesi tavanı — e-postada okunur kalsın. */
     public static final int MAX_ENTRIES = 25;
-    private static final int MAX_CHAIN = 8;
-    private static final Map<String, Integer> RANK = Map.of("MANAGER", 0, "BOLUM_BASKANI", 2, "CLEVEL", 3);
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -191,7 +190,10 @@ public class NocCallListService {
         };
     }
 
-    /** Takım Müdürü — sınıf javadoc'undaki üç halka. */
+    /**
+     * Takım Müdürü — sınıf javadoc'undaki üç halka. (3) artık {@link TeamManagerResolver} — Takım Yönetimi sütunu ve
+     * üye penceresiyle AYNI kural (2026-09-29, A1-O3: eskiden üye olan müdürü düşürüp bölüm başkanını seçebiliyordu).
+     */
     public Optional<AppUser> resolveManager(Team team) {
         if (team.getManagerId() != null) {
             Optional<AppUser> m = userRepo.findById(team.getManagerId()).filter(u -> Boolean.TRUE.equals(u.getActive()));
@@ -204,38 +206,27 @@ public class NocCallListService {
             List<AppUser> found = userRepo.findActiveByEmailsLower(emails);
             if (!found.isEmpty()) return Optional.of(found.get(0));
         }
-        return adChainManager(team);
+        return TeamManagerResolver.derive(activeMembers(team.getId()), repoLookup(), team.getLeaderId())
+                .map(TeamManagerResolver.Entry::userId)
+                .flatMap(id -> id == null ? Optional.empty()
+                        : userRepo.findById(id).filter(u -> Boolean.TRUE.equals(u.getActive())));
     }
 
-    private Optional<AppUser> adChainManager(Team team) {
-        List<AppUser> members = activeMembers(team.getId());
-        Set<Long> memberIds = new HashSet<>();
-        for (AppUser u : members) memberIds.add(u.getId());
-        Map<Long, Integer> directReports = new HashMap<>();
-        for (AppUser u : members) {
-            Long mid = u.getManagerId();
-            if (mid == null || memberIds.contains(mid) || mid.equals(team.getLeaderId())) continue;
-            directReports.merge(mid, 1, Integer::sum);
-        }
-        if (directReports.isEmpty()) return Optional.empty();
-        Map<Long, AppUser> cands = usersById(new ArrayList<>(directReports.keySet()));
-        cands.values().removeIf(u -> !Boolean.TRUE.equals(u.getActive()));
-        // Başka bir adayın zincirinde ÜSTÜ olan aday düşer (bölüm başkanı, müdürün üstü).
-        Set<Long> ancestors = new HashSet<>();
-        for (AppUser c : cands.values()) {
-            Long up = c.getManagerId();
-            for (int i = 0; i < MAX_CHAIN && up != null; i++) {
-                if (cands.containsKey(up)) ancestors.add(up);
-                AppUser next = cands.containsKey(up) ? cands.get(up) : userRepo.findById(up).orElse(null);
-                up = next == null ? null : next.getManagerId();
+    /** Repository tabanlı kullanıcı erişimi — her postada tüm kullanıcıları yüklemez; pasifler kullanıcı sayılmaz. */
+    private TeamManagerResolver.UserLookup repoLookup() {
+        Map<Long, AppUser> cache = new HashMap<>();
+        return new TeamManagerResolver.UserLookup() {
+            @Override public AppUser byId(Long id) {
+                if (id == null) return null;
+                return cache.computeIfAbsent(id, k -> userRepo.findById(k).filter(u -> Boolean.TRUE.equals(u.getActive())).orElse(null));
             }
-        }
-        return cands.values().stream()
-                .filter(u -> !ancestors.contains(u.getId()))
-                .min(Comparator.<AppUser>comparingInt(u -> RANK.getOrDefault(
-                                u.getOrgRole() == null ? "" : u.getOrgRole().toUpperCase(Locale.ROOT), 1))
-                        .thenComparing(u -> -directReports.getOrDefault(u.getId(), 0))
-                        .thenComparing(NocCallListService::displayName, String.CASE_INSENSITIVE_ORDER));
+            @Override public List<AppUser> byEmployeeId(String sicil) {
+                if (sicil == null || sicil.isBlank()) return List.of();
+                List<AppUser> out = new ArrayList<>();
+                for (AppUser u : userRepo.findAllByEmployeeIdNormalized(sicil)) if (Boolean.TRUE.equals(u.getActive())) out.add(u);
+                return out;
+            }
+        };
     }
 
     private Map<Long, AppUser> usersById(List<Long> ids) {

@@ -6,6 +6,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
@@ -127,6 +128,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   const [selected, setSelected] = useState(null)   // detay penceresi (MonitorDetailModal — Escape'i ModalShell işler)
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -286,10 +288,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   }
 
   async function save() {
-    if (!form.url.trim() || !form.keyword.trim()) return
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      url: !form.url.trim() && t('mon.fieldRequired'),
+      keyword: !form.keyword.trim() && t('mon.fieldRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const payload = {
@@ -579,10 +585,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField full label={t('keyword.url')} required hint={t('keyword.urlHint')}>
+        <FormField full label={t('keyword.url')} required {...fe.fieldProps('url')} hint={t('keyword.urlHint')}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.url} placeholder="https://example.com" autoFocus={!!dupSource}
-              onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, url: e.target.value })); fe.clear('url') }}
               onBlur={e => { const n = normalizeUrl(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, url: n })) }} />
           )}
         </FormField>
@@ -638,14 +644,14 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
         <FormField label={t('keyword.name')}>
           {({ id }) => <Input id={id} value={form.name} placeholder={form.url} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />}
         </FormField>
-        <FormField label={t('keyword.team')} required>
+        <FormField label={t('keyword.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('keyword.noTeam')} disabled />}
         </FormField>
-        <FormField full label={t('keyword.group')} required>
+        <FormField full label={t('keyword.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('keyword.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('keyword.noGroup')} />
           )}
@@ -663,8 +669,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
 
         {/* Etiketler */}
-        <FormSection title={t('keyword.tagsTitle')} required hint={t('keyword.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('keyword.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('keyword.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('keyword.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('keyword.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         {/* SSL + Domain kontrolleri */}

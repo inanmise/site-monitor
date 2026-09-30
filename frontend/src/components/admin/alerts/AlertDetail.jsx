@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall,
+  X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall, CloudLightning,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -24,7 +24,7 @@ import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, RepeatBadge,
-  SendFailedBadge, WhyOpenChips, ActBlockedNote,
+  SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge,
 } from './AlertBadges.jsx'
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
 
@@ -36,6 +36,8 @@ const EVENT_STYLE = {
   opened:       { Icon: Siren,        ink: 'border-destructive/40 bg-destructive/10 text-destructive' },
   mail:         { Icon: Mail,         ink: 'border-border bg-muted text-muted-foreground' },
   push:         { Icon: BellRing,     ink: 'border-border bg-muted text-muted-foreground' },
+  // Bildirim fırtınaya devredildi (2026-09-30): bireysel e-posta/push gitmedi — neden burada okunur.
+  storm:        { Icon: CloudLightning, ink: 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
   acknowledged: { Icon: UserCheck,    ink: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' },
   resolved:     { Icon: CheckCircle2, ink: 'border-success/40 bg-success/10 text-success' },
 }
@@ -114,6 +116,7 @@ export function AlertDetailBody({
         <MaintenanceBadge target={a.domain} />
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />
+        <StormBadge stormId={a.storm_id} />
         <span className="ml-auto inline-flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
           <Clock aria-hidden="true" className="size-3.5" />{open ? t('alh.openFor', dur) : t('alh.lastedFor', dur)}
         </span>
@@ -255,9 +258,11 @@ export function AlertDetailBody({
                     {ev.kind === 'opened' && t('alh.ev.opened')}
                     {ev.kind === 'mail' && t('alh.ev.mail', ev.recipient || '—')}
                     {ev.kind === 'push' && (ev.people > 0 ? t('alh.ev.push', ev.people) : t('alh.ev.pushSystem'))}
+                    {ev.kind === 'storm' && t('alh.ev.storm')}
                     {ev.kind === 'acknowledged' && t('alh.ev.ack')}
                     {ev.kind === 'resolved' && t('alh.ev.resolved')}
                   </span>
+                  {ev.kind === 'storm' && <StormBadge stormId={ev.stormId} className="text-[0.7em]" />}
                   {ev.kind === 'opened' && <AlertLevelBadge level={ev.level} className="text-[0.7em]" />}
                   {ev.kind === 'mail' && ev.trigger && <Badge variant="outline" className="text-[0.7em]">{mailTriggerText(t, ev.trigger)}</Badge>}
                   {ev.kind === 'mail' && <EmailStatusBadge status={ev.status} />}
@@ -266,6 +271,11 @@ export function AlertDetailBody({
                   <span className="ml-auto text-xs whitespace-nowrap text-muted-foreground" title={ev.when || undefined}>{when(ev.when)}</span>
                 </div>
                 {ev.kind === 'opened' && a.message && <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{a.message}</p>}
+                {ev.kind === 'storm' && (
+                  <p data-tl-storm="" className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {t('alh.ev.stormDetail', ev.stormId ?? '?')}{ev.backfilled ? ' ' + t('alh.ev.stormBackfilled') : ''}
+                  </p>
+                )}
                 {ev.kind === 'acknowledged' && ev.by && <p className="mt-1 text-xs"><UserBadge username={ev.by} inline size="sm" /></p>}
                 {ev.kind === 'resolved' && ev.by && <p className="mt-1 text-xs"><AlertResolvedBy by={ev.by} /></p>}
                 {(ev.kind === 'acknowledged' || ev.kind === 'resolved') && ev.note && (

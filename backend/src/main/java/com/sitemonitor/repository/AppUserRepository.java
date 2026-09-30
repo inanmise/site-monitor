@@ -175,4 +175,30 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
                                       @Param("dormantBefore") String dormantBefore,
                                       @Param("neverOnly") boolean neverOnly,
                                       Pageable pageable);
+
+    /**
+     * {@link #findFilteredDormant} + GÖRÜŞ KAPSAMI (2026-09-29, A1-O7): kapsamlı roller (TEAM_ADMIN, kapsamlı müdür)
+     * Kullanıcılar ekranında yalnız oturumun BİRİNCİL takımını görüyordu; {@code listUsers}/Takım Yönetimi ise tam
+     * {@code viewTeamIds} kümesini. Burada kullanıcı, {@code teamIds} kümesinden herhangi birine ÜYE (birincil ya da
+     * ek) olmalı; istemcinin {@code teamId} süzgeci kümeyle KESİŞİR (kapsam dışı takım istenirse boş döner — çağıran
+     * zaten kesişimi alır). {@code teamIds} ASLA null/boş geçilmez (çağıran boş kapsamda sorguya hiç inmez).
+     */
+    @Query("SELECT u FROM AppUser u WHERE "
+        + "(:q IS NULL OR LOWER(u.username) LIKE :q OR LOWER(u.displayName) LIKE :q "
+        +              "OR LOWER(u.email) LIKE :q OR LOWER(u.employeeId) LIKE :q) AND "
+        + "(:systemRole IS NULL OR u.systemRole = :systemRole) AND "
+        + "(:orgRole IS NULL OR u.orgRole = :orgRole) AND "
+        + "(:teamId IS NULL OR u.teamId = :teamId OR :teamId IN (SELECT tid FROM u.teamIds tid)) AND "
+        + "(u.teamId IN :teamIds OR EXISTS (SELECT tid2 FROM u.teamIds tid2 WHERE tid2 IN :teamIds)) AND "
+        + "(:dormantBefore IS NULL OR u.lastLoginAt IS NULL OR u.lastLoginAt < :dormantBefore) AND "
+        + "(:neverOnly = false OR u.lastLoginAt IS NULL) "
+        + "ORDER BY u.username ASC")
+    Page<AppUser> findFilteredInTeams(@Param("q") String q,
+                                      @Param("systemRole") String systemRole,
+                                      @Param("orgRole") String orgRole,
+                                      @Param("teamId") Long teamId,
+                                      @Param("teamIds") Collection<Long> teamIds,
+                                      @Param("dormantBefore") String dormantBefore,
+                                      @Param("neverOnly") boolean neverOnly,
+                                      Pageable pageable);
 }

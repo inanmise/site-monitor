@@ -102,7 +102,9 @@ public class MonitoringWeeklyStatsService {
 
         // Alarm kovaları (alertType→sayı) — takım-kapsamlı, tek gruplu sorgu × 4 (açılan/çözülen/açık/önceki-açılan)
         Map<String, Integer> opened     = alarmBucket(alertEventRepo.countFilteredByType(null, w.fromUtc(), w.toUtc(), null, null, null, true, scope));
-        Map<String, Integer> resolved   = alarmBucket(alertEventRepo.countFilteredByType(true, null, null, w.fromUtc(), w.toUtc(), null, true, scope));
+        // D-7 / D-c11 (2026-09-29): "çözülen" = pencerede GERÇEKTEN kurtarılan; sessiz kapanış (silindi/duraklatıldı/envanter
+        // pasif/tür bildirimi kapalı) sayılmaz (AlertEventRepository.countRecoveredByType).
+        Map<String, Integer> resolved   = alarmBucket(alertEventRepo.countRecoveredByType(w.fromUtc(), w.toUtc(), true, scope));
         Map<String, Integer> openNow    = alarmBucket(alertEventRepo.countFilteredByType(false, null, null, null, null, null, true, scope));
         Map<String, Integer> openedPrev = alarmBucket(alertEventRepo.countFilteredByType(null, wPrev.fromUtc(), wPrev.toUtc(), null, null, null, true, scope));
         Map<String, Integer> perTarget  = perDomainOpened(teamId, w);
@@ -127,7 +129,14 @@ public class MonitoringWeeklyStatsService {
                        Map<String, Integer> opened, Map<String, Integer> resolved, Map<String, Integer> openNow,
                        Map<String, Integer> openedPrev, Map<String, Integer> perTarget) {}
 
-    private record MonRef(long id, String name, String createdAt) {}
+    /**
+     * A5 O-3 (2026-09-29): {@code target} = alarm olayının {@code domain} anahtarı (sweep'in {@code SweepItem.domain}'i ile
+     * AYNI kaynak: HTTP/Keyword/Page/PageSpeed → url, Ping/Port → host, DNS/Alan adı → domain, Sentetik → ad). "En sorunlu
+     * hedefler"in alarm sayısı bununla aranır — eskiden GÖSTERİM ADIYLA aranıyor, adı dolu her izlemede 0 çıkıyordu.
+     */
+    private record MonRef(long id, String name, String createdAt, String target) {
+        MonRef(long id, String name, String createdAt) { this(id, name, createdAt, name); }
+    }
 
     // ── Tür metotları ────────────────────────────────────────────────────────
 
@@ -144,7 +153,7 @@ public class MonitoringWeeklyStatsService {
     private TypeStats domainType(Ctx c) {
         List<MonRef> mons = domainMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt(), m.getDomain())).toList();
         // ≤30 gün kalan (registrar) — takım domain monitörlerinin son kontrolünden
         Set<Long> ids = mons.stream().map(MonRef::id).collect(java.util.stream.Collectors.toSet());
         long expiring30 = ids.isEmpty() ? 0 : domainCheckRepo.findLatestPerMonitor().stream()
@@ -157,14 +166,14 @@ public class MonitoringWeeklyStatsService {
     private TypeStats httpType(Ctx c) {
         List<MonRef> mons = httpMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt(), m.getUrl())).toList();
         return monitorIdType("http", mons, c, (idl, from, to) -> httpCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
     }
 
     private TypeStats pingType(Ctx c) {
         List<MonRef> mons = pingMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getHost()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getHost()), m.getCreatedAt(), m.getHost())).toList();
         return monitorIdType("ping", mons, c, (idl, from, to) -> pingCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
     }
 
@@ -176,12 +185,12 @@ public class MonitoringWeeklyStatsService {
         List<MonRef> mons = new ArrayList<>();
         for (PortMonitor m : portMonitorRepo.findByActiveTrue()) {
             if (Boolean.TRUE.equals(m.getStandalone())) {
-                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt()));
+                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt(), m.getHost()));
             } else if (teamDomains.contains(m.getHost())) {
                 invByKey.merge(m.getHost() + ":" + m.getPort(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
             }
         }
-        for (PortMonitor m : invByKey.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt()));
+        for (PortMonitor m : invByKey.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getHost() + ":" + m.getPort()), m.getCreatedAt(), m.getHost()));
         return monitorIdType("port", mons, c, (idl, from, to) -> portCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.CLOSED_COUNT, null);
     }
 
@@ -193,19 +202,19 @@ public class MonitoringWeeklyStatsService {
         List<MonRef> mons = new ArrayList<>();
         for (DnsMonitor m : dnsMonitorRepo.findByActiveTrue()) {
             if (Boolean.TRUE.equals(m.getStandalone())) {
-                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt()));
+                if (c.teamId().equals(m.getTeamId())) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt(), m.getDomain()));
             } else if (teamDomains.contains(m.getDomain())) {
                 invByDomain.merge(m.getDomain(), m, (a, b) -> a.getId() <= b.getId() ? a : b);
             }
         }
-        for (DnsMonitor m : invByDomain.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt()));
+        for (DnsMonitor m : invByDomain.values()) mons.add(new MonRef(m.getId(), nz(m.getName(), m.getDomain()), m.getCreatedAt(), m.getDomain()));
         return monitorIdType("dns", mons, c, (idl, from, to) -> dnsRecordRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.CHANGED_SUM, null);
     }
 
     private TypeStats keywordType(Ctx c) {
         List<MonRef> mons = keywordMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt(), m.getUrl())).toList();
         return monitorIdType("keyword", mons, c, (idl, from, to) -> keywordResultRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.NONE, null);
     }
 
@@ -229,7 +238,7 @@ public class MonitoringWeeklyStatsService {
     private TypeStats pageType(Ctx c) {
         List<MonRef> mons = pageMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt(), m.getUrl())).toList();
         return monitorIdType("page", mons, c,
                 (idl, from, to) -> pageCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
     }
@@ -245,7 +254,7 @@ public class MonitoringWeeklyStatsService {
     private TypeStats pageSpeedType(Ctx c) {
         List<MonRef> mons = pageSpeedMonitorRepo.findByActiveTrue().stream()
                 .filter(m -> c.teamId().equals(m.getTeamId()))
-                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt())).toList();
+                .map(m -> new MonRef(m.getId(), nz(m.getName(), m.getUrl()), m.getCreatedAt(), m.getUrl())).toList();
         return monitorIdType("pagespeed", mons, c,
                 (idl, from, to) -> pageSpeedCheckRepo.weeklyStatsByMonitor(idl, from, to), ExtraMode.AVG_MS, null);
     }
@@ -261,21 +270,30 @@ public class MonitoringWeeklyStatsService {
     /** monitorId-anahtarlı türler için ortak: aktif-sayı + id→ad + haftalık grup sorgusu (cur/prev). */
     private TypeStats monitorIdType(String type, List<MonRef> mons, Ctx c, GroupedQuery query, ExtraMode extraMode, Double externalExtra) {
         Map<Long, String> idName = new HashMap<>();
-        for (MonRef m : mons) idName.putIfAbsent(m.id(), m.name());
+        Map<Long, String> idTarget = new HashMap<>();
+        for (MonRef m : mons) { idName.putIfAbsent(m.id(), m.name()); idTarget.putIfAbsent(m.id(), m.target()); }
         int active = (int) mons.stream().filter(m -> activeAsOf(m.createdAt(), c.weekEnd())).count();
         List<Long> ids = new ArrayList<>(idName.keySet());
         List<Object[]> cur  = ids.isEmpty() ? List.of() : query.run(ids, c.w().fromUtc(), c.w().toUtc());
         List<Object[]> prev = ids.isEmpty() ? List.of() : query.run(ids, c.wPrev().fromUtc(), c.wPrev().toUtc());
         Function<Object, String> nameOf = k -> idName.getOrDefault(((Number) k).longValue(), String.valueOf(k));
-        return buildStats(type, active, cur, prev, nameOf, c, extraMode, externalExtra);
+        Function<Object, String> targetOf = k -> idTarget.getOrDefault(((Number) k).longValue(), nameOf.apply(k));   // O-3
+        return buildStats(type, active, cur, prev, nameOf, targetOf, c, extraMode, externalExtra);
+    }
+
+    /** Sertifika türü: anahtar zaten alan adı — ad ve hedef aynı. */
+    private TypeStats buildStats(String type, int active, List<Object[]> cur, List<Object[]> prev,
+                                 Function<Object, String> nameOf, Ctx c, ExtraMode extraMode, Double externalExtra) {
+        return buildStats(type, active, cur, prev, nameOf, nameOf, c, extraMode, externalExtra);
     }
 
     @FunctionalInterface
     private interface GroupedQuery { List<Object[]> run(List<Long> ids, String from, String to); }
 
-    /** Gruplu satırlardan ([key,total,success,(extra)]) tür istatistiğini derler. */
+    /** Gruplu satırlardan ([key,total,success,(extra)]) tür istatistiğini derler; {@code targetOf} alarm anahtarı (O-3). */
     private TypeStats buildStats(String type, int active, List<Object[]> cur, List<Object[]> prev,
-                                 Function<Object, String> nameOf, Ctx c, ExtraMode extraMode, Double externalExtra) {
+                                 Function<Object, String> nameOf, Function<Object, String> targetOf,
+                                 Ctx c, ExtraMode extraMode, Double externalExtra) {
         Set<String> alerts = TYPE_ALERTS.getOrDefault(type, Set.of());
         int aOpened = sumBucket(c.opened(), alerts), aResolved = sumBucket(c.resolved(), alerts),
             aOpen = sumBucket(c.openNow(), alerts), aOpenedPrev = sumBucket(c.openedPrev(), alerts);
@@ -304,7 +322,9 @@ public class MonitoringWeeklyStatsService {
             if (extraMode == ExtraMode.CLOSED_COUNT && s < t) closed++;
             String name = nameOf.apply(r[0]);
             Double rate = com.sitemonitor.util.AvailabilityMath.pct(t, s, 1);   // O-5: hata varken %100 değil
-            targets.add(new TopTarget(name, rate, c.perTarget().getOrDefault(name, 0)));
+            // O-3: alarm sayısı olayın domain anahtarıyla (hedef), gösterim adıyla değil.
+            String target = targetOf.apply(r[0]);
+            targets.add(new TopTarget(name, rate, c.perTarget().getOrDefault(target == null ? name : target, 0)));
         }
         Double rate = com.sitemonitor.util.AvailabilityMath.pct(total, success, 1);
 

@@ -1158,6 +1158,21 @@ public class UserPushService {
         };
     }
 
+    /**
+     * Açılışta hiçbir kanal ÇALIŞMADAN verilen kararın izi (2026-09-30): fırtına devri ({@code SKIPPED_STORM}) ve
+     * sahipsiz kayıt ({@code SKIPPED_NO_TEAM}). Bireysel gönderim hattı bu olayı hiç görmediğinden karar satırı
+     * çağıran tarafından yazdırılır; çözüm simetrisi ({@code SKIPPED_NO_PRIOR}) değişmez. Kanal global KAPALIYSA
+     * satır yazılmaz (hattın kalanıyla aynı kural). Hiçbir istisna yayılmaz.
+     */
+    public void recordSuppressed(AlertEvent event, String reason) {
+        try {
+            if (!enabled() || event == null || event.getId() == null || reason == null) return;
+            skipRow(event, "OPEN", reason);
+        } catch (Exception e) {
+            log.warn("user-push karar satırı yazılamadı: {}", e.toString());
+        }
+    }
+
     private void skipRow(AlertEvent event, String trigger, String reason) {
         try {
             String dedupeKey = dedupeKeyFor(trigger, event);

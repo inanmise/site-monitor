@@ -9,6 +9,7 @@ import { useToast } from '../ui/Toast.jsx'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { announceAlertsChanged } from '../../hooks/useOpenAlerts.js'
 import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { copyText } from '../../utils/copyText.js'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -27,7 +28,7 @@ import ActionNoteDialog from '../incidents/ActionNoteDialog.jsx'   // gerekçeli
 import { contextFromAlert } from '../incidents/actionNoteModel.js'
 import {
   FILTER_DEFAULTS, TABS, tabFromUrl, filtersFromUrl, filtersToUrl, activeAlertFilters, listParams, csvParams,
-  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, actBlockReason,
+  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, actBlockReason, isSrcKey,
 } from './alerts/alertHistoryModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -224,7 +225,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     const apply = (p) => {
       setTab(tabFromUrl(p.view))
       // Yeni bir bildirim niyeti: kalan süzgeçler sıfırlanır, yoksa aranan alarm eleniyor olabilir.
-      setFilters({ ...FILTER_DEFAULTS, type: p.type ? String(p.type) : '', q: p.q ? String(p.q) : '' })
+      setFilters({ ...FILTER_DEFAULTS, type: p.type ? String(p.type) : '', q: p.q ? String(p.q) : '',
+        src: p.src && isSrcKey(p.src) ? String(p.src) : '' })   // İzleme menüsü rozeti (2026-09-30): kategori süzgeci
       resetPage()
       linkOpenedRef.current = null
       linkFetchedRef.current = null
@@ -235,7 +237,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       setLinkedNocCall(p.n_call != null && String(p.n_call) === '1')
     }
     const onNav = (e) => { if (e?.detail?.tab === 'alerthistory') apply(e.detail.params || {}) }
-    const onPop = () => apply({ view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''), alert: readUrlParam('alert', null), n_call: readUrlParam('n_call', null) })
+    const onPop = () => apply({ view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''), src: readUrlParam('src', ''), alert: readUrlParam('alert', null), n_call: readUrlParam('n_call', null) })
     window.addEventListener('sm:navigate', onNav)
     window.addEventListener('popstate', onPop)
     return () => { window.removeEventListener('sm:navigate', onNav); window.removeEventListener('popstate', onPop) }
@@ -329,6 +331,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     toast.success(t('alh.ackSuccess'))
     mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: note, acknowledged_at: nowIso() })
     refreshAll()
+    announceAlertsChanged()   // İzleme menüsü rozetleri (sahiplenilmemiş sayısı) hemen tazelensin
     return { ok: true }
   }
 
@@ -343,6 +346,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     toast.success(t('alh.resolveSuccess'))
     mergeDetail(a.id, r.data, { resolved: true, resolved_note: note, resolved_at: nowIso() })
     refreshAll()
+    announceAlertsChanged()   // İzleme menüsü rozetleri (açık sayı) hemen tazelensin
     return { ok: true }
   }
 
@@ -420,6 +424,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (failed) toast.error(msg); else toast.success(msg)
       setSelected(new Set())
       refreshAll()
+      announceAlertsChanged()
       return { ok: true }
     }
     const error = res?.error || t('alh.resolveError')

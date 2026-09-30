@@ -385,9 +385,10 @@ public class IncidentsController {
         dto.put("acknowledged_at", e.getAcknowledgedAt());
         if (d == null) return;
         if (d.mail() != null) {
-            long[] m = d.mail().getOrDefault(e.getId(), new long[]{ 0, 0 });
+            long[] m = d.mail().getOrDefault(e.getId(), new long[]{ 0, 0, 0 });
             dto.put("email_sent_count",   m[0]);
             dto.put("email_failed_count", m[1]);
+            dto.put("webhook_sent_count", m.length > 2 ? m[2] : 0L);   // O-A3-6
         }
         if (d.push() != null && d.push().containsKey(e.getId())) dto.put("push_summary", d.push().get(e.getId()));
         if (e.getNocCallCount() != null) dto.put("noc_call_count", e.getNocCallCount());
@@ -414,7 +415,8 @@ public class IncidentsController {
                 for (Object[] row : notificationLogRepo.countByAlertIds(ids)) {
                     long sent   = row[1] == null ? 0 : ((Number) row[1]).longValue();
                     long failed = row[2] == null ? 0 : ((Number) row[2]).longValue();
-                    m.put(((Number) row[0]).longValue(), new long[]{ sent, failed });
+                    long webhook = row.length > 3 && row[3] != null ? ((Number) row[3]).longValue() : 0;   // O-A3-6
+                    m.put(((Number) row[0]).longValue(), new long[]{ sent, failed, webhook });
                 }
                 mail = m;
             } catch (Exception ex) {

@@ -113,12 +113,27 @@ public class StartupLogger {
         rows.add(metaRow("build.time",          b.buildTime()));
         rows.add(metaRow("image.version",       b.imageVersion()));
         rows.add(metaRow("image.ref",           b.imageRef()));
-        rows.add(new Row("environment",         b.environment(), b.environment().equals("local") || b.environment().equals("unknown") ? "default" : "env"));
+        // Ortam adı Genel Ayarlar'dan da gelebilir (2026-09-29): etkin ad + gerçek kaynağı (db > env > default).
+        BuildInfo.EnvName envName = effectiveEnvironment();
+        rows.add(new Row("environment",         envName.name(), switch (envName.source()) {
+            case SETTING -> "db";
+            case ENV -> "env";
+            case AUTO -> "default";
+        }));
         rows.add(metaRow("helm.release",        b.helmRelease()));
         rows.add(metaRow("helm.revision",       b.helmRevision() == null ? "" : String.valueOf(b.helmRevision())));
         rows.add(metaRow("helm.chart-version",  b.helmChartVersion()));
         rows.add(new Row("instance",            b.instanceId(), "runtime"));
         return new Section("Uygulama", rows);
+    }
+
+    /** DB ayarı okunamazsa (tablo yok) env/otomatik'e düşer — döküm asla bu yüzden eksik kalmaz. */
+    private BuildInfo.EnvName effectiveEnvironment() {
+        try {
+            BuildInfo.EnvName n = appSettings.environmentName();
+            if (n != null) return n;
+        } catch (Exception ignored) { /* aşağıdaki env/otomatik */ }
+        return BuildInfo.resolveEnvironment(null, env);
     }
 
     private Section dbSection() {
@@ -330,7 +345,7 @@ public class StartupLogger {
           .append(',').append(js("profiles")).append(':').append(js(profiles()))
           // log-toplama korelasyonu: aynı sürümün farklı commit/ortam kayıtları ayrışsın
           .append(',').append(js("commit")).append(':').append(js(b.commitShort()))
-          .append(',').append(js("environment")).append(':').append(js(b.environment())).append('}');
+          .append(',').append(js("environment")).append(':').append(js(effectiveEnvironment().name())).append('}');
         for (Section s : sections) {
             sb.append(',').append(js(s.title())).append(":{");
             boolean first = true;

@@ -106,6 +106,24 @@ public class AppUser {
     @Column(name = "team_locked")
     private Boolean teamLocked;
 
+    /**
+     * LDAP kaynaklı profil alanlarının ALAN BAŞINA kilidi (2026-09-29, A1-O1): virgülle ayrılmış anahtarlar
+     * ({@link LdapFieldLocks#FIELDS}). Yönetici LDAP kullanıcısının bir AD alanını elle değiştirince o alan buraya
+     * yazılır; LDAP girişi / yeniden eşitleme kilitli alanı ezmez; kilit yalnız global yöneticinin "kilidi kaldır"
+     * işlemiyle kalkar. NULL bırakılabilir kolon (dolu tabloya sorunsuz eklenir) + {@code applySchemaPatches} yaması.
+     * Tel biçimi {@link #getLockedFieldKeys()} (JSON dizi); ham CSV istemciye gitmez.
+     */
+    @JsonIgnore
+    @Column(name = "locked_fields", length = 400)
+    private String lockedFields;
+
+    /** {@code locked_field_keys}: kilitli alan anahtarları (kanonik sıra) — istemci rozet/ipucu için okur. */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty("locked_field_keys")
+    public java.util.List<String> getLockedFieldKeys() {
+        return LdapFieldLocks.keys(lockedFields);
+    }
+
     /** Birincil takım (geriye-uyum + varsayılanlar: denetim actorTeamId, haftalık rapor varsayılanı,
      *  Nav gösterimi, eskalasyon kontağı). Her zaman {@link #teamIds} içindedir. */
     @Column(name = "team_id")
@@ -114,7 +132,11 @@ public class AppUser {
     /** Kullanıcının ÜYE olduğu TÜM takımlar (çoklu takım). Birincil takım da bu kümededir.
      *  Görünürlük/yetki scope'u (computeViewTeamIds/computeManageTeamIds) bu kümeden beslenir.
      *  EAGER: /me ve admin-liste JSON'unda (tx dışı) okunur. Join kolonu pinli (varsayılan
-     *  app_user_id değil, user_id) — backfill patch'i bununla aynı isimde olmalı. */
+     *  app_user_id değil, user_id) — backfill patch'i bununla aynı isimde olmalı.
+     *  <p><b>SIRA ANLAM TAŞIMAZ</b> (2026-09-29, A1-Y2): Hibernate bu kümeyi {@code HashSet} olarak yükler, JSON'daki
+     *  {@code team_ids} sırası hash sırasıdır. Birincil takım YALNIZ {@link #teamId}'de yaşar; {@code @OrderColumn} /
+     *  {@code @OrderBy} bilerek KULLANILMAZ ("ilk eleman = birincil" varsayımı yönetici kaydında birincili kaydırıyordu).
+     *  {@code UserServiceTest} bunu pinler. */
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "app_user_teams", joinColumns = @JoinColumn(name = "user_id"))
     @Column(name = "team_id")

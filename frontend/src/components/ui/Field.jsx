@@ -46,7 +46,7 @@ export function FieldError({ id, children }) {
 }
 
 export default function Field({
-  label, required = false, hint, hintTone, error, className = '', children,
+  label, required = false, hint, hintTone, error, name, className = '', children,
 }) {
   const base = useId()
   const id = `${base}-c`
@@ -68,7 +68,8 @@ export default function Field({
   // (adsız) ekran okuyucuya boş bir "grup" duyurusu ekler — eski sarmalayıcıda rol yoktu.
   // mb: eski .form-field alt boşluğu (formlar alanları üst üste dizerken ona güveniyor).
   return (
-    <ShadcnField role={undefined} data-invalid={error ? true : undefined}
+    // `name` → data-field: doğrulama hatası olan alana kaydırma/odak kancası (utils/formErrors.focusFormError, 2026-09-30).
+    <ShadcnField role={undefined} data-invalid={error ? true : undefined} data-field={name || undefined}
       className={cn('mb-3.5 gap-1.5', className)}>
       {label && (
         <FieldLabel htmlFor={id} className="gap-1 font-semibold">

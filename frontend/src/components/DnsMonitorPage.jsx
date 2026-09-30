@@ -14,6 +14,7 @@ import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
@@ -129,6 +130,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
   const [histReload, setHistReload] = useState(0)
   const [modal, setModal] = useState(null)
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   const expectedId = useId()   // "beklenen değer" alanı: etiket ↔ metin kutusu ↔ ipucu bağı
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
@@ -275,11 +277,13 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
   async function save() {
     // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
-    if ((modal === 'new' || modal?.standalone) && (form.teamId === '' || form.teamId == null)) {
-      toast.error(t('mon.teamRequired')); return
-    }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      domain: !form.domain?.trim() && t('mon.fieldRequired'),
+      teamId: (modal === 'new' || modal?.standalone) && (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const isNew = modal === 'new'
@@ -552,16 +556,16 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       {dupSource && <AlertBanner tone="info" icon={Copy}>{t('mon.duplicateHint')}</AlertBanner>}
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField label={t('dns.domain')} required>
+        <FormField label={t('dns.domain')} required {...fe.fieldProps('domain')}>
           {({ id }) => (
-            <Input id={id} value={form.domain} onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
+            <Input id={id} value={form.domain} onChange={e => { setForm(f => ({ ...f, domain: e.target.value })); fe.clear('domain') }}
               placeholder={t('dns.domainPlaceholder')} autoFocus={modal === 'new' || !!dupSource} />
           )}
         </FormField>
         {(modal === 'new' || modal.standalone) && (
-          <FormField label={t('dns.team')} required>
+          <FormField label={t('dns.team')} required {...fe.fieldProps('teamId')}>
             {({ id }) => canPickTeam
-              ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))}
+              ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }}
                   options={teamSelectOptions} searchThreshold={2} />
               : <Input id={id} value={defaultTeamName || t('app.noTeam')} disabled />}
           </FormField>
@@ -572,9 +576,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
               placeholder={form.domain || (modal !== 'new' ? modal.domain : '')} />
           )}
         </FormField>
-        <FormField label={t('dns.group')} required>
+        <FormField label={t('dns.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('dns.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dns.noGroup')} />
           )}
@@ -614,8 +618,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
         {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('mon.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
         <FormField label={t('dns.slowThresholdField')} hint={t('dns.slowThresholdHint')}>
           {({ id, describedBy }) => (

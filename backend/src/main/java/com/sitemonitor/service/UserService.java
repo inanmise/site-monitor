@@ -1,6 +1,7 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.LdapFieldLocks;
 import com.sitemonitor.model.PasswordHistory;
 import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.AppUserRepository;
@@ -710,10 +711,30 @@ public class UserService {
         return saved;
     }
 
-    /** Çoklu takımı kullanıcıya uygular: üyelik kümesini yazar, birincil = ilk eleman. */
+    /** Çoklu takımı YENİ kullanıcıya uygular: üyelik kümesini yazar, birincil = ilk eleman (form sırası). */
     private void applyTeams(AppUser user, LinkedHashSet<Long> teams) {
         user.setTeamIds(teams);
         user.setTeamId(teams.isEmpty() ? null : teams.iterator().next());
+    }
+
+    /**
+     * Birincil takım seçimi (2026-09-29, A1-Y2): mevcut birincil küme içinde kaldıkça KORUNUR; yalnız kümeden
+     * çıkarsa (ya da istemci açıkça {@code primaryTeamId} verirse) değişir. Eskiden "kümenin ilk elemanı" yazılıyordu
+     * ve JSON'daki {@code team_ids} sırası Hibernate'in {@code HashSet} sırasıydı → yönetici yalnız görünen adı
+     * düzeltse bile birincil takım kayabiliyordu (nav, kapsam kapısı, eskalasyon kontağı, denetim actorTeamId).
+     * Açık birincil kümede değilse 400.
+     */
+    private static Long choosePrimary(Long current, Long requested, LinkedHashSet<Long> next) {
+        if (next.isEmpty()) return null;
+        if (requested != null) {
+            if (!next.contains(requested)) {
+                throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                        "Birincil takım seçili takımlardan biri olmalı.", "The primary team must be one of the selected teams."));
+            }
+            return requested;
+        }
+        if (current != null && next.contains(current)) return current;
+        return next.iterator().next();
     }
 
     /** Gelen id koleksiyonunu sırayı koruyarak tekilleştirir (null'ları atar). */
@@ -743,13 +764,44 @@ public class UserService {
         });
     }
 
+    /** Geriye uyum: birincil takım istenmedi → mevcut birincil korunur (bkz. {@link #choosePrimary}). */
     @Transactional
     public AppUser updateUser(Long id, String displayName, String email, String employeeId,
                                String systemRole, Collection<Long> teamIds, Boolean active, String orgRole) {
+        return updateUser(id, displayName, email, employeeId, systemRole, teamIds, null, active, orgRole);
+    }
+
+    /**
+     * Yönetici güncellemesi — {@code null} parametre = "dokunma" (kısmi güncelleme), her alan için.
+     *
+     * <ul>
+     *   <li>{@code orgRole}: {@code null} → dokunma; BOŞ dize → temizle (2026-09-29, A1-Y1). Eskiden null "temizle"
+     *       demekti; üye ekle/çıkar ve toplu aktif/pasif null geçtiği için kullanıcının org rolü SİLİNİP
+     *       kilitleniyordu (push alıcısı NO_ORG_ROLE, PO süzgeci bozuk, LDAP düzeltemiyor).</li>
+     *   <li>{@code teamIds}: {@code null} → dokunma; verilirse (boş dâhil) üyelik kümesi. Birincil takım
+     *       {@link #choosePrimary} — kümede kaldıkça korunur, {@code primaryTeamId} açık istek.</li>
+     *   <li>LDAP hesabında AD kaynaklı bir alan (görünen ad, e-posta, sicil) GERÇEKTEN değişirse alan kilitlenir
+     *       ({@link LdapFieldLocks}; ürün kararı 2026-09-29) — LDAP girişi/eşitleme artık o alanı ezmez.</li>
+     * </ul>
+     */
+    @Transactional
+    public AppUser updateUser(Long id, String displayName, String email, String employeeId,
+                               String systemRole, Collection<Long> teamIds, Long primaryTeamId,
+                               Boolean active, String orgRole) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
-        if (displayName != null) user.setDisplayName(displayName);
-        if (email != null && !email.isBlank()) user.setEmail(email.trim());
-        if (employeeId != null) user.setEmployeeId(employeeId);
+        boolean ldap = LdapFieldLocks.isLdapUser(user);
+        if (displayName != null && !Objects.equals(displayName, user.getDisplayName())) {
+            user.setDisplayName(displayName);
+            if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.DISPLAY_NAME);
+        }
+        if (email != null && !email.isBlank() && !Objects.equals(email.trim(), user.getEmail())) {
+            user.setEmail(email.trim());
+            if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMAIL);
+        }
+        if (employeeId != null && !Objects.equals(employeeId, user.getEmployeeId())) {
+            user.setEmployeeId(employeeId);
+            if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMPLOYEE_ID);
+        }
         if (systemRole != null && !systemRole.equals(user.getSystemRole())) {
             user.setSystemRole(systemRole);
             user.setRoleLocked(true);   // admin manuel değiştirdi → LDAP provisyonu bu rolü ezmesin
@@ -757,12 +809,16 @@ public class UserService {
         // teamIds == null → takımlara dokunma (kısmi güncelleme); verilirse (boş dahil) üyeliği set et.
         if (teamIds != null) {
             LinkedHashSet<Long> next = normalizeTeams(teamIds);
-            // Üyelik GERÇEKTEN değiştiyse kilitle (role/orgRole ile aynı sözleşme): düzenleme formu her
-            // kayıtta team_ids gönderir; aynı kümeyi yeniden yazmak manuel atama sayılmaz (2026-09-18).
-            boolean changed = !next.equals(new LinkedHashSet<>(user.getTeamIds() == null ? java.util.Set.of() : user.getTeamIds()));
             LinkedHashSet<Long> before = new LinkedHashSet<>(user.getTeamIds() == null ? java.util.Set.of() : user.getTeamIds());
             if (user.getTeamId() != null) before.add(user.getTeamId());
-            applyTeams(user, next);
+            // Üyelik GERÇEKTEN değiştiyse kilitle (role/orgRole ile aynı sözleşme): düzenleme formu her
+            // kayıtta team_ids gönderir; aynı kümeyi yeniden yazmak manuel atama sayılmaz (2026-09-18).
+            // Karşılaştırma birincili de içeren `before` ile (2026-09-29, A1-D6): üyelik satırı olmayan eski
+            // birincil ("legacy_primary_only") aynı takımı içeren kayıtta yanlış "değişti" sayılıp kilit koyuyordu.
+            boolean changed = !next.equals(before);
+            Long primary = choosePrimary(user.getTeamId(), primaryTeamId, next);
+            user.setTeamIds(next);
+            user.setTeamId(primary);
             if (changed) user.setTeamLocked(true);   // admin manuel değiştirdi → LDAP takımları ezmesin
             if (changed && teamSources != null) {
                 // Yeni eklenen üyelik MANUAL; çıkarılanın izi silinir. Değişmeyenlerin (ör. AD grubu) izi korunur.
@@ -774,22 +830,38 @@ public class UserService {
             }
         }
         if (active != null) user.setActive(active);
-        String newOrg = (orgRole != null && !orgRole.isBlank()) ? orgRole : null;
-        if (!Objects.equals(newOrg, user.getOrgRole())) {
-            user.setOrgRole(newOrg);
-            user.setOrgRoleLocked(true);   // admin manuel değiştirdi → LDAP org rolünü ezmesin
+        if (orgRole != null) {
+            String newOrg = orgRole.isBlank() ? null : orgRole;
+            if (!Objects.equals(newOrg, user.getOrgRole())) {
+                user.setOrgRole(newOrg);
+                user.setOrgRoleLocked(true);   // admin manuel değiştirdi → LDAP org rolünü ezmesin
+            }
         }
         user.setUpdatedAt(now());
         AppUser saved = userRepo.save(user);
-        String syncName = saved.getDisplayName() != null && !saved.getDisplayName().isBlank()
-                ? saved.getDisplayName() : saved.getUsername();
-        contactRepo.findByUserId(id).forEach(c -> {
-            c.setName(syncName);
-            c.setEmail(saved.getEmail());
-            contactRepo.save(c);
-        });
+        UserContactSync.sync(contactRepo, saved);
         syncPoLeadership(saved);
         return saved;
+    }
+
+    /**
+     * LDAP alan kilidini kaldırır (2026-09-29): alan bir sonraki LDAP girişinde / yeniden eşitlemede AD değerine
+     * döner. Yalnız global yönetici çağırır (controller kapısı); geçersiz alan adı 400. Kilit yoksa no-op.
+     * @return kilit VARDIYSA true
+     */
+    @Transactional
+    public boolean unlockField(Long id, String field) {
+        if (!LdapFieldLocks.isValid(field)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Bilinmeyen AD alanı: ", "Unknown AD field: ") + field);
+        }
+        AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        boolean had = LdapFieldLocks.unlock(user, field);
+        if (had) {
+            user.setUpdatedAt(now());
+            userRepo.save(user);
+        }
+        return had;
     }
 
     /** Admin kullanıcının rol-kilidini kaldırır → systemRole tekrar AD (LDAP) yönetimine döner
@@ -832,14 +904,27 @@ public class UserService {
      * For LDAP users these are refreshed from AD on next login (same as displayName/email).
      */
     public void applyProfileFields(AppUser u, Map<String, Object> body) {
+        applyProfileFields(u, body, true);
+    }
+
+    /**
+     * @param sensitiveAllowed telefon yazılabilir mi — yalnız global yönetici telefonu GÖREBİLDİĞİ için (A2-D6 beyaz
+     *                         listesi) onu yalnız o değiştirebilir; kapsamlı yazarın gövdesindeki {@code phone}
+     *                         sessizce yok sayılır (görmediği alanı boşa çekmesin). Yeni kullanıcı oluşturmada true.
+     * <p>LDAP hesabında GERÇEKTEN değişen her AD alanı kilitlenir ({@link LdapFieldLocks}); aynı değeri yeniden
+     * göndermek (form her kayıtta tüm alanları yollar) kilit koymaz.
+     */
+    public void applyProfileFields(AppUser u, Map<String, Object> body, boolean sensitiveAllowed) {
         if (body == null) return;
-        if (body.containsKey("first_name"))    u.setFirstName(bodyStr(body.get("first_name")));
-        if (body.containsKey("last_name"))     u.setLastName(bodyStr(body.get("last_name")));
-        if (body.containsKey("title"))         u.setTitle(bodyStr(body.get("title")));
-        if (body.containsKey("phone"))         u.setPhone(bodyStr(body.get("phone")));
-        if (body.containsKey("department"))    u.setDepartment(bodyStr(body.get("department")));
-        if (body.containsKey("company_level")) u.setCompanyLevel(bodyStr(body.get("company_level")));
-        if (body.containsKey("mudurluk_name")) u.setMudurlukName(bodyStr(body.get("mudurluk_name")));
+        boolean ldap = LdapFieldLocks.isLdapUser(u);
+        if (body.containsKey("first_name"))    set(u, ldap, LdapFieldLocks.FIRST_NAME, u.getFirstName(), bodyStr(body.get("first_name")), u::setFirstName);
+        if (body.containsKey("last_name"))     set(u, ldap, LdapFieldLocks.LAST_NAME, u.getLastName(), bodyStr(body.get("last_name")), u::setLastName);
+        if (body.containsKey("title"))         set(u, ldap, LdapFieldLocks.TITLE, u.getTitle(), bodyStr(body.get("title")), u::setTitle);
+        if (body.containsKey("phone") && sensitiveAllowed)
+                                               set(u, ldap, LdapFieldLocks.PHONE, u.getPhone(), bodyStr(body.get("phone")), u::setPhone);
+        if (body.containsKey("department"))    set(u, ldap, LdapFieldLocks.DEPARTMENT, u.getDepartment(), bodyStr(body.get("department")), u::setDepartment);
+        if (body.containsKey("company_level")) set(u, ldap, LdapFieldLocks.COMPANY_LEVEL, u.getCompanyLevel(), bodyStr(body.get("company_level")), u::setCompanyLevel);
+        if (body.containsKey("mudurluk_name")) set(u, ldap, LdapFieldLocks.MUDURLUK, u.getMudurlukName(), bodyStr(body.get("mudurluk_name")), u::setMudurlukName);
         // manager_sicil YETKİLENDİRME girdisidir, sıradan bir profil alanı değil: computeViewTeamIds
         // ve computeManageTeamIds, LDAP kaynaklı ADMIN için ownPlusSubordinateTeamIds döndürüyor ve
         // subordinateTeamIds findByManagerId sonucundaki her astın TÜM teamIds'ini kapsama ekliyor.
@@ -852,12 +937,32 @@ public class UserService {
         if (body.containsKey("manager_sicil")
                 && com.sitemonitor.controller.SessionScope.isGlobalAdminInRequest()) {
             String sicil = bodyStr(body.get("manager_sicil"));
-            u.setManagerSicil(sicil);
-            // Elle girilen sicil DB'de bir kullanıcıya denk geliyorsa bağı da kur (Takım Müdürü sütunu ve
-            // müdür-zinciri managerId'den yürür; eskiden yalnız metin yazılıyor, bağ LDAP girişine kalıyordu).
-            // ManagerLookup: aynı sicilli iki kullanıcıda istisna (500) yerine BAĞLAMAZ; boşluk/harf duyarsız.
-            u.setManagerId(sicil == null ? null
-                    : ManagerLookup.resolve(userRepo, sicil, u.getId()).map(AppUser::getId).orElse(null));
+            if (!Objects.equals(sicil, u.getManagerSicil())) {
+                u.setManagerSicil(sicil);
+                // Elle girilen sicil DB'de bir kullanıcıya denk geliyorsa bağı da kur (Takım Müdürü sütunu ve
+                // müdür-zinciri managerId'den yürür; eskiden yalnız metin yazılıyor, bağ LDAP girişine kalıyordu).
+                // ManagerLookup: aynı sicilli iki kullanıcıda istisna (500) yerine BAĞLAMAZ; boşluk/harf duyarsız.
+                u.setManagerId(sicil == null ? null
+                        : ManagerLookup.resolve(userRepo, sicil, u.getId()).map(AppUser::getId).orElse(null));
+                if (ldap) LdapFieldLocks.lock(u, LdapFieldLocks.MANAGER);
+            }
+        }
+    }
+
+    /** Değer GERÇEKTEN değişiyorsa yazar; LDAP hesabında alanı kilitler. */
+    private static void set(AppUser u, boolean ldap, String field, String current, String next,
+                            java.util.function.Consumer<String> setter) {
+        if (Objects.equals(current, next)) return;
+        setter.accept(next);
+        if (ldap) LdapFieldLocks.lock(u, field);
+    }
+
+    /** Parola işlemi yalnız YEREL hesapta (2026-09-29, A1-Y3): AD hesabının parolası uygulamada yönetilmez. */
+    private static void requireLocalForPassword(AppUser user) {
+        if (LdapFieldLocks.isLdapUser(user)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "AD hesabının parolası uygulamada yönetilmez; parola Active Directory'de değiştirilir.",
+                    "This account signs in through Active Directory; its password is managed there, not in this application."));
         }
     }
 
@@ -877,6 +982,9 @@ public class UserService {
         }
         AppUser user = userRepo.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        // LDAP satırına yerel hash yazılmaz: eskiden geçici parola "mevcut parola" diye girilip yerel parola
+        // konabiliyor, LDAP kapatıldığında AD dışı bir kimlik yolu açılıyordu (A1-Y3).
+        requireLocalForPassword(user);
 
         // History check: the new raw password must not collide with the current
         // hash or any of the most recent (historyCount - 1) archived hashes.
@@ -961,6 +1069,9 @@ public class UserService {
 
         AppUser target = userRepo.findById(targetUserId)
                 .orElseThrow(() -> new NoSuchElementException("User not found: " + targetUserId));
+        // AD hesabına geçici parola yazılmaz (A1-Y3): 24 saat sonra AD girişi TEMP_PASSWORD_EXPIRED ile
+        // reddediliyor, o arada must_change_password tüm /api/** isteklerini 403'e düşürüyordu.
+        requireLocalForPassword(target);
         if (target.getEmail() == null || target.getEmail().isBlank()) {
             throw new IllegalArgumentException("User has no email address");
         }
@@ -990,18 +1101,42 @@ public class UserService {
         return tempPwd;
     }
 
+    /** Silme sırasında temizlenen bağlar — denetim kaydına yazılır (2026-09-29, A1-D3). */
+    public record DeleteImpact(int leaderOfTeams, int managerOfTeams, int subordinates) {}
+
     @Transactional
-    public void deleteUser(Long id) {
+    public DeleteImpact deleteUser(Long id) {
         // Bu kullanıcı bir takımın lideriyse, silmeden önce o takım(lar)ın liderliğini boşalt.
         // Aksi halde leaderId dangling (silinmiş id) kalır → UI "lider atanmadı" gösterir ama
         // yeni eklenen PO otomatik lider atanmaz (syncPoLeadership null kontrolü geçemez).
+        int leaders = 0;
         for (Team t : teamRepo.findByLeaderId(id)) {
             t.setLeaderId(null);
             t.setUpdatedAt(now());
             teamRepo.save(t);
+            leaders++;
+        }
+        // Elle atanmış takım müdürüyse kolon boşalır (A1-D3): dangling manager_id ile Takım Yönetimi sessizce
+        // türetilene düşüyor, "(elle)" kayboluyor ama kolon dolu kalıyordu.
+        int managed = 0;
+        for (Team t : teamRepo.findByManagerId(id)) {
+            t.setManagerId(null);
+            t.setUpdatedAt(now());
+            teamRepo.save(t);
+            managed++;
+        }
+        // Astların bağı: manager_id her zaman sicille tutarlı YA DA null (LDAP sözleşmesi). Sicil metni kalır —
+        // AD'deki müdürü hâlâ tarif eder; LDAP astı bir sonraki girişte yeniden bağlanır, yerel astta bilgi olarak durur.
+        int subs = 0;
+        for (AppUser s : userRepo.findByManagerId(id)) {
+            s.setManagerId(null);
+            s.setUpdatedAt(now());
+            userRepo.save(s);
+            subs++;
         }
         userRepo.deleteById(id);
         if (teamSources != null) teamSources.forgetUser(id);   // üyelik kaynak izleri öksüz kalmasın
+        return new DeleteImpact(leaders, managed, subs);
     }
 
     // ── Progressive lockout ───────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import { useCheckRun } from '../hooks/useCheckRun.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import { useToast } from './ui/Toast.jsx'
+import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
@@ -153,6 +154,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [modal, setModal] = useState(null)          // 'new' | monitor | null
+  const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
   // karşılaştırması form üzerinden yapılıyor ve not bir ayar değil, tek seferlik açıklama.
   const [changeNote, setChangeNote] = useState('')
@@ -316,10 +318,13 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   }
 
   async function save() {
-    if (!form.domain.trim()) return
-    if (form.teamId === '' || form.teamId == null) { toast.error(t('mon.teamRequired')); return }
-    if (!form.groupName?.trim()) { toast.error(t('mon.groupRequired')); return }   // grup + etiket zorunlu (2026-09-18)
-    if (!form.tags?.trim()) { toast.error(t('mon.tagsRequired')); return }
+    // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
+    if (fe.check({
+      domain: !form.domain.trim() && t('mon.fieldRequired'),
+      teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
+      groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
+      tags: !form.tags?.trim() && t('mon.tagsRequired'),
+    })) return
     setSaving(true)
     try {
       const payload = {
@@ -703,10 +708,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
       {modal === 'new' && teamless && <FormNoTeamAlert />}
       <FormGrid>
-        <FormField full label={t('dom.domain')} required hint={t('dom.domainHint')}>
+        <FormField full label={t('dom.domain')} required {...fe.fieldProps('domain')} hint={t('dom.domainHint')}>
           {({ id, describedBy }) => (
             <Input id={id} aria-describedby={describedBy} value={form.domain} placeholder="example.com" autoFocus
-              onChange={e => setForm(f => ({ ...f, domain: e.target.value }))}
+              onChange={e => { setForm(f => ({ ...f, domain: e.target.value })); fe.clear('domain') }}
               onBlur={e => { const n = normalizeDomainInput(e.target.value); if (n !== e.target.value) setForm(f => ({ ...f, domain: n })) }} />
           )}
         </FormField>
@@ -716,14 +721,14 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
             <Input id={id} value={form.name} placeholder={form.domain} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           )}
         </FormField>
-        <FormField label={t('dom.team')} required>
+        <FormField label={t('dom.team')} required {...fe.fieldProps('teamId')}>
           {({ id }) => canPickTeam
-            ? <SearchableSelect id={id} value={form.teamId} onChange={v => setForm(f => ({ ...f, teamId: v }))} options={teamSelectOptions} searchThreshold={2} />
+            ? <SearchableSelect id={id} value={form.teamId} onChange={v => { setForm(f => ({ ...f, teamId: v })); fe.clear('teamId') }} options={teamSelectOptions} searchThreshold={2} />
             : <Input id={id} value={defaultTeamName || t('dom.noTeam')} disabled />}
         </FormField>
-        <FormField full label={t('dom.group')} required>
+        <FormField full label={t('dom.group')} required {...fe.fieldProps('groupName')}>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.groupName} onChange={v => setForm(f => ({ ...f, groupName: v }))}
+            <SearchableSelect id={id} value={form.groupName} onChange={v => { setForm(f => ({ ...f, groupName: v })); fe.clear('groupName') }}
               options={[{ value: '', label: t('dom.noGroup') }, ...groupSelectOptions]}
               creatable onCreate={() => {}} searchThreshold={2} placeholder={t('dom.noGroup')} />
           )}
@@ -754,8 +759,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <IntervalSlider options={INTERVALS} value={form.intervalSeconds}
           onChange={v => setForm(f => ({ ...f, intervalSeconds: v }))} />
         {/* Etiketler — zorunlu (2026-09-18); Http/Port ile aynı blok */}
-        <FormSection title={t('mon.tagsTitle')} required hint={t('mon.tagsHint')}>
-          <TagInput value={form.tags} onChange={v => setForm(f => ({ ...f, tags: v }))} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
+        <FormSection title={t('mon.tagsTitle')} required {...fe.fieldProps('tags')} hint={t('mon.tagsHint')}>
+          <TagInput value={form.tags} onChange={v => { setForm(f => ({ ...f, tags: v })); fe.clear('tags') }} placeholder={t('mon.tagsPlaceholder')} suggestions={teamTags} />
         </FormSection>
 
         <FormField label={t('dom.warningDays')}>

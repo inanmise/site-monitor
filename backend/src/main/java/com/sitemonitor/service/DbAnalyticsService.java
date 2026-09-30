@@ -85,7 +85,10 @@ public class DbAnalyticsService {
     @org.springframework.cache.annotation.Cacheable("db-analytics-overview")
     public Map<String, Object> getOverview(int days) {
         int win = days <= 1 ? 1 : days >= 30 ? 30 : 7;
-        String since = ISO.format(Instant.now().minusSeconds((long) win * DAY));
+        // A5 D-2 (2026-09-29, AlertNoiseService deseni): pencere ile seri kovaları AYNI takvimden. Eskiden `since` kayan
+        // (şimdi − N gün) iken kovalar İstanbul takvim günleriydi; ilk kovadan önceki saatlerde koşan sorgular özete
+        // giriyor ama seriden düşüyordu ("7 gün: 5 sorgu" — grafik toplamı 0). since = ilk kovanın başlangıcı.
+        String since = tsOf(bucketStarts(win == 1 ? Gran.HOUR : Gran.DAY, win).get(0));
         // Tavanlı çekim (2026-08-20 bellek denetimi): pencere zaman filtreliydi ama LIMIT'siz,
         // oysa sql-history retention'ı 365 gün — 30 günlük pencere tabloyu sınırlamıyordu.
         // En YENİ satırlar korunur; aşağıdaki toplayıcılar ASC beklediği için ters çevrilir.
@@ -217,7 +220,7 @@ public class DbAnalyticsService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("queries", total);
         m.put("failed", failed);
-        m.put("success_rate", total > 0 ? Math.round((total - failed) * 1000.0 / total) / 10.0 : 100.0);
+        m.put("success_rate", pct(total - failed, total));   // A5 D-1: 0 sorgu → null (oran tanımsız), "%100" değil
         m.put("avg_ms", durN > 0 ? Math.round((double) sumMs / durN) : 0);
         m.put("max_ms", maxMs);
         m.put("p95_ms", percentile(durations, (int) durN, 95));

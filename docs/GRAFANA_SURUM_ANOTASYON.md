@@ -9,11 +9,14 @@ bağlar. Uygulama tarafında ek ayar gerekmez; ölçümler her zaman açıktır.
 
 | Ölçüm (Prometheus adı) | Tür | Etiketler | Anlamı |
 |---|---|---|---|
-| `sitemonitor_build_info` | gauge, sabit `1` | `version`, `commit`, `environment` | Koşan örneğin build kimliği. Etiketler süreç ömrü boyunca **sabittir**; sürüm değişince eski seri kaybolur, yeni seri doğar. |
+| `sitemonitor_build_info` | gauge, sabit `1` | `version`, `commit`, `environment` | Koşan örneğin build kimliği. `version`/`commit` süreç ömrü boyunca **sabittir**; sürüm değişince eski seri kaybolur, yeni seri doğar. `environment` ortam adı ayarını izler (aşağıda). |
 | `sitemonitor_deployment_started_seconds` | gauge | — | Bu örneğin JVM başlangıcı (epoch saniye). "Bu pod ne zamandır ayakta" ve dağıtım anı buradan okunur. |
 
 Etiket değerleri boşsa `unknown` yazılır (compose/yerel koşum). `commit` kısa (8 karakter) SHA'dır;
-`environment` Helm'in `APP_ENVIRONMENT` değeridir (`dev` / `staging` / `prod`; pod dışı koşumda `local`).
+`environment` etkin ortam adıdır (`dev` / `staging` / `prod`). Öncelik: Ayarlar → Genel Ayarlar → **Ortam adı**
+(DB, boş değilse) > Helm `APP_ENVIRONMENT` > otomatik (pod'da `unknown`, pod dışı koşumda `local`). Ayar
+yeniden başlatmasız değiştirilir; etiket de aynı pod'da hemen, diğer pod'larda ayar önbelleği tazelemesiyle
+(~10 sn) yenilenir — eski etiketli seri kaybolur, yeni adla tek seri kalır.
 
 Micrometer adı `sitemonitor.build.info` → Prometheus'ta `sitemonitor_build_info` olur (nokta → alt çizgi).
 
@@ -163,5 +166,8 @@ time() - max(sitemonitor_deployment_started_seconds{namespace="site-monitor-prod
 - Pod hiç ayağa kalkamazsa (failed-start) metrik de doğmaz; o durum `kube_pod_container_status_restarts_total`
   ve uygulamanın `SYSTEM_STARTUP` denetim izi ile izlenir.
 - Etiket kardinalitesi 1'dir (her sürüm tek seri, eski seri kaybolur) — uzun vadede seri şişmesi yaratmaz.
+- Ortam adı Genel Ayarlar'dan değiştirilince yeni `environment` etiketli seri doğar: `changes()` tabanlı anotasyon ve
+  "yeni sürüm" alarmı o an **bir kez** tetiklenir (sürüm değişmediği hâlde). Adlandırmayı bakım penceresinde yapın ya
+  da o anotasyonu yok sayın; `environment="…"` ile süzen panoların sorgusunu yeni ada göre güncelleyin.
 - Gerçek ana bilgisayar adı, küme adı ya da kurum kimliği bu belgeye ve panolara yazılmaz; örneklerde
   `<pod-ip>` ve `site-monitor-prod` gibi yer tutucular kullanılmıştır.

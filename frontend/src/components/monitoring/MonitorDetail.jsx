@@ -54,7 +54,10 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       // satırına sağa yaslı insin. Geniş ekranda eski düzen (tek satır, uzun başlık kırpılır).
       // `grid-cols-[minmax(0,1fr)]`: Dialog kutusu bir ızgara; `auto` sütun en uzun kırılmaz metne (uzun başlık) göre
       // genişleyip pencereyi telefonda ekrandan taşırıyordu (Sentetik detayı 439 px, 2026-09-26 responsive ölçümü).
-      className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(960px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
+      // GENİŞLİK (2026-09-30, kullanıcı: "sentetik kartına tıklayınca üst sekmeler taşıyor, yatay kaydırma açılıyor"):
+      // 7 sekme (ikon + sayaç) 960 px'e sığmıyordu → geniş ekranda 1140 px (ModalShell `xl` ile aynı ölçü); sekme
+      // listesi de artık SARAR (DetailTabs), hiçbir genişlikte yatay kaydırma yok.
+      className={cn('grid-cols-[minmax(0,1fr)] sm:max-w-[min(1140px,calc(100%-2rem))] [&>[data-slot=dialog-header]]:flex-wrap sm:[&>[data-slot=dialog-header]]:flex-nowrap',
         'sm:h-[min(88vh,calc(100dvh-2rem))] sm:w-full [&_[data-slot=modal-shell-body]]:[scrollbar-gutter:stable]', className)}
       title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
       headerExtra={(actions || noc) ? <>
@@ -208,13 +211,12 @@ export function DetailTabs({ value, onValueChange, tabs, counts, countsFor = nul
   }, [value, tabKeys])
   return (
     <Tabs value={value} onValueChange={onValueChange} className={cn('mt-4 gap-3', className)}>
-      {/* 5–7 sekme telefona sığmaz: LİSTE yatay kayar (sayfa değil), tetikler sıkışıp kırpılmaz. Kaydırma kabı
-          taşanı kırptığı için etkin sekme çizgisi 1 px yukarı alınır (kabın içinde kalsın). Telefon ve tablette kenar
-          soluklaşması (mask) kaydırılabilirliği gösterir (768'de de 5+ sekme taşıyor); lg+ maske yok (liste sığar). */}
+      {/* 5–7 sekme dar pencereye sığmaz: liste SARAR (2026-09-30, kullanıcı kararı — yatay kaydırma "kötü görüntü").
+          Eskiden yatay kayıyor ve kenarları soluklaşıyordu; şimdi satır satır kırılır, yükseklik içeriğe göre büyür,
+          hiçbir genişlikte kaydırma çubuğu çıkmaz. Dokunmatikte ≥ 40 px tetik yüksekliği (pointer-coarse). */}
       <TabsList variant="line" data-slot="detail-tabs-list"
-        className={cn('w-full justify-start overflow-x-auto overflow-y-hidden border-b [scrollbar-width:thin] max-sm:[scrollbar-width:none]',
-          'group-data-[orientation=horizontal]/tabs:pointer-coarse:h-12',
-          'max-lg:[mask-image:linear-gradient(to_right,transparent,black_14px,black_calc(100%-14px),transparent)]')}>
+        className={cn('h-auto w-full flex-wrap justify-start gap-x-1 gap-y-1 border-b pb-0',
+          'group-data-[orientation=horizontal]/tabs:pointer-coarse:min-h-12')}>
         {items.map(([k, label, opts]) => {
           const Icon = opts?.icon ?? TAB_ICONS[k]
           const n = opts?.count ?? all[k]

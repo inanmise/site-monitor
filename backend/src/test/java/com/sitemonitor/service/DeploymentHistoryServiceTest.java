@@ -196,6 +196,97 @@ class DeploymentHistoryServiceTest {
                 .doesNotThrowAnyException();
     }
 
+    // ── Ortam adı Genel Ayarlar'dan değişince koşan kayıt taşınır (2026-09-29) ─────────
+
+    private static BuildInfo.Snapshot snapshotIn(String env) {
+        return snapshot("1.1.0").withEnvironment(env);
+    }
+
+    /** Açılış "unknown" ortamında (Helm env yok, pod'dayız) kaydedilir, currentId 11. */
+    private void startedAsUnknown() {
+        when(buildInfo.get()).thenReturn(snapshotIn("unknown"));
+        when(repo.save(any())).thenAnswer(inv -> { DeploymentHistory d = inv.getArgument(0); d.setId(11L); return d; });
+        service.recordStartup();
+    }
+
+    @Test
+    @DisplayName("ad değişti (unknown → prod): KOŞAN kayıt yeni ada taşınır + nota iz; yeni satır/geçiş olayı YOK")
+    void syncEnvironment_relabelsCurrentRow() {
+        startedAsUnknown();
+        DeploymentHistory current = row(11L, "2026-09-11T08:00:00Z", "1.1.0", DeploymentHistory.SOURCE_STARTUP);
+        when(repo.findById(11L)).thenReturn(Optional.of(current));
+        when(repo.relabelEnvironment(anyLong(), anyString(), anyString())).thenReturn(1);
+        when(buildInfo.get()).thenReturn(snapshotIn("prod"));
+
+        service.onSettingsChanged(new AppSettingsChangedEvent(java.util.Set.of(BuildInfo.ENV_KEY), "save"));
+
+        ArgumentCaptor<String> note = ArgumentCaptor.forClass(String.class);
+        verify(repo).relabelEnvironment(eq(11L), eq("prod"), note.capture());
+        assertThat(note.getValue()).startsWith("Ortam adı değiştirildi: unknown → prod (")
+                .matches(".*\\(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z\\)$");
+        verify(repo, org.mockito.Mockito.times(1)).save(any());           // yalnız açılış satırı
+        verify(events, never()).publishEvent(any(Object.class));          // sürüm geçişi değil
+
+        // Aynı ad → ikinci kez taşımaz (idempotent)
+        service.onSettingsChanged(new AppSettingsChangedEvent(java.util.Set.of(), "refresh"));
+        verify(repo, org.mockito.Mockito.times(1)).relabelEnvironment(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("ilgisiz ayar değişikliği kayda dokunmaz")
+    void syncEnvironment_ignoresOtherKeys() {
+        startedAsUnknown();
+        when(buildInfo.get()).thenReturn(snapshotIn("prod"));
+        service.onSettingsChanged(new AppSettingsChangedEvent(java.util.Set.of("site.monitor.app.base-url"), "save"));
+        verify(repo, never()).relabelEnvironment(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("mevcut not korunur, iz eklenir; not 500 karakteri AŞMAZ (en yeni iz kalır)")
+    void syncEnvironment_appendsAndCapsNote() {
+        startedAsUnknown();
+        DeploymentHistory current = row(11L, "2026-09-11T08:00:00Z", "1.1.0", DeploymentHistory.SOURCE_STARTUP);
+        current.setNote("x".repeat(495));
+        when(repo.findById(11L)).thenReturn(Optional.of(current));
+        when(buildInfo.get()).thenReturn(snapshotIn("prod"));
+        service.syncEnvironment();
+        ArgumentCaptor<String> note = ArgumentCaptor.forClass(String.class);
+        verify(repo).relabelEnvironment(eq(11L), eq("prod"), note.capture());
+        assertThat(note.getValue()).hasSize(500).startsWith("…").contains("unknown → prod");
+    }
+
+    @Test
+    @DisplayName("DB hatası yutulur; heartbeat (touch) yeniden dener ve taşır")
+    void syncEnvironment_retriesOnHeartbeat() {
+        startedAsUnknown();
+        when(repo.findById(11L)).thenReturn(Optional.empty());
+        when(buildInfo.get()).thenReturn(snapshotIn("prod"));
+        when(repo.relabelEnvironment(anyLong(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("db down")).thenReturn(1);
+
+        assertThat(service.syncEnvironment()).isFalse();                  // yutuldu
+        service.touch();                                                    // güvenlik ağı
+        verify(repo, org.mockito.Mockito.times(2)).relabelEnvironment(eq(11L), eq("prod"), anyString());
+        service.touch();                                                    // artık aynı → no-op
+        verify(repo, org.mockito.Mockito.times(2)).relabelEnvironment(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("açılış kaydı yoksa (kapalı/başarısız) taşıma denenmez")
+    void syncEnvironment_withoutCurrentRow_noop() {
+        when(buildInfo.get()).thenReturn(snapshotIn("prod"));
+        assertThat(service.syncEnvironment()).isFalse();
+        verify(repo, never()).relabelEnvironment(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("elle kayıt ortam doğrulaması Genel Ayarlar'la AYNI desen (BuildInfo.ENV_NAME)")
+    void validateEnv_sharesPattern() {
+        assertThat(DeploymentHistoryService.validateEnv("prod-eu")).isEqualTo("prod-eu");
+        assertThatThrownBy(() -> DeploymentHistoryService.validateEnv("x".repeat(41))).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> DeploymentHistoryService.validateEnv("a_b")).isInstanceOf(IllegalArgumentException.class);
+    }
+
     // ── backfill ──────────────────────────────────────────────────────────────────
 
     @Test

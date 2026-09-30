@@ -1662,7 +1662,7 @@ About 180 keys can be changed from **Management → Settings** while the applica
 
 | Group | What it governs |
 |---|---|
-| `general` | Application base address, system administrator email, allowed origins, problem-reporting switches |
+| `general` | Application base address, system administrator email, allowed origins, problem-reporting switches, environment name (version panel, deployment history and Grafana label; falls back to Helm’s `APP_ENVIRONMENT`, then to an automatic value) |
 | `security` | The corporate certificate authority bundle and automatic authority pinning |
 | `branding` | Application name, tab title, sign-in text, primary colour, logo, announcement banner |
 | `monitoring` | Per-type alert switches, internal and loopback target policy, DNS resolvers and timeouts, registration lookup addresses, page crawl limits |

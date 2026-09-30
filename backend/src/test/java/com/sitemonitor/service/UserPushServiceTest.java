@@ -1336,4 +1336,33 @@ class UserPushServiceTest {
         verify(resolver, never()).resolve(any(), any());
         assertThat(savedRows()).singleElement().extracting(UserPushDelivery::getStatus).isEqualTo("SKIPPED_NO_PRIOR");
     }
+
+    /**
+     * 2026-09-30 (prod olayı): fırtınaya devredilen alarmın açılış kararı — bireysel hat hiç koşmaz, çağıran
+     * SKIPPED_STORM satırını yazdırır. Satır OPEN fazı sistem satırıdır (olay başına 1x); ikinci çağrı tekrar yazmaz;
+     * kanal global kapalıyken hiç yazılmaz (hattın kalanıyla aynı kural).
+     */
+    @Test
+    @DisplayName("recordSuppressed: OPEN fazında SKIPPED_STORM sistem satırı, olay başına bir kez; kanal kapalıysa satır yok")
+    void recordSuppressed_writesOneSystemRow() {
+        when(deliveryRepo.findDuePending(anyString(), any())).thenReturn(List.of());
+        AlertEvent e = stormMember(414L, "SCRIPTED_FAIL", null);
+
+        service.recordSuppressed(e, "SKIPPED_STORM");
+        assertThat(savedRows()).singleElement().satisfies(d -> {
+            assertThat(d.getStatus()).isEqualTo("SKIPPED_STORM");
+            assertThat(d.getTrigger()).isEqualTo("OPEN");
+            assertThat(d.getDedupeKey()).isEqualTo("OPEN");
+            assertThat(d.getUsername()).isEqualTo("-");
+            assertThat(d.getAlertEventId()).isEqualTo(414L);
+        });
+
+        when(deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(414L, "OPEN", "-")).thenReturn(true);
+        service.recordSuppressed(e, "SKIPPED_STORM");
+        assertThat(savedRows()).hasSize(1);
+
+        when(appSettings.getBoolean(eq("site.monitor.userpush.enabled"), any(Boolean.class))).thenReturn(false);
+        service.recordSuppressed(stormMember(415L, "SCRIPTED_FAIL", null), "SKIPPED_STORM");
+        assertThat(savedRows()).hasSize(1);
+    }
 }

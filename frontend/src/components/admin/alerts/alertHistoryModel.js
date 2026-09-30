@@ -1,5 +1,6 @@
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { parseUtc } from '../../../utils/incidentMeta.js'
+import { MONITOR_ALERT_TYPES, alertTypesFor } from '../../../utils/monitorAlertTypes.js'
 
 /**
  * Alarm Geçmişi'nin SAF modeli — bileşenlerden bağımsız yardımcılar (React'siz, test edilebilir).
@@ -21,8 +22,12 @@ export const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL
 export const RANGE_ACTIVE = 'active'
 
 /** Süzgeç varsayılanları — URL'e yalnız varsayılan-dışı değer yazılır (anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde). */
-export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '' })
-export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range' }
+export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '', src: '' })
+export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range', src: 'src' }
+
+/** Kategori süzgeci (URL `src`, 2026-09-30 — İzleme menüsü rozetleri): izleme türü → o türün TÜM alarm tipleri. */
+export const SRC_KEYS = Object.keys(MONITOR_ALERT_TYPES)
+export const isSrcKey = (v) => SRC_KEYS.includes(String(v || ''))
 
 export function filtersFromUrl(read) {
   const f = { ...FILTER_DEFAULTS }
@@ -33,6 +38,7 @@ export function filtersFromUrl(read) {
   if (f.level && !LEVELS.includes(f.level)) f.level = ''
   if (f.ack && f.ack !== 'ack' && f.ack !== 'unack') f.ack = ''
   if (f.range && f.range !== RANGE_ACTIVE) f.range = ''   // `range` başka sayfalarda da kullanılıyor (7 / custom) — yalnız 'active'
+  if (f.src && !isSrcKey(f.src)) f.src = ''
   return f
 }
 
@@ -57,6 +63,7 @@ export function filtersToUrl(filters, tab) {
  */
 export function activeAlertFilters(filters, tab) {
   const out = []
+  if (filters.src) out.push({ key: 'src', value: filters.src, patch: { src: '' } })
   if (filters.type) out.push({ key: 'type', value: filters.type, patch: { type: '' } })
   if (filters.level) out.push({ key: 'level', value: filters.level, patch: { level: '' } })
   if (filters.ack) out.push({ key: 'ack', value: filters.ack, patch: { ack: '' } })
@@ -88,6 +95,8 @@ export function listParams({ tab, filters, page, pageSize, domain, typesParam })
   }
   if (domain) params.domain = domain
   if (typesParam) params.alertTypes = typesParam
+  // Kategori süzgeci (2026-09-30): gömülü `types` verilmediyse izleme türünün alarm tipleri sunucuya gider.
+  else if (filters.src && isSrcKey(filters.src)) params.alertTypes = alertTypesFor(filters.src).join(',')
   if (filters.type) params.alertType = filters.type
   if (filters.q.trim()) params.q = filters.q.trim()
   if (filters.level) params.level = filters.level
@@ -209,7 +218,16 @@ export const PUSH_STATUS_KEYS = new Set([
   'SKIPPED_DISABLED', 'SKIPPED_MONITOR_OFF', 'SKIPPED_NO_CONTACT', 'SKIPPED_NO_ID',
   'SKIPPED_NO_PRIOR', 'SKIPPED_NO_RECIPIENT', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_QUIET_HOURS',
   'SKIPPED_REALERT_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_TYPE_OFF', 'SKIPPED_USER_OPT_OUT',
+  'SKIPPED_STORM', 'SKIPPED_NO_TEAM',   // 2026-09-30: açılışta hiçbir kanal koşmadan verilen kararlar
 ])
+
+/** Bildirim günlüğü tetiği "bildirim fırtınaya devredildi" kararı mı (e-posta değil, karar satırı — backend STORM). */
+export const STORM_SUPPRESSED_TRIGGER = 'STORM'
+/** "SKIPPED: fırtına #17 — …" → 17; eşleşmezse null. */
+export function stormIdFromStatus(status) {
+  const m = /f[ıi]rt[ıi]na\s*#(\d+)/i.exec(String(status || ''))
+  return m ? Number(m[1]) : null
+}
 export function statusLabel(t, status) {
   return PUSH_STATUS_KEYS.has(status) ? t('alh.push.status.' + status) : (status || '—')
 }
@@ -292,6 +310,13 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
   const openedAt = ts(a.created_at) ?? 0
   const items = [{ id: 'opened', kind: 'opened', at: openedAt, when: a.created_at, level: a.alert_level, message: a.message }]
   for (const n of notifications) {
+    if (n.trigger === STORM_SUPPRESSED_TRIGGER) {
+      // 2026-09-30: e-posta değil KARAR — "bireysel bildirim fırtınaya devredildi" (neden ekranda okunsun).
+      items.push({ id: `n-${n.id}`, kind: 'storm', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,
+        stormId: stormIdFromStatus(n.email_status) ?? a.storm_id ?? null, status: n.email_status || null,
+        backfilled: /geriye d[öo]n[üu]k|backfill/i.test(String(n.email_status || '')) })
+      continue
+    }
     items.push({ id: `n-${n.id}`, kind: 'mail', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,
       recipient: n.recipient_name || n.recipient_email || '', trigger: n.trigger || '', status: n.email_status || null })
   }

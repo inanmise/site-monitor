@@ -1469,6 +1469,106 @@ class EscalationServiceTest {
         verifyNoInteractions(emailService);
     }
 
+    /**
+     * Prod olayı 2026-09-30 (SY takımı, SCRIPTED_FAIL #412/#413/#414): fırtınaya sessizce bağlanan alarm hiçbir kanal
+     * çalıştırmıyor ve eskiden hiçbir iz bırakmıyordu — ekran "0 bildirim", push "önce bildirim gitmemişti". Artık
+     * bildirim günlüğünde STORM tetikli "SKIPPED: fırtına #N" satırı ve push kararında SKIPPED_STORM olmalı; e-posta,
+     * webhook ve bireysel push YİNE çalışmaz (fırtına toplu bildirir).
+     */
+    @Test
+    @DisplayName("processConfirmedOutage: fırtınaya devredilen alarm günlüğe STORM satırı + SKIPPED_STORM push kararı bırakır; hiçbir kanal çalışmaz")
+    void processConfirmedOutage_stormSuppressed_leavesTrace() {
+        String name = "OCPA - Response Time Anomalisi";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 14L);
+        ctx.put("monitor_id", 77);
+        ctx.put("name", name);
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(14L); team.setName("SY-Kurumsal Mimari"); team.setEmail("sy@example.com");
+        when(teamRepo.findById(14L)).thenReturn(Optional.of(team));
+        when(alertEventRepo.findOpenAlert(name, EscalationService.TYPE_SCRIPTED_FAIL)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> { AlertEvent e = inv.getArgument(0); e.setId(414L); return e; });
+        when(stormService.evaluate(any(), any())).thenAnswer(inv -> {
+            ((AlertEvent) inv.getArgument(0)).setStormId(7L);
+            return StormService.StormAction.SUPPRESSED;
+        });
+
+        service.processConfirmedOutage(name, EscalationService.TYPE_SCRIPTED_FAIL, "WARNING", ctx);
+
+        ArgumentCaptor<NotificationLog> logCap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(logCap.capture());
+        NotificationLog l = logCap.getValue();
+        assertThat(l.getAlertEventId()).isEqualTo(414L);
+        assertThat(l.getTrigger()).isEqualTo(EscalationService.TRIGGER_STORM_SUPPRESSED);
+        assertThat(l.getEmailStatus()).startsWith(EscalationService.STATUS_STORM_PREFIX + "7");
+        assertThat(l.getRecipientName()).isEqualTo("SY-Kurumsal Mimari");
+        assertThat(l.getRecipientEmail()).isEqualTo("sy@example.com");
+        ArgumentCaptor<AlertEvent> evCap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(userPushService).recordSuppressed(evCap.capture(), eq(EscalationService.PUSH_SKIPPED_STORM));
+        assertThat(evCap.getValue().getId()).isEqualTo(414L);
+        // Hiçbir kanal çalışmadı; lastReAlertAt damgalandı (fırtına toplu bildirir).
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+        verify(webhookService, never()).send(any(), any(), any(), any(), any());
+        assertThat(evCap.getValue().getLastReAlertAt()).isNotNull();
+    }
+
+    /**
+     * Sahipsiz kayıt kapısı (2026-09-28 kararı) da iz bırakır (2026-09-30): "SKIPPED: takım yok" günlük satırı +
+     * SKIPPED_NO_TEAM push kararı — eskiden yalnız log satırıydı, ekranda hiçbir açıklama yoktu.
+     */
+    @Test
+    @DisplayName("Sahipsiz kayıt: e-posta/push gitmez ama günlükte 'SKIPPED: takım yok' ve push kararında SKIPPED_NO_TEAM kalır")
+    void ownerless_leavesTrace() {
+        String host = "orphan.example.com";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("standalone", true);   // takımsız bağımsız izleme → sahipsiz
+        ctx.put("monitor_id", 5);
+        when(alertEventRepo.findOpenAlert(host, EscalationService.TYPE_PING_DOWN)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> { AlertEvent e = inv.getArgument(0); e.setId(99L); return e; });
+        when(alertEventRepo.findById(99L)).thenAnswer(inv -> Optional.of(new AlertEvent()));
+        when(stormService.evaluate(any(), any())).thenReturn(StormService.StormAction.SEND_INDIVIDUAL);
+
+        service.processConfirmedOutage(host, EscalationService.TYPE_PING_DOWN, "WARNING", ctx);
+
+        ArgumentCaptor<NotificationLog> logCap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(logCap.capture());
+        assertThat(logCap.getValue().getEmailStatus()).isEqualTo(EscalationService.STATUS_NO_TEAM);
+        assertThat(logCap.getValue().getTrigger()).isEqualTo("INITIAL");
+        verify(userPushService).recordSuppressed(any(), eq(EscalationService.PUSH_SKIPPED_NO_TEAM));
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Alıcısı olmayan takım (2026-09-30): e-posta atlanır ama "SKIPPED: alıcı yok" satırı yazılır — eskiden erken dönüş
+     * hiçbir satır bırakmıyordu; push yine tetiklenir (kanal bağımsızlığı).
+     */
+    @Test
+    @DisplayName("Takım e-postası boş: günlükte 'SKIPPED: alıcı yok' satırı kalır, push yine tetiklenir")
+    void noRecipients_leavesTraceAndStillPushes() {
+        String host = "https://mail-less.example.com/";
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("team_id", 21L);
+        ctx.put("monitor_id", 6);
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setId(21L); team.setName("Mailsiz Takım"); team.setEmail("");
+        when(teamRepo.findById(21L)).thenReturn(Optional.of(team));
+        when(alertEventRepo.findOpenAlert(host, EscalationService.TYPE_HTTP_DOWN)).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> { AlertEvent e = inv.getArgument(0); e.setId(100L); return e; });
+        when(alertEventRepo.findById(100L)).thenAnswer(inv -> Optional.of(new AlertEvent()));
+        when(stormService.evaluate(any(), any())).thenReturn(StormService.StormAction.SEND_INDIVIDUAL);
+        when(emailService.buildAlertEmailHtml(any(), any(), any(), any(), any(), any(), any())).thenReturn("<html/>");
+
+        service.processConfirmedOutage(host, EscalationService.TYPE_HTTP_DOWN, "WARNING", ctx);
+
+        ArgumentCaptor<NotificationLog> logCap = ArgumentCaptor.forClass(NotificationLog.class);
+        verify(notificationLogRepo).save(logCap.capture());
+        assertThat(logCap.getValue().getEmailStatus()).isEqualTo("SKIPPED: alıcı yok");
+        assertThat(logCap.getValue().getRecipientName()).isEqualTo("Mailsiz Takım");
+        verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
+        verify(userPushService).enqueueAlert(eq(100L), eq("INITIAL"), eq(21L), any(), any());
+    }
+
     @Test
     @DisplayName("processConfirmedOutage KEYWORD: contextJson snapshot + teamId (çözüldü detayı için)")
     void processConfirmedOutage_keyword_snapshotAndTeam() {

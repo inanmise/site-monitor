@@ -15,6 +15,99 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.92.0] — 2026-09-30
+
+### Fixed
+- **Genel Bakış istatistikleri açılırken titreme:** dikey kaydırma çubuğu belirip paneli daraltınca ölçülü sütun tabanı
+  yeniden hesaplanıyor, kartlar yeniden akıp çubuğu gizliyor ve döngü titreşiyordu — `html { scrollbar-gutter: stable }` +
+  istatistik panelinde 8 px histerezis; `useIsMobile` artık ilk çizimde doğru değeri verir (telefonda masaüstü → mobil
+  sıçraması yok, A6-D3).
+- **İzleme detay penceresinde sekmeler taşıp yatay kaydırma açıyordu** (Sentetik: 7 sekme): pencere 1140 px, sekme
+  listesi sarar; hiçbir genişlikte kaydırma çubuğu yok.
+- **HTTP kartında "Beklenen" durum kodu her kartta:** varsayılan aralık (200-399) nötr, elle değiştirilmiş vurgulu —
+  eskiden yalnız varsayılandan farklıysa çiziliyor, kullanıcı tutarsızlık sanıyordu.
+- **Fırtınaya sessizce bağlanan alarmlar hiçbir kanaldan bildirilmiyordu (üretim olayı 30.09.2026, SY takımının
+  sentetik test alarmları #392/#412/#413/#414).** Takımın 3 kalıcı başarısız sentetik testi fırtınayı histerezis
+  tabanının üstünde tutuyor, fırtına hiç kapanmıyor ve `StormService.evaluate` takımın her yeni DOWN alarmını
+  "aktif fırtınaya bağla" dalıyla yutuyordu: e-posta, kişi push'u, Teams webhook'u, 7/24 postası, bildirim günlüğü
+  ve push karar satırı üretilmiyor; ekranda "0 bildirim" ve çözümde "önce bildirim gitmemişti" görünüyordu.
+  - **Fırtına ömür sınırı:** son üye katılımından (`alert_storms.last_member_at`) `site.monitor.storm.quiet-minutes`
+    (varsayılan 30, 5–1440; Ayarlar → Alarm Fırtınası → Sessiz Pencere) geçince fırtına MÜHÜRLENİR: yeni alarm kabul
+    etmez (bireysel bildirilir) ve yaşam döngüsü onu kapatır. Kapanışta fırtına postasında duyurulmuş hâlâ-düşük
+    üyeler "bildirildi" sayılır (günlük tekrar kadansı postadan sürer), sonradan katılan duyurulmamış üyeler bireysel
+    ilk bildirimini alır.
+  - **Her sessiz karar iz bırakır:** fırtına devri (`STORM` tetikli `SKIPPED: fırtına #N` günlük satırı +
+    `SKIPPED_STORM` push kararı), sahipsiz kayıt (`SKIPPED: takım yok` + `SKIPPED_NO_TEAM`) ve alıcısız / kanalı
+    kapalı e-posta (`SKIPPED: alıcı yok` / `SKIPPED: e-posta kanalı kapalı`) artık `notification_logs`'a yazılır.
+    Fırtına postaları (açılış / günlük tekrar / çözüm) üye alarmların günlüğüne `STORM_INITIAL` / `STORM_REALERT` /
+    `STORM_RESOLVE` tetiğiyle girer; SMTP günlüğü ve alarm penceresi bunları gösterir.
+  - **Ekran:** alarm satırı ve penceresinde "Fırtına #N" rozeti; zaman çizelgesinde "Bildirim fırtınaya devredildi"
+    olayı (neden metniyle); Bildirimler bölümünde atlanan e-postalar nedeniyle ("Atlandı — alıcı yok").
+  - **Geriye dönük:** tek seferlik yama (`StormSuppressionBackfill`) fırtınaya bağlı olup hiç bildirim satırı
+    olmayan eski alarmlara "fırtınaya devredildi (geriye dönük kayıt)" izi yazar.
+
+- **29.09.2026 hata taraması (A1 kimlik / A2 güvenlik / A3 alarm / A5 hesap raporları — `BUG_RAPORU_2026-09-29_*.md`):**
+  - Alarm yaşam döngüsü (A3): envanter silme / pasifleştirme yalnız envanterin KENDİ sahip anahtarındaki alarmı kapatır,
+    aynı hedefi izleyen başka takımın bağımsız izleme alarmına dokunmaz (Y-1); paylaşılan anahtarda yabancı sahibin
+    sağlıklı sonucu kurtarma kanıtı sayılmaz (O-1); DNS_FAILURE / DNS_CHANGED bağlamına izlemenin SEÇİLİ alarm seviyesi
+    damgalanır — eskiden hep WARNING açılıp eskalasyon kişileri ve yönetici push'u sessizce atlanıyordu (Y-2); gönderim
+    seviyesi olayın seviyesinin altına inmez (D-1); HTTP / İçerik izlemesinin SSL-bitişi ve alan adı-bitişi alt
+    alarmlarında "veri yok" sağlıklı sayılmaz — geçici RDAP/TLS hatası açık alarmı kapatmaz (O-2); bakım penceresinde
+    gerçekten düzelen alarmın 7/24 (NOC) "ÇÖZÜLDÜ" postası gider (O-3); çift kaynaklı DNS izlemede ikinci sahibin
+    DNS_CHANGED teyit zinciri düşmez — anahtara izleme kimliği girer (O-4); bakım penceresinde görülen kenar tetikli
+    değişiklik (DNS_CHANGED / DOMAINMON_CHANGED) yutulmaz, bildirimsiz olay olarak kaydedilip pencere bitince ilk
+    bildirimi gönderilir (O-5, ürün kararı); yalnız Teams/Slack webhook'uyla teslim edilen alarm artık "kimseye ulaşmadı"
+    görünmez — webhook teslimat sayısı ayrı sayılır (O-6); fırtına üyesi elle çözülünce de bireysel ÇÖZÜLDÜ postası
+    gitmez ve elle çözüm otomatik kapanışla aynı atomik kapıdan geçer (D-3, D-4); ICMP ölçülemeyen ping ve URL'de host
+    olmayan (yapılandırma hatası) sentetik sonuç ne alarm açar ne kapatır — asılı alarm sessizce kapanır (D-5, D-6).
+  - Kimlik / kullanıcı yönetimi (A1): üye ekle/çıkar ve toplu işlemler kullanıcının org rolünü silmez — `orgRole` null
+    "dokunma", boş dize "temizle" (Y-1); birincil takım mevcut küme içinde kaldıkça korunur, JSON sırasına bağlı değil (Y-2);
+    LDAP hesabına "parola sıfırla" / geçici parola uygulanmaz, LDAP satırında yerel parola izi kalmaz (Y-3); AD kaynaklı
+    profil alanları ALAN BAŞINA kilitlenebilir (`app_users.locked_fields`, idempotent yama) — yöneticinin elle değiştirdiği
+    alan LDAP girişi/eşitlemesinde ezilmez (kilit örtük: yöneticinin düzenlemesiyle konur), LDAP tanı çıktısı kilitli alanları `locked_fields` ile listeler (O-1, ürün kararı);
+    AD'de e-posta/ad değişince `user_id` bağlı eskalasyon kişileri de tazelenir (O-2); 7/24 postasındaki takım müdürü
+    Takım Yönetimi'yle aynı kuraldan çözülür — `TeamManagerResolver` (O-3); Kullanıcılar ekranı kapsamlı roller için tüm
+    görüş kapsamındaki takımların kullanıcılarını listeler (O-7); girişte LDAP üyelik budaması ayara bağlı, tanı ekranı
+    aynı ayarı okur (D-1); kullanıcı silinince elle atanmış `teams.manager_id` ve astların `manager_id`'si temizlenir ve
+    denetim kaydına yazılır (D-3); üyelik satırı olmayan eski birincil takım karşılaştırmada dikkate alınır (D-6).
+  - Güvenlik (A2): telefon yalnız global yönetici tarafından görülebildiği için yalnız onun yazabileceği beyaz listede (D-6).
+  - Hesaplamalar (A5): 24 saati aşan tekrarlayan bakım penceresi ikinci günden sonra da aktif sayılır — tek occurrence
+    motoru, süre sınırı 30 gün (Y-1); hiç kontrolü olmayan alan "%100 erişilebilir" değil "—" (O-1); haftalık en çok alarm
+    alan hedefler alarm olayının anahtarıyla eşleşir — adlı izlemelerde artık 0 değil (O-3); yalnız-tarih WHOIS bitişinde
+    "kalan gün" günün büyük kısmında 1 eksik çıkmaz (O-5); Veritabanı / Kullanıcı analitiğinde özet penceresi seri
+    kovalarıyla aynı takvimden — özet toplamı = seri toplamı (D-2); Yönetici Özeti'nde "çözülen" pencerede ÇÖZÜLEN
+    alarmlardır, açılış tarihinden bağımsız (D-3); sonraki sertifika taraması cron'u her iki dalda UTC'de hesaplanır (D-5);
+    haftalık MTTR / gürültü / erişilebilirlik raporlarında sessiz kapanış (izleme silindi / duraklatıldı / envanter pasif /
+    tür bildirimi kapalı) "gerçek kurtarma" sayılmaz — `resolved_silently` süzgeci (D-7 / D-c11).
+
+### Added
+- **İzleme Panosu** (İzleme menüsünün ilk sırası, `?tab=monitoring`): 9 izleme türünün tek ekranda durumu — KPI şeridi
+  (toplam / sağlıklı / sorunlu / kontrolü gecikmiş / duraklatılmış / açık alarm / koşum / pencerede çözülen; tıklanınca
+  liste süzülür), tür kartları (aktif-duraklatılmış, sorunlu, gecikmiş, açık alarm, koşum ve başarı oranı, son kontrol,
+  silinmiş; "Sayfayı aç"), izleme listesi (≥768 px tablo, telefonda kartlar; arama, tür/durum/takım süzgeçleri, sayfalama;
+  satırdan izleme sayfasına ya da açık alarmlarına gidiş). Pencere 24 sa / 7 gün. Veri `GET /api/monitoring/overview`
+  (`MonitoringOverviewService`: satırın takımı görüş kapsamında; durum = son kontrol + açık alarm; "gecikmiş" = aralığın
+  3 katı / en az 10 dk; pencere sayımları mevcut gruplu sorgulardan).
+- **Form doğrulama hataları alanın altında.** Dokuz izleme formunda (HTTP, Ping, Port, DNS, İçerik, Sayfa, Sayfa Hızı,
+  Sentetik, Alan Adı) zorunlu alan (hedef, takım, grup, etiket) eksikse tost yerine hata metni ilgili alanın altında
+  görünür, sayfa ilk hatalı alana kaydırılıp odaklanır; alan düzenlenince hata silinir (`useFormErrors`, `Field name`,
+  `FormSection error`).
+- **İzleme menüsünde aktif alarm rozetleri.** Her izleme türünün (HTTP, Ping, Port, DNS, Alan Adı, İçerik, Sayfa, Sayfa
+  Hızı, Sentetik) yanında kullanıcının görüş kapsamındaki AÇIK alarm sayısı; ton en yüksek seviyeden (kritik/yüksek/uyarı).
+  Rozete tıklayınca Alarm Geçmişi o türe süzülmüş açılır (`?tab=alerthistory&src=<tür>`, yeni `src` kategori süzgeci +
+  çip); üzerine gelince yana açılan özet kartı seviye kırılımını, sahiplenilmemiş sayısını ve en yeni beş alarmı gösterir
+  (alarma tıklayınca detay açılır). Bölüm kapalıyken / menü daraltılmışken toplam sayı başlıkta görünür. Veri
+  `GET /api/me/open-alerts` (dakikada bir, sekme gizliyken durur; Alarm Geçmişi ile aynı kapsam kuralı).
+- **Ortam adı Ayarlar → Genel Ayarlar'dan ayarlanabilir** (yalnız global yönetici): değer PostgreSQL'de (`app_settings`,
+  anahtar `site.monitor.environment`) saklanır ve yeniden başlatmadan yansır (kaydeden pod'da hemen, diğer pod'larda ayar
+  önbelleğiyle ~10 sn). Öncelik: ayar > Helm `APP_ENVIRONMENT` > otomatik (pod'da "Ortam adı yok", dışında "Yerel");
+  alan boşaltılınca Helm değerine dönülür. Geçerli değer ve kaynağı ("Ayarlardan" / "Helm" / "Otomatik") rozetle
+  gösterilir; dev / staging / prod hazır seçenekleri, `[a-z0-9-]` doğrulaması. Sürüm penceresi, Sürüm & Dağıtım Geçmişi
+  ve Sistem Sağlığı kartı yeni adı gösterir.
+- Ortam adı değişince çalışan örneğin devreye alma kaydı yeni ada taşınır (notta "Ortam adı değiştirildi" izi kalır, yeni
+  satır eklenmez); Prometheus `sitemonitor_build_info` `environment` etiketi yenilenir (Grafana "yeni sürüm"
+  anotasyonu bir kez tetiklenir — `docs/GRAFANA_SURUM_ANOTASYON.md`).
+
 ## [20.91.0] — 2026-09-29
 
 ### Changed
@@ -1726,7 +1819,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.91.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.92.0...HEAD
+[20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
 [20.91.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.91.0
 [20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0
 [20.89.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.89.0

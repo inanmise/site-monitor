@@ -504,7 +504,7 @@ describe('Nav — ikon kipi: ipuçları ve yana açılan bölüm menüsü', () =
     pressMenuTrigger(mon)
     const menu = screen.getByRole('menu')
     expect(within(menu).getByText(/^(Availability|Erişilebilirlik)$/)).toBeInTheDocument()
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(9)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(10)   // 9 tür + İzleme Panosu (2026-09-30)
     fireEvent.click(within(menu).getByRole('menuitem', { name: /^Ping$/ }))
     expect(onTabChange).toHaveBeenCalledWith('ping')
   })

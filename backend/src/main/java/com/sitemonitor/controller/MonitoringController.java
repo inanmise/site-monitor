@@ -1341,8 +1341,9 @@ public class MonitoringController {
             long[] s15 = agg15.get(domain);
             long[] s7  = agg7.get(domain);
             long[] s1  = agg1.get(domain);
-            item.put("uptime_7d",  s7  == null ? 100.0 : uptimePct(s7[0],  s7[1]));
-            item.put("uptime_30d", s30 == null ? 100.0 : uptimePct(s30[0], s30[1]));
+            // A5 O-1 (2026-09-29): kontrolü olmayan alan "%100" DEĞİL, null ("—") — AvailabilityMath sözleşmesi (veri yok ≠ %100).
+            item.put("uptime_7d",  s7  == null ? null : uptimePct(s7[0],  s7[1]));
+            item.put("uptime_30d", s30 == null ? null : uptimePct(s30[0], s30[1]));
             item.put("incidents_1d",  s1  == null ? 0L : s1[1]);
             item.put("incidents_7d",  s7  == null ? 0L : s7[1]);
             item.put("incidents_15d", s15 == null ? 0L : s15[1]);
@@ -1384,8 +1385,8 @@ public class MonitoringController {
      * 100 gösterme" koruması. Arayüz bu alanı ham basıyor (UptimePage {@code {item.uptime_7d}%}),
      * ek bir yuvarlama katmanı yok — yani 99.99 ekrana da 99.99 olarak çıkar.
      */
-    private static double uptimePct(long total, long errors) {
-        if (total == 0) return 100.0;
+    static Double uptimePct(long total, long errors) {
+        if (total <= 0) return null;   // A5 O-1: 0 kontrol → bilinmiyor (null), "%100" değil
         return com.sitemonitor.util.AvailabilityMath.pct(total, total - errors, 2);   // tek kural (O-5)
     }
 

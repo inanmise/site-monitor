@@ -48,6 +48,7 @@ class LdapMembershipServiceTest {
         sources = new TeamSourceFakes.Store();
         service = new LdapMembershipService(userRepo, teamRepo, directory, provisioning, sources.service);
         when(provisioning.managerAttributeOrder()).thenReturn(List.of("extensionAttribute4", "manager"));
+        when(provisioning.pruneUnsupportedTeams()).thenReturn(true);   // A1-D1: tahmin ayarı okur; üretim varsayılanı AÇIK
         when(teamRepo.findAllById(any())).thenReturn(List.of(team(10L, "Takım A"), team(11L, "Takım B")));
         when(teamRepo.findByName("Takım B")).thenReturn(Optional.of(team(11L, "Takım B")));
         when(teamRepo.findByName("Takım A")).thenReturn(Optional.of(team(10L, "Takım A")));

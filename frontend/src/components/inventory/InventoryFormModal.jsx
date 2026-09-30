@@ -176,10 +176,13 @@ function initialForm(mode, record) {
  * @param {Function} onSaved              (savedResponse, domain, opts) => void — çağıran kapatır + tazeler. Mükerrer alan adı
  *                                        bandından aktarım / geri yükleme sonrası `opts = { open: true, record }`: çağıran
  *                                        (form kapandıktan sonra) taşınan / geri yüklenen kaydı açar (2026-09-28).
+ * @param {Function} [onRefresh]          () => void — yalnız LİSTE TAZELEMESİ; form AÇIK kalır, yazılanlar korunur. "Çalıştır"
+ *                                        bunu çağırır (A6 Y1, 2026-09-29): eskiden `onSaved` çağrılıyordu ve iki çağıran da onu
+ *                                        "kaydedildi → kapat" diye yorumladığı için kaydedilmemiş düzenlemeler onaysız gidiyordu.
  */
 export default function InventoryFormModal({ mode = 'add', record = null, teams: teamsProp,
                                              canManage = true, canWrite = false, canMoveTeam = false,
-                                             canOpenSettings, onClose, onSaved, focus = null }) {
+                                             canOpenSettings, onClose, onSaved, onRefresh, focus = null }) {
   const t = useT()
   const { theme } = useTheme()
   const toast = useToast()
@@ -249,7 +252,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   useEffect(() => {
     if (teamsProp) { setTeams(teamsProp); return }
     let alive = true
-    api.admin.getTeams().then(res => { if (alive && res?.success) setTeams(res.data) })
+    api.admin.getTeams().then(res => { if (alive && res?.success) setTeams(res.data) }).catch(() => { /* liste boş kalır; sunucu üyeliği doğrular */ })
     return () => { alive = false }
   }, [teamsProp])
 
@@ -263,7 +266,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   useEffect(() => {
     if (!form.team_id) { setTeamGroups([]); setTeamTags([]); return }
     let alive = true
-    api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) })
+    api.monitoring.listGroups(form.team_id, 'cert').then(r => { if (alive && r?.success) setTeamGroups(r.data || []) }).catch(() => { if (alive) setTeamGroups([]) })
     api.monitoring.listTags(form.team_id).then(r => { if (alive) setTeamTags(r?.success ? (r.data || []) : []) }).catch(() => { if (alive) setTeamTags([]) })
     return () => { alive = false }
   }, [form.team_id])
@@ -332,14 +335,20 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
    * Çalıştır — KAYITLI kaydın alan adıyla gerçek bir kontrol koşturur (kalıcı yazılır,
    * alarm üretebilir). Bilinçli olarak formdaki değeri KULLANMAZ: kaydedilmemiş bir adresle
    * kalıcı kontrol yazmak, kullanıcının istemediği sessiz bir yazma işlemi olurdu.
+   *
+   * <p>Bitince yalnız {@code onRefresh} (liste tazele) çağrılır — {@code onSaved} DEĞİL: çağıranlar onu
+   * "kaydedildi → formu kapat" diye yorumluyor ve kullanıcının "kaydetmeden önce kontrol edeyim" diye
+   * bastığı düğme yazdığı her şeyi onaysız düşürüyordu (A6 Y1). Form açık kalır, alanlar korunur.
    */
   async function runNow() {
     if (!savedDomain) return
     setRunning(true); setMsg(null)
     try {
       const res = await api.refreshCertificateHealth(savedDomain)
-      if (res?.success) { toast.success(t('inv.runDone', savedDomain)); onSaved?.() }
+      if (res?.success) { toast.success(t('inv.runDone', savedDomain)); onRefresh?.() }
       else toast.error(res?.error || t('inv.runError'))
+    } catch (e) {
+      toast.error(e?.message || t('inv.runError'))
     } finally {
       setRunning(false)
     }
@@ -360,7 +369,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     setDeleting(true)
     try {
       const res = await api.admin.deleteInventory(record.id)
-      if (res?.success) { toast.success(t('inv.deleted')); onSaved?.(); onClose?.() }
+      if (res?.success) { toast.success(t('inv.deleted', record.domain)); onSaved?.(); onClose?.() }
       else toast.error(res?.error || t('inv.deleteError'))
     } finally {
       setDeleting(false)
@@ -824,7 +833,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
  * pano yolunda HERKES için takım kutusu açıktı. Burada varsayılanlar KAPALI; `canWrite` verilmezse matristen
  * (inventory.crud/edit) okunur — sarmalayıcı PermissionsProvider'ın içinde çizilir, App gövdesi değil.
  */
-export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, focus = null,
+export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, onSaved, onRefresh, focus = null,
                                               canManage = false, canWrite, canMoveTeam = false, canOpenSettings = false }) {
   const t = useT()
   const toast = useToast()
@@ -852,6 +861,6 @@ export function InventoryFormModalForDomain({ domain, mode = 'edit', onClose, on
       </ModalShell>
     )
   }
-  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} focus={focus}
+  return <InventoryFormModal mode={mode} record={record} onClose={onClose} onSaved={onSaved} onRefresh={onRefresh} focus={focus}
     canManage={canManage} canWrite={canWrite ?? matrixCanWrite} canMoveTeam={canMoveTeam} canOpenSettings={canOpenSettings} />
 }

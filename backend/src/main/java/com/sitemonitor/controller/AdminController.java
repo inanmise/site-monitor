@@ -2213,7 +2213,8 @@ public class AdminController {
                 Long alertId = ((Number) row[0]).longValue();
                 long sent    = row[1] == null ? 0 : ((Number) row[1]).longValue();
                 long failed  = row[2] == null ? 0 : ((Number) row[2]).longValue();
-                mailCounts.put(alertId, new long[]{ sent, failed });
+                long webhook = row.length > 3 && row[3] != null ? ((Number) row[3]).longValue() : 0;   // O-A3-6
+                mailCounts.put(alertId, new long[]{ sent, failed, webhook });
             }
         }
 
@@ -2293,9 +2294,10 @@ public class AdminController {
                 ev.setUgTeamId(inv.getUgTeamId());
                 ev.setCertTier(inv.getTier());
             }
-            long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0});
+            long[] counts = mailCounts.getOrDefault(ev.getId(), new long[]{0, 0, 0});
             ev.setEmailSentCount(counts[0]);
             ev.setEmailFailedCount(counts[1]);
+            ev.setWebhookSentCount(counts.length > 2 ? counts[2] : 0L);   // O-A3-6: webhook-tek teslimat "kimseye ulaşmadı" değil
         }
     }
 

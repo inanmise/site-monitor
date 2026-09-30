@@ -156,6 +156,33 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<String> findDomainsWithUnnotifiedOpenAlerts();
 
     /**
+     * O-A3-5 (2026-09-29): ilk bildirimi HİÇ gitmemiş ({@code lastReAlertAt} null) açık olaylar, verilen türlerde — bakım
+     * penceresinde açılan değişiklik alarmlarının (DNS_CHANGED / DOMAINMON_CHANGED) pencere bitince bildirilmesi için.
+     * Yalnız okuma; türetilmiş sorgu (Spring Data), dar indeksli (resolved + alert_type).
+     */
+    List<AlertEvent> findByAlertTypeInAndResolvedFalseAndLastReAlertAtIsNull(Collection<String> alertTypes);
+
+    /**
+     * D-7 / D-c11 (2026-09-29): pencerede GERÇEKTEN kurtarılarak kapanan alarm sayısı, tür başına — sessiz kapanışlar
+     * ({@code resolvedSilently = true}: izleme silindi / duraklatıldı / envanter pasif / tür bildirimi kapalı) KURTARMA
+     * değildir, haftalık "çözülen" sayısına ve MTTR'a girmez. Takım kapsamı {@code findFiltered} ile aynı yüklem.
+     */
+    @Query("""
+            SELECT e.alertType, COUNT(e) FROM AlertEvent e
+            WHERE e.resolved = true
+              AND e.resolvedAt >= :resolvedSince AND e.resolvedAt <= :resolvedUntil
+              AND (e.resolvedSilently IS NULL OR e.resolvedSilently = false)
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            GROUP BY e.alertType
+            """)
+    List<Object[]> countRecoveredByType(@Param("resolvedSince") String resolvedSince,
+                                        @Param("resolvedUntil") String resolvedUntil,
+                                        @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    /**
      * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
      * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
      * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.
