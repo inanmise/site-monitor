@@ -60,6 +60,8 @@ describe.each(PAGES)('%s izleme sayfası — Kompakt / Zengin', (name, Page, lis
   const mount = () => render(<Page systemRole="ADMIN" teamId={5} teamName="Takım A" myTeams={[{ id: 5, name: 'Takım A' }]} />)
   const grid = (c) => c.querySelector('.upt-grid')
   const cards = (c) => [...c.querySelectorAll('.upt-grid > [data-slot="card"]')]
+  // Kart sırası varsayılan kuraldan gelir (sorunlu → grup → ad, 2026-10-01) — kart etiketle bulunur, konumla değil
+  const cardOf = (c, lbl) => cards(c).find((el) => el.querySelector(`[aria-label^="${lbl} — "]`))
   const toggle = () => document.querySelector('[data-slot="card-density-toggle"]')
   const pick = (re) => fireEvent.click(within(toggle()).getByRole('radio', { name: re }))
 
@@ -107,8 +109,8 @@ describe.each(PAGES)('%s izleme sayfası — Kompakt / Zengin', (name, Page, lis
     const { container } = mount()
     await waitFor(() => expect(cards(container)).toHaveLength(2))
     pick(/^(Compact|Kompakt)$/)
-    const [c1] = cards(container)
     const label = labelOf(rows[0])
+    const c1 = cardOf(container, label)
     fireEvent.click(within(c1).getByRole('checkbox', { name: new RegExp(esc(label)) }))
     await waitFor(() => expect(container.querySelector('[data-slot="bulk-action-bar"]')).not.toBeNull())
     expect(container.querySelector('[data-slot="bulk-action-bar"]').textContent).toMatch(/1/)
@@ -124,11 +126,12 @@ describe.each(PAGES)('%s izleme sayfası — Kompakt / Zengin', (name, Page, lis
     it('iki kaynaklı: kaynak rozeti İKİ görünümde de; türev satırda silme adı "izlemeyi durdur" Kompakt\'ta da', async () => {
       const { container } = mount()
       await waitFor(() => expect(cards(container)).toHaveLength(2))
-      const sources = () => cards(container).map((c) => c.querySelector(`[data-slot="${sourceSlot}"]`)?.getAttribute('data-source'))
+      const sources = () => [labelOf(rows[0]), labelOf(rows[1])]
+        .map((l) => cardOf(container, l)?.querySelector(`[data-slot="${sourceSlot}"]`)?.getAttribute('data-source'))
       expect(sources()).toEqual(['standalone', 'inventory'])
       pick(/^(Compact|Kompakt)$/)
       expect(sources()).toEqual(['standalone', 'inventory'])
-      const derived = cards(container)[1]
+      const derived = cardOf(container, labelOf(rows[1]))
       expect(within(derived).getByRole('button', {
         name: new RegExp(`^${esc(labelOf(rows[1]))} — (Stop monitoring \\(inventory-derived record is kept\\)|İzlemeyi durdur \\(envanter-türevi kayıt silinmez\\))$`),
       })).toBeInTheDocument()
@@ -153,7 +156,8 @@ describe('Port — silme onayı kaynağa göre', () => {
     const { container } = mount()
     await waitFor(() => expect(cardsOf(container)).toHaveLength(2))
 
-    fireEvent.click(within(cardsOf(container)[1]).getByRole('button', { name: /b\.example\.com:5432 — (Stop monitoring|İzlemeyi durdur)/ }))
+    const portCard = (lbl) => cardsOf(container).find((el) => el.querySelector(`[aria-label^="${lbl} — "]`))   // sıra kuraldan
+    fireEvent.click(within(portCard('b.example.com:5432')).getByRole('button', { name: /b\.example\.com:5432 — (Stop monitoring|İzlemeyi durdur)/ }))
     let dlg = await screen.findByRole('dialog')
     expect(dlg).toHaveTextContent(/inventory record|envanter kaydından/)
     expect(dlg).not.toHaveTextContent(/for good|kalıcı olarak/)
@@ -161,7 +165,7 @@ describe('Port — silme onayı kaynağa göre', () => {
     fireEvent.click(within(dlg).getAllByRole('button').at(-1))
     await waitFor(() => expect(api.monitoring.deletePortMonitor).toHaveBeenCalledWith(2))
 
-    fireEvent.click(within(cardsOf(container)[0]).getByRole('button', { name: /a\.example\.com:443 — (Delete|Sil)/ }))
+    fireEvent.click(within(portCard('a.example.com:443')).getByRole('button', { name: /a\.example\.com:443 — (Delete|Sil)/ }))
     dlg = await screen.findByRole('dialog')
     expect(dlg).toHaveTextContent(/for good|kalıcı olarak/)
   })

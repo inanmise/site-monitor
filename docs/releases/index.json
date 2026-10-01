@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-01T05:30:23Z",
+  "generatedAt": "2026-10-01T07:49:02Z",
   "repo": "inanmise/site-monitor",
-  "count": 692,
+  "count": 693,
   "releases": [
+    {
+      "version": "20.94.0",
+      "tag": "v20.94.0",
+      "releasedAt": "2026-10-01T07:48:56Z",
+      "commit": "f908d5e362b5cd96fb60ddd48c99d8e7fd2f228f",
+      "prevVersion": "20.93.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f908d5e3",
+          "subject": "izleme sayfalarında varsayılan kart sırası — sorunlu önce, sonra grup adına ve ada göre"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.93.1",
       "tag": "v20.93.1",

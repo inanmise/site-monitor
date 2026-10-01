@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -629,7 +630,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     return pred ? scoped.filter(pred) : scoped
   }, [scoped, statFilter])
 
-  const pager = usePagination(displayMonitors, {
+  // Varsayılan kart sırası (2026-10-01): sorunlu önce → grup adı A→Z (grup içinde ad) → grupsuzlar ada göre
+  const orderedMonitors = useMemo(() => sortMonitorsDefault(displayMonitors, 'pagespeed'), [displayMonitors])
+  const pager = usePagination(orderedMonitors, {
     listKey: 'pagespeed-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, proxyFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })

@@ -15,6 +15,16 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.94.0] — 2026-10-01
+
+### Changed
+- ⚠ Davranış — **İzleme sayfalarında kartların varsayılan sırası (dokuz tür):** önce sorunlu kartlar (kırmızı, sonra sarı:
+  yavaş / bozulmuş / uyarı), sonra grup adı olan izlemeler grup adına göre A→Z (aynı gruptakiler art arda, grup içinde
+  ada göre), en sonda grubu olmayanlar ada göre. Sıralama Türkçe harf düzeninde, büyük/küçük harf duyarsız, sayılar doğal
+  sırada ("web-2" < "web-10"); duraklatılmış izleme sorunlu sayılmaz. Eskiden sunucu sırası kullanılıyordu (ada göre;
+  Port/DNS'te bağımsız izlemeler tanımsız sırayla en sonda). Alan Adı sayfasında bu kural seçicinin yeni varsayılanı;
+  kalan gün / ad / kayıt kuruluşu / takım / son değişiklik seçenekleri duruyor.
+
 ## [20.93.1] — 2026-10-01
 
 ### Fixed
@@ -1944,7 +1954,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.93.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.94.0...HEAD
+[20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0
 [20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
 [20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0
 [20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
