@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ canView: () => true, canEdit: () => true, canExecute: () => true, perms: {} }),
@@ -13,6 +14,9 @@ vi.mock('recharts', () => ({
 /** Ana tablonun veri satırları (shadcn Table, `data-testid="sml-table"`) ve kırılım paneli satırları. */
 const tableRows = () => screen.getByTestId('sml-table').querySelectorAll('tbody tr')
 const pbpRows = () => [...document.querySelectorAll('[data-pbp-row]')]
+/** 2026-10-01 yeniden tasarım: durum sayıları ortak MonitorStatsBar kutuları; kırılımlar tek kartta sekmeler. */
+const statusBox = (key) => document.querySelector(`[data-slot="stat-item"][data-key="${key}"]`)
+const pickTab = (name) => pressMenuTrigger(screen.getByRole('tab', { name }))
 const { pushLog } = vi.hoisted(() => ({ pushLog: { search: vi.fn(), summary: vi.fn(), export: vi.fn(), detail: vi.fn(), requeue: vi.fn() } }))
 vi.mock('../api/client', () => ({
   formatDate: (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : ''),
@@ -55,7 +59,10 @@ describe('PushLogView', () => {
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
     expect(pushLog.summary.mock.calls[0][0].from).toBe(pushLog.search.mock.calls[0][0].from)
-    expect(screen.getByText('%33.3')).toBeInTheDocument()
+    expect(document.querySelector('[data-slot="pl-rate"]').textContent).toMatch(/^(%33\.3|33\.3%)$/)
+    expect(document.querySelector('[data-slot="pl-health"]')).toHaveAttribute('data-tone', 'bad')   // %33 < %90
+    expect(statusBox('BLOCKED').querySelector('[data-slot="stat-value"]').textContent).toBe('1')
+    expect(statusBox('PENDING').querySelector('[data-slot="stat-value"]').textContent).toBe('1')
     expect(screen.getByText(/^(6 kayıt|6 records)$/)).toBeInTheDocument()
     expect(screen.getAllByText(/Sunucu hatası \(5xx\)|Server error \(5xx\)/).length).toBeGreaterThan(0)
     expect(tableRows()).toHaveLength(3)
@@ -72,13 +79,18 @@ describe('PushLogView', () => {
   it('KPI Engellendi → status=BLOCKED; seviye kırılımı → level; alıcı satırı → username çipi; filtreleri temizle', async () => {
     render(<PushLogView onBack={() => {}} />)
     await screen.findByText('Internal error')
-    fireEvent.click(screen.getByRole('button', { name: /1\s*Engellendi|1\s*Blocked/ }))
+    fireEvent.click(statusBox('BLOCKED'))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'BLOCKED' })))
     await waitFor(() => expect(tableRows()).toHaveLength(1))
+    expect(statusBox('BLOCKED')).toHaveAttribute('aria-pressed', 'true')
+    // etkin süzgeç çipi (durum) — × ile kalkar
+    expect(document.querySelector('[data-slot="pl-chips"]').textContent).toMatch(/(Durum|Status): (Engellendi|Blocked)/)
+    pickTab(/Seviye|Level/)
     // kırılım paneli v2 (2026-09-21): satırdaki RAKAM tıklanır — Toplam → yalnız boyut (durum süzgeci kalkar)
     const rowOf = (re) => pbpRows().find((r) => re.test(r.textContent))
     fireEvent.click(within(rowOf(/HIGH/)).getByRole('button', { name: /Toplam|Total/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ level: 'HIGH', status: '' })))
+    pickTab(/Alıcı|Recipient/)
     fireEvent.click(within(rowOf(/Üç Kullanıcı/)).getByRole('button', { name: /Toplam|Total/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ username: 'u3' })))
     expect(screen.getByRole('button', { name: /Alıcı: u3|Recipient: u3/ })).toBeInTheDocument()
@@ -99,7 +111,12 @@ describe('PushLogView', () => {
     const dlg = await screen.findByRole('dialog')
     await within(dlg).findByText('KRİTİK api down')
     expect(within(dlg).getByText('{"error":"boom"}')).toBeInTheDocument()
-    expect(within(dlg).getByText(/Aynı toplu isteğin alıcıları \(2\)|Recipients in the same batch \(2\)/)).toBeInTheDocument()
+    expect(within(dlg).getAllByText(/Aynı toplu isteğin alıcıları \(2\)|Recipients in the same batch \(2\)/).length).toBeGreaterThan(0)
+    // 2026-10-01: sağdan açılan panel — hata bandı + teslimat akışı + önceki/sonraki (geçerli sayfa sırası)
+    expect(dlg).toHaveAttribute('data-slot', 'pl-detail')
+    expect(within(dlg).getByText(/Gönderilemedi|Could not be delivered/)).toBeInTheDocument()
+    expect(dlg.querySelector('[data-slot="pl-flow"]').textContent).toMatch(/Oluşturuldu|Created/)
+    expect(within(dlg).getByText(/^(1 \/ 3|1 of 3)$/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: /Alarmı aç|Open alert/ }))
     expect(nav.mock.calls.at(-1)[0].detail).toEqual({ tab: 'alerthistory', params: { alert: '10' } })   // E2: Alarm Geçmişi `alert` okur
     window.removeEventListener('sm:navigate', nav)
@@ -146,13 +163,43 @@ describe('PushLogView', () => {
     expect(within(rowOf(/Takım A/)).getByRole('button', { name: /Başarısız|Failed/ })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(within(rowOf(/Takım A/)).getByRole('button', { name: /Başarısız|Failed/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ teamId: '', status: '' })))
-    // izleme satırı: Gönderildi → q + SENT
+    // izleme sekmesi: Gönderildi → q + SENT (sekme sayısı kırılım satır sayısını söyler)
+    expect(screen.getByRole('tab', { name: /İzleme|Monitor/ }).textContent).toMatch(/1$/)
+    pickTab(/İzleme|Monitor/)
     fireEvent.click(within(rowOf(/HTTPgw/)).getByRole('button', { name: /Gönderildi|Sent/ }))
     await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'gw', status: 'SENT' })))
-    // panel daraltma
-    const head = document.querySelector('[data-testid=pbp] [data-slot="collapsible-trigger"]')
+    expect(document.querySelector('[data-slot="pl-chips"]').textContent).toMatch(/(Arama|Search): gw/)
+    // kart düzeyinde daraltma
+    const head = document.querySelector('[data-slot="pl-breakdown"] [data-slot="collapsible-trigger"]')
     fireEvent.click(head)
     expect(head.getAttribute('aria-expanded')).toBe('false')
-    expect(head.closest('[data-testid=pbp]').querySelector('ul')).toBeNull()
+    expect(document.querySelector('[data-pbp-row]')).toBeNull()
+  })
+
+  it('süzgeç çipleri: her etkin süzgeç ayrı çip, × kaldırır; aralık çipi varsayılana döner; telefon süzgeç düğmesi seçicileri açar', async () => {
+    render(<PushLogView onBack={() => {}} initial={{ range: '24h', status: 'FAILED', level: 'HIGH' }} />)
+    await screen.findByText('Internal error')
+    const chips = () => document.querySelector('[data-slot="pl-chips"]')
+    expect(chips().textContent).toMatch(/(Zaman aralığı|Time range): (Son 24 saat|Last 24 hours)/)
+    expect(chips().textContent).toMatch(/(Seviye|Level): HIGH/)
+    fireEvent.click(within(chips()).getByRole('button', { name: /(Seviye|Level): HIGH/ }))
+    await waitFor(() => expect(pushLog.search).toHaveBeenLastCalledWith(expect.objectContaining({ level: '', status: 'FAILED' })))
+    fireEvent.click(within(chips()).getByRole('button', { name: /(Zaman aralığı|Time range):/ }))
+    await waitFor(() => expect(chips().textContent).not.toMatch(/(Zaman aralığı|Time range)/))
+    // telefon: seçiciler düğmenin arkasında (aria-expanded), sayaç seçili süzgeç sayısını söyler
+    const toggle = document.querySelector('[data-slot="pl-filters-toggle"]')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.textContent).toMatch(/1$/)
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('yükleme hatası: bant + "Tekrar dene" yeniden ister', async () => {
+    pushLog.summary.mockResolvedValueOnce({ success: false, error: 'özet yok' })
+    render(<PushLogView onBack={() => {}} />)
+    expect(await screen.findByText('özet yok')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Tekrar dene|Try again/ }))
+    await screen.findByText('Internal error')
+    expect(screen.queryByText('özet yok')).toBeNull()
   })
 })

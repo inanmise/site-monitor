@@ -22,8 +22,9 @@ import { cn } from '@/lib/utils'
  * @param isDimActive (row) → boyut süzgeci bu satırda mı
  * @param status      etkin durum süzgeci ('' | 'SENT' | 'FAILED' | …)
  * @param onFilter    (patch) → süzgeci uygula (durum dâhil) ve tabloya kaydır
+ * @param bare        (2026-10-01) kart / açılır başlık OLMADAN yalnız liste — push logu kırılım sekmelerinin içinde
  */
-export default function PushBreakdownPanel({ title, rows = [], keyOf, label, dim, isDimActive, status = '', onFilter, defaultOpen = true }) {
+export default function PushBreakdownPanel({ title, rows = [], keyOf, label, dim, isDimActive, status = '', onFilter, defaultOpen = true, bare = false }) {
   const t = useT()
   const [open, setOpen] = useState(defaultOpen)
   const max = Math.max(1, ...rows.map((r) => Number(r.total) || 0))
@@ -50,6 +51,42 @@ export default function PushBreakdownPanel({ title, rows = [], keyOf, label, dim
     )
   }
 
+  const list = rows.length === 0 ? <div className="px-3.5 py-2.5 text-[0.85em] text-muted-foreground">{t('sml.noData')}</div> : (
+    <ul className="m-0 list-none p-0">
+      {rows.map((r) => {
+        const total = Number(r.total) || 0, sent = Number(r.sent) || 0, failed = Number(r.failed) || 0
+        const other = Math.max(0, total - sent - failed)
+        // genişlikler CSS özel değişkeniyle (--w): çok parçalı çubuk ProgressBar'a sığmaz; progress-guard kapısı inline width istemez
+        const w = (n) => `${total ? (n / total) * 100 : 0}%`
+        const active = isDimActive?.(r)
+        return (
+          <li key={keyOf(r)} data-pbp-row="" data-state={active ? 'selected' : undefined}
+            className={cn('grid grid-cols-1 items-center gap-x-3.5 gap-y-1.5 border-b px-3.5 py-2 last:border-b-0 hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(180px,1.3fr)_minmax(120px,1fr)_auto_150px] border-border',
+              active && 'bg-primary/5')}>
+            <div className="min-w-0 truncate font-semibold">{label(r)}</div>
+            <div data-pbp-bar="" className="hidden h-2.5 w-(--w) min-w-6 overflow-hidden rounded-full bg-muted lg:flex"
+              title={`${t('health.statusSent')} ${sent} · ${t('health.statusFailed')} ${failed}${other ? ` · ${t('pl.bdOther')} ${other}` : ''}`}
+              style={{ '--w': `${(total / max) * 100}%` }}>
+              <span className="block h-full w-(--w) bg-emerald-600" style={{ '--w': w(sent) }} />
+              <span className="block h-full w-(--w) bg-red-600" style={{ '--w': w(failed) }} />
+              <span className="block h-full w-(--w) bg-zinc-400" style={{ '--w': w(other) }} />
+            </div>
+            <div className="inline-flex gap-1.5">
+              {num(r, '', total)}
+              {num(r, 'SENT', sent, 'ok')}
+              {num(r, 'FAILED', failed, failed > 0 ? 'bad' : '')}
+            </div>
+            <div className="hidden text-right text-[0.8em] whitespace-nowrap lg:block" title={r.last_failed_at ? formatDate(r.last_failed_at) : ''}>
+              <span className="block text-[0.8em] text-muted-foreground">{t('sml.lastFailed')}</span>{r.last_failed_at ? formatDate(r.last_failed_at) : '—'}
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
+  if (bare) return <section data-testid="pbp" aria-label={title} className="min-w-0">{list}</section>
+
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <section data-testid="pbp">
@@ -62,39 +99,7 @@ export default function PushBreakdownPanel({ title, rows = [], keyOf, label, dim
             <span className="ml-auto text-[0.74em] text-muted-foreground">{t('pl.bdHint')}</span>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            {rows.length === 0 ? <div className="px-3.5 py-2.5 text-[0.85em] text-muted-foreground">{t('sml.noData')}</div> : (
-              <ul className="list-none">
-                {rows.map((r) => {
-                  const total = Number(r.total) || 0, sent = Number(r.sent) || 0, failed = Number(r.failed) || 0
-                  const other = Math.max(0, total - sent - failed)
-                  // genişlikler CSS özel değişkeniyle (--w): çok parçalı çubuk ProgressBar'a sığmaz; progress-guard kapısı inline width istemez
-                  const w = (n) => `${total ? (n / total) * 100 : 0}%`
-                  const active = isDimActive?.(r)
-                  return (
-                    <li key={keyOf(r)} data-pbp-row="" data-state={active ? 'selected' : undefined}
-                      className={cn('grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3.5 border-b px-3.5 py-2 last:border-b-0 hover:bg-muted/40 lg:grid-cols-[minmax(180px,1.3fr)_minmax(120px,1fr)_auto_150px] border-border',
-                        active && 'bg-primary/5')}>
-                      <div className="min-w-0 truncate font-semibold">{label(r)}</div>
-                      <div data-pbp-bar="" className="hidden h-2.5 w-(--w) min-w-6 overflow-hidden rounded-full bg-muted lg:flex"
-                        title={`${t('health.statusSent')} ${sent} · ${t('health.statusFailed')} ${failed}${other ? ` · ${t('pl.bdOther')} ${other}` : ''}`}
-                        style={{ '--w': `${(total / max) * 100}%` }}>
-                        <span className="block h-full w-(--w) bg-emerald-600" style={{ '--w': w(sent) }} />
-                        <span className="block h-full w-(--w) bg-red-600" style={{ '--w': w(failed) }} />
-                        <span className="block h-full w-(--w) bg-zinc-400" style={{ '--w': w(other) }} />
-                      </div>
-                      <div className="inline-flex gap-1.5">
-                        {num(r, '', total)}
-                        {num(r, 'SENT', sent, 'ok')}
-                        {num(r, 'FAILED', failed, failed > 0 ? 'bad' : '')}
-                      </div>
-                      <div className="hidden text-right text-[0.8em] whitespace-nowrap lg:block" title={r.last_failed_at ? formatDate(r.last_failed_at) : ''}>
-                        <span className="block text-[0.8em] text-muted-foreground">{t('sml.lastFailed')}</span>{r.last_failed_at ? formatDate(r.last_failed_at) : '—'}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
+            {list}
           </CollapsibleContent>
         </Card>
       </section>

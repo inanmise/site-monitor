@@ -400,3 +400,46 @@ describe('DomainMonitorPage — istatistik kartları (NS / DNSSEC / kara liste /
     expect(c).toHaveAccessibleDescription(/DNSBL/)
   })
 })
+
+// Varsayılan kart sırası (2026-10-01 kullanıcı kararı): "kullanıcı ilk baktığında en az süresi kalanları görsün" —
+// kalan gün ARTAN: süresi geçmiş en üstte, eşit günde alan adı A→Z, günü bilinmeyen en sonda; URL'ye yazılmaz.
+// Dokuz türün ortak kuralı (sorunlu → grup → ad) seçicide `default` olarak durur.
+describe('DomainMonitorPage — varsayılan sıra: en az gün önce', () => {
+  const base = { ...monitor, status: 'OK', group_name: null }
+  const LIST = [
+    { ...base, id: 21, domain: 'uzun.example.com', days_remaining: 300, group_name: 'A Grubu' },
+    { ...base, id: 22, domain: 'bilinmiyor.example.com', days_remaining: null, status: 'UNKNOWN' },
+    { ...base, id: 23, domain: 'b-yakin.example.com', days_remaining: 5, status: 'CRITICAL' },
+    { ...base, id: 24, domain: 'gecmis.example.com', days_remaining: -4, status: 'CRITICAL' },
+    { ...base, id: 25, domain: 'a-yakin.example.com', days_remaining: 5, status: 'CRITICAL' },
+    { ...base, id: 26, domain: 'orta.example.com', days_remaining: 25, status: 'WARNING', group_name: 'A Grubu' },
+  ].map((m) => ({ ...m, name: m.domain }))
+  const order = (c) => [...c.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    .map((card) => LIST.find((m) => card.textContent.includes(m.domain))?.domain)
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: LIST })
+    api.monitoring.getDomainHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.monitorDefaults.mockResolvedValue({ success: true, data: { domain: { intervalSeconds: 86400, warningDays: 30, criticalDays: 7, thresholds: '60,30,14,7,3,1' } } })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 3, name: 'SY-A' }] })
+  })
+
+  it('ilk açılış: süresi geçmiş → en az gün → … → günü bilinmeyen; eşit günde alan adı A→Z; sort URL\'de yok', async () => {
+    window.history.replaceState({}, '', '/?tab=domain')
+    const { container } = render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('uzun.example.com')
+    expect(order(container)).toEqual(['gecmis.example.com', 'a-yakin.example.com', 'b-yakin.example.com', 'orta.example.com',
+      'uzun.example.com', 'bilinmiyor.example.com'])
+    expect(new URLSearchParams(window.location.search).get('sort')).toBeNull()
+  })
+
+  it('?sort=default → dokuz türün ortak kuralı (sorunlu önce, sonra grup, sonra ad)', async () => {
+    window.history.replaceState({}, '', '/?tab=domain&sort=default')
+    const { container } = render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('uzun.example.com')
+    // kırmızı (CRITICAL: ad A→Z) → sarı (WARNING) → diğerleri: grubu olan (A Grubu/uzun) önce, sonra grupsuz (bilinmiyor)
+    expect(order(container)).toEqual(['a-yakin.example.com', 'b-yakin.example.com', 'gecmis.example.com', 'orta.example.com',
+      'uzun.example.com', 'bilinmiyor.example.com'])
+    window.history.replaceState({}, '', '/')
+  })
+})

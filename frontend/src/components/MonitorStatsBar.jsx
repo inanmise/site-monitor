@@ -30,6 +30,10 @@ import { cn } from '@/lib/utils'
  * satırı tam doldurur (son satırın kartları en fazla bir kart payı kadar geniş). Kart genişleyince içerik yatay
  * düzene geçer (`@container` sorgusu: ikon solda, değer/etiket sağda) — boş beyazlık yerine daha büyük ikon ve
  * okunur etiket. Ölçüm yokken (jsdom, ilk boyama) sınıf tabanlı taban: telefonda 2 sütun, ≥640 px'te ≥140 px kartlar.
+ *
+ * <p><b>Sıkı görünüm (`dense`, 2026-10-01 — İzleme Panosu akordiyonu).</b> Kart yüksekliği ~56 px: ikon solda, değer +
+ * etiket sağda HER genişlikte yatay; en dar kart {@link DENSE_MIN_TILE_PX}. `className` panel kabına eklenir (akordiyon
+ * içinde çerçeve/zemin/boşluk kaldırmak için). Varsayılan görünüm değişmez.
  */
 const TONE = {
   total:    { text: 'text-foreground', bg: 'bg-muted/40' },
@@ -47,6 +51,8 @@ const TONE = {
 
 /** Bir kartın sığabileceği en dar genişlik (px) — etiket iki satıra sarsa da okunur kalır. */
 export const MIN_TILE_PX = 140
+/** Sıkı görünümde (`dense`) bir kartın en dar genişliği (px). */
+export const DENSE_MIN_TILE_PX = 128
 
 /**
  * Kap genişliğine göre satırlara EŞİT dağıtılmış sütun sayısı.
@@ -63,11 +69,12 @@ export function balancedColumns(width, gap, count, minTile = MIN_TILE_PX) {
   return Math.ceil(count / rows)
 }
 
-export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
+export default function MonitorStatsBar({ items, activeFilter, onStatClick, dense = false, className }) {
   const t = useT()
   const uid = useId()
   const panelRef = useRef(null)
   const count = items?.length ?? 0
+  const minTile = dense ? DENSE_MIN_TILE_PX : MIN_TILE_PX
   // { cols, basis } — ölçülmüş yerleşim; null iken sınıf tabanlı taban geçerli.
   const [layout, setLayout] = useState(null)
 
@@ -78,7 +85,7 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
       const cs = getComputedStyle(el)
       const width = el.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
       const gap = parseFloat(cs.columnGap) || 0
-      const cols = balancedColumns(width, gap, count)
+      const cols = balancedColumns(width, gap, count, minTile)
       // Taban `floor` ile: kesirli pay altı kartı beş sütuna sarabilirdi; kalan pikselleri flex-grow dağıtır.
       const next = cols > 0 ? { cols, basis: Math.floor((width - (cols - 1) * gap) / cols) } : null
       // HİSTEREZİS (2026-09-30, kullanıcı: "istatistiklere tıklayınca titreşim"): bölüm açılınca sayfa uzuyor, dikey
@@ -96,12 +103,12 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [count])
+  }, [count, minTile])
 
   if (count === 0) return null
   return (
-    <div ref={panelRef} data-slot="stats-panel" data-cols={layout?.cols}
-      className="mb-4 flex flex-wrap gap-2 rounded-[10px] border bg-card p-2 shadow-xs sm:gap-3 sm:p-3">
+    <div ref={panelRef} data-slot="stats-panel" data-cols={layout?.cols} data-dense={dense || undefined}
+      className={cn('mb-4 flex flex-wrap gap-2 rounded-[10px] border bg-card p-2 shadow-xs sm:gap-3 sm:p-3', dense && 'sm:gap-2', className)}>
       {items.map((item) => {
         // item.onClick: süzgeç değil EYLEM kartı (ör. Pano "CA çeşitliliği" → pencere) — aria-pressed taşımaz
         const isFilter = !item.onClick
@@ -117,19 +124,23 @@ export default function MonitorStatsBar({ items, activeFilter, onStatClick }) {
             onClick={item.onClick ?? (() => onStatClick(item.key))}
             style={layout ? { flexBasis: `${layout.basis}px` } : undefined}
             className={cn(
-              '@container relative h-auto min-h-24 min-w-0 grow basis-[calc(50%-4px)] rounded-lg border px-2 py-3 whitespace-normal sm:basis-[140px] sm:py-4',
+              dense
+                ? '@container relative h-auto min-h-14 min-w-0 grow basis-[calc(50%-4px)] justify-start rounded-lg border px-3 py-2 whitespace-normal sm:basis-[128px]'
+                : '@container relative h-auto min-h-24 min-w-0 grow basis-[calc(50%-4px)] rounded-lg border px-2 py-3 whitespace-normal sm:basis-[140px] sm:py-4',
               tone.bg, 'hover:bg-accent/60 dark:hover:bg-accent/40',
               isActive && 'border-primary ring-2 ring-primary/40',
             )}>
-            {/* Kart ≥ 220 px olunca yatay: ikon solda, sayı + etiket sağda (geniş ekranda boş beyazlık yerine). */}
-            <span className="flex w-full min-w-0 flex-col items-center gap-1 @[220px]:flex-row @[220px]:justify-center @[220px]:gap-3">
-              <item.Icon aria-hidden="true" className={cn('size-6 shrink-0 sm:size-7 @[220px]:size-9', tone.text)} />
-              <span className="flex min-w-0 flex-col items-center gap-1 @[220px]:items-start">
-                <span data-slot="stat-value" className={cn('text-2xl leading-none font-extrabold tracking-[-.02em] tabular-nums sm:text-3xl', tone.text)}>
+            {/* Kart ≥ 220 px olunca yatay: ikon solda, sayı + etiket sağda (geniş ekranda boş beyazlık yerine). Sıkı
+                görünümde her genişlikte yatay. */}
+            <span className={cn('flex w-full min-w-0',
+              dense ? 'flex-row items-center gap-2.5' : 'flex-col items-center gap-1 @[220px]:flex-row @[220px]:justify-center @[220px]:gap-3')}>
+              <item.Icon aria-hidden="true" className={cn('shrink-0', dense ? 'size-5' : 'size-6 sm:size-7 @[220px]:size-9', tone.text)} />
+              <span className={cn('flex min-w-0 flex-col', dense ? 'items-start gap-0.5' : 'items-center gap-1 @[220px]:items-start')}>
+                <span data-slot="stat-value" className={cn('leading-none font-extrabold tracking-[-.02em] tabular-nums', dense ? 'text-xl' : 'text-2xl sm:text-3xl', tone.text)}>
                   {item.value ?? 0}
                 </span>
-                <span data-slot="stat-label" className="text-center text-xs leading-tight font-semibold text-muted-foreground @[220px]:text-left">{item.label}</span>
-                {item.sub && <span data-slot="stat-sub" className="max-w-full text-center text-[11.5px] leading-tight break-words text-muted-foreground @[220px]:text-left">{item.sub}</span>}
+                <span data-slot="stat-label" className={cn('leading-tight font-semibold text-muted-foreground', dense ? 'text-left text-[11px]' : 'text-center text-xs @[220px]:text-left')}>{item.label}</span>
+                {item.sub && <span data-slot="stat-sub" className={cn('max-w-full leading-tight break-words text-muted-foreground', dense ? 'text-left text-[11px]' : 'text-center text-[11.5px] @[220px]:text-left')}>{item.sub}</span>}
               </span>
             </span>
             {item.hint && <span id={hintId} className="sr-only">{item.hint}</span>}

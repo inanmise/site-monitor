@@ -15,6 +15,35 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.95.0] — 2026-10-01
+
+### Changed
+- **Haftalık erişilebilirlik e-postası gönderim logu yeniden tasarlandı (Sistem Sağlığı → Entegrasyonlar).** Eski
+  işlevler duruyor: son kayıtlar (test dahil), tarih / takım / alıcılar / tür / durum ve satıra tıklayınca gönderilen
+  e-postanın kendisi. Yeni: son zamanlanmış çalışmanın özeti (kaç takıma gitti, başarısız, alıcısız, durum çubuğu);
+  süzgeç işlevli sayım kutuları; arama, takım ve tür süzgeçleri; 100 / 250 / 500 kayıt seçimi; günlere gruplanmış
+  liste ve konu sütunu; CSV; sayfalama. Yükleme hatası artık boş liste gibi görünmüyor, "Tekrar dene" çıkıyor.
+  Ayrıntı penceresinde hata nedeni bandı, alıcı çipleri ve kopyalama, masaüstü / telefon önizleme genişliği,
+  bağlantıları yeni sekmede açan önizleme ve önceki / sonraki kayıt var. Telefonda kart listesi, geniş ekranda tablo.
+- **Webhook push gönderim logu yeniden tasarlandı.** Tüm işlevler korunuyor (aralık, süzgeçler, arama, zaman çizelgesi,
+  kırılımlar, sıralama, ayrıntı, CSV, yeniden kuyruğa alma, otomatik yenileme, URL'de süzgeç ve açık kayıt). Yeni:
+  teslimat sağlığı kartı (başarı oranı, başarısız alıcı, kuyrukta, son başarılı); her etkin süzgeç ayrı çip; telefonda
+  süzgeçler tek düğmenin arkasında; grafik lejantı; kırılımlar tek kartta sekmeler; dar ekranda kart listesi ve sıralama
+  seçicisi, geniş ekranda sabit sütunlu tablo (uzun takım / izleme adları artık eylem sütununu dışarı itmiyor); ayrıntı
+  sağdan açılan panelde: hata nedeni bandı, teslimat akışı (oluşturuldu → gönderildi, bekleme, deneme), mesaj ve ham
+  yanıtı kopyalama, önceki / sonraki kayıt.
+- **Alan Adı sayfasında varsayılan sıra: süresi en az kalan önce.** Sayfa ilk açıldığında kartlar kalan güne göre
+  artan sıralanır: süresi geçmiş alan adları en üstte, eşit günde alan adına göre, günü bilinmeyenler en sonda. Diğer
+  türlerdeki ortak sıra (sorunlu önce, gruba ve ada göre) seçicide ayrı bir seçenek olarak duruyor.
+- **İzleme Panosu üst bölümleri akordiyon oldu.** Özet göstergeler (KPI kutuları), filo sağlığı, takım sağlığı ve izleme
+  türleri tek kapta, her biri açılır/kapanır bir bölüm. Varsayılan olarak yalnız en üstteki özet göstergeler açık, diğerleri
+  kapalı. Kabın üst şeridindeki tek düğme ("Tümünü aç" / "Tümünü kapat") hepsini birden açar ya da kapatır. Kapalı bir
+  bölümün başlığı da durumu söyler: tonlu simge kutusu ve özet çipleri ("9 sorunlu", "2 takımda sorun", "1 türde sorun",
+  geniş ekranda tür simgeleri tonlarıyla). Açık bölümler adres satırında tutulur (`mo_open`), sayfa yenilense de korunur.
+  İçerikler daha sıkı: KPI kutuları ~56 px yüksekliğinde yatay düzende, takım satırları geniş ekranda ızgara. Telefon,
+  tablet ve dizüstü boylarında taşma yok; bölüm başlıkları en az 40 px dokunma hedefi. İzleme listesi akordiyonun dışında
+  kaldı, davranışı değişmedi.
+
 ## [20.94.0] — 2026-10-01
 
 ### Changed
@@ -1954,7 +1983,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.94.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.95.0...HEAD
+[20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0
 [20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0
 [20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
 [20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0

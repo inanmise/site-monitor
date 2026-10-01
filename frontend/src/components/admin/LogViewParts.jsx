@@ -18,7 +18,7 @@ export function LogHeader({ icon: Icon, title, subtitle, backLabel, onBack, acti
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button type="button" variant="secondary" onClick={onBack}><ArrowLeft size={14} /> {backLabel}</Button>
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <div className="flex min-w-0 flex-1 basis-[240px] items-center gap-2.5">
         <Icon size={18} aria-hidden="true" className="shrink-0 text-primary" />
         <div>
           <h3 className="text-[1.1em] font-semibold">{title}</h3>
