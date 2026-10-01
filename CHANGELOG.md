@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.95.0] — 2026-10-01
+
 ### Changed
 - **Haftalık erişilebilirlik e-postası gönderim logu yeniden tasarlandı (Sistem Sağlığı → Entegrasyonlar).** Eski
   işlevler duruyor: son kayıtlar (test dahil), tarih / takım / alıcılar / tür / durum ve satıra tıklayınca gönderilen
@@ -1981,7 +1983,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.94.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.95.0...HEAD
+[20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0
 [20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0
 [20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
 [20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0
