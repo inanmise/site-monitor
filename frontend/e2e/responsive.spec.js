@@ -203,6 +203,112 @@ for (const vp of VIEWPORTS) {
   })
 }
 
+// İzleme Panosu bölümler akordiyonu (2026-10-01, kullanıcı isteği): varsayılan yalnız özet göstergeler açık; "Tümünü aç"
+// sonrası dört bölüm (KPI, filo sağlığı, takım sağlığı, tür kartları) telefonda / tablette / dizüstünde taşmaz, her
+// bölüm başlığı dokunmatik hedef (≥ 40 px) ve kapalı başlıkların özet çipleri ekrana sığar.
+for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
+  test(`monitoring bölümler akordiyonu @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=monitoring')
+    const sections = page.locator('[data-slot="mo-section"]')
+    await page.locator('[data-slot="mo-sections"]').waitFor({ timeout: 20_000 })
+    await expect(sections).toHaveCount(4)
+    // Varsayılan: yalnız KPI açık; kapalı başlıkların özet çipleri ekrana sığar
+    await expect(page.locator('[data-slot="mo-section"][data-state="open"]')).toHaveCount(1)
+    await expect(page.locator('[data-slot="mo-section"][data-section="kpis"]')).toHaveAttribute('data-state', 'open')
+    await page.waitForTimeout(400)
+    let m = await page.evaluate(measure)
+    expect(m.offenders, `akordiyon kapalı @${vp.name}: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `akordiyon kapalı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    const heights = await page.locator('[data-slot="mo-section-trigger"]').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)))
+    for (const h of heights) expect(h, `bölüm başlığı dokunma hedefi @${vp.name}`).toBeGreaterThanOrEqual(40)
+    // Tek düğme: hepsini aç → dört bölüm açık, taşma yok
+    await page.locator('[data-slot="mo-sections-toggle"]').click()
+    await expect(page.locator('[data-slot="mo-section"][data-state="open"]')).toHaveCount(4)
+    await page.locator('[data-slot="mo-type-card"]').first().waitFor()
+    await page.waitForTimeout(600)   // açılma animasyonu
+    m = await page.evaluate(measure)
+    expect(m.offenders, `akordiyon açık @${vp.name}: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `akordiyon açık @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    // Hepsini kapat → hiçbiri açık değil
+    await page.locator('[data-slot="mo-sections-toggle"]').click()
+    await expect(page.locator('[data-slot="mo-section"][data-state="open"]')).toHaveCount(0)
+  })
+}
+
+// Sistem Sağlığı gönderim logları (2026-10-01 shadcn yeniden tasarımı): Webhook push logu (tam sayfa) ve haftalık
+// erişilebilirlik e-postası logu (pencere) telefon / tablet / dizüstünde taşmaz; dar kapta kart, geniş kapta tablo;
+// ayrıntı paneli / ikinci pencere ekrana sığar.
+for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
+  test(`webhook push logu @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=health&view=push')
+    await page.locator('[data-slot="pl-view"]').waitFor({ timeout: 20_000 })
+    await page.locator('[data-slot="pl-row"]').first().waitFor()
+    await page.waitForTimeout(500)
+    let m = await page.evaluate(measure)
+    expect(m.offenders, `push logu @${vp.name}: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `push logu @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    // dar kap → kart listesi, geniş → tablo
+    if (vp.name === 'phone') await expect(page.locator('[data-testid="pl-cards"]')).toBeVisible()
+    if (vp.name === 'laptop') await expect(page.getByTestId('sml-table')).toBeVisible()
+    if (vp.name === 'laptop') {
+      // sabit sütunlar: tablo kendi kabında yatay KAYMAZ (eylem sütunu görünür)
+      const over = await page.getByTestId('sml-table').evaluate((el) => { const box = el.closest('[data-slot="table-container"]') || el.parentElement; return box.scrollWidth - box.clientWidth })
+      expect(over, 'push tablosu yatay kayıyor (px)').toBeLessThanOrEqual(1)
+    }
+    // telefonda süzgeç seçicileri düğmenin arkasında; açılınca da taşmaz
+    if (vp.name === 'phone') {
+      await page.locator('[data-slot="pl-filters-toggle"]').click()
+      await page.waitForTimeout(200)
+      m = await page.evaluate(measure)
+      expect(m.offenders, `push süzgeçleri açık @${vp.name}`).toEqual([])
+    }
+    // ayrıntı paneli
+    if (vp.name === 'laptop') await page.locator('[data-slot="pl-row"]').nth(1).click()
+    else await page.locator('[data-slot="pl-row"]').nth(1).getByRole('button').first().click()
+    const dlg = page.locator('[data-slot="pl-detail"]')
+    await dlg.waitFor()
+    await page.locator('[data-slot="pl-flow"]').waitFor()
+    await page.waitForTimeout(600)
+    const dm = await page.evaluate(measure, '[data-slot="pl-detail"]')
+    expect(dm.offenders, `push ayrıntısı @${vp.name}: taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+  })
+
+  test(`haftalık e-posta logu @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=health&sec=integrations')
+    await page.getByRole('button', { name: /Gönderim loglarını görmek|Click to view delivery logs/ }).click({ timeout: 20_000 })
+    await page.locator('[data-slot="wa-row"]').first().waitFor()
+    await page.waitForTimeout(600)
+    const m = await page.evaluate(measure, '[role="dialog"]')
+    expect(m.offenders, `haftalık log @${vp.name}: pencerede taşan öğe`).toEqual([])
+    const tagName = await page.locator('[data-testid="wa-logs"]').evaluate((el) => el.tagName)
+    expect(tagName, `haftalık log @${vp.name}: dar kapta kart, genişte tablo`).toBe(vp.name === 'laptop' ? 'TABLE' : 'DIV')   // pencere içi liste kabı tablette de < 720 px
+    if (vp.name === 'laptop') {
+      const over = await page.locator('[data-testid="wa-logs"]').evaluate((el) => { const box = el.closest('[data-slot="table-container"]') || el.parentElement; return box.scrollWidth - box.clientWidth })
+      expect(over, 'haftalık log tablosu yatay kayıyor (px)').toBeLessThanOrEqual(1)
+    }
+    // ayrıntı (ikinci pencere) — önizleme genişliği seçicisi ve altlık gezinmesi sığar
+    await page.locator('[data-slot="wa-row"]').first().click()
+    await page.locator('[data-slot="wa-detail"]').waitFor()
+    await page.waitForTimeout(600)
+    const dm = await page.evaluate(measure, '[data-slot="wa-detail"]')
+    expect(dm.offenders, `haftalık ayrıntı @${vp.name}: taşan öğe`).toEqual([])
+    const dlg = page.getByRole('dialog').last()
+    const box = await dlg.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+    await expect(page.locator('[data-slot="wa-detail-nav"]')).toBeVisible()
+  })
+}
+
 for (const vp of [{ name: 'laptop', width: 1280, height: 800 }, { name: 'desktop', width: 1440, height: 900 }]) {
   test(`monitoring @${vp.name} ${vp.width}×${vp.height}: tablo görünümü, sayfa taşmaz`, async ({ page }) => {
     await page.setViewportSize({ width: vp.width, height: vp.height })

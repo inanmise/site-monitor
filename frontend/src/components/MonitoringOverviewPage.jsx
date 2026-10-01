@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Radar, RefreshCw, Search, PauseCircle, CircleAlert, Clock, CheckCircle2, BellRing, Boxes, Activity, ListChecks,
-  ShieldAlert, FilterX, Download, LayoutGrid,
+  ShieldAlert, FilterX, Download, LayoutGrid, Gauge, HeartPulse, Users,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { useT, useDateLocale } from '../i18n/index.jsx'
@@ -21,12 +21,16 @@ import {
   activeColumnFilterCount, matchLastCheck, matchChecks, matchAlert, LAST_CHECK_OPTS, CHECKS_OPTS, ALERT_OPTS, NO_TEAM,
 } from './monitoring/overviewFilters.js'
 import { TYPE_META, TYPE_ORDER, STATUS_META, STATUS_ORDER, WINDOWS } from './monitoring/overviewMeta.js'
-import { QUICK_VIEWS, matchQuickView, quickViewCounts, teamHealth, overviewCsv } from './monitoring/overviewModel.js'
+import {
+  QUICK_VIEWS, matchQuickView, quickViewCounts, teamHealth, overviewCsv, verdict, verdictHeadline, teamsDigest,
+} from './monitoring/overviewModel.js'
 import { FilterChips, PhoneFilterSheet } from './monitoring/OverviewColumnFilters.jsx'
 import { LiveIndicator } from './monitoring/OverviewParts.jsx'
 import OverviewHealthCard from './monitoring/OverviewHealthCard.jsx'
 import OverviewTeamsCard from './monitoring/OverviewTeamsCard.jsx'
-import OverviewTypeCard from './monitoring/OverviewTypeCard.jsx'
+import OverviewTypeCard, { typeTone } from './monitoring/OverviewTypeCard.jsx'
+import OverviewSections, { SummaryChip, parseOpenSections, openSectionsParam } from './monitoring/OverviewSections.jsx'
+import { pctText } from './monitoring/OverviewParts.jsx'
 import OverviewKpiDialog, { KPI_DIALOG_KINDS } from './monitoring/OverviewKpiDialog.jsx'
 import { OverviewCards, OverviewTable, TABLE_MIN_WIDTH } from './monitoring/OverviewList.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -50,6 +54,10 @@ export { TYPE_META, TYPE_ORDER, STATUS_META, successPct } from './monitoring/ove
  * <ol>
  *   <li>Başlık (PageHeader): "canlı" tazelik çipi (sunucunun veriyi ürettiği an, 60 sn yoklama) · pencere (24 sa / 7 gün)
  *       · Yenile (sunucu belleğini `fresh=1` ile atlar).</li>
+ *   <li><b>Bölümler akordiyonu (2026-10-01, kullanıcı isteği; OverviewSections):</b> aşağıdaki dört üst bölüm (KPI şeridi,
+ *       filo sağlığı, takım sağlığı, tür kartları) tek kapta açılır/kapanır shadcn Accordion öğeleri; varsayılan yalnız
+ *       KPI şeridi açık, kabın üst şeridindeki tek düğme hepsini açar/kapatır; kapalı bölüm başlığında ton + özet
+ *       çipleri; açık bölümler URL'de (`mo_open`, varsayılan yazılmaz). İçerikler sıkı (`dense` / `bare`) görünümde.</li>
  *   <li>KPI şeridi (MonitorStatsBar): Toplam / Sağlıklı süzgeç kartları; Sorunlu / Kontrolü gecikmiş / Duraklatılmış /
  *       Açık alarm → ÖZET PENCERESİ (tür + takım dağılımı, izleme listesi, "Listede süz"); Koşum → hata veren
  *       görünümü; Çözülen → Alarm Geçmişi.</li>
@@ -72,9 +80,10 @@ export { TYPE_META, TYPE_ORDER, STATUS_META, successPct } from './monitoring/ove
  * zaman serisi grafikleri ALINMADI: 9 depoya yeni kova sorgusu ve dakikalık yoklamada DB yükü gerektirir.
  *
  * <p>Veri: `GET /api/monitoring/overview` (dakikada bir; sekme gizliyken durur; sunucu 30 sn paylaşır). URL durumu `mo_*`
- * önekiyle (`mo_win mo_type mo_status mo_team mo_q mo_lc mo_ck mo_al mo_sort mo_dlg`).
+ * önekiyle (`mo_win mo_type mo_status mo_team mo_q mo_lc mo_ck mo_al mo_sort mo_dlg mo_open`).
  *
- * <p>Test kancaları: `data-slot="mo-page"`, `mo-window`, `mo-live`, `mo-health` (`data-tone`), `mo-verdict`,
+ * <p>Test kancaları: `data-slot="mo-page"`, `mo-window`, `mo-live`, `mo-sections`, `mo-sections-toggle`, `mo-section`
+ * (`data-section`, `data-tone`), `mo-section-summary`, `mo-chip`, `mo-health` (`data-tone`), `mo-verdict`,
  * `mo-distribution`, `mo-legend-item`, `mo-attention`, `mo-attention-item`, `mo-teams`, `mo-team-row` (`data-team`),
  * `mo-type-card` (`data-type`, `data-tone`), `mo-views` (öğe `data-view`), `mo-list-anchor`, `mo-status-filter`,
  * `mo-csv`, `mo-row` (`data-status`, `data-type`), `mo-uptime`, `mo-response`, `mo-inv-inactive`, `mo-kpi-dialog`
@@ -110,15 +119,13 @@ function useElementWidth() {
 
 function OverviewSkeleton({ label }) {
   return (
-    <div role="status" aria-live="polite" data-slot="mo-skeleton" className="flex flex-col gap-4">
+    <div role="status" aria-live="polite" data-slot="mo-skeleton" className="flex flex-col gap-3 rounded-xl border p-3 sm:p-4">
       <span className="sr-only">{label}</span>
+      <Skeleton className="h-6 w-48 motion-reduce:animate-none" />
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-        {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-24 motion-reduce:animate-none" />)}
+        {Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-14 motion-reduce:animate-none" />)}
       </div>
-      <Skeleton className="h-36 motion-reduce:animate-none" />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-48 motion-reduce:animate-none" />)}
-      </div>
+      {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-11 motion-reduce:animate-none" />)}
     </div>
   )
 }
@@ -142,10 +149,12 @@ export default function MonitoringOverviewPage() {
   const [sort, setSort] = useState(() => parseSort(readUrlParam('mo_sort', '')))
   // KPI özet penceresi (down | stale | alerts | paused) — URL'de: paylaşılan bağlantı pencereyi açık getirir
   const [kpi, setKpi] = useState(() => (KPI_DIALOG_KINDS.includes(readUrlParam('mo_dlg', '')) ? readUrlParam('mo_dlg', '') : ''))
+  // Bölümler akordiyonu: varsayılan yalnız KPI şeridi açık (2026-10-01 kullanıcı isteği); URL'de mo_open
+  const [openSections, setOpenSections] = useState(() => parseOpenSections(readUrlParam('mo_open', '')))
   useUrlQuerySync({
     mo_win: windowHours === 24 ? null : String(windowHours), mo_type: types.join(',') || null, mo_status: statuses.join(',') || null,
     mo_team: teamsSel.join(',') || null, mo_q: q || null, mo_lc: lastSel || null, mo_ck: checksSel || null, mo_al: alertSel || null,
-    mo_sort: sortValue(sort) || null, mo_dlg: kpi || null,
+    mo_sort: sortValue(sort) || null, mo_dlg: kpi || null, mo_open: openSectionsParam(openSections),
   })
   // Eski tek değerli adlar (araç çubuğu seçicileri) — dizinin tek elemanı ya da boş
   const type = types.length === 1 ? types[0] : ''
@@ -303,6 +312,70 @@ export default function MonitoringOverviewPage() {
     all: t('mo.view.all'), problems: t('mo.view.problems'), alerts: t('mo.view.alerts'),
     failing: t('mo.view.failing'), paused: t('mo.view.paused'),
   }
+  // ── Bölümler akordiyonu: başlık özetleri (kapalı bölüm de durumu söyler) ──
+  const totalN = Number(totals.total ?? 0)
+  const downN = Number(totals.down ?? 0), staleN = Number(totals.stale ?? 0), alertsN = Number(totals.open_alerts ?? 0)
+  const fleetVerdict = verdict(totals)
+  const tDigest = teamsDigest(teamGroups)
+  const typeList = (data?.types || []).filter((ty) => TYPE_META[ty.type])
+  const typeTones = typeList.map((ty) => typeTone(ty))
+  const badTypes = typeTones.filter((x) => x === 'bad').length, warnTypes = typeTones.filter((x) => x === 'warn').length
+  const fmt = (n) => Number(n).toLocaleString(locale)
+  const sections = data ? [
+    { key: 'kpis', Icon: Gauge, title: t('mo.sec.kpis'), desc: t('mo.sec.kpisDesc'), tone: 'primary',
+      summary: <>
+        <SummaryChip Icon={Boxes}>{t('mo.sum.monitors', fmt(totalN))}</SummaryChip>
+        {downN > 0 && <SummaryChip tone="bad" Icon={CircleAlert}>{t('mo.sum.down', fmt(downN))}</SummaryChip>}
+        {staleN > 0 && <SummaryChip tone="warn" Icon={Clock}>{t('mo.sum.stale', fmt(staleN))}</SummaryChip>}
+        {alertsN > 0 && <SummaryChip tone="alert" Icon={BellRing}>{t('mo.sum.alerts', fmt(alertsN))}</SummaryChip>}
+        {downN + staleN + alertsN === 0 && totalN > 0 && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.clear')}</SummaryChip>}
+      </>,
+      content: <MonitorStatsBar dense items={kpis} activeFilter={kpiActive} onStatClick={onStatClick}
+        className="mb-0 border-0 bg-transparent p-0 shadow-none sm:p-0" /> },
+    { key: 'health', Icon: HeartPulse, title: t('mo.sec.health'), desc: t('mo.sec.healthDesc'), tone: fleetVerdict.tone,
+      summary: <>
+        <SummaryChip tone={fleetVerdict.tone}>{verdictHeadline(fleetVerdict, t)}</SummaryChip>
+        {totals.success_rate_window != null && <SummaryChip>{t('mo.health.rate', windowLabel, pctText(Number(totals.success_rate_window), locale))}</SummaryChip>}
+      </>,
+      content: <OverviewHealthCard bare totals={totals} rows={rows} nowMs={nowMs} windowLabel={windowLabel} activeStatuses={statuses}
+        onPickStatus={pickStatus} onShowAll={() => { applyView('problems'); focusList() }} /> },
+    ...(teamGroups.length > 1 ? [{ key: 'teams', Icon: Users, title: t('mo.teams.title'), desc: t('mo.teams.desc'), tone: tDigest.tone,
+      summary: <>
+        <SummaryChip Icon={Users}>{t('mo.sum.teams', fmt(tDigest.count))}</SummaryChip>
+        {tDigest.issues > 0
+          ? <SummaryChip tone={tDigest.tone}>{t('mo.sum.teamsIssue', fmt(tDigest.issues))}</SummaryChip>
+          : <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.teamsOk')}</SummaryChip>}
+      </>,
+      content: <>
+        <p className="m-0 mb-2 text-xs text-muted-foreground md:hidden">{t('mo.teams.desc')}</p>
+        <OverviewTeamsCard bare teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} />
+      </> }] : []),
+    { key: 'types', Icon: LayoutGrid, title: t('mo.types'), desc: t('mo.types.hint'), tone: badTypes > 0 ? 'bad' : warnTypes > 0 ? 'warn' : 'ok',
+      summary: <>
+        {/* Tür simgeleri tonlarıyla (≥ 1024 px) — hangi türün kırmızı olduğu tek bakışta; sayılar çiplerde */}
+        <span aria-hidden="true" data-slot="mo-type-strip" className="hidden items-center gap-1 lg:inline-flex">
+          {typeList.map((ty, i) => {
+            const M = TYPE_META[ty.type]
+            return <M.Icon key={ty.type} className={cn('size-3.5', typeTones[i] === 'bad' ? 'text-destructive'
+              : typeTones[i] === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground/70')} />
+          })}
+        </span>
+        <SummaryChip Icon={LayoutGrid}>{t('mo.sum.types', fmt(typeList.length))}</SummaryChip>
+        {badTypes > 0 && <SummaryChip tone="bad" Icon={CircleAlert}>{t('mo.sum.typesBad', fmt(badTypes))}</SummaryChip>}
+        {warnTypes > 0 && <SummaryChip tone="warn" Icon={Clock}>{t('mo.sum.typesWarn', fmt(warnTypes))}</SummaryChip>}
+        {badTypes + warnTypes === 0 && <SummaryChip tone="ok" Icon={CheckCircle2}>{t('mo.sum.typesOk')}</SummaryChip>}
+      </>,
+      content: <>
+        <p className="m-0 mb-2 text-xs text-muted-foreground md:hidden">{t('mo.types.hint')}</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {typeList.map((ty) => (
+            <OverviewTypeCard key={ty.type} type={ty} active={types.includes(ty.type)} nowMs={nowMs} windowLabel={windowLabel}
+              onSelect={pickType} onOpen={(tab) => navigateTo(tab)} />
+          ))}
+        </div>
+      </> },
+  ] : []
+
   const filterSheet = (
     <PhoneFilterSheet groups={[columnGroups.status, columnGroups.type, columnGroups.team, columnGroups.last, columnGroups.checks, columnGroups.alert]}
       sort={sortValue(sort)} sortOptions={sortOptions} onSortChange={(v) => setSort(parseSort(v))}
@@ -343,31 +416,7 @@ export default function MonitoringOverviewPage() {
             </div>
           )}
 
-          <div className="[&>[data-slot=stats-panel]]:mb-0">
-            <MonitorStatsBar items={kpis} activeFilter={kpiActive} onStatClick={onStatClick} />
-          </div>
-
-          <div className={cn('grid min-w-0 grid-cols-1 gap-4', teamGroups.length > 1 && 'xl:grid-cols-5')}>
-            <OverviewHealthCard totals={totals} rows={rows} nowMs={nowMs} windowLabel={windowLabel} activeStatuses={statuses}
-              onPickStatus={pickStatus} onShowAll={() => { applyView('problems'); focusList() }}
-              {...(teamGroups.length > 1 ? { className: 'xl:col-span-3' } : {})} />
-            <OverviewTeamsCard teams={teamGroups} activeTeams={teamsSel} onPickTeam={pickTeam} className="xl:col-span-2 xl:self-start" />
-          </div>
-
-          <section aria-label={t('mo.types')} className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <h3 className="m-0 flex items-center gap-2 text-base font-semibold tracking-tight">
-                <LayoutGrid aria-hidden="true" className="size-4 text-muted-foreground" />{t('mo.types')}
-              </h3>
-              <span className="text-xs text-muted-foreground">{t('mo.types.hint')}</span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {(data.types || []).map((ty) => (
-                <OverviewTypeCard key={ty.type} type={ty} active={types.includes(ty.type)} nowMs={nowMs} windowLabel={windowLabel}
-                  onSelect={pickType} onOpen={(tab) => navigateTo(tab)} />
-              ))}
-            </div>
-          </section>
+          <OverviewSections sections={sections} open={openSections} onOpenChange={setOpenSections} />
 
           <section ref={measureRef} aria-labelledby={listTitleId} className="@container/list flex min-w-0 flex-col gap-3">
             {/* Liste başlığı — kart/KPI/pencere tıklaması buraya kaydırır (scroll-mt: yapışkan başlık payı) */}

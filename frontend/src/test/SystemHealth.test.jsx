@@ -391,8 +391,9 @@ describe('SystemHealth — haftalık erişilebilirlik günlükleri', () => {
     await renderLoaded()
     fireEvent.click(screen.getByRole('button', { name: /Click to view delivery logs|Gönderim loglarını görmek/ }))
     const table = await waitFor(() => { const el = document.querySelector('[data-testid="wa-logs"]'); expect(el).not.toBeNull(); return el })
-    expect(table.querySelectorAll('tbody tr').length).toBe(2)
-    fireEvent.click(table.querySelector('tbody tr'))
+    // 2026-10-01 yeniden tasarım: gün başlığı satırları da tbody'de — veri satırları `data-slot="wa-row"`
+    expect(table.querySelectorAll('[data-slot="wa-row"]').length).toBe(2)
+    fireEvent.click(table.querySelector('[data-slot="wa-row"]'))
     await waitFor(() => expect(api.admin.getWeeklyAvailHistoryItem).toHaveBeenCalledWith(1))
     await waitFor(() => expect(document.querySelectorAll('[role="dialog"]').length).toBe(2))
   })

@@ -569,6 +569,54 @@ function overviewMock(monitors) {
   return { generated_at: iso(0), window_hours: 24, totals, types, monitors: rows }
 }
 
+// Webhook push logu + haftalık e-posta logu (2026-10-01 yeniden tasarımı) — uzun adlar / hata metinleri dolu: telefon,
+// tablet ve masaüstünde taşma ölçümü gerçekçi veriyle yapılsın.
+const PL_KINDS = ['SENT', 'FAILED', 'SENT', 'BLOCKED', 'SENT', 'PENDING', 'SENT', 'SKIPPED', 'FAILED', 'SENT', 'SENT', 'SENT']
+function pushLogRows() {
+  return PL_KINDS.map((kind, i) => ({
+    id: 100 + i, alert_event_id: 7, trigger: ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE'][i % 4],
+    monitor_type: ['HTTP', 'PING', 'PORT', 'DNS'][i % 4],
+    monitor_name: i % 3 === 0 ? 'raporlama-ve-analitik-platformu.ic-servisler.example.com' : `servis-${i}.example.com`,
+    team_id: (i % 3) + 1, team_name: ['Takım A', 'Altyapı ve Ağ Operasyonları Takımı (Kurumsal)', 'Takım C'][i % 3],
+    alert_level: ['CRITICAL', 'HIGH', 'WARNING'][i % 3], username: `kullanici${i}`, display_name: i % 2 ? 'Ayşe Çağlayan-Uzunoğlu' : 'Bora Er',
+    title: 'Site Monitor', status: kind === 'BLOCKED' ? 'RATE_LIMITED' : kind, http_status: kind === 'FAILED' ? 503 : kind === 'SENT' ? 200 : null,
+    error: kind === 'FAILED' ? 'Service Unavailable — upstream connect error or disconnect/reset before headers. reset reason: connection termination' : null,
+    attempts: kind === 'FAILED' ? 3 : 1, at: iso(i * 47 * 60_000), kind, error_class: kind === 'FAILED' ? 'SERVER' : null,
+    batch_id: 'b-42', notification_id: `n-${100 + i}`,
+  }))
+}
+function pushLogSummary() {
+  const days = Array.from({ length: 7 }, (_, d) => ({ bucket: iso((6 - d) * 24 * HOUR).slice(0, 10), sent: 20 + d * 3, failed: d % 3, pending: d === 6 ? 2 : 0, skipped: d % 2 }))
+  return {
+    granularity: 'day',
+    kpi: { total: 168, sent: 150, failed: 9, pending: 2, blocked: 3, skipped: 4, success_rate: 94.3, failed_users: 3, last_sent_at: iso(5 * 60_000) },
+    timeline: days,
+    teams: [
+      { team_id: 2, team_name: 'Altyapı ve Ağ Operasyonları Takımı (Kurumsal)', total: 80, sent: 72, failed: 6, last_failed_at: iso(HOUR) },
+      { team_id: 1, team_name: 'Takım A', total: 60, sent: 58, failed: 2, last_failed_at: iso(5 * HOUR) },
+      { team_id: 3, team_name: 'Takım C', total: 28, sent: 20, failed: 1, last_failed_at: null },
+    ],
+    top_users: [{ username: 'kullanici1', display_name: 'Ayşe Çağlayan-Uzunoğlu', total: 40, sent: 36, failed: 4, last_failed_at: iso(HOUR) }],
+    top_monitors: [{ monitor_type: 'HTTP', monitor_name: 'raporlama-ve-analitik-platformu.ic-servisler.example.com', total: 30, sent: 27, failed: 3 }],
+    levels: [{ level: 'CRITICAL', total: 50, sent: 45, failed: 5 }, { level: 'HIGH', total: 70, sent: 66, failed: 3 }, { level: 'WARNING', total: 48, sent: 47, failed: 1 }],
+    triggers: [{ trigger: 'OPEN', count: 100 }],
+  }
+}
+const WA_TEAMS = ['Ödeme Sistemleri', 'Altyapı ve Ağ Operasyonları Takımı (Kurumsal)', 'Kart', 'Takım C', 'Dijital Kanallar', 'Çağrı Merkezi']
+function weeklyRows() {
+  const out = []
+  let id = 500
+  for (const [wk, ago] of [[0, 2 * 24 * HOUR], [1, 9 * 24 * HOUR]]) {
+    WA_TEAMS.forEach((team, i) => {
+      const status = i === 1 && wk === 0 ? 'FAILED: 550 5.7.1 relay access denied for raporlama-ve-analitik@ic-servisler.example.com' : i === 3 ? 'NO_RECIPIENT' : 'SENT'
+      out.push({ id: id--, sent_at: iso(ago + i * 4000), team, to: i === 3 ? '' : `${team.toLowerCase().replace(/[^a-z]+/g, '-')}@example.com, ekip-lideri.uzun-adres@example.com`,
+        cc: i % 2 ? 'mudur.yardimcisi@example.com' : null, subject: `Haftalık erişilebilirlik raporu — ${team} — 22–28 Eylül 2026`, status, trigger: 'WEEKLY_AVAILABILITY' })
+    })
+  }
+  out.splice(3, 0, { id: 900, sent_at: iso(3 * 24 * HOUR), team: 'Ödeme Sistemleri', to: 'demo@example.com', cc: null, subject: 'TEST — Haftalık erişilebilirlik raporu', status: 'SENT', trigger: 'WEEKLY_AVAILABILITY_TEST' })
+  return out
+}
+
 export async function mockApi(page, opts = {}) {
   const { role = 'ADMIN', globalAdmin = role === 'ADMIN', teamIds = [1], monitors = MONITORS, perms = null } = opts
   await page.addInitScript(() => {
@@ -585,6 +633,28 @@ export async function mockApi(page, opts = {}) {
         team_ids: teamIds, team_names: teamIds.map((id) => (id === 1 ? 'Takım A' : `Takım ${id}`)),
         tour: { status: 'dismissed', version: 99 },
       }
+    } else if (p === '/api/admin/system') {
+      // Sistem Sağlığı: Entegrasyonlar → haftalık e-posta kartı (gönderim logu penceresinin CTA'sı) görünsün
+      body = { success: true, data: { weekly_availability: { enabled: true, cron: '0 30 10 * * MON', next_run: iso(-5 * 24 * HOUR),
+        last_run_at: iso(2 * 24 * HOUR), last_run_year: 2026, last_run_week_no: 39, last_run_week: '22–28 Eyl 2026',
+        last_run_sent: 4, last_run_failed: 1, last_run_no_recipient: 1, last_run_teams: 6 } } }
+    } else if (p === '/api/admin/push-log/summary') {
+      body = { success: true, data: pushLogSummary() }
+    } else if (p === '/api/admin/push-log/search') {
+      const rows = pushLogRows()
+      body = { success: true, data: rows, total: rows.length }
+    } else if (/^\/api\/admin\/push-log\/\d+$/.test(p)) {
+      const rows = pushLogRows()
+      const r = rows.find((x) => `/api/admin/push-log/${x.id}` === p) || rows[1]
+      body = { success: true, data: { ...r, created_at: r.at, sent_at: r.kind === 'PENDING' ? null : r.at,
+        message: 'KRİTİK — raporlama-ve-analitik-platformu.ic-servisler.example.com erişilemiyor (HTTP 503). Açık kalma süresi 12 dk.',
+        raw_response: '{"error":"Service Unavailable","detail":"upstream connect error or disconnect/reset before headers","trace":"' + 'x'.repeat(180) + '"}',
+        batch: rows.slice(0, 4).map((x) => ({ id: x.id, username: x.username, display_name: x.display_name, kind: x.kind, status: x.status, http_status: x.http_status })) } }
+    } else if (p === '/api/admin/system/weekly-availability/history') {
+      body = { success: true, data: weeklyRows() }
+    } else if (/^\/api\/admin\/system\/weekly-availability\/history\/\d+$/.test(p)) {
+      const r = weeklyRows().find((x) => p.endsWith(`/${x.id}`)) || weeklyRows()[1]
+      body = { success: true, data: { ...r, html: '<html><body style="font-family:sans-serif"><h1>Haftalık erişilebilirlik</h1><table style="width:600px"><tr><td>raporlama-ve-analitik-platformu.ic-servisler.example.com</td><td>%99,95</td></tr></table></body></html>' } }
     } else if (p === '/api/monitoring/uptime/overview') {
       body = { success: true, data: UPTIME }
     } else if (p === '/api/monitoring/overview') {

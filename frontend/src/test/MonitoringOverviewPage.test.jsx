@@ -6,6 +6,7 @@ import {
   alertLevelCounts, staleLimitMs, overviewCsv,
 } from '../components/monitoring/overviewModel.js'
 import { parseSort, sortRows, toggleSort } from '../components/monitoring/overviewFilters.js'
+import { parseOpenSections, openSectionsParam, SECTION_DEFAULT } from '../components/monitoring/OverviewSections.jsx'
 
 /**
  * İzleme Panosu (2026-09-30; 2026-10-01 shadcn yeniden tasarımı): KPI şeridi + özet pencereleri, filo sağlığı ve
@@ -49,6 +50,11 @@ const rowsOf = (c) => [...c.querySelectorAll('[data-slot="mo-row"]')]
 const kpiButton = (c, key) => c.querySelector(`[data-slot="stat-item"][data-key="${key}"]`)
 const dialog = (kind) => document.querySelector(`[data-slot="mo-kpi-dialog"][data-kind="${kind}"]`)
 const filterInDialog = () => fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /listede süz|filter the list/i }))
+// Bölümler akordiyonu (2026-10-01): varsayılan yalnız KPI şeridi açık — sağlık / takım / tür kartlarına dokunan testler önce
+// kabın tek düğmesiyle hepsini açar.
+const expandAll = async () => fireEvent.click(await screen.findByRole('button', { name: /^(expand all|tümünü aç)$/i }))
+const section = (c, key) => c.querySelector(`[data-slot="mo-section"][data-section="${key}"]`)
+const summaryOf = (c, key) => section(c, key)?.querySelector('[data-slot="mo-section-summary"]')?.textContent ?? ''
 
 describe('İzleme Panosu', () => {
   beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/?tab=monitoring'); try { localStorage.clear() } catch { /* yok */ } })
@@ -57,6 +63,7 @@ describe('İzleme Panosu', () => {
     api.monitoring.getOverview.mockResolvedValue(DATA)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(api.monitoring.getOverview).toHaveBeenCalledWith(24))
+    await expandAll()
     const kpi = (key) => container.querySelector(`[data-slot="stat-item"][data-key="${key}"] [data-slot="stat-value"]`).textContent
     expect(kpi('total')).toBe('4')
     expect(kpi('down')).toBe('1')
@@ -81,6 +88,7 @@ describe('İzleme Panosu', () => {
     api.monitoring.getOverview.mockResolvedValue(DATA)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    await expandAll()
     const httpCard = container.querySelector('[data-slot="mo-type-card"][data-type="http"]')
     fireEvent.click(within(httpCard).getAllByRole('button')[0])
     await waitFor(() => expect(rowsOf(container).length).toBe(2))
@@ -104,6 +112,7 @@ describe('İzleme Panosu', () => {
       api.monitoring.getOverview.mockResolvedValue(withInv)
       const { container } = render(<MonitoringOverviewPage />)
       await waitFor(() => expect(rowsOf(container).length).toBeGreaterThan(0))
+      await expandAll()
       fireEvent.click(kpiButton(container, 'stale'))
       await waitFor(() => expect(dialog('stale')).not.toBeNull())
       filterInDialog()
@@ -353,6 +362,7 @@ describe('İzleme Panosu — KPI özet pencereleri', () => {
     window.addEventListener('sm:navigate', onNav)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(6))
+    await expandAll()
     expect(kpiButton(container, 'paused').textContent).toMatch(/1 out of inventory/)
     // Tür kartı: sayfa ile eşleşen sayım (aktif 1 + duraklatılmış 0) + envanter dışı çipi
     const dns = container.querySelector('[data-slot="mo-type-card"][data-type="dns"]')
@@ -389,6 +399,7 @@ describe('İzleme Panosu — zenginleştirmeler', () => {
     api.monitoring.getOverview.mockResolvedValue(DATA)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    await expandAll()
     const health = container.querySelector('[data-slot="mo-health"]')
     expect(health).toHaveAttribute('data-tone', 'bad')
     expect(health.querySelector('[data-slot="mo-verdict"]').textContent).toBe('Monitors failing: 1')
@@ -408,6 +419,7 @@ describe('İzleme Panosu — zenginleştirmeler', () => {
     api.monitoring.getOverview.mockResolvedValue(DATA)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    await expandAll()
     const teamRows = [...container.querySelectorAll('[data-slot="mo-team-row"]')]
     expect(teamRows.map((x) => x.getAttribute('data-team'))).toEqual(['14', '7'])
     expect(teamRows[0]).toHaveAccessibleName(/SY: monitors 3, failing 1, overdue 0, open alerts 1/)
@@ -455,6 +467,7 @@ describe('İzleme Panosu — zenginleştirmeler', () => {
     api.monitoring.getOverview.mockResolvedValue(DATA)
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    await expandAll()
     fireEvent.click(container.querySelector('[data-slot="mo-type-card"][data-type="http"] button'))
     await waitFor(() => expect(rowsOf(container).length).toBe(2))
     fireEvent.click(screen.getByRole('button', { name: /download the 2 filtered monitors as csv/i }))
@@ -466,6 +479,90 @@ describe('İzleme Panosu — zenginleştirmeler', () => {
     expect(lines[0]).toBe('Type,Monitor,Target,Team,Status,Last check,Success (%),Runs,Failed,Last response (ms),Avg response (ms),Open alerts,Alert level,Alert opened,Last error,Out of inventory')
     expect(lines).toHaveLength(3)
     expect(lines[1]).toMatch(/^HTTP \/ Website,API sağlık,https:\/\/api\.example\.com\/health,SY,Failing,.+,90,60,6,800,200,1,CRITICAL,.+,HTTP 503,$/)
+  })
+})
+
+describe('İzleme Panosu — bölümler akordiyonu (2026-10-01)', () => {
+  beforeEach(() => { vi.clearAllMocks(); window.history.replaceState({}, '', '/?tab=monitoring'); try { localStorage.clear() } catch { /* yok */ } })
+  const openKeys = (c) => [...c.querySelectorAll('[data-slot="mo-section"]')].filter((x) => x.getAttribute('data-state') === 'open').map((x) => x.getAttribute('data-section'))
+  const urlOpen = () => new URLSearchParams(window.location.search).get('mo_open')
+
+  it('varsayılan: yalnız en üstteki özet göstergeler açık; kapalı bölüm başlıkları ton + özet çipleri taşır', async () => {
+    api.monitoring.getOverview.mockResolvedValue(DATA)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    expect([...container.querySelectorAll('[data-slot="mo-section"]')].map((x) => x.getAttribute('data-section'))).toEqual(['kpis', 'health', 'teams', 'types'])
+    expect(openKeys(container)).toEqual(['kpis'])
+    // Açık bölümün içeriği var, kapalıların yok (Radix kapalı içeriği DOM'dan çıkarır)
+    expect(kpiButton(container, 'down')).not.toBeNull()
+    expect(container.querySelector('[data-slot="stats-panel"]')).toHaveAttribute('data-dense', 'true')
+    expect(container.querySelector('[data-slot="mo-health"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mo-team-row"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mo-type-card"]')).toBeNull()
+    // Liste akordiyonun dışında: her zaman görünür
+    expect(container.querySelector('[data-slot="mo-list-anchor"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="mo-sections-count"]').textContent).toBe('1 of 4 sections open')
+    expect(screen.getByRole('button', { name: /^expand all$/i })).toHaveAttribute('data-all-open', 'false')
+    expect(urlOpen()).toBeNull()   // varsayılan URL'ye yazılmaz
+    // Başlık özetleri ve tonlar
+    expect(summaryOf(container, 'kpis')).toMatch(/Monitors: 4.*Failing: 1.*Overdue: 1.*Open alerts: 1/)
+    expect(section(container, 'health')).toHaveAttribute('data-tone', 'bad')
+    expect(summaryOf(container, 'health')).toMatch(/Monitors failing: 1.*Success \(Last 24 hours\): 95%/)
+    expect(section(container, 'teams')).toHaveAttribute('data-tone', 'bad')
+    expect(summaryOf(container, 'teams')).toMatch(/Teams: 2.*Teams with issues: 2/)
+    expect(section(container, 'types')).toHaveAttribute('data-tone', 'bad')
+    expect(summaryOf(container, 'types')).toMatch(/Types: 9.*Types with issues: 1.*Types with warnings: 1/)
+    expect(section(container, 'types').querySelector('[data-slot="mo-chip"][data-tone="bad"]')).not.toBeNull()
+  })
+
+  it('tek düğme hepsini açar / kapatır; tek bölüm başlığı yalnız onu açar; durum URL\'de (mo_open)', async () => {
+    api.monitoring.getOverview.mockResolvedValue(DATA)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    await expandAll()
+    await waitFor(() => expect(openKeys(container)).toEqual(['kpis', 'health', 'teams', 'types']))
+    expect(container.querySelectorAll('[data-slot="mo-type-card"]')).toHaveLength(9)
+    expect(container.querySelector('[data-slot="mo-health"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="mo-sections-count"]').textContent).toBe('4 of 4 sections open')
+    await waitFor(() => expect(urlOpen()).toBe('kpis,health,teams,types'))
+    fireEvent.click(screen.getByRole('button', { name: /^collapse all$/i }))
+    await waitFor(() => expect(openKeys(container)).toEqual([]))
+    expect(container.querySelector('[data-slot="stat-item"]')).toBeNull()
+    await waitFor(() => expect(urlOpen()).toBe('none'))
+    // Bölüm başlığı (Radix tetikleyici, h3 içinde) yalnız kendi bölümünü açar
+    fireEvent.click(within(section(container, 'health')).getByRole('button', { name: /fleet health/i }))
+    await waitFor(() => expect(openKeys(container)).toEqual(['health']))
+    expect(container.querySelector('[data-slot="mo-verdict"]').textContent).toBe('Monitors failing: 1')
+    await waitFor(() => expect(urlOpen()).toBe('health'))
+    expect(screen.getByRole('button', { name: /^expand all$/i })).toBeInTheDocument()
+  })
+
+  it('URL mo_open=types ile açılış: yalnız tür kartları açık; tek takım görülüyorsa takım bölümü hiç yok', async () => {
+    window.history.replaceState({}, '', '/?tab=monitoring&mo_open=types')
+    const oneTeam = { ...DATA, data: { ...DATA.data, monitors: DATA.data.monitors.map((m) => ({ ...m, team_id: 14, team_name: 'SY' })) } }
+    api.monitoring.getOverview.mockResolvedValue(oneTeam)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(rowsOf(container).length).toBe(4))
+    expect([...container.querySelectorAll('[data-slot="mo-section"]')].map((x) => x.getAttribute('data-section'))).toEqual(['kpis', 'health', 'types'])
+    expect(openKeys(container)).toEqual(['types'])
+    expect(container.querySelectorAll('[data-slot="mo-type-card"]')).toHaveLength(9)
+    expect(container.querySelector('[data-slot="stat-item"]')).toBeNull()
+    expect(container.querySelector('[data-slot="mo-sections-count"]').textContent).toBe('1 of 3 sections open')
+    // "Tümünü aç" yalnız görünen üç bölümü açar
+    await expandAll()
+    await waitFor(() => expect(openKeys(container)).toEqual(['kpis', 'health', 'types']))
+    expect(screen.getByRole('button', { name: /^collapse all$/i })).toHaveAttribute('data-all-open', 'true')
+  })
+
+  it('URL yardımcıları: boş → varsayılan, none → hiçbiri, bilinmeyen anahtar atılır; varsayılan URL\'ye yazılmaz', () => {
+    expect(SECTION_DEFAULT).toEqual(['kpis'])
+    expect(parseOpenSections('')).toEqual(['kpis'])
+    expect(parseOpenSections(null)).toEqual(['kpis'])
+    expect(parseOpenSections('none')).toEqual([])
+    expect(parseOpenSections('types,bogus,health')).toEqual(['health', 'types'])
+    expect(openSectionsParam(['kpis'])).toBeNull()
+    expect(openSectionsParam([])).toBe('none')
+    expect(openSectionsParam(['types', 'kpis'])).toBe('kpis,types')
   })
 })
 

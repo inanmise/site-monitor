@@ -190,6 +190,28 @@ export function verdict(totals = {}) {
   return { tone: 'ok', key: 'mo.health.ok', n: active }
 }
 
+/** Hükmün tek cümlesi — filo sağlığı kartı ve pano akordiyonunun özet çipi aynı metni kullanır. */
+export function verdictHeadline(v, t) {
+  switch (v?.key) {
+    case 'mo.health.down': return t('mo.health.down', v.n)
+    case 'mo.health.stale': return t('mo.health.stale', v.n)
+    case 'mo.health.unknown': return t('mo.health.unknown', v.n)
+    case 'mo.health.allPaused': return t('mo.health.allPaused')
+    case 'mo.health.empty': return t('mo.health.empty')
+    default: return t('mo.health.ok')
+  }
+}
+
+/**
+ * Takım sağlığı özeti (pano akordiyonu başlığı): sorunu olan takım sayısı (sorunlu / gecikmiş / açık alarm) ve ton —
+ * sorunlu izlemesi olan takım varsa kötü, yalnız gecikme/alarm varsa uyarı, aksi iyi.
+ */
+export function teamsDigest(groups = []) {
+  const issues = groups.filter((g) => g.down > 0 || g.stale > 0 || g.openAlerts > 0).length
+  const tone = groups.some((g) => g.down > 0) ? 'bad' : issues > 0 ? 'warn' : 'ok'
+  return { count: groups.length, issues, tone }
+}
+
 /**
  * Hızlı görünümler (kayıtlı süzgeç önayarları) — Better Stack / Checkly'deki "Down / Paused / Failing" sekmeleri gibi.
  * Seçim sütun süzgeçlerini DEĞİŞTİRİR (arama kutusu korunur); süzgeçler bir önayara birebir uyuyorsa o seçili görünür.
