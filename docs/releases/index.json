@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-01T00:17:35Z",
+  "generatedAt": "2026-10-01T05:30:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 691,
+  "count": 692,
   "releases": [
+    {
+      "version": "20.93.1",
+      "tag": "v20.93.1",
+      "releasedAt": "2026-10-01T05:30:17Z",
+      "commit": "fab348920738d89c72a85dd03b4a29b90b467476",
+      "prevVersion": "20.93.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fab34892",
+          "subject": "Alarm Fırtınası açıklaması gerçek ayarlardan; sayfaya fırtına kuralları özeti"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.93.0",
       "tag": "v20.93.0",

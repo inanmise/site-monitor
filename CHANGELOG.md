@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.93.1] — 2026-10-01
+
 ### Fixed
 - **Alarm Fırtınası sayfa açıklamasında `{0}` görünüyordu** (pencere değeri metne geçirilmiyordu). Açıklama artık
   sunucunun uyguladığı GERÇEK değerlerle kurulur: "bir takımın 5 dakikalık penceresinde 5 farklı hedef düşük olunca…"
@@ -1942,7 +1944,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.93.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.93.1...HEAD
+[20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
 [20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0
 [20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
 [20.91.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.91.0
