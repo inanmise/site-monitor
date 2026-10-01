@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.93.0] — 2026-10-01
+
 ### Changed
 - ⚠ Davranış — **Fırtına sessiz penceresi varsayılanı 30 → 5 dk** (`site.monitor.storm.quiet-minutes`, `STORM_QUIET_MINUTES`):
   son üye katılımından 5 dk yeni alarm gelmezse fırtına mühürlenir ve kapanır; hazır değerler 5 / 15 / 30 / 60. Ayarı
@@ -1928,7 +1930,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.92.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.93.0...HEAD
+[20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0
 [20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
 [20.91.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.91.0
 [20.90.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.90.0

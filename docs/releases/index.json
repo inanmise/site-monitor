@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-30T20:06:05Z",
+  "generatedAt": "2026-10-01T00:17:35Z",
   "repo": "inanmise/site-monitor",
-  "count": 690,
+  "count": 691,
   "releases": [
+    {
+      "version": "20.93.0",
+      "tag": "v20.93.0",
+      "releasedAt": "2026-10-01T00:17:28Z",
+      "commit": "1b933a04381d8d9e7cdfc7558ebb989829394d4d",
+      "prevVersion": "20.92.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1b933a04",
+          "subject": "Alarm Fırtınası sayfası ve gözlem verisi, İzleme Panosu yeniden tasarımı, Alarm Geçmişi sıralama/süzgeçleri, gürültü analizi yeniden tasarımı ve performans iyileştirmeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.92.0",
       "tag": "v20.92.0",
