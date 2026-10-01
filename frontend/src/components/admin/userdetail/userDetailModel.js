@@ -33,8 +33,35 @@ export function signInState(user, now = Date.now()) {
 }
 
 /**
+ * LDAP alan kilidi anahtarı → alan etiketi (i18n anahtarı). Sıra KANONİK — backend `LdapFieldLocks.FIELDS` ile aynı;
+ * `locked_field_keys` bu sırayla gelir ve ekranlar bu sırayla çizer.
+ */
+export const FIELD_LABEL_KEYS = {
+  display_name: 'usr.formDisplay',
+  email: 'usr.formEmail',
+  employee_id: 'usr.formEmployeeId',
+  first_name: 'usr.formFirstName',
+  last_name: 'usr.formLastName',
+  title: 'usr.colTitle',
+  phone: 'usr.colPhone',
+  department: 'usr.colDept',
+  company_level: 'usr.formCompanyLevel',
+  mudurluk: 'usr.colMudurluk',
+  manager: 'usr.colManager',
+}
+export const LDAP_FIELD_KEYS = Object.keys(FIELD_LABEL_KEYS)
+
+/** Kullanıcı satırındaki kilitli AD alanları — bilinmeyen anahtar atılır, kanonik sıra korunur. */
+export function lockedFieldsOf(user) {
+  const raw = Array.isArray(user?.locked_field_keys) ? user.locked_field_keys : []
+  return LDAP_FIELD_KEYS.filter((k) => raw.includes(k))
+}
+
+/**
  * Etkin kilitler — satırın taşıdığı bayraklar, önem sırasıyla. `unlockKey`: UserManager'daki kilit açma
  * işleyicisinin anahtarı (perm → unlock, role → roleUnlock, org → orgRoleUnlock, team → teamUnlock).
+ * Ardından LDAP alan kilitleri (2026-09-30): alan başına `{ key: 'field:<k>', field: k }` — kilit açma sunucu ucu
+ * `POST /admin/users/{id}/field-unlock` (yalnız global yönetici).
  */
 export function locksOf(user) {
   return [
@@ -42,6 +69,7 @@ export function locksOf(user) {
     user?.role_locked && { key: 'role', severe: false },
     user?.org_role_locked && { key: 'org', severe: false },
     user?.team_locked && { key: 'team', severe: false },
+    ...lockedFieldsOf(user).map((k) => ({ key: `field:${k}`, field: k, severe: false })),
   ].filter(Boolean)
 }
 

@@ -15,6 +15,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
@@ -1250,6 +1251,44 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /admin/users/{id}/field-unlock: YALNIZ global admin (TEAM_ADMIN/USER → 403); 200 + USER_FIELD_UNLOCK denetimi; bilinmeyen alan → 400")
+    void fieldUnlock_globalAdminOnly_andAudited() throws Exception {
+        AppUser target = new AppUser(); target.setId(79L); target.setUsername("ldapuser"); target.setTeamId(2L); target.setActive(true);
+        target.setAuthSource("LDAP"); target.setLockedFields("email,title");
+        when(userRepo.findById(79L)).thenReturn(Optional.of(target));
+        when(userService.unlockField(79L, "title")).thenReturn(true);
+
+        // Hedef takım 2'de → kapsamlı takım yöneticisi bile 403 (kilit kaldırma global yöneticiye özel)
+        mvc.perform(post("/api/admin/users/79/field-unlock").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"field\":\"title\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/users/79/field-unlock").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"field\":\"title\"}"))
+                .andExpect(status().isForbidden());
+        verify(userService, never()).unlockField(anyLong(), any());
+
+        mvc.perform(post("/api/admin/users/79/field-unlock").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"field\":\"title\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.had_lock").value(true))
+                .andExpect(jsonPath("$.data.username").value("ldapuser"))
+                .andExpect(jsonPath("$.data.locked_field_keys").isArray());
+        verify(userService).unlockField(79L, "title");
+        verify(auditService).recordAction(eq("USER_FIELD_UNLOCK"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("79"),
+                ArgumentMatchers.argThat(d -> d.contains("ldapuser") && d.contains("\"field\":\"title\"") && d.contains("had_lock")));
+
+        mvc.perform(post("/api/admin/users/79/field-unlock").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"field\":\"password\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/users/79/field-unlock").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        verify(userService, never()).unlockField(eq(79L), eq("password"));
+    }
+
+    @Test
     @DisplayName("POST /api/admin/inventory/bulk as USER → 403")
     void bulkInventory_asUser_returns403() throws Exception {
         mvc.perform(post("/api/admin/inventory/bulk").session(userSession())
@@ -2180,6 +2219,83 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.total").value(0))
                 .andExpect(jsonPath("$.page").value(0));
+    }
+
+    // ── Sütun sıralaması (2026-10-01): sort + dir beyaz listeli, varsayılan açılış DESC ─────────────────
+
+    private List<Sort.Order> alertSortFor(String query) throws Exception {
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(Collections.emptyList()));
+        mvc.perform(get("/api/admin/alerts" + query).session(authSession())).andExpect(status().isOk());
+        ArgumentCaptor<Pageable> cap = ArgumentCaptor.forClass(Pageable.class);
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), cap.capture());
+        return cap.getValue().getSort().toList();
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts → varsayılan sıralama createdAt DESC; kapalı görünümde resolvedAt DESC + createdAt DESC")
+    void listAlerts_defaultSort() throws Exception {
+        List<Sort.Order> o = alertSortFor("");
+        assertThat(o).hasSize(1);
+        assertThat(o.get(0).getProperty()).isEqualTo("createdAt");
+        assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
+
+        org.mockito.Mockito.clearInvocations(alertEventRepo);
+        List<Sort.Order> c = alertSortFor("?resolved=true");
+        assertThat(c.stream().map(Sort.Order::getProperty).toList()).containsExactly("resolvedAt", "createdAt");
+        assertThat(c).allMatch(x -> x.getDirection() == Sort.Direction.DESC);
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts?sort=level&dir=asc → seviye CASE sırası (asc) + createdAt DESC eşitlik bozucu")
+    void listAlerts_sortLevel_usesCaseRank() throws Exception {
+        List<Sort.Order> o = alertSortFor("?sort=level&dir=asc");
+        assertThat(o).hasSize(2);
+        assertThat(o.get(0).getProperty()).isEqualTo(AdminController.AlertSort.LEVEL_RANK);
+        assertThat(o.get(0).getProperty()).contains("CRITICAL").contains("HIGH").contains("WARNING");
+        assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.ASC);
+        assertThat(o.get(1).getProperty()).isEqualTo("createdAt");
+        assertThat(o.get(1).getDirection()).isEqualTo(Sort.Direction.DESC);
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts?sort=<bilinmeyen>&dir=<bilinmeyen> → beyaz liste dışı anahtar varsayılana düşer (enjeksiyon yok)")
+    void listAlerts_unknownSort_fallsBackToDefault() throws Exception {
+        List<Sort.Order> o = alertSortFor("?sort=e.domain;DROP&dir=sideways");
+        assertThat(o).hasSize(1);
+        assertThat(o.get(0).getProperty()).isEqualTo("createdAt");
+        assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts?sort=team|domain|type|opened|resolved → beyaz listedeki her anahtar kendi özelliğine gider (team → takım ADI ifadesi)")
+    void listAlerts_whitelistedSortKeys_mapToProperties() throws Exception {
+        Map<String, String> expect = Map.of("team", AdminController.AlertSort.TEAM_NAME, "domain", "domain", "type", "alertType", "opened", "createdAt", "resolved", "resolvedAt");
+        for (Map.Entry<String, String> e : expect.entrySet()) {
+            org.mockito.Mockito.clearInvocations(alertEventRepo);
+            List<Sort.Order> o = alertSortFor("?sort=" + e.getKey() + "&dir=desc");
+            assertThat(o.get(0).getProperty()).as(e.getKey()).isEqualTo(e.getValue());
+            assertThat(o.get(0).getDirection()).isEqualTo(Sort.Direction.DESC);
+        }
+    }
+
+    @Test
+    @DisplayName("GET /api/admin/alerts → damgalı takımın adı team_name olarak gelir (Takım sütunu)")
+    void listAlerts_enrichment_stampedTeamName() throws Exception {
+        AlertEvent ev = new AlertEvent();
+        ev.setId(303L); ev.setDomain("mon.example.com"); ev.setAlertType("HTTP_DOWN"); ev.setAlertLevel("HIGH");
+        ev.setTeamId(9L);
+        Team t9 = new Team(); t9.setId(9L); t9.setName("Ops");
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(ev)));
+        when(inventoryRepo.findByDomainIn(any())).thenReturn(Collections.emptyList());
+        when(teamRepo.findAllById(any())).thenReturn(List.of(t9));
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].team_id").value(9))
+                .andExpect(jsonPath("$.data[0].team_name").value("Ops"))
+                .andExpect(jsonPath("$.data[0].sy_team_name").doesNotExist());
     }
 
     @Test

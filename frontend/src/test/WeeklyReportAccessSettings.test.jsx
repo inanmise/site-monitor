@@ -20,8 +20,13 @@ import WeeklyReportAccessSettings from '../components/admin/WeeklyReportAccessSe
 
 const wrap = () => render(<LangProvider><WeeklyReportAccessSettings /></LangProvider>)
 const TEAMS = [
-  { team_id: 5, team_name: 'Takım A', active: true, enabled: false, reminder: true, report_count: 3 },
-  { team_id: 9, team_name: 'Takım B', active: false, enabled: false, reminder: false, report_count: 0 },
+  { team_id: 5, team_name: 'Takım A', active: true, enabled: false, reminder: true, report_count: 3,
+    po_users: [{ user_id: 11, display_name: 'Kişi B', email: 'b@example.com' }, { user_id: 12, display_name: 'Kişi C', email: null }],
+    manager_user_id: 91, manager_display_name: 'Elle E', manager_manual: true, manager_email: 'e@example.com',
+    last_report: { id: 100, report_year: 2026, week_no: 39, iso_week: '2026-W39', week_label: '21–27 Eylül 2026', status: 'APPROVED',
+      submitted_at: '2026-09-25T10:00:00', approved_at: '2026-09-26T08:00:00', sent_at: null, updated_at: '2026-09-26T08:00:00' } },
+  { team_id: 9, team_name: 'Takım B', active: false, enabled: false, reminder: false, report_count: 0,
+    po_users: [], manager_user_id: 90, manager_display_name: 'Müdür M', manager_manual: false, manager_email: null, last_report: null },
 ]
 
 describe('WeeklyReportAccessSettings', () => {
@@ -55,6 +60,42 @@ describe('WeeklyReportAccessSettings', () => {
     expect(confirmMock.mock.calls[0][0].message).toMatch(/3/)   // rapor sayısı onayda görünür
     expect(api.weeklyReports.setAccess).not.toHaveBeenCalled()
     expect(sw.getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('satır bilgisi (2026-09-30): PO adları mailto ile, müdür kaynak rozetiyle (elle / AD), son rapor ISO hafta + durum + onay zamanı; rapor yoksa "Hiç gönderilmedi"', async () => {
+    wrap()
+    await screen.findByText('Takım A')
+    const rowA = screen.getByText('Takım A').closest('tr')
+    const rowB = screen.getByText('Takım B').closest('tr')
+    // PO: e-postası olan ad mailto bağlantısı, e-postasız ad düz metin (sütun + telefon dl'si aynı içeriği taşır)
+    const poCell = rowA.querySelector('[data-slot="wracc-po"]')
+    const link = poCell.querySelector('a[href="mailto:b@example.com"]')
+    expect(link).not.toBeNull()
+    expect(link.textContent).toBe('Kişi B')
+    expect(link.getAttribute('aria-label')).toMatch(/Kişi B — (e-posta gönder|send email)/)
+    expect(poCell.textContent).toContain('Kişi C')
+    expect(poCell.querySelectorAll('a')).toHaveLength(1)
+    expect(rowB.querySelector('[data-slot="wracc-po"]').textContent).toMatch(/PO yok|No PO/)
+    // Müdür: elle atanmış → "elle"/"manual" rozeti + mailto; türetilmiş → "AD" rozeti, e-postasız düz ad
+    const mgrA = rowA.querySelector('[data-slot="wracc-manager"]')
+    expect(mgrA.querySelector('a[href="mailto:e@example.com"]').textContent).toBe('Elle E')
+    expect(mgrA.querySelector('[data-slot="wracc-manager-source"]').getAttribute('data-manual')).toBe('true')
+    expect(mgrA.querySelector('[data-slot="wracc-manager-source"]').textContent).toMatch(/^(elle|manual)$/)
+    const mgrB = rowB.querySelector('[data-slot="wracc-manager"]')
+    expect(mgrB.textContent).toContain('Müdür M')
+    expect(mgrB.querySelector('a')).toBeNull()
+    expect(mgrB.querySelector('[data-slot="wracc-manager-source"]').textContent).toBe('AD')
+    // Son rapor: ISO hafta + durum rozeti + onay zamanı; hiç rapor yoksa "Hiç gönderilmedi"
+    const lastA = rowA.querySelector('[data-slot="wracc-last"]')
+    expect(lastA.textContent).toContain('2026-W39')
+    expect(lastA.querySelector('[data-status="APPROVED"]').textContent).toMatch(/Onaylandı|Approved/)
+    expect(lastA.textContent).toMatch(/(Onay|Approved): 2026-09-26T08:00:00/)
+    expect(rowB.querySelector('[data-slot="wracc-last"]').textContent).toMatch(/Hiç gönderilmedi|Never submitted/)
+    // Telefon yerleşimi: aynı üç bilgi takım hücresinin altında etiket:değer olarak (md'de gizli, jsdom'da DOM'da)
+    const dl = rowA.querySelector('[data-slot="wracc-mobile"]')
+    expect(dl.querySelectorAll('dt')).toHaveLength(3)
+    expect(dl.textContent).toContain('Kişi B')
+    expect(dl.textContent).toContain('2026-W39')
   })
 
   it('arama takımı süzer; pasif takım işaretlenir; uç hatasında toast.error', async () => {

@@ -167,8 +167,58 @@ public class LdapMembershipService {
             }
         }
         out.put("to_add", toAdd);
-        out.put("manager", managerCheck(u, a));
+        Map<String, Object> manager = managerCheck(u, a);
+        // Alan başına AD ↔ uygulama karşılaştırması (2026-09-30): kilitli alan eşitlemede atlanır, "farklı" olan
+        // kilitsiz alan bir sonraki girişte AD değerine döner. Gizli değer yok (parola LDAP hesabında tutulmaz).
+        out.put("fields", fieldRows(u, a, manager));
+        out.put("manager", manager);
         return out;
+    }
+
+    /**
+     * {@link com.sitemonitor.model.LdapFieldLocks#FIELDS} kanonik sırasıyla {@code {key, ad, local, locked, differs}}.
+     * AD tarafı {@link LdapProvisioningService#upsert} ile AYNI nitelikten okunur (mail/cn/givenName/sn/displayName/
+     * title/mobile/department/description/extensionAttribute5 ad kısmı/müdür sicili); müdür satırı managerCheck'in
+     * çözdüğü sicilleri kullanır.
+     */
+    private List<Map<String, Object>> fieldRows(AppUser u, Map<String, Object> a, Map<String, Object> manager) {
+        Set<String> locked = com.sitemonitor.model.LdapFieldLocks.of(u);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String key : com.sitemonitor.model.LdapFieldLocks.FIELDS) {
+            String ad;
+            String local;
+            switch (key) {
+                case com.sitemonitor.model.LdapFieldLocks.DISPLAY_NAME  -> { ad = LdapProvisioningService.str(a, "displayName"); local = u.getDisplayName(); }
+                case com.sitemonitor.model.LdapFieldLocks.EMAIL         -> { ad = LdapProvisioningService.str(a, "mail"); local = u.getEmail(); }
+                case com.sitemonitor.model.LdapFieldLocks.EMPLOYEE_ID   -> { ad = LdapProvisioningService.str(a, "cn"); local = u.getEmployeeId(); }
+                case com.sitemonitor.model.LdapFieldLocks.FIRST_NAME    -> { ad = LdapProvisioningService.str(a, "givenName"); local = u.getFirstName(); }
+                case com.sitemonitor.model.LdapFieldLocks.LAST_NAME     -> { ad = LdapProvisioningService.str(a, "sn"); local = u.getLastName(); }
+                case com.sitemonitor.model.LdapFieldLocks.TITLE         -> { ad = LdapProvisioningService.str(a, "title"); local = u.getTitle(); }
+                case com.sitemonitor.model.LdapFieldLocks.PHONE         -> { ad = LdapProvisioningService.str(a, "mobile"); local = u.getPhone(); }
+                case com.sitemonitor.model.LdapFieldLocks.DEPARTMENT    -> { ad = LdapProvisioningService.str(a, "department"); local = u.getDepartment(); }
+                case com.sitemonitor.model.LdapFieldLocks.COMPANY_LEVEL -> { ad = LdapProvisioningService.str(a, "description"); local = u.getCompanyLevel(); }
+                case com.sitemonitor.model.LdapFieldLocks.MUDURLUK      -> { ad = mudurlukNameOf(LdapProvisioningService.str(a, "extensionAttribute5")); local = u.getMudurlukName(); }
+                case com.sitemonitor.model.LdapFieldLocks.MANAGER       -> { ad = (String) manager.get("ad_sicil"); local = (String) manager.get("db_sicil"); }
+                default -> { continue; }
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("key", key);
+            m.put("ad", ad);
+            m.put("local", local);
+            m.put("locked", locked.contains(key));
+            m.put("differs", !Objects.equals(norm(ad), norm(local)));
+            rows.add(m);
+        }
+        return rows;
+    }
+
+    /** {@code "ID;Ad"} → {@code "Ad"} (LdapProvisioningService.applyMudurluk'un yazdığı kısım); ayraç yoksa ham değer. */
+    private static String mudurlukNameOf(String ext5) {
+        if (ext5 == null) return null;
+        int i = ext5.indexOf(';');
+        String name = i < 0 ? ext5 : ext5.substring(i + 1);
+        name = name.trim();
+        return name.isEmpty() ? null : name;
     }
 
     /** Müdür bağının AD'ye göre durumu: nitelik başına sicil, çözülen kişi, DB'deki ile fark. */

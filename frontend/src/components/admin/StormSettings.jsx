@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import StormLivePanel from './storm/StormLivePanel.jsx'
 import { CloudLightning } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -23,7 +24,7 @@ import { cn } from '@/lib/utils'
  */
 /** Sessiz pencere sınırları — sunucu (StormService.QUIET_MIN/MAX) ile aynı; hazır değerler dakika. */
 const QUIET_MIN = 5, QUIET_MAX = 1440
-const QUIET_PRESETS = [15, 30, 60, 120]
+const QUIET_PRESETS = [5, 15, 30, 60]
 
 export default function StormSettings() {
   const t = useT()
@@ -186,6 +187,9 @@ export default function StormSettings() {
           <p className="text-xs text-muted-foreground">{t('storm.perGroupHintTeam')}</p>
         </CardContent>
       </Card>
+
+      {/* Canlı durum (2026-09-30): ayarları değiştirmeden önce takımların pencere sayımı ve açık fırtınalar */}
+      <StormLivePanel />
 
       {/* Save */}
       <SettingsSaveBar saving={saving} onSave={save} saveLabel={t('storm.save')} />

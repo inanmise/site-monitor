@@ -203,7 +203,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));   // 3 >= eşik 3
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class)))
                 .thenReturn(1);   // biz oluşturduk (kazanan)
 
         teamWithEmail(7L);
@@ -224,7 +224,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class)))
                 .thenReturn(0);   // başka worker kazandı
 
         AlertEvent e = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);
@@ -244,7 +244,7 @@ class StormServiceTest {
                 .thenReturn(List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(2, EscalationService.TYPE_HTTP_DOWN, 7L),
                                     down(3, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class)))
                 .thenReturn(1);
 
         teamWithEmail(7L);
@@ -276,7 +276,7 @@ class StormServiceTest {
         // DB, tetikleyenin group_name'i henüz commit edilmediğinden onu HARİÇ döner (yalnız 1 diğer üye).
         when(alertEventRepo.findOpenDownSinceInGroup(anyCollection(), anyString(), eq("G")))
                 .thenReturn(List.of(down(2, EscalationService.TYPE_HTTP_DOWN, 7L)));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any()))
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class)))
                 .thenReturn(1);
 
         AlertEvent current = down(1, EscalationService.TYPE_HTTP_DOWN, 7L);

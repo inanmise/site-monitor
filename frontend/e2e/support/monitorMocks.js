@@ -507,39 +507,65 @@ export const PERMISSION_MATRIX = {
  *                    yönetici sekmeleri izin matrisi olmadan çizilir (mevcut davranış korunur).
  */
 /**
- * İzleme Panosu mock'u (2026-09-30): MONITORS listelerinden tür özetleri + satırlar; durumlar sırayla düşük / gecikmiş /
- * sağlıklı / duraklatılmış / bilinmiyor ki her rozet ve tonu telefon/tablet ölçümünde çizilsin.
+ * İzleme Panosu mock'u (2026-09-30; 2026-10-01 yeniden tasarım alanları): MONITORS listelerinden tür özetleri + satırlar;
+ * durumlar sırayla düşük / gecikmiş / sağlıklı / duraklatılmış / bilinmiyor ki her rozet ve tonu telefon/tablet
+ * ölçümünde çizilsin. Satırda pencere başarı oranı, ort. yanıt (yavaş işareti çıkacak şekilde), açık alarm başlangıcı +
+ * sahiplenme; üç takım (biri uzun adlı) → takım sağlığı kartı çizilir; DNS'te envanterden çıkmış eski satır + bağımsız
+ * ikizi (Duraklatılmış penceresinin alt grubu ve ikiz bağlantısı ölçülsün).
  */
 function overviewMock(monitors) {
   const STATUSES = ['down', 'stale', 'up', 'paused', 'unknown', 'up']
+  const TEAMS = [[1, 'Takım A'], [2, 'Altyapı ve Ağ Operasyonları Takımı (Kurumsal Uygulamalar)'], [3, 'Takım C']]
   const rows = []
   const types = []
   for (const type of ['http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted']) {
     const list = monitors[type] || []
-    const t = { type, total: 0, active: 0, paused: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0,
-      success_rate_window: null, open_alerts: 0, open_critical: 0, resolved_window: type === 'http' ? 2 : 0, last_checked_at: null }
+    const t = { type, total: 0, active: 0, paused: 0, inventory_inactive: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0,
+      success_rate_window: null, avg_response_ms_window: null, open_alerts: 0, open_critical: 0, resolved_window: type === 'http' ? 2 : 0, last_checked_at: null }
+    let avgSum = 0, avgN = 0
     list.forEach((m, i) => {
       const status = STATUSES[i % STATUSES.length]
       const checks = status === 'unknown' ? 0 : 24 + i * 7
       const failed = status === 'down' ? 6 : 0
       const target = m.url || m.host || m.domain || m.name || `hedef-${i}`
-      rows.push({ type, id: m.id ?? i + 1, name: m.name || target, target, team_id: m.team_id ?? 1, team_name: m.team_name || 'Takım A',
-        active: status !== 'paused', deleted: false, status, last_checked_at: status === 'unknown' ? null : iso((i + 1) * 600000),
-        last_ok: status !== 'down', response_ms: status === 'unknown' ? null : 120 + i * 40,
-        last_error: status === 'down' ? 'HTTP 503 Service Unavailable' : null, interval_seconds: 300,
-        open_alerts: status === 'down' ? 1 : 0, open_alert_level: status === 'down' ? 'CRITICAL' : null, checks_window: checks, failed_window: failed })
+      const [teamId, teamName] = TEAMS[i % TEAMS.length]   // MONITORS'ta hepsi team_id 1 — panoda üç takım görünsün
+      const response = status === 'unknown' ? null : (status === 'down' ? 2400 : 120 + i * 40)
+      const avg = status === 'unknown' ? null : 150 + i * 20
+      rows.push({ type, id: m.id ?? i + 1, name: m.name || target, target, team_id: teamId, team_name: teamName,
+        active: status !== 'paused', deleted: false, standalone: type === 'port' || type === 'dns' ? true : null, inventory_inactive: false,
+        status, last_checked_at: status === 'unknown' ? null : iso((i + 1) * 600000),
+        last_ok: status !== 'down', response_ms: response, avg_response_ms_window: avg,
+        last_error: status === 'down' ? 'HTTP 503 Service Unavailable — upstream connect error or disconnect/reset before headers. reset reason: connection termination' : null,
+        interval_seconds: 300,
+        open_alerts: status === 'down' ? 1 : 0, open_alert_level: status === 'down' ? 'CRITICAL' : null,
+        open_since: status === 'down' ? iso(3 * HOUR + i * 60000) : null, open_acknowledged: status === 'down' && i % 2 === 1,
+        checks_window: checks, failed_window: failed,
+        success_rate_window: checks > 0 ? Math.round((checks - failed) * 1000 / checks) / 10 : null })
       t.total++; if (status === 'paused') t.paused++; else t.active++
       if (status === 'down') { t.down++; t.open_alerts++; t.open_critical++ }
       if (status === 'stale') t.stale++
       if (status === 'unknown') t.unknown++
       t.checks_window += checks; t.failed_window += failed
+      if (avg != null) { avgSum += avg; avgN++ }
       if (status !== 'unknown') t.last_checked_at = iso((i + 1) * 600000)
     })
+    if (type === 'dns' && list.length) {
+      // Envanterden çıkmış eski envanter-türevi satır (tarama atlar → duraklatılmış) + aynı host'un bağımsız ikizi
+      const twin = rows.find((r) => r.type === 'dns' && r.status === 'up')
+      rows.push({ type, id: 9901, name: 'outboundivr-eski-envanter-kaydi.corp.example.com', target: twin ? twin.target : 'outboundivr.example.com',
+        team_id: 1, team_name: 'Takım A', active: false, deleted: false, standalone: false, inventory_inactive: true, status: 'paused',
+        last_checked_at: iso(50 * 24 * HOUR), last_ok: false, response_ms: null, avg_response_ms_window: null, last_error: null, interval_seconds: 300,
+        open_alerts: 0, open_alert_level: null, open_since: null, open_acknowledged: false, checks_window: 0, failed_window: 0, success_rate_window: null,
+        standalone_twin: twin ? { id: twin.id, name: twin.name, target: twin.target, status: twin.status } : undefined })
+      t.total++; t.paused++; t.inventory_inactive++
+    }
     t.success_rate_window = t.checks_window > 0 ? Math.round((t.checks_window - t.failed_window) * 1000 / t.checks_window) / 10 : null
+    t.avg_response_ms_window = avgN ? Math.round(avgSum / avgN) : null
     types.push(t)
   }
-  const totals = { total: 0, active: 0, paused: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0, open_alerts: 0, open_critical: 0, resolved_window: 0, last_checked_at: iso(600000) }
+  const totals = { total: 0, active: 0, paused: 0, inventory_inactive: 0, deleted: 0, down: 0, stale: 0, unknown: 0, checks_window: 0, failed_window: 0, open_alerts: 0, open_critical: 0, resolved_window: 0, last_checked_at: iso(600000) }
   for (const t of types) for (const k of Object.keys(totals)) if (typeof t[k] === 'number') totals[k] += t[k]
+  totals.success_rate_window = totals.checks_window > 0 ? Math.round((totals.checks_window - totals.failed_window) * 1000 / totals.checks_window) / 10 : null
   return { generated_at: iso(0), window_hours: 24, totals, types, monitors: rows }
 }
 
@@ -564,6 +590,38 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/monitoring/overview') {
       // İzleme Panosu (2026-09-30): 9 tür + izleme satırları — telefon/tablet taşma ölçümü dolu verilerle
       body = { success: true, data: overviewMock(monitors) }
+    } else if (p === '/api/monitoring/storm/status') {
+      // Alarm Fırtınası (2026-09-30): fırtınalı + eşiğe yakın + sakin takım — kart/pencere/mühür ölçümü dolu veriyle
+      body = { success: true, data: {
+        generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5 },
+        totals: { teams: 3, storming: 1, near: 1, open_storms: 1 },
+        teams: [
+          { team_id: 1, team_name: 'Takım A', status: 'STORM', threshold: 5, active_monitors: 40, window_minutes: 5, window_targets: 6, window_alerts: 7, window_items: [],
+            last_storm_at: iso(-20), storms_30d: 3, storms: [{ id: 7, team_id: 1, team_name: 'Takım A', resolved: false, created_at: iso(-20), root_cause: 'HTTP_DOWN', member_count: 7,
+              threshold_effective: 5, targets_at_open: 6, peak_targets: 7, quiet_minutes: 5, last_member_at: iso(-2), seal_at: iso(3), sealed: false, active_down: 6, active_members: 7, recovered_members: 1, resolve_floor: 3,
+              trigger: { id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: iso(-20) } }] },
+          { team_id: 2, team_name: 'Takım B', status: 'NEAR', threshold: 5, active_monitors: 12, window_minutes: 5, window_targets: 4, window_alerts: 4,
+            window_items: [{ id: 401, domain: 'b1.example.com', alert_type: 'PING_DOWN', alert_level: 'HIGH', created_at: iso(-3) }], last_storm_at: null, storms_30d: 0, storms: [] },
+          { team_id: 3, team_name: 'Takım C', status: 'CALM', threshold: 5, active_monitors: 8, window_minutes: 5, window_targets: 0, window_alerts: 0, window_items: [], last_storm_at: iso(-3000), storms_30d: 1, storms: [] },
+        ], legacy_open: [] } }
+    } else if (p === '/api/monitoring/storm/history') {
+      body = { success: true, data: { items: [
+        { id: 6, team_id: 1, team_name: 'Takım A', resolved: true, created_at: iso(-600), resolved_at: iso(-500), resolve_reason: 'SEALED', duration_ms: 6000000, root_cause: 'HTTP_DOWN', member_count: 5, members_total: 5, members_recovered: 3, targets_at_open: 5, threshold_effective: 5 },
+        { id: 5, team_id: 2, team_name: 'Takım B', resolved: true, created_at: iso(-3000), resolved_at: iso(-2900), resolve_reason: 'FLOOR', duration_ms: 5400000, root_cause: 'MIXED', member_count: 6, members_total: 6, members_recovered: 6, targets_at_open: 6, threshold_effective: 5 },
+      ], total: 2, page: 0, size: 20, total_pages: 1 } }
+    } else if (p === '/api/monitoring/storm/analytics') {
+      body = { success: true, data: { days: 30, from: '2026-09-01', to: '2026-09-30', total: 3, open: 1, sealed: 1, avg_duration_ms: 5700000, avg_members: 6,
+        series: Array.from({ length: 30 }, (_, i) => ({ day: `2026-09-${String(i + 1).padStart(2, '0')}`, total: i % 10 === 0 ? 1 : 0, by_team: i % 10 === 0 ? { 1: 1 } : {} })),
+        teams: [{ team_id: 1, team_name: 'Takım A', storms: 2, open: 1, sealed: 1, floor: 0, avg_duration_ms: 6000000, avg_members: 6, max_peak_targets: 7, last_storm_at: iso(-20) },
+                { team_id: 2, team_name: 'Takım B', storms: 1, open: 0, sealed: 0, floor: 1, avg_duration_ms: 5400000, avg_members: 6, max_peak_targets: 6, last_storm_at: iso(-3000) }],
+        reasons: { SEALED: 1, FLOOR: 1, OPEN: 1 }, root_causes: { HTTP_DOWN: 2, MIXED: 1 }, hours: Array.from({ length: 24 }, (_, h) => (h === 3 ? 2 : h === 14 ? 1 : 0)), recent: [] } }
+    } else if (/^\/api\/monitoring\/storm\/\d+$/.test(p)) {
+      body = { success: true, data: { id: 7, team_id: 1, team_name: 'Takım A', resolved: false, created_at: iso(-20), root_cause: 'HTTP_DOWN', member_count: 7, threshold_effective: 5, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5,
+        targets_at_open: 6, peak_targets: 7, last_member_at: iso(-2), last_re_alert_at: iso(-20), seal_at: iso(3), sealed: false, duration_ms: 1200000,
+        trigger: { id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: iso(-20) },
+        members: [{ event_id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', team_id: 1, created_at: iso(-20), resolved: false, join_kind: 'TRIGGER', joined_at: iso(-20), announced_at: iso(-20), trigger: true },
+                  { event_id: 301, domain: 'https://b.example.com', alert_type: 'HTTP_DOWN', alert_level: 'HIGH', team_id: 1, created_at: iso(-19), resolved: true, resolved_at: iso(-5), join_kind: 'PEER', joined_at: iso(-20), announced_at: iso(-20), left_at: iso(-5), leave_kind: 'RECOVERED', trigger: false }],
+        members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, last_mail_at: iso(-20) } } }
     } else if (p === '/api/me/open-alerts') {
       // İzleme menüsü rozetleri (2026-09-30): HTTP 2 (1 kritik), Sentetik 3 uyarı
       body = { success: true, data: { visible: true, total: 5, sampled: false, tabs: {

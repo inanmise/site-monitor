@@ -12,6 +12,7 @@ import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import TeamMembersManager from './TeamMembersManager.jsx'
+import UserDetailPanel from './UserDetailPanel.jsx'
 import TeamDeleteImpactModal from './TeamDeleteImpactModal.jsx'
 import TeamLdapAuditModal from './TeamLdapAuditModal.jsx'
 import { navigateTo } from '../../utils/navigate.js'
@@ -71,7 +72,7 @@ function WeeklySwitch({ on, disabled, onToggle, label, short }) {
 }
 
 
-export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange }) {
+export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
@@ -99,6 +100,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [membersTeam, setMembersTeam]   = useState(null)
   const [membersNonce, setMembersNonce] = useState(0)
   const [editingUser, setEditingUser]   = useState(null)
+  // Üyeler sekmesinden açılan kullanıcı detayı (2026-09-30): takım penceresinin ÜSTÜNE Sheet (UserManager ile aynı panel).
+  const [viewUser, setViewUser]         = useState(null)
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
@@ -166,8 +169,26 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
     } }
   }, [])
 
-  const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.username]))
-  const usersById = Object.fromEntries(users.map(u => [u.id, u]))
+  // Performans (2026-10-01): dizinler kullanıcı listesi değişince kurulur (her render'da değil) — `openViewUser`
+  // kararlı kalır ve üye satırlarının `memo(MemberRow)`'u her render'da yeniden çizilmez.
+  const userMap = useMemo(() => Object.fromEntries(users.map(u => [u.id, u.display_name || u.username])), [users])
+  const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
+
+  /** Üye satırından kullanıcı detayına (2026-09-30). Yönetim yükleyicisi (`/admin/teams/{id}/users`) tam kaydı verir;
+   *  yine de yerel kullanıcı listesi (taze, kilit/AD alanlarıyla) üste bindirilir. Satır kısmi bir projeksiyonsa
+   *  (sistem rolü yok = beyaz-liste ucu) tam kayıt MEVCUT arama ucundan (`searchUsers`) çekilir — yeni uç yok.
+   *  `useCallback` (2026-10-01): `onView` olarak `memo(MemberRow)`'a gider — kimliği render'lar arasında sabit. */
+  const openViewUser = useCallback(async (m) => {
+    if (!m) return
+    const local = usersById[m.id]
+    if (local || m.system_role !== undefined) { setViewUser(local ? { ...m, ...local } : m); return }
+    try {
+      const r = await api.admin.searchUsers({ q: m.username || m.display_name || '', size: 10 })
+      const hit = (r?.data || []).find(u => String(u.id) === String(m.id))
+        || (r?.data || []).find(u => m.username && String(u.username).toLowerCase() === String(m.username).toLowerCase())
+      setViewUser(hit ? { ...m, ...hit } : m)
+    } catch { setViewUser(m) }
+  }, [usersById])
 
   /** Bir kullanıcının bağlı olduğu müdür etiketi: adı (çözülebiliyorsa) yoksa sicili. */
   const managerLabelFor = (u) => (u?.manager_id && userMap[u.manager_id]) || u?.manager_sicil || null
@@ -589,9 +610,19 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           ve satırdaki "Takım Müdürü" sütununda ayrı durur. `teamManager` = o sütunla AYNI kayıt (tüm kullanıcılardan
           türetilir); pencere başlığındaki Takım Müdürü çipi sütunla çelişmesin (2026-09-28 yeniden tasarım). */}
       <TeamMembersModal open={!!membersTeam} team={membersTeam} onClose={() => setMembersTeam(null)}
-        canManage={canManage} onEditUser={setEditingUser} loadMembers={loadTeamMembers}
+        canManage={canManage} onEditUser={setEditingUser} onViewUser={canManage ? openViewUser : undefined}
+        loadMembers={loadTeamMembers}
         managerLabelFor={managerLabelFor} refreshKey={membersNonce}
         teamManager={membersTeam ? teamManagerEntry(membersTeam) : undefined} />
+      {/* Kullanıcı detayı — takım penceresinin ÜSTÜNDE (stacked); Escape/scrim yalnız bu katmanı kapatır, takım penceresi
+          açık kalır. Düzenle: detay kapanır, paylaşılan UserEditModal açılır (üye kartındaki kalemle aynı yol). */}
+      {viewUser && (
+        <UserDetailPanel stacked user={usersById[viewUser.id] ? { ...viewUser, ...usersById[viewUser.id] } : viewUser}
+          teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin}
+          onClose={() => setViewUser(null)}
+          onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
+          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setEditingUser(u) } : undefined} />
+      )}
       <UserEditModal
         user={editingUser}
         teams={teams}

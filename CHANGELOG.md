@@ -15,6 +15,115 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- ⚠ Davranış — **Fırtına sessiz penceresi varsayılanı 30 → 5 dk** (`site.monitor.storm.quiet-minutes`, `STORM_QUIET_MINUTES`):
+  son üye katılımından 5 dk yeni alarm gelmezse fırtına mühürlenir ve kapanır; hazır değerler 5 / 15 / 30 / 60. Ayarı
+  değiştirmiş kurulumlar etkilenmez.
+- **Alarm Geçmişi → Gürültü analizi yeniden tasarlandı (shadcn, mobil-önce) ve çözüm önerisi motoru eklendi.** Mevcut
+  her işlev korundu (katlanır panel, 7/30 gün, başlık özeti, KPI'lar, günlük eğri, en çok alarm üreten hedefler → liste
+  süzgeci, gün × saat ısı haritası, flap adayları + Ayarlar, tipe göre dağılım); üstüne 14 günlük pencere, takım seçici
+  (`?team=` — "Takımlarım" grubu önde; görülemeyen takım 403), gürültülü hedef / flap / sessiz kapanış / gürültü skoru
+  (0–100) KPI'ları, desen rozetli "Gürültü kaynakları" listesi (satırdan Alarmları listele / Monitörü aç), takım kırılımı
+  (≥ 768 px tablo, telefonda kart; fırtına sayısı `alert_storms`'tan), saat grafiği (shadcn Chart) ve sunucuda hesaplanan
+  "Çözüm önerileri" geldi. Aynı uç `GET /api/admin/alerts/noise` EKLEYİCİ alanlar döner: `top[*].pattern|monitor_type|
+  team_id|team_name|median_minutes|flap_count|still_open|last_opened_at`, `by_type[*].silent|monitor_type`, `teams[]`,
+  `hours[]`, `noisy_targets`, `flap_targets`, `flap_alerts`, `night`, `night_pct`, `noise_score`, `team_options[]`,
+  `my_team_ids`, `default_team_id`, `suggestions[]` (`{code, severity, title_key, target?, team_id?, params[], action{kind,
+  tab, params}}`). Öneri kataloğu `AlertNoiseSuggestion` (FLAPPING 5+ alarm & ort ≤ 10 dk · SHORT_OUTAGES 3+ alarm & ortanca
+  < 5 dk · REPEAT_SAME_TARGET 7+ alarm · SLOW_THRESHOLD_TIGHT 3+ `*_SLOW` · DUPLICATE_MONITORS aynı host'a ≥ 2 izleme türü /
+  takım · SILENT_CLOSES ≥ 3 ve ≥ %20 · OFF_HOURS_NOISE ≥ 10 alarm, gece 22–06 payı ≥ %30 ve gece alarmlarının ≥ %80'i
+  sahiplenilmemiş · STORM_PRONE takımda ≥ 2 fırtına); metinler arayüzde (`noise.sug.<KOD>.title|body`, TR + EN), kapı
+  `AlertNoiseSuggestionI18nGateTest` kaynak dosyadan doğrular. LEVEL_TOO_LOW/HIGH veri desteklemediği için katalogda yok.
+- **Performans (2026-10-01 inceleme):** her kullanıcının dakikada bir çağırdığı açık alarm rozeti (`/api/me/open-alerts`)
+  3–4 sorgu + 200 tam alarm varlığı yerine tek gruplu sayım + dar ilk-N sorgusu ve 15 sn kapsam ezberiyle yanıt verir
+  (alarm onay/çözümünde ezber atlanır); İzleme Panosu 30 sn, fırtına durum ekranı 10 sn ezberlenir; fırtına ekranı takım
+  başına 10 COUNT yerine dakikada TEK gruplu sorgu, tetikleyen / canlı üyeler fırtına başına değil tek sorgu; gürültü
+  analizi 90 güne kadar tam alarm yerine 9 sütunlu izdüşüm, haftalık rapor takım bilgisi yalnız aktif kullanıcılar + tüm
+  takımların son raporu tek sorgu. Alarm yolunda fırtına açılışı üye başına 2 sorgu + commit yerine tek JDBC batch, kapanış
+  tek batch; açılış anlık görüntüsü ayrı UPDATE yerine terfi INSERT'inde (arada koşan yaşam döngüsü turu alanları
+  boşaltamaz), sayaç tazelemesi varlık `save` yerine hedefli UPDATE (katılımın zamanı geri sarılmaz). Yeni indeksler
+  `alert_events(created_at)`, `alert_storms(created_at)`, `user_push_deliveries(dedupe_key text_pattern_ops)` (büyük
+  tablolarda `CONCURRENTLY`); gereksiz `idx_asm_storm` kaldırıldı. Alarm Geçmişi'nin Takım sütunu artık takım ADINA göre
+  sıralanır (eskiden kimliğe göre).
+- **İzleme Panosu yeniden tasarlandı (shadcn, mobil-önce; mevcut işlevler korunarak):** filo hükmü + durum dağılım
+  çubuğu, "Dikkat gerektirenler" (sorunlu / gecikmiş / hiç kontrol edilmemiş, neden satırıyla), satır başına pencere
+  başarı oranı ölçeri ve yanıt süresi (son + ortalama, "Yavaş" işareti; ikisi de sıralanabilir), takım sağlığı kartı,
+  hızlı görünümler (Tümü / Dikkat gerektiren / Alarmlı / Hata veren / Duraklatılmış), canlı tazelik çipi, CSV dışa aktarma;
+  liste kabın genişliğine göre tablo ya da kart. Sorunlu, Kontrolü gecikmiş, Açık alarm ve Duraklatılmış kutuları özet
+  penceresi açar (türe / takıma göre dağılım, eylemli liste, "Listede süz"; URL `mo_dlg`). Yenile sunucu ezberini atlar
+  (`?fresh=1`, en çok 5 sn'de bir).
+
+### Added
+- **Alarm Geçmişi: hızlı dönemler, tarih alanı seçimi, sütun sıralaması ve süzgeçleri, Takım sütunu.** Araç çubuğunda
+  "Tüm zamanlar · Son 1 saat · Son 24 saat · Son 7 gün · Son 30 gün · Özel" dönem seçici (URL `from=1h|24h|7d|30d`, istek
+  anında göreli hesaplanır — paylaşılan bağlantı hep bugüne göre açılır; günlükler yerel gün sınırından); tarih aralığı artık
+  AÇIK görünümde de uygulanır ("son 1 saatte açılanlar"). "Tarih alanı" seçici: Kapalı'da Kapanış (varsayılan) / Açılış,
+  Tümü'nde Açılış (varsayılan) / Kapanış / Aktif olduğu dönem (URL `range=opened|resolved|active`). Tablo başlıkları
+  sıralar (Seviye · Alarm · Takım · Açıldı · Çözüm; `aria-sort`), araç çubuğunda ve telefonda aynı seçenekli sıralama
+  seçicisi; URL `sort=<anahtar>[_asc]`, sunucuya `sort` + `dir` (`GET /api/admin/alerts?sort=opened|resolved|level|team|domain|type&dir=asc|desc`,
+  beyaz liste, bilinmeyen anahtar varsayılana düşer; seviye METİN saklandığı için CASE sırası CRITICAL > HIGH > WARNING,
+  eşitlikte açılış en yeni önce). Başlıklarda sütun süzgeci menüleri (seviye / tür / takım / sahiplenme — araç çubuğu
+  çipleriyle aynı durum). Yeni Takım sütunu (sunucu yanıtına `team_name`: damgalı takım adı) ve telefon kartında takım satırı;
+  takım rozetine tıklamak takım süzgecini uygular. Boş dönemde "Bu dönemde alarm yok" + tek tıkla "Dönemi genişlet"
+  (1 sa → 24 sa → 7 g → 30 g → tüm zamanlar).
+- **Alarm Fırtınası sayfası** (Alarmlar menüsü, `?tab=storms`; kapı `alerts.read`, görüş kapsamı Alarm Geçmişi ile aynı —
+  kullanıcı yalnız kendi takımlarını görür): takım kartlarında durum (Fırtına / Eşiğe yakın / İzleniyor / Sakin), pencere
+  doluluğu (farklı hedef / eşik), kural metni, son fırtına ve 30 günlük sayı; açık fırtına özeti (mühür geri sayımı, hâlâ
+  düşük hedef, kapanış tabanı, tetikleyen alarm) ve "Takımın açık alarmları"; **Geçmiş** sekmesi (takım / tarih / yalnız
+  kapanmış süzgeçleri, sayfalama, kapanış nedeni rozeti); **Analiz** sekmesi (günlük fırtına sayısı takıma göre yığılı
+  grafik, takım özeti, kapanış nedeni ve kök neden dağılımı, saat dağılımı); **fırtına ayrıntı penceresi** (anlık görüntü,
+  zaman çizelgesi, üye listesi: katılım türü / duyuru / ayrılış ve alarma gidiş, bildirim özeti). Ayarlar → Alarm
+  Fırtınası'nda aynı verinin kompakt **Canlı durum** paneli. Uçlar `GET /api/monitoring/storm/status|history|analytics|{id}`
+  (`StormStatusService`). Telefon/tablet düzeni `e2e/responsive.spec.js` ile ölçülür.
+- **Fırtına gözlem verisi:** fırtına satırı açılışta takım, eşik ayarı + etkin eşik, pencere, sessiz pencere, açılıştaki
+  hedef sayısı, tetikleyen alarm ve ömür boyu tepe hedef sayısını dondurur; kapanışta nedeni yazar (`FLOOR` / `SEALED` /
+  `DISABLED` / `LEGACY_RETIRE`). Yeni `alert_storm_members` tablosu üyeliği kalıcı tutar (katılım türü, duyuru anı,
+  ayrılış türü) — kapanışta `storm_id` sıfırlansa da "kim hangi fırtınadaydı" okunur. Eski takım fırtınalarına takım
+  kimliği geriye dönük yazılır; üye tablosu fırtına silinince yetim politikasıyla temizlenir.
+- **Ayarlar → Haftalık Raporlar → takım görünürlüğü: PO, müdür ve son rapor:** her takım satırında artık takımın
+  PO'ları (ad + mailto), Takım Yönetimi ile AYNI kuralla çözülen müdür (`TeamManagerResolver`: elle atama > AD zinciri;
+  kaynak rozeti "elle" / "AD") ve en son rapor haftası (ISO hafta `2026-W39` + durum rozeti + gönderim/onay zamanı;
+  hiç rapor yoksa "Hiç gönderilmedi") görünür. ≥768 px'te üç ek sütun, telefonda takımın altında etiket:değer
+  satırları. `GET /api/weekly-reports/access/teams` satırına `po_users[]`, `manager_user_id` / `manager_display_name`
+  / `manager_manual` / `manager_email` ve `last_report` alanları eklendi (`WeeklyReportTeamInfoService`).
+- **Takım üyeleri penceresi → Üyeler sekmesi → kullanıcı detayı:** Takım Yönetimi'nde takım adına tıklayınca açılan
+  pencerede her üye satırının adı artık bir düğme ve satır sonunda "Kullanıcı detayını aç" ikonu var; ikisi de o
+  kullanıcının detay panelini (Kullanıcılar ekranındakiyle aynı `UserDetailPanel`) takım penceresinin ÜSTÜNDE açar.
+  Escape ve scrim yalnız üstteki katmanı kapatır, takım penceresi açık kalır. Yalnız takımı yönetebilen görüntüleyici
+  (ADMIN / TEAM_ADMIN) görür; kısmi üye satırı için tam kayıt mevcut arama ucundan çekilir (yeni uç yok).
+- **LDAP alan kilidi arayüzü ve ucu:** yöneticinin elle düzenlediği AD kaynaklı alanlar (`locked_fields`: görünen ad,
+  e-posta, sicil, ad, soyad, ünvan, telefon, departman, seviye, müdürlük, müdür) artık görünür — Kullanıcı Detayı
+  başlığında "N alan kilitli" rozeti, "Kilitler ve AD istisnaları" kartında alan başına satır, düzenleme formunda AD
+  alanlarının altında "Kilitli: elle düzenlendi" / "AD'den gelir — düzenlersen kilitlenir" ipucu ve "AD ile karşılaştır"
+  sekmesinde alan karşılaştırma tablosu (AD ↔ uygulama değeri, Kilitli / Farklı / Aynı; telefonda kart listesi).
+  Yeni uç `POST /api/admin/users/{id}/field-unlock` (`{"field": "<anahtar>"}`) kilidi kaldırır — YALNIZ global yönetici
+  (kapsamlı müdür 403), denetim olayı `USER_FIELD_UNLOCK`; alan bir sonraki AD eşitlemesinde AD değerine döner.
+- **Gürültü analizi — tıklanabilir grafikler:** "Günlük alarm sayısı" çubuğuna tıklayınca Alarm Geçmişi "Tümü"
+  görünümünde o günün (açılış tarihi) alarmlarına süzülür; "Gün × saat yoğunluğu" hücresine tıklayınca o gün ve saatte
+  (İstanbul, pencere boyunca) açılan alarmlar yan panelde listelenir (en çok 200, en yeni önce; gün / saat seçicileri ve
+  önceki / sonraki saat düğmeleriyle panel kapanmadan dolaşılır; satır alarm ayrıntısını açar) —
+  `GET /api/admin/alerts/noise/slot?days&dow&hour[&team]`, kapsam gürültü analiziyle aynı. Tarihsiz bozuk seri kaydı
+  düşürülür (grafik çökmez); telefonda uzun alan adı artık satırı ekran dışına taşırmaz.
+- **İzleme Panosu — sütun süzgeçleri ve sıralama:** tablo başlıklarında durum / tür / takım çoklu seçim (sayılar diğer
+  süzgeçler etkinken kalan izleme), son kontrol (son 15 dk / 1 sa / 24 sa / daha eski / hiç), koşum (başarısız / hatasız
+  / koşum yok), açık alarm (herhangi / seviye / yok) ve izleme adı süzgeci; her sütuna göre sıralama (`aria-sort`); etkin
+  süzgeç çipleri; telefonda aynı süzgeçler ve sıralama "Süzgeçler" panelinde. URL `mo_*` (çoklu değerler virgüllü).
+
+### Fixed
+- **İzleme Panosu yanlış "kontrolü gecikmiş" / "sorunlu":** envanterden çıkarılmış host'un eski envanter-türevi Port/DNS
+  satırları (tarama atlar, tür sayfası listelemez) aktif sayılıp son kontrolleri eski olduğu için "gecikmiş", son kontrolleri
+  başarısızsa "sorunlu" görünüyordu (prod: DNS kartında 49 aktif / 3 gecikmiş, DNS sayfasında 46 izleme; aynı host'un
+  bağımsız izlemesi 5 dk'da bir sağlıklı). Artık taramayla BİREBİR aynı kural (büyük/küçük harf duyarlı envanter eşleşmesi):
+  bu satırlar "Duraklatılmış · Envanter pasif" sayılır, sorunlu / gecikmiş / başarı oranına girmez, açık alarm bu satıra
+  bağlanmaz; aynı hedefin bağımsız ikizi varsa "Asıl kontrol" bağlantısı gösterilir. Tür kartı sayıları tür sayfasıyla eşleşir.
+- **İzleme Panosu:** KPI ve tür kartı tıklaması listeyi süzüp liste başlığına kaydırır (eskiden süzgeç ekranın altında
+  değişiyor, kullanıcı ne olduğunu göremiyordu). Envanteri pasif olan envanter türevi Port/DNS izlemeleri (taramanın
+  atladığı, tür sayfasının listelemediği satırlar) artık "kontrolü gecikmiş" değil "duraklatılmış" sayılır ve "Envanter
+  pasif" rozeti taşır; gecikmiş yalnız aktif olup kontrol edilmeyen izlemelerdir.
+- **Boş alanla kazara LDAP alan kilidi:** düzenleme formu her kayıtta görünen ad / sicil alanını `''` olarak yolluyor,
+  sunucu `''` ile `null`'ı "değişti" sayıp dokunulmamış alanı kilitliyordu (AD eşitlemesi o alanı bir daha yazmıyordu).
+  Boş/boşluk değer karşılaştırmadan önce `null`'a indirgenir; değişmeyen alan kilitlenmez.
+
 ## [20.92.0] — 2026-09-30
 
 ### Fixed

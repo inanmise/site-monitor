@@ -37,6 +37,8 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findAllByEmployeeIdNormalized(@Param("sicil") String sicil);
     List<AppUser> findByTeamIdOrderByUsernameAsc(Long teamId);
     List<AppUser> findAllByOrderByUsernameAsc();
+    /** Yalnız AKTİF kullanıcılar — pasifleri hiç kullanmayan çözümleyiciler için (Haftalık Rapor takım bilgisi, 2026-10-01). */
+    List<AppUser> findByActiveTrueOrderByUsernameAsc();
     @Query("SELECT COUNT(u) > 0 FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
     boolean existsByUsername(@Param("username") String username);
     boolean existsByTeamId(Long teamId);

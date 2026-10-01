@@ -12,6 +12,8 @@ const EMPTY = Object.freeze({ tabs: {}, total: 0, sampled: false, visible: false
 /**
  * İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki AÇIK alarmların izleme türü başına özeti
  * (`GET /api/me/open-alerts`). Dakikada bir yoklar; ağ hatasında son bilinen veri korunur (rozet titremez).
+ * Sunucu sonucu kapsam başına kısa süre paylaşır (2026-10-01): düz yoklama belleği kullanır, alarm eylemi sonrası
+ * (`ALERTS_CHANGED_EVENT`) tazeleme `fresh=1` ile belleği atlar — kullanıcı kendi eyleminin etkisini hemen görür.
  *
  * @returns {{ byTab: object, total: number, sampled: boolean, visible: boolean, loaded: boolean, refresh: Function }}
  */
@@ -21,10 +23,11 @@ export function useOpenAlerts({ enabled = true, pollMs = OPEN_ALERTS_POLL_MS } =
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
 
-  const refresh = useCallback(async () => {
+  /** `fresh === true` → sunucu belleğini atla (yalnız gerçek `true`; olay nesnesi vb. düz yoklama sayılır). */
+  const refresh = useCallback(async (fresh = false) => {
     if (!enabled) return
     try {
-      const res = await api.me.openAlerts()
+      const res = await api.me.openAlerts(fresh === true)
       if (!alive.current) return
       if (res?.success && res.data) setData({ ...EMPTY, ...res.data, tabs: res.data.tabs || {} })
     } catch { /* son bilinen veri kalır */ } finally {
@@ -35,7 +38,7 @@ export function useOpenAlerts({ enabled = true, pollMs = OPEN_ALERTS_POLL_MS } =
   useVisibleInterval(refresh, enabled ? pollMs : 0)
   useEffect(() => {
     if (!enabled) return undefined
-    const onChanged = () => { refresh() }
+    const onChanged = () => { refresh(true) }
     window.addEventListener(ALERTS_CHANGED_EVENT, onChanged)
     return () => window.removeEventListener(ALERTS_CHANGED_EVENT, onChanged)
   }, [enabled, refresh])

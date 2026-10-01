@@ -102,7 +102,7 @@ class StormSealingTest {
     // ── evaluate: mühürlü fırtına yeni üye ALMAZ ────────────────────────────────
 
     @Test
-    @DisplayName("Son üye katılımı 31 dk önce (sessiz pencere 30) → fırtına mühürlü: SUPPRESSED DEĞİL, bireysel gönderim, bağ yok")
+    @DisplayName("Son üye katılımı 31 dk önce (sessiz pencere varsayılan 5) → fırtına mühürlü: SUPPRESSED DEĞİL, bireysel gönderim, bağ yok")
     void evaluate_sealedStorm_doesNotSwallow() {
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:14")).thenReturn(Optional.of(teamStorm(5, ago(600), ago(31), ago(600))));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString())).thenReturn(List.of());
@@ -135,9 +135,9 @@ class StormSealingTest {
     }
 
     @Test
-    @DisplayName("Sessiz pencere ayarı okunur ve 5–1440 aralığına kırpılır; varsayılan 30")
+    @DisplayName("Sessiz pencere ayarı okunur ve 5–1440 aralığına kırpılır; varsayılan 5 (30.09.2026: 30 → 5)")
     void quietMinutes_readAndClamped() {
-        assertThat(storm.quietMinutes()).isEqualTo(30);
+        assertThat(storm.quietMinutes()).isEqualTo(5);
         when(appSettings.getInt(eq(StormService.KEY_QUIET), anyInt())).thenReturn(1);
         assertThat(storm.quietMinutes()).isEqualTo(5);
         when(appSettings.getInt(eq(StormService.KEY_QUIET), anyInt())).thenReturn(99999);
@@ -148,17 +148,19 @@ class StormSealingTest {
     }
 
     @Test
-    @DisplayName("Terfi INSERT'i last_member_at kolonunu da yazar (7 parametre)")
+    @DisplayName("Terfi INSERT'i last_member_at + açılış anlık görüntüsünü AYNI cümlede yazar (17 parametre, ilk 7'nin sırası korunur)")
     void promotion_insertStampsMemberClock() {
         when(stormRepo.findByScopeKeyAndResolvedFalse("TEAM:14"))
                 .thenReturn(Optional.empty()).thenReturn(Optional.of(teamStorm(9, ago(0), ago(0), ago(0))));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString()))
                 .thenReturn(List.of(down(1, 14L, ago(1)), down(2, 14L, ago(1)), down(3, 14L, ago(1)),
                         down(4, 14L, ago(1)), down(5, 14L, ago(1))));
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class))).thenReturn(1);
 
         assertThat(storm.evaluate(down(1, 14L, ago(1)), null)).isEqualTo(StormService.StormAction.SUPPRESSED);
-        verify(jdbcTemplate).update(contains("last_member_at"), eq("TEAM:14"), eq("TEAM"), any(), any(), anyString(), anyString(), anyString());
+        verify(jdbcTemplate).update(contains("last_member_at"), eq("TEAM:14"), eq("TEAM"), any(), any(), anyString(), anyString(), anyString(),
+                eq(14L), isNull(), eq("COUNT"), eq(5), eq(5), eq(5), eq(5), eq(5), eq(5), eq(1L));
+        verify(jdbcTemplate, never()).update(startsWith("UPDATE alert_storms SET team_id"), any(Object[].class));   // ayrı UPDATE yok
     }
 
     // ── lifecycle: mühürlü fırtına, hâlâ-down üye sayısı ne olursa olsun kapanır ─────
@@ -191,10 +193,10 @@ class StormSealingTest {
     }
 
     @Test
-    @DisplayName("Taze fırtına (son üye 5 dk önce) hâlâ-down üyelerle AÇIK kalır")
+    @DisplayName("Taze fırtına (son üye 2 dk önce, pencere 5) hâlâ-down üyelerle AÇIK kalır")
     void lifecycle_freshStorm_staysOpen() {
         lockOk();
-        AlertStorm s = teamStorm(7, ago(600), ago(5), ago(1));
+        AlertStorm s = teamStorm(7, ago(600), ago(2), ago(1));
         when(stormRepo.findByResolvedFalse()).thenReturn(List.of(s));
         when(alertEventRepo.findByStormId(7L)).thenReturn(List.of(down(1, 14L, ago(600)), down(2, 14L, ago(300)), down(3, 14L, ago(5))));
 
@@ -230,7 +232,7 @@ class StormSealingTest {
         List<AlertEvent> peers = List.of(down(1, 14L, ago(1)), down(2, 14L, ago(1)), down(3, 14L, ago(1)),
                 down(4, 14L, ago(1)), down(5, 14L, ago(1)));
         when(alertEventRepo.findOpenDownSince(anyCollection(), anyString())).thenReturn(peers);
-        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(jdbcTemplate.update(startsWith("INSERT INTO alert_storms"), any(Object[].class))).thenReturn(1);
 
         storm.evaluate(down(1, 14L, ago(1)), null);
 

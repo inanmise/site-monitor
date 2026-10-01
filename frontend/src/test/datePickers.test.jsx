@@ -116,6 +116,12 @@ describe('TimeRangePicker', () => {
   })
 
   it('mutlak aralık: Başlangıç/Bitiş seçicileri yerel "yyyy-MM-ddTHH:mm" ile abs tanımlayıcı üretir', async () => {
+    // Saatten bağımsız (2026-10-01): başlangıç BUGÜN 08:15 seçilir; gerçek saat 08:15'ten önceyse başlangıç bitişten
+    // (şimdi) sonra kalır ve Uygula tetiklenmez → test gece yarısı ile 08:15 arasında kırılıyordu. Yalnız Date sahtelenir
+    // (zamanlayıcılar gerçek; userEvent etkilenmez), "şimdi" yerel 14:00.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 30, 14, 0, 0))
+    try {
     const user = userEvent.setup()
     const onChange = vi.fn()
     render(<TimeRangePicker value={{ type: 'rel', minutes: 60, key: '1h' }} onChange={onChange} />)
@@ -128,6 +134,9 @@ describe('TimeRangePicker', () => {
     expect(arg.type).toBe('abs')
     expect(arg.from).toMatch(/^\d{4}-\d{2}-\d{2}T08:15$/)
     expect(arg.to).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

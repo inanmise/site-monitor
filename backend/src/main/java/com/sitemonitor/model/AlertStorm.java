@@ -82,4 +82,41 @@ public class AlertStorm {
      * bireysel hatta döner). Eski satırlarda NULL → {@code createdAt} esas alınır.
      */
     private String lastMemberAt;
+
+    // ── Gözlem / analiz anlık görüntüsü (2026-09-30, takım bazlı fırtına ekranı) ─────────────────────────────────
+    // Fırtına kapanınca üyelerin storm_id'si sıfırlanır ve eşik/pencere ayarı sonradan değişebilir; "kim, ne zaman,
+    // hangi eşikle, kaç hedefle" sorusu ancak açılış anında dondurulan bu kolonlarla cevaplanır. Eski satırlarda NULL.
+
+    /** Sahip takım (scope_key'den; eski ACCOUNT/grup satırlarında NULL). */
+    private Long teamId;
+
+    /** Per-group modda grup adı (UNGROUPED dâhil), aksi hâlde NULL. */
+    private String groupName;
+
+    /** Açılış anındaki eşik birimi (COUNT | PERCENT). */
+    private String thresholdUnit;
+
+    /** Açılış anındaki ayar değeri (adet ya da yüzde). */
+    private Integer thresholdValue;
+
+    /** Açılış anında hesaplanan etkin eşik (farklı hedef sayısı). */
+    private Integer thresholdEffective;
+
+    /** Açılış anındaki sayım penceresi (dk). */
+    private Integer windowMinutes;
+
+    /** Açılış anındaki sessiz pencere (dk). */
+    private Integer quietMinutes;
+
+    /** Açılışta penceredeki FARKLI hedef sayısı (eşiği aşan değer). */
+    private Integer targetsAtOpen;
+
+    /** Fırtına ömrü boyunca görülen en yüksek eşzamanlı düşük hedef sayısı. */
+    private Integer peakTargets;
+
+    /** Eşiği aşmayı tetikleyen alarm (evaluate'i çağıran olay); eski/legacy geçişte NULL. */
+    private Long triggerEventId;
+
+    /** Kapanış nedeni: FLOOR (histerezis tabanı) | SEALED (sessiz pencere) | DISABLED (koruma kapatıldı) | LEGACY_RETIRE. */
+    private String resolveReason;
 }

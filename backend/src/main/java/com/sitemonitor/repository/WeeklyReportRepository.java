@@ -33,6 +33,17 @@ public interface WeeklyReportRepository extends JpaRepository<WeeklyReport, Long
     /** Yeni hafta şablonunun kaynağı — takımın en güncel raporu. */
     Optional<WeeklyReport> findFirstByTeamIdOrderByReportYearDescWeekNoDesc(Long teamId);
 
+    /**
+     * Takım kümesinin her biri için EN GÜNCEL rapor (yıl/hafta) — TEK sorgu (2026-10-01, performans: takım başına
+     * {@link #findFirstByTeamIdOrderByReportYearDescWeekNoDesc} yerine). Taşınabilir JPQL (PostgreSQL {@code DISTINCT ON}
+     * H2'de yok): {@code (takım, yıl, hafta)} tekil olduğundan ({@code ux_weekly_report_team_week}) takım başına en çok
+     * bir satır döner. {@code yıl*100 + hafta} sırası (yıl, hafta) sırasıyla aynıdır (hafta ≤ 53).
+     */
+    @Query("SELECT r FROM WeeklyReport r WHERE r.teamId IN :teamIds"
+            + " AND (r.reportYear * 100 + r.weekNo) = (SELECT MAX(r2.reportYear * 100 + r2.weekNo)"
+            + " FROM WeeklyReport r2 WHERE r2.teamId = r.teamId)")
+    List<WeeklyReport> findLatestPerTeam(@Param("teamIds") java.util.Collection<Long> teamIds);
+
     /** Logout/oturum sonu: kullanıcının elindeki tüm düzenleme kilitlerini serbest bırak. */
     @Modifying
     @Query("UPDATE WeeklyReport r SET r.editingBy = null, r.editingUserId = null,"

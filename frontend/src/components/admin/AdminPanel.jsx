@@ -38,7 +38,7 @@ const TAB_GROUPS = [
   },
 ]
 
-export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUsername }) {
+export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUsername, globalAdmin = false }) {
   const t = useT()
   const isAdmin = systemRole === 'ADMIN'
   const defaultTab = isAdmin ? 'thresholds' : 'contacts'
@@ -113,8 +113,8 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
             <RecipientSimulator teams={teams} isAdmin={isAdmin} onNavigate={jump}
               defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
           )}
-          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} />}
-          {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} />}
+          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} />}
+          {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}
         </TabsContent>
       </Tabs>
     </div>

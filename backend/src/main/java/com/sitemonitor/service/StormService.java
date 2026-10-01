@@ -2,6 +2,7 @@ package com.sitemonitor.service;
 
 import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.AlertStorm;
+import com.sitemonitor.model.AlertStormMember;
 import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.AlertStormRepository;
@@ -127,6 +128,7 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
 
+
     /** Fırtına e-posta tetik adları — üye alarmın bildirim günlüğünde görünür; ön yüz {@code MAIL_TRIGGER} eşler. */
     public static final String TRIGGER_STORM_INITIAL = "STORM_INITIAL";
     public static final String TRIGGER_STORM_REALERT = "STORM_REALERT";
@@ -134,7 +136,7 @@ public class StormService {
 
     /** Sessiz pencere ayarı: son üye katılımından bu kadar dakika sonra yeni üye gelmediyse fırtına mühürlenir. */
     public static final String KEY_QUIET = "site.monitor.storm.quiet-minutes";
-    public static final int QUIET_DEFAULT = 30, QUIET_MIN = 5, QUIET_MAX = 1440;
+    public static final int QUIET_DEFAULT = 5, QUIET_MIN = 5, QUIET_MAX = 1440;
 
     public enum StormAction {
         /** Storm devrede değil / eşik altı → bireysel alarm gönder (bugünkü davranış, sıfır gecikme). */
@@ -238,6 +240,7 @@ public class StormService {
                 }
                 event.setStormId(storm.getId());
                 bumpMemberCount(storm);
+                recordMember(storm.getId(), event.getId(), AlertStormMember.JOIN_ATTACH);
                 log.info("🌩 Storm üyesi eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
                         event.getDomain(), event.getAlertType(), storm.getId());
                 return StormAction.SUPPRESSED;
@@ -261,10 +264,13 @@ public class StormService {
             }
             int threshold = computeThreshold(teamId);
             // Eşik FARKLI HEDEF sayısıyla (O-4): aynı host'un ACCESSIBILITY + PORT_DOWN + DNS_FAILURE alarmları tek hedeftir.
-            if (distinctTargets(peers) < threshold) return StormAction.SEND_INDIVIDUAL;
+            int targets = distinctTargets(peers);
+            if (targets < threshold) return StormAction.SEND_INDIVIDUAL;
 
-            // 3) Atomik terfi — scope-başına-tek-aktif UNIQUE; kazanan (rows==1) toplu alarm gönderir.
-            boolean created = insertStormIfAbsent(scopeKey, scopeType, peers);
+            // 3) Atomik terfi — scope-başına-tek-aktif UNIQUE; kazanan (rows==1) toplu alarm gönderir. Açılış anlık
+            //    görüntüsü (takım, eşik, pencere, hedef sayısı, tetikleyen) AYNI INSERT'te yazılır (2026-10-01).
+            boolean created = insertStormIfAbsent(scopeKey, scopeType, peers,
+                    new OpenSnapshot(teamId, group, threshold, targets, event.getId()));
             Optional<AlertStorm> stormOpt = stormRepo.findByScopeKeyAndResolvedFalse(scopeKey);
             if (stormOpt.isEmpty()) {
                 log.warn("Storm terfi sonrası aktif storm bulunamadı ({}) — bireysel gönderiliyor", scopeKey);
@@ -282,6 +288,8 @@ public class StormService {
             linkPeers(peers, storm.getId(), event.getId());
 
             if (created) {
+                // Gözlem: üyelik TEK toplu INSERT (açılış postası duyuru damgasını bu satırlara yazar).
+                recordMembers(storm.getId(), peers, event.getId(), AlertStormMember.JOIN_PEER);
                 sendStormAlert(storm, peers, "INITIAL");   // kazanan → TEK toplu alarm (senkron; worker thread)
                 log.warn("🌩🔴 ALARM FIRTINASI başladı — storm #{} [{}] {} monitör (eşik {}) — TEK toplu bildirim gönderildi",
                         storm.getId(), scopeKey, peers.size(), threshold);
@@ -346,19 +354,20 @@ public class StormService {
         // Histerezis de FARKLI HEDEF sayısıyla (O-4) — açılış kuralıyla aynı ölçü.
         long activeDown = distinctTargets(members.stream().filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList());
         storm.setMemberCount(members.size());
+        if (storm.getPeakTargets() == null || activeDown > storm.getPeakTargets()) storm.setPeakTargets((int) activeDown);
 
         int threshold = computeThreshold(teamOfScope(storm.getScopeKey()));
         int resolveFloor = Math.max(MIN_THRESHOLD, (threshold + 1) / 2);   // histerezis: eşiğin altı → flapping'i önler
 
         if (activeDown < resolveFloor) {
-            resolveStorm(storm, members, "histerezis tabanının altına inildi");
+            resolveStorm(storm, members, "histerezis tabanının altına inildi", RESOLVE_FLOOR);
             return;
         }
         // ÖMÜR SINIRI (2026-09-30): son üye katılımından quiet-minutes geçtiyse patlama bitmiştir — hâlâ-down üye
         // sayısı ne olursa olsun fırtına kapanır. Kalıcı başarısız izlemeler (asla iyileşmeyen sentetik testler)
         // fırtınayı süresiz açık tutup takımın sonraki tüm alarmlarını bildirimsiz bırakıyordu.
         if (isSealed(storm, now())) {
-            resolveStorm(storm, members, "sessiz pencere doldu (" + quietMinutes() + " dk yeni üye yok)");
+            resolveStorm(storm, members, "sessiz pencere doldu (" + quietMinutes() + " dk yeni üye yok)", RESOLVE_SEALED);
             return;
         }
         // Aktif storm sürüyor → günlük toplu re-alert (aynı-UTC-gün kuralı, bireysel re-alert'in aynası)
@@ -370,7 +379,14 @@ public class StormService {
             sendStormAlert(storm, stillDown, "DAILY_REALERT");
             log.info("🌩 Storm #{} günlük toplu re-alert gönderildi — {} monitör hâlâ down", storm.getId(), stillDown.size());
         } else {
-            stormRepo.save(storm);   // memberCount tazelemesini kalıcılaştır
+            // memberCount + tepe hedef tazelemesi — HEDEFLİ UPDATE (2026-10-01). Varlığın save'i, okuma ile yazma arasında
+            // katılan üyenin last_member_at damgasını eski değere geri sarıp fırtınayı erken mühürleyebiliyordu.
+            try {
+                jdbcTemplate.update("UPDATE alert_storms SET member_count = ?, peak_targets = GREATEST(COALESCE(peak_targets, 0), ?) "
+                        + "WHERE id = ? AND resolved = false", storm.getMemberCount(), (int) activeDown, storm.getId());
+            } catch (Exception ex) {
+                log.debug("Storm #{} sayaç tazelemesi yazılamadı: {}", storm.getId(), ex.getMessage());
+            }
         }
         // 7/24: fırtına SÜRERKEN katılan kapsanan izlemeler bireysel alarm üretmez (evaluate bastırır) — NOC'a toplu
         // güncelleme bu tik'ten gider (fırtına başına en çok ~5 dk'da bir; tekilleştirme ve aralık serviste).
@@ -393,25 +409,38 @@ public class StormService {
      * bir İLK bildirim gitmez; postadan SONRA katılan (hiç duyurulmamış) üye ise {@code lastReAlertAt=null} ile çözülür
      * ve ilk turda bireysel İLK bildirimini alır. Eskiden hepsi ikinci sınıftı: duyurulmuş üyeler de yeniden İLK alıyordu.
      */
-    private void resolveStorm(AlertStorm storm, List<AlertEvent> members, String reason) {
+    private void resolveStorm(AlertStorm storm, List<AlertEvent> members, String reason, String reasonCode) {
         List<AlertEvent> recovered = members.stream()
                 .filter(m -> Boolean.TRUE.equals(m.getResolved())).toList();
         List<AlertEvent> stillDown = members.stream()
                 .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
 
         String announcedAt = storm.getLastReAlertAt();
+        String closingAt = now();
+        List<Object[]> leaves = new ArrayList<>(members.size());
         int announced = 0, unannounced = 0;
         for (AlertEvent e : stillDown) {
             if (announcedInStorm(e, announcedAt)) {
-                if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), announcedAt) == 1) announced++;
-                else alertEventRepo.unlinkFromStorm(e.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK
+                if (alertEventRepo.releaseFromStormAsNotified(e.getId(), storm.getId(), announcedAt) == 1) {
+                    announced++;
+                    leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_NOTIFIED);
+                } else {
+                    alertEventRepo.unlinkFromStorm(e.getId());   // bağ değişmişse (yarış) güvenli taraf: bireysel İLK
+                    leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
+                }
             } else {
                 alertEventRepo.unlinkFromStorm(e.getId());   // koşullu — çözülmüş üyeyi diriltmeden bağı kaldır (M6)
+                leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
                 unannounced++;
             }
         }
+        for (AlertEvent e : recovered) {
+            leave(leaves, storm.getId(), e.getId(), e.getResolvedAt() != null ? e.getResolvedAt() : closingAt, AlertStormMember.LEAVE_RECOVERED);
+        }
+        flushLeaves(storm.getId(), leaves);
         storm.setResolved(true);
-        storm.setResolvedAt(now());
+        storm.setResolvedAt(closingAt);
+        storm.setResolveReason(reasonCode);
         stormRepo.save(storm);
 
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
@@ -496,11 +525,19 @@ public class StormService {
         for (AlertEvent e : alertEventRepo.findByStormId(storm.getId()))
             if (e.getId() != null && !stillDownIds.contains(e.getId())) recovered.add(e);
 
+        String closingAt = now();
+        List<Object[]> leaves = new ArrayList<>(stillDown.size() + recovered.size());
         for (AlertEvent e : stillDown) {
             alertEventRepo.unlinkFromStorm(e.getId());   // koşullu geri-bağlama (M6); sonraki sweep bireysel re-alert
+            leave(leaves, storm.getId(), e.getId(), closingAt, AlertStormMember.LEAVE_UNLINKED);
         }
+        for (AlertEvent e : recovered) {
+            leave(leaves, storm.getId(), e.getId(), e.getResolvedAt() != null ? e.getResolvedAt() : closingAt, AlertStormMember.LEAVE_RECOVERED);
+        }
+        flushLeaves(storm.getId(), leaves);
         storm.setResolved(true);
-        storm.setResolvedAt(now());
+        storm.setResolvedAt(closingAt);
+        storm.setResolveReason(RESOLVE_DISABLED);
         stormRepo.save(storm);
         if (!recovered.isEmpty()) sendStormRecovery(storm, recovered, stillDown);
         log.info("🌩 Storm #{} kapatıldı ({}) — {} kurtulan için toplu çözüm gitti, "
@@ -542,13 +579,17 @@ public class StormService {
             byScope.computeIfAbsent(teamScopeKey(m.getTeamId(), g), k -> new ArrayList<>()).add(m);
         }
         int moved = 0, released = 0;
+        List<Object[]> leaves = new ArrayList<>(stillDown.size());
         for (Map.Entry<String, List<AlertEvent>> e : byScope.entrySet()) {
             String key = e.getKey();
             List<AlertEvent> ms = e.getValue();
             AlertStorm target = null;
-            if (distinctTargets(ms) >= computeThreshold(teamOfScope(key))) {
+            int targetsNow = distinctTargets(ms);
+            int thresholdNow = computeThreshold(teamOfScope(key));
+            if (targetsNow >= thresholdNow) {
                 boolean created = insertStormIfAbsent(key,
-                        key.contains(GROUP_SCOPE_SEP) ? SCOPE_TYPE_TEAM_GROUP : SCOPE_TYPE_TEAM, ms);
+                        key.contains(GROUP_SCOPE_SEP) ? SCOPE_TYPE_TEAM_GROUP : SCOPE_TYPE_TEAM, ms,
+                        new OpenSnapshot(teamOfScope(key), groupOfScope(key), thresholdNow, targetsNow, null));
                 target = stormRepo.findByScopeKeyAndResolvedFalse(key).orElse(null);
                 if (target != null && created) {
                     target.setLastReAlertAt(notifiedAt);   // toplu tekrar kadansı eski postadan sürer (erken tekrar yok)
@@ -556,17 +597,31 @@ public class StormService {
                     // listesi ve 7/24 açılış kaydı bunu da sayar (D-b6) — sessiz taşıma 7/24'e yeni açılış postası atmaz.
                     target.setLegacyStormId(legacy.getId());
                     stormRepo.save(target);
+                    recordMembers(target.getId(), ms, null, AlertStormMember.JOIN_LEGACY);
+                    // Eski fırtına bu üyeleri zaten duyurmuştu — yeni fırtınada da "duyurulmuş" sayılır (erken tekrar yok).
+                    markAnnounced(target.getId(), ms, notifiedAt);
                 }
             }
+            String movedAt = now();
             for (AlertEvent m : ms) {
-                if (target != null && alertEventRepo.moveToStormIfOpen(m.getId(), legacy.getId(), target.getId()) == 1) moved++;
-                else { alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++; }
+                if (target != null && alertEventRepo.moveToStormIfOpen(m.getId(), legacy.getId(), target.getId()) == 1) {
+                    moved++;
+                    leave(leaves, legacy.getId(), m.getId(), movedAt, AlertStormMember.LEAVE_MOVED);
+                } else {
+                    alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++;
+                    leave(leaves, legacy.getId(), m.getId(), movedAt, AlertStormMember.LEAVE_RELEASED);
+                }
             }
         }
-        for (AlertEvent m : ownerless) { alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++; }
+        for (AlertEvent m : ownerless) {
+            alertEventRepo.releaseFromStormAsNotified(m.getId(), legacy.getId(), notifiedAt); released++;
+            leave(leaves, legacy.getId(), m.getId(), now(), AlertStormMember.LEAVE_RELEASED);
+        }
+        flushLeaves(legacy.getId(), leaves);
 
         legacy.setResolved(true);
         legacy.setResolvedAt(now());
+        legacy.setResolveReason(RESOLVE_LEGACY);
         stormRepo.save(legacy);
         // D-b7(a) (2026-09-29): kurtulanlar işlemin SONUNDA yeniden okunur. Üye listesi baştan okunduktan sonra, taşıma /
         // çözme sürerken izleme turu bir üyeyi çözebilir: bireysel çözüm e-postası "fırtına aktif" diye bastırılmıştı, üye
@@ -707,15 +762,27 @@ public class StormService {
 
     // ── Terfi / bağlama yardımcıları ──────────────────────────────────────────────
 
-    /** Scope-başına-tek-aktif kısmi UNIQUE indekse dayalı atomik terfi. rows==1 → biz oluşturduk (kazanan). */
-    private boolean insertStormIfAbsent(String scopeKey, String scopeType, List<AlertEvent> peers) {
+    /** Açılış anlık görüntüsü — fırtına satırına terfi INSERT'inde dondurulur (gözlem ekranı; 2026-10-01). */
+    record OpenSnapshot(Long teamId, String group, int threshold, int targets, Long triggerEventId) {}
+
+    /**
+     * Scope-başına-tek-aktif kısmi UNIQUE indekse dayalı atomik terfi. rows==1 → biz oluşturduk (kazanan).
+     * Anlık görüntü aynı cümlede yazılır (2026-10-01): eskiden ayrı bir UPDATE'ti — arada koşan yaşam döngüsü turu
+     * fırtınayı okuyup {@code save} ile geri yazınca takım / eşik / tetikleyen kolonları NULL'a dönebiliyordu; ek bir
+     * gidiş-dönüş de alarm gönderimini geciktiriyordu. İlk 7 bağ değişkeni (scope … last_member_at) sırası korunur.
+     */
+    private boolean insertStormIfAbsent(String scopeKey, String scopeType, List<AlertEvent> peers, OpenSnapshot snap) {
         String nowIso = now();
         String rootCause = commonRootCause(peers);
         try {
             int rows = jdbcTemplate.update(
-                    "INSERT INTO alert_storms(scope_key, scope_type, resolved, member_count, root_cause, created_at, last_re_alert_at, last_member_at) "
-                  + "VALUES(?, ?, false, ?, ?, ?, ?, ?) ON CONFLICT (scope_key) WHERE resolved = false DO NOTHING",
-                    scopeKey, scopeType, peers.size(), rootCause, nowIso, nowIso, nowIso);
+                    "INSERT INTO alert_storms(scope_key, scope_type, resolved, member_count, root_cause, created_at, last_re_alert_at, last_member_at, "
+                  + "team_id, group_name, threshold_unit, threshold_value, threshold_effective, window_minutes, quiet_minutes, "
+                  + "targets_at_open, peak_targets, trigger_event_id) "
+                  + "VALUES(?, ?, false, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (scope_key) WHERE resolved = false DO NOTHING",
+                    scopeKey, scopeType, peers.size(), rootCause, nowIso, nowIso, nowIso,
+                    snap.teamId(), snap.group(), thresholdUnit(), thresholdValue(), snap.threshold(), windowMinutes(), quietMinutes(),
+                    snap.targets(), snap.targets(), snap.triggerEventId());
             return rows == 1;
         } catch (Exception e) {
             log.warn("Storm terfi INSERT hatası ({}): {}", scopeKey, e.getMessage());
@@ -729,6 +796,143 @@ public class StormService {
             if (Objects.equals(p.getId(), skipId)) continue;                 // mevcut event → çağıran kaydeder
             if (Objects.equals(p.getStormId(), stormId)) continue;           // zaten bağlı
             alertEventRepo.linkToStormIfOpen(p.getId(), stormId);            // koşullu — çözülmüş peer'ı diriltmez (M6)
+        }
+    }
+
+    // ── Gözlem kaydı (2026-09-30) — hepsi null-güvenli ve try/catch'li: bildirim kararını asla düşürmez ─────────────
+    /** Kapanış nedeni kodları ({@code alert_storms.resolve_reason}); ön yüz {@code sf.reason.*} ile etiketler. */
+    public static final String RESOLVE_FLOOR = "FLOOR", RESOLVE_SEALED = "SEALED",
+            RESOLVE_DISABLED = "DISABLED", RESOLVE_LEGACY = "LEGACY_RETIRE";
+
+    /**
+     * Takım başına AKTİF izleme sayısı — TEK sorgu (2026-10-01, fırtına durum ekranı). {@link #totalActiveMonitorsForTeam}
+     * takım başına 10 COUNT çalıştırır; durum ekranı 30 sn'de bir tüm takımlar için soruyordu (40 takım → 400 sorgu).
+     * Kaynaklar ve kurallar {@code totalActiveMonitorsForTeam} ile birebir (Port/DNS yalnız bağımsız satır). 60 sn önbellek.
+     */
+    public static final String SQL_ACTIVE_BY_TEAM = "SELECT team_id, SUM(n) FROM ("
+            + "SELECT team_id, COUNT(*) AS n FROM certificate_inventory WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM http_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM keyword_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM ping_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM domain_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM port_monitors WHERE standalone = true AND active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM dns_monitors WHERE standalone = true AND active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM page_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM scripted_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + " UNION ALL SELECT team_id, COUNT(*) FROM pagespeed_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + ") x GROUP BY team_id";
+    private volatile Map<Long, Long> activeByTeam;
+    private volatile long activeByTeamAtMs;
+
+    public Map<Long, Long> activeMonitorsByTeam() {
+        Map<Long, Long> cur = activeByTeam;
+        long nowMs = System.currentTimeMillis();
+        if (cur != null && nowMs - activeByTeamAtMs < 60_000) return cur;
+        synchronized (this) {   // tek-uçuş: süresi dolunca eşzamanlı ekranlar aynı anda yeniden hesaplamaz
+            cur = activeByTeam;
+            if (cur != null && System.currentTimeMillis() - activeByTeamAtMs < 60_000) return cur;
+            try {
+                Map<Long, Long> out = new java.util.HashMap<>();
+                jdbcTemplate.query(SQL_ACTIVE_BY_TEAM, rs -> {
+                    long team = rs.getLong(1);
+                    if (!rs.wasNull()) out.put(team, rs.getLong(2));
+                });
+                activeByTeam = java.util.Collections.unmodifiableMap(out);
+                activeByTeamAtMs = System.currentTimeMillis();
+                return activeByTeam;
+            } catch (Exception e) {
+                log.debug("Takım başına aktif izleme sayısı okunamadı: {}", e.getMessage());
+                return cur != null ? cur : Map.of();
+            }
+        }
+    }
+
+    /** Etkin eşik — takım toplamı DIŞARIDAN verilir (durum ekranı; {@link #computeThreshold(Long)} ile aynı kural). */
+    public int thresholdForTotal(long teamTotal) {
+        if ("PERCENT".equals(thresholdUnit())) {
+            return Math.max(PERCENT_MIN_TARGETS, (int) Math.ceil((thresholdValue() / 100.0) * teamTotal));
+        }
+        return Math.max(MIN_THRESHOLD, thresholdValue());
+    }
+
+    /** Sayım penceresi (dk, 1–15) — durum ekranı aynı değeri gösterir. */
+    public int windowMinutes() { return clamp(appSettings.getInt(KEY_WINDOW, 5), 1, 15); }
+    /** Eşik birimi (COUNT | PERCENT) — durum ekranı. */
+    public String thresholdUnit() { return "PERCENT".equalsIgnoreCase(appSettings.getString(KEY_UNIT, "COUNT")) ? "PERCENT" : "COUNT"; }
+    /** Eşik ayar değeri (adet ya da yüzde) — durum ekranı. */
+    public int thresholdValue() { return appSettings.getInt(KEY_VALUE, 5); }
+
+    // Üyelik SQL'i (2026-10-01, performans): eskiden üye başına exists + INSERT + commit (açılışta 2N gidiş-dönüş, 100
+    // üyeli fırtınada ilk bildirim ~200 ms gecikiyordu) ve kapanışta üye başına UPDATE + commit vardı. Artık açılış tek
+    // JDBC batch, katılım tek cümle, duyuru tek UPDATE (IN parçaları), kapanış tek batch. Çakışma (aynı fırtına + alarm)
+    // UNIQUE ile sessizce yutulur — H2 (PostgreSQL modu) ve PostgreSQL ortak sözdizimi.
+    public static final String SQL_MEMBER_INSERT = "INSERT INTO alert_storm_members(storm_id, alert_event_id, joined_at, join_kind) "
+            + "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING";
+    public static final String SQL_MEMBER_LEFT = "UPDATE alert_storm_members SET left_at = ?, leave_kind = ? "
+            + "WHERE storm_id = ? AND alert_event_id = ? AND left_at IS NULL";
+    public static final String SQL_MEMBER_ANNOUNCED_PREFIX = "UPDATE alert_storm_members SET announced_at = ? "
+            + "WHERE storm_id = ? AND announced_at IS NULL AND alert_event_id IN (";
+    private static final int IN_CHUNK = 500;
+
+    /** Tek üye (fırtına sürerken katılım) — tek cümle, çakışma yutulur. */
+    private void recordMember(Long stormId, Long eventId, String joinKind) {
+        if (stormId == null || eventId == null) return;
+        try {
+            jdbcTemplate.update(SQL_MEMBER_INSERT, stormId, eventId, now(), joinKind);
+        } catch (Exception e) {
+            log.debug("Storm #{} üyelik kaydı yazılamadı (alarm {}): {}", stormId, eventId, e.getMessage());
+        }
+    }
+
+    /** Açılış / taşıma üyeleri — TEK batch: {@code triggerId} olan alarm TRIGGER, diğerleri {@code kind}. */
+    private void recordMembers(Long stormId, List<AlertEvent> events, Long triggerId, String kind) {
+        if (stormId == null || events == null || events.isEmpty()) return;
+        String at = now();
+        List<Object[]> rows = new ArrayList<>(events.size());
+        Set<Long> seen = new java.util.HashSet<>();
+        for (AlertEvent e : events) {
+            if (e == null || e.getId() == null || !seen.add(e.getId())) continue;
+            rows.add(new Object[]{stormId, e.getId(), at,
+                    triggerId != null && triggerId.equals(e.getId()) ? AlertStormMember.JOIN_TRIGGER : kind});
+        }
+        if (rows.isEmpty()) return;
+        try {
+            jdbcTemplate.batchUpdate(SQL_MEMBER_INSERT, rows);
+        } catch (Exception e) {
+            log.debug("Storm #{} üyelik kayıtları yazılamadı ({} üye): {}", stormId, rows.size(), e.getMessage());
+        }
+    }
+
+    /** Toplu posta gitti: listelenen üyelerin ilk duyuru anı — tek UPDATE (IN {@value #IN_CHUNK}'lük parçalar). */
+    private void markAnnounced(Long stormId, List<AlertEvent> events, String at) {
+        if (stormId == null || events == null || events.isEmpty()) return;
+        List<Long> ids = new ArrayList<>(events.size());
+        for (AlertEvent e : events) if (e != null && e.getId() != null) ids.add(e.getId());
+        String stamp = at != null ? at : now();
+        for (int i = 0; i < ids.size(); i += IN_CHUNK) {
+            List<Long> part = ids.subList(i, Math.min(ids.size(), i + IN_CHUNK));
+            Object[] args = new Object[part.size() + 2];
+            args[0] = stamp; args[1] = stormId;
+            for (int j = 0; j < part.size(); j++) args[j + 2] = part.get(j);
+            try {
+                jdbcTemplate.update(SQL_MEMBER_ANNOUNCED_PREFIX + String.join(",", java.util.Collections.nCopies(part.size(), "?")) + ")", args);
+            } catch (Exception e) {
+                log.debug("Storm #{} duyuru damgası yazılamadı: {}", stormId, e.getMessage());
+            }
+        }
+    }
+
+    /** Ayrılış kaydı biriktirici — kapanış yollarında üye başına satır, sonunda TEK batch ({@link #flushLeaves}). */
+    private static void leave(List<Object[]> acc, Long stormId, Long eventId, String at, String kind) {
+        if (stormId != null && eventId != null) acc.add(new Object[]{at, kind, stormId, eventId});
+    }
+
+    private void flushLeaves(Long stormId, List<Object[]> acc) {
+        if (acc.isEmpty()) return;
+        try {
+            jdbcTemplate.batchUpdate(SQL_MEMBER_LEFT, acc);
+        } catch (Exception e) {
+            log.debug("Storm #{} üye ayrılışları yazılamadı ({} satır): {}", stormId, acc.size(), e.getMessage());
         }
     }
 
@@ -869,6 +1073,7 @@ public class StormService {
             storm.setMemberCount(downMembers.size());
             storm.setLastReAlertAt(now());
             stormRepo.save(storm);
+            markAnnounced(storm.getId(), downMembers, storm.getLastReAlertAt());
         } catch (Exception e) {
             log.warn("Storm #{} toplu alarm gönderilemedi: {}", storm.getId(), e.getMessage());
         }
@@ -1230,7 +1435,7 @@ public class StormService {
         };
     }
 
-    private boolean isEnabled() {
+    public boolean isEnabled() {
         return appSettings.getBoolean(KEY_ENABLED, true);   // default AÇIK
     }
 

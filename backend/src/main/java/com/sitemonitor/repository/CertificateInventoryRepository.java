@@ -14,6 +14,14 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByDomainIn(Collection<String> domains);
 
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
+    /** Aktif envanterin alan adları (ham; normalizasyon çağıranda) — İzleme Panosu envanter-pasif kuralı (2026-10-01,
+     *  performans: tam entity yerine tek sütun). */
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.active = true AND c.domain IS NOT NULL")
+    List<String> findActiveDomains();
+    /** Aktif envanter (alan adı, SY takımı) çiftleri — alarm gürültü analizinin kapsam/takım eşlemesi (2026-10-01,
+     *  performans: tam entity yerine iki sütun). Sütunlar: {@code [domain, teamId]}. */
+    @Query("SELECT c.domain, c.teamId FROM CertificateInventory c WHERE c.active = true")
+    List<Object[]> findActiveDomainTeams();
     List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     /** Takımın UG olarak bağlı olduğu TÜM kayıtlar (pasif/silinmiş dahil) — takım taşıma/silme etkisi (2026-09-28). */

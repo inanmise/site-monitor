@@ -154,6 +154,45 @@ class LdapMembershipServiceTest {
     }
 
     @Test
+    @DisplayName("check: fields — 11 AD alanı kanonik sırada, kilit + AD/uygulama farkı; müdür satırı sicillerden, müdürlük ad kısmından")
+    void check_listsFieldsWithLockAndDiff() {
+        AppUser u = x(10L);
+        u.setDisplayName("Kullanıcı X");
+        u.setEmail("x@example.com");
+        u.setEmployeeId("100003");
+        u.setTitle("Elle Ünvan");          // elle yazıldı → kilitli
+        u.setPhone("+90 555 000 00 00");   // AD farklı ama kilitsiz → girişte AD değeri gelir
+        u.setMudurlukName("Teknoloji");
+        u.setManagerSicil("100004");
+        u.setLockedFields("title");
+        Map<String, Object> ad = new java.util.HashMap<>();
+        ad.put("cn", "100003");
+        ad.put("displayName", "Kullanıcı X");
+        ad.put("mail", "X@EXAMPLE.COM");   // yalnız büyük/küçük harf → aynı sayılır
+        ad.put("title", "AD Ünvan");
+        ad.put("mobile", "+90 555 111 11 11");
+        ad.put("extensionAttribute5", "42;Teknoloji");
+        ad.put("extensionAttribute4", "100004");
+        when(directory.findUser("KULLANICI_X")).thenReturn(Optional.of(ad));
+
+        Map<String, Object> c = service.check(u);
+
+        @SuppressWarnings("unchecked") List<Map<String, Object>> fields = (List<Map<String, Object>>) c.get("fields");
+        assertThat(fields).extracting(f -> f.get("key")).containsExactlyElementsOf(com.sitemonitor.model.LdapFieldLocks.FIELDS);
+        Map<String, Map<String, Object>> byKey = new java.util.HashMap<>();
+        for (Map<String, Object> f : fields) byKey.put((String) f.get("key"), f);
+        assertThat(byKey.get("title")).containsEntry("ad", "AD Ünvan").containsEntry("local", "Elle Ünvan")
+                .containsEntry("locked", true).containsEntry("differs", true);
+        assertThat(byKey.get("phone")).containsEntry("locked", false).containsEntry("differs", true);
+        assertThat(byKey.get("email")).containsEntry("locked", false).containsEntry("differs", false);
+        assertThat(byKey.get("mudurluk")).containsEntry("ad", "Teknoloji").containsEntry("local", "Teknoloji").containsEntry("differs", false);
+        assertThat(byKey.get("manager")).containsEntry("ad", "100004").containsEntry("local", "100004").containsEntry("differs", false);
+        assertThat(byKey.get("department")).containsEntry("ad", null).containsEntry("local", null).containsEntry("differs", false);
+        assertThat(fields).allSatisfy(f -> assertThat(f.keySet()).containsExactly("key", "ad", "local", "locked", "differs"));
+        assertThat(c.get("locked_fields")).isEqualTo(List.of("title"));
+    }
+
+    @Test
     @DisplayName("check: yerel hesap AD'ye sorulmaz; AD'de bulunamayan kullanıcı found=false döner")
     void check_localOrMissing() {
         AppUser local = x(10L);

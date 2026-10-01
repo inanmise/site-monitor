@@ -116,6 +116,9 @@ public class AlertEvent {
     // ── Transient enrichment (populated by AdminController, not persisted) ──
     @Transient private String  syTeamName;
     @Transient private String  ugTeamName;
+    /** Alarmın DAMGALI takımının adı ({@code teamId} → {@code teams.name}; liste ucunda toplu çözülür, 2026-10-01: Alarm
+     *  Geçmişi'nin Takım sütunu — istemci takım listesi kapsamlı kullanıcıda / 7/24 operatöründe eksik olabilir). */
+    @Transient private String  teamName;
     /** Takım rozeti (tıklanabilir) için kimlik — adla değil id ile modal açılsın. */
     @Transient private Long    syTeamId;
     @Transient private Long    ugTeamId;

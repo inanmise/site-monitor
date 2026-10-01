@@ -58,6 +58,9 @@ const USERS = [
   // Takım kilidi (2026-09-18): admin üyeliği elle değiştirdi → LDAP girişi ezmez; rozet + "AD'ye geri ver"
   { id: 4, username: 'cokTakim', display_name: 'Çok Takım', email: 'ct@example.com',
     system_role: 'USER', team_ids: [5, 9], active: true, team_locked: true },
+  // LDAP alan kilidi (2026-09-30): e-posta + ünvan elle düzenlendi → düzenleme formunda kilit ipucu
+  { id: 5, username: 'adkisi', display_name: 'AD Kişi', email: 'ad@example.com', system_role: 'USER', team_ids: [5], active: true,
+    auth_source: 'LDAP', title: 'Elle Ünvan', locked_field_keys: ['email', 'title'] },
 ]
 
 const renderUm = (props = {}) => render(
@@ -220,6 +223,31 @@ describe('UserManager', () => {
     await openRowMenu('cokTakim')
     fireEvent.click(await screen.findByText(/Takımları AD'ye geri ver|Return teams to AD/i))
     await waitFor(() => expect(api.admin.unlockUserTeams).toHaveBeenCalledWith(4))
+  })
+
+  it('LDAP kullanıcısının düzenleme formunda AD alanlarının altında kilit / "AD\'den gelir" ipucu; yerel kullanıcıda ipucu yok', async () => {
+    renderUm()
+    await openRowMenu('adkisi')
+    fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    let dlg = await screen.findByRole('dialog')
+    // Kilitli alan rozeti (data-lock="field" + data-field), form sırasıyla: e-posta önce, ünvan sonra
+    expect([...dlg.querySelectorAll('[data-lock="field"]')].map((e) => e.getAttribute('data-field'))).toEqual(['email', 'title'])
+    expect(within(dlg).getAllByText(/Kilitli: elle düzenlendi|Locked: edited by hand/)).toHaveLength(2)
+    // Kilitsiz AD alanları (11 − 2): görünen ad, sicil, ad, soyad, telefon, departman, seviye, müdürlük, müdür
+    expect(within(dlg).getAllByText(/AD'den gelir — düzenlersen kilitlenir|Comes from AD — editing it locks the field/)).toHaveLength(9)
+    // İpucu alana aria-describedby ile bağlı (ekran okuyucu okur)
+    const emailInput = dlg.querySelector('input[value="ad@example.com"]')
+    expect(emailInput).toHaveAttribute('aria-describedby')
+    expect(document.getElementById(emailInput.getAttribute('aria-describedby').split(' ')[0])).toHaveTextContent(/Kilitli|Locked/)
+    fireEvent.click(within(dlg).getByRole('button', { name: /^İptal$|^Cancel$/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await openRowMenu('ali')                       // yerel hesap
+    fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    dlg = await screen.findByRole('dialog')
+    expect(dlg.querySelector('[data-lock="field"]')).toBeNull()
+    expect(within(dlg).queryByText(/AD'den gelir|Comes from AD/)).toBeNull()
+    expect(within(dlg).queryByText(/Kilitli: elle düzenlendi|Locked: edited by hand/)).toBeNull()
   })
 
   it('kaydetme reddedilirse modal AÇIK kalır ve hata gösterilir', async () => {

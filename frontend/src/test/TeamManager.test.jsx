@@ -138,6 +138,74 @@ describe('TeamManager — business-card members', () => {
   })
 })
 
+describe('TeamManager — Üyeler sekmesinden kullanıcı detayı (2026-09-30, üst üste açılan Sheet)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getTeams.mockResolvedValue({ success: true, data: sampleTeams })
+    api.admin.getUsers.mockResolvedValue({ success: true, data: sampleMembers })
+    api.admin.getTeamUsers.mockResolvedValue({ success: true, data: sampleMembers })
+  })
+
+  const teamBadge = (name) => screen.getAllByRole('button', { name: new RegExp(name) })
+    .find(b => b.getAttribute('data-slot') === 'team-badge')
+  const openMembers = async () => {
+    fireEvent.click(teamBadge('Payments'))
+    await waitFor(() => expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull())
+  }
+
+  it('yönetici: satırda "Kullanıcı detayını aç" ikonu + ad düğmesi; tıklayınca detay Sheet\'i O üyeyle takım penceresinin ÜSTÜNDE açılır (arama ucu çağrılmaz — satır tam kayıt)', async () => {
+    render(<TeamManager systemRole="ADMIN" globalAdmin onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    await openMembers()
+    const icon = document.querySelector('[data-slot="team-member-view"]')
+    expect(icon).not.toBeNull()
+    expect(icon.getAttribute('aria-label')).toMatch(/Ali V — (Kullanıcı detayını aç|Open user details)/)
+    expect(document.querySelector('[data-slot="team-member-view-name"]')).not.toBeNull()
+    fireEvent.click(icon)
+    const sheet = await screen.findByTestId('user-detail')
+    expect(sheet.getAttribute('data-user-id')).toBe('7')
+    expect(sheet.getAttribute('data-stacked')).toBe('true')
+    expect(api.admin.searchUsers).not.toHaveBeenCalled()
+    // Takım penceresi hâlâ altta açık
+    expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull()
+  })
+
+  it('Escape yalnız üstteki detay katmanını kapatır; takım üyeleri penceresi açık kalır', async () => {
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    await openMembers()
+    fireEvent.click(document.querySelector('[data-slot="team-member-view-name"]'))
+    await screen.findByTestId('user-detail')
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('user-detail')).toBeNull())
+    expect(document.querySelector('[data-slot="team-member-card"]')).not.toBeNull()
+    expect(api.admin.getTeamUsers).toHaveBeenCalledTimes(1)   // takım penceresi yeniden açılmadı/yüklenmedi
+  })
+
+  it('kısmi satır (beyaz-liste projeksiyonu, sistem rolü yok) → tam kayıt MEVCUT arama ucundan çekilir', async () => {
+    api.admin.getUsers.mockResolvedValue({ success: true, data: [] })
+    api.admin.getTeamUsers.mockResolvedValue({ success: true, data: [{ id: 7, username: 'ali', display_name: 'Ali V', email: 'ali@example.com' }] })
+    api.admin.searchUsers.mockResolvedValue({ success: true, data: [{ ...sampleMembers[0], title: 'Uzman' }], total: 1 })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    await openMembers()
+    fireEvent.click(document.querySelector('[data-slot="team-member-view"]'))
+    const sheet = await screen.findByTestId('user-detail')
+    expect(api.admin.searchUsers).toHaveBeenCalledWith(expect.objectContaining({ q: 'ali' }))
+    expect(sheet.getAttribute('data-user-id')).toBe('7')
+    expect(sheet.textContent).toContain('Uzman')
+  })
+
+  it('sıradan kullanıcı: detay düğmesi yok, ad düz metin', async () => {
+    render(<TeamManager onTeamsChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText('Payments')).toBeDefined())
+    await openMembers()
+    expect(document.querySelector('[data-slot="team-member-view"]')).toBeNull()
+    expect(document.querySelector('[data-slot="team-member-view-name"]')).toBeNull()
+    expect(document.querySelector('[data-slot="team-member-name"]').tagName).toBe('SPAN')
+  })
+})
+
 describe('TeamManager — haftalık e-posta anahtarları', () => {
   const teams = [
     { id: 1, name: 'Payments', active: true, leader_id: 7, email: 't@ex.com',

@@ -1,22 +1,20 @@
 package com.sitemonitor.service;
 
-import com.sitemonitor.model.AlertEvent;
-import com.sitemonitor.model.Team;
 import com.sitemonitor.repository.AlertEventRepository;
-import com.sitemonitor.repository.TeamRepository;
+import com.sitemonitor.util.TtlMemo;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * İzleme menüsü rozetleri (2026-09-30): kullanıcının görüş kapsamındaki AÇIK alarmların izleme türü (menü sekmesi)
@@ -24,21 +22,47 @@ import java.util.Set;
  * özet kartı için). Kapsam kuralı Alarm Geçmişi listesiyle AYNI ({@code AdminController.listAlerts}: global görüntüleyici /
  * 7-24 operatörü tümünü, diğerleri {@code viewTeamIds}; alarmın takımı damgadan ya da envanterin SY/UG'sinden).
  *
- * <p>Sayılar gruplu sorgudan ({@code countFilteredByType}) — kesin; seviye kırılımı ve örnek satırlar en yeni
- * {@value #SAMPLE} açık alarmdan (tek sayfa) — {@code sampled=true} ise kırılım örneklemdir. Menü her dakika yoklar;
- * iki sorgu, indeksli, küçük.
+ * <p><b>Performans (2026-10-01):</b> uç HER oturum açmış kullanıcı tarafından dakikada bir yoklanır. Eskiden çağrı başına
+ * 3–4 sorgu (tip sayımı + 200 tam {@code AlertEvent} entity'si + sayfa COUNT'u + takım adları) atılır, seviye kırılımı
+ * örneklenirdi ({@code sampled}). Şimdi:
+ * <ol>
+ *   <li>TEK gruplu sorgu ({@code countOpenByTypeLevelAck}: tip × seviye × sahiplenildi) → sayı, seviye kırılımı ve
+ *       sahiplenilmemiş KESİN; {@code sampled} alanı korunur, hep {@code false}.</li>
+ *   <li>Özet kartı satırları dar projeksiyondan ({@code findOpenSummaryItems}: 9 sütun, takım adı LEFT JOIN, COUNT yok) —
+ *       en yeni {@value #ITEMS_WINDOW} açık alarm; pencere doluyken örneği {@value #TOP}'ten az kalan sekme (başka sekmenin
+ *       yeni alarmları pencereyi doldurduysa) kendi tipleriyle ayrıca tamamlanır (nadir).</li>
+ *   <li>{@link #cached} — kapsam anahtarı başına {@code site.monitor.open-alerts.cache-ms} (varsayılan 15 sn) bellek;
+ *       {@code fresh=true} (alarm eylemi sonrası, {@code ?fresh=1}) belleği atlar ve tazeler.</li>
+ * </ol>
  */
 @Service
 @RequiredArgsConstructor
 public class OpenAlertsSummaryService {
 
-    /** Örnek satır sayfası (seviye kırılımı + son alarmlar). */
-    static final int SAMPLE = 200;
     /** Sekme başına özet kartında gösterilen en yeni alarm sayısı. */
     static final int TOP = 5;
+    /** Özet kartı satırları için okunan en yeni açık alarm penceresi (dar projeksiyon). */
+    static final int ITEMS_WINDOW = 60;
+    /** Bellek anahtar tavanı (kapsam kombinasyonu) — aşılınca süresi dolanlar, yine doluysa tümü atılır. */
+    static final int MEMO_MAX_KEYS = 500;
 
     private final AlertEventRepository alertEventRepo;
-    private final TeamRepository teamRepo;
+
+    /** Sunucu tarafı bellek penceresi (ms); 0 → kapalı (birim testlerinde {@code new} ile kurulunca varsayılan). */
+    @Value("${site.monitor.open-alerts.cache-ms:15000}")
+    long cacheMs;
+
+    private final TtlMemo<Map<String, Object>> memo = new TtlMemo<>(MEMO_MAX_KEYS);
+
+    /**
+     * Denetleyici girişi: {@link #build} sonucunu görüş kapsamı anahtarı ({@code "ALL"} / sıralı takım id'leri) başına
+     * {@link #cacheMs} boyunca paylaşır. {@code fresh=true} belleği atlar ve yeni sonucu yazar. Dönen harita PAYLAŞILIR —
+     * çağıran değiştirmez (üst düzeyi kopyalar).
+     */
+    public Map<String, Object> cached(boolean seesAll, List<Long> viewTeamIds, boolean fresh) {
+        if (!seesAll && (viewTeamIds == null || viewTeamIds.isEmpty())) return build(false, viewTeamIds);   // sorgusuz boş
+        return memo.get(TtlMemo.scopeKey(seesAll, viewTeamIds), cacheMs, fresh, () -> build(seesAll, viewTeamIds));
+    }
 
     /**
      * @param seesAll     global görüntüleyici / 7-24 operatörü — kapsam süzgeci yok
@@ -50,46 +74,59 @@ public class OpenAlertsSummaryService {
         for (String type : MonitorTypeCatalog.ORDER) tabs.put(type, emptyTab());
         out.put("tabs", tabs);
         out.put("total", 0L);
-        out.put("sampled", false);
+        out.put("sampled", false);   // 2026-10-01: kırılım artık kesin — alan geriye uyum için hep false
 
         boolean scoped = !seesAll;
         if (scoped && (viewTeamIds == null || viewTeamIds.isEmpty())) return out;   // kapsamsız → hiçbir alarm
         List<Long> scopeList = scoped ? viewTeamIds : List.of(-1L);
 
+        // 1) Kesin sayılar: tip × seviye × sahiplenildi (tek gruplu sorgu)
         long total = 0;
-        for (Object[] row : alertEventRepo.countFilteredByType(false, null, null, null, null, null, scoped, scopeList)) {
-            if (row == null || row.length < 2 || row[0] == null) continue;
-            String family = MonitorTypeCatalog.typeOfAlert(String.valueOf(row[0]));
-            long n = row[1] instanceof Number num ? num.longValue() : 0L;
+        Map<String, Set<String>> typesByFamily = new LinkedHashMap<>();
+        for (Object[] row : alertEventRepo.countOpenByTypeLevelAck(scoped, scopeList)) {
+            if (row == null || row.length < 4 || row[0] == null) continue;
+            String alertType = String.valueOf(row[0]);
+            String family = MonitorTypeCatalog.typeOfAlert(alertType);
+            long n = row[3] instanceof Number num ? num.longValue() : 0L;
             if (family == null || n <= 0) continue;
             Map<String, Object> tab = tabs.computeIfAbsent(family, k -> emptyTab());
             tab.put("count", ((Number) tab.get("count")).longValue() + n);
+            @SuppressWarnings("unchecked") Map<String, Long> levels = (Map<String, Long>) tab.get("levels");
+            levels.merge(levelKey(row[1] == null ? null : String.valueOf(row[1])), n, Long::sum);
+            if (!Boolean.TRUE.equals(row[2])) tab.put("unacked", ((Number) tab.get("unacked")).longValue() + n);
+            typesByFamily.computeIfAbsent(family, k -> new TreeSet<>()).add(alertType);
             total += n;
         }
         out.put("total", total);
         if (total == 0) return out;
 
-        List<AlertEvent> sample = alertEventRepo.findFiltered(false, null, null, null, null, null, null,
-                scoped, scopeList, PageRequest.of(0, SAMPLE, Sort.by(Sort.Direction.DESC, "createdAt"))).getContent();
-        out.put("sampled", total > sample.size());
-
-        Set<Long> teamIds = new HashSet<>();
-        for (AlertEvent e : sample) if (e.getTeamId() != null) teamIds.add(e.getTeamId());
-        Map<Long, String> teamNames = new HashMap<>();
-        if (!teamIds.isEmpty()) {
-            for (Team t : teamRepo.findAllById(teamIds)) if (t != null && t.getId() != null) teamNames.put(t.getId(), t.getName());
-        }
-
-        for (AlertEvent e : sample) {
-            String family = MonitorTypeCatalog.typeOfAlert(e.getAlertType());
+        // 2) Özet kartı satırları: en yeni açık alarmlar (dar projeksiyon), sekmeye dağıtılır
+        Set<String> knownTypes = new LinkedHashSet<>();
+        for (Set<String> s : typesByFamily.values()) knownTypes.addAll(s);
+        List<Object[]> window = alertEventRepo.findOpenSummaryItems(knownTypes, scoped, scopeList, PageRequest.of(0, ITEMS_WINDOW));
+        Map<String, List<Object[]>> byFamily = new LinkedHashMap<>();
+        for (Object[] r : window) {
+            String family = r == null || r.length < 9 || r[2] == null ? null : MonitorTypeCatalog.typeOfAlert(String.valueOf(r[2]));
             if (family == null) continue;
-            Map<String, Object> tab = tabs.computeIfAbsent(family, k -> emptyTab());
-            @SuppressWarnings("unchecked") Map<String, Long> levels = (Map<String, Long>) tab.get("levels");
-            String lvl = levelKey(e.getAlertLevel());
-            levels.merge(lvl, 1L, Long::sum);
-            if (!Boolean.TRUE.equals(e.getAcknowledged())) tab.put("unacked", ((Number) tab.get("unacked")).longValue() + 1);
-            @SuppressWarnings("unchecked") List<Map<String, Object>> items = (List<Map<String, Object>>) tab.get("items");
-            if (items.size() < TOP) items.add(item(e, teamNames.get(e.getTeamId())));
+            List<Object[]> l = byFamily.computeIfAbsent(family, k -> new ArrayList<>());
+            if (l.size() < TOP) l.add(r);
+        }
+        // Pencere doluyken örneği eksik kalan sekme (başka sekmenin yeni alarmları pencereyi doldurdu) → kendi tipleriyle tamamla
+        if (window.size() >= ITEMS_WINDOW) {
+            for (Map.Entry<String, Set<String>> en : typesByFamily.entrySet()) {
+                long count = ((Number) tabs.get(en.getKey()).get("count")).longValue();
+                int got = byFamily.getOrDefault(en.getKey(), List.of()).size();
+                if (got >= TOP || got >= count) continue;
+                List<Object[]> own = new ArrayList<>();
+                for (Object[] r : alertEventRepo.findOpenSummaryItems(en.getValue(), scoped, scopeList, PageRequest.of(0, TOP))) {
+                    if (r != null && r.length >= 9 && own.size() < TOP) own.add(r);
+                }
+                byFamily.put(en.getKey(), own);
+            }
+        }
+        for (Map.Entry<String, List<Object[]>> en : byFamily.entrySet()) {
+            @SuppressWarnings("unchecked") List<Map<String, Object>> items = (List<Map<String, Object>>) tabs.get(en.getKey()).get("items");
+            for (Object[] r : en.getValue()) items.add(item(r));
         }
         return out;
     }
@@ -115,17 +152,22 @@ public class OpenAlertsSummaryService {
         };
     }
 
-    private static Map<String, Object> item(AlertEvent e, String teamName) {
+    /** Projeksiyon satırı ({@code findOpenSummaryItems} sütun sırası) → özet kartı öğesi (alan adları DEĞİŞMEDİ). */
+    private static Map<String, Object> item(Object[] r) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", e.getId());
-        m.put("domain", e.getDomain());
-        m.put("alert_type", e.getAlertType());
-        m.put("alert_level", e.getAlertLevel());
-        m.put("created_at", e.getCreatedAt());
-        m.put("acknowledged", Boolean.TRUE.equals(e.getAcknowledged()));
-        m.put("team_id", e.getTeamId());
-        m.put("team_name", teamName);
-        m.put("storm_id", e.getStormId());
+        m.put("id", asLong(r[0]));
+        m.put("domain", str(r[1]));
+        m.put("alert_type", str(r[2]));
+        m.put("alert_level", str(r[3]));
+        m.put("created_at", str(r[4]));
+        m.put("acknowledged", Boolean.TRUE.equals(r[5]));
+        m.put("team_id", asLong(r[6]));
+        m.put("team_name", str(r[8]));
+        m.put("storm_id", asLong(r[7]));
         return m;
     }
+
+    private static Long asLong(Object v) { return v instanceof Number n ? n.longValue() : null; }
+
+    private static String str(Object v) { return v == null ? null : String.valueOf(v); }
 }

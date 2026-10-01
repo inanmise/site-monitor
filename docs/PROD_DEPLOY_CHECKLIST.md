@@ -231,6 +231,10 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
 - [ ] Şema yamaları: `kubectl logs -n "$NS" "$DEPLOY" | grep -E 'Schema patch (applied|skipped)'` —
       `applied` bu sürümün eklediklerini listeler; `skipped` satırları (DEBUG'ta görünür) tek tek okunur,
       beklenmeyen bir SQL hatası varsa geri almayı düşünün.
+- [ ] Eşzamanlı kurulan indeksler geçerli mi (`CREATE INDEX CONCURRENTLY` — `idx_ae_created_at`, `idx_push_dedupe`; yarıda
+      kalan derleme INVALID indeks bırakır ve `IF NOT EXISTS` onu bir daha kurmaz):
+      `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE NOT i.indisvalid;` → boş olmalı.
+      Satır dönerse: `DROP INDEX CONCURRENTLY <ad>;` ve pod'u yeniden başlatın (yama indeksi yeniden kurar).
 
 ### Duman testi (sırları da çözdürür)
 - [ ] Yerel admin girişi + bir LDAP kullanıcısı girişi; Ayarlar → LDAP test-bind.

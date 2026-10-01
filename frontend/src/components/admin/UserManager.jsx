@@ -124,7 +124,17 @@ function UserKpi({ kpiKey, icon: Icon, label, value, sub, tone, active = false, 
   )
 }
 
-export default function UserManager({ systemRole, ownTeamId, currentUsername, teams }) {
+/**
+ * Düzenleme formu alanı → LDAP alan-kilidi anahtarı (backend LdapFieldLocks.FIELDS; müdürlük ad+kimlik tek kilit,
+ * müdür sicil+bağ tek kilit). Formda olmayan alan (fotoğraf) kilit konusu değil.
+ */
+const FORM_LOCK_KEY = {
+  display_name: 'display_name', email: 'email', employee_id: 'employee_id', first_name: 'first_name', last_name: 'last_name',
+  title: 'title', phone: 'phone', department: 'department', company_level: 'company_level', mudurluk_name: 'mudurluk',
+  manager_sicil: 'manager',
+}
+
+export default function UserManager({ systemRole, ownTeamId, currentUsername, teams, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
@@ -380,9 +390,27 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   const warn = (text) => <span className="text-xs text-warning">{text}</span>
   const editingLocked = modal !== null && modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))
+  // LDAP alan kilidi (2026-09-30): AD kaynaklı alanın altında durum ipucu — kilitliyse "elle düzenlendi, AD ezmez",
+  // değilse "AD'den gelir, düzenlersen kilitlenir". Yalnız LDAP hesabının düzenlemesinde; kayıt davranışı değişmez
+  // (kilit sunucuda, alan GERÇEKTEN değişince konur).
+  const editingLdap = modal !== null && modal !== 'add' && modal?.auth_source === 'LDAP'
+  const lockedKeys = new Set(editingLdap ? (modal.locked_field_keys || []) : [])
+  const adHint = (formKey) => {
+    const lockKey = FORM_LOCK_KEY[formKey]
+    if (!editingLdap || !lockKey) return undefined
+    if (!lockedKeys.has(lockKey)) return t('usr.fieldFromAdHint')
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <Badge variant="warning" data-lock="field" data-field={lockKey} className="gap-1 px-1.5 py-0 text-[11px]">
+          <Lock aria-hidden="true" className="size-3" />{t('usr.fieldLockedBadge')}
+        </Badge>
+        {t('usr.fieldLockedHint')}
+      </span>
+    )
+  }
   const profileField = (key, labelKey) => (
-    <Field label={t(labelKey)}>
-      {({ id }) => <Input id={id} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />}
+    <Field label={t(labelKey)} hint={adHint(key)} hintTone={lockedKeys.has(FORM_LOCK_KEY[key]) ? 'warn' : undefined}>
+      {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />}
     </Field>
   )
 
@@ -746,9 +774,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
             </Field>
           )}
           {profileField('display_name', 'usr.formDisplay')}
-          <Field label={t('usr.formEmail')} required>
-            {({ id }) => (
-              <Input id={id} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          <Field label={t('usr.formEmail')} required hint={adHint('email')} hintTone={lockedKeys.has('email') ? 'warn' : undefined}>
+            {({ id, describedBy }) => (
+              <Input id={id} type="email" aria-describedby={describedBy} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
             )}
           </Field>
           {profileField('employee_id', 'usr.formEmployeeId')}
@@ -841,7 +869,7 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       {/* Satıra tıklayınca: kullanıcı ayrıntısı (salt-okunur). Liste tazelenince (kilit açma, AD eşitleme) güncel satır
           verilir; kilit açma MEVCUT işleyicilerle (menüdekiyle aynı yetki kapısı: canManage). */}
       {viewUser && (
-        <UserDetailPanel user={users.find((u) => u.id === viewUser.id) || viewUser} teams={teams} isAdmin={isAdmin}
+        <UserDetailPanel user={users.find((u) => u.id === viewUser.id) || viewUser} teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin}
           onClose={() => setViewUser(null)} onChanged={refresh}
           onUnlock={canManage ? { perm: unlock, role: roleUnlock, org: orgRoleUnlock, team: teamUnlock } : undefined}
           onEdit={canManage ? () => { const u = viewUser; setViewUser(null); openEdit(u) } : undefined} />

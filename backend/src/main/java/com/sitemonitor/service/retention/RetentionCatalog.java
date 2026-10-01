@@ -304,6 +304,9 @@ public final class RetentionCatalog {
         guarded("alert-storms", "alert_storms", "resolved_at", "site.monitor.storm.retention-days",
                 365, 90, "resolved = true AND {t}", DataClass.OPERATIONAL,
                 "Alarm fırtınası kayıtları. Yalnız çözülmüş fırtınalar silinir."),
+        orphan("alert-storm-members-orphan", "alert_storm_members",
+                "NOT EXISTS (SELECT 1 FROM alert_storms s WHERE s.id = alert_storm_members.storm_id)", DataClass.OPERATIONAL,
+                "Fırtına üyelik kaydı (kim hangi fırtınadaydı — gözlem/analiz ekranı). Fırtına satırı silinince yetim kalır."),
         age("scripted-drafts", "scripted_drafts", "updated_at", "site.monitor.scripted.draft-retention-days",
                 30, 1, false, DataClass.CONTENT,
                 "k6 script düzenleme formunun otomatik kaydedilen taslakları. Kaydedilince silinirler; "

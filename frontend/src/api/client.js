@@ -162,8 +162,9 @@ export const api = {
     today: (opts = {}) => request(opts.full ? '/me/today?full=true' : '/me/today'),
     /** Bildirim kutusu (2026-09-12, #2) */
     inbox: () => request('/me/inbox'),
-    /** İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki açık alarmların izleme türü başına özeti. */
-    openAlerts: () => request('/me/open-alerts'),
+    /** İzleme menüsü rozetleri (2026-09-30): görüş kapsamındaki açık alarmların izleme türü başına özeti.
+     *  Sunucu sonucu kapsam başına ~15 sn paylaşır (2026-10-01); `fresh=true` (alarm eylemi sonrası) belleği atlar. */
+    openAlerts: (fresh = false) => request(fresh === true ? '/me/open-alerts?fresh=1' : '/me/open-alerts'),
     /** Geçmiş (2026-09-20): çözülmüş alarmlar 30 gün, sayfalı. */
     inboxHistory: (page = 0, size = 25) => request(`/me/inbox?view=history&page=${page}&size=${size}`),
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
@@ -932,7 +933,9 @@ export const api = {
       method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
-    getAlertNoise: (days = 7) => request(`/admin/alerts/noise?days=${days}`),   // gürültü analizi (2026-09-12, #18)
+    getAlertNoise: (days = 7, teamId) => request(`/admin/alerts/noise?days=${days}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),
+    // Isı haritası hücresi (gün × saat, İstanbul) ayrıntısı — 2026-10-01
+    getAlertNoiseSlot: (days, dow, hour, teamId) => request(`/admin/alerts/noise/slot?days=${encodeURIComponent(days)}&dow=${encodeURIComponent(dow)}&hour=${encodeURIComponent(hour)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),   // gürültü analizi (2026-09-12, #18); takım süzgeci (2026-10-01)
     getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
     /** Tekil uyarı (listeyle aynı zenginleştirme + 7/24 arama özeti + noc_can_write) — derin bağlantı yedeği (2026-09-27). */
@@ -988,6 +991,8 @@ export const api = {
     unlockUserRole: (id) => request(`/admin/users/${id}/role-unlock`, { method: 'POST' }),
     unlockUserOrgRole: (id) => request(`/admin/users/${id}/org-role-unlock`, { method: 'POST' }),
     unlockUserTeams: (id) => request(`/admin/users/${id}/team-unlock`, { method: 'POST' }),   // takım kilidi (2026-09-18)
+    // LDAP alan kilidi (2026-09-30): elle düzenlenen AD alanını AD yönetimine geri ver — yalnız global yönetici
+    unlockUserField: (id, field) => request(`/admin/users/${id}/field-unlock`, { method: 'POST', body: JSON.stringify({ field }) }),
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {
@@ -1139,8 +1144,10 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
-    /** İzleme Panosu (2026-09-30): 9 türün tek ekranda özeti + izleme satırları; pencere saat (24 | 168). */
-    getOverview: (hours = 24) => request(`/monitoring/overview?hours=${encodeURIComponent(hours)}`),
+    /** İzleme Panosu (2026-09-30): 9 türün tek ekranda özeti + izleme satırları; pencere saat (24 | 168).
+     *  `fresh` (2026-10-01, sayfanın Yenile düğmesi): sunucunun 30 sn'lik belleğini atlar (sunucu en fazla 5 sn'de bir izin verir). */
+    getOverview: (hours = 24, fresh = false) =>
+      request(`/monitoring/overview?hours=${encodeURIComponent(hours)}${fresh ? '&fresh=1' : ''}`),
     // İzleme Grupları (TAKIM + izleme TÜRÜ bazlı) — autocomplete + yeniden adlandırma; server-side takım filtresi
     listGroups: (teamId, type) => {
       const p = new URLSearchParams()
@@ -1194,6 +1201,11 @@ export const api = {
 
     // Alarm fırtınası (alert storm) ayarları — "Alert Settings" bölümü
     storm: {
+      // Takım bazlı fırtına gözlemi (2026-09-30): alerts.read kapısı, görüş kapsamı sunucuda
+      status:    (fresh = false) => request('/monitoring/storm/status' + (fresh ? '?fresh=1' : '')),
+      history:   (p = {}) => { const q = new URLSearchParams(); for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== null && v !== '') q.set(k, v); const s = q.toString(); return request('/monitoring/storm/history' + (s ? '?' + s : '')) },
+      analytics: (p = {}) => { const q = new URLSearchParams(); for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== null && v !== '') q.set(k, v); const s = q.toString(); return request('/monitoring/storm/analytics' + (s ? '?' + s : '')) },
+      detail:    (id) => request(`/monitoring/storm/${encodeURIComponent(id)}`),
       getSettings:  () => request('/monitoring/storm/settings'),
       saveSettings: (data) => request('/monitoring/storm/settings', { method: 'PUT', body: JSON.stringify(data) }),
     },

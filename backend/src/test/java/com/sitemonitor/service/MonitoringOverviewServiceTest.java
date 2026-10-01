@@ -58,7 +58,7 @@ class MonitoringOverviewServiceTest {
         Team t = new Team(); t.setId(14L); t.setName("SY");
         when(teamRepo.findAll()).thenReturn(List.of(t));
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
-        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of());
+        when(alertEventRepo.countRecoveredSinceByTypeAndTeam(anyString())).thenReturn(List.of());
     }
 
     private static HttpMonitor http(long id, String url, Long team, boolean active, int interval) {
@@ -85,8 +85,11 @@ class MonitoringOverviewServiceTest {
                 .thenReturn(List.<Object[]>of(new Object[]{1L, 10L, 10L, 100.0, 10L}, new Object[]{2L, 10L, 4L, 100.0, 10L}));
         AlertEvent open = new AlertEvent(); open.setDomain("https://down.example.com"); open.setAlertType("HTTP_DOWN"); open.setAlertLevel("CRITICAL"); open.setResolved(false);
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(open));
-        AlertEvent resolved = new AlertEvent(); resolved.setDomain("https://up.example.com"); resolved.setAlertType("HTTP_DOWN"); resolved.setResolved(true); resolved.setTeamId(14L); resolved.setResolvedAt(ago(30));
-        when(alertEventRepo.findByResolvedAtGreaterThanEqual(anyString())).thenReturn(List.of(resolved));
+        // Pencerede kurtarılan alarmlar — gruplu sayım (tip, damgalı takım, adet): kapsam içi takım sayılır; kapsam dışı
+        // takım, takımsız satır ve katalog dışı tip sayılmaz (eski tam-entity döngüsüyle aynı kural).
+        when(alertEventRepo.countRecoveredSinceByTypeAndTeam(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"HTTP_DOWN", 14L, 1L}, new Object[]{"HTTP_DOWN", 99L, 4L},
+                new Object[]{"HTTP_DOWN", null, 2L}, new Object[]{"BOGUS", 14L, 3L}));
 
         Map<String, Object> out = svc.build(team -> Long.valueOf(14L).equals(team), false, 24);
 
@@ -106,6 +109,191 @@ class MonitoringOverviewServiceTest {
         Map<String, Object> totals = (Map<String, Object>) out.get("totals");
         assertThat(totals).containsEntry("total", 5L).containsEntry("down", 1L).containsEntry("open_alerts", 1L);
         assertThat(types).extracting(x -> x.get("type")).containsExactly("http", "ping", "port", "dns", "domain", "keyword", "page", "pagespeed", "scripted");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Envanteri PASİF host'un envanter türevi Port/DNS izlemesi 'duraklatılmış' + inventory_inactive (tarama atlar); standalone ve aktif envanterli satır gecikmiş kalır")
+    void inventoryInactivePortIsPausedNotStale() {
+        com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
+        // Tek sütunluk projeksiyon (2026-10-01): ham alan adı — tarama gibi BİREBİR karşılaştırılır (normalizasyon yok;
+        // harf büyüklüğü farkı ayrı testte: inventoryInactive_exactMatchLikeSweep).
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of("live.example.com"));
+        PortMonitor gone = new PortMonitor(); gone.setId(1L); gone.setName("p-gone"); gone.setHost("gone.example.com"); gone.setPort(443); gone.setTeamId(14L); gone.setActive(true); gone.setStandalone(false); gone.setIntervalSeconds(300);
+        PortMonitor alone = new PortMonitor(); alone.setId(2L); alone.setName("p-alone"); alone.setHost("gone.example.com"); alone.setPort(443); alone.setTeamId(14L); alone.setActive(true); alone.setStandalone(true); alone.setIntervalSeconds(300);
+        PortMonitor live = new PortMonitor(); live.setId(3L); live.setName("p-live"); live.setHost("live.example.com"); live.setPort(443); live.setTeamId(14L); live.setActive(true); live.setStandalone(false); live.setIntervalSeconds(300);
+        when(portMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(gone, alone, live));
+        List<com.sitemonitor.model.PortCheck> checks = new java.util.ArrayList<>();
+        for (long id : new long[]{1, 2, 3}) { com.sitemonitor.model.PortCheck c = new com.sitemonitor.model.PortCheck(); c.setMonitorId(id); c.setOpen(true); c.setCheckedAt(ago(600)); checks.add(c); }
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(checks);
+        com.sitemonitor.model.DnsMonitor dgone = new com.sitemonitor.model.DnsMonitor(); dgone.setId(5L); dgone.setName("d-gone"); dgone.setDomain("gone.example.com"); dgone.setTeamId(14L); dgone.setActive(true); dgone.setStandalone(false); dgone.setIntervalSeconds(300);
+        when(dnsMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(dgone));
+
+        Map<String, Object> out = svc.build(team -> true, true, 24);
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        java.util.function.Function<String, Map<String, Object>> row = n -> rows.stream().filter(r -> n.equals(r.get("name"))).findFirst().orElseThrow();
+        assertThat(row.apply("p-gone")).containsEntry("status", "paused").containsEntry("inventory_inactive", true).containsEntry("active", false);
+        assertThat(row.apply("p-alone")).containsEntry("status", "stale").containsEntry("inventory_inactive", false);
+        assertThat(row.apply("p-live")).containsEntry("status", "stale").containsEntry("inventory_inactive", false);
+        assertThat(row.apply("d-gone")).containsEntry("status", "paused").containsEntry("inventory_inactive", true);
+        List<Map<String, Object>> types = (List<Map<String, Object>>) out.get("types");
+        Map<String, Object> port = types.stream().filter(x -> "port".equals(x.get("type"))).findFirst().orElseThrow();
+        assertThat(port).containsEntry("total", 3L).containsEntry("active", 2L).containsEntry("paused", 1L).containsEntry("stale", 2L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Envanter eşleşmesi taramayla BİREBİR (2026-10-01 prod): envanterde yalnız harf büyüklüğü farklı host'un envanter-türevi satırı tarama gibi atlanır → duraklatılmış + inventory_inactive, gecikmiş DEĞİL")
+    void inventoryInactive_exactMatchLikeSweep() {
+        com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
+        // SchedulerService: activeDomains.contains(m.getDomain()) — "OutboundIVR.example.com" ≠ "outboundivr.example.com"
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of("OutboundIVR.example.com", "exact.example.com"));
+        com.sitemonitor.model.DnsMonitor caseOnly = new com.sitemonitor.model.DnsMonitor(); caseOnly.setId(1L); caseOnly.setName("d-case"); caseOnly.setDomain("outboundivr.example.com");
+        caseOnly.setTeamId(14L); caseOnly.setActive(true); caseOnly.setStandalone(false); caseOnly.setIntervalSeconds(300);
+        com.sitemonitor.model.DnsMonitor exact = new com.sitemonitor.model.DnsMonitor(); exact.setId(2L); exact.setName("d-exact"); exact.setDomain("exact.example.com");
+        exact.setTeamId(14L); exact.setActive(true); exact.setStandalone(false); exact.setIntervalSeconds(300);
+        com.sitemonitor.model.DnsMonitor nullHost = new com.sitemonitor.model.DnsMonitor(); nullHost.setId(3L); nullHost.setName("d-null");
+        nullHost.setTeamId(14L); nullHost.setActive(true); nullHost.setStandalone(false); nullHost.setIntervalSeconds(300);
+        when(dnsMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(caseOnly, exact, nullHost));
+        List<com.sitemonitor.model.DnsRecord> recs = new java.util.ArrayList<>();
+        for (long id : new long[]{1, 2}) { com.sitemonitor.model.DnsRecord r = new com.sitemonitor.model.DnsRecord(); r.setMonitorId(id); r.setValue("1.2.3.4"); r.setCheckedAt(ago(id == 1 ? 70 * 24 * 60 : 2)); recs.add(r); }
+        when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(recs);
+
+        Map<String, Object> out = svc.build(team -> true, true, 24);
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        java.util.function.Function<String, Map<String, Object>> row = n -> rows.stream().filter(r -> n.equals(r.get("name"))).findFirst().orElseThrow();
+        assertThat(row.apply("d-case")).containsEntry("status", "paused").containsEntry("inventory_inactive", true).containsEntry("active", false);
+        assertThat(row.apply("d-exact")).containsEntry("status", "up").containsEntry("inventory_inactive", false);
+        assertThat(row.apply("d-null")).containsEntry("status", "paused").containsEntry("inventory_inactive", true);   // contains(null) → atlanır
+        Map<String, Object> dns = ((List<Map<String, Object>>) out.get("types")).stream().filter(x -> "dns".equals(x.get("type"))).findFirst().orElseThrow();
+        // Kart "aktif" = taramanın gerçekten kontrol ettiği; gecikmiş SAYILMAZ; envanter-dışı paused'un alt kümesi
+        assertThat(dns).containsEntry("total", 3L).containsEntry("active", 1L).containsEntry("stale", 0L)
+                .containsEntry("paused", 2L).containsEntry("inventory_inactive", 2L);
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("stale", 0L).containsEntry("inventory_inactive", 2L);
+        assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of("A.example.com"), false, "a.example.com")).isTrue();
+        assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of("a.example.com"), false, "a.example.com")).isFalse();
+        assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of(), true, "a.example.com")).isFalse();    // standalone baypas
+        assertThat(MonitoringOverviewService.inventoryInactive(null, false, "a.example.com")).isFalse();                 // depo yok → bilinmiyor
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Envanterden çıkmış eski Port satırının son kontrolü BAŞARISIZ olsa da 'sorunlu' değil duraklatılmış; açık alarm eski satıra bağlanmaz; aynı host'un bağımsız izlemesi sağlıklı ve standalone_twin olarak bağlı (outboundivrtahprod prod vakası)")
+    void orphanFailedPort_isPausedNotDown_andLinksStandaloneTwin() {
+        com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of("other.example.com"));
+        PortMonitor orphan = new PortMonitor(); orphan.setId(1L); orphan.setName("outboundivrtahprod.example.com"); orphan.setHost("outboundivrtahprod.example.com");
+        orphan.setPort(443); orphan.setTeamId(14L); orphan.setActive(true); orphan.setStandalone(false); orphan.setIntervalSeconds(300);
+        PortMonitor twin = new PortMonitor(); twin.setId(2L); twin.setName("IVR tah prod"); twin.setHost("OUTBOUNDIVRTAHPROD.example.com");
+        twin.setPort(443); twin.setTeamId(14L); twin.setActive(true); twin.setStandalone(true); twin.setIntervalSeconds(300);
+        when(portMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(orphan, twin));
+        com.sitemonitor.model.PortCheck old = new com.sitemonitor.model.PortCheck(); old.setMonitorId(1L); old.setOpen(false); old.setError("Connect timed out"); old.setCheckedAt(ago(50L * 24 * 60));
+        com.sitemonitor.model.PortCheck fresh = new com.sitemonitor.model.PortCheck(); fresh.setMonitorId(2L); fresh.setOpen(true); fresh.setCheckedAt(ago(2)); fresh.setResponseMs(40L);
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of(old, fresh));
+        when(portCheckRepo.weeklyStatsByMonitor(anyCollection(), anyString(), anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{2L, 288L, 288L}));
+        // Host'un açık alarmı (hedef anahtarı küçük harf): YALNIZ taranan bağımsız satıra bağlanır, iki kez sayılmaz
+        AlertEvent open = new AlertEvent(); open.setDomain("outboundivrtahprod.example.com"); open.setAlertType("PORT_DOWN"); open.setAlertLevel("HIGH"); open.setResolved(false);
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(open));
+
+        Map<String, Object> out = svc.build(team -> true, true, 24);
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        Map<String, Object> o = rows.stream().filter(r -> Long.valueOf(1L).equals(r.get("id"))).findFirst().orElseThrow();
+        Map<String, Object> s = rows.stream().filter(r -> Long.valueOf(2L).equals(r.get("id"))).findFirst().orElseThrow();
+        assertThat(o).containsEntry("status", "paused").containsEntry("inventory_inactive", true).containsEntry("standalone", false)
+                .containsEntry("open_alerts", 0).containsEntry("checks_window", 0L).containsEntry("success_rate_window", null);
+        assertThat((Map<String, Object>) o.get("standalone_twin")).containsEntry("id", 2L).containsEntry("name", "IVR tah prod")
+                .containsEntry("status", "down");   // alarmı açık → bağımsız satır sorunlu; eski satır değil
+        assertThat(s).containsEntry("standalone", true).containsEntry("inventory_inactive", false).containsEntry("open_alerts", 1)
+                .containsEntry("success_rate_window", 100.0).doesNotContainKey("standalone_twin");
+        Map<String, Object> port = ((List<Map<String, Object>>) out.get("types")).stream().filter(x -> "port".equals(x.get("type"))).findFirst().orElseThrow();
+        assertThat(port).containsEntry("down", 1L).containsEntry("paused", 1L).containsEntry("inventory_inactive", 1L)
+                .containsEntry("open_alerts", 1L).containsEntry("success_rate_window", 100.0);
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("down", 1L).containsEntry("open_alerts", 1L);
+
+        // Alarm kapalıyken: bağımsız izleme sağlıklı, eski satır yine duraklatılmış — "sorunlu" toplamı 0
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
+        Map<String, Object> out2 = svc.build(team -> true, true, 24);
+        List<Map<String, Object>> rows2 = (List<Map<String, Object>>) out2.get("monitors");
+        Map<String, Object> o2 = rows2.stream().filter(r -> Long.valueOf(1L).equals(r.get("id"))).findFirst().orElseThrow();
+        assertThat(o2).containsEntry("status", "paused");
+        assertThat((Map<String, Object>) o2.get("standalone_twin")).containsEntry("status", "up");
+        Map<String, Object> port2 = ((List<Map<String, Object>>) out2.get("types")).stream().filter(x -> "port".equals(x.get("type"))).findFirst().orElseThrow();
+        assertThat(port2).containsEntry("down", 0L).containsEntry("active", 1L).containsEntry("paused", 1L);
+        assertThat((Map<String, Object>) out2.get("totals")).containsEntry("down", 0L).containsEntry("stale", 0L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Zenginleştirme (2026-10-01): satır başarı oranı + pencere ort. yanıt (ek sorgu yok), açık alarm başlangıcı + sahiplenme, tür ağırlıklı ort. yanıt, filo başarı oranı; DNS'in 4. sütunu (değişim sayısı) ort. yanıt SAYILMAZ")
+    void enrichmentFields() {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(http(1, "https://a.example.com", 14L, true, 300), http(2, "https://b.example.com", 14L, true, 300)));
+        when(httpCheckRepo.findLatestPerMonitor()).thenReturn(List.of(httpCheck(1, true, ago(1)), httpCheck(2, true, ago(1))));
+        // [id, toplam, başarılı, AVG(responseMs), ölçümlü sayısı]
+        when(httpCheckRepo.weeklyStatsByMonitor(anyCollection(), anyString(), anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{1L, 10L, 9L, 100.0, 9L}, new Object[]{2L, 10L, 10L, 400.4, 3L}));
+        AlertEvent older = new AlertEvent(); older.setDomain("https://a.example.com"); older.setAlertType("HTTP_DOWN"); older.setAlertLevel("WARNING");
+        older.setResolved(false); older.setCreatedAt("2026-09-30T08:00:00"); older.setAcknowledged(true);
+        AlertEvent newer = new AlertEvent(); newer.setDomain("https://a.example.com"); newer.setAlertType("HTTP_DOWN"); newer.setAlertLevel("CRITICAL");
+        newer.setResolved(false); newer.setCreatedAt("2026-09-30T09:00:00"); newer.setAcknowledged(true);
+        AlertEvent unacked = new AlertEvent(); unacked.setDomain("https://b.example.com"); unacked.setAlertType("HTTP_DOWN"); unacked.setAlertLevel("HIGH");
+        unacked.setResolved(false); unacked.setCreatedAt("2026-09-30T10:00:00");
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(newer, unacked, older));
+        com.sitemonitor.model.DnsMonitor d = new com.sitemonitor.model.DnsMonitor(); d.setId(5L); d.setName("d"); d.setDomain("d.example.com");
+        d.setTeamId(14L); d.setActive(true); d.setStandalone(true); d.setIntervalSeconds(300);
+        when(dnsMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(d));
+        when(dnsRecordRepo.weeklyStatsByMonitor(anyCollection(), anyString(), anyString())).thenReturn(List.<Object[]>of(new Object[]{5L, 4L, 4L, 3L}));
+
+        Map<String, Object> out = svc.build(team -> true, true, 24);
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        java.util.function.Function<Long, Map<String, Object>> row = id -> rows.stream().filter(r -> id.equals(r.get("id")) && !"dns".equals(r.get("type"))).findFirst().orElseThrow();
+        assertThat(row.apply(1L)).containsEntry("success_rate_window", 90.0).containsEntry("avg_response_ms_window", 100L)
+                .containsEntry("open_since", "2026-09-30T08:00:00").containsEntry("open_acknowledged", true).containsEntry("open_alert_level", "CRITICAL");
+        assertThat(row.apply(2L)).containsEntry("success_rate_window", 100.0).containsEntry("avg_response_ms_window", 400L)
+                .containsEntry("open_acknowledged", false);
+        Map<String, Object> dnsRow = rows.stream().filter(r -> "dns".equals(r.get("type"))).findFirst().orElseThrow();
+        assertThat(dnsRow).containsEntry("avg_response_ms_window", null).containsEntry("checks_window", 4L).containsEntry("standalone", true);
+        List<Map<String, Object>> types = (List<Map<String, Object>>) out.get("types");
+        Map<String, Object> http = types.stream().filter(x -> "http".equals(x.get("type"))).findFirst().orElseThrow();
+        // Ağırlıklı: (100×9 + 400×3) / 12 = 175
+        assertThat(http).containsEntry("avg_response_ms_window", 175L).containsEntry("success_rate_window", 95.0);
+        assertThat(types.stream().filter(x -> "dns".equals(x.get("type"))).findFirst().orElseThrow()).containsEntry("avg_response_ms_window", null);
+        // Filo: 24 koşum, 1 başarısız → 95,8
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("checks_window", 24L).containsEntry("failed_window", 1L)
+                .containsEntry("success_rate_window", 95.8);
+        assertThat(rows.stream().filter(r -> "http".equals(r.get("type"))).findFirst().orElseThrow()).containsEntry("standalone", null);
+    }
+
+    @Test
+    @DisplayName("fresh=true (Yenile düğmesi): bellek kaydı 5 sn'den gençse o döner; eskiyse yeniden hesaplanır ve bellek tazelenir — sonraki yoklama taze kaydı okur")
+    void fresh_bypassesMemoAtMostEveryFiveSeconds() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 30_000L);
+        long[] clock = {1_000_000L};
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "memo",
+                new com.sitemonitor.util.TtlMemo<Map<String, Object>>(MonitoringOverviewService.MEMO_MAX_KEYS, () -> clock[0]));
+        Map<String, Object> a = svc.build("ALL", team -> true, true, 24, false);
+        clock[0] += 1_000;
+        Map<String, Object> b = svc.build("ALL", team -> true, true, 24, true);     // 1 sn → sel koruması: bellekten
+        assertThat(b).isSameAs(a);
+        verify(teamRepo, times(1)).findAll();
+        clock[0] += 6_000;
+        Map<String, Object> c = svc.build("ALL", team -> true, true, 24, true);     // 7 sn → yeniden hesap
+        assertThat(c).isNotSameAs(a);
+        verify(teamRepo, times(2)).findAll();
+        clock[0] += 1_000;
+        Map<String, Object> d = svc.build("ALL", team -> true, true, 24);           // düz yoklama → taze kayıt
+        assertThat(d).isSameAs(c);
+        verify(teamRepo, times(2)).findAll();
     }
 
     @Test
@@ -132,6 +320,62 @@ class MonitoringOverviewServiceTest {
         List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
         assertThat(rows.stream().filter(r -> "scripted".equals(r.get("type"))).findFirst().orElseThrow())
                 .containsEntry("status", "down").containsEntry("open_alert_level", "WARNING").containsEntry("response_ms", 900L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Kurtarılan sayımı global görüntüleyicide takımdan bağımsız: kapsam dışı + takımsız satırlar da sayılır (katalog dışı tip yine hayır)")
+    void resolvedWindow_globalViewerCountsAllTeams() {
+        when(alertEventRepo.countRecoveredSinceByTypeAndTeam(anyString())).thenReturn(List.<Object[]>of(
+                new Object[]{"HTTP_DOWN", 14L, 1L}, new Object[]{"ACCESSIBILITY", 99L, 4L},
+                new Object[]{"PING_DOWN", null, 2L}, new Object[]{"BOGUS", 14L, 3L}));
+        Map<String, Object> out = svc.build(team -> false, true, 24);
+        List<Map<String, Object>> types = (List<Map<String, Object>>) out.get("types");
+        java.util.function.Function<String, Object> resolved = ty -> types.stream().filter(x -> ty.equals(x.get("type"))).findFirst().orElseThrow().get("resolved_window");
+        assertThat(resolved.apply("http")).isEqualTo(5L);
+        assertThat(resolved.apply("ping")).isEqualTo(2L);
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("resolved_window", 7L);
+    }
+
+    @Test
+    @DisplayName("Performans (2026-10-01): tam alarm/envanter entity'si yüklenmez — gruplu sayım + tek sütunluk envanter projeksiyonu")
+    void noFullEntityLoads() {
+        com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of());
+        svc.build(team -> true, true, 24);
+        verify(alertEventRepo).countRecoveredSinceByTypeAndTeam(anyString());
+        verify(alertEventRepo, never()).findByResolvedAtGreaterThanEqual(anyString());
+        verify(inventoryRepo).findActiveDomains();
+        verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
+    }
+
+    @Test
+    @DisplayName("Bellek (2026-10-01): aynı (kapsam, pencere, global) anahtarı cacheMs içinde tek hesaplama; farklı kapsam/pencere ya da null anahtar yeniden hesaplar; cacheMs=0 kapalı")
+    void memo_perScopeAndWindow() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 60_000L);
+        Map<String, Object> a = svc.build("T:14", team -> Long.valueOf(14L).equals(team), false, 24);
+        Map<String, Object> b = svc.build("T:14", team -> Long.valueOf(14L).equals(team), false, 24);
+        assertThat(b).isSameAs(a);
+        verify(teamRepo, times(1)).findAll();
+
+        svc.build("T:14", team -> Long.valueOf(14L).equals(team), false, 48);   // farklı pencere
+        svc.build("T:3,14", team -> true, false, 24);                           // farklı kapsam
+        svc.build("T:14", team -> true, true, 24);                              // farklı global bayrağı
+        verify(teamRepo, times(4)).findAll();
+        svc.build(null, team -> true, true, 24);                                // anahtarsız → bellek yok
+        svc.build(null, team -> true, true, 24);
+        verify(teamRepo, times(6)).findAll();
+        // Pencere kırpılır: 0 saat → 1 saat; aynı kırpılmış anahtar bellekten gelir
+        Map<String, Object> c1 = svc.build("ALL", team -> true, true, 0);
+        Map<String, Object> c2 = svc.build("ALL", team -> true, true, -5);
+        assertThat(c2).isSameAs(c1).containsEntry("window_hours", 1);
+
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 0L);
+        Map<String, Object> d1 = svc.build("T:14", team -> true, false, 24);
+        Map<String, Object> d2 = svc.build("T:14", team -> true, false, 24);
+        assertThat(d2).isNotSameAs(d1);
     }
 
     @Test

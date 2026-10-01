@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { Building2, Contact, Lock, LockOpen, UserRound } from 'lucide-react'
-import { formatDateSec } from '../../../api/client'
+import { api, formatDateSec } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { AccountBadge, lockText } from './UserDetailHeader.jsx'
 import { Dash, Fact, SectionCard } from './parts.jsx'
-import { DORMANT_DAYS, locksOf, signInState } from './userDetailModel.js'
+import { DORMANT_DAYS, FIELD_LABEL_KEYS, locksOf, signInState } from './userDetailModel.js'
 import { Button } from '@/components/shadcn/button'
 
 /** Kilit → UserManager'daki mevcut kilit açma işleyicisinin etiketi (yeni uç YOK; işleyiciler prop'la gelir). */
@@ -23,9 +24,13 @@ function unlockLabel(t, key) {
  * Genel Bakış — dört kart: Hesap ve oturum · Kuruluş · İletişim · Kilitler ve AD istisnaları. Kartlar kap genişliğine
  * göre iki sütun (`@container`, tablet ve masaüstü), telefonda tek sütun. Yalnız kullanıcı satırının taşıdığı alanlar
  * (sunucunun döndürmediği alan UYDURULMAZ); boş isteğe bağlı alanlar gizlenir, temel alanlar "—" gösterir.
+ *
+ * <p>LDAP alan kilitleri (2026-09-30): `locked_field_keys`'teki her alan "Kilitler" kartında kendi satırıyla listelenir
+ * (`data-lock="field"` + `data-field`); "AD'ye geri ver" YALNIZ global yöneticide (`globalAdmin`) — sunucu da 403 verir.
  */
-export default function OverviewTab({ user, teamName, onUnlock, onUnlocked }) {
+export default function OverviewTab({ user, teamName, onUnlock, onUnlocked, globalAdmin = false }) {
   const t = useT()
+  const toast = useToast()
   const sign = signInState(user)
   const locks = locksOf(user)
   const [busy, setBusy] = useState(null)
@@ -44,6 +49,21 @@ export default function OverviewTab({ user, teamName, onUnlock, onUnlocked }) {
     if (!fn || busy) return
     setBusy(key)
     try { await fn(user.id); onUnlocked?.() } finally { setBusy(null) }
+  }
+
+  /** LDAP alan kilidi: sunucu ucu doğrudan (UserManager işleyicisi yok); başarıda satır + geçmiş tazelenir. */
+  async function unlockField(field) {
+    if (busy) return
+    setBusy(`field:${field}`)
+    try {
+      const r = await api.admin.unlockUserField(user.id, field)
+      if (r?.success) { toast.success(t('usr.fieldUnlocked')); onUnlocked?.() }
+      else toast.error(r?.error || 'Error')
+    } catch (e) {
+      toast.error(e?.message || 'Error')
+    } finally {
+      setBusy(null)
+    }
   }
 
   // İki sütun yalnız kap yeterince genişken (≥ 48rem: masaüstü yan panel); iki bağımsız sütun → kısa kart uzun kartın
@@ -83,19 +103,24 @@ export default function OverviewTab({ user, teamName, onUnlock, onUnlocked }) {
               <p data-slot="ud-no-locks" className="m-0 text-sm text-muted-foreground">{t('ud.noLocks')}</p>
             ) : (
               <ul data-slot="ud-locks" className="m-0 flex list-none flex-col gap-2.5 p-0">
-                {locks.map(({ key, severe }) => {
-                  const { label, hint } = lockText(t, key)
-                  const can = !!onUnlock?.[key]
+                {locks.map(({ key, field, severe }) => {
+                  const isField = !!field
+                  const { label, hint } = isField
+                    ? { label: t('ud.lock.field', t(FIELD_LABEL_KEYS[field])), hint: t('ud.lockHint.field') }
+                    : lockText(t, key)
+                  const can = isField ? !!globalAdmin : !!onUnlock?.[key]
                   return (
-                    <li key={key} data-lock={key} className="flex min-w-0 flex-col gap-2 rounded-lg border px-3 py-2.5">
+                    <li key={key} data-lock={isField ? 'field' : key} data-field={field || undefined}
+                      className="flex min-w-0 flex-col gap-2 rounded-lg border px-3 py-2.5">
                       <div className="flex min-w-0 flex-1 flex-col gap-1">
                         <ToneBadge tone={severe ? 'danger' : 'warning'} className="gap-1 self-start"><Lock aria-hidden="true" className="size-3" />{label}</ToneBadge>
                         <span className="text-xs leading-relaxed text-muted-foreground">{hint}</span>
                       </div>
                       {can && (
                         <Button type="button" variant="outline" size="sm" className="h-10 self-start sm:h-8" disabled={busy != null}
-                          aria-busy={busy === key || undefined} onClick={() => unlock(key)}>
-                          {busy === key ? <Spinner decorative size={14} /> : <LockOpen aria-hidden="true" />}{unlockLabel(t, key)}
+                          aria-busy={busy === key || undefined} onClick={() => (isField ? unlockField(field) : unlock(key))}>
+                          {busy === key ? <Spinner decorative size={14} /> : <LockOpen aria-hidden="true" />}
+                          {isField ? t('usr.fieldUnlock') : unlockLabel(t, key)}
                         </Button>
                       )}
                     </li>

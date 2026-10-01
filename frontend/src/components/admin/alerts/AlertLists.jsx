@@ -1,5 +1,7 @@
 import { useId } from 'react'
-import { UserCheck, CheckCircle2, BellPlus, CalendarClock, Mail, MailX, Clock, PhoneCall } from 'lucide-react'
+import {
+  UserCheck, CheckCircle2, BellPlus, CalendarClock, Mail, MailX, Clock, PhoneCall, ArrowUpDown, ArrowUp, ArrowDown, Filter,
+} from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { durationMs, formatDuration, formatIncidentTime } from '../../../utils/incidentMeta.js'
@@ -15,6 +17,10 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
@@ -22,6 +28,88 @@ import {
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
 import { NocCallIndicator } from './NocCallLog.jsx'
+
+/** Radix radyo öğesi değeri boş dize olamaz → "Tümü" için sabit belirteç (AlertToolbar ile aynı). */
+const ALL = '__all__'
+
+/**
+ * Alarmın takımı (2026-10-01, Takım sütunu): DAMGALI takım (`team_id` + sunucunun `team_name`'i; yoksa çağıranın dizini)
+ * — izleme alarmları; sertifika alarmlarında envanterin SY takımı. `onPickTeam` verilirse tıklama takım SÜZGECİNİ uygular
+ * (çip + URL), yoksa üye penceresi (TeamBadge varsayılanı). Takımsız alarm okunur "takım yok".
+ */
+export function AlertTeam({ alert: a, teamName, onPickTeam, className }) {
+  const t = useT()
+  const stamped = a.team_id != null
+  const id = stamped ? a.team_id : a.sy_team_id
+  const name = stamped ? (a.team_name || teamName || undefined) : (a.sy_team_name || undefined)
+  if (id == null && !name) return <span className={cn('text-muted-foreground italic', className)}>{t('alh.noTeam')}</span>
+  const filterLabel = onPickTeam && name ? t('alh.filterByTeam', name) : undefined
+  return (
+    <TeamBadge as="span" teamId={id} teamName={name} className={className} title={filterLabel} ariaLabel={filterLabel}
+      onOpen={onPickTeam ? (tid) => onPickTeam(tid) : undefined} />
+  )
+}
+
+/**
+ * Sütun süzgeci (2026-10-01): başlıktaki huni düğmesi → shadcn DropdownMenu radyo listesi. Kendi durumu YOK — araç
+ * çubuğunun süzgeç durumunu kullanır (çipler / URL tek kaynak). Test kancası: tetik `data-slot="column-filter"` +
+ * `data-column`, öğeler `menuitemradio` + `data-facet-value`.
+ */
+function ColumnFilter({ label, name, value, options, onChange }) {
+  const t = useT()
+  const on = !!value
+  return (
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-xs" data-slot="column-filter" data-column={name} data-active={on || undefined}
+          aria-label={t('alh.colFilter', label)} onClick={(e) => e.stopPropagation()}
+          className={cn('size-7', on ? 'text-primary' : 'text-muted-foreground opacity-60 hover:opacity-100')}>
+          <Filter aria-hidden="true" className="size-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" collisionPadding={8} className="z-(--z-menu) max-h-80 min-w-48">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">{label}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={value || ALL} onValueChange={(v) => onChange(v === ALL ? '' : v)}>
+          {options.map((o) => (
+            <DropdownMenuRadioItem key={o.value || ALL} value={o.value || ALL} data-facet-value={o.value || ALL}>
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {o.count != null && <span data-slot="facet-count" className="ml-3 font-mono text-xs text-muted-foreground tabular-nums">{o.count}</span>}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * Sıralanabilir / süzülebilir sütun başlığı (2026-10-01): shadcn Button ghost + ok simgesi (ArrowUpDown pasif, ArrowUp /
+ * ArrowDown etkin yön); `th` `aria-sort` (etkin sütunda yön, diğer sıralanabilirlerde "none"). `filter` verilirse
+ * yanında ColumnFilter. Test kancası: `data-slot="sort-button"` + `data-sort-key`.
+ */
+function ColumnHead({ label, sortKey, sort, onSort, filter, className }) {
+  const t = useT()
+  const sortable = !!(sortKey && onSort)
+  const active = sortable && sort?.key === sortKey
+  const ariaSort = !sortable ? undefined : active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'
+  const Icon = active ? (sort.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown
+  return (
+    <TableHead aria-sort={ariaSort} data-sort-key={sortKey || undefined} className={cn(TH, className)}>
+      <span className="inline-flex items-center gap-0.5">
+        {sortable ? (
+          <Button type="button" variant="ghost" size="sm" data-slot="sort-button" data-active={active || undefined}
+            aria-label={t('alh.sort.by', label)} onClick={() => onSort(sortKey)}
+            className={cn('-ml-2 h-8 gap-1 px-2 text-[length:inherit] font-semibold tracking-wide uppercase',
+              active ? 'text-foreground' : 'text-muted-foreground')}>
+            {label}<Icon aria-hidden="true" className={cn('size-3.5', !active && 'opacity-50')} />
+          </Button>
+        ) : label}
+        {filter && <ColumnFilter label={label} {...filter} />}
+      </span>
+    </TableHead>
+  )
+}
 
 /** Örtünün (başlık düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard / IncidentCard deseni). */
 const LAYER = 'relative z-10'
@@ -71,7 +159,7 @@ export function ListSkeleton({ variant = 'cards' }) {
  */
 export function OpenAlertCard({
   alert: a, nowMs, staleHours, teamName, push, selectable = true, selected = false, onToggleSelect, highlighted = false,
-  linked = false, onOpen, onAck, onResolve, onReNotify, notifying = false, menuItems, onLogCall, actBlocked = false,
+  linked = false, onOpen, onAck, onResolve, onReNotify, notifying = false, menuItems, onLogCall, actBlocked = false, onPickTeam,
 }) {
   const t = useT()
   const locale = useDateLocale()
@@ -79,9 +167,6 @@ export function OpenAlertCard({
   const lvl = levelClass(a.alert_level)
   const name = alertRowName(a, t)
   const rowLabel = (label) => t('a11y.rowAction', name, label)
-  const team = a.team_id != null
-    ? <TeamBadge as="span" teamId={a.team_id} teamName={teamName || undefined} />
-    : a.sy_team_name ? <TeamBadge as="span" teamId={a.sy_team_id} teamName={a.sy_team_name} /> : null
 
   return (
     <Card data-alert-card="" data-status="open" data-level={lvl} data-alert-id={a.id}
@@ -119,7 +204,7 @@ export function OpenAlertCard({
 
       <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 text-xs text-muted-foreground sm:px-4">
         <AlertTypeChip type={a.alert_type} />
-        {team ? <span className={cn(LAYER, 'min-w-0')}>{team}</span> : <span className="italic">{t('alh.noTeam')}</span>}
+        <span className={cn(LAYER, 'min-w-0')}><AlertTeam alert={a} teamName={teamName} onPickTeam={onPickTeam} /></span>
         <span className="inline-flex items-center gap-1 whitespace-nowrap" title={a.created_at}>
           <CalendarClock aria-hidden="true" className="size-3.5" />{formatIncidentTime(a.created_at, locale)}
         </span>
@@ -195,8 +280,8 @@ export function OpenAlertList({ groups, renderCard }) {
   return (
     <div data-slot="alert-list" data-variant="cards" className="flex min-w-0 flex-col gap-4">
       {groups.map((g, i) => (
-        <section key={g.key} aria-labelledby={`${uid}-${i}`} className="min-w-0">
-          <DayHeading id={`${uid}-${i}`} label={dayLabel(g, t, locale)} count={g.items.length} />
+        <section key={g.key} aria-labelledby={g.kind === 'none' ? undefined : `${uid}-${i}`} className="min-w-0">
+          {g.kind !== 'none' && <DayHeading id={`${uid}-${i}`} label={dayLabel(g, t, locale)} count={g.items.length} />}
           <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {g.items.map((a) => <li key={a.id} className="min-w-0">{renderCard(a)}</li>)}
           </ul>
@@ -242,13 +327,22 @@ const TH = 'h-9 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foregr
 /**
  * KAPALI / TÜMÜ görünümü — özet satırlar. md+ shadcn Table (gün başlık satırlarıyla), telefonda aynı özet kart olarak.
  * Satır tıklaması/Enter detayı açar; ↑/↓ listeyi gezer (çağıranın kabı); satır eylemleri tek KebabMenu'de (adı satırı ayırır).
- * Sütunlar: seviye · alarm (tür + hedef + mesaj) · [durum] · açıldı · süre · çözen (+ not önizlemesi) · bildirim · işlemler.
+ * Sütunlar: seviye · alarm (tür + hedef + mesaj) · [durum] · takım · açıldı · süre · çözen (+ not önizlemesi) · bildirim · işlemler.
+ * 2026-10-01: başlıklar sıralar (`sort` {key,dir} + `onSort(key)`; `aria-sort`), `columnFilters` {level,type,team,ack}
+ * başlıkta süzgeç menüsü (araç çubuğu durumu), takım rozeti `onPickTeam` ile takım süzgeci; gün bölümü sıralama alanına göre
+ * (seviye/takım/alan adı/tür sıralamasında bölüm yok — `kind:'none'`).
  * Test kancaları: `data-alert-row` + `data-history-card` (satır), `data-slot="day-group"`, `data-slot="resolve-note"`.
  */
-export function AlertRowsList({ groups, tab, nowMs, onOpen, activeId, linkedId, menuItems, phone = false }) {
+export function AlertRowsList({
+  groups, tab, nowMs, onOpen, activeId, linkedId, menuItems, phone = false, sort, onSort, columnFilters, onPickTeam, teamNameOf,
+}) {
   const t = useT()
   const locale = useDateLocale()
   const all = tab === 'all'
+  const cf = columnFilters || {}
+  // Sunucunun `team_name`'i varsa dizine hiç bakılmaz (AlertTeam de önce onu kullanır — sonuç aynı); yalnız eksikse
+  // çağıranın id → ad dizini (2026-10-01, performans: satır başına arama yok).
+  const nameOf = (a) => a.team_name || (teamNameOf ? teamNameOf(a.team_id) : null)
 
   const onRowKey = (e, a) => {
     if (e.target !== e.currentTarget) return
@@ -260,7 +354,7 @@ export function AlertRowsList({ groups, tab, nowMs, onOpen, activeId, linkedId, 
       <div data-slot="alert-list" data-variant="rows" className="flex min-w-0 flex-col gap-4">
         {groups.map((g) => (
           <section key={g.key} className="min-w-0">
-            <DayHeading label={dayLabel(g, t, locale)} count={g.items.length} />
+            {g.kind !== 'none' && <DayHeading label={dayLabel(g, t, locale)} count={g.items.length} />}
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {g.items.map((a) => {
                 const name = alertRowName(a, t)
@@ -283,6 +377,11 @@ export function AlertRowsList({ groups, tab, nowMs, onOpen, activeId, linkedId, 
                       </Button>
                       {a.message && <p className="mt-1 line-clamp-1 px-3 text-xs text-muted-foreground [overflow-wrap:anywhere]">{a.message}</p>}
                       <div className="mt-2 flex min-w-0 flex-col gap-1.5 border-t px-3 py-2 text-xs">
+                        <span className={cn(LAYER, 'inline-flex min-w-0 items-center gap-1.5 text-muted-foreground')} data-slot="alert-team-line">
+                          <CalendarClock aria-hidden="true" className="size-3.5" />{formatIncidentTime(a.created_at, locale)}
+                          <span aria-hidden="true">·</span>
+                          <AlertTeam alert={a} teamName={nameOf(a)} onPickTeam={onPickTeam} />
+                        </span>
                         {a.resolved
                           ? <ResolutionSummary alert={a} nowMs={nowMs} withDuration />
                           : <span className="inline-flex items-center gap-1 text-muted-foreground"><Clock aria-hidden="true" className="size-3.5" />{t('alh.openFor', formatDuration(durationMs(a.created_at, null, nowMs), t))}</span>}
@@ -300,29 +399,32 @@ export function AlertRowsList({ groups, tab, nowMs, onOpen, activeId, linkedId, 
     )
   }
 
-  const cols = all ? 8 : 7
+  const cols = all ? 9 : 8
   return (
     <div data-slot="alert-list" data-variant="rows" className="overflow-hidden rounded-lg border bg-card">
       <Table className="text-[0.88em]">
         <TableHeader className="bg-muted/50">
           <TableRow className="hover:bg-transparent">
-            <TableHead className={cn(TH, 'w-[7.5rem]')}>{t('alh.col.level')}</TableHead>
-            <TableHead className={cn(TH, 'min-w-[18rem]')}>{t('alh.col.alert')}</TableHead>
-            {all && <TableHead className={cn(TH, 'w-[8rem]')}>{t('alh.col.state')}</TableHead>}
-            <TableHead className={cn(TH, 'hidden whitespace-nowrap lg:table-cell')}>{t('alh.col.opened')}</TableHead>
+            <ColumnHead label={t('alh.col.level')} sortKey="level" sort={sort} onSort={onSort} filter={cf.level} className="w-[8.5rem]" />
+            <ColumnHead label={t('alh.col.alert')} sortKey="domain" sort={sort} onSort={onSort} filter={cf.type} className="min-w-[18rem]" />
+            {all && <ColumnHead label={t('alh.col.state')} filter={cf.ack} className="w-[8rem]" />}
+            <ColumnHead label={t('alh.col.team')} sortKey="team" sort={sort} onSort={onSort} filter={cf.team} className="hidden md:table-cell" />
+            <ColumnHead label={t('alh.col.opened')} sortKey="opened" sort={sort} onSort={onSort} className="hidden whitespace-nowrap lg:table-cell" />
             <TableHead className={cn(TH, 'whitespace-nowrap')}>{t('alh.col.duration')}</TableHead>
-            <TableHead className={cn(TH, 'min-w-[11rem]')}>{t('alh.col.resolvedBy')}</TableHead>
+            <ColumnHead label={t('alh.col.resolvedBy')} sortKey="resolved" sort={sort} onSort={onSort} className="min-w-[11rem]" />
             <TableHead className={cn(TH, 'hidden xl:table-cell')}>{t('alh.col.notifs')}</TableHead>
             <TableHead className={cn(TH, 'w-12')}><span className="sr-only">{t('alh.col.actions')}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {groups.map((g) => [
-            <TableRow key={`g-${g.key}`} data-slot="day-group" className="bg-muted/30 hover:bg-muted/30">
-              <TableCell colSpan={cols} className="py-1.5 text-xs font-bold tracking-wide text-muted-foreground uppercase">
-                {dayLabel(g, t, locale)} <Badge variant="secondary" className="ml-1.5 h-5 rounded-full px-1.5 tabular-nums">{g.items.length}</Badge>
-              </TableCell>
-            </TableRow>,
+            g.kind !== 'none' && (
+              <TableRow key={`g-${g.key}`} data-slot="day-group" className="bg-muted/30 hover:bg-muted/30">
+                <TableCell colSpan={cols} className="py-1.5 text-xs font-bold tracking-wide text-muted-foreground uppercase">
+                  {dayLabel(g, t, locale)} <Badge variant="secondary" className="ml-1.5 h-5 rounded-full px-1.5 tabular-nums">{g.items.length}</Badge>
+                </TableCell>
+              </TableRow>
+            ),
             ...g.items.map((a) => {
               const name = alertRowName(a, t)
               const active = String(activeId) === String(a.id)
@@ -363,6 +465,9 @@ export function AlertRowsList({ groups, tab, nowMs, onOpen, activeId, linkedId, 
                       </span>
                     </TableCell>
                   )}
+                  <TableCell className="hidden max-w-[12rem] md:table-cell" data-slot="alert-team-cell">
+                    <AlertTeam alert={a} teamName={nameOf(a)} onPickTeam={onPickTeam} />
+                  </TableCell>
                   <TableCell className="hidden text-[0.92em] whitespace-nowrap text-muted-foreground lg:table-cell" title={a.created_at}>
                     {formatIncidentTime(a.created_at, locale)}
                   </TableCell>

@@ -48,6 +48,7 @@ public class WeeklyReportController {
     private final com.sitemonitor.service.AppSettingsService appSettings;   // son giriş zamanı (2026-09-12)
     private final com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneri: açık olay sayısı (2026-09-13)
     private final com.sitemonitor.repository.TeamRepository teamRepo;                  // takım kanal şablonu (2026-09-13)
+    private final com.sitemonitor.service.WeeklyReportTeamInfoService teamInfo;        // ayar satırı: PO / müdür / son rapor (2026-09-30)
     @org.springframework.beans.factory.annotation.Value("${site.monitor.weekly-report.reminder-enabled:true}")
     private boolean reminderEnabled;
 
@@ -365,12 +366,16 @@ public class WeeklyReportController {
 
     // ── Modül görünürlüğü (2026-09-16): Ayarlar → Haftalık Raporlar ───────────────────────────
 
-    /** Takım × modül durumu (yalnız global admin): ad, aktiflik, açık mı, mevcut rapor sayısı. */
+    /** Takım × modül durumu (yalnız global admin): ad, aktiflik, açık mı, mevcut rapor sayısı; ayrıca (2026-09-30)
+     *  PO'lar ({@code po_users}), Takım Yönetimi ile aynı kuralla müdür ({@code manager_*}) ve son rapor
+     *  ({@code last_report}: ISO hafta, durum, gönderim/onay zamanı — yoksa null). */
     @GetMapping("/access/teams")
     public ResponseEntity<Map<String, Object>> accessTeams(HttpSession session) {
         if (!SessionScope.isGlobalAdmin(session)) throw new SecurityException("Admin access required");
         Map<Long, Long> counts = service.reportCountsByTeam();
-        List<Map<String, Object>> rows = teamRepo.findAll().stream()
+        List<com.sitemonitor.model.Team> teams = teamRepo.findAll();
+        Map<Long, Map<String, Object>> info = teamInfo.infoByTeam(teams);
+        List<Map<String, Object>> rows = teams.stream()
                 .sorted(java.util.Comparator.comparing(t -> t.getName() == null ? "" : t.getName().toLowerCase(java.util.Locale.ROOT)))
                 .map(t -> {
                     Map<String, Object> m = new LinkedHashMap<>();
@@ -380,6 +385,8 @@ public class WeeklyReportController {
                     m.put("enabled", Boolean.TRUE.equals(t.getWeeklyReportsEnabled()));
                     m.put("reminder", Boolean.TRUE.equals(t.getWeeklyReminderEnabled()));
                     m.put("report_count", counts.getOrDefault(t.getId(), 0L));
+                    Map<String, Object> extra = info == null ? null : info.get(t.getId());
+                    if (extra != null) m.putAll(extra);
                     return m;
                 }).toList();
         Map<String, Object> data = new LinkedHashMap<>();

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, act } from './test-utils.jsx'
 import { withSidebar } from './helpers/sidebar.jsx'
 import Nav from '../components/Nav.jsx'
+import { announceAlertsChanged } from '../hooks/useOpenAlerts.js'
 
 /**
  * İzleme menüsü — aktif alarm rozetleri (2026-09-30, kullanıcı isteği).
@@ -77,6 +78,17 @@ describe('İzleme menüsü — aktif alarm rozetleri', () => {
     expect(trigger.querySelector('[data-slot="nav-section-alert-count"]').textContent).toBe('5')
     fireEvent.click(trigger)
     await waitFor(() => expect(trigger.querySelector('[data-slot="nav-section-alert-count"]')).toBeNull())
+  })
+
+  it('performans (2026-10-01): açılış/yoklama sunucu belleğini kullanır (fresh=false); alarm eylemi olayı fresh=true ile tazeler', async () => {
+    api.me.openAlerts.mockResolvedValue(SUMMARY)
+    render(withSidebar(<Nav {...PROPS} />))
+    await waitFor(() => expect(api.me.openAlerts).toHaveBeenCalled())
+    expect(api.me.openAlerts).toHaveBeenLastCalledWith(false)
+    const before = api.me.openAlerts.mock.calls.length
+    act(() => { announceAlertsChanged() })
+    await waitFor(() => expect(api.me.openAlerts.mock.calls.length).toBeGreaterThan(before))
+    expect(api.me.openAlerts).toHaveBeenLastCalledWith(true)
   })
 
   it('sunucu görünürlük vermezse (alerts.read izni yok) hiçbir rozet çizilmez', async () => {

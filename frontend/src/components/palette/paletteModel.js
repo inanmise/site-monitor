@@ -5,7 +5,7 @@ import {
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
   Logs, UserCheck, Fingerprint, FilePenLine,
   Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity,
+  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning,
 } from 'lucide-react'
 import { personalKey } from '../../utils/personalStorage.js'
 
@@ -38,6 +38,7 @@ export const TAB_META = {
   incidents:          { Icon: Siren,         section: 'nav.groupAlerts' },
   maintenance:        { Icon: Wrench,        section: 'nav.groupAlerts' },
   alerthistory:       { Icon: History,       section: 'nav.groupAlerts' },
+  storms:             { Icon: CloudLightning, section: 'nav.groupAlerts' },
   noc:                { Icon: Headset,       section: 'nav.groupAlerts' },
   stats:              { Icon: ChartPie,        section: 'nav.groupReports' },
   weakalgo:           { Icon: ShieldAlert,     section: 'nav.groupReports' },

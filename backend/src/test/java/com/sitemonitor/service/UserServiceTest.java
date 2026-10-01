@@ -1214,6 +1214,75 @@ class UserServiceTest {
         assertThat(service.computeManageTeamIds(mudur)).isNotNull().isNotEmpty();
     }
 
+    // ── LDAP alan kilitleri (2026-09-30) ───────────────────────────────────────
+
+    @Test
+    @DisplayName("updateUser: LDAP kullanıcısında boş sicil ('' ↔ null) değişiklik SAYILMAZ → alan kilitlenmez")
+    void updateUser_blankEmployeeId_doesNotLock() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setAuthSource("LDAP");
+        u.setEmployeeId(null);
+        u.setDisplayName(null);
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        service.updateUser(1L, "   ", null, "", null, null, null, null, null);   // form: dokunulmamış boş alanlar
+
+        assertThat(u.getEmployeeId()).isNull();
+        assertThat(u.getDisplayName()).isNull();
+        assertThat(u.getLockedFieldKeys()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("updateUser/applyProfileFields: gerçekten değişen ünvan yalnız LDAP hesabında kilitlenir; yerel hesap hiç kilitlenmez")
+    void updateUser_changedTitle_locksField_ldapOnly() {
+        AppUser ldap = user("alice", "hash");
+        ldap.setId(1L);
+        ldap.setAuthSource("LDAP");
+        ldap.setTitle("Uzman");
+        when(userRepo.findById(1L)).thenReturn(Optional.of(ldap));
+        service.updateUser(1L, null, null, "100001", null, null, null, null, null);
+        service.applyProfileFields(ldap, Map.of("title", "Kıdemli Uzman"));
+        assertThat(ldap.getTitle()).isEqualTo("Kıdemli Uzman");
+        assertThat(ldap.getLockedFieldKeys()).containsExactly("employee_id", "title");   // kanonik sıra
+
+        AppUser local = user("bob", "hash");
+        local.setId(2L);
+        local.setAuthSource("LOCAL");
+        local.setTitle("Uzman");
+        when(userRepo.findById(2L)).thenReturn(Optional.of(local));
+        service.updateUser(2L, "Bob Yeni", null, "200001", null, null, null, null, null);
+        service.applyProfileFields(local, Map.of("title", "Kıdemli Uzman"));
+        assertThat(local.getTitle()).isEqualTo("Kıdemli Uzman");
+        assertThat(local.getDisplayName()).isEqualTo("Bob Yeni");
+        assertThat(local.getLockedFieldKeys()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("unlockField: kilidi kaldırır, kilit VARDIYSA true; ikinci çağrı false ve kaydetmez")
+    void unlockField_clearsLockAndReturnsHad() {
+        AppUser u = user("alice", "hash");
+        u.setId(1L);
+        u.setAuthSource("LDAP");
+        u.setLockedFields("email,title");
+        when(userRepo.findById(1L)).thenReturn(Optional.of(u));
+
+        assertThat(service.unlockField(1L, "title")).isTrue();
+        assertThat(u.getLockedFieldKeys()).containsExactly("email");
+        verify(userRepo, times(1)).save(u);
+
+        assertThat(service.unlockField(1L, "title")).isFalse();
+        verify(userRepo, times(1)).save(u);   // no-op: yeniden kaydetmez
+    }
+
+    @Test
+    @DisplayName("unlockField: bilinmeyen alan adı → IllegalArgumentException (400), kullanıcı hiç okunmaz")
+    void unlockField_unknownKey_throws() {
+        assertThatThrownBy(() -> service.unlockField(1L, "password"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(userRepo, never()).findById(anyLong());
+    }
+
     // ── applyProfileFields (AD-mirrored profil alanları) ──────────────────────
 
     @Test
