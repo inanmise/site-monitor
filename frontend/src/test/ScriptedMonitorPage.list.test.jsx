@@ -159,7 +159,10 @@ describe('ScriptedMonitorPage — liste ve kartlar', () => {
     const { container } = render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('Duran Senaryo')
 
-    const [paused, running] = container.querySelectorAll('.upt-grid > [data-slot="card"]')
+    // Sıra varsayılan kuraldan (ad A→Z: Calisan < Duran) — kartlar içerikle bulunur
+    const all = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    const paused = all.find((c) => c.textContent.includes('Duran Senaryo'))
+    const running = all.find((c) => c.textContent.includes('Calisan Senaryo'))
     expect(paused.dataset.inactive).toBe('true')
     expect(running.dataset.inactive).toBeUndefined()
     expect(within(running).queryByRole('button', { name: /(Sürdür|Resume)$/i })).toBeNull()

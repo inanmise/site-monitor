@@ -382,7 +382,10 @@ describe('DnsMonitorPage', () => {
     ] })
     const { container } = render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('api.example.com')
-    const [own, derived] = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    // Sıra varsayılan kuraldan (ad A→Z: api < www) — kartlar içerikle bulunur
+    const all = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    const own = all.find((c) => c.textContent.includes('www.example.com'))
+    const derived = all.find((c) => c.textContent.includes('api.example.com'))
 
     expect(own.querySelector('[data-slot="dns-source"]')).toHaveAttribute('data-source', 'standalone')
     expect(derived.querySelector('[data-slot="dns-source"]')).toHaveAttribute('data-source', 'inventory')

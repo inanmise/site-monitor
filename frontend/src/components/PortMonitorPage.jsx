@@ -1,6 +1,7 @@
 import { LoadingBlock } from './ui/Progress.jsx'
 import { formatPercent } from '../i18n/dateLocale.js'
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
+import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -494,7 +495,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // (`scoped` = takım + grup + arama) sayılır; kart filtresi (statFilter) sayima GIRMEZ.
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
-  const pager = usePagination(displayMonitors, {
+  // Varsayılan kart sırası (2026-10-01): sorunlu önce → grup adı A→Z (grup içinde ad) → grupsuzlar ada göre
+  const orderedMonitors = useMemo(() => sortMonitorsDefault(displayMonitors, 'port'), [displayMonitors])
+  const pager = usePagination(orderedMonitors, {
     listKey: 'port-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, statFilter],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })

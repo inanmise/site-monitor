@@ -15,6 +15,14 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- ⚠ Davranış — **İzleme sayfalarında kartların varsayılan sırası (dokuz tür):** önce sorunlu kartlar (kırmızı, sonra sarı:
+  yavaş / bozulmuş / uyarı), sonra grup adı olan izlemeler grup adına göre A→Z (aynı gruptakiler art arda, grup içinde
+  ada göre), en sonda grubu olmayanlar ada göre. Sıralama Türkçe harf düzeninde, büyük/küçük harf duyarsız, sayılar doğal
+  sırada ("web-2" < "web-10"); duraklatılmış izleme sorunlu sayılmaz. Eskiden sunucu sırası kullanılıyordu (ada göre;
+  Port/DNS'te bağımsız izlemeler tanımsız sırayla en sonda). Alan Adı sayfasında bu kural seçicinin yeni varsayılanı;
+  kalan gün / ad / kayıt kuruluşu / takım / son değişiklik seçenekleri duruyor.
+
 ## [20.93.1] — 2026-10-01
 
 ### Fixed

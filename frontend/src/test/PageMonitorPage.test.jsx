@@ -457,7 +457,11 @@ describe('PageMonitorPage', () => {
     ] })
     const { container } = render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
     await findCard('https://ok.example.com/')
-    const cards = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    // Varsayılan sıra (2026-10-01): kırmızı (DOWN) → sarı (DEGRADED) → diğerleri (ad, eşitlikte kimlik)
+    const all = [...container.querySelectorAll('.upt-grid > [data-slot="card"]')]
+    expect(all.map(c => c.getAttribute('data-status'))).toEqual(['down', 'warn', 'up', 'unknown'])
+    const byUrl = (u) => all.find(c => c.querySelector(`[aria-label^="${u} — "]`))
+    const cards = ['https://ok.example.com/', 'https://deg.example.com/', 'https://down.example.com/', 'https://cfg.example.com/'].map(byUrl)
     expect(cards.map(c => c.getAttribute('data-status'))).toEqual(['up', 'warn', 'down', 'unknown'])
     // Rozet kartın sözlüğünü izler; yapılandırma hatası "bilinmiyor"da ama kendi metniyle
     const badges = cards.map(c => c.querySelector('[data-slot="badge"][data-status]'))

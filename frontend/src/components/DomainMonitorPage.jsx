@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
+import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -71,7 +72,7 @@ const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
 
 const REFRESH_INTERVAL = 60
-const SORTS = ['days_asc', 'days_desc', 'name', 'registrar', 'team', 'changed']   // registrar/takım/son değişiklik (2026-09-22, B)
+const SORTS = ['default', 'days_asc', 'days_desc', 'name', 'registrar', 'team', 'changed']   // default: sorunlu → grup → ad (2026-10-01)   // registrar/takım/son değişiklik (2026-09-22, B)
 /** Hızlı süzgeç (2026-09-22, B): URL `dq`. 'all' | 'nolock' | 'unsigned' | 'soon' | 'rdap' | 'whois' | 'alarm' */
 const QUICK = ['all', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
 const QUICK_PRED = {
@@ -185,7 +186,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
-  const [sortBy, setSortBy] = useState(() => readUrlParam('sort', 'days_asc'))
+  const [sortBy, setSortBy] = useState(() => (SORTS.includes(readUrlParam('sort', 'default')) ? readUrlParam('sort', 'default') : 'default'))
   const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
@@ -581,6 +582,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     const dv = (m) => (m.days_remaining == null ? (sortBy === 'days_asc' ? 1e9 : -1e9) : m.days_remaining)
     const sorted = [...list]
     const byDomain = (a, b) => (a.domain || '').localeCompare(b.domain || '')
+    if (sortBy === 'default') return sortMonitorsDefault(list, 'domain')   // tüm türlerle aynı varsayılan
     if (sortBy === 'days_asc') sorted.sort((a, b) => dv(a) - dv(b))
     else if (sortBy === 'days_desc') sorted.sort((a, b) => dv(b) - dv(a))
     else if (sortBy === 'registrar') sorted.sort((a, b) => (a.registrar || '\uffff').localeCompare(b.registrar || '\uffff') || byDomain(a, b))
@@ -603,7 +605,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // varsayılan değerler param üretmez (temiz URL). Yazım debounce'lu replaceState (useUrlQuerySync).
   useUrlQuerySync({
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
-    sort: sortBy !== 'days_asc' ? sortBy : null,
+    sort: sortBy !== 'default' ? sortBy : null,
     dq: quick !== 'all' ? quick : null,   // hızlı süzgeç (2026-09-22)
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
