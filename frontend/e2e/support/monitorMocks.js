@@ -593,7 +593,7 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/monitoring/storm/status') {
       // Alarm Fırtınası (2026-09-30): fırtınalı + eşiğe yakın + sakin takım — kart/pencere/mühür ölçümü dolu veriyle
       body = { success: true, data: {
-        generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5 },
+        generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5, per_group: false, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 },
         totals: { teams: 3, storming: 1, near: 1, open_storms: 1 },
         teams: [
           { team_id: 1, team_name: 'Takım A', status: 'STORM', threshold: 5, active_monitors: 40, window_minutes: 5, window_targets: 6, window_alerts: 7, window_items: [],

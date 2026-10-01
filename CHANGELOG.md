@@ -15,6 +15,18 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Alarm Fırtınası sayfa açıklamasında `{0}` görünüyordu** (pencere değeri metne geçirilmiyordu). Açıklama artık
+  sunucunun uyguladığı GERÇEK değerlerle kurulur: "bir takımın 5 dakikalık penceresinde 5 farklı hedef düşük olunca…"
+  (yüzde biriminde "aktif izlemelerin %N oranı kadar farklı hedef (en az 3)"); veri gelmeden genel metin.
+
+### Added
+- **Alarm Fırtınası → "Fırtına kuralları" kartı:** Ayarlar → Alarm Fırtınası'ndaki geçerli değerlerin özeti — koruma
+  açık/kapalı, açılma eşiği, sayım penceresi, sessiz pencere (ömür), kapanış tabanı (eşiğin yarısı, en az 2 ya da sessiz
+  pencere), 24 saatte bir toplu tekrar ve kapsam (takım / takım + bildirim grubu); her satırda kısa açıklama. Ayar
+  değişince kart ve açıklama da değişir. Durum ucu `settings` alanına `per_group`, `re_alert_hours`, `min_threshold`,
+  `percent_min_targets` eklendi.
+
 ## [20.93.0] — 2026-10-01
 
 ### Changed
