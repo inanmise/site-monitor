@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.94.0] — 2026-10-01
+
 ### Changed
 - ⚠ Davranış — **İzleme sayfalarında kartların varsayılan sırası (dokuz tür):** önce sorunlu kartlar (kırmızı, sonra sarı:
   yavaş / bozulmuş / uyarı), sonra grup adı olan izlemeler grup adına göre A→Z (aynı gruptakiler art arda, grup içinde
@@ -1952,7 +1954,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.93.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.94.0...HEAD
+[20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0
 [20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
 [20.93.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.0
 [20.92.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.92.0
