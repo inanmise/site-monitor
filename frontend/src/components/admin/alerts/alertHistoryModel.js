@@ -5,8 +5,19 @@ import { MONITOR_ALERT_TYPES, alertTypesFor } from '../../../utils/monitorAlertT
 /**
  * Alarm Geçmişi'nin SAF modeli — bileşenlerden bağımsız yardımcılar (React'siz, test edilebilir).
  * Sunucu sözleşmesi (AdminController.listAlerts): `resolved | page | size | since | until | resolvedSince |
- * resolvedUntil | domain | alertType | alertTypes | q | level | acknowledged | teamId | range`; sıralama sunucuda sabittir
- * (en yeni önce) — burada uydurma bir sıralama boyutu YOK.
+ * resolvedUntil | domain | alertType | alertTypes | q | level | acknowledged | teamId | range | sort | dir`.
+ *
+ * URL SÖZLEŞMESİ (anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde; sekme değişince temizlenir):
+ *   `view`  open (vars.) | closed | all — alt görünüm (`tab` DEĞİL, o uygulamanın sekmesi).
+ *   `type`  alarm tipi · `src` izleme türü kategorisi · `level` CRITICAL|HIGH|WARNING · `ack` ack|unack · `team` takım id · `q` arama.
+ *   `from`  dönem başlangıcı: HIZLI DÖNEM belirteci (`1h` `24h` `7d` `30d` — istek anında göreli hesaplanır, paylaşılan
+ *           bağlantı "son 7 gün"ü hep BUGÜNE göre açar) ya da gün (yyyy-MM-dd) ya da tam UTC damga; `to` yalnız gün/damga.
+ *   `range` tarih aralığının hangi alana uygulandığı: '' görünümün varsayılanı (açık/tümü → AÇILIŞ, kapalı → KAPANIŞ);
+ *           `active` (yalnız Tümü) aralıkta AKTİF olanlar; `resolved` (Tümü) kapanış anı; `opened` (Kapalı) açılış anı.
+ *   `sort`  `<anahtar>` (azalan) ya da `<anahtar>_asc`; anahtar opened|resolved|level|team|domain|type. '' = görünümün
+ *           varsayılanı (açık/tümü: açılış en yeni önce; kapalı: kapanış en yeni önce) — yön tek parametrede taşınır
+ *           (ayrı `dir` anahtarı yok; sunucuya `sort` + `dir` olarak açılır).
+ *   `alert` açılacak kayıt (tüketilir) · `page` / `ps` sayfalama (useServerPagination).
  */
 
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING']
@@ -15,15 +26,53 @@ export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING']
 export const levelClass = (lvl) => ({ WARNING: 'warning', HIGH: 'high', CRITICAL: 'critical' })[lvl] ?? 'unknown'
 
 /**
- * Tarih aralığı kipi (URL `range`, 2026-09-28 — regresyon B3): varsayılan '' = aralıkta AÇILANLAR; `'active'` = aralıkta
- * AKTİF olanlar (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç) — daha önce açılıp aralığa DEVREDENLER dahil). Yalnız
- * "Tümü" görünümünde uygulanır; haftalık erişilebilirlik e-postasının "Haftanın alarmları" bağlantısı bu kipi açar.
+ * Tarih aralığı kipi (URL `range`, 2026-09-28 — regresyon B3): varsayılan '' = görünümün varsayılan alanı; `'active'` = aralıkta
+ * AKTİF olanlar (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç) — daha önce açılıp aralığa DEVREDENLER dahil; yalnız
+ * "Tümü"; haftalık erişilebilirlik e-postasının "Haftanın alarmları" bağlantısı bu kipi açar). 2026-10-01: `'resolved'` (Tümü'nde
+ * kapanış anına göre) ve `'opened'` (Kapalı'da açılış anına göre) — "belirli tarihlerde açılan / kapanan alarmlar".
  */
 export const RANGE_ACTIVE = 'active'
+export const RANGE_RESOLVED = 'resolved'
+export const RANGE_OPENED = 'opened'
+const RANGE_VALUES = [RANGE_ACTIVE, RANGE_RESOLVED, RANGE_OPENED]
+
+/** Hızlı dönem belirteçleri (URL `from`): saatlikler şimdiye göre damga, günlükler yerel gün sınırından (Europe/Istanbul). */
+export const PRESETS = ['1h', '24h', '7d', '30d']
+export const isPreset = (v) => PRESETS.includes(String(v || ''))
+/** Bir üst dönem ("Dönemi genişlet"): 1h→24h→7d→30d→'' (tüm zamanlar); belirteç değilse null. */
+export function widerPreset(p) {
+  const i = PRESETS.indexOf(String(p || ''))
+  return i < 0 ? null : (PRESETS[i + 1] ?? '')
+}
+
+/** Sıralama anahtarları (sunucu beyaz listesiyle aynı); `resolved` yalnız kapalı/tümü görünümünde anlamlı. */
+export const SORT_KEYS = ['opened', 'resolved', 'level', 'team', 'domain', 'type']
+const SORT_RX = /^(opened|resolved|level|team|domain|type)(_asc)?$/
+export const isSortValue = (v) => SORT_RX.test(String(v || ''))
+/** Görünümün varsayılan sıralama anahtarı — sunucu varsayılanıyla aynı (kapalı: kapanış anı). */
+export const defaultSortKey = (tab) => (tab === 'closed' ? 'resolved' : 'opened')
+/** URL/süzgeç değeri → { key, dir }; boş/geçersiz/görünüme uymayan değer görünümün varsayılanı (en yeni önce). */
+export function sortParts(sort, tab) {
+  const m = SORT_RX.exec(String(sort || ''))
+  if (!m || (m[1] === 'resolved' && tab === 'open')) return { key: defaultSortKey(tab), dir: 'desc' }
+  return { key: m[1], dir: m[2] ? 'asc' : 'desc' }
+}
+/** { key, dir } → süzgeç değeri; görünümün varsayılanı '' (URL'e yazılmaz). */
+export function sortValue(key, dir, tab) {
+  if (!SORT_KEYS.includes(key)) return ''
+  if (key === defaultSortKey(tab) && dir !== 'asc') return ''
+  return dir === 'asc' ? `${key}_asc` : key
+}
+/** Başlığa tıklama: aynı sütun → yön değişir; başka sütun → tarihler en yeni önce (desc), metinler A→Z (asc). */
+export function toggleSort(sort, key, tab) {
+  const cur = sortParts(sort, tab)
+  if (cur.key === key) return sortValue(key, cur.dir === 'desc' ? 'asc' : 'desc', tab)
+  return sortValue(key, key === 'opened' || key === 'resolved' || key === 'level' ? 'desc' : 'asc', tab)
+}
 
 /** Süzgeç varsayılanları — URL'e yalnız varsayılan-dışı değer yazılır (anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde). */
-export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '', src: '' })
-export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range', src: 'src' }
+export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '', src: '', sort: '' })
+export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range', src: 'src', sort: 'sort' }
 
 /** Kategori süzgeci (URL `src`, 2026-09-30 — İzleme menüsü rozetleri): izleme türü → o türün TÜM alarm tipleri. */
 export const SRC_KEYS = Object.keys(MONITOR_ALERT_TYPES)
@@ -37,13 +86,46 @@ export function filtersFromUrl(read) {
   }
   if (f.level && !LEVELS.includes(f.level)) f.level = ''
   if (f.ack && f.ack !== 'ack' && f.ack !== 'unack') f.ack = ''
-  if (f.range && f.range !== RANGE_ACTIVE) f.range = ''   // `range` başka sayfalarda da kullanılıyor (7 / custom) — yalnız 'active'
+  if (f.range && !RANGE_VALUES.includes(f.range)) f.range = ''   // `range` başka sayfalarda da kullanılıyor (7 / custom) — yalnız kipler
   if (f.src && !isSrcKey(f.src)) f.src = ''
+  if (f.sort && !isSortValue(f.sort)) f.sort = ''               // `sort` başka sayfaların da anahtarı — yalnız beyaz liste
+  if (isPreset(f.from)) f.to = ''                                // hızlı dönem "şimdiye kadar"dır; bitiş taşımaz
   return f
 }
 
-/** "Aralıkta aktif" kipi bu görünümde GEÇERLİ mi? (yalnız "Tümü" — açık görünümde tarih yok, kapalıda kapanış anı) */
-export const activeRangeOn = (filters, tab) => tab === 'all' && filters.range === RANGE_ACTIVE
+/**
+ * Aralığın uygulandığı tarih alanı: `'opened'` (açılış — since/until) · `'resolved'` (kapanış — resolvedSince/Until) ·
+ * `'active'` (Tümü: aralıkta aktif). Açık görünümde her zaman açılış (kapanış yok); kapalı görünümde varsayılan kapanış
+ * (eski davranış: "Son 24 saatte çözülen" kartı), `range=opened` ile açılış; Tümü'nde varsayılan açılış.
+ */
+export function dateKind(filters, tab) {
+  if (tab === 'open') return 'opened'
+  if (tab === 'closed') return filters.range === RANGE_OPENED ? 'opened' : 'resolved'
+  if (filters.range === RANGE_ACTIVE) return 'active'
+  if (filters.range === RANGE_RESOLVED) return 'resolved'
+  return 'opened'
+}
+/** Görünümde seçilebilir tarih alanları (araç çubuğu seçicisi): açıkta seçici yok. */
+export function dateKindOptions(tab) {
+  if (tab === 'closed') return ['resolved', 'opened']
+  if (tab === 'all') return ['opened', 'resolved', 'active']
+  return []
+}
+/** Tarih alanı seçimi → `range` yaması (görünümün varsayılanı '' yazılır). */
+export function rangeForKind(kind, tab) {
+  if (tab === 'closed') return kind === 'opened' ? RANGE_OPENED : ''
+  if (tab === 'all') return kind === 'active' ? RANGE_ACTIVE : kind === 'resolved' ? RANGE_RESOLVED : ''
+  return ''
+}
+/** Görünümün varsayılanı dışında bir kip seçili mi → çip değeri ('active' | 'resolved' | 'opened') ya da null. */
+export function rangeChip(filters, tab) {
+  if (tab === 'closed') return filters.range === RANGE_OPENED ? RANGE_OPENED : null
+  if (tab === 'all') return filters.range === RANGE_ACTIVE || filters.range === RANGE_RESOLVED ? filters.range : null
+  return null
+}
+
+/** "Aralıkta aktif" kipi bu görünümde GEÇERLİ mi? (yalnız "Tümü") */
+export const activeRangeOn = (filters, tab) => dateKind(filters, tab) === 'active'
 
 /** Alt görünüm (URL `view`): açık (varsayılan) · kapalı · tümü. */
 export const TABS = ['open', 'closed', 'all']
@@ -57,9 +139,9 @@ export function filtersToUrl(filters, tab) {
 }
 
 /**
- * Etkin süzgeç çipleri — [{ key, value, patch }] (etiket çağıranın t'siyle kurulur). Tarih aralığı AÇIK görünümde
- * uygulanmaz (açık alarm "şimdi"dir; açık kalma süresi kartta yazar) → çipi de çıkmaz: gizli süzgeç kalmaz.
- * "Aralıkta aktif" kipi yalnız "Tümü"nde çip olur; × varsayılana ("aralıkta açılanlar") döner.
+ * Etkin süzgeç çipleri — [{ key, value, patch }] (etiket çağıranın t'siyle kurulur). Tarih aralığı HER görünümde
+ * uygulanır (2026-10-01: açık görünümde "son 1 saatte açılanlar"); hızlı dönem TEK çip (`preset`), gün/damga aralığı
+ * `from` / `to` çipleri. Görünümün varsayılanı dışındaki tarih kipi (`range`) çip olur; × varsayılana döner.
  */
 export function activeAlertFilters(filters, tab) {
   const out = []
@@ -69,30 +151,53 @@ export function activeAlertFilters(filters, tab) {
   if (filters.ack) out.push({ key: 'ack', value: filters.ack, patch: { ack: '' } })
   if (filters.team) out.push({ key: 'team', value: filters.team, patch: { team: '' } })
   if (filters.q) out.push({ key: 'q', value: filters.q, patch: { q: '' } })
-  if (activeRangeOn(filters, tab)) out.push({ key: 'range', value: RANGE_ACTIVE, patch: { range: '' } })
-  if (tab !== 'open' && filters.from) out.push({ key: 'from', value: filters.from, patch: { from: '' } })
-  if (tab !== 'open' && filters.to) out.push({ key: 'to', value: filters.to, patch: { to: '' } })
+  const mode = rangeChip(filters, tab)
+  if (mode) out.push({ key: 'range', value: mode, patch: { range: '' } })
+  if (isPreset(filters.from)) out.push({ key: 'preset', value: filters.from, patch: { from: '', to: '' } })
+  else {
+    if (filters.from) out.push({ key: 'from', value: filters.from, patch: { from: '' } })
+    if (filters.to) out.push({ key: 'to', value: filters.to, patch: { to: '' } })
+  }
   return out
 }
 
 /**
- * Liste isteği parametreleri — sunucunun tanıdığı boyutlar. Tarih aralığı kapalı görünümde KAPANIŞ
- * (resolvedSince/Until), "tümü"nde AÇILIŞ (since/until) anına uygulanır; açık görünümde hiç gitmez.
- * "Tümü"nde `range=active` kipinde sunucu since'ı aktiflik alt sınırı sayar (aralıkta AKTİF olanlar, devredenler dahil).
- * Tarih-gün süzgeci (yyyy-MM-dd) gün sınırlarına açılır: sunucu damgaları 19 karakterlik ISO ile
- * SÖZLÜKSEL karşılaştırır; çıplak "2026-09-27" bitiş günü o günün tamamını dışarıda bırakırdı.
+ * Süzgecin tarih aralığı → sunucu damgaları { since, until } (zone'suz UTC, 19 karakter). Hızlı dönem belirteci: saatlikler
+ * `now - N saat`, günlükler N gün önceki YEREL günün başından (gün seçiciyle aynı sınır) — bitiş yok ("şimdiye kadar").
+ * Gün (yyyy-MM-dd) gün sınırlarına açılır: sunucu SÖZLÜKSEL karşılaştırır; çıplak "2026-09-27" bitiş günü o günün tamamını
+ * dışarıda bırakırdı. Tam damga olduğu gibi geçer.
  */
-export function listParams({ tab, filters, page, pageSize, domain, typesParam }) {
+export function resolveRange(filters, nowMs = Date.now()) {
+  const from = filters.from || ''
+  if (isPreset(from)) {
+    if (from === '1h') return { since: new Date(nowMs - 3_600_000).toISOString().slice(0, 19), until: '' }
+    if (from === '24h') return { since: iso24hAgo(nowMs), until: '' }
+    return { since: dayStart(quickRange(from === '7d' ? 7 : 30, new Date(nowMs)).from), until: '' }
+  }
+  return { since: from ? dayStart(from) : '', until: filters.to ? dayEnd(filters.to) : '' }
+}
+
+/**
+ * Liste isteği parametreleri — sunucunun tanıdığı boyutlar. Tarih aralığı {@link dateKind} alanına gider: açılış →
+ * since/until (HER görünümde; açık görünümde "son 1 saatte açılanlar"), kapanış → resolvedSince/Until, "Tümü"nde
+ * `range=active` kipinde sunucu since'ı aktiflik alt sınırı sayar (aralıkta AKTİF olanlar, devredenler dahil).
+ * Sıralama görünümün varsayılanıysa (sunucununkiyle aynı) gönderilmez; aksi hâlde `sort` + `dir`.
+ */
+export function listParams({ tab, filters, page, pageSize, domain, typesParam, nowMs = Date.now() }) {
   const params = { page, size: pageSize }
   if (tab !== 'all') params.resolved = tab === 'closed' ? 'true' : 'false'
-  if (tab === 'closed') {
-    if (filters.from) params.resolvedSince = dayStart(filters.from)
-    if (filters.to) params.resolvedUntil = dayEnd(filters.to)
-  } else if (tab === 'all') {
-    if (filters.from) params.since = dayStart(filters.from)
-    if (filters.to) params.until = dayEnd(filters.to)
-    if (activeRangeOn(filters, tab)) params.range = RANGE_ACTIVE
+  const kind = dateKind(filters, tab)
+  const { since, until } = resolveRange(filters, nowMs)
+  if (kind === 'resolved') {
+    if (since) params.resolvedSince = since
+    if (until) params.resolvedUntil = until
+  } else {
+    if (since) params.since = since
+    if (until) params.until = until
+    if (kind === 'active') params.range = RANGE_ACTIVE
   }
+  const { key, dir } = sortParts(filters.sort, tab)
+  if (!(key === defaultSortKey(tab) && dir === 'desc')) { params.sort = key; params.dir = dir }
   if (domain) params.domain = domain
   if (typesParam) params.alertTypes = typesParam
   // Kategori süzgeci (2026-09-30): gömülü `types` verilmediyse izleme türünün alarm tipleri sunucuya gider.
@@ -143,12 +248,16 @@ export function fmtFilterDate(v, locale) {
 }
 
 /**
- * Sayfadaki alarmları GÜNE göre bölümler (Bugün / Dün / tarih) — sunucu sırası (en yeni önce) korunur, günler bitişik.
- * Anahtar damga: kapalı görünümde kapanış, diğerlerinde açılış anı. `now` yerel gün hesabı için.
+ * Sayfadaki alarmları GÜNE göre bölümler (Bugün / Dün / tarih) — sunucu sırası korunur, günler bitişik.
+ * Anahtar damga SIRALAMA alanıdır (`sortKey`, vars. görünümünki: kapalıda kapanış, diğerlerinde açılış); seviye / takım /
+ * alan adı / tür sıralamasında gün bölümü anlamsız → tek başlıksız bölüm (`kind: 'none'`). `now` yerel gün hesabı için.
  */
-export function groupByDay(alerts, tab, now = new Date()) {
+export function groupByDay(alerts, tab, now = new Date(), sortKey = defaultSortKey(tab)) {
+  if (sortKey !== 'opened' && sortKey !== 'resolved') {
+    return alerts.length ? [{ key: 'all', kind: 'none', date: null, items: [...alerts] }] : []
+  }
   const keyOf = (a) => {
-    const d = parseUtc(tab === 'closed' ? (a.resolved_at || a.created_at) : a.created_at)
+    const d = parseUtc(sortKey === 'resolved' ? (a.resolved_at || a.created_at) : a.created_at)
     if (!d) return { key: 'unknown', date: null }
     const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     return { key: k, date: d }

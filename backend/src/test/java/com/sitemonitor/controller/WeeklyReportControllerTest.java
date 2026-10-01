@@ -47,6 +47,7 @@ class WeeklyReportControllerTest {
     @MockitoBean com.sitemonitor.service.AppSettingsService appSettings;          // son giriş zamanı (2026-09-12)
     @MockitoBean com.sitemonitor.repository.IncidentRecordRepository incidentRepo;   // öneriler (2026-09-13)
     @MockitoBean com.sitemonitor.repository.TeamRepository teamRepo;                   // takım kanal şablonu (2026-09-13)
+    @MockitoBean com.sitemonitor.service.WeeklyReportTeamInfoService teamInfoService;   // ayar satırı zenginleştirmesi (2026-09-30)
 
     private static WeeklyReport report(Long id, Long teamId, String status) {
         WeeklyReport r = new WeeklyReport();

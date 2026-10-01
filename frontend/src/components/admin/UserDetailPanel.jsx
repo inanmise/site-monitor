@@ -18,6 +18,7 @@ import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
+import { cn } from '@/lib/utils'
 
 // Kaydırma kilidi sayaçlı (ModalShell / IssueDetailSheet ile aynı sözleşme): iç içe pencerede erken açılmaz.
 let scrollLocks = 0
@@ -40,8 +41,14 @@ let savedOverflow = ''
  * UserManager'ın MEVCUT kilit açma işleyicileri `{ perm, role, org, team }` (yeni uç yok). Kapılar eskisiyle aynı:
  * yetki / push / geçmiş / AD ayakları yalnız `isAdmin`'e yüklenir; AD karşılaştırması yalnız LDAP hesapta (sunucu
  * ayrıca global yönetici ister).
+ *
+ * <p><b>`stacked` (2026-09-30):</b> pencere bir ModalShell'in (takım üyeleri penceresi, Üyeler sekmesi) ÜSTÜNE açılıyorsa
+ * katman 2100/2101'e çıkar (ModalShell 2000; onay diyaloğu 9500, menü 9600, toast 9700 yine üstte) ve scrim tıklanabilir
+ * kalır. Escape yalnız EN ÜSTTEKİ katmanı kapatır (Radix DismissableLayer yığını: alttaki ModalShell'in
+ * `onEscapeKeyDown`'u çağrılmaz) — gate: `TeamManager.test.jsx` "üst üste açılan detay". Bu kipte içeriden açılan bir
+ * TeamBadge penceresi (2000) bu kabuğun ALTINDA kalır; takım penceresinden gelen kullanıcı için takım zaten açıktır.
  */
-export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, onEdit, onChanged, onUnlock }) {
+export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin = false, onClose, onEdit, onChanged, onUnlock, stacked = false }) {
   const t = useT()
   const [tab, setTab] = useState('overview')
   const bodyRef = useRef(null)
@@ -116,13 +123,16 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, on
           rowAccessibleNames kapısı bu örtüyü pasif tıklama sayar — kapatma ayrıca X ve Escape ile. */}
       {createPortal(
         <div data-slot="dialog-overlay" aria-hidden="true"
-          className="fixed inset-0 z-[1000] bg-black/50 animate-in fade-in-0 motion-reduce:animate-none"
+          className={cn('fixed inset-0 bg-black/50 animate-in fade-in-0 motion-reduce:animate-none',
+            stacked ? 'z-[2100] pointer-events-auto' : 'z-[1000]')}
           onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }} />,
         document.body,
       )}
       <SheetContent side="right" showCloseButton={false} data-testid="user-detail" data-slot="user-detail" data-user-id={user.id}
+        data-stacked={stacked ? 'true' : undefined}
         aria-modal="true" onInteractOutside={(e) => e.preventDefault()} onCloseAutoFocus={(e) => e.preventDefault()}
-        className="z-[1001] flex h-[100dvh] w-full flex-col gap-0 p-0 sm:w-[min(56rem,calc(100vw-2rem))] sm:max-w-none">
+        className={cn('flex h-[100dvh] w-full flex-col gap-0 p-0 sm:w-[min(56rem,calc(100vw-2rem))] sm:max-w-none',
+          stacked ? 'z-[2101]' : 'z-[1001]')}>
         <SheetHeader className="shrink-0 gap-3 px-4 pt-3 pb-4 text-left sm:px-6">
           <div className="flex items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
@@ -157,7 +167,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, on
 
           <div ref={bodyRef} data-slot="ud-body" className="min-h-0 flex-1 overflow-y-auto bg-muted/30 px-4 py-4 pb-[max(env(safe-area-inset-bottom),1rem)] sm:px-6">
             <TabsContent value="overview" className="mt-0">
-              <OverviewTab user={user} teamName={primaryName} onUnlock={onUnlock} onUnlocked={afterMutation} />
+              <OverviewTab user={user} teamName={primaryName} onUnlock={onUnlock} onUnlocked={afterMutation} globalAdmin={globalAdmin} />
             </TabsContent>
             <TabsContent value="teams" className="mt-0">
               <TeamsTab user={user} section={membership} teamIds={teamIds} teamMap={teamMap} />
@@ -178,7 +188,8 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, onClose, on
             {showDirectory && (
               <TabsContent value="directory" className="mt-0">
                 <SectionCard icon={SearchCheck} title={t('mship.checkTitle')} description={t('ud.dirIntro')}>
-                  <UserLdapCompare user={user} onResynced={() => { membership.reload(); afterMutation() }} />
+                  <UserLdapCompare user={user} globalAdmin={globalAdmin} onFieldUnlocked={afterMutation}
+                    onResynced={() => { membership.reload(); afterMutation() }} />
                 </SectionCard>
               </TabsContent>
             )}

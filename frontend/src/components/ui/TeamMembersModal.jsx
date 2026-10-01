@@ -124,7 +124,11 @@ function RowsSkeleton({ label, rows = 5 }) {
   )
 }
 
-export default function TeamMembersModal({ team, open, onClose, canManage = false, onEditUser, loadMembers, managerLabelFor, refreshKey = 0, teamManager }) {
+/**
+ * @param onViewUser  (yönetim ekranı, 2026-09-30) Üyeler sekmesinde üyenin kullanıcı detayını açar — ad düğmesi + satır
+ *                    sonu ikonu (`TeamMemberCards.onView`). Yoksa üye satırı salt bilgidir (kurum-geneli rozet penceresi).
+ */
+export default function TeamMembersModal({ team, open, onClose, canManage = false, onEditUser, onViewUser, loadMembers, managerLabelFor, refreshKey = 0, teamManager }) {
   const t = useT()
   const teamId = team?.id ?? null
   const [state, setState] = useState(EMPTY_STATE)
@@ -287,7 +291,7 @@ export default function TeamMembersModal({ team, open, onClose, canManage = fals
             {loadingFirst ? <RowsSkeleton label={t('team.loadingMembers')} /> : data && (
               <TeamMemberCards key={teamId} members={members} leaderId={info.leader_id ?? info.leaderId}
                 managerUserId={manager?.member ? manager.userId : null} teamId={teamId} teamName={name}
-                canManage={canManage} onSelect={onEditUser} managerLabelFor={managerLabelFor} sharedUnit={unit} />
+                canManage={canManage} onSelect={onEditUser} onView={onViewUser} managerLabelFor={managerLabelFor} sharedUnit={unit} />
             )}
           </TabsContent>
           <TabsContent value="escalation" className="min-w-0">

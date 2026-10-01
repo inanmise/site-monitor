@@ -1,5 +1,5 @@
 import { memo, useId, useMemo, useState } from 'react'
-import { Mail, PenLine, Search, SearchX, Users, X } from 'lucide-react'
+import { Mail, PenLine, Search, SearchX, UserRoundSearch, Users, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import CopyButton from './CopyButton.jsx'
 import PaginationBar from './PaginationBar.jsx'
@@ -35,8 +35,15 @@ import { cn } from '@/lib/utils'
  * e-posta, müdür adı) + fotoğraf (kullanıcı kararı 2026-09-28: fotoğraf ve sistem rolü görünür). Yönetim yükleyicisi
  * tam entity verse de telefon / sicil ÇİZİLMEZ. Fotoğrafı olmayanda baş harf (jeton tonlu, kişiye göre kararlı).
  *
+ * <p><b>Kullanıcı detayına geçiş (2026-09-30, kullanıcı bildirimi: "Üyeler sekmesindeki kullanıcı üzerinden detay
+ * bilgilerine erişim linki yok"):</b> `onView` verildiğinde satırın adı bir düğmedir (telefonda büyük dokunma hedefi)
+ * ve satır sonunda "Kullanıcı detayını aç" ikon düğmesi durur; ikisi de `onView(üye)` çağırır — yönetim ekranı bunu
+ * `UserDetailPanel`'e (üst üste açılan Sheet) bağlar. `onView` yoksa (kurum-geneli rozet penceresi, sıradan kullanıcı)
+ * ad düz metindir ve düğme çizilmez.
+ *
  * <p>Test kancaları: `team-member-cards` (liste), `team-member-card` (satır), `team-member-name`,
- * `team-member-leader`, `team-member-manager`, `team-member-open` (yalnız canManage), `team-member-results`.
+ * `team-member-leader`, `team-member-manager`, `team-member-open` (yalnız canManage), `team-member-view` +
+ * `team-member-view-name` (yalnız onView), `team-member-results`.
  */
 
 /** Varsayılan sayfa boyutu (modal ön ayarının listesinde) — 300 kişilik takımda ilk çizim hızlı kalsın. */
@@ -114,9 +121,9 @@ const facetLabel = (t, f) => {
 }
 
 /** Masaüstü sütun şablonu — başlık satırı ve üye satırları AYNI şablonu kullanır. */
-const LG_COLS = 'lg:grid-cols-[2.25rem_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.3fr)_2.5rem]'
+const LG_COLS = 'lg:grid-cols-[2.25rem_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto]'
 
-const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary, canManage, onSelect, managerLabel, sharedUnit }) {
+const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary, canManage, onSelect, onView, managerLabel, sharedUnit }) {
   const nameId = useId()
   const name = nameOf(m) || '—'
   // Takımın ORTAK müdürlüğü başlıkta bir kez yazılır; satırda tekrar edilmez (her satırda aynı metin = gürültü).
@@ -131,7 +138,16 @@ const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary
         className="row-span-3 mt-0.5 lg:row-span-1 lg:mt-0" />
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-          <span id={nameId} data-slot="team-member-name" className="min-w-0 font-medium break-words">{name}</span>
+          {onView ? (
+            // Ad = detayı açan düğme (telefonda satır yüksekliğinde hedef; bağlantı görünümü, ad metni erişilebilir ad)
+            <Button type="button" variant="link" size="sm" data-slot="team-member-view-name" onClick={() => onView(m)}
+              title={t('team.memberViewDetail')}
+              className="h-auto min-h-0 min-w-0 justify-start p-0 text-left font-medium whitespace-normal text-foreground max-sm:min-h-10 pointer-coarse:min-h-10">
+              <span id={nameId} data-slot="team-member-name" className="min-w-0 break-words">{name}</span>
+            </Button>
+          ) : (
+            <span id={nameId} data-slot="team-member-name" className="min-w-0 font-medium break-words">{name}</span>
+          )}
           {isManager && <Badge variant="secondary" data-slot="team-member-manager">{t('team.colManager')}</Badge>}
           {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
           {m.org_role && m.org_role !== 'TECH' && <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>}
@@ -148,7 +164,14 @@ const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary
       <div className={cn('col-start-2 min-w-0 lg:col-start-auto', !m.email && 'max-lg:hidden')}>
         <EmailLine email={m.email} personName={name} t={t} />
       </div>
-      <div className="col-start-3 row-start-1 flex justify-end lg:col-start-auto lg:row-start-auto">
+      <div className="col-start-3 row-start-1 flex justify-end gap-1 lg:col-start-auto lg:row-start-auto">
+        {onView && (
+          <Button type="button" variant="ghost" size="icon-sm" data-slot="team-member-view"
+            aria-label={t('a11y.rowAction', name, t('team.memberViewDetail'))} title={t('team.memberViewDetail')}
+            onClick={() => onView(m)} className="text-muted-foreground max-sm:size-10 pointer-coarse:size-10">
+            <UserRoundSearch aria-hidden="true" />
+          </Button>
+        )}
         {canManage && (
           <Button type="button" variant="ghost" size="icon-sm" data-slot="team-member-open"
             aria-label={t('a11y.rowAction', name, t('usr.editTitle'))} title={t('usr.editTitle')}
@@ -168,9 +191,10 @@ const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary
  * @param teamId         ek üyelik tespiti (yönetim verisi `team_id` taşır)
  * @param managerLabelFor üyenin müdür etiketi (yönetim ekranı: ad ya da sicil); yoksa `manager_display_name`
  * @param sharedUnit     başlıkta gösterilen ortak müdürlük — satırlarda tekrar edilmez
+ * @param onView         üyenin kullanıcı detayını açar (yalnız yönetim ekranı, yetkili görüntüleyici); yoksa düğme çizilmez
  */
 export default function TeamMemberCards({ members = [], leaderId, managerUserId = null, teamId = null, teamName = '',
-  canManage = false, onSelect, managerLabelFor, sharedUnit = null }) {
+  canManage = false, onSelect, onView, managerLabelFor, sharedUnit = null }) {
   const t = useT()
   const searchId = useId()
   const [query, setQuery] = useState('')
@@ -269,7 +293,7 @@ export default function TeamMemberCards({ members = [], leaderId, managerUserId 
             {pager.pageItems.map((m) => (
               <MemberRow key={m.id ?? m.username} m={m} t={t}
                 isLeader={sameId(leaderId, m.id)} isManager={sameId(managerUserId, m.id)}
-                secondary={isSecondaryMember(m, teamId)} canManage={canManage} onSelect={onSelect}
+                secondary={isSecondaryMember(m, teamId)} canManage={canManage} onSelect={onSelect} onView={onView}
                 managerLabel={mgrLabel(m)} sharedUnit={sharedUnit} />
             ))}
           </ul>

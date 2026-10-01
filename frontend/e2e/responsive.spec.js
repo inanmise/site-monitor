@@ -16,7 +16,7 @@ import { mockApi } from './support/monitorMocks.js'
 const TABS = [
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'monitoring', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted',
+  'health', 'uptime', 'monitoring', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted',
   'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ]
@@ -124,6 +124,8 @@ const NOC_COVERAGE = { success: true, data: { items: [], summary: { total: 3, co
 const ADMIN_SUBTABS = [
   // "Kim bilgilendirilir?" (2026-09-27): senaryo formu + özet kutucukları + kanal kartları
   { key: 'admin/whoNotified', url: '/?tab=admin&g_tab=whoNotified&g_team=1', ready: '[data-slot="wn-result"]' },
+  // Ayarlar → Alarm Fırtınası (2026-09-30): eşik/pencere/sessiz pencere alanları + canlı takım durum paneli
+  { key: 'settings/storm', url: '/?tab=settings&sec=storm', ready: '[data-testid="storm-settings"]' },
 ]
 for (const vp of VIEWPORTS) {
   test.describe(`mobil web — yönetim alt sekmeleri ${vp.name} ${vp.width}×${vp.height}`, () => {
@@ -171,3 +173,51 @@ test.describe('mobil web — detay pencereleri (telefon 390×844)', () => {
     })
   }
 })
+
+// İzleme Panosu KPI özet pencereleri (2026-10-01, kullanıcı isteği): Sorunlu / Kontrolü gecikmiş / Açık alarm /
+// Duraklatılmış kutuları ModalShell açar — telefonda tam ekran, tablette ortalı; içerideki hiçbir öğe (özet kutucukları,
+// dağılım listeleri, izleme satırları, envanter-dışı alt grubu ve ikiz bağlantısı, altlık düğmeleri) ekran dışına taşmaz.
+// Ayrıca pano masaüstü genişliklerinde (1280 / 1440 — tablo görünümü, kap sorgulu sütunlar) sayfa düzeyinde taşmaz.
+const MO_KPI_DIALOGS = ['down', 'stale', 'alerts', 'paused']
+for (const vp of VIEWPORTS) {
+  test.describe(`mobil web — monitoring KPI pencereleri ${vp.name} ${vp.width}×${vp.height}`, () => {
+    for (const kind of MO_KPI_DIALOGS) {
+      test(`monitoring ${kind} penceresi`, async ({ page }) => {
+        await page.setViewportSize({ width: vp.width, height: vp.height })
+        await mockApi(page)
+        await page.goto('/?tab=monitoring')
+        await page.locator(`[data-slot="stat-item"][data-key="${kind}"]`).click({ timeout: 20_000 })
+        await page.locator(`[data-slot="mo-kpi-dialog"][data-kind="${kind}"]`).waitFor()
+        const dlg = page.getByRole('dialog').first()
+        await page.waitForTimeout(600)
+        const m = await page.evaluate(measure, '[role="dialog"]')
+        expect(m.offenders, `monitoring ${kind} penceresi @${vp.name}: ekran dışına taşan öğe`).toEqual([])
+        const box = await dlg.boundingBox()
+        expect(box.x).toBeGreaterThanOrEqual(0)
+        expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+        expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
+        // Altlık düğmesi ("Listede süz") görünür ve dokunma hedefi ≥ 40 px (dokunmatik taklidi yok → yalnız görünürlük)
+        await expect(page.locator('[data-slot="mo-dlg-filter"]')).toBeVisible()
+      })
+    }
+  })
+}
+
+for (const vp of [{ name: 'laptop', width: 1280, height: 800 }, { name: 'desktop', width: 1440, height: 900 }]) {
+  test(`monitoring @${vp.name} ${vp.width}×${vp.height}: tablo görünümü, sayfa taşmaz`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=monitoring')
+    await page.locator('[data-slot="mo-table"]').waitFor({ timeout: 20_000 })
+    await page.waitForTimeout(600)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `monitoring@${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+    expect(m.pageOverflow, `monitoring@${vp.name}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    // Kap sorgulu sütunlar: açık kenar çubuğuyla bile tablo kendi kabında yatay KAYDIRMA istemez (eylemler görünür)
+    const tableOverflow = await page.locator('[data-slot="mo-table"]').evaluate((el) => {
+      const box = el.closest('[data-slot="table-container"]') || el.parentElement
+      return box.scrollWidth - box.clientWidth
+    })
+    expect(tableOverflow, `monitoring@${vp.name}: tablo yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+  })
+}

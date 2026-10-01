@@ -1101,6 +1101,52 @@ public class SchedulerService {
         patch("ALTER TABLE alert_storms ADD COLUMN last_member_at VARCHAR(30)");
         // 2026-09-29 (A1-O1): LDAP kaynaklı profil alanlarının alan-başına kilidi (virgülle ayrılmış anahtarlar, NULL = kilit yok).
         patch("ALTER TABLE app_users ADD COLUMN locked_fields VARCHAR(400)");
+        // 2026-09-30: takım bazlı fırtına gözlem ekranı — açılış anlık görüntüsü (eşik/pencere/hedef sayısı/tetikleyen
+        // alarm) ve kapanış nedeni fırtına satırında dondurulur; üyelik kalıcı tabloya yazılır (kapanışta storm_id
+        // sıfırlansa da "kim hangi fırtınadaydı" geriye dönük okunabilir).
+        patch("ALTER TABLE alert_storms ADD COLUMN team_id BIGINT");
+        patch("ALTER TABLE alert_storms ADD COLUMN group_name VARCHAR(160)");
+        patch("ALTER TABLE alert_storms ADD COLUMN threshold_unit VARCHAR(8)");
+        patch("ALTER TABLE alert_storms ADD COLUMN threshold_value INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN threshold_effective INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN window_minutes INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN quiet_minutes INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN targets_at_open INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN peak_targets INTEGER");
+        patch("ALTER TABLE alert_storms ADD COLUMN trigger_event_id BIGINT");
+        patch("ALTER TABLE alert_storms ADD COLUMN resolve_reason VARCHAR(32)");
+        // Eski takım fırtınalarına takım kimliği geriye dönük (scope_key = TEAM:<id> ya da TEAM:<id>|GROUP:<g>).
+        patch("UPDATE alert_storms SET team_id = CAST(substring(scope_key from 'TEAM:([0-9]+)') AS BIGINT) "
+            + "WHERE team_id IS NULL AND scope_key LIKE 'TEAM:%'");
+        patch("CREATE INDEX IF NOT EXISTS idx_as_team_created ON alert_storms(team_id, created_at)");
+        patch("""
+            CREATE TABLE IF NOT EXISTS alert_storm_members (
+                id BIGSERIAL PRIMARY KEY,
+                storm_id BIGINT NOT NULL,
+                alert_event_id BIGINT NOT NULL,
+                joined_at VARCHAR(30) NOT NULL,
+                join_kind VARCHAR(12) NOT NULL,
+                announced_at VARCHAR(30),
+                left_at VARCHAR(30),
+                leave_kind VARCHAR(16),
+                CONSTRAINT ux_asm_storm_event UNIQUE (storm_id, alert_event_id)
+            )
+            """);
+        // storm_id tek başına indekslenmez: UNIQUE(storm_id, alert_event_id) önde storm_id ile aynı işi görür (2026-10-01)
+        patch("DROP INDEX IF EXISTS idx_asm_storm");
+        // ── Performans indeksleri (2026-10-01 inceleme) ──
+        // Fırtına geçmişi / analizi takım süzgeçsiz: created_at aralığı + ORDER BY created_at DESC.
+        patch("CREATE INDEX IF NOT EXISTS idx_as_created ON alert_storms(created_at)");
+        // Gürültü analizi ve pencere sorguları alert_events'i created_at aralığıyla okur; öndeki created_at'li indeks yoktu.
+        // CONCURRENTLY: büyük tabloda açılışta yazmaları kilitlemez (patch() otomatik commit'te koşar). Yarıda kalan derleme
+        // INVALID indeks bırakır ve IF NOT EXISTS onu bir daha kurmaz — dağıtım sonrası pg_index.indisvalid denetlenir
+        // (docs/PROD_DEPLOY_CHECKLIST.md). H2 CONCURRENTLY'yi tanımaz: düz kurulum ikinci satırda.
+        patch("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ae_created_at ON alert_events(created_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_ae_created_at ON alert_events(created_at)");
+        // Fırtına ayrıntısı push sayımı + UserPushService önek aramaları: dedupe_key LIKE 'storm:N:%' — C dışı collation'da
+        // düz btree LIKE önekine hizmet etmez; text_pattern_ops hem = hem LIKE 'önek%' için kullanılır (PostgreSQL'e özel).
+        patch("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_push_dedupe ON user_push_deliveries(dedupe_key text_pattern_ops)");
+        patch("CREATE INDEX IF NOT EXISTS idx_asm_event ON alert_storm_members(alert_event_id)");
         // Pencere-içi açık DOWN eş sayımı (StormService.evaluate) — resolved + alert_type + created_at aralığı.
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_scan ON alert_events(resolved, alert_type, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_id ON alert_events(storm_id)");

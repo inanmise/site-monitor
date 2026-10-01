@@ -35,7 +35,8 @@ export const TEAM_BADGE_TOUCH = 'relative pointer-coarse:overflow-visible pointe
  * 2026-09-10). Bu modda <span role="button" tabIndex=0> çizilir; tıklama/Enter/Space aynı
  * modalı açar ve dış düğmeye SIZMAZ.
  */
-export default function TeamBadge({ teamId, teamName, size = 12, className = '', onOpen, static: forceStatic = false, title, as = 'button' }) {
+/** {@code ariaLabel}: tıklama üye penceresi DEĞİL başka bir eylemse (ör. Alarm Geçmişi "bu takıma süz") erişilebilir ad da onu söyler. */
+export default function TeamBadge({ teamId, teamName, size = 12, className = '', onOpen, static: forceStatic = false, title, as = 'button', ariaLabel }) {
   const t = useT()
   const dir = useTeamDirectory()
   const [open, setOpen] = useState(false)
@@ -62,7 +63,7 @@ export default function TeamBadge({ teamId, teamName, size = 12, className = '',
     if (onOpen) onOpen(id, name)
     else setOpen(true)
   }
-  const label = t('team.openMembers', name)
+  const label = ariaLabel || t('team.openMembers', name)
   const cls = cn(BADGE_BASE, BADGE_INTERACTIVE, TEAM_BADGE_TOUCH, className)
   return (
     <>

@@ -68,6 +68,7 @@ const PingMonitorPage = lazy(() => import('./components/PingMonitorPage'))
 const PageMonitorPage = lazy(() => import('./components/PageMonitorPage'))
 const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPage'))
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
+const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
 const AdminPanel = lazy(() => import('./components/admin/AdminPanel'))
@@ -148,7 +149,7 @@ export const NAVIGATE_EVENT = 'sm:navigate'
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'monitoring', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
+  'health', 'uptime', 'monitoring', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 /** Genel Bakış kart listesinin paylaşılabilir sayfa/boyut adresi (usePagination `url`; sabit referans). */
@@ -1449,7 +1450,7 @@ export default function App() {
             {tab === 'admin' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.admin.Icon} title={t('app.adminTitle')} description={t('app.adminDesc')} />
-                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} />
+                <AdminPanel systemRole={systemRole} ownTeamId={teamId} myTeamIds={myTeamIds} currentUsername={user} globalAdmin={globalAdmin} />
               </div>
             )}
 
@@ -1556,6 +1557,7 @@ export default function App() {
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'monitoring' && <MonitoringOverviewPage />}
+            {tab === 'storms' && <StormStatusPage />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}

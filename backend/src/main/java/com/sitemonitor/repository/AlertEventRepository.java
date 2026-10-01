@@ -570,6 +570,87 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
          + "FROM AlertEvent e WHERE e.domain IN :domains GROUP BY e.domain, e.alertType")
     List<Object[]> summarizeHistoryByDomainAndType(@Param("domains") Collection<String> domains);
 
+    // ── Performans projeksiyonları (2026-10-01) — tam entity (5 TEXT sütun) yerine yalnız okunan alanlar ──────────
+
+    /**
+     * Menü alarm rozetleri ({@code OpenAlertsSummaryService}): AÇIK alarmların (tip, seviye, sahiplenildi) kırılımı — TEK
+     * gruplu sorgu, KESİN sayılar (eskiden seviye/sahiplenilmemiş kırılımı en yeni 200 alarmdan örneklenirdi). Takım
+     * kapsamı {@link #findFiltered} ile AYNI yüklem (damgalı takım ya da envanterin SY/UG'si).
+     * Sütunlar: {@code [alertType, alertLevel, acknowledged, count]}.
+     */
+    @Query("""
+            SELECT e.alertType, e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e
+            WHERE e.resolved = false
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            GROUP BY e.alertType, e.alertLevel, e.acknowledged
+            """)
+    List<Object[]> countOpenByTypeLevelAck(@Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    /**
+     * Menü alarm rozetlerinin özet kartı: verilen tiplerdeki en yeni AÇIK alarmlar, dar projeksiyon + damgalı takımın adı
+     * (LEFT JOIN — ayrı takım sorgusu yok). Sayfa yalnız LIMIT için ({@code List} dönüşü → COUNT sorgusu YOK).
+     * Kapsam {@link #countOpenByTypeLevelAck} ile aynı.
+     * Sütunlar: {@code [id, domain, alertType, alertLevel, createdAt, acknowledged, teamId, stormId, teamName]}.
+     */
+    @Query("""
+            SELECT e.id, e.domain, e.alertType, e.alertLevel, e.createdAt, e.acknowledged, e.teamId, e.stormId, t.name
+            FROM AlertEvent e LEFT JOIN Team t ON t.id = e.teamId
+            WHERE e.resolved = false
+              AND e.alertType IN :types
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            ORDER BY e.createdAt DESC, e.id DESC
+            """)
+    List<Object[]> findOpenSummaryItems(@Param("types") Collection<String> types,
+                                        @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                        Pageable pageable);
+
+    /**
+     * Alarm gürültü analizi ({@code AlertNoiseService}): pencere içinde AÇILAN alarmların yalnız okunan alanları — 90 güne
+     * kadar tam entity yüklemek yerine. ORDER BY YOK (sıralama gerekirse bellekte); kapsam çağıranda.
+     * İndeks: {@code alert_events(created_at)}.
+     * Sütunlar: {@code [domain, alertType, alertLevel, createdAt, resolvedAt, resolved, resolvedSilently, acknowledged, teamId]}.
+     */
+    @Query("""
+            SELECT e.domain, e.alertType, e.alertLevel, e.createdAt, e.resolvedAt, e.resolved, e.resolvedSilently,
+                   e.acknowledged, e.teamId
+            FROM AlertEvent e
+            WHERE e.createdAt >= :since
+            """)
+    List<Object[]> findNoiseRowsSince(@Param("since") String since);
+
+    /**
+     * Gürültü ısı haritası HÜCRE ayrıntısı (2026-10-01): pencerenin alarmları, satıra gidiş için kimlikle. Dar izdüşüm —
+     * gün × saat (İstanbul) süzgeci Java'da (created_at metin; dilim birden çok haftaya yayılır). Yalnız tıklanınca çalışır.
+     * Sütunlar: {@code [id, domain, alertType, alertLevel, createdAt, resolvedAt, resolved, acknowledged, teamId]}.
+     */
+    @Query("""
+            SELECT e.id, e.domain, e.alertType, e.alertLevel, e.createdAt, e.resolvedAt, e.resolved, e.acknowledged, e.teamId
+            FROM AlertEvent e
+            WHERE e.createdAt >= :since
+            """)
+    List<Object[]> findNoiseSlotRowsSince(@Param("since") String since);
+
+    /**
+     * İzleme Panosu ({@code MonitoringOverviewService}): {@code from}'dan beri GERÇEKTEN kurtarılarak kapanan alarmlar
+     * (sessiz kapanış hariç — {@link #countRecoveredByType} ile aynı kural), (tip, damgalı takım) başına sayı. Kapsam
+     * (damgalı takım görüş kapsamında) çağıranda, takım sütunu üzerinden uygulanır.
+     * Sütunlar: {@code [alertType, teamId, count]}.
+     */
+    @Query("""
+            SELECT e.alertType, e.teamId, COUNT(e) FROM AlertEvent e
+            WHERE e.resolved = true
+              AND e.resolvedAt >= :from
+              AND (e.resolvedSilently IS NULL OR e.resolvedSilently = false)
+            GROUP BY e.alertType, e.teamId
+            """)
+    List<Object[]> countRecoveredSinceByTypeAndTeam(@Param("from") String from);
+
     /** İmza zaman çizelgesi (en yeniden eskiye, SAYFALI): "bu alarmdan ÖNCEKİ oluşum" için. */
     @Query("SELECT e.domain, e.alertType, e.createdAt FROM AlertEvent e "
          + "WHERE e.domain IN :domains ORDER BY e.createdAt DESC")

@@ -10,7 +10,7 @@ vi.mock('../api/client', () => ({
   api: withApiFallback({
     admin: {
       getContacts: vi.fn(), getPermissionMatrix: vi.fn(), history: vi.fn(), userPush: { explain: vi.fn() },
-      userTeamMembership: vi.fn(), userLdapCheck: vi.fn(), userLdapResync: vi.fn(),
+      userTeamMembership: vi.fn(), userLdapCheck: vi.fn(), userLdapResync: vi.fn(), unlockUserField: vi.fn(),
     },
   }),
 }))
@@ -276,6 +276,40 @@ describe('UserDetailPanel — yeniden tasarım', () => {
     await waitFor(() => expect(team).toHaveBeenCalledWith(7))
     await waitFor(() => expect(onChanged).toHaveBeenCalled())
     await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(2))
+  })
+
+  // LDAP alan kilitleri (2026-09-30): satır `locked_field_keys` taşır → başlıkta TEK toplu rozet, Genel Bakış'ta alan başına
+  // satır (mevcut perm/role/org/team satırlarından SONRA, kanonik sırada). "AD'ye geri ver" yalnız global yöneticide.
+  it('LDAP alan kilitleri: alan başına satır + başlıkta "N alan kilitli"; geri verme düğmesi yalnız globalAdmin ve doğru alanla çağrılır', async () => {
+    const locked = { ...USER, locked_field_keys: ['title', 'email'] }   // sunucu kanonik sırada yollar; ekran yine de sıralar
+    api.admin.unlockUserField.mockResolvedValue({ success: true, had_lock: true, data: { ...locked, locked_field_keys: ['email'] } })
+    const { unmount } = await renderPanel({ user: locked, onUnlock: { team: vi.fn() } })
+    let dlg = screen.getByTestId('user-detail')
+    const badges = dlg.querySelector('[data-slot="ud-badges"]')
+    expect([...badges.querySelectorAll('[data-lock]')].map((e) => e.getAttribute('data-lock'))).toEqual(['org', 'team', 'fields'])
+    expect(badges.querySelector('[data-lock="fields"]')).toHaveTextContent('2 fields locked')
+    fireEvent.click(within(badges).getByRole('button', { name: /2 fields locked — what does this mean\?/ }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(/Email, Title/)
+    let locks = dlg.querySelector('[data-slot="ud-locks"]')
+    expect([...locks.querySelectorAll('li[data-lock]')].map((e) => `${e.getAttribute('data-lock')}:${e.getAttribute('data-field') || ''}`))
+      .toEqual(['org:', 'team:', 'field:email', 'field:title'])
+    const titleRow = locks.querySelector('li[data-field="title"]')
+    expect(titleRow).toHaveTextContent('Title locked')
+    expect(titleRow).toHaveTextContent(/Edited by hand/)
+    expect(within(titleRow).queryByRole('button', { name: 'Return to AD' })).toBeNull()         // global yönetici değil
+    expect(within(locks).getByRole('button', { name: 'Return teams to AD' })).toBeInTheDocument()   // mevcut satır bozulmadı
+    unmount()
+
+    const onChanged = vi.fn()
+    await renderPanel({ user: locked, globalAdmin: true, onChanged })
+    dlg = screen.getByTestId('user-detail')
+    locks = dlg.querySelector('[data-slot="ud-locks"]')
+    expect(within(locks).getAllByRole('button', { name: 'Return to AD' })).toHaveLength(2)
+    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(2))
+    fireEvent.click(within(locks.querySelector('li[data-field="title"]')).getByRole('button', { name: 'Return to AD' }))
+    await waitFor(() => expect(api.admin.unlockUserField).toHaveBeenCalledWith(7, 'title'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+    await waitFor(() => expect(api.admin.history).toHaveBeenCalledTimes(3))   // geçmiş tazelendi
   })
 
   it('kilitsiz ve işleyicisiz: kilit kartı "kilit yok" der, düğme yok', async () => {

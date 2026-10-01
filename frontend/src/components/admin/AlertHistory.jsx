@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react'
 import {
   History, RefreshCcw, Download, Siren, OctagonAlert, TriangleAlert, CircleAlert, BellRing, UserCheck, Clock,
-  CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall,
+  CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall, CalendarSearch, CalendarRange,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -27,9 +27,11 @@ import { NocCallQuickSheet } from './alerts/NocCallLog.jsx'   // 7/24 arama kayd
 import ActionNoteDialog from '../incidents/ActionNoteDialog.jsx'   // gerekçeli sahiplen / çöz penceresi (2026-09-28)
 import { contextFromAlert } from '../incidents/actionNoteModel.js'
 import {
-  FILTER_DEFAULTS, TABS, tabFromUrl, filtersFromUrl, filtersToUrl, activeAlertFilters, listParams, csvParams,
-  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, actBlockReason, isSrcKey,
+  FILTER_DEFAULTS, LEVELS, TABS, tabFromUrl, filtersFromUrl, filtersToUrl, activeAlertFilters, listParams, csvParams,
+  iso24hAgo, groupByDay, alertLink, alertHref, alertSourceTab, actBlockReason, isSrcKey, isPreset, widerPreset, sortParts, toggleSort,
 } from './alerts/alertHistoryModel.js'
+import { presetLabel } from './alerts/AlertToolbar.jsx'
+import { ALERT_TYPES, alertTypeLabel } from '../../utils/alertTypeMeta.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -54,8 +56,10 @@ const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'ac
  * Sözleşmeler (değişmedi): süzme/sayfalama SUNUCUDA (istemcide süzmek yalnız açık sayfayı süzerdi); sahiplenme ve
  * çözüm GEREKÇE ister (AlertActionNote — tekli ve toplu yolda); yetki sunucuda (`alerts.actions`, 403 → toast);
  * URL anahtarları uygulamanın PAGE_STATE_PARAMS'ı (`view` — `tab` DEĞİL, ISSUE-002; `type q level team ack from to
- * range alert page ps`; `range=active` = "Tümü"nde aralıkta AKTİF olanlar, haftalık e-postanın alarm bağlantısı);
- * bildirim kutusu derin bağlantısı `?alert=<id>` (sm:navigate ile açıkken de).
+ * range sort alert page ps` — tam sözleşme alertHistoryModel.js başında; `from` hızlı dönem belirteci de taşır (`1h 24h 7d
+ * 30d`), `range` tarih alanı kipi (`active` = "Tümü"nde aralıkta AKTİF olanlar, haftalık e-postanın alarm bağlantısı;
+ * `resolved` / `opened`), `sort` sütun sıralaması (`<anahtar>[_asc]`)); bildirim kutusu derin bağlantısı `?alert=<id>`
+ * (sm:navigate ile açıkken de). 2026-10-01: hızlı dönemler, sütun sıralaması/süzgeçleri, Takım sütunu (Alarm Geçmişi isteği).
  *
  * @param domain  GÖMÜLÜ kullanım (izleme/sertifika penceresinin "Alarm Geçmişi" sekmesi): yalnız bu hedef.
  * @param types   GÖMÜLÜ kullanım: yalnız bu alarm tipleri (sunucuda süzülür).
@@ -302,10 +306,17 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     return () => clearTimeout(id)
   }, [linkedAlertId, alerts, loaded, linkedNocCall, nocCanWrite, logCall])
 
+  // Takım adı dizini (2026-10-01, performans): satır başına `teams.find` (satır × takım) yerine bir kez kurulan
+  // id → ad haritası. İlk eşleşme kazanır (eski `find` ile aynı); bulunamayan / adsız takım null.
+  const teamNameById = useMemo(() => {
+    const m = new Map()
+    for (const tm of teams) { const k = String(tm?.id); if (tm?.id != null && !m.has(k)) m.set(k, tm.name) }
+    return m
+  }, [teams])
   const teamNameOf = useCallback((id) => {
     if (id == null) return null
-    return teams.find((tm) => String(tm.id) === String(id))?.name ?? null
-  }, [teams])
+    return teamNameById.get(String(id)) ?? null
+  }, [teamNameById])
 
   // ── Eylemler (gerekçe zorunlu — sunucu AlertActionNote ile aynı kural) ──
   // Pencere: incidents/ActionNoteDialog (Olaylar ile ortak). Sunucu çağrısı pencerenin İÇİNDEN (`submit`): hata
@@ -473,7 +484,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     }
     patch({ level: tab === 'open' && filters.level === key ? '' : key, ack: '' })
   }
-  const showResolved24 = () => { setTab('closed'); patch({ from: iso24hAgo(Date.now()), to: '', level: '', ack: '' }) }
+  // Kapalı görünümde varsayılan tarih alanı KAPANIŞ (range '') — "son 24 saatte çözülen"; dönem belirteci istek anında hesaplanır.
+  const showResolved24 = () => { setTab('closed'); patch({ from: '24h', to: '', range: '', level: '', ack: '' }) }
   const activeTile = tab !== 'open' ? null
     : (filters.level || (filters.ack === 'unack' ? 'unacked' : filters.ack === 'ack' ? 'acked' : null))
   const tiles = useMemo(() => {
@@ -495,7 +507,28 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   const active = activeAlertFilters(filters, tab)
   const filtered = !embedded && active.length > 0
-  const groups = useMemo(() => groupByDay(alerts, tab, new Date(nowMs)), [alerts, tab, nowMs])
+  // Sıralama (2026-10-01): sütun başlığı / araç çubuğu seçicisi → `filters.sort` (URL); gün bölümleri sıralama alanına göre.
+  const sort = useMemo(() => sortParts(filters.sort, tab), [filters.sort, tab])
+  const onSort = useCallback((key) => patch({ sort: toggleSort(filters.sort, key, tab) }), [patch, filters.sort, tab])
+  const pickTeam = useCallback((id) => { if (id != null) patch({ team: String(id) }) }, [patch])
+  const groups = useMemo(() => groupByDay(alerts, tab, new Date(nowMs), sort.key), [alerts, tab, nowMs, sort.key])
+  // Sütun başlığı süzgeçleri — araç çubuğuyla AYNI durum (çipler + URL tek kaynak); yalnız bağımsız sayfada.
+  const columnFilters = useMemo(() => {
+    if (!urlSync) return null
+    const counts = facets.typeCounts || {}
+    const known = ALERT_TYPES.filter((type) => (counts[type] ?? 0) > 0 || filters.type === type)
+    const unknown = Object.keys(counts).filter((type) => !ALERT_TYPES.includes(type) && counts[type] > 0)
+    return {
+      level: { name: 'level', value: filters.level, onChange: (v) => patch({ level: v }),
+        options: [{ value: '', label: t('alh.allLevels') }, ...LEVELS.map((l) => ({ value: l, label: t(`alh.level.${l.toLowerCase()}`) }))] },
+      type: { name: 'type', value: filters.type, onChange: (v) => patch({ type: v }),
+        options: [{ value: '', label: t('alh.typeAll') }, ...[...known, ...unknown].map((type) => ({ value: type, label: alertTypeLabel(t, type), count: counts[type] ?? 0 }))] },
+      team: { name: 'team', value: filters.team, onChange: (v) => patch({ team: v }),
+        options: [{ value: '', label: t('alh.allTeams') }, ...teams.map((tm) => ({ value: String(tm.id), label: tm.name }))] },
+      ack: { name: 'ack', value: filters.ack, onChange: (v) => patch({ ack: v }),
+        options: [{ value: '', label: t('alh.allAckStates') }, { value: 'unack', label: t('alh.unackedOnly') }, { value: 'ack', label: t('alh.ackOnly') }] },
+    }
+  }, [urlSync, facets.typeCounts, filters.level, filters.type, filters.team, filters.ack, teams, t, patch])
   const initial = loading && !loaded && !error
   const updatedText = updatedAt ? updatedAt.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : null
 
@@ -508,7 +541,19 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     if (next) { e.preventDefault(); next.focus() }
   }
 
-  const emptyState = filtered ? (
+  // Hızlı dönemde boş sonuç (2026-10-01): "Bu dönemde alarm yok" + tek tıkla bir üst dönem (1 sa → 24 sa → 7 g → 30 g → tümü).
+  const wider = !embedded && isPreset(filters.from) ? widerPreset(filters.from) : null
+  const emptyState = wider != null ? (
+    <StatusBlock tone="neutral" icon={CalendarSearch} title={t('alh.emptyPeriod')} description={t('alh.emptyPeriodText', presetLabel(t, filters.from))} className="py-12"
+      actions={(
+        <>
+          <Button type="button" data-slot="widen-period" onClick={() => patch({ from: wider, to: '' })}>
+            <CalendarRange aria-hidden="true" />{wider ? t('alh.widenPeriod', presetLabel(t, wider)) : t('alh.widenPeriodAll')}
+          </Button>
+          {active.length > 1 && <Button type="button" variant="outline" onClick={resetFilters}><FilterX aria-hidden="true" />{t('alh.clearFilters')}</Button>}
+        </>
+      )} />
+  ) : filtered ? (
     <StatusBlock tone="neutral" icon={FilterX} title={t('alh.emptyFiltered')} description={t('alh.emptyFilteredText')} className="py-12"
       actions={<Button type="button" variant="outline" onClick={resetFilters}><FilterX aria-hidden="true" />{t('alh.clearFilters')}</Button>} />
   ) : tab === 'open' ? (
@@ -562,12 +607,13 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
                 push={facets.push[String(a.id)]} selected={selected.has(a.id)} onToggleSelect={toggleSelect}
                 highlighted={detail != null && String(detail.id) === String(a.id)} linked={String(a.id) === String(linkedAlertId)}
                 onOpen={openDetail} onAck={ack} onResolve={resolve} onReNotify={reNotify} notifying={notifying === a.id}
-                onLogCall={nocCanWrite ? logCall : undefined} actBlocked={actBlocked(a)}
+                onLogCall={nocCanWrite ? logCall : undefined} actBlocked={actBlocked(a)} onPickTeam={urlSync ? pickTeam : undefined}
                 menuItems={(x) => menuItems(x, { card: true })} />
             )} />
           ) : (
             <AlertRowsList groups={groups} tab={tab} nowMs={nowMs} onOpen={openDetail} activeId={detail?.id} linkedId={linkedAlertId}
-              menuItems={(x) => menuItems(x)} phone={phone} />
+              menuItems={(x) => menuItems(x)} phone={phone} sort={sort} onSort={onSort} columnFilters={columnFilters}
+              onPickTeam={urlSync ? pickTeam : undefined} teamNameOf={teamNameOf} />
           )}
         </div>
       )}
@@ -624,7 +670,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           <AlertTeamStatsPanel activeTeamId={filters.team}
             onPickTeam={(id) => patch({ team: String(id) })}
             onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
-          <AlertNoisePanel onPickDomain={(d) => patch({ q: d })} />
+          <AlertNoisePanel onPickDomain={(d) => patch({ q: d })}
+            onPickDay={(day) => { setTab('all'); patch({ from: day, to: day, range: '' }) }}
+            onOpenAlert={(a) => { setTab(a.resolved ? 'closed' : 'open'); setFilters({ ...FILTER_DEFAULTS, q: a.domain || '' }); setDetail(a) }} />
         </div>
       )}
 

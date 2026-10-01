@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CalendarDays } from 'lucide-react'
-import { api } from '../../api/client'
+import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -25,7 +25,78 @@ import { cn } from '@/lib/utils'
  *
  * <p>Kapatmak VERİ SİLMEZ — mevcut raporlar durur, yalnız görünmez olur; tekrar açılınca
  * aynen geri gelir. Bu yüzden kapatma onayında rapor sayısı gösterilir.
+ *
+ * <p><b>Satır bilgisi (2026-09-30, kullanıcı isteği):</b> takımın PO'ları (ad + mailto), müdürü (Takım Yönetimi ile
+ * AYNI kural — sunucu `TeamManagerResolver`; kaynak rozeti "elle" / "AD") ve son raporu (ISO hafta + durum +
+ * gönderim/onay zamanı; hiç yoksa "Hiç gönderilmedi"). Geniş ekranda (≥768) üç ek sütun; telefonda takım hücresinin
+ * altında etiket:değer satırları. Veri `GET /weekly-reports/access/teams` satırından (`po_users`, `manager_*`,
+ * `last_report`). Test kancaları: `wracc-po`, `wracc-manager`, `wracc-last`, `wracc-mobile`.
  */
+
+/** Haftalık rapor durumu → ton + i18n (WeeklyThisWeekStrip ile aynı etiket kuralı; onaylanmış + gönderilmiş = "Gönderildi"). */
+const STATUS_TONE = { DRAFT: 'muted', PENDING_APPROVAL: 'warning', APPROVED: 'success', REJECTED: 'danger' }
+function statusLabel(t, r) {
+  const st = String(r?.status || 'DRAFT')
+  if (st === 'APPROVED' && r.sent_at) return t('wr.statusSent')
+  const key = st === 'PENDING_APPROVAL' ? 'Pending' : st.charAt(0) + st.slice(1).toLowerCase()
+  return t('wr.status' + key)
+}
+
+/** Kişi adı: e-postası varsa mailto bağlantısı (dokunma hedefi satır yüksekliğinde), yoksa düz metin. */
+function PersonLink({ name, email, t }) {
+  if (!email) return <span className="break-words">{name}</span>
+  return (
+    <a href={`mailto:${email}`} title={email} aria-label={t('wracc.mailTo', name)}
+      className="inline-flex min-h-6 items-center break-words text-primary underline-offset-4 hover:underline">
+      {name}
+    </a>
+  )
+}
+
+/** PO listesi — birden çok PO virgülle değil sarmalanan çiplerle (telefonda satır kırılır). */
+function PoList({ pos, t }) {
+  if (!pos?.length) return <span className="text-muted-foreground">{t('wracc.noPo')}</span>
+  return (
+    <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+      {pos.map((p) => <PersonLink key={p.user_id ?? p.email ?? p.display_name} name={p.display_name} email={p.email} t={t} />)}
+    </span>
+  )
+}
+
+/** Müdür — ad (+ mailto) ve kaynak rozeti: "elle" (teams.manager_id) ya da "AD" (üyelerin yönetim zinciri). */
+function ManagerCell({ r, t }) {
+  if (!r.manager_display_name) return <span className="text-muted-foreground">{t('wracc.noManager')}</span>
+  const manual = !!r.manager_manual
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <PersonLink name={r.manager_display_name} email={r.manager_email} t={t} />
+      <Badge variant="outline" data-slot="wracc-manager-source" data-manual={manual ? 'true' : 'false'}
+        title={manual ? t('wracc.mgrManualTitle') : t('wracc.mgrAdTitle')} className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+        {manual ? t('wracc.mgrManual') : t('wracc.mgrAd')}
+      </Badge>
+    </span>
+  )
+}
+
+/** Son rapor — ISO hafta + durum rozeti + (varsa) onay/gönderim zamanı; hiç yoksa "Hiç gönderilmedi". */
+function LastReportCell({ r, t }) {
+  const last = r.last_report
+  if (!last) return <span className="text-muted-foreground">{t('wracc.never')}</span>
+  const when = last.approved_at
+    ? t('wracc.lastApproved', formatDate(last.approved_at))
+    : last.submitted_at ? t('wracc.lastSubmitted', formatDate(last.submitted_at))
+      : last.updated_at ? t('wracc.lastUpdated', formatDate(last.updated_at)) : null
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <span className="font-semibold tabular-nums" title={last.week_label || undefined}>{last.iso_week}</span>
+        <ToneBadge tone={STATUS_TONE[last.status] || 'muted'} data-status={last.status}>{statusLabel(t, last)}</ToneBadge>
+      </span>
+      {when && <span className="text-xs text-muted-foreground">{when}</span>}
+    </span>
+  )
+}
+
 export default function WeeklyReportAccessSettings() {
   const t = useT()
   const toast = useToast()
@@ -93,19 +164,34 @@ export default function WeeklyReportAccessSettings() {
             <TableHeader className="bg-muted/50">
               <TableRow>
                 <TableHead>{t('wracc.colTeam')}</TableHead>
+                <TableHead className="hidden md:table-cell">{t('wracc.colPo')}</TableHead>
+                <TableHead className="hidden md:table-cell">{t('wracc.colManager')}</TableHead>
+                <TableHead className="hidden md:table-cell">{t('wracc.colLast')}</TableHead>
                 <TableHead className="text-right">{t('wracc.colReports')}</TableHead>
                 <TableHead>{t('wracc.colState')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {list.map((r) => (
-                <TableRow key={r.team_id} data-passive={r.active ? undefined : 'true'}>
+                <TableRow key={r.team_id} data-passive={r.active ? undefined : 'true'} className="align-top">
                   <TableCell className="whitespace-normal">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <TeamBadge teamId={r.team_id} teamName={r.team_name} />
                       {!r.active && <ToneBadge tone="muted">{t('wracc.passive')}</ToneBadge>}
                     </div>
+                    {/* Telefon/tablet-altı: ek bilgiler etiket:değer satırları olarak takımın altında (sütunlar ≥768'de). */}
+                    <dl data-slot="wracc-mobile" className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-sm md:hidden">
+                      <dt className="text-xs font-medium text-muted-foreground">{t('wracc.colPo')}</dt>
+                      <dd className="m-0 min-w-0"><PoList pos={r.po_users} t={t} /></dd>
+                      <dt className="text-xs font-medium text-muted-foreground">{t('wracc.colManager')}</dt>
+                      <dd className="m-0 min-w-0"><ManagerCell r={r} t={t} /></dd>
+                      <dt className="text-xs font-medium text-muted-foreground">{t('wracc.colLast')}</dt>
+                      <dd className="m-0 min-w-0"><LastReportCell r={r} t={t} /></dd>
+                    </dl>
                   </TableCell>
+                  <TableCell data-slot="wracc-po" className="hidden whitespace-normal md:table-cell"><PoList pos={r.po_users} t={t} /></TableCell>
+                  <TableCell data-slot="wracc-manager" className="hidden whitespace-normal md:table-cell"><ManagerCell r={r} t={t} /></TableCell>
+                  <TableCell data-slot="wracc-last" className="hidden whitespace-normal md:table-cell"><LastReportCell r={r} t={t} /></TableCell>
                   <TableCell className="text-right tabular-nums">{r.report_count || 0}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -120,7 +206,7 @@ export default function WeeklyReportAccessSettings() {
               ))}
               {list.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="py-6 text-center text-muted-foreground">{t('wracc.noMatch')}</TableCell>
+                  <TableCell colSpan={6} className="py-6 text-center text-muted-foreground">{t('wracc.noMatch')}</TableCell>
                 </TableRow>
               )}
             </TableBody>

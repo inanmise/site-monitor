@@ -790,17 +790,26 @@ public class UserService {
                                Boolean active, String orgRole) {
         AppUser user = userRepo.findById(id).orElseThrow(() -> new NoSuchElementException("User not found: " + id));
         boolean ldap = LdapFieldLocks.isLdapUser(user);
-        if (displayName != null && !Objects.equals(displayName, user.getDisplayName())) {
-            user.setDisplayName(displayName);
-            if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.DISPLAY_NAME);
+        // Boş/boşluk değer null'a indirgenir (bodyStr ile aynı sözleşme, 2026-09-30): düzenleme formu her kayıtta
+        // display_name/employee_id'yi '' olarak yollar; '' ile null'ı "değişti" saymak LDAP kullanıcısında
+        // dokunulmamış alanı kazara KİLİTLİYORDU (AD eşitlemesi o alanı bir daha yazmıyordu).
+        if (displayName != null) {
+            String next = bodyStr(displayName);
+            if (!Objects.equals(next, bodyStr(user.getDisplayName()))) {
+                user.setDisplayName(next);
+                if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.DISPLAY_NAME);
+            }
         }
-        if (email != null && !email.isBlank() && !Objects.equals(email.trim(), user.getEmail())) {
+        if (email != null && !email.isBlank() && !Objects.equals(email.trim(), bodyStr(user.getEmail()))) {
             user.setEmail(email.trim());
             if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMAIL);
         }
-        if (employeeId != null && !Objects.equals(employeeId, user.getEmployeeId())) {
-            user.setEmployeeId(employeeId);
-            if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMPLOYEE_ID);
+        if (employeeId != null) {
+            String next = bodyStr(employeeId);
+            if (!Objects.equals(next, bodyStr(user.getEmployeeId()))) {
+                user.setEmployeeId(next);
+                if (ldap) LdapFieldLocks.lock(user, LdapFieldLocks.EMPLOYEE_ID);
+            }
         }
         if (systemRole != null && !systemRole.equals(user.getSystemRole())) {
             user.setSystemRole(systemRole);

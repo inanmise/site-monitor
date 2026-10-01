@@ -70,6 +70,16 @@ describe('api.getMe', () => {
     expect(res.push_opt_out).toBe(true)
   })
 
+  it('2026-10-01: me.openAlerts — düz yoklama belleği kullanır; fresh=true ?fresh=1 ekler (olay nesnesi fresh sayılmaz)', async () => {
+    mockFetch({ success: true, data: { tabs: {} } })
+    await api.me.openAlerts()
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/me/open-alerts', expect.any(Object))
+    await api.me.openAlerts(true)
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/me/open-alerts?fresh=1', expect.any(Object))
+    await api.me.openAlerts({ type: 'click' })
+    expect(global.fetch).toHaveBeenLastCalledWith('/api/me/open-alerts', expect.any(Object))
+  })
+
   it('GETs /api/me', async () => {
     mockFetch({ success: true, username: 'alice' })
     const result = await api.getMe()

@@ -1945,6 +1945,8 @@ public class AdminController {
             @RequestParam(required = false) Boolean acknowledged,
             @RequestParam(required = false) Long teamId,
             @RequestParam(required = false) String range,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String dir,
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
@@ -1969,10 +1971,9 @@ public class AdminController {
             qEffective = "%" + esc + "%";
         }
         String levelEffective = (level != null && !level.isBlank()) ? level.trim().toUpperCase(java.util.Locale.ROOT) : null;
-        // Default sort: en yeniden en eskiye (newest → oldest) — hem açık hem kapalı için.
-        Sort sort = Boolean.TRUE.equals(resolvedEffective)
-                ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(Sort.by(Sort.Direction.DESC, "createdAt"))
-                : Sort.by(Sort.Direction.DESC, "createdAt");
+        // Sıralama (2026-10-01): sütun başlığından / URL'den `sort` + `dir`; beyaz liste dışı anahtar varsayılana düşer
+        // (açılış, en yeni önce; kapalı görünümde kapanış anı). Seviye METİN saklandığı için CASE ile sıralanır.
+        Sort sortSpec = AlertSort.of(sort, dir, resolvedEffective);
         // Takım kapsamı (IDOR engeli): global viewer (admin/AUDIT) tümünü; aksi halde alarmın takımı
         // (keyword/ping: e.teamId; cert: domain→envanter SY/UG) çağıranın görüntüleme kapsamında olmalı.
         // 7/24 operatörü (noc_calls.write) de TÜMÜNÜ görür — yalnız bu listede ve alarm okuma uçlarında (2026-09-27).
@@ -1987,7 +1988,7 @@ public class AdminController {
                 resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
                 typeScoped, typesParam,
                 qEffective, levelEffective, acknowledged, teamId,
-                scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sort));
+                scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sortSpec));
         enrichAlerts(result.getContent());
         if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
@@ -2192,6 +2193,7 @@ public class AdminController {
 
         Map<String, CertificateInventory> invByDomain = new HashMap<>();
         Set<Long> teamIds = new HashSet<>();
+        for (AlertEvent ev : events) if (ev.getTeamId() != null) teamIds.add(ev.getTeamId());   // damgalı takım → team_name
         if (!domains.isEmpty()) {
             for (CertificateInventory inv : inventoryRepo.findByDomainIn(domains)) {
                 invByDomain.putIfAbsent(inv.getDomain(), inv);
@@ -2286,6 +2288,7 @@ public class AdminController {
                 ev.setCurrentNotAfter(current);
                 if (ev.getNotAfter() == null && current != null) ev.setNotAfter(current);   // yalnız görüntü — kaydedilmez
             }
+            if (ev.getTeamId() != null) ev.setTeamName(teamNames.get(ev.getTeamId()));
             CertificateInventory inv = invByDomain.get(ev.getDomain());
             if (inv != null) {
                 ev.setSyTeamName(inv.getTeamId()   != null ? teamNames.get(inv.getTeamId())   : null);
@@ -3224,6 +3227,33 @@ public class AdminController {
         return ok(Map.of("message", "User teams unlocked"));
     }
 
+    /**
+     * LDAP alan kilidini kaldır (2026-09-30, {@link LdapFieldLocks}): alan bir sonraki LDAP girişinde / "AD'den yeniden
+     * eşitle"de AD değerine döner. YALNIZ global yönetici (kapsamlı müdür 403) — kilit, müdürün elle yazdığı değeri AD'ye
+     * karşı korur; kaldırmak o değeri kaybettirir. Gövde {@code {"field": "<anahtar>"}}; bilinmeyen anahtar 400.
+     * Yanıt: taze kullanıcı satırı ({@code locked_field_keys} güncel) + {@code had_lock}.
+     */
+    @PostMapping("/users/{id}/field-unlock")
+    public ResponseEntity<Map<String, Object>> unlockUserField(
+            @PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
+            HttpSession session, HttpServletRequest request) {
+        requireAdmin(session);
+        requirePerm(session, "users.crud", "edit");
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        Object raw = body == null ? null : body.get("field");
+        String field = raw == null ? null : String.valueOf(raw).trim().toLowerCase(java.util.Locale.ROOT);
+        if (!LdapFieldLocks.isValid(field)) {
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t(
+                    "Bilinmeyen AD alanı: ", "Unknown AD field: ") + raw);
+        }
+        boolean had = userService.unlockField(id, field);
+        String detail = AuditDetail.of("username", target.getUsername(), "field", field, "had_lock", had);
+        auditService.recordAction("USER_FIELD_UNLOCK", session, request, "USER", id.toString(), detail);
+        AppUser fresh = userRepo.findById(id).orElse(target);
+        return ok(Map.of("data", fresh, "had_lock", had));
+    }
+
     /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/org-role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserOrgRole(
@@ -3562,6 +3592,70 @@ public class AdminController {
             boolean active = range != null && "active".equalsIgnoreCase(range.trim());
             if (!active) return new AlertRange(since, null);
             return new AlertRange(null, since == null || since.isBlank() ? null : since);
+        }
+    }
+
+    /**
+     * Alarm listesinin sıralaması (2026-10-01, Alarm Geçmişi sütun sıralaması). Anahtarlar BEYAZ LİSTE — bilinmeyen
+     * {@code sort} varsayılana düşer, {@code dir} yalnız {@code asc|desc} (varsayılan desc). Varsayılan: açılış anı, en
+     * yeni önce; kapalı görünümde ({@code resolved=true}) kapanış anı, en yeni önce (eski davranış birebir).
+     * <ul>
+     *   <li>{@code opened} → {@code createdAt}; {@code resolved} → {@code resolvedAt}; {@code domain} → {@code domain};
+     *       {@code type} → {@code alertType}; {@code team} → takım ADI ({@link #TEAM_NAME}, 2026-10-01: eskiden
+     *       {@code teamId} — kullanıcıya rastgele görünüyordu). Sütunun gösterdiği takımla aynı: damgalı takım, yoksa
+     *       envanterin SY takımı (sertifika alarmları); takımsız alarm adsız (NULL) sıralanır.</li>
+     *   <li>{@code level} → önem METİN saklanır ({@code ORDER BY alertLevel} alfabetik: WARNING &gt; HIGH &gt; CRITICAL) →
+     *       açık CASE (CRITICAL 3 &gt; HIGH 2 &gt; WARNING 1 &gt; diğer 0) — {@code findAllOpenOrderBySeverity} ile aynı
+     *       ders; {@link org.springframework.data.jpa.domain.JpaSort#unsafe} ifadeyi takma ad öneki olmadan ekler.</li>
+     * </ul>
+     * Her anahtardan sonra {@code createdAt DESC} eşitlik bozucu (aynı seviye/takım içinde en yeni önce).
+     */
+    public static final class AlertSort {
+        public static final java.util.Set<String> KEYS = java.util.Set.of("opened", "resolved", "level", "team", "domain", "type");
+        public static final String LEVEL_RANK =
+                "(CASE UPPER(e.alertLevel) WHEN 'CRITICAL' THEN 3 WHEN 'HIGH' THEN 2 WHEN 'WARNING' THEN 1 ELSE 0 END)";
+        /**
+         * Takım sütununun ADI (2026-10-01) — {@code AlertTeam} (arayüz) ile aynı kaynak: damgalı takım ({@code e.teamId})
+         * varsa onun adı, yoksa alan adının envanter SY takımının adı. İlişkisiz varlıklar için ilintili alt sorgu
+         * ({@code Sort} JOIN ekleyemez); {@link org.springframework.data.jpa.domain.JpaSort#unsafe} ifadeyi olduğu gibi
+         * ekler. Takma adlar ({@code st}/{@code si}/{@code st2}) {@code findFiltered}'in alt sorgularıyla ({@code i},
+         * {@code ti}) çakışmaz. {@code AlertEventRepositoryTest} H2'de pinler; Hibernate ORDER BY'da skaler alt sorguyu
+         * PostgreSQL'e aynen çevirir.
+         */
+        public static final String TEAM_NAME =
+                "(CASE WHEN e.teamId IS NOT NULL"
+                + " THEN (SELECT MIN(st.name) FROM Team st WHERE st.id = e.teamId)"
+                + " ELSE (SELECT MIN(st2.name) FROM CertificateInventory si, Team st2"
+                + " WHERE si.domain = e.domain AND st2.id = si.teamId) END)";
+
+        /** Beyaz listedeki anahtar ya da null (varsayılan). */
+        static String key(String sort) {
+            if (sort == null) return null;
+            String k = sort.trim().toLowerCase(java.util.Locale.ROOT);
+            return KEYS.contains(k) ? k : null;
+        }
+
+        static Sort.Direction direction(String dir) {
+            return dir != null && "asc".equalsIgnoreCase(dir.trim()) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        }
+
+        public static Sort of(String sort, String dir, Boolean resolved) {
+            String k = key(sort);
+            Sort.Direction d = direction(dir);
+            Sort tie = Sort.by(Sort.Direction.DESC, "createdAt");
+            if (k == null) {
+                return Boolean.TRUE.equals(resolved)
+                        ? Sort.by(Sort.Direction.DESC, "resolvedAt").and(tie)
+                        : tie;
+            }
+            return switch (k) {
+                case "opened"   -> Sort.by(d, "createdAt");
+                case "resolved" -> Sort.by(d, "resolvedAt").and(tie);
+                case "domain"   -> Sort.by(d, "domain").and(tie);
+                case "type"     -> Sort.by(d, "alertType").and(tie);
+                case "team"     -> org.springframework.data.jpa.domain.JpaSort.unsafe(d, TEAM_NAME).and(tie);
+                default         -> org.springframework.data.jpa.domain.JpaSort.unsafe(d, LEVEL_RANK).and(tie);   // level
+            };
         }
     }
 

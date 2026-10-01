@@ -241,6 +241,7 @@ public final class AuditEventCatalog {
             "TOUR_DISMISSED",
             "USER_CREATE",
             "USER_DELETE",
+            "USER_FIELD_UNLOCK",          // global yönetici: LDAP alan kilidini kaldır (2026-09-30)
             "USER_LDAP_RESYNC",           // yönetici: kullanıcıyı AD'den yeniden eşitle (2026-09-26)
             "USER_LDAP_SYNC",             // giriş/müdür provizyonunda LDAP kaynaklı üyelik/müdür değişikliği (2026-09-26)
             "USER_ORG_ROLE_UNLOCK",

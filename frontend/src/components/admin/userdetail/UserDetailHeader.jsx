@@ -5,7 +5,7 @@ import CopyButton from '../../ui/CopyButton.jsx'
 import HintPopover from '../../ui/HintPopover.jsx'
 import { adSoyadInitials, avatarStyleFor } from '../../ui/TeamMemberCards.jsx'
 import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from '../ToneBadge.jsx'
-import { locksOf, signInState, DORMANT_DAYS } from './userDetailModel.js'
+import { FIELD_LABEL_KEYS, lockedFieldsOf, locksOf, signInState, DORMANT_DAYS } from './userDetailModel.js'
 import { SheetTitle } from '@/components/shadcn/sheet'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
 import { Badge } from '@/components/shadcn/badge'
@@ -57,7 +57,9 @@ export function AccountBadge({ active }) {
 export default function UserDetailHeader({ user, name, onEdit, onOpenDirectory }) {
   const t = useT()
   const sign = signInState(user)
-  const locks = locksOf(user)
+  // Alan kilitleri başlıkta TEK toplu rozet ("N alan kilitli"); alan başına satırlar Genel Bakış'ta.
+  const locks = locksOf(user).filter((l) => !l.field)
+  const lockedFields = lockedFieldsOf(user)
   const copyProps = { variant: 'ghost', buttonSize: 'icon-sm', copiedLabel: t('ud.copied'), className: 'text-muted-foreground max-sm:size-10' }
   // Tek varyant çizilir (jsdom medya sorgusu uygulamaz — iki kopya testlerde iki düğme olurdu): telefonda ızgara DOM
   // sırasıyla akar (kimlik → rozetler → son giriş → eylemler), sm+'da eylemler kimliğin sağına yerleşir.
@@ -98,6 +100,14 @@ export default function UserDetailHeader({ user, name, onEdit, onOpenDirectory }
             </HintPopover>
           )
         })}
+        {lockedFields.length > 0 && (
+          <HintPopover content={t('ud.lockHint.fields', lockedFields.map((k) => t(FIELD_LABEL_KEYS[k])).join(', '))}
+            aria-label={t('ud.aboutLock', t('ud.lock.fields', lockedFields.length))} triggerClassName={HIT}>
+            <ToneBadge tone="warning" data-lock="fields" data-count={lockedFields.length} className="gap-1">
+              <Lock aria-hidden="true" className="size-3" />{t('ud.lock.fields', lockedFields.length)}
+            </ToneBadge>
+          </HintPopover>
+        )}
         {user.push_opt_out && (
           <HintPopover content={t('usr.pushOptOutTitle')} aria-label={t('ud.aboutLock', t('ud.pushOff'))} triggerClassName={HIT}>
             <ToneBadge tone="muted" data-flag="push-off" className="gap-1"><BellOff aria-hidden="true" className="size-3" />{t('ud.pushOff')}</ToneBadge>

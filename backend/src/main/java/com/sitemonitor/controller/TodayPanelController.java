@@ -35,13 +35,18 @@ public class TodayPanelController {
      * İzleme menüsü rozetleri (2026-09-30): {@code GET /api/me/open-alerts} — görüş kapsamındaki açık alarmların izleme
      * türü başına özeti. Alarm Geçmişi'ni açamayan kullanıcı ({@code alerts.read/view} yok) boş özet alır — rozet
      * gidemeyeceği bir sayfayı işaret etmesin.
+     *
+     * <p>Performans (2026-10-01): sonuç görüş kapsamı başına kısa süre (varsayılan 15 sn) sunucuda paylaşılır;
+     * {@code ?fresh=1} (alarm eylemi sonrası tazeleme) belleği atlar. HTTP yanıtı yine {@code no-store}.
      */
     @GetMapping("/open-alerts")
-    public ResponseEntity<Map<String, Object>> openAlerts(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> openAlerts(HttpSession session,
+                                                          @RequestParam(required = false) String fresh) {
         boolean visible = permissionService.allows(session, "alerts.read", "view");
         boolean seesAll = SessionScope.isGlobalViewer(session) || (nocCallLog != null && nocCallLog.seesAllAlerts(session));
+        boolean bypass = fresh != null && ("1".equals(fresh.trim()) || "true".equalsIgnoreCase(fresh.trim()));
         Map<String, Object> data = visible
-                ? openAlertsSummary.build(seesAll, SessionScope.viewTeamIds(session))
+                ? openAlertsSummary.cached(seesAll, SessionScope.viewTeamIds(session), bypass)
                 : openAlertsSummary.build(false, List.of());
         Map<String, Object> out = new java.util.LinkedHashMap<>(data);
         out.put("visible", visible);

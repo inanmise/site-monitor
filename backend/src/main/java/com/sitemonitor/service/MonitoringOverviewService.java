@@ -51,6 +51,20 @@ import java.util.function.Predicate;
  * kapsamında olmalı); alarmlar hedef anahtarıyla izlemelere BAĞLANIR (alarm olayının {@code domain}'i sweep anahtarıdır:
  * HTTP/İçerik/Sayfa/Sayfa Hızı → url, Ping/Port → host, DNS/Alan adı → domain, Sentetik → ad) — kapsam izlemelerden
  * miras kalır. Yalnızca okuma; mevcut sorgular (son kontrol haritası + gruplu pencere sayımı) — tür başına 3 sorgu.
+ *
+ * <p><b>Performans (2026-10-01):</b> sayfa dakikada bir yoklanır. Aktif envanter host'ları tek sütunluk projeksiyondan
+ * ({@code findActiveDomains}), pencerede çözülen alarmlar (tip, damgalı takım) başına gruplu sayımdan
+ * ({@code countRecoveredSinceByTypeAndTeam}) gelir — tam entity yüklenmez. Denetleyici girişi {@link #build(String,
+ * Predicate, boolean, int)} sonucu (görüş kapsamı anahtarı, pencere) başına {@code site.monitor.monitoring-overview.cache-ms}
+ * (varsayılan 30 sn) paylaşır.
+ *
+ * <p><b>Zenginleştirme (2026-10-01, sayfa yeniden tasarımı) — YENİ SORGU YOK:</b> satıra pencere başarı oranı
+ * ({@code success_rate_window}), pencere ortalama yanıt/süre ({@code avg_response_ms_window} — HTTP/Ping/Sayfa/Sayfa Hızı
+ * sorgusunun zaten döndürdüğü {@code AVG(responseMs)}, Sentetik'te {@code AVG(durationMs)}; DNS'te 4. sütun değişim sayısı
+ * olduğu için okunmaz), açık alarmın başlangıcı ({@code open_since} — en eski açık alarmın {@code createdAt}'i) ve
+ * sahiplenme ({@code open_acknowledged} — açık alarmların HEPSİ sahiplenilmiş) eklenir; tür özetine ağırlıklı ortalama
+ * yanıt, toplamlara filo başarı oranı. Sayfanın Yenile düğmesi {@code fresh=true} ile belleği en fazla
+ * {@link #FRESH_MIN_MS}'de bir atlar (düğmeye art arda basmak DB'ye art arda binmesin).
  */
 @Slf4j
 @Service
@@ -63,6 +77,10 @@ public class MonitoringOverviewService {
     static final int STALE_FACTOR = 3;
     /** Aralığı olmayan izlemede eski eşiği (sn). */
     static final long STALE_FALLBACK_SECONDS = 3 * 3600;
+    /** Taze istek ({@code fresh=true}) belleği ancak kayıt bu yaştan eskiyse atlar (ms) — Yenile düğmesi sel koruması. */
+    static final long FRESH_MIN_MS = 5_000;
+    /** Pencere sorgusunun 4. sütunu ORTALAMA yanıt/süre olan türler (DNS'te aynı sütun değişim sayısıdır — okunmaz). */
+    static final Set<String> AVG_RESPONSE_TYPES = Set.of("http", "ping", "page", "pagespeed", "scripted");
 
     private final HttpMonitorRepository httpMonitorRepo;
     private final PingMonitorRepository pingMonitorRepo;
@@ -87,7 +105,34 @@ public class MonitoringOverviewService {
     private final AlertEventRepository alertEventRepo;
     private final TeamRepository teamRepo;
 
-    /** Bir izleme türünün panodaki tanımı — satır ve son-kontrol okuyucuları. */
+    /**
+     * Envanter türevi Port/DNS izlemeleri (2026-09-30, kullanıcı bildirimi): host'u artık AKTİF envanterde olmayan
+     * satırı tarama atlar ({@code SchedulerService} "not in active inventory") ve tür sayfası listelemez; pano ise onu
+     * "aktif ama kontrol edilmemiş" sayıp GECİKMİŞ gösteriyordu — kullanıcı sayfada bulamıyordu. Aynı kural burada:
+     * böyle satır "duraklatılmış" sayılır ({@code inventory_inactive} bayrağıyla). Alan enjeksiyonu, null-güvenli.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo;
+
+    /** Bellekli girişin hesaplamayı PROXY üzerinden çağırması için (salt-okunur işlem korunur) — CertificateService deseni.
+     *  Birim testinde null → doğrudan {@code this}. */
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private MonitoringOverviewService self;
+
+    /** Sunucu tarafı bellek penceresi (ms); 0 → kapalı (birim testlerinde {@code new} ile kurulunca varsayılan). */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.monitoring-overview.cache-ms:30000}")
+    long cacheMs;
+
+    /** Bellek anahtar tavanı (kapsam × pencere kombinasyonu). */
+    static final int MEMO_MAX_KEYS = 500;
+    /** Final değil: birim testi saat enjekte edilmiş bir bellekle değiştirir (fresh sel koruması testi). */
+    private com.sitemonitor.util.TtlMemo<Map<String, Object>> memo = new com.sitemonitor.util.TtlMemo<>(MEMO_MAX_KEYS);
+
+    /**
+     * Bir izleme türünün panodaki tanımı — satır ve son-kontrol okuyucuları. {@code unmonitored}: tarama bu satırı atlar;
+     * {@code standalone}: Port/DNS'te kullanıcının eklediği (envanterden bağımsız) satır, diğer türlerde null.
+     */
     private record TypeSpec<M, C>(String type,
                                  java.util.function.Supplier<List<M>> monitors,
                                  Function<M, Long> id, Function<M, String> name, Function<M, String> target,
@@ -96,12 +141,72 @@ public class MonitoringOverviewService {
                                  java.util.function.Supplier<List<C>> latest, Function<C, Long> checkMonitorId,
                                  Function<C, Boolean> ok, Function<C, String> checkedAt, Function<C, Object> responseMs,
                                  Function<C, String> error,
-                                 StatsQuery stats) {}
+                                 StatsQuery stats,
+                                 Function<M, Boolean> unmonitored,
+                                 Function<M, Boolean> standalone) {
+        TypeSpec(String type, java.util.function.Supplier<List<M>> monitors,
+                 Function<M, Long> id, Function<M, String> name, Function<M, String> target,
+                 Function<M, Long> team, Function<M, Boolean> active, Function<M, Boolean> deleted,
+                 Function<M, Integer> interval,
+                 java.util.function.Supplier<List<C>> latest, Function<C, Long> checkMonitorId,
+                 Function<C, Boolean> ok, Function<C, String> checkedAt, Function<C, Object> responseMs,
+                 Function<C, String> error, StatsQuery stats) {
+            this(type, monitors, id, name, target, team, active, deleted, interval, latest, checkMonitorId, ok, checkedAt,
+                 responseMs, error, stats, m -> false, m -> null);
+        }
+    }
+
+    /**
+     * Aktif envanterin alan adları — HAM (normalizasyon YOK). Tarama ({@code SchedulerService} port/DNS sweep'i)
+     * {@code activeDomains.contains(m.getHost()/getDomain())} ile BİREBİR, büyük/küçük harf duyarlı karşılaştırır; pano da
+     * aynısını yapmalı. 2026-10-01 prod hatası: küçük harfe çevrilmiş karşılaştırma, envanterde yalnız harf büyüklüğü
+     * farklı kalan (ya da envanterden çıkarılıp aynı host için bağımsız izlemesi açılan) eski envanter-türevi satırları
+     * "aktif ama kontrolü gecikmiş" sayıyordu — tarama onları hiç kontrol etmediği için DNS kartı 3 "gecikmiş" gösteriyor,
+     * DNS sayfası onları listelemiyordu. Depo yoksa null = "bilinmiyor, hiçbirini atlama".
+     */
+    private java.util.Set<String> activeInventoryHosts() {
+        if (inventoryRepo == null) return null;
+        try {
+            return new java.util.HashSet<>(inventoryRepo.findActiveDomains());
+        } catch (Exception e) { log.debug("aktif envanter okunamadı: {}", e.toString()); return null; }
+    }
+
+    /**
+     * Envanter türevi satır (standalone değil) ve host'u aktif envanterde BİREBİR yok → tarama atlar. Taramayla aynı:
+     * host null ise de atlanır ({@code contains(null)} — envanterde alan adı boş aktif satır olmaz).
+     */
+    static boolean inventoryInactive(java.util.Set<String> activeHosts, Boolean standalone, String host) {
+        if (activeHosts == null || Boolean.TRUE.equals(standalone)) return false;
+        return host == null || !activeHosts.contains(host);
+    }
 
     @FunctionalInterface
     private interface StatsQuery { List<Object[]> run(Collection<Long> ids, String from, String to); }
 
-    /** Sayfa satırı ve tür özeti — {@code Map} olarak (Jackson snake_case ile doğrudan yanıt). */
+    /**
+     * Denetleyici girişi — bellekli: sonuç {@code (scopeKey, pencere, seesAllAlerts)} başına {@link #cacheMs} boyunca
+     * paylaşılır. {@code scopeKey} yüklemi TAM belirlemelidir (global görüntüleyici {@code "ALL"}, aksi halde sıralı görüş
+     * takımları — {@link com.sitemonitor.util.TtlMemo#scopeKey}); null anahtar belleği atlar. Dönen harita PAYLAŞILIR —
+     * çağıran değiştirmez.
+     */
+    public Map<String, Object> build(String scopeKey, Predicate<Long> canViewTeam, boolean seesAllAlerts, int hours) {
+        return build(scopeKey, canViewTeam, seesAllAlerts, hours, false);
+    }
+
+    /**
+     * {@code fresh=true} (sayfanın Yenile düğmesi): bellekteki kayıt {@link #FRESH_MIN_MS}'den eskiyse yeniden hesaplanır
+     * ve bellek TAZELENİR (sonraki yoklamalar da taze veriyi görür); daha yeniyse o kayıt döner — düğmeye art arda basmak
+     * kapsam başına 5 sn'de birden sık hesaplama yaptırmaz. Bellek kapalıysa ({@code cacheMs ≤ 0}) her çağrı hesaplar.
+     */
+    public Map<String, Object> build(String scopeKey, Predicate<Long> canViewTeam, boolean seesAllAlerts, int hours, boolean fresh) {
+        int h = Math.max(1, Math.min(hours, 24 * 30));
+        MonitoringOverviewService target = self != null ? self : this;
+        String key = scopeKey == null ? null : scopeKey + "|h=" + h + "|all=" + seesAllAlerts;
+        long ttl = fresh && cacheMs > 0 ? Math.min(cacheMs, FRESH_MIN_MS) : cacheMs;
+        return memo.get(key, ttl, false, () -> target.build(canViewTeam, seesAllAlerts, h));
+    }
+
+    /** Sayfa satırı ve tür özeti — {@code Map} olarak (Jackson snake_case ile doğrudan yanıt). Belleksiz hesaplama. */
     @Transactional(readOnly = true)
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean seesAllAlerts, int hours) {
         int h = Math.max(1, Math.min(hours, 24 * 30));
@@ -128,8 +233,9 @@ public class MonitoringOverviewService {
         List<Map<String, Object>> rows = new ArrayList<>();
         types.add(summarize(httpSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pingSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
-        types.add(summarize(portSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
-        types.add(summarize(dnsSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
+        java.util.Set<String> activeHosts = activeInventoryHosts();
+        types.add(summarize(portSpec(activeHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
+        types.add(summarize(dnsSpec(activeHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(domainSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(keywordSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pageSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
@@ -137,25 +243,33 @@ public class MonitoringOverviewService {
         types.add(summarize(scriptedSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
 
         // Pencerede çözülen alarmlar (tür başına) — kapsam: alarm satırının takımı görüş kapsamında (global → hepsi).
+        // Gruplu sayım (tip, damgalı takım): sessiz kapanış sorguda elenir, kapsam takım sütunu üzerinden burada.
         Map<String, Long> resolvedByType = new HashMap<>();
         try {
-            for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(from)) {
-                if (!Boolean.TRUE.equals(e.getResolved()) || Boolean.TRUE.equals(e.getResolvedSilently())) continue;
-                if (!seesAllAlerts && !(e.getTeamId() != null && canViewTeam.test(e.getTeamId()))) continue;
-                String family = MonitorTypeCatalog.typeOfAlert(e.getAlertType());
+            for (Object[] r : alertEventRepo.countRecoveredSinceByTypeAndTeam(from)) {
+                if (r == null || r.length < 3 || r[0] == null) continue;
+                Long teamId = r[1] instanceof Number tid ? tid.longValue() : null;
+                long n = r[2] instanceof Number c ? c.longValue() : 0L;
+                if (n <= 0) continue;
+                if (!seesAllAlerts && !(teamId != null && canViewTeam.test(teamId))) continue;
+                String family = MonitorTypeCatalog.typeOfAlert(String.valueOf(r[0]));
                 if (family == null) continue;
-                resolvedByType.merge(family, 1L, Long::sum);
+                resolvedByType.merge(family, n, Long::sum);
             }
         } catch (Exception e) { log.debug("çözülen alarmlar okunamadı: {}", e.toString()); }
         for (Map<String, Object> t : types) t.put("resolved_window", resolvedByType.getOrDefault(String.valueOf(t.get("type")), 0L));
 
+        linkStandaloneTwins(rows);
+
         Map<String, Object> totals = new LinkedHashMap<>();
-        for (String k : List.of("total", "active", "paused", "deleted", "down", "stale", "unknown", "checks_window",
+        for (String k : List.of("total", "active", "paused", "inventory_inactive", "deleted", "down", "stale", "unknown", "checks_window",
                 "failed_window", "open_alerts", "open_critical", "resolved_window")) {
             long sum = 0;
             for (Map<String, Object> t : types) sum += ((Number) t.getOrDefault(k, 0L)).longValue();
             totals.put(k, sum);
         }
+        totals.put("success_rate_window", successRate(((Number) totals.get("checks_window")).longValue(),
+                ((Number) totals.get("failed_window")).longValue()));
         String lastChecked = null;
         for (Map<String, Object> t : types) {
             Object v = t.get("last_checked_at");
@@ -178,7 +292,7 @@ public class MonitoringOverviewService {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("type", spec.type());
         long total = 0, active = 0, paused = 0, deleted = 0, down = 0, stale = 0, unknown = 0, openAlerts = 0, openCritical = 0;
-        long checks = 0, failed = 0;
+        long checks = 0, failed = 0, inventoryInactive = 0;
         String lastChecked = null;
 
         List<M> monitors;
@@ -197,30 +311,47 @@ public class MonitoringOverviewService {
 
         List<Long> ids = new ArrayList<>();
         for (M m : visible) if (!Boolean.TRUE.equals(spec.deleted().apply(m))) ids.add(spec.id().apply(m));
+        // [toplam, başarılı, ortalama yanıt (ms, yoksa -1), ortalamanın ağırlığı (ölçümlü kontrol sayısı)]
         Map<Long, long[]> stats = new HashMap<>();
+        boolean hasAvg = AVG_RESPONSE_TYPES.contains(spec.type());
         if (!ids.isEmpty()) {
             try {
                 for (Object[] r : spec.stats().run(ids, from, now)) {
                     if (r == null || r.length < 3 || r[0] == null) continue;
                     long tot = r[1] instanceof Number n ? n.longValue() : 0L;
                     long ok = r[2] instanceof Number n ? n.longValue() : 0L;
-                    stats.put(((Number) r[0]).longValue(), new long[]{ tot, ok });
+                    long avg = hasAvg && r.length > 3 && r[3] instanceof Number a ? Math.round(a.doubleValue()) : -1L;
+                    // Ağırlık: ölçümü olan kontrol sayısı (5. sütun); Sentetik sorgusunda yok → toplam koşum.
+                    long weight = avg < 0 ? 0L : r.length > 4 && r[4] instanceof Number w ? w.longValue() : tot;
+                    stats.put(((Number) r[0]).longValue(), new long[]{ tot, ok, avg, weight });
                 }
             } catch (Exception e) { log.debug("{} pencere sayımı okunamadı: {}", spec.type(), e.toString()); }
         }
+        double avgSum = 0; long avgWeight = 0;
 
         for (M m : visible) {
             Long id = spec.id().apply(m);
             boolean isDeleted = Boolean.TRUE.equals(spec.deleted().apply(m));
-            boolean isActive = Boolean.TRUE.equals(spec.active().apply(m));
+            boolean unmonitored = Boolean.TRUE.equals(spec.unmonitored().apply(m));   // envanter pasif → tarama atlar
+            boolean isActive = Boolean.TRUE.equals(spec.active().apply(m)) && !unmonitored;
             String target = spec.target().apply(m);
             C c = latest.get(id);
             String checkedAt = c != null ? spec.checkedAt().apply(c) : null;
             Boolean ok = c != null ? spec.ok().apply(c) : null;
-            List<AlertEvent> open = target == null ? List.of()
+            // Taramanın atladığı (envanterden çıkmış) satıra açık alarm BAĞLANMAZ: alarm hedef anahtarıyla eşleşir ve
+            // aynı host'un taranan bağımsız izlemesine aittir — iki satıra bağlanırsa açık alarm iki kez sayılır, eski
+            // satır "sorunlu" görünürdü (2026-10-01 prod: outboundivrtahprod'un eski Port satırı).
+            List<AlertEvent> open = target == null || unmonitored ? List.of()
                     : openByKey.getOrDefault(spec.type() + "|" + target.toLowerCase(Locale.ROOT), List.of());
             String openLevel = null;
-            for (AlertEvent e : open) if (rank(e.getAlertLevel()) > rank(openLevel)) openLevel = e.getAlertLevel();
+            String openSince = null;
+            boolean allAcked = !open.isEmpty();
+            for (AlertEvent e : open) {
+                if (rank(e.getAlertLevel()) > rank(openLevel)) openLevel = e.getAlertLevel();
+                String created = e.getCreatedAt();
+                if (created != null && (openSince == null || created.compareTo(openSince) < 0)) openSince = created;
+                if (!Boolean.TRUE.equals(e.getAcknowledged())) allAcked = false;
+            }
 
             String status;
             if (isDeleted) status = "deleted";
@@ -232,7 +363,7 @@ public class MonitoringOverviewService {
 
             total++;
             if (isDeleted) deleted++;
-            else if (!isActive) paused++;
+            else if (!isActive) { paused++; if (unmonitored) inventoryInactive++; }
             else active++;
             if ("down".equals(status)) down++;
             if ("stale".equals(status)) stale++;
@@ -241,6 +372,8 @@ public class MonitoringOverviewService {
             long[] st = stats.get(id);
             long rowChecks = st != null ? st[0] : 0L, rowFailed = st != null ? Math.max(0, st[0] - st[1]) : 0L;
             checks += rowChecks; failed += rowFailed;
+            Long rowAvg = st != null && st[2] >= 0 ? st[2] : null;
+            if (rowAvg != null && st[3] > 0) { avgSum += (double) rowAvg * st[3]; avgWeight += st[3]; }
             if (checkedAt != null && (lastChecked == null || checkedAt.compareTo(lastChecked) > 0)) lastChecked = checkedAt;
 
             Map<String, Object> row = new LinkedHashMap<>();
@@ -253,6 +386,8 @@ public class MonitoringOverviewService {
             row.put("team_name", team != null ? teamNames.get(team) : null);
             row.put("active", isActive);
             row.put("deleted", isDeleted);
+            row.put("standalone", spec.standalone().apply(m));
+            row.put("inventory_inactive", unmonitored);
             row.put("status", status);
             row.put("last_checked_at", checkedAt);
             row.put("last_ok", ok);
@@ -261,15 +396,23 @@ public class MonitoringOverviewService {
             row.put("interval_seconds", spec.interval().apply(m));
             row.put("open_alerts", open.size());
             row.put("open_alert_level", openLevel);
+            row.put("open_since", openSince);
+            row.put("open_acknowledged", allAcked);
             row.put("checks_window", rowChecks);
             row.put("failed_window", rowFailed);
+            row.put("success_rate_window", successRate(rowChecks, rowFailed));
+            row.put("avg_response_ms_window", rowAvg);
             rows.add(row);
         }
 
         t.put("total", total); t.put("active", active); t.put("paused", paused); t.put("deleted", deleted);
+        // paused'un alt kümesi: envanterden çıkmış (taramanın atladığı) eski envanter-türevi satırlar — tür sayfası
+        // bunları listelemez; kart "aktif + duraklatılmış" sayısını sayfayla eşlemek için bunu düşer.
+        t.put("inventory_inactive", inventoryInactive);
         t.put("down", down); t.put("stale", stale); t.put("unknown", unknown);
         t.put("checks_window", checks); t.put("failed_window", failed);
-        t.put("success_rate_window", checks > 0 ? Math.round((checks - failed) * 1000.0 / checks) / 10.0 : null);
+        t.put("success_rate_window", successRate(checks, failed));
+        t.put("avg_response_ms_window", avgWeight > 0 ? Math.round(avgSum / avgWeight) : null);
         t.put("open_alerts", openAlerts); t.put("open_critical", openCritical);
         t.put("last_checked_at", lastChecked);
         return t;
@@ -284,6 +427,37 @@ public class MonitoringOverviewService {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Envanterden çıkmış eski envanter-türevi satıra (taramanın atladığı, {@code inventory_inactive}) aynı türde, aynı
+     * hedefte (büyük/küçük harf duyarsız — bağımsız izleme küçük harfle kaydedilir) AKTİF ve silinmemiş bağımsız
+     * (standalone) izleme varsa onu {@code standalone_twin} olarak bağlar: host'un ASIL kontrolü odur, arayüz
+     * "duraklatılmış" açıklamasında ona yönlendirir. Yalnız yüklenmiş satırlardan — ek sorgu yok.
+     */
+    static void linkStandaloneTwins(List<Map<String, Object>> rows) {
+        Map<String, Map<String, Object>> live = new HashMap<>();
+        for (Map<String, Object> r : rows) {
+            if (!Boolean.TRUE.equals(r.get("standalone")) || !Boolean.TRUE.equals(r.get("active"))
+                    || Boolean.TRUE.equals(r.get("deleted")) || !(r.get("target") instanceof String tg)) continue;
+            live.putIfAbsent(r.get("type") + "|" + tg.trim().toLowerCase(Locale.ROOT), r);
+        }
+        for (Map<String, Object> r : rows) {
+            if (!Boolean.TRUE.equals(r.get("inventory_inactive")) || !(r.get("target") instanceof String tg)) continue;
+            Map<String, Object> twin = live.get(r.get("type") + "|" + tg.trim().toLowerCase(Locale.ROOT));
+            if (twin == null) continue;
+            Map<String, Object> link = new LinkedHashMap<>();
+            link.put("id", twin.get("id"));
+            link.put("name", twin.get("name"));
+            link.put("target", twin.get("target"));
+            link.put("status", twin.get("status"));
+            r.put("standalone_twin", link);
+        }
+    }
+
+    /** Başarı oranı (%, tek ondalık) — koşum yoksa null. Tür, satır ve toplam AYNI yuvarlamayı kullanır. */
+    static Double successRate(long checks, long failed) {
+        return checks > 0 ? Math.round((checks - failed) * 1000.0 / checks) / 10.0 : null;
     }
 
     private static int rank(String level) {
@@ -313,23 +487,25 @@ public class MonitoringOverviewService {
                 pingCheckRepo::weeklyStatsByMonitor);
     }
 
-    private TypeSpec<PortMonitor, PortCheck> portSpec() {
+    private TypeSpec<PortMonitor, PortCheck> portSpec(java.util.Set<String> activeHosts) {
         return new TypeSpec<>("port", portMonitorRepo::findAllByOrderByNameAsc,
                 PortMonitor::getId, m -> nz(m.getName(), m.getHost() + ":" + m.getPort()), PortMonitor::getHost, PortMonitor::getTeamId,
                 PortMonitor::getActive, m -> m.getDeletedAt() != null, PortMonitor::getIntervalSeconds,
                 portCheckRepo::findLatestPerMonitor, PortCheck::getMonitorId,
                 c -> Boolean.TRUE.equals(c.getOpen()), PortCheck::getCheckedAt, PortCheck::getResponseMs, PortCheck::getError,
-                portCheckRepo::weeklyStatsByMonitor);
+                portCheckRepo::weeklyStatsByMonitor,
+                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getHost()), m -> Boolean.TRUE.equals(m.getStandalone()));
     }
 
-    private TypeSpec<DnsMonitor, com.sitemonitor.model.DnsRecord> dnsSpec() {
+    private TypeSpec<DnsMonitor, com.sitemonitor.model.DnsRecord> dnsSpec(java.util.Set<String> activeHosts) {
         return new TypeSpec<>("dns", dnsMonitorRepo::findAllByOrderByNameAsc,
                 DnsMonitor::getId, m -> nz(m.getName(), m.getDomain()), DnsMonitor::getDomain, DnsMonitor::getTeamId,
                 DnsMonitor::getActive, m -> m.getDeletedAt() != null, DnsMonitor::getIntervalSeconds,
                 dnsRecordRepo::findLatestPerMonitor, com.sitemonitor.model.DnsRecord::getMonitorId,
                 c -> c.getValue() != null && !c.getValue().isBlank(), com.sitemonitor.model.DnsRecord::getCheckedAt,
                 com.sitemonitor.model.DnsRecord::getResponseMs, c -> null,
-                dnsRecordRepo::weeklyStatsByMonitor);
+                dnsRecordRepo::weeklyStatsByMonitor,
+                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getDomain()), m -> Boolean.TRUE.equals(m.getStandalone()));
     }
 
     private TypeSpec<DomainMonitor, DomainCheck> domainSpec() {

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import {
+  useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n/index.jsx'
 import CommandPalette from './CommandPalette.jsx'
 import InboxBell from './InboxBell.jsx'
@@ -9,7 +10,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar,
+  LifeBuoy, Search, Users, Radar, CloudLightning,
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -93,6 +94,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
         { id: 'incidents',    Icon: Siren,         labelKey: 'nav.incidents',    show: true },
         { id: 'maintenance',  Icon: Wrench,        labelKey: 'nav.maintenance',  show: true },
         { id: 'alerthistory', Icon: History,       labelKey: 'nav.alertHistory', show: true },
+        // Alarm Fırtınası (2026-09-30): takım bazlı eşik yakınlığı, açık fırtınalar, geçmiş ve analiz — görüş kapsamlı
+        { id: 'storms',       Icon: CloudLightning, labelKey: 'nav.storms',       show: true },
         // 7/24 Kapsamı (2026-09-27): hangi izlemeler gece kesintisinde 7/24 izleme ekibine gitmiyor — herkese açık, görüş kapsamlı
         { id: 'noc',          Icon: Headset,       labelKey: 'nav.noc',          show: true },
       ],

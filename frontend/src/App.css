@@ -3129,6 +3129,14 @@ body:has(.app-main .sticky.bottom-0) [data-tour="help-fab"] { bottom: calc(88px 
 .noise-trend-bars { display: flex; align-items: flex-end; justify-content: space-evenly; gap: 3px; height: 68px; padding: 0 2px; }
 .noise-trend-bar { flex: 1 1 0; max-width: 46px; height: var(--h, 3%); border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--primary) 55%, transparent); }
 .noise-trend-bar.is-peak { background: var(--danger, #dc2626); opacity: .8; }
+/* Tıklanabilir gün çubuğu / ısı hücresi (2026-10-01): shadcn Button olarak çizilir — boyut ve renk yukarıdaki kurallardan,
+   düğme dolgusu/çerçevesi sıfırlanır; imleç, üzerine gelme ve klavye odağı görünür. */
+.noise-trend-bar.is-pickable, .noise-heat-cell.is-pickable { padding: 0; min-width: 0; border: 0; box-shadow: none; cursor: pointer; }
+.noise-trend-bar.is-pickable { height: var(--h, 3%); align-self: flex-end; }
+.noise-heat-cell.is-pickable { width: auto; height: auto; }
+.noise-trend-bar.is-pickable:hover, .noise-heat-cell.is-pickable:hover { outline: 2px solid var(--primary); outline-offset: 1px; }
+.noise-trend-bar.is-pickable:focus-visible, .noise-heat-cell.is-pickable:focus-visible { outline: 2px solid var(--ring, var(--primary)); outline-offset: 2px; }
+.noise-heat-cell.is-pickable[aria-pressed="true"] { outline: 2px solid var(--primary); outline-offset: 1px; }
 .noise-trend-axis { display: flex; justify-content: space-between; gap: 8px; font-size: .72em; color: var(--text-light); margin-top: 4px; }
 .noise-trend-peak { font-weight: 600; }
 
