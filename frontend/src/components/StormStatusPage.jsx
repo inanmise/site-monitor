@@ -19,6 +19,7 @@ import TeamBadge from './ui/TeamBadge.jsx'
 import MonitorStatsBar from './MonitorStatsBar.jsx'
 import StormTeamCards, { ReasonBadge, StormSummary } from './storm/StormTeamCards.jsx'
 import StormDetailModal from './storm/StormDetailModal.jsx'
+import StormRulesCard, { thresholdPhrase } from './storm/StormRulesCard.jsx'
 import { ANALYTICS_DAYS, chartRows, isDay } from './storm/stormModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -192,14 +193,11 @@ export default function StormStatusPage() {
   ]
 
   const settings = data?.settings
-  const meta = settings ? (
-    <span className="inline-flex flex-wrap items-center gap-1.5">
-      <Badge variant="outline" data-slot="sf-setting-threshold">{settings.threshold_unit === 'PERCENT' ? t('sf.settings.thresholdPct', settings.threshold_value) : t('sf.settings.thresholdCount', settings.threshold_value)}</Badge>
-      <Badge variant="outline">{t('sf.settings.window', settings.window_minutes)}</Badge>
-      <Badge variant="outline">{t('sf.settings.quiet', settings.quiet_minutes)}</Badge>
-      {settings.enabled === false && <Badge variant="destructive">{t('sf.settings.disabled')}</Badge>}
-    </span>
-  ) : null
+  // Açıklama GERÇEK ayarlardan (2026-10-01): pencere ve eşik sunucunun uyguladığı değerler; veri gelmeden genel metin.
+  const description = settings
+    ? t('sf.descWith', settings.window_minutes, thresholdPhrase(settings, t))
+    : t('sf.descGeneric')
+  const meta = settings?.enabled === false ? <Badge variant="destructive">{t('sf.settings.disabled')}</Badge> : null
 
   const hist = history.data
   const anyHistFilter = !!(team || from || to || resolvedOnly)
@@ -207,7 +205,7 @@ export default function StormStatusPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4" data-slot="sf-page">
-      <PageHeader icon={CloudLightning} title={t('sf.title')} description={t('sf.desc')} meta={meta}
+      <PageHeader icon={CloudLightning} title={t('sf.title')} description={description} meta={meta}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" onClick={() => navigateTo('settings', { sec: 'storm' })}>
@@ -226,6 +224,9 @@ export default function StormStatusPage() {
       {data && (
         <>
           <MonitorStatsBar items={kpis} activeFilter={null} onStatClick={() => {}} />
+
+          {/* Geçerli fırtına kuralları — Ayarlar → Alarm Fırtınası'ndaki değerlerin özeti */}
+          <StormRulesCard settings={settings} />
 
           <Tabs value={tab} onValueChange={(v) => setTab(TABS.includes(v) ? v : 'status')}>
             <TabsList className="h-auto w-full flex-wrap justify-start gap-1">

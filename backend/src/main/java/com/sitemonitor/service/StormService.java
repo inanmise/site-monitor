@@ -373,7 +373,7 @@ public class StormService {
         // Aktif storm sürüyor → günlük toplu re-alert (aynı-UTC-gün kuralı, bireysel re-alert'in aynası)
         String last = storm.getLastReAlertAt() != null ? storm.getLastReAlertAt() : storm.getCreatedAt();
         // Storm günlük toplu re-alert — rolling 24 saat (23:59'da açılıp 00:00'da tekrar alarmlama edge'i, M10 ile tutarlı).
-        if (last == null || EscalationService.reAlertDue(last, now(), 24)) {
+        if (last == null || EscalationService.reAlertDue(last, now(), RE_ALERT_HOURS)) {
             List<AlertEvent> stillDown = members.stream()
                     .filter(m -> !Boolean.TRUE.equals(m.getResolved())).toList();
             sendStormAlert(storm, stillDown, "DAILY_REALERT");
@@ -854,6 +854,12 @@ public class StormService {
         }
         return Math.max(MIN_THRESHOLD, thresholdValue());
     }
+
+    /** Açık fırtınanın toplu tekrar postası aralığı (saat) — yaşam döngüsü ve durum ekranı aynı değeri kullanır. */
+    public static final int RE_ALERT_HOURS = 24;
+
+    /** Grup bazlı kapsam (takım + bildirim grubu) açık mı — durum ekranı kuralları anlatır. */
+    public boolean perGroup() { return appSettings.getBoolean(KEY_PER_GROUP, false); }
 
     /** Sayım penceresi (dk, 1–15) — durum ekranı aynı değeri gösterir. */
     public int windowMinutes() { return clamp(appSettings.getInt(KEY_WINDOW, 5), 1, 15); }

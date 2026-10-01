@@ -12,7 +12,7 @@ import { api } from '../api/client'
 const iso = (min) => new Date(Date.now() + min * 60_000).toISOString().slice(0, 19)
 
 const STATUS = { success: true, data: {
-  generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5 },
+  generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5, per_group: false, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 },
   totals: { teams: 3, storming: 1, near: 1, open_storms: 1 },
   teams: [
     { team_id: 3, team_name: 'Takım C', status: 'CALM', threshold: 5, active_monitors: 8, window_minutes: 5, window_targets: 0, window_alerts: 0, window_items: [], last_storm_at: null, storms_30d: 1, storms: [] },
@@ -79,6 +79,35 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
     expect(storm.textContent).toMatch(/a\.example\.com/)
     // eşiğe yakın takım: pencere alarmları listelenir
     expect(cards[1].querySelector('[data-slot="sf-window-items"]').textContent).toMatch(/b1\.example\.com/)
+  })
+
+  it('Açıklama ve kural kartı GERÇEK ayarlardan: pencere 7 dk + eşik 4 hedef; kapanış tabanı 2; sessiz pencere 15 dk; grup kapsamı', async () => {
+    api.monitoring.storm.status.mockResolvedValue({ ...STATUS, data: { ...STATUS.data,
+      settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 4, window_minutes: 7, quiet_minutes: 15, per_group: true, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 } } })
+    const { container } = render(<StormStatusPage />)
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-rules"]')).not.toBeNull())
+    expect(screen.getByText(/7-minute window/)).toBeInTheDocument()
+    expect(screen.getByText(/4 distinct targets go down/)).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('{0}')
+    const rule = (id) => container.querySelector(`[data-slot="sf-rule"][data-rule="${id}"]`).textContent
+    expect(rule('threshold')).toMatch(/4 distinct targets/)
+    expect(rule('window')).toMatch(/7 min/)
+    expect(rule('quiet')).toMatch(/15 min/)
+    expect(rule('floor')).toMatch(/below 2/)
+    expect(rule('realert')).toMatch(/24 hours/)
+    expect(rule('scope')).toMatch(/notification group/)
+    expect(container.querySelector('[data-slot="sf-rules"]').getAttribute('data-enabled')).toBe('true')
+  })
+
+  it('Yüzde birimi ve kapalı koruma: eşik cümlesi yüzdeyle (en az 3), kart "Koruma kapalı" ve başlıkta uyarı rozeti', async () => {
+    api.monitoring.storm.status.mockResolvedValue({ ...STATUS, data: { ...STATUS.data,
+      settings: { enabled: false, threshold_unit: 'PERCENT', threshold_value: 10, window_minutes: 5, quiet_minutes: 5, per_group: false, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 } } })
+    const { container } = render(<StormStatusPage />)
+    await waitFor(() => expect(container.querySelector('[data-slot="sf-rules"]')).not.toBeNull())
+    expect(container.querySelector('[data-slot="sf-rule"][data-rule="threshold"]').textContent).toMatch(/10% of the active monitors \(at least 3\)/)
+    expect(container.querySelector('[data-slot="sf-rules"]').getAttribute('data-enabled')).toBe('false')
+    expect(container.querySelector('[data-slot="sf-rules-state"]').textContent).toMatch(/protection off/i)
+    expect(screen.getAllByText(/protection off/i).length).toBeGreaterThanOrEqual(1)
   })
 
   it('"Fırtına ayarları" Ayarlar → Alarm Fırtınası\'na, "Takımın açık alarmları" Alarm Geçmişi\'ne takım süzgeciyle gider', async () => {

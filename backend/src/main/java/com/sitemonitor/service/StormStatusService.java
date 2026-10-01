@@ -165,6 +165,11 @@ public class StormStatusService {
         settings.put("threshold_value", stormService.thresholdValue());
         settings.put("window_minutes", window);
         settings.put("quiet_minutes", stormService.quietMinutes());
+        // Kural özeti (2026-10-01): sayfa açıklaması ve "Fırtına kuralları" kartı GERÇEK ayarlardan okunur
+        settings.put("per_group", stormService.perGroup());
+        settings.put("re_alert_hours", StormService.RE_ALERT_HOURS);
+        settings.put("min_threshold", StormService.MIN_THRESHOLD);
+        settings.put("percent_min_targets", StormService.PERCENT_MIN_TARGETS);
 
         Map<String, Object> totals = new LinkedHashMap<>();
         totals.put("teams", rows.size());

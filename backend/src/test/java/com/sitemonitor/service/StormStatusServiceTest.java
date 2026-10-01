@@ -56,6 +56,7 @@ class StormStatusServiceTest {
         when(stormService.windowMinutes()).thenReturn(5);
         when(stormService.quietMinutes()).thenReturn(5);
         when(stormService.isEnabled()).thenReturn(true);
+        when(stormService.perGroup()).thenReturn(true);
         when(stormService.thresholdUnit()).thenReturn("COUNT");
         when(stormService.thresholdValue()).thenReturn(5);
         when(stormService.thresholdForTotal(anyLong())).thenReturn(5);
@@ -122,7 +123,8 @@ class StormStatusServiceTest {
         @SuppressWarnings("unchecked") Map<String, Object> totals = (Map<String, Object>) out.get("totals");
         assertThat(totals).containsEntry("teams", 2).containsEntry("storming", 1).containsEntry("near", 1).containsEntry("open_storms", 1);
         @SuppressWarnings("unchecked") Map<String, Object> settings = (Map<String, Object>) out.get("settings");
-        assertThat(settings).containsEntry("quiet_minutes", 5).containsEntry("window_minutes", 5).containsEntry("threshold_unit", "COUNT");
+        assertThat(settings).containsEntry("quiet_minutes", 5).containsEntry("window_minutes", 5).containsEntry("threshold_unit", "COUNT")
+                .containsEntry("per_group", true).containsEntry("re_alert_hours", 24).containsEntry("min_threshold", 2).containsEntry("percent_min_targets", 3);
     }
 
     @Test
