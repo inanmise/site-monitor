@@ -219,6 +219,17 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         return new String(buf, StandardCharsets.UTF_8);
     }
 
+    /**
+     * Serbest metindeki (JSON / form gövdesi) hassas alan DEĞERLERİNİ bu filtrenin AYNI desenleriyle maskeler —
+     * HTTP uçtan uca tanılamasının yanıt gövdesi önizlemesi için (2026-10-02). Filtrenin kendi log yolu
+     * ({@link #redact}) DEĞİŞMEDİ; bu yalnız aynı desenleri dışarıya açan saf yardımcıdır.
+     */
+    public static String redactSensitiveFields(String text) {
+        if (text == null || text.isEmpty()) return text;
+        String redacted = SENSITIVE_JSON_FIELDS.matcher(text).replaceAll("$1\"" + MASK + "\"");
+        return SENSITIVE_FORM_FIELDS.matcher(redacted).replaceAll("$1" + MASK);
+    }
+
     private String redact(String body) {
         if (body == null || body.isEmpty()) return body;
         // JSON: "field":"value"

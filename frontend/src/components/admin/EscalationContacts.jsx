@@ -9,7 +9,7 @@ import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { formatDateSec } from '../../api/client'
-import { ArrowRight, Download, Timer, UserPlus, Users } from 'lucide-react'
+import { ArrowRight, Download, Timer, UserPlus, UserX, Users } from 'lucide-react'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { useFormErrors } from '../../hooks/useFormErrors.js'
@@ -65,6 +65,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [contacts, setContacts] = useState([])
   const [loadError, setLoadError] = useState(null)
   const [users, setUsers]       = useState([])
+  // Pasif kullanıcıya bağlı kişiler (2026-10-02): bildirim ALMAZLAR — listede belirgin "Pasif" rozeti. Seçici aktif-yalnız kalır.
+  const [inactiveUserIds, setInactiveUserIds] = useState(() => new Set())
   const [modal, setModal]   = useState(null)
   const [form, setForm]     = useState(emptyContact)
   const [saving, setSaving] = useState(false)
@@ -124,7 +126,11 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
 
   async function loadUsers() {
     const res = await api.admin.getUsers()
-    if (res?.success) setUsers((res.data ?? []).filter(u => u.active))   // data null gelirse ekran cokmesin
+    if (res?.success) {
+      const all = res.data ?? []   // data null gelirse ekran cokmesin
+      setUsers(all.filter(u => u.active))
+      setInactiveUserIds(new Set(all.filter(u => u.active === false).map(u => String(u.id))))
+    }
   }
 
   async function loadDeliveries() {
@@ -309,6 +315,12 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
               <TableRow key={c.id}>
                 <TableCell className="max-w-[16rem] whitespace-normal">
                   <UserBadge displayName={c.name} email={c.email} inline size="sm" />
+                  {c.user_id != null && inactiveUserIds.has(String(c.user_id)) && (
+                    <Badge variant="destructive" data-slot="contact-user-inactive" title={t('team.contactInactiveTip')}
+                      className="mt-1 flex w-fit">
+                      <UserX aria-hidden="true" /> {t('team.memberInactive')}
+                    </Badge>
+                  )}
                   {/* Takım sütunu telefonda gizli — takımsız kişinin uyarısı orada da görünsün */}
                   {c.team_id == null && <NoTeamBadge label={t('ec.noTeamBadge')} className="mt-1 sm:hidden" />}
                 </TableCell>

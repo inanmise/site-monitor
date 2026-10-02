@@ -122,6 +122,7 @@ public final class AuditEventCatalog {
             "GUIDE_LINK_CREATE",
             "GUIDE_LINK_DELETE",
             "GUIDE_LINK_UPDATE",
+            "HTTP_DIAGNOSTICS_RUN",       // HTTP izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-02)
             "INCIDENT_COMMENT_ADD",
             "INCIDENT_COMMENT_DELETE",
             "INCIDENT_CREATE",
@@ -206,6 +207,8 @@ public final class AuditEventCatalog {
             "SCRIPTED_DRAFT_SAVE",
             "SECRET_DECRYPT",
             "SELF_PASSWORD_CHANGE",
+            "SESSION_ENDED_INACTIVE",     // pasife alınan hesabın canlı oturumu kesildi (2026-10-02)
+            "SESSION_ENDED_MAINTENANCE",  // sistem bakımı başladı — global yönetici olmayan oturum kesildi (2026-10-02)
             "SESSION_REVOKE_ALL",
             "SESSION_TERMINATE",
             "SMTP_RESEND",
@@ -218,6 +221,17 @@ public final class AuditEventCatalog {
             "SYSTEM_DEPLOYMENT_DELETE",
             "SYSTEM_DEPLOYMENT_EXPORT",
             "SYSTEM_DEPLOYMENT_MANUAL",
+            // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / uzat / hemen bitir / iptal + sistemin
+            // başlangıç-bitiş kayıtları ve duyuru/düzeltme e-postası
+            "SYSTEM_MAINTENANCE_CANCELLED",
+            "SYSTEM_MAINTENANCE_ENDED",
+            "SYSTEM_MAINTENANCE_END_NOW",
+            "SYSTEM_MAINTENANCE_EXTENDED",
+            "SYSTEM_MAINTENANCE_MAIL",
+            "SYSTEM_MAINTENANCE_SCHEDULED",
+            "SYSTEM_MAINTENANCE_STARTED",
+            "SYSTEM_MAINTENANCE_START_NOW",
+            "SYSTEM_MAINTENANCE_UPDATED",
             "SYSTEM_SHUTDOWN",
             "SYSTEM_STARTUP",
             "TEAM_CREATE",
@@ -260,6 +274,8 @@ public final class AuditEventCatalog {
             "USER_UNLOCK",
             "USER_UPDATE",
             "USER_BULK_UPDATE",
+            "USER_BULK_DEACTIVATE",       // global yönetici: sistem geneli toplu pasife alma (2026-10-02)
+            "USER_BULK_DEACTIVATE_UNDO",  // global yönetici: toplu pasife almayı geri aldı (2026-10-02)
             "WEAK_ALGO_EXCEPTION_CLEAR",
             "WEAK_ALGO_EXCEPTION_SET",
             "WEAK_ALGO_EXPORT",
@@ -274,6 +290,7 @@ public final class AuditEventCatalog {
             "WEEKLY_REPORT_DELETE",
             "WEEKLY_REPORT_IMAGE_ADD",
             "WEEKLY_REPORT_IMAGE_DELETE",
+            "WEEKLY_REPORT_LINK_DENIED",  // onay bağlantısının sahibi pasif hesap → reddedildi (2026-10-02)
             "WEEKLY_REPORT_REJECT",
             "WEEKLY_REPORT_REMINDER_TRIGGER",
             "WEEKLY_REPORT_REOPEN",
@@ -323,6 +340,11 @@ public final class AuditEventCatalog {
         if (t.startsWith("WEAK_ALGO_")) return CERTIFICATE;         // _EXPORT sonekinden ÖNCE: sertifika raporu
 
         if (t.startsWith("MAINTENANCE_")) return MAINTENANCE;
+        // Sistem Bakım Modu (2026-10-02) — SYSTEM_* kuralından ÖNCE: denetçi "Bakım" grubunda arar (hedef bakım
+        // pencereleriyle aynı kova; tür adı ikisini ayırır).
+        if (t.startsWith("SYSTEM_MAINTENANCE")) return MAINTENANCE;
+        // HTTP uçtan uca tanılaması (2026-10-02) bir İZLEME eylemidir — DIAGNOSTICS_* (sertifika/alan adı tanılaması) değil.
+        if (t.startsWith("HTTP_DIAGNOSTICS")) return MONITOR;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
                 || t.startsWith("SCRIPTED_DRAFT")) return MONITOR;
         if (t.startsWith("CERT_") || t.startsWith("DOMAIN_") || t.startsWith("DIAGNOSTICS_")) return CERTIFICATE;

@@ -65,6 +65,9 @@ describe('activityModel — cümle, cihaz, konum, sebep', () => {
     expect(reasonText({ event_type: 'LOGIN_FAILED', outcome: 'FAILURE', failure_reason: "BAD_PASSWORD: attempt #1/5 for 'demo'" }, t)).toBe('Wrong password')
     expect(reasonText({ event_type: 'LOGIN_FAILED', outcome: 'FAILURE', failure_reason: 'TEMP_PASSWORD_EXPIRED: x' }, t)).toBe('Temporary password expired')
     expect(reasonText({ event_type: 'LOGIN_FAILED', outcome: 'BLOCKED', failure_reason: 'Rate limited: …' }, t)).toBe('Too many attempts from this address')
+    // Pasif hesap (2026-10-02): sonuç BLOCKED ama oran sınırı DEĞİL — kendi metni.
+    expect(reasonText({ event_type: 'LOGIN_FAILED', outcome: 'BLOCKED', failure_reason: 'ACCOUNT_INACTIVE: pasif hesap (LDAP)' }, t))
+      .toBe('Rejected because the account is inactive')
     expect(reasonText({ event_type: 'ACCESS_DENIED', outcome: 'BLOCKED', failure_reason: 'Insufficient role' }, t)).toBe('Insufficient role')
     expect(reasonText({ event_type: 'LOGIN' }, t)).toBeNull()
   })

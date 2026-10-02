@@ -69,6 +69,14 @@ const renderUm = (props = {}) => render(
   </LangProvider>
 )
 
+/**
+ * Paylaşılan düzenleyici (2026-10-02): düzenlemede değişiklik yokken Kaydet KAPALI. Kayıt yükünü sınayan testler önce
+ * zararsız bir alanı (görünen ad) değiştirir; takım / rol / id iddiaları aynı kalır.
+ */
+function touchDisplayName(current) {
+  fireEvent.change(screen.getByDisplayValue(current), { target: { value: `${current} (güncel)` } })
+}
+
 async function openRowMenu(username) {
   const row = (await screen.findByText(username)).closest('tr')
   pressMenuTrigger(within(row).getByRole('button', { name: /işlem|actions/i }))
@@ -112,6 +120,7 @@ describe('UserManager', () => {
     renderUm()
     await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    touchDisplayName('Ali V')                      // 2026-10-02: değişiklik yokken Kaydet kapalı
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
@@ -122,6 +131,7 @@ describe('UserManager', () => {
     renderUm()
     await openRowMenu('kilitli')                        // üçüncü satır → id=3
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    touchDisplayName('Kilitli K')
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
@@ -255,6 +265,7 @@ describe('UserManager', () => {
     renderUm()
     await openRowMenu('ali')
     fireEvent.click(await screen.findByText(/^Düzenle$|^Edit$/))
+    touchDisplayName('Ali V')
     fireEvent.click(await screen.findByRole('button', { name: /^Kaydet$|^Save$/ }))
 
     await waitFor(() => expect(screen.getByText('çakışma')).toBeInTheDocument())

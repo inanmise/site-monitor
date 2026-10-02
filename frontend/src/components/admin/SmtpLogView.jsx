@@ -82,7 +82,9 @@ function rangeFrom(range, now = new Date()) {
 export function triggerLabel(trigger, t) {
   const map = { INITIAL: 'health.triggerInitial', ESCALATION: 'health.triggerEscalation', ESCALATION_STEP: 'health.triggerEscalationStep', DAILY_REALERT: 'health.triggerDailyRealert', MANUAL: 'health.triggerManual', RESOLUTION: 'health.triggerResolution',
     // 2026-10-01: sessiz saat — karar satırı ve pencere sonunda giden özet e-postası
-    QUIET_HOURS: 'health.triggerQuietHours', QUIET_DIGEST: 'health.triggerQuietDigest' }
+    QUIET_HOURS: 'health.triggerQuietHours', QUIET_DIGEST: 'health.triggerQuietDigest',
+    // 2026-10-02: sistem bakımı — bildirim susturuldu (karar satırı)
+    SYSTEM_MAINTENANCE: 'health.triggerSystemMaintenance' }
   return map[trigger] ? t(map[trigger]) : (trigger || '—')
 }
 

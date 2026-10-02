@@ -77,6 +77,16 @@ public class WeeklyReportService {
      *  aynı gerekçeyle; null ise (eski testler) sessizce atlanır. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private UserPushService userPushService;
+    /** Pasif kullanıcı süzgeci (2026-10-02, kullanıcı kararı): pasif kullanıcıya bağlı PO / MANAGER kişisi alıcı olmaz —
+     *  müdür kişisi pasifse onay postası AD müdürüne düşer (mevcut yedek). Alan enjeksiyonu; null ise liste aynen. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
+
+    private List<EscalationContact> reachable(List<EscalationContact> contacts, String where) {
+        return inactiveGuard == null ? contacts : inactiveGuard.withoutInactive(contacts, where);
+    }
 
     /** static resetTemplate için paylaşılan, thread-safe mapper — her çağrıda
      *  yeni ObjectMapper kurma maliyetini önler (Jackson 3 mapper'ları yeniden
@@ -349,8 +359,8 @@ public class WeeklyReportService {
     }
 
     public boolean managerContactMissing(Long teamId) {
-        return contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, "MANAGER").stream()
-                .noneMatch(c -> c.getEmail() != null && !c.getEmail().isBlank());
+        return reachable(contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, "MANAGER"), "haftalık rapor takım " + teamId)
+                .stream().noneMatch(c -> c.getEmail() != null && !c.getEmail().isBlank());
     }
 
     // ── Oluşturma — şablon kopyalama ──────────────────────────────────────────
@@ -714,8 +724,81 @@ public class WeeklyReportService {
             out.put("reason", "APPROVED".equals(r.getStatus()) ? "already_approved" : "not_pending");
             return out;
         }
+        if (approverInactive(r)) {
+            out.put("valid", false);
+            out.put("reason", "approver_inactive");
+            out.put("report_id", r.getId());
+            out.put("team_id", r.getTeamId());
+            return out;
+        }
         out.put("valid", true);
         return out;
+    }
+
+    /**
+     * Onay bağlantısının sahibi PASİF hesap (2026-10-02, kullanıcı kararı: pasif hesap hiçbir yoldan işlem yapamaz).
+     * {@link #approveViaToken} / {@link #rejectViaToken} bunu fırlatır; denetleyici {@code WEEKLY_REPORT_LINK_DENIED}
+     * yazar ve ret sayfasını gösterir. {@link IllegalStateException} alt sınıfı: eski yakalayıcılar aynı 409'u görür.
+     */
+    public static class ApproverInactiveException extends IllegalStateException {
+        private final Long reportId;
+        private final Long teamId;
+
+        public ApproverInactiveException(String message, Long reportId, Long teamId) {
+            super(message);
+            this.reportId = reportId;
+            this.teamId = teamId;
+        }
+
+        public Long reportId() { return reportId; }
+        public Long teamId() { return teamId; }
+    }
+
+    public static String approverInactiveMessage() {
+        return com.sitemonitor.util.Msg.t(
+                "Bu onay bağlantısının sahibi olan hesap pasif durumda; onay verilemez.",
+                "The account that owns this approval link is inactive; it can't be used to approve.");
+    }
+
+    /**
+     * Bağlantının sahibi pasif mi (2026-10-02)? Belirteç bir KİŞİYE değil rapora bağlıdır; sahibi, raporun son
+     * {@code SUBMIT_PO} postasının ALICILARIDIR (belirteç her onaya gönderimde yenilenir ve aynı anda o postaya gömülür).
+     * Alıcı adreslerinin HEPSİ pasif ise bağlantı kullanılamaz; adres pasif sayılır:
+     * <ul>
+     *   <li>yalnız pasif kullanıcılara aitse ({@link InactiveRecipientGuard#isInactiveOnlyEmail} — aynı adresi aktif biri
+     *       de kullanıyorsa pasif DEĞİL), ya da</li>
+     *   <li>takımın bu adresi taşıyan PO kişisi pasif bir kullanıcıya bağlıysa ({@code user_id}) ve adres hiçbir aktif
+     *       kullanıcıya ait değilse.</li>
+     * </ul>
+     * Kullanıcıya ait olmayan bir adres (takım kutusu, grup adresi) ya da en az bir aktif alıcı bağlantıyı açık tutar —
+     * kimin tıkladığı bilinemez. Alıcı kaydı yoksa (eski rapor / gönderilmemiş posta) ya da süzgeç yoksa davranış aynıdır.
+     */
+    boolean approverInactive(WeeklyReport r) {
+        if (inactiveGuard == null || r == null || r.getId() == null) return false;
+        try {
+            List<String> rows = mailRepo.findToAddressesByReportIdAndType(r.getId(), "SUBMIT_PO");
+            if (rows == null || rows.isEmpty() || rows.get(0) == null) return false;
+            List<String> to = Arrays.stream(rows.get(0).split("[,;]"))
+                    .map(String::trim).filter(s -> !s.isEmpty()).toList();
+            if (to.isEmpty()) return false;
+            List<EscalationContact> poContacts = null;
+            for (String addr : to) {
+                if (inactiveGuard.isInactiveOnlyEmail(addr)) continue;
+                if (poContacts == null) poContacts = contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "PO");
+                boolean passiveContact = poContacts.stream().anyMatch(c -> c.getEmail() != null
+                        && c.getEmail().trim().equalsIgnoreCase(addr) && inactiveGuard.isInactiveContact(c));
+                if (!passiveContact) return false;
+                List<String> activeOwners = userRepo.findActiveEmailsLowerIn(List.of(addr.toLowerCase(Locale.ROOT)));
+                if (activeOwners != null && !activeOwners.isEmpty()) return false;
+            }
+            log.warn("Haftalık rapor onay bağlantısının sahibi pasif hesap: report={} team={} alıcı_sayısı={}",
+                    r.getId(), r.getTeamId(), to.size());
+            return true;
+        } catch (Exception e) {
+            // Okuma hatası bağlantıyı KİLİTLEMEZ (fail-open, InactiveRecipientGuard ile aynı ilke).
+            log.warn("Onay bağlantısı sahibi denetlenemedi (report={}): {}", r.getId(), e.toString());
+            return false;
+        }
     }
 
     /** Token ile onay (login'siz). Geçerli + süresi geçmemiş + PENDING_APPROVAL şart.
@@ -730,6 +813,7 @@ public class WeeklyReportService {
             throw new IllegalStateException("APPROVED".equals(r.getStatus())
                     ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
         }
+        if (approverInactive(r)) throw new ApproverInactiveException(approverInactiveMessage(), r.getId(), r.getTeamId());
         String approver = resolvePoDisplayName(r.getTeamId());
         Actor actor = new Actor(null, "email-approval", approver, r.getTeamId(), "ADMIN");
         String mailStatus = sendApprovalMail(r, actor); // MANAGER yoksa 409 fırlatır
@@ -766,6 +850,7 @@ public class WeeklyReportService {
             throw new IllegalStateException("APPROVED".equals(r.getStatus())
                     ? "Bu rapor zaten onaylanmış" : "Rapor onay bekleme durumunda değil");
         }
+        if (approverInactive(r)) throw new ApproverInactiveException(approverInactiveMessage(), r.getId(), r.getTeamId());
         String rejecter = resolvePoDisplayName(r.getTeamId());
         Actor actor = new Actor(null, "email-approval", rejecter, r.getTeamId(), "ADMIN");
         String finalNote = (note != null && !note.isBlank()) ? note.trim() : "İade edildi — neden belirtilmedi (e-posta ile)";
@@ -901,8 +986,8 @@ public class WeeklyReportService {
     /** Müdüre rapor maili gönderir + kaydeder; mailStatus döner. MANAGER kontağı
      *  yoksa MANAGER_CONTACT_MISSING (409). approve ve resend ortak kullanır. */
     private String sendApprovalMail(WeeklyReport r, Actor actor) {
-        List<EscalationContact> managers = contactRepo
-                .findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER").stream()
+        List<EscalationContact> managers = reachable(contactRepo
+                .findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER"), "haftalık rapor onayı takım " + r.getTeamId()).stream()
                 .filter(c -> c.getEmail() != null && !c.getEmail().isBlank())
                 .toList();
         String[] to;
@@ -993,7 +1078,8 @@ public class WeeklyReportService {
         WeeklyReport r = get(id, actor);
         Team team = teamRepo.findById(r.getTeamId()).orElse(null);
         String teamName = team != null ? team.getName() : "Takım";
-        String managerName = contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER").stream()
+        String managerName = reachable(contactRepo.findByTeamIdAndRoleAndActiveTrue(r.getTeamId(), "MANAGER"),
+                        "haftalık rapor önizleme takım " + r.getTeamId()).stream()
                 .findFirst().map(EscalationContact::getName).orElse(null);
         // Önizlemede de footer onay bilgisi gösterilir (onaylı raporda maille aynı);
         // DRAFT'ta alanlar null → ilgili satırlar gizlenir.
@@ -1349,7 +1435,7 @@ public class WeeklyReportService {
     }
 
     private List<String> resolvePoEmails(Long teamId) {
-        List<String> emails = contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, "PO").stream()
+        List<String> emails = reachable(contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, "PO"), "haftalık rapor PO takım " + teamId).stream()
                 .map(EscalationContact::getEmail)
                 .filter(e -> e != null && !e.isBlank())
                 .map(String::trim)

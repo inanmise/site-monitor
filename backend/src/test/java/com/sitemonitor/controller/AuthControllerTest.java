@@ -615,6 +615,28 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    @Test
+    @DisplayName("POST /api/session/leave (2026-10-02): beacon gövdesi okunmaz, 204; kullanıcı bu oturumla 'ayrıldı' işaretlenir")
+    void sessionLeave_marksLeft_returns204() throws Exception {
+        MockHttpSession session = new MockHttpSession();
+        session.setAttribute("authenticated", Boolean.TRUE);
+        session.setAttribute("username", "testuser");
+
+        mvc.perform(post("/api/session/leave").session(session)
+                        .contentType(MediaType.TEXT_PLAIN).content("leave"))
+                .andExpect(status().isNoContent());
+        verify(userService).markLeft("testuser", session.getId());
+    }
+
+    @Test
+    @DisplayName("POST /api/session/leave oturumsuz → 401 (interceptor), işaretleme yok")
+    void sessionLeave_unauthenticated_returns401() throws Exception {
+        mvc.perform(post("/api/session/leave"))
+                .andExpect(status().isUnauthorized());
+        verify(userService, org.mockito.Mockito.never()).markLeft(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
     // ── Self-service push opt-out (2026-09-10: istemci yolu yanlıştı, uç burada pinlenir) ──
 
     @Test
@@ -1047,5 +1069,151 @@ class AuthControllerTest {
         verify(loginIssueMailService, never()).dispatchUserReport(any(), any(), any(), any(), any(),
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         verify(loginIssueMailService, never()).dispatchAck(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ── Pasif hesap (2026-10-02, kullanıcı kararı: pasif kullanıcı hiçbir yoldan giriş yapamaz) ──────────
+
+    private static AppUser passiveUser(String username, String authSource) {
+        AppUser u = new AppUser();
+        u.setId(55L);
+        u.setUsername(username);
+        u.setSystemRole("USER");
+        u.setActive(false);
+        u.setAuthSource(authSource);
+        return u;
+    }
+
+    private static com.sitemonitor.model.LdapSettings ldapOn() {
+        com.sitemonitor.model.LdapSettings ls = new com.sitemonitor.model.LdapSettings();
+        ls.setEnabled(true);
+        return ls;
+    }
+
+    private void assertNoSessionNoLogin(org.springframework.test.web.servlet.MvcResult result) {
+        assertThat(result.getRequest().getSession(false)).as("oturum kurulmamalı").isNull();
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        verify(userService, never()).clearLockoutOnSuccess(any());
+        verify(rememberMeService, never()).generateToken(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Pasif YEREL hesap + DOĞRU parola → 403 ACCOUNT_INACTIVE (TR metin); oturum yok; denetim ACCOUNT_INACTIVE, kilit sayacına GİRMEZ")
+    void login_passiveLocal_correctPassword_403() throws Exception {
+        AppUser p = passiveUser("pasif", null);
+        when(userService.findByUsername("pasif")).thenReturn(Optional.of(p));
+        when(userService.authenticate("pasif", "dogru")).thenReturn(Optional.empty());
+        when(userService.findInactiveWithValidPassword("pasif", "dogru")).thenReturn(Optional.of(p));
+
+        var result = mvc.perform(post("/api/login").header("X-Lang", "tr")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"pasif\",\"password\":\"dogru\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("ACCOUNT_INACTIVE"))
+                .andExpect(jsonPath("$.error_code").value("ACCOUNT_INACTIVE"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("pasif")))
+                .andReturn();
+
+        assertNoSessionNoLogin(result);
+        verify(auditService).recordInactiveLogin(eq("pasif"), eq(55L), any(), eq("USER"), any(), any(), eq("PASSWORD"));
+        verify(userService).recordFailedLogin("pasif", "127.0.0.1", "ACCOUNT_INACTIVE");
+        // İlerleyici kilit yanlış parolaya karşıdır: pasif hesabın (doğru parolalı) denemesi BRUTE_FORCE sayımına girmez.
+        verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt());
+        verify(userService, never()).applyProgressiveLockout(any());
+    }
+
+    @Test
+    @DisplayName("Pasif hesap mesajı arayüz dilinde (X-Lang: en)")
+    void login_passiveLocal_englishMessage() throws Exception {
+        AppUser p = passiveUser("pasif", null);
+        when(userService.findByUsername("pasif")).thenReturn(Optional.of(p));
+        when(userService.findInactiveWithValidPassword("pasif", "dogru")).thenReturn(Optional.of(p));
+
+        mvc.perform(post("/api/login").header("X-Lang", "en")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"pasif\",\"password\":\"dogru\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value(
+                        "Your account is inactive; sign-in is not allowed. Contact your administrator."));
+    }
+
+    @Test
+    @DisplayName("Pasif YEREL hesap + YANLIŞ parola → bugünkü genel 401 (pasif bilgisi sızmaz, numaralandırma yok)")
+    void login_passiveLocal_wrongPassword_generic401() throws Exception {
+        AppUser p = passiveUser("pasif", null);
+        when(userService.findByUsername("pasif")).thenReturn(Optional.of(p));
+        when(userService.authenticate("pasif", "yanlis")).thenReturn(Optional.empty());
+        // findInactiveWithValidPassword → boş (parola tutmadı)
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"pasif\",\"password\":\"yanlis\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Invalid username or password"))
+                .andExpect(jsonPath("$.code").doesNotExist())
+                .andExpect(jsonPath("$.error_code").doesNotExist());
+
+        verify(auditService, never()).recordInactiveLogin(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Pasif LDAP hesabı + BAŞARILI AD bind → 403 ACCOUNT_INACTIVE; provizyon HİÇ çalışmaz (yeniden aktifleşmez / profil-takım değişmez), oturum yok")
+    void login_passiveLdap_successfulBind_403_noProvisioning() throws Exception {
+        when(ldapSettings.getOrDefaults()).thenReturn(ldapOn());
+        AppUser p = passiveUser("ADPASIF", "LDAP");
+        when(userService.findByUsername("adpasif")).thenReturn(Optional.of(p));
+        when(ldapDirectory.authenticate("adpasif", "adpass")).thenReturn(Optional.of(
+                new com.sitemonitor.service.LdapDirectoryService.LdapUser(
+                        "adpasif", "CN=adpasif,DC=corp", java.util.Map.of("mail", "pasif@corp.com"))));
+
+        var result = mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"adpasif\",\"password\":\"adpass\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_INACTIVE"))
+                .andReturn();
+
+        assertNoSessionNoLogin(result);
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+        verify(userService, never()).updateUser(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(auditService).recordInactiveLogin(eq("ADPASIF"), eq(55L), any(), any(), any(), any(), eq("LDAP"));
+        assertThat(p.getActive()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Pasif LDAP hesabı + YANLIŞ AD parolası → genel 401 (pasif bilgisi sızmaz)")
+    void login_passiveLdap_wrongPassword_generic401() throws Exception {
+        when(ldapSettings.getOrDefaults()).thenReturn(ldapOn());
+        AppUser p = passiveUser("ADPASIF", "LDAP");
+        when(userService.findByUsername("adpasif")).thenReturn(Optional.of(p));
+        when(ldapDirectory.authenticate("adpasif", "bad")).thenReturn(Optional.empty());
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"adpasif\",\"password\":\"bad\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").doesNotExist());
+        verify(auditService, never()).recordInactiveLogin(any(), any(), any(), any(), any(), any(), any());
+        verify(ldapProvisioning, never()).provisionFromAd(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("AKTİF LDAP hesabı (satır var, aktif) değişmez: provizyon çalışır, 200")
+    void login_activeLdap_existingRow_unchanged() throws Exception {
+        when(ldapSettings.getOrDefaults()).thenReturn(ldapOn());
+        AppUser row = passiveUser("ADAKTIF", "LDAP");
+        row.setActive(true);
+        when(userService.findByUsername("adaktif")).thenReturn(Optional.of(row));
+        when(ldapDirectory.authenticate("adaktif", "adpass")).thenReturn(Optional.of(
+                new com.sitemonitor.service.LdapDirectoryService.LdapUser("adaktif", "CN=adaktif,DC=corp", java.util.Map.of())));
+        when(ldapProvisioning.provisionFromAd(eq("adaktif"), any(), any())).thenReturn(row);
+
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"adaktif\",\"password\":\"adpass\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        verify(ldapProvisioning).provisionFromAd(eq("adaktif"), any(), any());
+        verify(auditService, never()).recordInactiveLogin(any(), any(), any(), any(), any(), any(), any());
     }
 }

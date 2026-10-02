@@ -1,7 +1,7 @@
 import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText,
-  CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset,
+  CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -30,6 +30,7 @@ import BrandingSettings from './BrandingSettings'
 import RetentionSettings from './RetentionSettings'
 import UserPushSettings from './UserPushSettings'
 import NocSettings from './NocSettings.jsx'   // 7/24 İzleme Ekibi (2026-09-27)
+import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sistem Bakım Modu (2026-10-02)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -51,6 +52,8 @@ const GROUPS = [
     { id: 'branding', labelKey: 'settings.navBranding', icon: Palette },
     { id: 'monitorgroups', labelKey: 'settings.navMonitorGroups', icon: FolderTree },
     { id: 'platforms', labelKey: 'settings.navPlatforms', icon: Layers },
+    // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): SiteMonitor'ün kendisini bakıma alma — YALNIZ global yönetici
+    { id: 'sysmaint', labelKey: 'settings.navSysMaint', icon: ServerCog },
   ] },
   { id: 'notifications', labelKey: 'settings.grpNotifications', sections: [
     { id: 'smtp', labelKey: 'settings.navSmtp', icon: Mail },
@@ -90,7 +93,8 @@ function initialSection() {
  * "yalnız global yönetici" notu çizilir. Sekme listede kalır (var olduğu görülsün).
  */
 // Modül görünürlüğü kurumsal bir karardır: kapsamlı müdür kendi takımına açamaz (2026-09-16).
-const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports'])
+// Sistem Bakım Modu (2026-10-02): yalnız global yönetici sistemi bakıma alır — sunucu her uçta 403.
+const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint'])
 
 /** Durum ağırlığı — bir bölüme birden çok kontrol düşerse en kötüsü gösterilir. */
 const STATUS_RANK = { bad: 2, warn: 1 }
@@ -260,6 +264,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'branding' && <BrandingSettings />}
           {active === 'monitorgroups' && <MonitorGroups />}
           {active === 'platforms' && <PlatformSettings />}
+          {active === 'sysmaint' && <SystemMaintenanceSettings />}
           {active === 'smtp' && <SmtpSettings />}
           {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
           {active === 'weeklyreports' && <WeeklyReportAccessSettings />}

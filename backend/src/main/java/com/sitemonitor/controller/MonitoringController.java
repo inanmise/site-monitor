@@ -3220,7 +3220,12 @@ public class MonitoringController {
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichHttp(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()),
                         slowAlarms.get(m.getUrl()), admin)).toList();
-        return ok(withCheckFlag(session, result));
+        List<Map<String, Object>> rows = withCheckFlag(session, result);
+        // can_diagnose (2026-10-02, HTTP uçtan uca tanılama): can_check + diagnostics.run/execute — tanılama ucunun
+        // (HttpDiagnosticsController.requireDiagnose) kapısıyla AYNI kural. EK alan; mevcut alanların hiçbiri değişmedi.
+        boolean diagPerm = permissionService.allows(session, "diagnostics.run", "execute");
+        for (Map<String, Object> row : rows) row.put("can_diagnose", diagPerm && Boolean.TRUE.equals(row.get("can_check")));
+        return ok(rows);
     }
 
     /** Açık alarm listesinden tek türün alan→olay haritası ({@link #openAlarmsByDomain} ile aynı birleştirme kuralı). */

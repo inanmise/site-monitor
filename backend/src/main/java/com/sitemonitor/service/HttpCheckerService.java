@@ -68,6 +68,13 @@ public class HttpCheckerService {
     private ProxySettings proxySettings;
     private HttpClient trustAllProxied;
     private HttpClient strictProxied;
+    // Tanılama eşleri (2026-10-02, HTTP uçtan uca tanılama): strict yolun GÜVEN HATASI KAYDETMEYEN istemcileri. Normal
+    // strict bağlam reddedilen host'u CaAutoPinService'e yazar (auto-pin yönlendirme hedefini bulsun diye); tanılamanın
+    // kaydı aynı anda koşan bir sweep kontrolünün auto-pin taramasına karışıp tanılanan hedefi pinletebilirdi. İlk
+    // tanılamada tembel kurulur — sweep yolu bu alanlara HİÇ dokunmaz.
+    private volatile HttpClient strictDiagNoFollow;
+    private volatile HttpClient strictDiagProxied;
+    private volatile boolean diagClientsReady;
 
     // Çok-A pin yolu için saklanan SSLContext'ler (paylaşılan client'larla aynı güven) + per-host pinned client cache.
     private SSLContext trustAllCtx;
@@ -162,6 +169,33 @@ public class HttpCheckerService {
         return verifySsl ? strictNoFollow : trustAllNoFollow;
     }
 
+    /**
+     * {@code diag=false}: yukarıdakinin AYNISI (sweep / elle kontrol / form denemesi). {@code diag=true} ve strict:
+     * güven hatası kaydetmeyen tanılama eşi (trust-all yolu zaten kayıt yapmaz → paylaşılan istemci).
+     */
+    private HttpClient client(boolean verifySsl, boolean viaProxy, boolean diag) {
+        if (!diag || !verifySsl) return client(verifySsl, viaProxy);
+        ensureDiagClients();
+        if (viaProxy) {
+            HttpClient p = strictDiagProxied;
+            if (p != null) return p;
+            log.debug("HTTP checker (tanılama): vekil istendi ama yapılandırılmamış → doğrudan");
+        }
+        return strictDiagNoFollow;
+    }
+
+    /** Tanılama strict istemcileri — pin okuması AYNI (cacerts → kurumsal paket → pinlenmiş CA), güven hatası KAYDI YOK. */
+    private synchronized void ensureDiagClients() {
+        if (diagClientsReady) return;
+        SSLContext strict = trustEvaluator.pinAwareOutboundSslContext(caAutoPinService::trustManagerForHost, null);
+        strictDiagNoFollow = build(strict);
+        if (proxySettings != null && proxySettings.enabled()) {
+            strictDiagProxied = build(strict, proxySettings.proxySelector(),
+                    proxySettings.authenticator(log, "HTTP checker (tanılama)"));
+        }
+        diagClientsReady = true;
+    }
+
     /** Bir deneme sonucu + yakalanan hata (trust-failure sınıflandırması için). */
     private record Attempt(Map<String, Object> result, Exception cause) {}
 
@@ -242,7 +276,7 @@ public class HttpCheckerService {
         // drain haritayı topluca boşaltıyordu ve paralel sweep'te bir monitör diğerinin kaydını
         // çalıyordu; watermark + kaynak filtresi kaydı sahibine bağlar.
         long trustWatermark = System.currentTimeMillis();
-        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts);
+        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts, false);
         if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
                 || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
             return a1.result();
@@ -267,9 +301,45 @@ public class HttpCheckerService {
             } catch (NumberFormatException ignore) { /* bozuk anahtar — atla */ }
         }
         if (!pinned) return a1.result();
-        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts);
+        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts, false);
         a2.result().put("repinned", true);
         return a2.result();
+    }
+
+    /**
+     * TANILAMA girişi (2026-10-02, HTTP uçtan uca tanılama — "izlemenin gerçek istemcisi aynı yoldan ne diyor?").
+     * İstek, yönlendirme, SSRF ve karar yukarıdaki {@link #check(String, String, String, int, boolean, boolean, boolean,
+     * HttpRequestOptions)} ile AYNI kod yolundan geçer; üç fark var:
+     * <ul>
+     *   <li>CA auto-pin YOK — ne {@code pinFromServer} çağrılır ne kontrol tekrarlanır (tanılama izlemeyi değiştirmez);</li>
+     *   <li>strict güven hatası {@link CaAutoPinService}'e KAYDEDİLMEZ (bkz. {@link #ensureDiagClients});</li>
+     *   <li>sonuçta {@code http_version} ({@code HTTP_1_1|HTTP_2}; yanıt yoksa null) döner.</li>
+     * </ul>
+     * Hiçbir şey yazmaz; sweep / elle kontrol / form denemesi bu girişi KULLANMAZ — onların davranışı değişmedi.
+     */
+    public Map<String, Object> checkForDiagnostics(String url, String method, String expectedStatus,
+                                                   int timeoutMs, boolean verifySsl, boolean followRedirects,
+                                                   boolean viaProxy, HttpRequestOptions options) {
+        final HttpRequestOptions opts = options == null ? HttpRequestOptions.NONE : options;
+        if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ok", false);
+            r.put("config_error", true);
+            r.put("error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+            r.put("http_version", null);
+            return r;
+        }
+        String blocked = ssrfBlockReason(url);
+        if (blocked != null) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ok", false);
+            r.put("error", blocked);
+            r.put("http_version", null);
+            return r;
+        }
+        Map<String, Object> r = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts, true).result();
+        r.putIfAbsent("http_version", null);
+        return r;
     }
 
     /** Cause zincirinde PKIX/güven-yolu hatası var mı? (Kanonik sınıflandırma CaAutoPinService'te.) */
@@ -293,12 +363,13 @@ public class HttpCheckerService {
         }
     }
 
+    /** @param diag tanılama girişi ({@link #checkForDiagnostics}): güven kaydı yapmayan strict eş + {@code http_version}. */
     private Attempt doCheck(String url, String method, String expectedStatus,
                             int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy,
-                            HttpRequestOptions opts) {
+                            HttpRequestOptions opts, boolean diag) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
-        boolean proxied = viaProxy && client(verifySsl, true) != client(verifySsl, false);
+        boolean proxied = viaProxy && client(verifySsl, true, diag) != client(verifySsl, false, diag);
         result.put("via", proxied ? "proxy" : "direct");
         // Tanı izi (2026-09-22): çözümlenen IP'ler, pinlenen hedef, yönlendirme zinciri — yalnız hata anında JSON'a döner.
         HttpFailureDiagnostics.Trace trace = newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied);
@@ -309,11 +380,12 @@ public class HttpCheckerService {
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
             HttpResponse<java.io.InputStream> resp = sendFollowing(
-                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace, opts, capture);
+                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace, opts, capture, diag);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
             result.put("http_status", status);
             result.put("response_ms", ms);
+            if (diag) result.put("http_version", resp.version() == null ? null : resp.version().name());
             boolean ok = matchesStatus(status, expectedStatus);
             // JSON doğrulaması (2026-10-01): durum kodu UYDUYSA gövdeye bakılır. Düşerse aynı HTTP_DOWN yolu — neden
             // `error`'da (kart/geçmiş/e-posta onu gösterir), tanı BODY_ASSERTION.
@@ -367,9 +439,9 @@ public class HttpCheckerService {
     private HttpResponse<java.io.InputStream> sendFollowing(URI baseUri, String method, int timeoutMs,
                                              boolean verifySsl, boolean followRedirects, boolean viaProxy,
                                              HttpFailureDiagnostics.Trace trace, HttpRequestOptions opts,
-                                             BodyCapture capture)
+                                             BodyCapture capture, boolean diag)
             throws java.io.IOException, InterruptedException {
-        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy, trace, opts, true, capture);
+        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy, trace, opts, true, capture, diag);
         // Özel başlıklar, Basic auth ve gövde YALNIZ ilk host'a gider (Anahtar Kelime ile aynı kural): yönlendirme başka
         // bir host'a çıkınca onları da göndermek kimliği yabancıya teslim etmek olurdu — tarayıcıların cross-origin
         // yönlendirmede Authorization düşürmesiyle aynı.
@@ -385,7 +457,7 @@ public class HttpCheckerService {
                 ssrfGuard.validate(host);
             }
             boolean origin = originHost != null && originHost.equalsIgnoreCase(current.getHost());
-            HttpResponse<java.io.InputStream> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace, opts, origin, capture);
+            HttpResponse<java.io.InputStream> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace, opts, origin, capture, diag);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (trace != null) trace.hop(next);
@@ -399,12 +471,12 @@ public class HttpCheckerService {
 
     private HttpResponse<java.io.InputStream> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy,
                                               HttpFailureDiagnostics.Trace trace, HttpRequestOptions opts, boolean origin,
-                                              BodyCapture capture)
+                                              BodyCapture capture, boolean diag)
             throws java.io.IOException, InterruptedException {
-        HttpClient shared = client(verifySsl, viaProxy);
+        HttpClient shared = client(verifySsl, viaProxy, diag);
         String host = baseUri.getHost();
         // Vekil yolunda çok-A pin uygulanmaz: hedefi vekil çözer, IP'ye yeniden yazmak CONNECT'i bozar.
-        if (viaProxy && shared != client(verifySsl, false)) {
+        if (viaProxy && shared != client(verifySsl, false, diag)) {
             return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null, opts, origin), timeoutMs, capture);
         }
         if (host == null || NetworkResolver.isIpLiteral(host)) {
@@ -608,7 +680,8 @@ public class HttpCheckerService {
         }
     }
 
-    static boolean hostnameMatches(X509Certificate cert, String host) {
+    /** Sertifika bu adı kapsıyor mu (SAN dNSName, yoksa CN; tek etiket joker). HTTP tanılaması da aynı kuralı okur. */
+    public static boolean hostnameMatches(X509Certificate cert, String host) {
         if (host == null) return false;
         String h = host.toLowerCase(Locale.ROOT);
         List<String> names = new ArrayList<>();

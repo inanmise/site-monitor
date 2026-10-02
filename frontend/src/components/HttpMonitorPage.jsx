@@ -15,7 +15,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight, Copy } from 'lucide-react'
+import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ShieldCheck, Inbox, ChevronRight, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -57,6 +57,8 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Input } from '@/components/shadcn/input'
 import { TabsContent } from '@/components/shadcn/tabs'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { cn } from '@/lib/utils'
 import HttpMonitorCard from './http/HttpMonitorCard.jsx'
 import { metaRow as httpMetaRow } from './http/httpCardModel.js'
 import HttpAdvancedRequestSection from './http/HttpAdvancedRequestSection.jsx'
@@ -67,6 +69,8 @@ import {
 } from './monitoring/MonitorForm.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// HTTP uçtan uca tanılama penceresi (2026-10-02) — tembel: yalnız açılınca iner, sayfa paketi büyümez
+const HttpDiagnoseDialog = lazy(() => import('./http/diagnose/HttpDiagnoseDialog.jsx'))
 
 // Kontrol aralığı çubuğu duraklama noktaları (30 sn → 24 saat).
 const INTERVALS = [
@@ -117,6 +121,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Uçtan uca tanılama (2026-10-02): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run). Liste
+  // satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla DEĞİŞTİRİR ve o yanıtta bayrak olmayabilir
+  // — pencere koşu ortasında sökülmesin.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -156,6 +164,12 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
   const [selCheck, setSelCheck] = useState(null)   // geçmişte tıklanan başarısız kontrol → tanı paneli (sentetikle aynı desen)
+  // Uçtan uca tanılama penceresi (2026-10-02): { monitorId, runId } | null. Derin bağlantı ?monitor=<id>&hdx=<no> YALNIZ
+  // kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz); `runId` gösterilen çalıştırmadır (URL'e yazılır).
+  const [httpDx, setHttpDx] = useState(() => {
+    const runId = readUrlInt('hdx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -231,8 +245,13 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     onEdit: openEdit, canEdit: canManageRow, nocType: 'HTTP',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
   })
 
-  function openDetail(m) { setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
-  function closeDetail() { setSelected(null); setSelCheck(null) }
+  function openDetail(m) {
+    setSelected(m); setSelCheck(null); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab())
+    setHttpDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
+  }
+  function closeDetail() { setSelected(null); setSelCheck(null); setHttpDx(null) }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setHttpDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   function openNew() {
     setTestResult(null); setDupSource(null); setAdvOpen(false)
@@ -515,6 +534,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, proxyFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-02) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    hdx: selected && httpDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (httpDx.runId ?? null) : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -794,6 +815,15 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
               deleting={deleting === selected.id}
               deleteTitle={t('http.delete')}
               onClose={closeDetail}>
+              {/* Uçtan uca tanılama (2026-10-02) — yalnız `can_diagnose` satırında; paylaşılan eylem grubuna çocuk olarak
+                  (MonitorModalActions değişmedi, diğer sekiz tür aynı çizilir) */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="httpdx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('httpdx.open')} aria-label={t('httpdx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -894,9 +924,24 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
           {/* Tanı KENDİ penceresinde (2026-09-23): iç içe modal — ModalShell derinliğe göre katmanlıyor,
               Escape yalnız en derindekini kapatıyor, odak geri Detay düğmesine dönüyor. */}
           <ModalShell open={detailTab === 'control' && !!selCheck} onClose={() => setSelCheck(null)}
-            title={t('httpdiag.title')} icon={AlertTriangle} size="lg" closeLabel={t('httpdiag.close')}>
+            title={t('httpdiag.title')} icon={AlertTriangle} size="lg" closeLabel={t('httpdiag.close')}
+            // Kayıtlı hatadan canlı tanılamaya tek adım (2026-10-02) — yalnız `can_diagnose`; yoksa altlık HİÇ çizilmez (eski görünüm)
+            footer={canDiagnoseRow(selected) ? (
+              <Button type="button" data-slot="httpdx-run-live" onClick={() => { setSelCheck(null); openDiagnose(selected) }}>
+                <Stethoscope aria-hidden="true" /> {t('httpdx.runLive')}
+              </Button>
+            ) : undefined}>
             <HttpErrorDetail check={selCheck} t={t} className="hdiag--modal" />
           </ModalShell>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-02) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {httpDx && httpDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <HttpDiagnoseDialog monitor={selected} initialRunId={httpDx.initialRunId}
+                onRunChange={(runId) => setHttpDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setHttpDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>

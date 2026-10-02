@@ -37,7 +37,10 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/login-help",
             // ErrorBoundary otomatik çökme bildirimi — çökme login öncesi de olabilir; oturum varsa
             // kullanıcı adı içeride okunur. IP rate-limit + uzunluk sınırı içeride.
-            "/api/client-error-report");
+            "/api/client-error-report",
+            // Sistem Bakım Modu (2026-10-02): giriş sayfası bakım kartını oturumsuz okur — yalnız durum, pencere saatleri,
+            // TR/EN mesaj ve iletişim; kimlik/IP/sayaç YOK (SystemMaintenanceService.publicStatus).
+            "/api/public/system-maintenance");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(
@@ -64,6 +67,52 @@ public class AuthInterceptor implements HandlerInterceptor {
     private static final long REAUTH_AUDIT_DEBOUNCE_MS = 30_000;
     private static final int REAUTH_MAP_MAX = 10_000;   // sert üst sınır (UserService.SESSION_MAP_MAX deseni)
 
+    /**
+     * Pasif hesap "mezar taşı" (2026-10-02, kullanıcı kararı). Pasife alınan kullanıcının canlı oturumu KİMLİKSİZLEŞTİRİLİR:
+     * tüm öznitelikleri (authenticated, username, userId, rol, kapsam…) silinir, yerine yalnız bu iki öznitelik konur ve
+     * oturum ömrü {@link #INACTIVE_TOMBSTONE_TTL_SECONDS}'e iner. Oturum artık hiçbir işe yetkili değildir.
+     *
+     * <p>Neden {@code invalidate()} değil: SPA aynı anda birkaç istek atar ve birden çok sekme aynı çerezi paylaşır. Oturum
+     * yok edilseydi ilk istek "hesabınız pasif" alır, aynı anda uçuştaki diğer istekler ve öteki sekmeler OTURUMSUZ genel
+     * 401'e düşüp "oturum süresi doldu" sayfasına yönlenirdi. Mezar taşı oturum deposunda (prod: JDBC → tüm pod'lar)
+     * durduğu için aynı çerezle gelen HER istek aynı sinyali alır. Giriş ({@code /api/login}) ve çıkış eski oturumu yok eder.
+     */
+    public static final String ATTR_INACTIVE = "accountInactive";
+    public static final String ATTR_INACTIVE_USER = "accountInactiveUser";
+    static final int INACTIVE_TOMBSTONE_TTL_SECONDS = 15 * 60;
+
+    /** Pasif kesim denetim ikizlenme kalkanı (eşzamanlı istekler aynı oturumu birlikte keser): anahtar → son yazma (ms). */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> inactiveAuditAtMs =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Sistem Bakım Modu "mezar taşı" (2026-10-02, kullanıcı kararı) — pasif hesap deseninin AYNISI: bakım başlayınca global
+     * yönetici olmayan kullanıcının canlı oturumu kimliksizleştirilir, yerine yalnız bu iki öznitelik kalır. Aynı çerezle
+     * gelen her istek (öteki sekmeler, uçuştaki istekler, öteki pod'lar — JDBC deposu) aynı {@code MAINTENANCE} sinyalini
+     * alır; bakım bitince mezar taşı kapatılır ve istek oturumsuz sayılır (yeniden giriş).
+     */
+    public static final String ATTR_MAINTENANCE = "systemMaintenance";
+    public static final String ATTR_MAINTENANCE_USER = "systemMaintenanceUser";
+
+    /**
+     * Bakım durumu — İSTEĞE BAĞLI bağımlılık (yapıcıya EKLENMEZ): interceptor her {@code @WebMvcTest} diliminde kuruluyor ve
+     * dilimler servisleri yüklemiyor; zorunlu bağımlılık ~30 controller testinin bağlamını düşürürdü (IP çözümü notuyla aynı
+     * gerekçe). Yoksa (dilim/birim test) kapı hiç çalışmaz → davranış bugünküyle birebir.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    private boolean maintenanceActive() {
+        try {
+            return systemMaintenance != null && systemMaintenance.isActive();
+        } catch (Exception e) {
+            return false;   // fail-open: bakım durumu okunamıyorsa kimse dışarıda kalmaz
+        }
+    }
+
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) throws Exception {
         // BK1 (2026-09-27): karar HAM getRequestURI() ile DEĞİL, yönlendiricinin gördüğü NORMALİZE yolla
@@ -79,17 +128,50 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (session != null) {
             try {
                 if (Boolean.TRUE.equals(session.getAttribute("authenticated"))) {
+                    String username = (String) session.getAttribute("username");
+                    // PASİF HESAP KAPISI (2026-10-02, kullanıcı kararı) — süpersede kontrolünden ÖNCE: pasifleştirme
+                    // tek-oturum kaydına TERMINATED sentinel'i de yazar; sıra ters olsaydı istemci "oturum düştü"
+                    // (/?session=expired) görürdü, "hesabınız pasif" penceresini değil. Merkezî kapı budur — tek tek
+                    // uçlara pasif kontrolü serpiştirilmez. Tek-kolon okuma + kısa TTL önbellek (UserService).
+                    if (userService.isAccountInactive(username)) {
+                        endInactiveSession(session, username, req, res);
+                        return writeAccountInactive(res);
+                    }
+                    // SİSTEM BAKIM KAPISI (2026-10-02, kullanıcı kararı) — pasif kontrolünden SONRA, süpersede kontrolünden
+                    // ÖNCE: bakım AKTİFKEN yalnız global yönetici içeride kalır. Kesim pasif hesapla aynı mezar taşı
+                    // desenidir (invalidate değil); sıra ters olsaydı kesilen oturumun öteki sekmesi "oturum düştü"
+                    // (/?session=expired) görürdü. Bakım yoksa tek bellek-içi okuma (≤ 5 sn önbellek) — DB yok.
+                    if (maintenanceActive() && !com.sitemonitor.controller.SessionScope.isGlobalAdmin(session)) {
+                        endMaintenanceSession(session, username, req, res);
+                        return writeMaintenance(res);
+                    }
                     // Tek aktif oturum: bu oturum kullanıcının kayıtlı (daha yeni) oturumu tarafından
                     // geçersiz kılındıysa (başka yerden login ya da admin "Sonlandır"), oturumu kapat ve
                     // temiz 401 dön → frontend otomatik logout (/?session=expired). remember-me cookie'si
                     // de silinir ki kullanıcı sessizce geri dönmesin.
-                    String username = (String) session.getAttribute("username");
                     if (userService.isSessionSuperseded(username, session.getId())) {
                         try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
                         clearRememberMeCookie(res);
                         return writeUnauthorized(res, "Session superseded");
                     }
                     return enforceForcedPasswordChange(session, path, res);
+                } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_INACTIVE))) {
+                    // Pasif hesabın mezar taşı oturumu: hesap hâlâ pasifse aynı sinyal (çok sekme / eşzamanlı istek).
+                    // Yeniden aktifleştirildiyse mezar taşı kapatılır ve istek oturumsuz sayılır (yeniden giriş ister).
+                    String tombUser = (String) session.getAttribute(ATTR_INACTIVE_USER);
+                    if (userService.isAccountInactive(tombUser)) {
+                        clearRememberMeCookie(res);
+                        return writeAccountInactive(res);
+                    }
+                    try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
+                } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_MAINTENANCE))) {
+                    // Bakım mezar taşı: bakım sürüyorsa aynı sinyal (çok sekme / eşzamanlı istek); bittiyse mezar taşı
+                    // kapatılır, istek oturumsuz sayılır (giriş yeniden açıldı — kullanıcı yeniden giriş yapar).
+                    if (maintenanceActive()) {
+                        clearRememberMeCookie(res);
+                        return writeMaintenance(res);
+                    }
+                    try { session.invalidate(); } catch (IllegalStateException ignored) { /* zaten kapalı */ }
                 }
             } catch (IllegalStateException alreadyInvalidated) {
                 // Oturum, eşzamanlı (paralel) bir istek tarafından zaten geçersiz kılınmış. Tarayıcılar
@@ -115,6 +197,32 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (usernameOpt.isPresent()) {
             String username = usernameOpt.get();
             Optional<AppUser> userOpt = userService.findByUsername(username);
+            if (userOpt.isPresent() && !Boolean.TRUE.equals(userOpt.get().getActive())) {
+                // PASİF hesabın geçerli çerezi (2026-10-02): oturum KURULMAZ; kullanıcının tüm token'ları silinir, çerez
+                // düşürülür ve istemci "hesabınız pasif" sinyalini alır (açılışta giriş sayfası pasif bildirimiyle açılır).
+                AppUser u = userOpt.get();
+                rememberMeService.invalidateAllForUser(u.getUsername());
+                clearRememberMeCookie(res);
+                if (shouldAuditInactive("RM|" + u.getUsername())) {
+                    auditService.recordInactiveLogin(u.getUsername(), u.getId(), u.getTeamId(), u.getSystemRole(),
+                            rememberIp, req.getHeader("User-Agent"), "REMEMBER_ME");
+                }
+                return writeAccountInactive(res);
+            }
+            if (userOpt.isPresent() && Boolean.TRUE.equals(userOpt.get().getActive()) && maintenanceActive()
+                    && !systemMaintenance.isGlobalAdminAccount(userOpt.get())) {
+                // SİSTEM BAKIMI (2026-10-02): çerez global yönetici olmayan hesaba ait → oturum KURULMAZ; token'lar silinir,
+                // çerez düşürülür, istemci bakım sinyalini alır (giriş sayfası bakım kartıyla açılır). Engellenen giriş sayılır.
+                AppUser u = userOpt.get();
+                rememberMeService.invalidateAllForUser(u.getUsername());
+                clearRememberMeCookie(res);
+                if (shouldAuditInactive("RMM|" + u.getUsername())) {
+                    auditService.recordMaintenanceLogin(u.getUsername(), u.getId(), u.getTeamId(), u.getSystemRole(),
+                            rememberIp, req.getHeader("User-Agent"), "REMEMBER_ME");
+                    systemMaintenance.recordBlockedLogin();
+                }
+                return writeMaintenance(res);
+            }
             if (userOpt.isPresent()
                     && Boolean.TRUE.equals(userOpt.get().getActive())
                     && !userService.checkLockout(username).isBlocked()) {
@@ -157,6 +265,99 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (reauthAuditAtMs.size() > REAUTH_MAP_MAX) reauthAuditAtMs.clear();
         reauthAuditAtMs.put(username, now);
         return true;
+    }
+
+    /**
+     * Pasife alınan kullanıcının canlı oturumunu keser (2026-10-02): oturum kimliksizleştirilir (mezar taşı, bkz.
+     * {@link #ATTR_INACTIVE}), kullanıcının TÜM remember-me token'ları silinir, çerez düşürülür ve
+     * {@code SESSION_ENDED_INACTIVE} denetim kaydı yazılır (eşzamanlı istekler için 30 sn ikizlenme kalkanı).
+     */
+    private void endInactiveSession(HttpSession session, String username, HttpServletRequest req, HttpServletResponse res) {
+        String sid = session.getId();
+        Long userId = longAttr(session.getAttribute("userId"));
+        Long teamId = longAttr(session.getAttribute("teamId"));
+        Object role = session.getAttribute("systemRole");
+        for (String name : java.util.Collections.list(session.getAttributeNames())) session.removeAttribute(name);
+        session.setAttribute(ATTR_INACTIVE, Boolean.TRUE);
+        session.setAttribute(ATTR_INACTIVE_USER, username);
+        session.setMaxInactiveInterval(INACTIVE_TOMBSTONE_TTL_SECONDS);
+        rememberMeService.invalidateAllForUser(username);   // oturumdaki ad CANONICAL (populateSession)
+        clearRememberMeCookie(res);
+        if (shouldAuditInactive("S|" + username + "|" + sid)) {
+            auditService.recordAction("SESSION_ENDED_INACTIVE", username, userId, teamId,
+                    role == null ? null : role.toString(), "USER", username,
+                    "Hesap pasife alındığı için canlı oturum sonlandırıldı (hatırlanan girişler silindi)",
+                    auditService.resolveIp(req), req.getHeader("User-Agent"), sid);
+        }
+    }
+
+    /**
+     * Bakım başlayınca global yönetici olmayan kullanıcının canlı oturumunu keser (2026-10-02) — pasif hesap kesiminin
+     * aynası: oturum kimliksizleştirilir (mezar taşı, bkz. {@link #ATTR_MAINTENANCE}), kullanıcının remember-me token'ları
+     * silinir, çerez düşürülür, tek-oturum kaydı temizlenir (bakım sonrası girişte yanlış "başka yerde oturum" onayı çıkmasın),
+     * {@code SESSION_ENDED_MAINTENANCE} denetimi yazılır ve kapatılan oturum bakım kaydına sayılır (eşzamanlı istekler için
+     * 30 sn ikizlenme kalkanı — sayaç da kalkanın içinde, aynı oturum iki kez sayılmaz).
+     */
+    private void endMaintenanceSession(HttpSession session, String username, HttpServletRequest req, HttpServletResponse res) {
+        String sid = session.getId();
+        Long userId = longAttr(session.getAttribute("userId"));
+        Long teamId = longAttr(session.getAttribute("teamId"));
+        Object role = session.getAttribute("systemRole");
+        for (String name : java.util.Collections.list(session.getAttributeNames())) session.removeAttribute(name);
+        session.setAttribute(ATTR_MAINTENANCE, Boolean.TRUE);
+        session.setAttribute(ATTR_MAINTENANCE_USER, username);
+        session.setMaxInactiveInterval(INACTIVE_TOMBSTONE_TTL_SECONDS);
+        if (username != null) {
+            rememberMeService.invalidateAllForUser(username);
+            try { userService.clearActiveSession(username, sid); } catch (Exception ignored) { /* kayıt best-effort */ }
+        }
+        clearRememberMeCookie(res);
+        if (shouldAuditInactive("M|" + username + "|" + sid)) {
+            auditService.recordAction("SESSION_ENDED_MAINTENANCE", username, userId, teamId,
+                    role == null ? null : role.toString(), "USER", username,
+                    "Sistem bakımı başladığı için canlı oturum sonlandırıldı (hatırlanan girişler silindi)",
+                    auditService.resolveIp(req), req.getHeader("User-Agent"), sid);
+            try { systemMaintenance.recordSessionEnded(); } catch (Exception ignored) { /* sayaç best-effort */ }
+        }
+    }
+
+    /** 401 + {@code MAINTENANCE} gövdesi (pencere bilgisiyle) — istemci geri sayım penceresini açar, sonra giriş sayfası. */
+    private boolean writeMaintenance(HttpServletResponse res) throws Exception {
+        res.setStatus(401);
+        res.setContentType("application/json;charset=UTF-8");
+        Map<String, Object> body;
+        try {
+            body = systemMaintenance != null ? systemMaintenance.signalBody()
+                    : com.sitemonitor.util.SystemMaintenanceSignal.body("Maintenance", null);
+        } catch (Exception e) {
+            body = com.sitemonitor.util.SystemMaintenanceSignal.body("Maintenance", null);
+        }
+        mapper.writeValue(res.getWriter(), body);
+        return false;
+    }
+
+    private static Long longAttr(Object v) {
+        if (v instanceof Long l) return l;
+        if (v instanceof Number n) return n.longValue();
+        try { return v == null ? null : Long.parseLong(v.toString()); } catch (NumberFormatException e) { return null; }
+    }
+
+    /** Pasif kesim / pasif çerez denetimi yazılsın mı (aynı anahtar için 30 sn'de bir)? */
+    private boolean shouldAuditInactive(String key) {
+        long now = System.currentTimeMillis();
+        Long last = inactiveAuditAtMs.get(key);
+        if (last != null && now - last < REAUTH_AUDIT_DEBOUNCE_MS) return false;
+        if (inactiveAuditAtMs.size() > REAUTH_MAP_MAX) inactiveAuditAtMs.clear();
+        inactiveAuditAtMs.put(key, now);
+        return true;
+    }
+
+    /** 401 + {@code ACCOUNT_INACTIVE} gövdesi — istemci "Hesabınız pasife alındı" penceresini açar (yönlendirme değil). */
+    private boolean writeAccountInactive(HttpServletResponse res) throws Exception {
+        res.setStatus(401);
+        res.setContentType("application/json;charset=UTF-8");
+        mapper.writeValue(res.getWriter(), com.sitemonitor.util.AccountInactive.body());
+        return false;
     }
 
     /** Temiz 401 JSON yanıtı (frontend bunu yakalayıp otomatik logout eder). */

@@ -91,6 +91,18 @@ class TeamAdminServiceTest {
         assertThat(s.get(7L)).containsEntry("members", 2).containsEntry("domains", 2).containsEntry("monitors", 1)
                 .containsEntry("open_alerts", 1).containsEntry("contacts", 1).containsEntry("groups", 1);
         assertThat(s.get(9L)).containsEntry("members", 2).containsEntry("domains", 1).containsEntry("monitors", 0);
+        assertThat(s.get(7L)).containsEntry("members_inactive", 0);
+    }
+
+    @Test
+    @DisplayName("stats (2026-10-02): pasif üyeler toplamda sayılır ve ayrıca members_inactive'te — arayüz 'N aktif · M pasif' yazar")
+    void stats_countsInactiveMembers() {
+        AppUser gone = user(4, "gone", 7L, 7L);
+        gone.setActive(false);
+        when(userRepo.findAll()).thenReturn(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), gone));
+        Map<Long, Map<String, Object>> s = service.stats();
+        assertThat(s.get(7L)).containsEntry("members", 3).containsEntry("members_inactive", 1);
+        assertThat(s.get(9L)).containsEntry("members", 1).containsEntry("members_inactive", 0);
     }
 
     @Test

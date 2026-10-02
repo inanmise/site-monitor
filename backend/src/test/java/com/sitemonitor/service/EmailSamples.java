@@ -103,8 +103,26 @@ final class EmailSamples {
         weekly();
         reports();
         noc();
+        systemMaintenance();
         addHtml("smtp-test", "smtp", "[Site Monitor] SMTP test e-postası", smtp.buildTestHtml(smtpSettings), "ok");
         return List.copyOf(out);
+    }
+
+    // ── Sistem Bakım Modu duyuruları (2026-10-02) ───────────────────────────
+
+    private void systemMaintenance() {
+        for (var kind : com.sitemonitor.service.mail.SystemMaintenanceMail.Kind.values()) {
+            // ENDED ("bakım tamamlandı", 2026-10-02): plan ≠ gerçekleşen (uzatılmış) — en uzun satır düzeni
+            boolean ended = kind == com.sitemonitor.service.mail.SystemMaintenanceMail.Kind.ENDED;
+            var info = new com.sitemonitor.service.mail.SystemMaintenanceMail.Info(kind, "02.10.2026 22:00 – 03.10.2026 01:30",
+                    "3 sa 30 dk", "Veritabanı sunucusu sürüm yükseltmesi ve " + TR, null,
+                    "BT Destek Masası · dahili 1234 · destek@example.com", BASE,
+                    ended ? "02.10.2026 22:00 – 03.10.2026 01:00" : null,
+                    ended ? com.sitemonitor.service.mail.SystemMaintenanceMail.EndShift.EXTENDED : null);
+            var m = com.sitemonitor.service.mail.SystemMaintenanceMail.build(info);
+            add("system-maintenance-" + kind.name().toLowerCase(java.util.Locale.ROOT), "admin",
+                    com.sitemonitor.service.mail.SystemMaintenanceMail.subject(info), m.html(), m.text(), "ok");
+        }
     }
 
     // ── 7/24 İzleme Ekibi (NOC) ailesi (2026-09-27) ─────────────────────────

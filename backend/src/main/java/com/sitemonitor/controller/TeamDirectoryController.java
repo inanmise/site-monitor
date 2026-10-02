@@ -60,8 +60,12 @@ public class TeamDirectoryController {
 
     /**
      * Takım üyeleri (beyaz-listeli) + takımın eskalasyon kişileri. Üyelik yüklemi
-     * AdminController.listTeamUsers ile aynı: birincil takım ya da çoklu-takım üyeliği.
-     * Yalnız AKTİF hesaplar. Bilinmeyen takım → 404.
+     * AdminController.listTeamUsers ile aynı: birincil takım ya da çoklu-takım üyeliği. Bilinmeyen takım → 404.
+     *
+     * <p><b>Pasif üyeler (2026-10-02, kullanıcı kararı):</b> artık GİZLENMEZ — her satır {@code active} bayrağı taşır,
+     * pasifler aktiflerden SONRA sıralanır ve arayüz onları belirgin "Pasif" rozetiyle gösterir. Bu ucun tüketicileri
+     * yalnız GÖRÜNTÜLEME listeleridir (takım üyeleri penceresi; Takım Yönetimi buradan yalnız takım satırını ve kişileri
+     * okur) — seçici / atama / alıcı kaynağı DEĞİLDİR. Seçiciler aktif-yalnız kalır (kendi kaynaklarında süzerler).
      */
     @GetMapping("/{id}/members")
     public ResponseEntity<Map<String, Object>> members(@PathVariable Long id) {
@@ -75,12 +79,13 @@ public class TeamDirectoryController {
 
         List<Map<String, Object>> members = new ArrayList<>();
         for (AppUser u : all) {
-            if (!Boolean.TRUE.equals(u.getActive())) continue;
             boolean member = id.equals(u.getTeamId()) || (u.getTeamIds() != null && u.getTeamIds().contains(id));
             if (!member) continue;
             members.add(project(u, byId));
         }
-        members.sort(Comparator.comparing(m -> String.valueOf(m.get("display_name")), String.CASE_INSENSITIVE_ORDER));
+        // Aktifler önce, pasifler sonda; her grupta ada göre.
+        members.sort(Comparator.comparing((Map<String, Object> m) -> !Boolean.TRUE.equals(m.get("active")))
+                .thenComparing(m -> String.valueOf(m.get("display_name")), String.CASE_INSENSITIVE_ORDER));
 
         List<Map<String, Object>> contacts = new ArrayList<>();
         for (EscalationContact c : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(id)) {
@@ -90,6 +95,10 @@ public class TeamDirectoryController {
             m.put("email", c.getEmail());
             m.put("role", c.getRole());
             m.put("min_alert_level", c.getMinAlertLevel());
+            // Bağlı kullanıcı pasif mi (2026-10-02): pasif kişi BİLDİRİM ALMAZ (InactiveRecipientGuard) — arayüz üye
+            // listesindeki gibi belirgin "Pasif" rozeti çizer. Bağsız (serbest metin) kişi → null; kimlik sızdırılmaz.
+            AppUser linked = c.getUserId() == null ? null : byId.get(c.getUserId());
+            m.put("user_active", linked == null ? null : Boolean.TRUE.equals(linked.getActive()));
             contacts.add(m);
         }
 
@@ -126,6 +135,7 @@ public class TeamDirectoryController {
         m.put("manager_display_name", u.getManagerId() != null ? displayName(byId.get(u.getManagerId())) : null);
         m.put("system_role", u.getSystemRole());
         m.put("has_photo", u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
+        m.put("active", Boolean.TRUE.equals(u.getActive()));   // 2026-10-02: pasif üye listede, belirgin rozetle
         return m;
     }
 

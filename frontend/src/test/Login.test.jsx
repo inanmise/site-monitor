@@ -126,6 +126,49 @@ describe('Login', () => {
     expect(screen.queryByText(/session has expired/i)).toBeNull()
   })
 
+  // ── Pasif hesap (2026-10-02, kullanıcı kararı) ─────────────────────────────────────────────
+
+  async function submitWith(response) {
+    api.login.mockResolvedValueOnce(response)
+    const onLogin = vi.fn()
+    render(<Login onLogin={onLogin} />)
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'pasif' } })
+    fireEvent.change(document.getElementById('lp-pass'), { target: { value: 'pw' } })
+    fireEvent.submit(document.querySelector('form'))
+    await waitFor(() => expect(api.login).toHaveBeenCalled())
+    return onLogin
+  }
+
+  it('403 ACCOUNT_INACTIVE → form hata alanında PASİF mesajı ("yanlış parola"dan ayrı), giriş yok', async () => {
+    const onLogin = await submitWith({ success: false, code: 'ACCOUNT_INACTIVE', error_code: 'ACCOUNT_INACTIVE',
+      error: 'Your account is inactive; sign-in is not allowed. Contact your administrator.' })
+
+    const alert = await waitFor(() => {
+      const el = document.querySelector('[data-slot="alert"][data-code="ACCOUNT_INACTIVE"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(alert).toHaveTextContent(/inactive; sign-in is not allowed/i)
+    expect(screen.queryByText(/Invalid username or password/i)).toBeNull()
+    expect(onLogin).not.toHaveBeenCalled()
+  })
+
+  it('401 yanlış parola → genel mesaj (pasif işareti YOK)', async () => {
+    await submitWith({ success: false, error: 'Invalid username or password' })
+
+    expect(await screen.findByText(/Invalid username or password/i)).toBeDefined()
+    expect(document.querySelector('[data-code="ACCOUNT_INACTIVE"]')).toBeNull()
+  })
+
+  it('accountInactive bildirimi: giriş sayfasının üstünde "Hesabınız pasife alındı", form yine kullanılabilir', () => {
+    render(<Login onLogin={() => {}} accountInactive />)
+    const banner = document.querySelector('[data-slot="login-account-inactive"]')
+    expect(banner).not.toBeNull()
+    expect(banner).toHaveTextContent(/deactivated/i)
+    expect(screen.getByLabelText(/username/i)).toBeDefined()
+    expect(screen.queryByText(/session has expired/i)).toBeNull()
+  })
+
   it('renders the executive left panel: wordmark, badge, tagline + subline, three pillars (Monitor/Alert/Report), hero stats, rings + pulse', async () => {
     const { container } = render(<Login onLogin={() => {}} />)
     // Üst bölge: nötr marka logosu (beyaz-etiket yokken) + wordmark + ENTERPRISE rozeti

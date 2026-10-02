@@ -105,6 +105,12 @@ public class IncidentNotificationService {
         String managerName = null;
         if (team.getLeaderId() != null) {
             AppUser mgr = userRepo.findById(team.getLeaderId()).orElse(null);
+            if (mgr != null && !Boolean.TRUE.equals(mgr.getActive())) {
+                // Pasif takım lideri (2026-10-02, kullanıcı kararı): pasif kullanıcıya hiçbir bildirim gitmez — ne alıcı
+                // olur ne de e-postada "müdür" olarak adı geçer. İz: WARN (olay postası bildirim günlüğüne yazılmaz).
+                log.warn("Incident notify: takım {} lideri pasif kullanıcı ({}) — alıcılardan çıkarıldı", team.getId(), mgr.getUsername());
+                mgr = null;
+            }
             if (mgr != null) {
                 managerName = (mgr.getDisplayName() != null && !mgr.getDisplayName().isBlank())
                         ? mgr.getDisplayName() : mgr.getUsername();
@@ -113,7 +119,7 @@ public class IncidentNotificationService {
             }
         }
         if (recipients.isEmpty()) {
-            log.warn("Incident notify: team {} has no group/email and no manager email — skipped", team.getId());
+            log.warn("Incident notify: team {} has no group/email and no (active) manager email — skipped", team.getId());
             return;
         }
 

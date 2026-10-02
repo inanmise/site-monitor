@@ -38,6 +38,7 @@ function methodLabel(t, m) {
 function reasonLabel(t, r) {
   if (r === 'BAD_PASSWORD') return t('lastLogin.reasonBadPassword')
   if (r === 'TEMP_PASSWORD_EXPIRED') return t('lastLogin.reasonTempExpired')
+  if (r === 'ACCOUNT_INACTIVE') return t('lastLogin.reasonAccountInactive')   // 2026-10-02
   return null
 }
 

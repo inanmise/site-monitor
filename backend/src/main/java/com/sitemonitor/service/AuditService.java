@@ -346,6 +346,76 @@ public class AuditService {
         log.warn("Rate-limited login blocked: IP={} actor={}", ipAddress, actor);
     }
 
+    /** Pasif hesap girişinin denetim nedeni (makine kodu, {@code failure_reason} öneki). */
+    public static final String REASON_ACCOUNT_INACTIVE = "ACCOUNT_INACTIVE";
+
+    /**
+     * PASİF hesabın kimlik bilgisi DOĞRU ama giriş REDDEDİLDİ (2026-10-02, kullanıcı kararı) — {@code LOGIN_FAILED},
+     * neden {@code ACCOUNT_INACTIVE}. Sonuç {@code BLOCKED}: kaba kuvvet sayacı ({@code countRecentFailedLogins})
+     * BLOCKED satırları SAYMAZ — parolasını bilen pasif kişinin denemeleri ilerleyici kilidi tetiklemez (kilit yanlış
+     * parolaya karşıdır). Anomali bayrağı yalnız mesai dışı; RATE_LIMITED basılmaz (oran sınırı değil, hesap durumu).
+     *
+     * @param method giriş yolu: {@code PASSWORD} (yerel), {@code LDAP}, {@code REMEMBER_ME}
+     */
+    public void recordInactiveLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                    String ipAddress, String userAgent, String method) {
+        AuditLog entry = new AuditLog();
+        entry.setEventType("LOGIN_FAILED");
+        entry.setEventTime(now());
+        entry.setActor(actor);
+        entry.setActorId(actorId);
+        entry.setActorTeamId(actorTeamId);
+        entry.setActorRole(actorRole);
+        entry.setIpAddress(ipAddress);
+        entry.setUserAgent(userAgent);
+        entry.setOutcome("BLOCKED");
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
+        entry.setFailureReason(REASON_ACCOUNT_INACTIVE + ": pasif hesap — kimlik doğrulandı, giriş reddedildi ("
+                + (method == null ? "?" : method) + ")");
+        if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
+        AuditLog saved = persist(entry);
+        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        log.warn("Pasif hesap girişi reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
+    }
+
+    /** Sistem bakımında reddedilen girişin denetim nedeni (makine kodu, {@code failure_reason} öneki). */
+    public static final String REASON_MAINTENANCE = "MAINTENANCE";
+
+    /**
+     * SİSTEM BAKIMI sürerken global yönetici olmayan hesabın girişi REDDEDİLDİ (2026-10-02, kullanıcı kararı) —
+     * {@code LOGIN_FAILED}, neden {@code MAINTENANCE}, sonuç {@code BLOCKED}: kaba kuvvet sayacı BLOCKED satırları SAYMAZ
+     * (bakımda tekrar tekrar giriş denemek kilit tetiklemez; kilit yanlış parolaya karşıdır). Kimlik bilgisi doğrulanmıştır
+     * (yerel / LDAP); remember-me yolunda çerez geçerliydi. Anomali bayrağı yalnız mesai dışı.
+     *
+     * @param method giriş yolu: {@code PASSWORD} (yerel), {@code LDAP}, {@code REMEMBER_ME}
+     */
+    public void recordMaintenanceLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                       String ipAddress, String userAgent, String method) {
+        AuditLog entry = new AuditLog();
+        entry.setEventType("LOGIN_FAILED");
+        entry.setEventTime(now());
+        entry.setActor(actor);
+        entry.setActorId(actorId);
+        entry.setActorTeamId(actorTeamId);
+        entry.setActorRole(actorRole);
+        entry.setIpAddress(ipAddress);
+        entry.setUserAgent(userAgent);
+        entry.setOutcome("BLOCKED");
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
+        entry.setFailureReason(REASON_MAINTENANCE + ": sistem bakımı — yalnız global yöneticiler giriş yapabilir ("
+                + (method == null ? "?" : method) + ")");
+        if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
+        AuditLog saved = persist(entry);
+        if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+        log.info("Sistem bakımında giriş reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
+    }
+
     public void recordLogout(String actor, Long actorId, String ipAddress, String sessionId) {
         AuditLog entry = new AuditLog();
         entry.setEventType("LOGOUT");

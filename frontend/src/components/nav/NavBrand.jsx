@@ -2,6 +2,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import BrandLogo from '../BrandLogo.jsx'
 import VersionChip from '../VersionChip.jsx'
+import OnlineUsersIndicator from './OnlineUsersIndicator.jsx'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarTrigger } from '@/components/shadcn/sidebar'
 import { cn } from '@/lib/utils'
 
@@ -43,6 +44,8 @@ export default function NavBrand({ onHome, onTabChange, collapsed, isMobile, glo
           isMobile && '[&_button]:relative [&_button]:after:absolute [&_button]:after:-inset-3')}>
           <VersionChip onTabChange={onTabChange} />
         </div>
+        {/* Çevrimiçi kullanıcılar (2026-10-02): logonun sağında; ikon kipinde logonun altında, sayı rozetle */}
+        <OnlineUsersIndicator collapsed={collapsed} isMobile={isMobile} />
         <SidebarTrigger className={cn('shrink-0 text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground', isMobile ? 'size-10' : 'size-8')}
           title={toggleLabel} aria-label={toggleLabel} />
       </SidebarMenuItem>

@@ -92,6 +92,27 @@ public class AuthController {
     @Autowired(required = false)
     private WeeklyReportService weeklyReportService;
 
+    /** Sistem Bakım Modu (2026-10-02) — isteğe bağlı: {@code @WebMvcTest} dilimlerinde yok → kapı çalışmaz (bugünkü davranış). */
+    @Autowired(required = false)
+    private com.sitemonitor.service.SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    /** Bakım AKTİF mi — okuma hatası girişi ENGELLEMEZ (fail-open). */
+    private boolean maintenanceActive() {
+        try {
+            return systemMaintenance != null && systemMaintenance.isActive();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Bakım bu hesabın girişini engeller mi: bakım aktif + global yönetici değil. */
+    private boolean maintenanceBlocks(AppUser user) {
+        return maintenanceActive() && !systemMaintenance.isGlobalAdminAccount(user);
+    }
+
     // Per-IP attempt counter within a sliding 60-second window
     private final ConcurrentHashMap<String, AtomicInteger> loginAttempts = new ConcurrentHashMap<>();
     // Per-IP: timestamp when the current counting window started
@@ -147,12 +168,37 @@ public class AuthController {
                     || "LOCAL".equalsIgnoreCase(existing.get().getAuthSource()));
 
         Optional<AppUser> userOpt;
+        // PASİF hesap (2026-10-02, kullanıcı kararı): kimlik bilgisi DOĞRULANDIKTAN sonra hesap pasifse giriş reddedilir
+        // (403 ACCOUNT_INACTIVE). Yanlış parolada aşağıdaki genel 401 DEĞİŞMEZ — "pasif" bilgisi yalnız parolayı / AD
+        // parolasını bilene açılır (kullanıcı adı numaralandırması yok).
+        AppUser inactive = null;
+        AppUser maintenanceBlocked = null;
+        String inactiveMethod = "PASSWORD";
         if (isLocalAccount) {
             userOpt = userService.authenticate(username, password);   // local BCrypt
+            if (userOpt.isEmpty()) inactive = userService.findInactiveWithValidPassword(username, password).orElse(null);
         } else if (ldapEnabled()) {
-            userOpt = tryLdapLogin(username, password);               // AD bind + provision (USER)
+            LdapAttempt ldap = tryLdapLogin(username, password);      // AD bind + provision (USER)
+            userOpt = Optional.ofNullable(ldap.user());
+            inactive = ldap.inactive();
+            maintenanceBlocked = ldap.maintenance();
+            inactiveMethod = "LDAP";
         } else {
             userOpt = userService.authenticate(username, password);   // LDAP off → local only
+            if (userOpt.isEmpty()) inactive = userService.findInactiveWithValidPassword(username, password).orElse(null);
+        }
+
+        if (inactive != null) {
+            return rejectInactiveLogin(inactive, inactiveMethod, clientIp, request);
+        }
+        // SİSTEM BAKIMI (2026-10-02, kullanıcı kararı): bakım AKTİFKEN yalnız global yönetici girer. Karar kimlik bilgisi
+        // DOĞRULANDIKTAN sonra (pasif hesapla aynı ilke): yanlış parola bugünkü genel 401'i alır — "kim global yönetici"
+        // numaralandırılamaz; giriş sayfası bakım kartını zaten public uçtan gösterir. LDAP yolunda provizyon hiç koşmaz.
+        if (maintenanceBlocked == null && userOpt.isPresent() && maintenanceBlocks(userOpt.get())) {
+            maintenanceBlocked = userOpt.get();
+        }
+        if (maintenanceBlocked != null) {
+            return rejectMaintenanceLogin(maintenanceBlocked, inactiveMethod, clientIp, request);
         }
 
         if (userOpt.isPresent()) {
@@ -304,6 +350,49 @@ public class AuthController {
                 .body(Map.of("success", false, "error", "Invalid username or password"));
     }
 
+    /**
+     * Pasif hesabın (kimlik bilgisi doğrulanmış) girişini reddeder — oturum KURULMAZ, LDAP provizyonu / profil / takım
+     * eşitlemesi YAPILMAZ, hesap yeniden aktifleşmez. Denetim: {@code LOGIN_FAILED} + neden {@code ACCOUNT_INACTIVE},
+     * sonuç BLOCKED → ilerleyici kilit sayacına GİRMEZ (kilit yanlış parolaya karşıdır). IP oran sınırı yine işler
+     * (bu IP'den art arda deneme sınırlanır). Kullanıcının güvenlik özetine başarısız deneme damgası düşer.
+     */
+    private ResponseEntity<Map<String, Object>> rejectInactiveLogin(AppUser user, String method, String clientIp,
+                                                                   HttpServletRequest request) {
+        recordFailedAttempt(clientIp);   // IP oran sınırı (hesap kilidi DEĞİL)
+        userService.recordFailedLogin(user.getUsername(), clientIp, com.sitemonitor.util.AccountInactive.CODE);
+        auditService.recordInactiveLogin(user.getUsername(), user.getId(), user.getTeamId(), user.getSystemRole(),
+                clientIp, request.getHeader("User-Agent"), method);
+        log.warn("Login rejected — account inactive: user={} method={} IP={}", user.getUsername(), method, clientIp);
+        return ResponseEntity.status(403).body(com.sitemonitor.util.AccountInactive.body());
+    }
+
+    /**
+     * Sistem bakımında global yönetici olmayan hesabın (kimlik bilgisi doğrulanmış) girişini reddeder (2026-10-02) — oturum
+     * KURULMAZ, LDAP provizyonu YAPILMAZ. Denetim {@code LOGIN_FAILED} + neden {@code MAINTENANCE} (BLOCKED → kilit sayacına
+     * girmez); engellenen giriş bakım kaydına sayılır. IP oran sınırına SAYILMAZ: aynı NAT arkasındaki çok sayıda kullanıcı
+     * bakımda giriş denerken global yöneticinin IP'si bloklanmasın. Kullanıcının "başarısız deneme" özetine de yazılmaz
+     * (bir sonraki girişte yanlış "şüpheli deneme" uyarısı çıkmasın).
+     */
+    private ResponseEntity<Map<String, Object>> rejectMaintenanceLogin(AppUser user, String method, String clientIp,
+                                                                      HttpServletRequest request) {
+        auditService.recordMaintenanceLogin(user.getUsername(), user.getId(), user.getTeamId(), user.getSystemRole(),
+                clientIp, request.getHeader("User-Agent"), method);
+        try { systemMaintenance.recordBlockedLogin(); } catch (Exception ignored) { /* sayaç best-effort */ }
+        log.info("Login rejected — system maintenance: user={} method={} IP={}", user.getUsername(), method, clientIp);
+        return ResponseEntity.status(403).body(systemMaintenance.signalBody());
+    }
+
+    /** Oturum yoklaması / {@code /me} / giriş yanıtına EK bakım bloğu + sunucu saati (servis yoksa hiçbir alan eklenmez). */
+    private void putMaintenance(Map<String, Object> resp) {
+        if (systemMaintenance == null) return;
+        try {
+            resp.put("maintenance", systemMaintenance.clientBlock());
+            resp.put("server_now", systemMaintenance.serverNow());
+        } catch (Exception e) {
+            log.debug("Bakım bloğu eklenemedi: {}", e.getMessage());
+        }
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<Map<String, Object>> logout(
             HttpServletRequest request,
@@ -358,7 +447,26 @@ public class AuthController {
         if (username != null) userService.touchActiveSession(username, session.getId());
         // Görünür sekme (yalnız sekme anahtarı; URL parametreleri değil) → sayfa kullanımı sayacı
         if (username != null && tab != null && pageUsageService != null) pageUsageService.record(username, tab);
-        return ResponseEntity.ok(Map.of("success", true));
+        // Sistem Bakım Modu (2026-10-02): yoklama yanıtına EK blok — duyuru/uyarı şeridi, geri sayım penceresi ve admin
+        // şeridi bunu okur; geri sayım İSTEMCİ saatinde değil server_now'a göre hesaplanır. Mevcut alan ("success")
+        // değişmez; bakım servisi yoksa yanıt bugünküyle birebir. Okuma pod önbelleğinden (≤ 5 sn) — DB yok.
+        if (systemMaintenance == null) return ResponseEntity.ok(Map.of("success", true));
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        putMaintenance(resp);
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * "Ayrıldım" sinyali (2026-10-02) — kullanıcının SON açık sekmesi kapanırken istemci {@code navigator.sendBeacon} ile
+     * gönderir; kullanıcı çevrimiçi sayımından hemen düşer (bkz. {@link UserService#markLeft}). Gövde okunmaz (beacon
+     * text/plain gönderir). Oturum sonlandırılmaz — aynı çerezle dönüş yeniden giriş istemez. Yanıt 204, gövdesiz.
+     */
+    @PostMapping("/session/leave")
+    public ResponseEntity<Void> sessionLeave(HttpSession session) {
+        String username = (String) session.getAttribute("username");
+        if (username != null) userService.markLeft(username, session.getId());
+        return ResponseEntity.noContent().build();
     }
 
     /**
@@ -434,6 +542,7 @@ public class AuthController {
         // Haftalık Raporlar modülü bu kullanıcıya görünür mü (2026-09-16)? Takım bazlı açılır, varsayılan
         // KAPALI — sekme yalnız açık takımlara (ve en az bir takım açıksa yönetici/denetçiye) çizilir.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
+        putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): EK blok — açılışta şerit/pencere ilk yoklamayı beklemesin
         return ResponseEntity.ok(resp);
     }
 
@@ -850,23 +959,53 @@ public class AuthController {
         }
     }
 
+    /** LDAP giriş denemesinin sonucu: {@code user} = provizyonlanmış aktif kullanıcı; {@code inactive} = AD bind'ı
+     *  BAŞARILI ama uygulama hesabı PASİF (provizyon yapılmadı). İkisi de null = başarısız deneme. */
+    record LdapAttempt(AppUser user, AppUser inactive, AppUser maintenance) {
+        static final LdapAttempt FAILED = new LdapAttempt(null, null, null);
+        LdapAttempt(AppUser user, AppUser inactive) { this(user, inactive, null); }
+    }
+
     /**
      * Authenticates against AD and provisions/loads the local row (USER, no team).
-     * Returns empty on wrong password / user-not-found / any LDAP error (caller then
+     * Returns {@link LdapAttempt#FAILED} on wrong password / user-not-found / any LDAP error (caller then
      * records a normal failed attempt). Never throws.
+     *
+     * <p><b>Pasif hesap (2026-10-02, kullanıcı kararı — güvenlik açığı kapatıldı):</b> AD bind başarılıysa provizyondan
+     * ÖNCE mevcut uygulama hesabına bakılır; pasifse {@code inactive} döner ve provizyon HİÇ çalışmaz — hesap yeniden
+     * aktifleşmez, profil/takım/müdür eşitlemesi bu denemeyle değişmez, oturum kurulmaz. Eskiden provizyon aktiflik
+     * bakmadığı için AD parolası geçerli pasif LDAP kullanıcısı içeri girebiliyordu.
      */
-    private Optional<AppUser> tryLdapLogin(String username, String password) {
+    private LdapAttempt tryLdapLogin(String username, String password) {
         try {
             Optional<LdapDirectoryService.LdapUser> ad =
                     ldapDirectory.authenticate(username, password);
-            if (ad.isEmpty()) return Optional.empty();
+            if (ad.isEmpty()) return LdapAttempt.FAILED;
             var u = ad.get();
             String uname = (u.username() != null && !u.username().isBlank()) ? u.username() : username;
+            Optional<AppUser> existingRow = userService.findByUsername(uname);
+            if (existingRow.isPresent() && !Boolean.TRUE.equals(existingRow.get().getActive())) {
+                return new LdapAttempt(null, existingRow.get());
+            }
+            // SİSTEM BAKIMI (2026-10-02): AD bind'ı başarılı ama bakım aktif → provizyon / profil / takım eşitlemesi HİÇ
+            // koşmaz (bakımda veri değişmesin), oturum kurulmaz. AD kaynaklı hesap global yönetici olamaz (kapsam AD
+            // takımlarından türer); yine de satır global yönetici çıkarsa (ör. elle kaynak değişimi) normal akış sürer.
+            if (maintenanceActive() && (existingRow.isEmpty() || !systemMaintenance.isGlobalAdminAccount(existingRow.get()))) {
+                AppUser row = existingRow.orElseGet(() -> {
+                    AppUser t = new AppUser();
+                    t.setUsername(uname);
+                    return t;
+                });
+                return new LdapAttempt(null, null, row);
+            }
             // Map all AD attributes → user/team/manager (Faz 3a).
-            return Optional.of(ldapProvisioning.provisionFromAd(uname, u.dn(), u.attributes()));
+            AppUser provisioned = ldapProvisioning.provisionFromAd(uname, u.dn(), u.attributes());
+            // Savunma: provizyon pasif bir satır döndürdüyse (yukarıdaki kapı bunu önler) yine oturum kurulmaz.
+            if (provisioned != null && !Boolean.TRUE.equals(provisioned.getActive())) return new LdapAttempt(null, provisioned);
+            return new LdapAttempt(provisioned, null);
         } catch (Exception e) {
             log.warn("LDAP login error for '{}': {}", username, e.getMessage());
-            return Optional.empty();
+            return LdapAttempt.FAILED;
         }
     }
 
@@ -972,6 +1111,7 @@ public class AuthController {
         resp.put("scoped", session.getAttribute("viewTeamIds") != null);
         // Giriş yanıtına da konur: /me yalnız açılışta koşuyor — konmazsa sekme ancak F5'ten sonra görünürdü.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
+        putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): global yönetici bakımda girince admin şeridi hemen görünsün
         return resp;
     }
 

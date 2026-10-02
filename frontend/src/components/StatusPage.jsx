@@ -9,6 +9,7 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { LiveIndicator } from './monitoring/OverviewParts.jsx'
+import MaintenanceStatusNote from './maintenance/MaintenanceStatusNote.jsx'   // Sistem Bakım Modu notu (2026-10-02)
 import { groupByTeam, defaultOpenGroups, isStatusPayload } from './statuspage/statusPageModel.js'
 import {
   OverallBanner, TeamGroups, ActiveIncidents, ResolvedIncidents, MaintenanceCard, Legend,
@@ -116,6 +117,7 @@ export default function StatusPage() {
             </div>
           )}
 
+          <MaintenanceStatusNote note={data.system_maintenance} />
           <OverallBanner data={data} />
 
           <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">

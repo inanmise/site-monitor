@@ -296,4 +296,25 @@ class UserServiceSessionTest {
         verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S1"), any());
         verify(userRepo, times(1)).touchLastSeen(eq("alice"), eq("S2"), any());
     }
+
+    @Test
+    @DisplayName("ayrıldım sinyali (2026-10-02): yalnız bu oturumun lastSeenAt'i silinir; sonraki ping debounce'a takılmadan yazar")
+    void markLeft_clearsLastSeen_andResetsDebounce() {
+        ReflectionTestUtils.setField(service, "touchDebounceMs", 60_000L);
+
+        service.touchActiveSession("alice", "S1");   // yazar
+        service.markLeft("alice", "S1");             // damga silinir + debounce kaydı düşer
+        service.touchActiveSession("alice", "S1");   // geri dönüş/yenileme: 60 sn beklemeden YAZAR
+
+        verify(userRepo).clearLastSeen("alice", "S1");
+        verify(userRepo, times(2)).touchLastSeen(eq("alice"), eq("S1"), any());
+    }
+
+    @Test
+    @DisplayName("ayrıldım sinyali: kullanıcı/oturum yoksa hiçbir şey yazılmaz")
+    void markLeft_noop_withoutIdentity() {
+        service.markLeft(null, "S1");
+        service.markLeft("alice", null);
+        verify(userRepo, times(0)).clearLastSeen(any(), any());
+    }
 }

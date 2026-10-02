@@ -206,6 +206,19 @@ export function LangProvider({ children, fallback = null }) {
   return <LangCtx.Provider value={value}>{ready ? children : fallback}</LangCtx.Provider>
 }
 
+/**
+ * Alt ağacı SABİT bir dilde çizer — arayüz dilini DEĞİŞTİRMEZ (2026-10-02, Sistem Bakımı önizlemesi: yönetici giriş kartını,
+ * şeritleri ve geri sayım penceresini TR/EN olarak yayına almadan görür). İngilizce sözlük inmemişse çağıran önce
+ * {@link loadLanguage}'i bekler (inmemişse metinler açılış yedeğine / TR'ye düşer — ham anahtar basılmaz).
+ */
+export function FixedLangProvider({ lang, children }) {
+  const parent = useContext(LangCtx)
+  const value = useMemo(() => ({
+    lang, toggle: parent?.toggle ?? (() => Promise.resolve(false)), pending: null, loadFailures: 0,
+  }), [lang, parent?.toggle])
+  return <LangCtx.Provider value={value}>{children}</LangCtx.Provider>
+}
+
 let warnedNoProvider = false
 
 export function useLanguage() {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon } from 'lucide-react'
+import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon, Wrench } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../../utils/mailPreview.js'
 import UserBadge from '../../ui/UserBadge.jsx'
@@ -52,6 +52,8 @@ const MAIL_TRIGGER = {
   // 2026-10-01: sessiz saat — bildirim takımın özetine devredildi (KARAR satırı) ve pencere sonunda giden özet e-postası.
   QUIET_HOURS:   { Icon: Moon, textKey: 'alh.trigger.quietHours',  cls: 'quiet' },
   QUIET_DIGEST:  { Icon: Moon, textKey: 'alh.trigger.quietDigest', cls: 'quiet' },
+  // 2026-10-02: sistem bakımı — "Bildirimler bakım boyunca sussun" açıkken bildirim GÖNDERİLMEDİ (karar satırı)
+  SYSTEM_MAINTENANCE: { Icon: Wrench, textKey: 'alh.trigger.systemMaintenance', cls: 'quiet' },
 }
 
 /** E-posta tetiğinin okunur adı (bilinmeyen tetik ham adıyla). */

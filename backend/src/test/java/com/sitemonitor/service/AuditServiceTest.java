@@ -164,6 +164,26 @@ class AuditServiceTest {
         assertThat(saved.getAnomalyFlags()).contains("RATE_LIMITED");
     }
 
+    @Test
+    @DisplayName("recordInactiveLogin (2026-10-02) → LOGIN_FAILED, neden ACCOUNT_INACTIVE, outcome=BLOCKED (kaba kuvvet sayacına GİRMEZ), RATE_LIMITED basılmaz")
+    void recordInactiveLogin_blockedWithReason() {
+        ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+
+        service.recordInactiveLogin("PASIF", 55L, 3L, "USER", "1.2.3.4", "Mozilla/5.0", "LDAP");
+
+        verify(auditLogRepo).save(captor.capture());
+        AuditLog saved = captor.getValue();
+        assertThat(saved.getEventType()).isEqualTo("LOGIN_FAILED");
+        assertThat(saved.getOutcome()).isEqualTo("BLOCKED");   // countRecentFailedLogins BLOCKED'ı saymaz
+        assertThat(saved.getFailureReason()).startsWith("ACCOUNT_INACTIVE:").contains("LDAP");
+        assertThat(saved.getActor()).isEqualTo("PASIF");
+        assertThat(saved.getActorId()).isEqualTo(55L);
+        assertThat(saved.getAnomalyFlags() == null ? "" : saved.getAnomalyFlags()).doesNotContain("RATE_LIMITED")
+                .doesNotContain("BRUTE_FORCE");
+        // Sayaç sorgusu çağrılmaz: bu satır kilit kararına girmez.
+        verify(auditLogRepo, never()).countRecentFailedLogins(any(), any());
+    }
+
     // ── E2: geo zenginleştirmesi giriş iş parçacığında KOŞMAZ ──────────────────
 
     @Test

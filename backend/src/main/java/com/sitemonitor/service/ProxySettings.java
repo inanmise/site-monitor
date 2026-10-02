@@ -131,6 +131,21 @@ public class ProxySettings {
 
     public int port() { return port; }
 
+    /** Vekil kimliği tanımlı mı (kullanıcı adı dolu) — tanılama ekranı yalnız bu BAYRAĞI gösterir, değeri asla. */
+    public boolean hasAuth() {
+        return user != null && !user.isBlank();
+    }
+
+    /**
+     * Ham soket istekleri için {@code Proxy-Authorization} değeri ({@link #openConnectTunnel} ile aynı Basic biçim);
+     * kimlik yoksa {@code null}. HTTP uçtan uca tanılaması (2026-10-02) kullanır — değer çıktıya YAZILMAZ, maskelenir.
+     */
+    public String proxyAuthorizationHeader() {
+        if (!hasAuth()) return null;
+        return "Basic " + java.util.Base64.getEncoder().encodeToString(
+                (user + ":" + (pass == null ? "" : pass)).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     /** {@code NO_PROXY} ham listesi (virgülle ayrık); tanımsızsa boş string. */
     public String noProxyList() {
         return noProxy == null ? "" : noProxy.trim();

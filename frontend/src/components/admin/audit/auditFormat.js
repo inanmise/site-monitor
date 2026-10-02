@@ -158,6 +158,25 @@ const SPECIAL = {
   CA_PINNED: 'audit.ev.CA_PINNED',
   CA_ROTATED: 'audit.ev.CA_ROTATED',
   AUDIT_REPLAY: 'audit.ev.AUDIT_REPLAY',
+  // Sistem geneli toplu pasife alma + geri alma; pasif hesabın haftalık rapor onay bağlantısı reddi (2026-10-02)
+  USER_BULK_DEACTIVATE: 'audit.ev.USER_BULK_DEACTIVATE',
+  USER_BULK_DEACTIVATE_UNDO: 'audit.ev.USER_BULK_DEACTIVATE_UNDO',
+  WEEKLY_REPORT_LINK_DENIED: 'audit.ev.WEEKLY_REPORT_LINK_DENIED',
+  // Pasif hesabın açık oturumunun kesilmesi; HTTP uçtan uca tanılama (2026-10-02) — kural adı/eylem eşlemesine uymaz
+  SESSION_ENDED_INACTIVE: 'audit.ev.SESSION_ENDED_INACTIVE',
+  HTTP_DIAGNOSTICS_RUN: 'audit.ev.HTTP_DIAGNOSTICS_RUN',
+  // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / başladı / uzat / hemen bitir / bitti / iptal /
+  // duyuru e-postası + bakım başlayınca kesilen oturum — kural adı/eylem eşlemesine uymaz
+  SYSTEM_MAINTENANCE_SCHEDULED: 'audit.ev.SYSTEM_MAINTENANCE_SCHEDULED',
+  SYSTEM_MAINTENANCE_START_NOW: 'audit.ev.SYSTEM_MAINTENANCE_START_NOW',
+  SYSTEM_MAINTENANCE_UPDATED: 'audit.ev.SYSTEM_MAINTENANCE_UPDATED',
+  SYSTEM_MAINTENANCE_STARTED: 'audit.ev.SYSTEM_MAINTENANCE_STARTED',
+  SYSTEM_MAINTENANCE_EXTENDED: 'audit.ev.SYSTEM_MAINTENANCE_EXTENDED',
+  SYSTEM_MAINTENANCE_END_NOW: 'audit.ev.SYSTEM_MAINTENANCE_END_NOW',
+  SYSTEM_MAINTENANCE_ENDED: 'audit.ev.SYSTEM_MAINTENANCE_ENDED',
+  SYSTEM_MAINTENANCE_CANCELLED: 'audit.ev.SYSTEM_MAINTENANCE_CANCELLED',
+  SYSTEM_MAINTENANCE_MAIL: 'audit.ev.SYSTEM_MAINTENANCE_MAIL',
+  SESSION_ENDED_MAINTENANCE: 'audit.ev.SESSION_ENDED_MAINTENANCE',
 }
 
 /**

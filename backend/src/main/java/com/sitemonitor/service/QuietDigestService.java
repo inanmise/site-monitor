@@ -70,6 +70,16 @@ public class QuietDigestService {
     /** Test kancası (paket-özel). */
     Clock clock = Clock.systemUTC();
 
+    /**
+     * Sistem Bakım Modu (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım sürerken VE bitişteki
+     * telafi koşana dek özet BEKLER (kayıtlar sahiplenilmez, kaybolmaz): bakım bitince normal turda gider. İsteğe bağlı;
+     * yokken davranış bayt bayt bugünkü.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
+
     /** Tur özeti (log + test). */
     public record RunResult(int items, int mails, int sent) {
         static final RunResult EMPTY = new RunResult(0, 0, 0);
@@ -81,12 +91,24 @@ public class QuietDigestService {
         String now = ISO.format(Instant.now(clock));
         // Sessiz saat kurulmamış (bugünkü kurulum) ya da vakti gelen özet yok: tek boolean sorgu, kilit yok.
         if (!anyDue(now)) return;
+        if (systemMaintenanceHeld()) {
+            log.debug("Sessiz saat özeti sistem bakımı nedeniyle bekletildi (bildirimler susturulmuş / telafi bekleniyor)");
+            return;
+        }
         schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
             RunResult r = run(Instant.now(clock));
             if (r.items() > 0) {
                 log.info("Sessiz saat özeti turu: {} kayıt, {} e-posta ({} gönderildi)", r.items(), r.mails(), r.sent());
             }
         });
+    }
+
+    private boolean systemMaintenanceHeld() {
+        try {
+            return systemMaintenance != null && systemMaintenance.notificationsHeld();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     boolean anyDue(String now) {

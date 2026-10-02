@@ -82,9 +82,13 @@ export function locationText(row, t) {
  */
 export function reasonText(row, t) {
   const raw = row?.failure_reason
+  const code = raw ? String(raw).split(':')[0].trim() : ''
+  // Pasif hesap (2026-10-02): kimlik doğru ama hesap pasif — sonuç BLOCKED olsa da oran sınırı DEĞİL.
+  if (code === 'ACCOUNT_INACTIVE') return t('lastLogin.reasonAccountInactive')
+  // Sistem bakımı (2026-10-02): kimlik doğru ama bakımda yalnız global yöneticiler girer — BLOCKED, oran sınırı DEĞİL.
+  if (code === 'MAINTENANCE') return t('lastLogin.reasonMaintenance')
   if (row?.event_type === EV.SIGN_IN_FAILED && row?.outcome === 'BLOCKED') return t('myact.reason.rateLimited')
   if (!raw) return null
-  const code = String(raw).split(':')[0].trim()
   if (code === 'BAD_PASSWORD') return t('lastLogin.reasonBadPassword')
   if (code === 'TEMP_PASSWORD_EXPIRED') return t('lastLogin.reasonTempExpired')
   return String(raw)

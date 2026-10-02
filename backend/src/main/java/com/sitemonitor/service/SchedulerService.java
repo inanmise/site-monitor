@@ -1467,6 +1467,111 @@ public class SchedulerService {
                 updated_at VARCHAR(40)
             )
             """);
+        // ── Sistem geneli toplu pasife alma kaydı (2026-10-02, kullanıcı kararı): çalıştırma başına TEK satır — kim, ne
+        //    zaman, hangi ölçütle, kimleri pasife aldı (user_ids) + kişi başına TERMINATED işareti (markers, geri alma
+        //    kuralının kanıtı). UserBulkOperation entity'si; silinmez (RetentionCatalog 'user-bulk-operations', BOUNDED). ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS user_bulk_operations(
+                id BIGSERIAL PRIMARY KEY,
+                kind VARCHAR(32) NOT NULL,
+                status VARCHAR(16) NOT NULL,
+                created_at VARCHAR(30) NOT NULL,
+                finished_at VARCHAR(30),
+                actor VARCHAR(120),
+                actor_id BIGINT,
+                criteria_json TEXT,
+                note VARCHAR(500),
+                user_ids TEXT,
+                markers TEXT,
+                target_count INTEGER,
+                ok_count INTEGER,
+                failed_count INTEGER,
+                skipped_count INTEGER,
+                undone_at VARCHAR(30),
+                undone_by VARCHAR(120),
+                undone_by_id BIGINT,
+                undo_ok_count INTEGER,
+                undo_skipped_count INTEGER,
+                undo_failed_count INTEGER
+            )
+            """);
+        // ── Sistem Bakım Modu (2026-10-02, kullanıcı kararı): bakım başına TEK satır — pencere, ayarlar, kim/ne zaman,
+        //    sayaçlar (kapatılan oturum, engellenen giriş, susturulan bildirim) ve yan iş damgaları. Durum ZAMANDAN türetilir.
+        //    SystemMaintenanceWindow entity'si; silinmez (RetentionCatalog 'system-maintenance-windows', BOUNDED). ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS system_maintenance_windows(
+                id BIGSERIAL PRIMARY KEY,
+                start_at VARCHAR(30) NOT NULL,
+                end_at VARCHAR(30) NOT NULL,
+                planned_start_at VARCHAR(30),
+                planned_end_at VARCHAR(30),
+                warn_minutes INTEGER,
+                announce_hours INTEGER,
+                mute_notifications BOOLEAN,
+                immediate BOOLEAN,
+                message_tr VARCHAR(1000),
+                message_en VARCHAR(1000),
+                contact VARCHAR(300),
+                email_all_users BOOLEAN,
+                email_team_ids VARCHAR(2000),
+                email_corrections BOOLEAN,
+                email_on_end BOOLEAN DEFAULT TRUE,
+                revision INTEGER,
+                created_at VARCHAR(30),
+                created_by VARCHAR(120),
+                created_by_id BIGINT,
+                updated_at VARCHAR(30),
+                updated_by VARCHAR(120),
+                started_by VARCHAR(120),
+                extended_count INTEGER,
+                extended_by VARCHAR(120),
+                ended_by VARCHAR(120),
+                cancelled_at VARCHAR(30),
+                cancelled_by VARCHAR(120),
+                announce_mail_at VARCHAR(30),
+                announce_mail_status VARCHAR(200),
+                announce_mail_count INTEGER,
+                mailed_revision INTEGER,
+                correction_mail_at VARCHAR(30),
+                correction_mail_count INTEGER,
+                end_mail_at VARCHAR(30),
+                end_mail_status VARCHAR(200),
+                end_mail_count INTEGER,
+                start_logged_at VARCHAR(30),
+                end_logged_at VARCHAR(30),
+                catch_up_at VARCHAR(30),
+                caught_up_count INTEGER,
+                jobs_done BOOLEAN DEFAULT FALSE,
+                sessions_ended INTEGER DEFAULT 0,
+                logins_blocked INTEGER DEFAULT 0,
+                notifications_suppressed INTEGER DEFAULT 0
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_smw_end_at ON system_maintenance_windows(end_at)");
+        // "Bakım tamamlandı" e-postası (2026-10-02, kullanıcı isteği): pencere başına seçim (varsayılan AÇIK) + tek-kez
+        // sahiplenme damgaları. Tablo bu kolonlardan ÖNCE kurulmuş veritabanları için (yeni kurulumda "zaten var" = noop).
+        patch("ALTER TABLE system_maintenance_windows ADD COLUMN email_on_end BOOLEAN DEFAULT TRUE");
+        patch("ALTER TABLE system_maintenance_windows ADD COLUMN end_mail_at VARCHAR(30)");
+        patch("ALTER TABLE system_maintenance_windows ADD COLUMN end_mail_status VARCHAR(200)");
+        patch("ALTER TABLE system_maintenance_windows ADD COLUMN end_mail_count INTEGER");
+        // Bakımda susturulan alarm bildirimleri — bakım × alarm başına TEK satır (bitişteki telafinin listesi).
+        // SystemMaintenanceSuppression entity'si; RetentionCatalog 'system-maintenance-suppressions' (first_at).
+        patch("""
+            CREATE TABLE IF NOT EXISTS system_maintenance_suppressions(
+                id BIGSERIAL PRIMARY KEY,
+                window_id BIGINT NOT NULL,
+                alert_event_id BIGINT NOT NULL,
+                first_trigger VARCHAR(40),
+                opening BOOLEAN,
+                suppressed_count INTEGER,
+                first_at VARCHAR(30),
+                last_at VARCHAR(30),
+                outcome VARCHAR(20),
+                caught_up_at VARCHAR(30),
+                CONSTRAINT uq_sms_window_alert UNIQUE (window_id, alert_event_id)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_sms_first_at ON system_maintenance_suppressions(first_at)");
 
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
@@ -6038,7 +6143,8 @@ public class SchedulerService {
         } catch (Exception e) {
             status = "FAILED: " + e.getMessage();
         }
-        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status)) {
+        // SKIPPED: pasif kullanıcı (2026-10-02) de KESİN sonuçtur — adres pasif kullanıcıya ait; her turda yeniden denenmez.
+        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status) || InactiveRecipientGuard.STATUS_SKIPPED.equals(status)) {
             pendingAdminAlertEmail.set(false);
             log.info("System admin notified about network outage ({}) status={}", adminEmail, status);
         } else {
@@ -6069,7 +6175,8 @@ public class SchedulerService {
         } catch (Exception e) {
             status = "FAILED: " + e.getMessage();
         }
-        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status)) {
+        // SKIPPED: pasif kullanıcı (2026-10-02) de KESİN sonuçtur — adres pasif kullanıcıya ait; her turda yeniden denenmez.
+        if ("SENT".equals(status) || "SKIPPED_DISABLED".equals(status) || InactiveRecipientGuard.STATUS_SKIPPED.equals(status)) {
             pendingAdminResolvedEmail.set(false);
             // Resolved email contains full timeline → no need to send the detection-only one separately
             pendingAdminAlertEmail.set(false);

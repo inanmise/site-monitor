@@ -115,6 +115,19 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     int linkToStormIfOpen(@Param("id") Long id, @Param("stormId") Long stormId);
 
     /**
+     * Sistem bakımı telafisi (2026-10-02, kullanıcı kararı): açılış bildirimi bakımda SUSTURULMUŞ, hâlâ açık ve onaylanmamış
+     * alarmların "ilk bildirim gitti" damgasını sıfırlar → bir sonraki tur INITIAL'ı normal kurallarla BİR kez gönderir
+     * ("yarıda kalmış ilk bildirim" dalı — fırtına "unlinked → bireysel INITIAL" deseni). {@code until} = bakım bitişi:
+     * bakımdan SONRA gerçekten gönderilmiş bir bildirimin (ör. bitişten sonra gelen eskalasyon) damgası EZİLMEZ.
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.lastReAlertAt = NULL WHERE e.id IN :ids AND e.resolved = false "
+            + "AND (e.acknowledged IS NULL OR e.acknowledged = false) "
+            + "AND (e.lastReAlertAt IS NULL OR e.lastReAlertAt <= :until)")
+    int clearInitialStampForCatchUp(@Param("ids") Collection<Long> ids, @Param("until") String until);
+
+    /**
      * Storm bağını kaldır — yalnız hâlâ AÇIK satırda (çözülmüş üyeyi full-save ile diriltmeden).
      *
      * <p>{@code lastReAlertAt} de sıfırlanır: üye storm'a eklenirken bireysel bildirim GİTMEDEN

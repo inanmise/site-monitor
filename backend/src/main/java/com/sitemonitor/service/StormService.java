@@ -114,6 +114,41 @@ public class StormService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.noc.NocNotificationService nocNotifications;
 
+    /**
+     * Sistem Bakım Modu (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN: yeni fırtına
+     * KURULMAZ ve fırtınaya üye BAĞLANMAZ (alarm bireysel hatta gider, orada susturulup bakım sonunda telafi edilir); süren
+     * fırtınaların toplu postaları (tekrar / çözüm; e-posta, webhook, push, 7/24) gönderilmez, her üyenin günlüğüne
+     * {@code SKIPPED: sistem bakımı} satırı düşer. Alan enjeksiyonu + isteğe bağlı: yokken davranış bayt bayt bugünkü.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    private boolean systemMaintenanceMuted() {
+        try {
+            return systemMaintenance != null && systemMaintenance.notificationsMuted();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Susturulan fırtına postasının izi: takım başına üye alarmların günlüğüne SKIPPED satırı + bakım sayacı. */
+    private void recordStormMaintenanceSkip(AlertStorm storm, List<AlertEvent> members, String trigger) {
+        try {
+            for (TeamDispatch d : resolveDispatches(members)) {
+                logStormMail(d, storm, trigger, "Sistem bakımı — fırtına #" + storm.getId() + " bildirimi susturuldu", null,
+                        SystemMaintenanceService.STATUS_SKIPPED);
+            }
+        } catch (Exception e) {
+            log.warn("Storm #{} sistem bakımı izi yazılamadı: {}", storm.getId(), e.getMessage());
+        }
+        try { systemMaintenance.noteSuppressed(null, trigger); } catch (Exception ignored) { /* sayaç best-effort */ }
+        log.info("🌩 Storm #{} {} postası sistem bakımı nedeniyle susturuldu ({} üye)", storm.getId(), trigger,
+                members == null ? 0 : members.size());
+    }
+
     /** Olay ctx'indeki kanal bastırma damgasını okumak için — alan enjeksiyonu, null-güvenli. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -127,6 +162,13 @@ public class StormService {
      */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.NotificationLogRepository notificationLogRepo;
+
+    /** Pasif kullanıcı süzgeci (2026-10-02): pasif kullanıcıya bağlı kişi fırtına postasına / webhook'una girmez.
+     *  Alan enjeksiyonu, null-güvenli — yokken liste aynen döner. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
 
 
     /** Fırtına e-posta tetik adları — üye alarmın bildirim günlüğünde görünür; ön yüz {@code MAIL_TRIGGER} eşler. */
@@ -203,6 +245,8 @@ public class StormService {
      */
     public StormAction evaluate(AlertEvent event, Map<String, Object> ctx) {
         if (!isEnabled()) return StormAction.SEND_INDIVIDUAL;
+        // Sistem bakımı (2026-10-02): susturulan bakımda fırtına kurulmaz / üye bağlanmaz — bireysel hat susturur ve iz bırakır.
+        if (systemMaintenanceMuted()) return StormAction.SEND_INDIVIDUAL;
         if (event == null || event.getAlertType() == null
                 || !EscalationService.DOWN_ALERT_TYPES.contains(event.getAlertType())) {
             return StormAction.SEND_INDIVIDUAL;   // yalnız gerçek DOWN tipleri storm'a girer
@@ -1009,6 +1053,19 @@ public class StormService {
     // ── Toplu bildirim (e-posta + webhook) ────────────────────────────────────────
 
     private void sendStormAlert(AlertStorm storm, List<AlertEvent> downMembers, String trigger) {
+        if (systemMaintenanceMuted()) {
+            // Sistem bakımı (2026-10-02): toplu posta gitmez (e-posta/webhook/push/7-24). Damga ilerler (tekrar her turda
+            // denenmesin) ama üyeler "duyuruldu" İŞARETLENMEZ — fırtına kapanırken duyurulmamış üye bireysel INITIAL alır.
+            recordStormMaintenanceSkip(storm, downMembers,
+                    "DAILY_REALERT".equals(trigger) ? TRIGGER_STORM_REALERT : TRIGGER_STORM_INITIAL);
+            try {
+                storm.setLastReAlertAt(now());
+                stormRepo.save(storm);
+            } catch (Exception e) {
+                log.warn("Storm #{} damgası yazılamadı (sistem bakımı): {}", storm.getId(), e.getMessage());
+            }
+            return;
+        }
         try {
             List<TeamDispatch> dispatches = resolveDispatches(downMembers);
             String prefix = "DAILY_REALERT".equals(trigger) ? "[RE-ALERT] " : "";
@@ -1136,6 +1193,10 @@ public class StormService {
         if (recovered.isEmpty()) {
             log.info("🌩 Storm #{}: kurtulan üyelerin tamamı sessiz kapandı ({} üye) — toplu çözüm bildirimi gönderilmedi",
                     storm.getId(), recoveredIn.size());
+            return;
+        }
+        if (systemMaintenanceMuted()) {   // sistem bakımı (2026-10-02): toplu çözüm postası susturuldu — kurtulanların günlüğüne iz
+            recordStormMaintenanceSkip(storm, recovered, TRIGGER_STORM_RESOLVE);
             return;
         }
         try {
@@ -1348,7 +1409,9 @@ public class StormService {
     private List<EscalationContact> contactsForLevel(String level, Long teamId) {
         // Zamana bağlı eskalasyon adımı (2026-10-01): gecikmeli kişi toplu fırtına postasına GİRMEZ — fırtına üyesi alarm
         // adım üretmez ("fırtınaya devredilen alarm eskale olmaz"). Gecikme tanımsızsa liste aynen döner.
-        return EscalationDelay.immediateOnly(EscalationContactScope.forLevel(contactRepo, level, teamId));
+        List<EscalationContact> contacts = EscalationContactScope.forLevel(contactRepo, level, teamId);
+        if (inactiveGuard != null) contacts = inactiveGuard.withoutInactive(contacts, "fırtına takım " + teamId + " seviye " + level);
+        return EscalationDelay.immediateOnly(contacts);
     }
 
     // isTeamOnly kaldırıldı (Y4): EscalationService.teamOnlyRecipients tek doğruluk kaynağı.

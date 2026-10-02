@@ -54,7 +54,8 @@ function toDateOnly(d) {
  * köşede ok yerine aynı genişlikte boş yer bırakır ki değer metni düğmenin altına kaymasın.
  */
 export default function DateTimeField({ value, onChange, disabled, placeholder, clearable, dateOnly, className, min, max,
-  invalid, describedBy }) {   // isteğe bağlı ui/Field bağları (hata/ipucu → tetiğin aria-invalid / aria-describedby'ı) — 2026-09-28
+  invalid, describedBy, id }) {   // isteğe bağlı ui/Field bağları (hata/ipucu → tetiğin aria-invalid / aria-describedby'ı) — 2026-09-28
+  // `id` (isteğe bağlı, 2026-10-02 sistem bakımı): ui/Field etiketinin htmlFor'u tetiğe bağlansın; verilmezse çıktı aynı.
   const t = useT()
   const parse = dateOnly ? parseDateOnly : parseIso
   const selected = parse(value)
@@ -77,7 +78,7 @@ export default function DateTimeField({ value, onChange, disabled, placeholder, 
       reserveEnd={clearShown}
       className={cn(inline ? 'w-auto' : 'w-full', extra)}
       triggerClassName={inline ? 'w-auto max-w-full' : undefined}
-      triggerProps={invalid || describedBy ? { 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } : undefined}
+      triggerProps={invalid || describedBy || id ? { id, 'aria-invalid': invalid || undefined, 'aria-describedby': describedBy } : undefined}
       endSlot={clearShown && (
         <SimpleTooltip content={clearLabel}>
           {/* Görsel 24 px (masaüstü yerleşimi aynı); dokunmatikte (pointer: coarse) görünmez ::after katmanı vuruş alanını

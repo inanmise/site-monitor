@@ -488,8 +488,46 @@ public class WeeklyReportController {
     // ── E-posta ile hızlı onay (login'siz, public — AuthInterceptor PUBLIC) ──
 
     /** PO maildeki linke tıklayınca: rapor özeti + "Onayla" butonu (GET mutasyon yapmaz). */
+    /**
+     * Sistem Bakım Modu (2026-10-02) — isteğe bağlı (WebMvcTest dilimlerinde yok → bugünkü davranış). Bakım AKTİFKEN
+     * e-posta onay bağlantıları (oturumsuz, PUBLIC) rapor durumunu DEĞİŞTİRMEZ: bakım sayfası döner, deneme denetime
+     * {@code WEEKLY_REPORT_LINK_DENIED} (system_maintenance) olarak yazılır; bakım bitince aynı bağlantı yeniden çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    private boolean maintenanceActive() {
+        try {
+            return systemMaintenance != null && systemMaintenance.isActive();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Bakım sayfası (onay bağlantısı) — metin arayüz dilinde (Accept-Language), pencere saatleriyle. */
+    private ResponseEntity<String> maintenancePage(HttpServletRequest request, String action) {
+        auditService.recordSecurityEvent("WEEKLY_REPORT_LINK_DENIED", request, null, "WEEKLY_REPORT", "email-token",
+                "system_maintenance (" + action + ")");
+        String msg;
+        try {
+            msg = systemMaintenance.signalBody().get("error").toString();
+        } catch (Exception e) {
+            msg = com.sitemonitor.util.Msg.t("Sistem bakımda.", "The system is under maintenance.");
+        }
+        return htmlPage(com.sitemonitor.util.Msg.t("Sistem Bakımda", "System Maintenance"),
+                "<p class='msg'>" + esc(msg) + "</p><p class='msg'>" + esc(com.sitemonitor.util.Msg.t(
+                        "Rapor durumu değişmedi. Bakım bittikten sonra aynı bağlantıyı yeniden açabilirsiniz.",
+                        "The report has not changed. You can open the same link again once maintenance is over.")) + "</p>",
+                "#d97706");
+    }
+
     @GetMapping(value = "/approve-link", produces = MediaType.TEXT_HTML_VALUE)
-    public ResponseEntity<String> approveLinkPage(@RequestParam(required = false) String token) {
+    public ResponseEntity<String> approveLinkPage(@RequestParam(required = false) String token,
+                                                  HttpServletRequest request) {
+        if (maintenanceActive()) return maintenancePage(request, "link opened");
         Map<String, Object> st = service.approvalTokenStatus(token);
         String team = esc(String.valueOf(st.getOrDefault("team_name", "—")));
         String week = esc(String.valueOf(st.getOrDefault("week_label", "—")));
@@ -499,8 +537,18 @@ public class WeeklyReportController {
                 case "already_approved" -> "Bu rapor zaten onaylanmış. Ek bir işlem gerekmiyor.";
                 case "expired"          -> "Onay bağlantısının süresi dolmuş. Ekipten raporu tekrar onaya göndermesini isteyebilirsiniz.";
                 case "not_pending"      -> "Rapor şu an onay bekleme durumunda değil.";
+                case "approver_inactive" -> WeeklyReportService.approverInactiveMessage();
                 default                 -> "Onay bağlantısı geçersiz veya daha önce kullanılmış.";
             };
+            if ("approver_inactive".equals(reason)) {
+                // Pasif hesabın bağlantısı (2026-10-02): açılış da iz bırakır — form hiç gösterilmez.
+                Object rid = st.get("report_id");
+                auditService.recordSecurityEvent("WEEKLY_REPORT_LINK_DENIED", request, null,
+                        "WEEKLY_REPORT", rid == null ? "email-token" : String.valueOf(rid), "approver_inactive (link opened)");
+                return htmlPage("Onay Verilemez",
+                    "<div class='wk'>" + team + " · " + week + "</div>"
+                    + "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
+            }
             return htmlPage("Haftalık Rapor Onayı",
                 "<div class='wk'>" + team + " · " + week + "</div>"
                 + "<p class='msg'>" + esc(msg) + "</p>", "#64748b");
@@ -527,6 +575,7 @@ public class WeeklyReportController {
     @PostMapping(value = "/approve-link/confirm", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> approveLinkConfirm(@RequestParam(required = false) String token,
                                                      HttpServletRequest request) {
+        if (maintenanceActive()) return maintenancePage(request, "approve");
         try {
             Map<String, Object> res = service.approveViaToken(token);
             String mail = String.valueOf(res.get("mail_status"));
@@ -536,6 +585,8 @@ public class WeeklyReportController {
                 : "Rapor onaylandı; müdür e-postası gönderilemedi/atlandı (" + esc(mail) + "). Uygulamadan tekrar gönderebilirsiniz.";
             return htmlPage("Onaylandı",
                 "<p class='msg'><strong>Rapor onaylandı.</strong><br>" + note + "</p>", "#15803d");
+        } catch (WeeklyReportService.ApproverInactiveException e) {
+            return linkDenied(request, e, "approve");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "Onay işlemi başarısız.";
             // Başarısız token denemesi de iz bırakır: sızmış/süresi dolmuş bir bağlantının
@@ -551,6 +602,7 @@ public class WeeklyReportController {
     public ResponseEntity<String> approveLinkReject(@RequestParam(required = false) String token,
                                                     @RequestParam(required = false) String reason,
                                                     HttpServletRequest request) {
+        if (maintenanceActive()) return maintenancePage(request, "reject");
         try {
             Map<String, Object> res = service.rejectViaToken(token, reason);
             String mail = String.valueOf(res.get("mail_status"));
@@ -560,12 +612,26 @@ public class WeeklyReportController {
                 : "Rapor iade edildi; ekip bilgilendirme e-postası gönderilemedi/atlandı (" + esc(mail) + ").";
             return htmlPage("İade Edildi",
                 "<p class='msg'><strong>Rapor iade edildi.</strong><br>" + note + "</p>", "#d97706");
+        } catch (WeeklyReportService.ApproverInactiveException e) {
+            return linkDenied(request, e, "reject");
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : "İade işlemi başarısız.";
             auditService.recordSecurityEvent("WEEKLY_REPORT_REJECT", request, null,
                     "WEEKLY_REPORT", "email-token", msg);
             return htmlPage("İade Başarısız", "<p class='msg'>" + esc(msg) + "</p>", "#dc2626");
         }
+    }
+
+    /**
+     * Pasif hesabın onay bağlantısı (2026-10-02, kullanıcı kararı): onay/iade REDDEDİLİR, rapor durumu değişmez;
+     * ayrı güvenlik olayı {@code WEEKLY_REPORT_LINK_DENIED} (BLOCKED) yazılır — "sızmış/eski bağlantı" denemelerinden
+     * ({@code WEEKLY_REPORT_APPROVE} BLOCKED) ayrı süzülebilsin.
+     */
+    private ResponseEntity<String> linkDenied(HttpServletRequest request,
+                                              WeeklyReportService.ApproverInactiveException e, String action) {
+        auditService.recordSecurityEvent("WEEKLY_REPORT_LINK_DENIED", request, null, "WEEKLY_REPORT",
+                e.reportId() == null ? "email-token" : String.valueOf(e.reportId()), "approver_inactive (" + action + ")");
+        return htmlPage("Onay Verilemez", "<p class='msg'>" + esc(e.getMessage()) + "</p>", "#dc2626");
     }
 
     /**

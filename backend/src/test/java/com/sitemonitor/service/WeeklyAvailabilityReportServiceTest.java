@@ -1015,6 +1015,29 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(WeeklyAvailabilityReportService.CC_ROLES).containsExactly("PO", "TECH", "MANAGER");
     }
 
+    @Test
+    @DisplayName("2026-10-02: pasif kullanıcıya bağlı MANAGER kişisi haftalık rapor CC'sine GİRMEZ (diğerleri aynı)")
+    void send_ccExcludesContactLinkedToPassiveUser() {
+        Team t = team(5L, "Takım A", "team@example.com");
+        when(teamRepo.findByActiveTrueOrderByNameAsc()).thenReturn(List.of(t));
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L)).thenReturn(List.of(inv("a.example.com")));
+        stubAllUp(120L);
+        EscalationContact mgr = contact("mgr@example.com");
+        mgr.setUserId(500L);
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "PO")).thenReturn(List.of(contact("po@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "TECH")).thenReturn(List.of(contact("tech@example.com")));
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(5L, "MANAGER")).thenReturn(List.of(mgr));
+        com.sitemonitor.repository.AppUserRepository users = mock(com.sitemonitor.repository.AppUserRepository.class);
+        when(users.findInactiveIdsAndEmails()).thenReturn(List.<Object[]>of(new Object[]{500L, "mgr@example.com"}));
+        service.setInactiveGuard(new InactiveRecipientGuard(users));
+
+        service.sendWeeklyReports(false);
+
+        ArgumentCaptor<String[]> ccCap = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtmlWithAttachments(any(), ccCap.capture(), anyString(), anyString(), any(), any());
+        assertThat(ccCap.getValue()).containsExactly("po@example.com", "tech@example.com");
+    }
+
     // ── BO5/O15 (2026-09-28): TOPLU okuma — domain başına sorgu YOK ─────────────────────────────
 
     private UptimeCheck ucAt(String domain, int port, String status, String checkedAt) {

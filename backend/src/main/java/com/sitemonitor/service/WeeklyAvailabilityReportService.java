@@ -55,6 +55,12 @@ public class WeeklyAvailabilityReportService {
     private com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.repository.DomainCheckRepository domainCheckRepo;
+    /** Pasif kullanıcı süzgeci (2026-10-02, kullanıcı kararı): pasif kullanıcıya bağlı PO/TECH/MANAGER kişisi CC'ye
+     *  girmez. Alan enjeksiyonu, isteğe bağlı (yapıcı büyümez); null ise liste aynen. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
     /** "Sürüm & Dağıtım" satırı (E2). @Lazy — aşağıdaki yapıcı notuna bak. */
     private final DeploymentHistoryService deploymentHistory;
 
@@ -995,7 +1001,9 @@ public class WeeklyAvailabilityReportService {
         Set<String> seen = new HashSet<>();
         List<String> out = new ArrayList<>();
         for (String role : CC_ROLES) {
-            for (EscalationContact c : contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, role)) {
+            List<EscalationContact> cs = contactRepo.findByTeamIdAndRoleAndActiveTrue(teamId, role);
+            if (inactiveGuard != null) cs = inactiveGuard.withoutInactive(cs, "haftalık erişilebilirlik CC takım " + teamId);
+            for (EscalationContact c : cs) {
                 addEmail(out, seen, c.getEmail());
             }
         }

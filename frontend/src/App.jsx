@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { useVisibleInterval } from './hooks/useVisibleInterval'
 import { BarChart3, AlertOctagon, Inbox, CalendarDays, Plus, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
@@ -17,10 +17,20 @@ import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES }
 import { useUserPrefsController, UserPrefsContext } from './hooks/useUserPrefs.js'   // kişisel tercihler (2026-10-02, öneri 23)
 import { resolveLandingTab } from './hooks/userPrefsModel.js'
 import { landingTabOptions } from './utils/landingTabs.js'
+import { installLeaveBeacon } from './utils/tabPresence.js'
 import { APPLY_VIEW_EVENT } from './utils/navigate.js'
 import DashboardFilters from './components/dashboard/DashboardFilters.jsx'   // Genel Bakış kart araç çubuğu (2026-09-28)
 import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
+import AccountInactiveDialog from './components/AccountInactiveDialog.jsx'
+import {
+  ACCOUNT_INACTIVE_REDIRECT, accountInactiveFromUrl, accountInactiveSignaled, assignLocation, onAccountInactive,
+} from './utils/accountInactive.js'
+// Sistem Bakım Modu (2026-10-02): şeritler + geri sayım penceresi (saniyelik tik kendi içinde) ve oturum kesimi sinyali
+import SystemMaintenanceLayer from './components/maintenance/SystemMaintenanceLayer.jsx'
+import {
+  MAINTENANCE_REDIRECT, maintenanceFromUrl, maintenanceSignaled, onMaintenance, rememberWindow, serverOffset,
+} from './utils/systemMaintenance.js'
 import { claimPersonalStorage, clearPersonalStorage, storageOwner } from './utils/personalStorage.js'
 import Nav from './components/Nav'
 import MobileTopBar from './components/nav/MobileTopBar.jsx'
@@ -250,6 +260,28 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false)
   // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
+  // Pasif hesap (2026-10-02, kullanıcı kararı): giriş sayfası bildirimi (`?session=inactive` ya da açılışta /me 401
+  // ACCOUNT_INACTIVE) ve oturum açıkken gelen sinyalin bloklayan penceresi. Sinyal api/client.js → utils/accountInactive.
+  const [accountInactiveNotice, setAccountInactiveNotice] = useState(accountInactiveFromUrl)
+  const [inactiveDialogOpen, setInactiveDialogOpen] = useState(false)
+  // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): sunucunun EK `maintenance` bloğu (yoklama / me / giriş yanıtı) +
+  // sunucu saati farkı. Bakım başlayınca oturum sunucuda kesilir (401 MAINTENANCE) → kısa geri sayımlı pencere (`ended`);
+  // giriş sayfası `?session=maintenance` ile bakım kartını gösterir.
+  const [maint, setMaint] = useState({ block: null, offset: 0 })
+  const [maintEnded, setMaintEnded] = useState(false)
+  const [maintNotice, setMaintNotice] = useState(maintenanceFromUrl)
+  const applyMaintenance = useCallback((res) => {
+    if (!res || typeof res !== 'object' || !('maintenance' in res)) return
+    const block = res.maintenance && typeof res.maintenance === 'object' ? res.maintenance : null
+    const offset = serverOffset(res.server_now)
+    // "Tamamlandı" (`ended`, 2026-10-02) saklanmaz: giriş kartının ilk çizimi bir SONRAKİ bakımın kesiminde bitmiş pencereyi göstermesin
+    if (block && block.state && block.state !== 'none' && block.state !== 'ended') rememberWindow(block)
+    setMaint((prev) => (JSON.stringify(prev.block) === JSON.stringify(block) && Math.abs(prev.offset - offset) < 1500
+      ? prev : { block, offset }))
+  }, [])
+  // Hareketsizlik şeridi (sabit, üstte) görünürken bakım şeritleri onun ALTINA iner — çakışmasınlar (2026-10-02).
+  const inactivityRef = useRef(null)
+  const [inactivityH, setInactivityH] = useState(0)
   const [tab, setTab] = useState('dashboard')
   const tabRef = useRef(tab)
   tabRef.current = tab
@@ -418,10 +450,11 @@ export default function App() {
           const fd = new URLSearchParams(window.location.search).get('domain')
           if (fd && (dl || 'dashboard') === 'dashboard' && !readUrlParam('q', null)) setSearch(fd)   // yeni ?q= paramı varsa o kazanır
         } catch { /* yoksay */ }
+        applyMaintenance(res)   // Sistem Bakım Modu: şerit/pencere ilk yoklamayı (~15 sn) beklemesin
       }
       setAuthChecked(true)
     }).catch(() => setAuthChecked(true))
-  }, [])
+  }, [applyMaintenance])   // applyMaintenance kararlı (useCallback []) — açılışta bir kez koşar
 
   // Tarayıcı Geri/İleri (popstate): URL'deki ?tab= / ?domain='e göre görünümü geri yükle.
   // handleTabChange pushState ile geçmiş kaydı bıraktığından buradaki dinleyici o kayıtları uygular.
@@ -677,7 +710,11 @@ export default function App() {
     if (!user) return
     const ms = Number(import.meta.env.VITE_SESSION_PING_MS ?? 15_000)
     // Sayfa kullanımı: sekme görünürken hangi sayfada olduğunu taşır (utils: yalnız sekme anahtarı)
-    const ping = () => { api.sessionPing(document.visibilityState === 'visible' ? (new URLSearchParams(window.location.search).get('tab') || 'dashboard') : undefined) }
+    // Sistem Bakım Modu (2026-10-02): yoklama yanıtının EK `maintenance` bloğu + server_now → şerit/pencere (sunucu saatine göre)
+    const ping = () => {
+      Promise.resolve(api.sessionPing(document.visibilityState === 'visible' ? (new URLSearchParams(window.location.search).get('tab') || 'dashboard') : undefined))
+        .then(applyMaintenance).catch(() => { /* yoklama hatası şeridi bozmaz */ })
+    }
     const id = setInterval(ping, ms)
     const onVisible = () => { if (document.visibilityState === 'visible') ping() }
     document.addEventListener('visibilitychange', onVisible)
@@ -687,9 +724,109 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', ping)
     }
+  }, [user, applyMaintenance])
+
+  // "Ayrıldım" sinyali (2026-10-02): kullanıcının SON açık sekmesi kapanınca sunucuya bildirilir → çevrimiçi sayımından
+  // hemen düşer (utils/tabPresence.js). Çıkış/oturum kesmeleri oturum kaydını zaten siler; bu yalnız sekme kapanışı için.
+  useEffect(() => {
+    if (!user) return undefined
+    return installLeaveBeacon()
   }, [user])
 
   // Uyarılar sekmesinin verisi (uyarılar + ağ kesinti geçmişi) pages/WarningsPage içinde yüklenir (2026-09-27).
+
+  // PASİF HESAP SİNYALİ (2026-10-02, kullanıcı kararı). Oturum açıkken → bloklayan "Hesabınız pasife alındı" penceresi
+  // (geri sayım + "Şimdi çıkış yap"); oturum yokken (açılış /me'si, remember-me çerezi pasif hesaba ait) → pencere YOK,
+  // giriş sayfası pasif bildirimiyle açılır. Öteki sekmenin duyurusu da aynı yoldan gelir (her sekme kendi penceresi).
+  const userRef = useRef(user)
+  userRef.current = user
+  useEffect(() => {
+    const handle = () => {
+      if (userRef.current) {
+        clearTimeout(logoutTimer.current)
+        clearTimeout(warnTimer.current)
+        clearInterval(countdownInterval.current)
+        setInactivityWarning(false)
+        setInactiveDialogOpen(true)
+      } else {
+        setSessionExpiredNotice(false)
+        setAccountInactiveNotice(true)
+      }
+    }
+    const off = onAccountInactive(handle)
+    // Açılış yarışı: /me yanıtı bu dinleyici bağlanmadan döndüyse sinyal kaçmasın.
+    if (accountInactiveSignaled()) handle()
+    return off
+  }, [])
+
+  // SİSTEM BAKIMI SİNYALİ (2026-10-02, kullanıcı kararı): oturum açıkken (401 MAINTENANCE — bakım başladı, oturum sunucuda
+  // kesildi) → kısa geri sayımlı bakım penceresi, sonra /?session=maintenance; oturum yokken (açılışta /me ya da remember-me
+  // çerezi bakımda reddedildi) → pencere YOK, giriş sayfası bakım kartıyla. Öteki sekmenin duyurusu da aynı yoldan gelir.
+  useEffect(() => {
+    const handle = () => {
+      if (userRef.current) {
+        clearTimeout(logoutTimer.current)
+        clearTimeout(warnTimer.current)
+        clearInterval(countdownInterval.current)
+        setInactivityWarning(false)
+        setMaintEnded(true)
+      } else {
+        setSessionExpiredNotice(false)
+        setMaintNotice(true)
+      }
+    }
+    const off = onMaintenance(handle)
+    if (maintenanceSignaled()) handle()
+    return off
+  }, [])
+
+  /** Bakım başladı (son 60 sn penceresi bitti / oturum kesildi): istemci temizliği + sunucu çıkışı (kısa süre sınırlı) +
+   *  /?session=maintenance. Sunucu oturumu zaten kestiyse /logout zararsızdır (PUBLIC). */
+  const finishMaintenanceLogout = useCallback(async () => {
+    clearTimeout(logoutTimer.current)
+    clearTimeout(warnTimer.current)
+    clearInterval(countdownInterval.current)
+    clearInterval(refreshPollRef.current)
+    try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
+    clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
+    try {
+      await Promise.race([Promise.resolve(api.logout()).catch(() => {}), new Promise((r) => setTimeout(r, 1500))])
+    } catch { /* çıkış isteği başarısız: sunucu zaten kesti */ }
+    assignLocation(MAINTENANCE_REDIRECT)
+  }, [])
+
+  /** Bakım bloğunu hemen tazele (admin "Uzat" / "Hemen bitir" sonrası) — tek yoklama. */
+  const refreshMaintenance = useCallback(() => {
+    Promise.resolve(api.sessionPing()).then(applyMaintenance).catch(() => {})
+  }, [applyMaintenance])
+
+  // Hareketsizlik şeridi yüksekliği (sabit konumlu; görünürken bakım şeritleri altına iner)
+  useLayoutEffect(() => {
+    if (!inactivityWarning) { setInactivityH(0); return undefined }
+    const el = inactivityRef.current
+    if (!el) return undefined
+    const measure = () => setInactivityH(el.offsetHeight || 0)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [inactivityWarning])
+
+  /** Geri sayım bitti / "Şimdi çıkış yap": hareketsizlik çıkışıyla AYNI istemci temizliği, ama 401 dönecek API çağrısı
+   *  YOK (tercih yazımı, /logout) — sunucu oturumu zaten kesti, token'ları sildi, çerezi düşürdü. Sert yönlendirme tüm
+   *  bellek durumunu da sıfırlar; giriş sayfası `?session=inactive` ile pasif bildirimini gösterir. */
+  const finishInactiveLogout = useCallback(() => {
+    clearTimeout(logoutTimer.current)
+    clearTimeout(warnTimer.current)
+    clearInterval(countdownInterval.current)
+    clearInterval(refreshPollRef.current)
+    try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+    try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
+    clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
+    assignLocation(ACCOUNT_INACTIVE_REDIRECT)
+  }, [])
 
 
   async function handleLogout() {
@@ -960,6 +1097,9 @@ export default function App() {
     setPushOptOut(!!userData.push_opt_out)
     setPushQuiet(userData.push_quiet ?? null)
     { const ts = mergeState(userData.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
+    setMaintNotice(false)
+    setMaintEnded(false)
+    applyMaintenance(userData)   // Sistem Bakım Modu: global yönetici bakımda girince admin şeridi hemen
   }
 
   /** Tur durumu yazımı: sunucu birleştirir ve güncel hâli döner; ayna da o hâle çekilir. */
@@ -1024,6 +1164,8 @@ export default function App() {
   // kaybolmuyordu. Diğer paramlar (ör. ?tab=) korunur.
   useEffect(() => {
     if (!user) return
+    setAccountInactiveNotice(false)   // pasif bildirimi yalnız bir sonraki girişe dek (sonraki çıkışta tekrar görünmesin)
+    setMaintNotice(false)             // bakım bildirimi de (2026-10-02)
     try {
       const url = new URL(window.location.href)
       if (url.searchParams.has('session')) {
@@ -1228,18 +1370,25 @@ export default function App() {
     )
   }
   // Login ekranında da duyuru görünür (public /api/branding) — orada sol menü yok, tam genişlik doğru.
-  if (!user) return (<><AnnouncementBanner /><Login onLogin={handleLogin} sessionExpired={sessionExpiredNotice} /></>)
+  if (!user) return (<><AnnouncementBanner /><Login onLogin={handleLogin}
+    sessionExpired={sessionExpiredNotice && !accountInactiveNotice && !maintNotice} accountInactive={accountInactiveNotice}
+    maintenanceEnded={maintNotice && !accountInactiveNotice} /></>)
   if (mustChangePwd) {
     // User was auto-reset by an admin — block all of the app until they
     // pick a new password. PasswordChangeModal in forced-change mode hides
     // the cancel button and ignores overlay clicks.
     return (
-      <PasswordChangeModal
-        mode="forced-change"
-        targetUser={{ id: null, username: user }}
-        onClose={() => {}}
-        onSuccess={() => setMustChangePwd(false)}
-      />
+      <>
+        <PasswordChangeModal
+          mode="forced-change"
+          targetUser={{ id: null, username: user }}
+          onClose={() => {}}
+          onSuccess={() => setMustChangePwd(false)}
+        />
+        <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+        <SystemMaintenanceLayer stripsHidden block={maint.block} offset={maint.offset} globalAdmin={globalAdmin}
+          ended={maintEnded} onExpire={finishMaintenanceLogout} />
+      </>
     )
   }
 
@@ -1252,9 +1401,12 @@ export default function App() {
     <UserPrefsContext.Provider value={prefsCtl}>
     <SidebarProvider open={sidebarOpen} onOpenChange={onSidebarOpenChange} className="app-layout">
 
+      {/* Pasif hesap (2026-10-02): bloklayan, kapatılamaz pencere — geri sayım bitince giriş sayfasına */}
+      <AccountInactiveDialog open={inactiveDialogOpen} onExpire={finishInactiveLogout} />
+
       {inactivityWarning && (
         // Oturum zaman aşımı şeridi (eski .inactivity-warning) — Tailwind + shadcn Button; telefonda sarar.
-        <div data-slot="inactivity-warning"
+        <div data-slot="inactivity-warning" ref={inactivityRef}
           className="fixed inset-x-0 top-0 z-(--z-critical) flex flex-wrap items-center justify-center gap-3 bg-linear-to-r from-[#e65c00] to-[#f9d423] px-4 py-3 text-[#1a1a1a] shadow-lg animate-in slide-in-from-top motion-reduce:animate-none sm:gap-5 sm:px-6 sm:py-3.5">
           <span className="text-[.95em] [&_strong]:text-[1.1em] [&_strong]:tabular-nums"
             dangerouslySetInnerHTML={{ __html: t('app.inactivityWarn', `<strong>${countdown}</strong>`) }} />
@@ -1282,6 +1434,12 @@ export default function App() {
         {/* Bağlama duyarlı yardım (2026-09-12, #24): sağ altta "?", o sayfanın kılavuz bölümü yan panelde */}
         <HelpDrawer tab={tab} />
         <TourPageChip tab={tab} />
+        {/* Sistem Bakım Modu (2026-10-02): duyuru / uyarı / admin şeridi + son 60 sn penceresi. Akış içinde; hareketsizlik
+            şeridi (sabit) görünürken onun altına iner. */}
+        <SystemMaintenanceLayer block={maint.block} offset={maint.offset} globalAdmin={globalAdmin} ended={maintEnded}
+          onExpire={finishMaintenanceLogout} onChanged={refreshMaintenance}
+          onOpenSettings={globalAdmin ? () => handleTabChange('settings', { sec: 'sysmaint' }) : undefined}
+          style={inactivityH ? { marginTop: inactivityH } : undefined} />
         <AnnouncementBanner heroOnMount />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />

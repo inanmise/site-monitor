@@ -238,6 +238,11 @@ public class UserPushService {
                 skipRow(event, trigger, "SKIPPED_REALERT_OFF");
                 return;
             }
+            // Sistem bakımı (2026-10-02): elle gönderim (RESEND) operatör iradesidir — susmaz; diğer fazlar karar satırıyla atlanır.
+            if (!"RESEND".equals(trigger) && systemMaintenanceMuted()) {
+                skipRow(event, trigger, SystemMaintenanceService.PUSH_SKIPPED);
+                return;
+            }
             enqueueInternal(event, trigger, fallbackTeamId, ctx, excludeUsernames);
         } catch (Exception e) {
             log.warn("user-push enqueue atlandı (alarm yolu etkilenmedi): {}", e.toString());
@@ -258,6 +263,11 @@ public class UserPushService {
     public void enqueueResolve(AlertEvent event, Map<String, Object> ctx, Long fallbackTeamId) {
         try {
             if (!enabled() || event == null || event.getId() == null) return;
+            // Sistem bakımı (2026-10-02): bildirimler susturulmuşken çözüm push'u da gitmez — karar satırıyla.
+            if (systemMaintenanceMuted()) {
+                skipRow(event, "RESOLVE", SystemMaintenanceService.PUSH_SKIPPED);
+                return;
+            }
             // Simetri kuralı: açılışı kimseye push'lanmamış bir olayın çözümü de push'lanmaz —
             // yoksa kullanıcı hiç haber almadığı bir kesinti için "DÜZELDİ" mesajı alırdı.
             // (İzleme bayrağı/sessiz saat/katman reddi çözümde ayrıca değerlendirilmez; karar
@@ -1208,6 +1218,50 @@ public class UserPushService {
             skipRow(event, "OPEN", reason);
         } catch (Exception e) {
             log.warn("user-push karar satırı yazılamadı: {}", e.toString());
+        }
+    }
+
+    /**
+     * {@link #recordSuppressed} — e-posta tetiğinin push karşılığıyla (2026-10-02, sistem bakımı): susturulan bildirim
+     * yeniden uyarı / eskalasyon / çözüm ise karar satırı kendi fazında (RE_ALERT / ESCALATION / RESOLVE) yazılır.
+     */
+    public void recordSuppressedFor(AlertEvent event, String mailTrigger, String reason) {
+        try {
+            if (!enabled() || event == null || event.getId() == null || reason == null) return;
+            skipRow(event, pushTriggerOf(mailTrigger), reason);
+        } catch (Exception e) {
+            log.warn("user-push karar satırı yazılamadı: {}", e.toString());
+        }
+    }
+
+    /** E-posta tetiği → push fazı (enqueueAlert eşlemesiyle aynı; RESOLUTION → RESOLVE). */
+    static String pushTriggerOf(String mailTrigger) {
+        return switch (mailTrigger == null ? "" : mailTrigger) {
+            case "ESCALATION" -> "ESCALATION";
+            case "DAILY_REALERT" -> "RE_ALERT";
+            case "MANUAL" -> "RESEND";
+            case "RESOLUTION", "MANUAL_RESOLVE" -> "RESOLVE";
+            default -> "OPEN";
+        };
+    }
+
+    /**
+     * Sistem Bakım Modu (2026-10-02) — "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN push gönderilmez (karar
+     * satırı {@code SKIPPED_SYSTEM_MAINTENANCE}). Ana kapı alarm hunisinde ({@code EscalationService}); bu MERKEZÎ ağ, hunin
+     * dışından gelen çözüm push'larını (fırtına üyesi / sessiz kapanış) da yakalar. Alan enjeksiyonu + isteğe bağlı: yokken
+     * davranış birebir bugünkü.
+     */
+    @Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    private boolean systemMaintenanceMuted() {
+        try {
+            return systemMaintenance != null && systemMaintenance.notificationsMuted();
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -87,7 +87,8 @@ public class SecurityMailDispatcher {
 
     private static boolean isDelivered(String status) {
         return status != null && (status.equals("SENT") || status.startsWith("QUEUED")
-                || status.equals("SKIPPED_DISABLED") || status.equals("SKIPPED_NO_RECIPIENT"));
+                || status.equals("SKIPPED_DISABLED") || status.equals("SKIPPED_NO_RECIPIENT")
+                || status.equals(InactiveRecipientGuard.STATUS_SKIPPED));   // pasif kullanıcı (2026-10-02): kesin sonuç
     }
 
     private void writeNotificationLog(String[] recipients, String subject, String trigger, String status, Long incidentId) {

@@ -4805,6 +4805,36 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("Liste can_diagnose (2026-10-02, HTTP tanılama): can_check VE diagnostics.run/execute — EK alan, can_check değişmez")
+    void listHttp_canDiagnose_requiresCanCheckAndPermission() throws Exception {
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(httpMon(1L, 2L), httpMon(2L, 3L)));
+        MockHttpSession mudur = session("ADMIN");                      // kapsamlı müdür: takım 2'yi yönetir, 3'ü yalnız görür
+        mudur.setAttribute("viewTeamIds", List.of(2L, 3L));
+        mudur.setAttribute("manageTeamIds", List.of(2L));
+        mudur.setAttribute("teamId", 2L);
+
+        // İzin YOK → can_check true olan satırda bile false
+        mvc.perform(get("/api/monitoring/http").session(mudur))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(false))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(false));
+
+        // İzin VAR → yalnız işletebildiği satırda true
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute")))
+                .thenReturn(true);
+        mvc.perform(get("/api/monitoring/http").session(mudur))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(true))
+                .andExpect(jsonPath("$.data[1].can_check").value(false))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(false));
+        mvc.perform(get("/api/monitoring/http").session(session("ADMIN")))
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(true))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(true));
+    }
+
+    @Test
     @DisplayName("Q4: POST /dns/{id}/check elle kaydı manual=true işaretler — zamanlanmış değişiklik tabanı olmaz")
     void triggerDns_marksRecordManual() throws Exception {
         com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();

@@ -363,7 +363,7 @@ public class NocCallLogService {
         Long userId = null;
         Object rawUser = b.get("contactedUserId");
         if (rawUser != null && !(rawUser instanceof String rs && rs.isBlank())) {
-            userId = rawUser instanceof Number n ? n.longValue() : parseLong(rawUser.toString());
+            userId = rawUser instanceof Number n ? Long.valueOf(n.longValue()) : parseLong(rawUser.toString());
             if (userId == null) throw bad("Geçersiz kişi kimliği", "Invalid person id");
         }
 

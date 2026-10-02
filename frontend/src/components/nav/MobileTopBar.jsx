@@ -2,6 +2,7 @@ import { useT } from '../../i18n/index.jsx'
 import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import BrandLogo from '../BrandLogo.jsx'
 import InboxBell from '../InboxBell.jsx'
+import OnlineUsersIndicator from './OnlineUsersIndicator.jsx'
 import { SidebarTrigger, useSidebar } from '@/components/shadcn/sidebar'
 import { Button } from '@/components/shadcn/button'
 import { Separator } from '@/components/shadcn/separator'
@@ -34,6 +35,8 @@ export default function MobileTopBar({ onTabChange, username }) {
           : <BrandLogo size={24} />}
         <span className="truncate">{appName}</span>
       </Button>
+      {/* Çevrimiçi kullanıcılar (2026-10-02) — marka yanında; yoklama paylaşılan (usePresence), ikinci örnek istek açmaz */}
+      {isMobile && <OnlineUsersIndicator isMobile />}
       {/* Komut paleti (2026-09-26): telefonda arama kutusu kenar çubuğu çekmecesinde kalıyordu → zilin yanında ikon düğme (Ctrl+K eşdeğeri). */}
       <Button type="button" variant="ghost" size="icon" onClick={() => window.dispatchEvent(new CustomEvent('sm:palette'))}
         aria-label={t('palette.title')} title={t('palette.title')}

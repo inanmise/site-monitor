@@ -5,6 +5,8 @@ import { dateLocale, LANG_STORAGE_KEY, sessionLangOverride } from '../i18n/dateL
 import { toUtc, localDayKey } from '../utils/localDay.js'
 import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCoverageEvent.js'
 import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventoryEvent.js'
+import { assignLocation, isAccountInactivePayload, signalAccountInactive } from '../utils/accountInactive.js'
+import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
  *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur.
@@ -50,6 +52,24 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   } finally {
     clearTimeout(timer)
   }
+}
+
+/**
+ * Çağıranın iptal sinyali + üst süre sınırı TEK sinyalde (2026-10-02, HTTP tanılama). `request()` timeoutMs verildiğinde
+ * kendi denetleyicisini kurup çağıranın sinyalini ezdiği için uzun ve iptal edilebilir çağrılar timeoutMs YERİNE bunu
+ * kullanır: hangisi önce gelirse istek kesilir (AbortError → request'in yumuşak hata yükü). `done()` zamanlayıcıyı ve
+ * dinleyiciyi söker.
+ */
+function deadlineSignal(signal, ms) {
+  if (typeof AbortController === 'undefined') return { signal, done: () => {} }
+  const c = new AbortController()
+  const timer = setTimeout(() => c.abort(), ms)
+  const onAbort = () => c.abort()
+  if (signal) {
+    if (signal.aborted) c.abort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  }
+  return { signal: c.signal, done: () => { clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort) } }
 }
 
 // Son başarısız API çağrıları (Sorun Bildir otomatik bağlamı) — yalnız yol + durum kodu + zaman.
@@ -109,6 +129,24 @@ async function request(path, options = {}) {
   }
   if (!res.ok) recordFailure(path, res.status)
   if (res.status === 401) {
+    // PASİF HESAP (2026-10-02, kullanıcı kararı): gövde ACCOUNT_INACTIVE taşıyorsa YÖNLENDİRME YOK — uygulama bloklayan
+    // "Hesabınız pasife alındı" penceresini açar (utils/accountInactive.js). Bayrak hemen silinir: aynı anda düşen öteki
+    // 401'ler pencerenin önüne geçip /?session=expired'a götüremez. Açılıştaki /me (bayrak yok) aynı sinyali verir; App
+    // o durumda pencere değil giriş sayfası + pasif bildirimi gösterir.
+    let body401 = null
+    try { body401 = typeof res.json === 'function' ? await res.json() : null } catch { body401 = null }
+    if (isAccountInactivePayload(body401)) {
+      try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+      signalAccountInactive()
+      return null
+    }
+    // SİSTEM BAKIMI (2026-10-02, kullanıcı kararı): bakım başladı ve oturum sunucuda kesildi (MAINTENANCE) — pasif hesap
+    // deseninin aynısı: YÖNLENDİRME YOK, uygulama kısa geri sayımlı bakım penceresini açar, sonra /?session=maintenance.
+    if (isMaintenancePayload(body401)) {
+      try { sessionStorage.removeItem('sm.session.active') } catch { /* sessionStorage yok */ }
+      signalMaintenance(body401.maintenance)
+      return null
+    }
     // Session expired or invalidated (typically: pod restart wiped in-memory
     // sessions). Don't redirect during the initial auth bootstrap or from the
     // login endpoint itself — App.jsx already handles user=null by rendering
@@ -117,7 +155,7 @@ async function request(path, options = {}) {
     if (typeof window !== 'undefined' &&
         sessionStorage.getItem('sm.session.active') === '1') {
       try { sessionStorage.removeItem('sm.session.active') } catch {}
-      window.location.assign('/?session=expired')
+      assignLocation('/?session=expired')
     }
     return null
   }
@@ -148,6 +186,10 @@ export const api = {
   },
   users: {
     directory: () => request('/users/directory'),
+  },
+  /** Çevrimiçi kullanıcı özeti (2026-10-02) — oturum açmış HERKES; yalnız sayılar (toplam + birincil takıma göre). */
+  presence: {
+    online: () => request('/presence/online'),
   },
   /** Kurum içi Durum Sayfası (2026-10-01) — oturum açmış HERKES; sunucu 30 sn paylaşır, `fresh=true` (Yenile) belleği atlar. */
   statusPage: {
@@ -268,6 +310,26 @@ export const api = {
 
   // Login hero istatistikleri — PUBLIC (izlenen hedef adedi + 7g erişilebilirlik %).
   getPublicStats: () => request('/public-stats'),
+
+  // Sistem Bakım Modu (2026-10-02) — giriş sayfasının bakım kartı. PUBLIC: yalnız durum, pencere saatleri, TR/EN mesaj ve
+  // iletişim (kimlik/sayaç yok). Yanıt `no-store` — paylaşımlı önbellek bayat tutmaz.
+  getSystemMaintenanceStatus: () => request('/public/system-maintenance', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+
+  /**
+   * Sistem Bakım Modu yönetimi (Ayarlar → Platform → Sistem Bakımı) — YALNIZ global yönetici (sunucu 403). Yazma uçları
+   * doğrulama hatasında 400 + `field` döner (alanın altında gösterilir); `withStatus` 409'u (durum çakışması) ayırır.
+   */
+  systemMaintenance: {
+    overview: () => request('/admin/system-maintenance'),
+    history: (page = 1, size = 25) => request(`/admin/system-maintenance/history?page=${page}&size=${size}`),
+    detail: (id) => request(`/admin/system-maintenance/${id}`),
+    schedule: (body) => request('/admin/system-maintenance', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    startNow: (body) => request('/admin/system-maintenance/start-now', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    update: (id, body) => request(`/admin/system-maintenance/${id}`, { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    extend: (id, body) => request(`/admin/system-maintenance/${id}/extend`, { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    endNow: (id) => request(`/admin/system-maintenance/${id}/end-now`, { method: 'POST', withStatus: true }),
+    cancel: (id) => request(`/admin/system-maintenance/${id}/cancel`, { method: 'POST', withStatus: true }),
+  },
 
   // Login "sorun bildir" — PUBLIC; sistem yöneticisi e-postasına iletilir (IP rate-limit'li).
   // Zengin sonuç döner: {success, status, reference?, error?, networkError?} — modal, sebebi +
@@ -974,6 +1036,11 @@ export const api = {
     overview: () => request('/admin/overview'),
     // Toplu kullanıcı işlemi (2026-09-20): action = activate | deactivate | assign_team | set_org_role
     bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
+    // Sistem geneli toplu pasife alma (2026-10-02, yalnız global yönetici): önizleme → uygula (409 BULK_LIST_CHANGED) → geri al
+    bulkDeactivatePreview: (criteria) => request('/admin/users/bulk-deactivate/preview', { method: 'POST', body: JSON.stringify({ criteria }) }),
+    bulkDeactivate: (body) => request('/admin/users/bulk-deactivate', { method: 'POST', body: JSON.stringify(body) }),
+    bulkDeactivateUndo: (opId) => request(`/admin/users/bulk-deactivate/${opId}/undo`, { method: 'POST' }),
+    bulkOperations: () => request('/admin/users/bulk-operations'),
     // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
     teamStats: () => request('/admin/teams/stats'),
     bulkTeams: (body) => request('/admin/teams/bulk', { method: 'POST', body: JSON.stringify(body) }),   // toplu takım işlemi (2026-09-20)
@@ -1412,6 +1479,21 @@ export const api = {
     deleteHttpMonitor: (id) => request(`/monitoring/http/${id}`, { method: 'DELETE' }),
     triggerHttpCheck:  (id) => request(`/monitoring/http/${id}/check`, { method: 'POST' }),
     testHttp:          (data) => request('/monitoring/http/test', { method: 'POST', body: JSON.stringify(data) }),
+    // HTTP uçtan uca tanılama (2026-10-02): izlemenin kendi yolu + vekil tanımlıysa öteki yol, adım adım. Sunucu tüm
+    // çalıştırmayı 60 sn'de keser → istemci 75 sn bekler (çağıranın `signal`'i İptal için; ikisi tek sinyalde birleşir).
+    // withStatus: 429 / 403 / 404 hata gövdesinde ayırt edilsin (pencere hız sınırı şeridini buna göre çizer).
+    diagnoseHttp: async (id, { compare = true } = {}, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/http/${id}/diagnose`, {
+          method: 'POST', body: JSON.stringify({ compare: compare !== false }), withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    httpDiagnoseHistory: (id) => request(`/monitoring/http/${id}/diagnose/history`, { withStatus: true }),
+    httpDiagnoseRun: (id, runId) => request(`/monitoring/http/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
     getHttpResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

@@ -32,6 +32,16 @@ public class DiagnosticHistoryService {
     public void record(String domain, Integer port, String runType,
                        String actor, Long actorId, Long actorTeamId, String sourceIp,
                        boolean success, String summary, Object resultObj) {
+        recordRun(domain, port, runType, actor, actorId, actorTeamId, sourceIp, success, summary, resultObj);
+    }
+
+    /**
+     * {@link #record} ile AYNI kayıt; üretilen kimliği döner (HTTP uçtan uca tanılaması yanıtında {@code run_id},
+     * 2026-10-02). Kayıt yazılamazsa {@code null} — tanılama akışı yine bozulmaz.
+     */
+    public Long recordRun(String domain, Integer port, String runType,
+                          String actor, Long actorId, Long actorTeamId, String sourceIp,
+                          boolean success, String summary, Object resultObj) {
         try {
             DiagnosticRun d = new DiagnosticRun();
             d.setDomain(domain);
@@ -45,11 +55,18 @@ public class DiagnosticHistoryService {
             d.setSummary(summary);
             d.setResultJson(objectMapper.writeValueAsString(resultObj));
             d.setExecutedAt(ISO.format(Instant.now()));
-            repo.save(d);
+            DiagnosticRun saved = repo.save(d);
+            return saved != null ? saved.getId() : null;
         } catch (Exception e) {
             log.warn("Tanılama geçmişi kaydı yazılamadı: domain={} type={} err={}",
                     domain, runType, e.getMessage());
+            return null;
         }
+    }
+
+    /** Anahtar + tür başına son 20 kayıt (yeni → eski) — liste özeti için; resultJson'a dokunulmaz. */
+    public List<DiagnosticRun> recent(String domain, String runType) {
+        return repo.findTop20ByDomainAndRunTypeOrderByIdDesc(domain, runType);
     }
 
     /** Domain geçmişi — resultJson hariç özet alanlar (liste). */

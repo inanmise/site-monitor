@@ -10,7 +10,9 @@ import { TONE_CLASS } from '../admin/ToneBadge.jsx'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { navigateTo } from '../../utils/navigate.js'
-import { commonUnit, memberSeed, resolveModalLeader, resolveModalManager } from './teamMembersModel.js'
+import {
+  commonUnit, isInactiveMember, memberActivityCounts, memberSeed, resolveModalLeader, resolveModalManager,
+} from './teamMembersModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
@@ -191,15 +193,19 @@ export default function TeamMembersModal({ team, open, onClose, canManage = fals
   const tab = wanted === 'calllist' && !showCalls ? 'members' : wanted
   const setTab = (v) => setTabState({ teamId, tab: v })
 
+  // Pasif üyeler (2026-10-02) listede belirgin görünür ama müdür türetmesine ve ortak birime KATILMAZ (eskiden kurum-geneli
+  // uç pasifleri hiç döndürmüyordu — türetme bugünküyle aynı kalsın).
+  const activeMembers = members.some(isInactiveMember) ? members.filter((m) => !isInactiveMember(m)) : members
   const leader = data || info.leader_display_name
     ? resolveModalLeader({ leaderId: info.leader_id ?? info.leaderId, leaderName: info.leader_display_name, members })
     : null
   const manager = data
-    ? resolveModalManager({ teamManager, managerId: info.manager_id ?? info.managerId, leaderId: info.leader_id ?? info.leaderId, members, labelFor: managerLabelFor })
+    ? resolveModalManager({ teamManager, managerId: info.manager_id ?? info.managerId, leaderId: info.leader_id ?? info.leaderId, members: activeMembers, labelFor: managerLabelFor })
     : null
   const managerIsLeader = manager && leader && sameId(manager.userId, leader.userId)
-  const unit = commonUnit(members)
+  const unit = commonUnit(activeMembers)
   const count = members.length
+  const activity = memberActivityCounts(members)
 
   // Aynı kişi üç sekmede aynı avatar rengini alsın: eskalasyon kişisi e-postasıyla, arama listesi kimliğiyle üyeye bağlanır.
   const seedByEmail = new Map()
@@ -232,8 +238,12 @@ export default function TeamMembersModal({ team, open, onClose, canManage = fals
             {loadingFirst
               ? <Skeleton className="h-5 w-20 rounded-full motion-reduce:animate-none" />
               : data && (
-                <Badge variant="secondary" data-slot="team-member-count" className="tabular-nums">
-                  <Users aria-hidden="true" /> {t(count === 1 ? 'team.membersCount.one' : 'team.membersCount', count)}
+                <Badge variant="secondary" data-slot="team-member-count" className="tabular-nums"
+                  data-inactive-count={activity.inactive > 0 ? activity.inactive : undefined}>
+                  <Users aria-hidden="true" />{' '}
+                  {activity.inactive > 0
+                    ? t('team.membersActiveInactive', activity.active, activity.inactive)
+                    : t(count === 1 ? 'team.membersCount.one' : 'team.membersCount', count)}
                 </Badge>
               )}
             {info.active === false && <Badge variant="outline" className={TONE_CLASS.danger}>{t('team.inactive')}</Badge>}
