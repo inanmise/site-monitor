@@ -574,4 +574,45 @@ class EscalationStepServiceTest {
         port.setContextJson("{\"team_id\":42,\"standalone\":true}");   // bağımsız Port izlemesi → envanterden takım YOK
         assertThat(escalation.stepOwners(port, inv)).isEqualTo(new EscalationService.StepOwners(TEAM, null));
     }
+
+    // ── Pasif kullanıcı (2026-10-02, kullanıcı kararı) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Pasif kullanıcıya bağlı gecikmeli kişi: adım GİTMEZ (e-posta/webhook yok), günlükte ESCALATION_STEP + 'SKIPPED: pasif kullanıcı' — tek kez")
+    void passiveContact_stepSkippedWithTrace() {
+        AppUserRepository users = mock(AppUserRepository.class);
+        when(users.findInactiveIdsAndEmails()).thenReturn(List.<Object[]>of(new Object[]{500L, "mgr@x.com"}));
+        job.setInactiveGuard(new InactiveRecipientGuard(users));
+        EscalationContact mgr = contact(1, TEAM, "WARNING", 30, "mgr@x.com");
+        mgr.setUserId(500L);
+        mgr.setWebhookUrl("https://hooks.example.com/a");
+        mgr.setWebhookType("TEAMS");
+        contacts.add(mgr);
+        open.add(alarm(10, "HTTP_DOWN", "CRITICAL", TEAM, 31));
+
+        EscalationStepService.SweepResult r = job.sweep(NOW);
+
+        assertThat(r.sent()).isZero();
+        assertThat(r.skipped()).isEqualTo(1);
+        assertNoMailSent();
+        verify(webhookService, never()).send(any(), any(), any(), any(), any());
+        assertThat(stepLogs()).singleElement()
+                .satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo(InactiveRecipientGuard.STATUS_SKIPPED));
+        job.sweep(NOW);   // ikinci tur aynı kararı tekrar yazmaz (alarm × kişi × seviye sahiplenildi)
+        assertThat(stepLogs()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("Pasif listesi boşken (kullanıcı aktif) adım bugünkü gibi gider")
+    void activeContact_stepUnchangedWithGuard() {
+        AppUserRepository users = mock(AppUserRepository.class);
+        when(users.findInactiveIdsAndEmails()).thenReturn(List.of());
+        job.setInactiveGuard(new InactiveRecipientGuard(users));
+        EscalationContact mgr = contact(1, TEAM, "WARNING", 30, "mgr@x.com");
+        mgr.setUserId(500L);
+        contacts.add(mgr);
+        open.add(alarm(10, "HTTP_DOWN", "CRITICAL", TEAM, 31));
+
+        assertThat(job.sweep(NOW).sent()).isEqualTo(1);
+    }
 }

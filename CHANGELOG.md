@@ -15,6 +15,51 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.97.0] — 2026-10-02
+
+### Added
+- **HTTP izlemede uçtan uca tanılama:** izleme ayrıntısındaki "Uçtan uca tanıla" düğmesi (ve "Hata tanısı"
+  penceresindeki "Canlı tanılama çalıştır") isteğin izlediği yolu adım adım gösterir: DNS, vekil/TCP bağlantısı,
+  CONNECT tüneli, TLS (sürüm, şifre, SNI, sertifika zinciri, güven, ad eşleşmesi), gönderilen istek satırı ve başlıklar,
+  dönen durum satırı, başlıklar, süre dağılımı, yönlendirme adımları, gövdenin ilk 32 KB'ı ve curl -v tarzı döküm.
+  Vekil tanımlıysa öteki yol da yan yana denenir ve fark söylenir; izlemenin kendi istemcisiyle de karşılaştırılır.
+  Pod, düğüm ve pod IP'si gösterilir. Rapor kopyalanabilir, JSON indirilebilir, geçmiş çalıştırmalar açılabilir.
+  Gizli değerler (yetki, çerez, şifreli başlıklar, parolalar) her yerde maskelenir; gövde önizlemesi saklanmaz.
+  Yalnız `diagnostics.run` yetkisi olan ve izlemenin takımını işletebilen kullanıcılar görür; dakikada en fazla 6.
+  Tanılama kontrol geçmişine yazmaz, alarm açmaz; mevcut kontroller değişmedi.
+- **Toplu pasife al (yalnız global yönetici):** Kullanıcılar sayfasında ölçüte göre (tüm admin olmayanlar, seçili
+  takımlar, N gündür giriş yapmayanlar, hesap kaynağı, rol) önizlemeli, sayı yazarak onaylanan toplu pasife alma.
+  ADMIN rolündeki tüm hesaplar, işlemi yapan kişi ve zaten pasif olanlar her zaman hariç. İşlem geçmişi tutulur ve
+  "Bu işlemi geri al" yalnız o işlemle pasife alınan, sonradan değişmemiş kullanıcıları geri açar.
+- **Sistem Bakım Modu (Ayarlar → Platform → Sistem Bakımı, yalnız global yönetici):** bakım penceresi planlanır
+  (İstanbul saati) ya da geri sayımla hemen başlatılır; uzatılabilir, erken bitirilebilir, düzenlenebilir, iptal
+  edilebilir. Bakımda yalnız global yöneticiler girebilir; diğer kullanıcılar önceden duyuru ve uyarı şeridi görür,
+  son 60 saniyede kapatılamayan geri sayım penceresiyle çıkış yapar, giriş ekranında ve Durum Sayfası'nda bakım
+  saatleri yazar. Kullanıcı ekranlarının TR/EN önizlemesi, sayaçlı bakım geçmişi, denetim kayıtları, isteğe bağlı
+  e-posta duyurusu (düzeltme/iptal e-postası dahil) var. İsteğe bağlı "bildirimler sussun" seçeneği (varsayılan
+  kapalı): susturulan her bildirim iz bırakır, bakım bitince hâlâ açık alarmlar bir kez bildirilir. Bakım bitince
+  kullanıcılar "Planlı bakım tamamlandı" bildirimi alır: kapatılabilir şerit, giriş ekranı ve Durum Sayfası notu
+  (bitişten sonra 60 dk) ve isteğe bağlı (varsayılan açık) "bakım tamamlandı" e-postası. Uyarı şeridi ve geri sayım
+  penceresi bakımın başlangıç, bitiş ve süresini yazar.
+- **Kullanıcı Düzenle yeniden (shadcn, telefonda tam ekran):** Kullanıcılar sayfası ve takım üye kartı artık aynı
+  düzenleyiciyi açar; Hesap / Takımlar / Profil / Güvenlik sekmeleri, alan yanında doğrulama ve hatalı sekmede işaret,
+  değişiklik özeti ("N değişiklik"), kaydedilmemiş değişiklikte kapatma onayı, yeni kullanıcıda birincil takım seçimi,
+  AD kilidini alanın yanında açma (global yönetici), Güvenlik sekmesinde kilit açma, şifre sıfırlama, oturum sonlandırma,
+  tur sıfırlama ve cihaz geçmişi. Mevcut tüm korumalar ve gönderilen veri aynı.
+- **Çevrimiçi kullanıcı göstergesi:** sol üstte logonun yanında yeşil kullanıcı figürü ve o an çevrimiçi kişi
+  sayısı; tıklanınca birincil takıma göre dağılım. Herkes görür, yalnız sayılar gösterilir, 30 saniyede bir yenilenir.
+
+### Changed
+- **⚠ Davranış — Pasif hesaplar:** pasif hesap hiçbir yoldan (yerel şifre, LDAP/AD, "beni hatırla") giriş yapamaz;
+  şifre doğruysa "Hesabınız pasif" uyarısı görür. Hesap pasife alınınca açık oturumu 10 saniyelik geri sayımla kapanır.
+  Pasif kullanıcıya hiçbir alarm, eskalasyon, olay ya da push bildirimi gitmez (gönderilmeyen her bildirim
+  `SKIPPED: pasif kullanıcı` izi bırakır). Takım üye listelerinde pasif üyeler gizlenmez, belirgin "Pasif" rozetiyle en
+  sonda gösterilir; eskalasyon kişisi listelerinde de "bildirim gitmez" notu çıkar. Pasif sahibinin haftalık rapor onay
+  bağlantısı reddedilir.
+
+### Security
+- Pasif LDAP/AD hesabının AD şifresiyle giriş yapabilmesi ve pasife alınan kullanıcının açık oturumunun sürmesi kapatıldı.
+
 ## [20.96.1] — 2026-10-02
 
 ### Changed
@@ -2037,7 +2082,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.96.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.97.0...HEAD
+[20.97.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.97.0
 [20.96.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.1
 [20.96.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.0
 [20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0

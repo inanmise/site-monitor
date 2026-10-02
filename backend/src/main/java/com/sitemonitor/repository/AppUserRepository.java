@@ -26,6 +26,44 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
      *  join'ini tetiklemez. Eski findByUsername iki SELECT'e mal oluyordu; bu tek hafif indexli okuma. */
     @Query("SELECT u.activeSessionId FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
     Optional<String> findActiveSessionIdByUsername(@Param("username") String username);
+
+    /** SICAK YOL (her /api/** isteği, 2026-10-02 pasif hesap kapısı): YALNIZ {@code active} kolonu — entity / EAGER
+     *  teamIds hidrate edilmez ({@link #findActiveSessionIdByUsername} ile aynı gerekçe). Kullanıcı yoksa boş. */
+    @Query("SELECT u.active FROM AppUser u WHERE UPPER(u.username) = UPPER(:username)")
+    Optional<Boolean> findActiveFlagByUsername(@Param("username") String username);
+
+    /** Pasif kullanıcıların kimliği + e-postası (bildirim süzgeci, 2026-10-02). Satır: {@code [Long id, String email]}.
+     *  Projeksiyon BİLİNÇLİ: foto/teamIds taşınmaz; süzgeç bunu dakikada bir okur. */
+    @Query("SELECT u.id, u.email FROM AppUser u WHERE u.active = false")
+    List<Object[]> findInactiveIdsAndEmails();
+
+    /** Çevrimiçi kullanıcı sayısı, BİRİNCİL takıma göre (sol üst çevrimiçi göstergesi, 2026-10-02). Satır:
+     *  {@code [Long teamId (null = takımsız), Long count]}. "Çevrimiçi" = {@link com.sitemonitor.service.UserService#hasLiveSession}
+     *  ile aynı ölçüt: aktif hesap, kayıtlı oturum (TERMINATED nöbetçisi değil) ve eşikten taze lastSeenAt (ISO metin
+     *  karşılaştırması, hasLiveSession ile aynı). Tek gruplu sorgu — kullanıcı satırı taşınmaz. */
+    @Query("SELECT u.teamId, COUNT(u) FROM AppUser u WHERE u.active = true AND u.activeSessionId IS NOT NULL"
+         + " AND u.activeSessionId NOT LIKE 'TERMINATED:%' AND u.lastSeenAt >= :threshold GROUP BY u.teamId")
+    List<Object[]> countOnlineByPrimaryTeam(@Param("threshold") String threshold);
+
+    /** Verilen (küçük harf, kırpılmış) adreslerden AKTİF bir kullanıcıya ait olanlar — "yalnız pasife ait adres"
+     *  kararı için (aynı adresi aktif biri de kullanıyorsa adres düşürülmez). */
+    @Query("SELECT DISTINCT LOWER(TRIM(u.email)) FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL "
+        + "AND LOWER(TRIM(u.email)) IN :emails")
+    List<String> findActiveEmailsLowerIn(@Param("emails") Collection<String> emails);
+
+    /**
+     * Sistem geneli toplu pasife alma (2026-10-02) — aday satırları HAFİF projeksiyonla: foto / EAGER teamIds taşınmaz
+     * (tam entity listesi kullanıcı başına base64 foto çekerdi). Satır:
+     * {@code [Long id, String username, String displayName, String email, String systemRole, String authSource,
+     * String lastLoginAt, String createdAt, Boolean active, Long teamId, String employeeId]}.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.email, u.systemRole, u.authSource, u.lastLoginAt, u.createdAt, "
+        + "u.active, u.teamId, u.employeeId FROM AppUser u")
+    List<Object[]> findBulkCandidateRows();
+
+    /** Tüm çoklu-takım üyelikleri ({@code app_user_teams}) — satır {@code [Long userId, Long teamId]}. */
+    @Query("SELECT u.id, tid FROM AppUser u JOIN u.teamIds tid")
+    List<Object[]> findAllTeamMembershipPairs();
     /**
      * Sicil (AD {@code cn}) → kullanıcı(lar). BİLEREK liste döner: eski {@code Optional findByEmployeeId}
      * aynı sicili taşıyan iki satırda (ör. elle açılmış yerel hesap + LDAP hesabı) istisna fırlatıyordu —
@@ -104,6 +142,15 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Modifying
     @Query("UPDATE AppUser u SET u.lastSeenAt = :ts WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
     int touchLastSeen(@Param("username") String username, @Param("sid") String sid, @Param("ts") String ts);
+
+    /** Sekme/tarayıcı kapandı ("ayrıldım" sinyali, 2026-10-02): yalnız BU oturumun lastSeenAt'i silinir → kullanıcı
+     *  çevrimiçi sayımından ve "başka yerde açık oturum" kararından hemen düşer. Kayıtlı oturum başka bir sid ise
+     *  (yeni giriş / sentinel) dokunulmaz. Oturum kaydı ({@code activeSessionId}) korunur: aynı çerezle dönen kullanıcı
+     *  yeniden giriş yapmadan devam eder, ilk ping'i lastSeenAt'i yeniden yazar. */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE AppUser u SET u.lastSeenAt = null WHERE UPPER(u.username) = UPPER(:username) AND u.activeSessionId = :sid")
+    int clearLastSeen(@Param("username") String username, @Param("sid") String sid);
 
     /** Restart sonrası yeniden sahiplenme (2026-09-13, QA ISSUE-002): açılış temizliği işareti NULL'a çeker ama JDBC
      *  oturum restart'ı yaşar; ilk ping oturumu geri yazar. Başka bir işaret (canlı sid ya da TERMINATED) varsa

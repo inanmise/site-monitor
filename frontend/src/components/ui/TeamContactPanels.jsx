@@ -41,15 +41,26 @@ function EscalationGroup({ group, t, seedFor }) {
       <ul data-slot="team-escalation-list" className="m-0 grid list-none grid-cols-1 gap-2 p-0 md:grid-cols-2">
         {group.items.map((c) => {
           const name = c.name || c.email || '—'
+          // Bağlı hesap pasif (2026-10-02): kişi BİLDİRİM ALMAZ (sunucu InactiveRecipientGuard) — üye listesindeki gibi belirgin
+          // "Pasif" rozeti + soluk ad/avatar. Bayrak yoksa (bağsız kişi / eski yanıt) kişi aktif sayılır.
+          const inactive = c.user_active === false
           return (
             <li key={c.id ?? c.email} data-slot="team-escalation-card" data-level={group.level}
-              className="flex min-w-0 items-start gap-3 rounded-lg border bg-card px-3 py-2.5">
-              <PersonAvatar name={name} seed={seedFor(c)} className="mt-0.5" />
+              data-inactive={inactive ? 'true' : undefined}
+              className={cn('flex min-w-0 items-start gap-3 rounded-lg border bg-card px-3 py-2.5', inactive && 'bg-muted/40')}>
+              <PersonAvatar name={name} seed={seedFor(c)} className={cn('mt-0.5', inactive && 'opacity-50 grayscale')} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span data-slot="team-escalation-name" className="min-w-0 font-medium break-words">{name}</span>
+                  <span data-slot="team-escalation-name"
+                    className={cn('min-w-0 font-medium break-words', inactive && 'text-muted-foreground')}>{name}</span>
+                  {inactive && (
+                    <Badge variant="destructive" data-slot="team-escalation-inactive" title={t('team.contactInactiveTip')}>
+                      <UserX aria-hidden="true" /> {t('team.memberInactive')}
+                    </Badge>
+                  )}
                   {c.role && <OrgRoleBadge role={c.role}>{t('usr.orgRoleVal.' + c.role)}</OrgRoleBadge>}
                 </div>
+                {inactive && <p className="m-0 text-xs text-destructive">{t('team.contactInactiveTip')}</p>}
                 <EmailLine email={c.email} personName={name} t={t} />
               </div>
             </li>

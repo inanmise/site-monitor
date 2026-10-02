@@ -86,6 +86,15 @@ public class UserService {
     @Value("${site.monitor.session.supersede-cache-ms:5000}")
     private long supersedeCacheMs;
 
+    /**
+     * Pasif hesap kapısı (2026-10-02, kullanıcı kararı: "pasif kullanıcı hiçbir şekilde giriş yapamamalı / işlem
+     * yapamamalı"). {@code AuthInterceptor} her /api isteğinde hesabın pasif olup olmadığını sorar — supersede kontrolüyle
+     * AYNI desen: tek-kolon projeksiyon ({@code findActiveFlagByUsername}) + kısa TTL'li bellek önbelleği. Pasifleştirmenin
+     * yapıldığı pod'da önbellek ANINDA boşaltılır; diğer pod'lar en geç bu süre sonra görür (doğruluk kaynağı DB).
+     */
+    @Value("${site.monitor.session.inactive-cache-ms:5000}")
+    private long inactiveCacheMs;
+
     /** Ping başına lastSeenAt UPDATE'i debounce penceresi (F3). 60+15 sn < 120 sn tazelik penceresi →
      *  login-onayı/aktif sayım etkilenmez. */
     @Value("${site.monitor.session.touch-debounce-ms:60000}")
@@ -116,7 +125,33 @@ public class UserService {
         this.teamSources = teamSources;
     }
 
+    /**
+     * Pasifleştirme anında kullanıcının TÜM hatırlanan girişleri silinir (2026-10-02, kullanıcı kararı). Alan enjeksiyonu
+     * + isteğe bağlı: yapıcıyla kurulan birim testleri aynen çalışır (yokken yalnız bu silme atlanır — interceptor pasif
+     * hesabın çerezini zaten reddeder).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private RememberMeService rememberMeService;
+
+    /** Bildirim süzgecinin pasif kullanıcı önbelleği — aktiflik değişince bu pod'da hemen tazelensin (isteğe bağlı). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveRecipientGuard;
+
+    /** Test kancası. */
+    void setRememberMeService(RememberMeService rememberMeService) {
+        this.rememberMeService = rememberMeService;
+    }
+
+    /** Test kancası. */
+    void setInactiveRecipientGuard(InactiveRecipientGuard guard) {
+        this.inactiveRecipientGuard = guard;
+    }
+
     private record ActiveSidEntry(String sid, long atMs) {}
+    private record InactiveEntry(boolean inactive, long atMs) {}
+    /** username (normalize) → pasif mi — {@link #isAccountInactive} önbelleği (sert üst sınır SESSION_MAP_MAX). */
+    private final java.util.concurrent.ConcurrentHashMap<String, InactiveEntry> inactiveCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private static final int SESSION_MAP_MAX = 10_000;   // sert üst sınır (CaAutoPinService cap deseni)
     private final java.util.concurrent.ConcurrentHashMap<String, ActiveSidEntry> activeSessionCache =
             new java.util.concurrent.ConcurrentHashMap<>();
@@ -140,6 +175,37 @@ public class UserService {
                 // LDAP users have no stored password (hash is null) → never match local auth.
                 .filter(u -> u.getPasswordHash() != null
                         && PASSWORD_ENCODER.matches(rawPassword, u.getPasswordHash()));
+    }
+
+    /**
+     * PASİF hesap + DOĞRU parola (2026-10-02, kullanıcı kararı). {@link #authenticate} pasif hesabı hiç bulmaz; giriş ucu
+     * o boş döndüğünde bunu sorar. "Hesabınız pasif" bilgisi YALNIZ kimlik bilgisi doğrulandıktan sonra açığa çıkar —
+     * yanlış parolada boş döner ve giriş bugünkü genel 401'i verir (kullanıcı adı numaralandırması yok).
+     */
+    public Optional<AppUser> findInactiveWithValidPassword(String username, String rawPassword) {
+        if (username == null || username.isBlank() || rawPassword == null) return Optional.empty();
+        return userRepo.findByUsername(username)
+                .filter(u -> !Boolean.TRUE.equals(u.getActive()))
+                .filter(u -> u.getPasswordHash() != null
+                        && PASSWORD_ENCODER.matches(rawPassword, u.getPasswordHash()));
+    }
+
+    /**
+     * Hesap PASİF mi (2026-10-02)? Kullanıcı yoksa false (silinmiş kullanıcının kapısı ayrı). Her /api isteğinde
+     * {@code AuthInterceptor} çağırır — süpersede kontrolünden ÖNCE, ki istemci "oturum düştü" değil "hesabınız pasif"
+     * sinyalini alsın. Tek-kolon okuma + {@code site.monitor.session.inactive-cache-ms} TTL (varsayılan 5 sn).
+     */
+    public boolean isAccountInactive(String username) {
+        if (username == null || username.isBlank()) return false;
+        String key = normalizeUsername(username);
+        long now = System.currentTimeMillis();
+        InactiveEntry e = inactiveCache.get(key);
+        if (e != null && now - e.atMs() < inactiveCacheMs) return e.inactive();
+        boolean inactive = userRepo.findActiveFlagByUsername(username)
+                .map(a -> !Boolean.TRUE.equals(a)).orElse(false);
+        if (inactiveCache.size() > SESSION_MAP_MAX) inactiveCache.clear();
+        inactiveCache.put(key, new InactiveEntry(inactive, now));
+        return inactive;
     }
 
     /** True when an admin-issued temp password's 24-hour window has elapsed.
@@ -303,6 +369,18 @@ public class UserService {
     public void recordFailedLogin(String username, String clientIp, String reasonCode) {
         if (username == null || username.isBlank()) return;
         userRepo.bumpFailedLogin(username, ISO.format(Instant.now()), clientIp, reasonCode);
+    }
+
+    /**
+     * "Ayrıldım" sinyali (2026-10-02, kullanıcı isteği: çevrimiçi sayımı "son 2 dk" değil, o an açık olanları göstersin):
+     * kullanıcının SON açık sekmesi kapanınca istemci {@code navigator.sendBeacon} ile bildirir. Bu oturumun lastSeenAt'i
+     * silinir ve ping debounce kaydı düşürülür — sayfa yenilenip geri gelen ya da başka sekmesi açık kalan kullanıcının
+     * sıradaki ping'i bekletilmeden yazılır (aksi hâlde 60 sn çevrimdışı görünürdü). Oturum kaydı silinmez.
+     */
+    public void markLeft(String username, String sessionId) {
+        if (username == null || sessionId == null) return;
+        lastTouchAtMs.remove(normalizeUsername(username) + ":" + sessionId);
+        userRepo.clearLastSeen(username, sessionId);
     }
 
     /** Oturum ping'i (frontend ~15 sn): kullanıcının güncel oturumunun lastSeenAt'ini tazeler.
@@ -865,7 +943,14 @@ public class UserService {
                 teamSources.forget(id, removed);
             }
         }
+        boolean wasActive = Boolean.TRUE.equals(user.getActive());
         if (active != null) user.setActive(active);
+        // Pasifleştirme (2026-10-02, kullanıcı kararı): kullanıcının her şeyi SUNUCU tarafında hemen biter. Tek-oturum
+        // kaydına "Sonlandır" ile aynı TERMINATED sentinel'i yazılır — yeniden aktifleştirme ERİŞİMİ geri verir, oturumu
+        // DEĞİL (canlı oturum her durumda yeniden giriş ister). İstemcinin aldığı sinyal yine "hesabınız pasif"tir:
+        // AuthInterceptor pasif kapısını süpersede kontrolünden ÖNCE uygular.
+        boolean deactivated = wasActive && Boolean.FALSE.equals(active);
+        if (deactivated) user.setActiveSessionId(SESSION_TERMINATED_PREFIX + UUID.randomUUID());
         if (orgRole != null) {
             String newOrg = orgRole.isBlank() ? null : orgRole;
             if (!Objects.equals(newOrg, user.getOrgRole())) {
@@ -877,7 +962,29 @@ public class UserService {
         AppUser saved = userRepo.save(user);
         UserContactSync.sync(contactRepo, saved);
         syncPoLeadership(saved);
+        if (wasActive != Boolean.TRUE.equals(saved.getActive())) onActiveChanged(saved, deactivated);
         return saved;
+    }
+
+    /**
+     * Aktiflik değişti (2026-10-02): bu pod'un önbellekleri hemen boşaltılır (pasif kapısı, süpersede, bildirim süzgeci).
+     * Pasifleştirmede kullanıcının TÜM remember-me token'ları silinir — çerezle sessiz geri dönüş kalmaz. Canlı oturum bir
+     * sonraki isteğinde (SPA ~15 sn'de bir yoklar) {@code AuthInterceptor} pasif kapısında kapanır.
+     */
+    private void onActiveChanged(AppUser u, boolean deactivated) {
+        String key = normalizeUsername(u.getUsername());
+        if (key != null) {
+            inactiveCache.remove(key);
+            activeSessionCache.remove(key);
+        }
+        if (inactiveRecipientGuard != null) inactiveRecipientGuard.evict();
+        if (deactivated) {
+            if (rememberMeService != null) rememberMeService.invalidateAllForUser(u.getUsername());
+            log.info("Kullanıcı pasife alındı — tek-oturum kaydı sonlandırıldı, hatırlanan girişler silindi: user={}",
+                    u.getUsername());
+        } else {
+            log.info("Kullanıcı yeniden aktifleştirildi — giriş açıldı (eski oturumlar geri gelmez): user={}", u.getUsername());
+        }
     }
 
     /**

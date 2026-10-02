@@ -210,8 +210,26 @@ public class StatusPageService {
      */
     public Map<String, Object> view(String memoKey, Viewer viewer, boolean fresh) {
         long ttl = ttl(fresh);
-        return viewMemo.get(memoKey, ttl, false, () -> project(base(fresh), viewer));
+        Map<String, Object> projected = viewMemo.get(memoKey, ttl, false, () -> project(base(fresh), viewer));
+        if (systemMaintenance == null) return projected;
+        // Sistem Bakım Modu notu (2026-10-02, kullanıcı kararı): "Planlı bakım: 22:00–23:00" — EK alan; bellekli (paylaşılan)
+        // izdüşüme DOKUNULMAZ, kopyaya eklenir. Kaynak bakım servisinin pod önbelleği (≤ 5 sn) → 30 sn'lik bellekten taze.
+        // İçerik giriş sayfasının public bloğuyla aynı: durum, saatler, TR/EN mesaj, iletişim — kimlik/sayaç yok.
+        Map<String, Object> out = new LinkedHashMap<>(projected);
+        try {
+            out.put("system_maintenance", systemMaintenance.publicStatus());
+        } catch (Exception e) {
+            log.debug("Durum sayfası bakım notu eklenemedi: {}", e.getMessage());
+        }
+        return out;
     }
+
+    /** Sistem Bakım Modu (2026-10-02) — isteğe bağlı; yokken yanıt bugünküyle birebir. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
 
     private long ttl(boolean fresh) {
         return fresh && cacheMs > 0 ? Math.min(cacheMs, FRESH_MIN_MS) : cacheMs;

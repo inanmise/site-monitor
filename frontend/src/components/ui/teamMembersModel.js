@@ -26,6 +26,26 @@ export function sortMembers(members) {
 
 export const MEMBER_SORTS = Object.freeze(['role', 'name', 'title'])
 
+/**
+ * Pasif üye (2026-10-02, kullanıcı kararı: pasif üyeler GİZLENMEZ, belirgin gösterilir). Hem kurum-geneli uç
+ * (`/api/teams/{id}/members` → `active` bayrağı) hem yönetim ucu (tam entity `active`) aynı alanı taşır; alan YOKSA
+ * (eski yanıt) üye aktif sayılır.
+ */
+export const isInactiveMember = (m) => m?.active === false
+
+/** Aktif / pasif sayıları — başlıkta "N aktif · M pasif". */
+export function memberActivityCounts(members) {
+  let inactive = 0
+  for (const m of members || []) if (isInactiveMember(m)) inactive++
+  return { active: (members?.length || 0) - inactive, inactive }
+}
+
+/** Pasifleri SONA alır; her grubun kendi içindeki sırası (seçilen sıralama) korunur. Pasif yoksa aynı dizi döner. */
+export function withInactiveLast(members) {
+  if (!members?.some(isInactiveMember)) return members
+  return [...members.filter((m) => !isInactiveMember(m)), ...members.filter(isInactiveMember)]
+}
+
 export const nameOf = (m) => String(m?.display_name || m?.username || '')
 
 /** Sıralama: `role` (varsayılan, {@link sortMembers}), `name` (A–Z), `title` (unvan A–Z, unvansızlar sonda; eşitlikte ad). */

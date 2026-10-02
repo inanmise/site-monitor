@@ -21,6 +21,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
   'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
   'scope',       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli) + Olaylar kapsamı mine|others|all (2026-09-28)
   'src',         // Alarm Geçmişi kategori süzgeci (İzleme menüsü rozetleri, 2026-09-30)
+  'hdx',         // HTTP izleme detayında açık uçtan uca tanılama çalıştırması (2026-10-02; yalnız KAYITLI sonucu açar)
   'open']        // UYGULAMA düzeyi tek seferlik "vardığında aç" (cert | noc — utils/monitorDeepLink.js DEEP_OPEN_PARAM, 2026-09-28); tüketilince silinir
 
 /**

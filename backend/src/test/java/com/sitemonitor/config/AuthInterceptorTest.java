@@ -288,4 +288,120 @@ class AuthInterceptorTest {
         assertThat(res.getStatus()).isEqualTo(401);
         assertThat(res.getContentAsString()).contains("Session superseded");
     }
+
+    // ── Pasif hesap kapısı (2026-10-02, kullanıcı kararı) ─────────────────────────────────────────
+
+    private static MockHttpSession liveSession(String username) {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute("authenticated", true);
+        s.setAttribute("username", username);
+        s.setAttribute("userId", 5L);
+        s.setAttribute("teamId", 3L);
+        s.setAttribute("systemRole", "USER");
+        s.setAttribute("viewTeamIds", java.util.List.of(3L));
+        return s;
+    }
+
+    @Test
+    @DisplayName("Pasife alınan kullanıcının CANLI oturumu (ping dâhil): 401 ACCOUNT_INACTIVE, oturum kimliksizleşir, token'lar silinir, çerez düşer, SESSION_ENDED_INACTIVE — süpersede kontrolünden ÖNCE")
+    void liveSession_userTurnedPassive_401AccountInactive() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/session/ping");
+        MockHttpSession s = liveSession("ALICE");
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(userService.isAccountInactive("ALICE")).thenReturn(true);
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("\"code\":\"ACCOUNT_INACTIVE\"").doesNotContain("Session superseded");
+        // Oturum artık hiçbir işe yetkili değil: kimlik/kapsam öznitelikleri yok, yalnız mezar taşı.
+        assertThat(s.getAttribute("authenticated")).isNull();
+        assertThat(s.getAttribute("username")).isNull();
+        assertThat(s.getAttribute("viewTeamIds")).isNull();
+        assertThat(s.getAttribute(AuthInterceptor.ATTR_INACTIVE)).isEqualTo(true);
+        verify(rememberMeService).invalidateAllForUser("ALICE");
+        Cookie c = res.getCookie(RememberMeService.COOKIE_NAME);
+        assertThat(c).isNotNull();
+        assertThat(c.getMaxAge()).isZero();
+        verify(auditService).recordAction(eq("SESSION_ENDED_INACTIVE"), eq("ALICE"), eq(5L), eq(3L), eq("USER"),
+                eq("USER"), eq("ALICE"), anyString(), any(), any(), any());
+        // Pasif kapısı süpersede kontrolünden ÖNCE: istemci "oturum düştü" değil "hesabınız pasif" sinyalini alır.
+        verify(userService, never()).isSessionSuperseded(any(), any());
+    }
+
+    @Test
+    @DisplayName("Mezar taşı oturumu (öteki sekme / eşzamanlı istek): hesap hâlâ pasif → aynı ACCOUNT_INACTIVE sinyali, ikinci denetim yok")
+    void tombstone_stillPassive_sameSignal() throws Exception {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute(AuthInterceptor.ATTR_INACTIVE, true);
+        s.setAttribute(AuthInterceptor.ATTR_INACTIVE_USER, "ALICE");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/me");
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(userService.isAccountInactive("ALICE")).thenReturn(true);
+
+        assertThat(interceptor.preHandle(req, res, new Object())).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("ACCOUNT_INACTIVE");
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    @DisplayName("Mezar taşı + hesap yeniden aktifleştirildi → mezar taşı kapanır, istek oturumsuz (genel 401: yeniden giriş ister)")
+    void tombstone_reactivated_plainUnauthorized() throws Exception {
+        MockHttpSession s = new MockHttpSession();
+        s.setAttribute(AuthInterceptor.ATTR_INACTIVE, true);
+        s.setAttribute(AuthInterceptor.ATTR_INACTIVE_USER, "ALICE");
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/me");
+        req.setSession(s);
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        when(userService.isAccountInactive("ALICE")).thenReturn(false);
+
+        assertThat(interceptor.preHandle(req, res, new Object())).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("Unauthorized").doesNotContain("ACCOUNT_INACTIVE");
+        assertThat(s.isInvalid()).isTrue();
+    }
+
+    @Test
+    @DisplayName("AKTİF kullanıcının oturumu etkilenmez: pasif kapısı false → süpersede + parola kapısı bugünkü gibi")
+    void liveSession_activeUser_passes() throws Exception {
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/certificates");
+        MockHttpSession s = liveSession("ALICE");
+        req.setSession(s);
+
+        assertThat(interceptor.preHandle(req, new MockHttpServletResponse(), new Object())).isTrue();
+        verify(userService).isAccountInactive("ALICE");
+        verify(userService).isSessionSuperseded(eq("ALICE"), any());
+        assertThat(s.getAttribute("authenticated")).isEqualTo(true);
+        verifyNoInteractions(rememberMeService);
+    }
+
+    @Test
+    @DisplayName("Pasif kullanıcının GEÇERLİ remember-me çerezi: oturum kurulmaz, token'ları silinir, çerez düşer, 401 ACCOUNT_INACTIVE + denetim")
+    void rememberMe_passiveUser_tokenDeleted_accountInactive() throws Exception {
+        MockHttpServletRequest req = reqWithCookie("/api/me");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        AppUser u = activeUser();
+        u.setActive(false);
+        u.setId(9L);
+        when(rememberMeService.validate(eq("tok"), any())).thenReturn(Optional.of("alice"));
+        when(userService.findByUsername("alice")).thenReturn(Optional.of(u));
+
+        boolean allowed = interceptor.preHandle(req, res, new Object());
+
+        assertThat(allowed).isFalse();
+        assertThat(res.getStatus()).isEqualTo(401);
+        assertThat(res.getContentAsString()).contains("\"code\":\"ACCOUNT_INACTIVE\"");
+        verify(rememberMeService).invalidateAllForUser("alice");
+        Cookie c = res.getCookie(RememberMeService.COOKIE_NAME);
+        assertThat(c).isNotNull();
+        assertThat(c.getMaxAge()).isZero();
+        verify(authController, never()).populateSession(any(), any());
+        verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        verify(auditService).recordInactiveLogin(eq("alice"), eq(9L), any(), any(), any(), any(), eq("REMEMBER_ME"));
+        assertThat(req.getSession(false)).isNull();
+    }
 }

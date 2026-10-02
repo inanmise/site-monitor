@@ -353,6 +353,19 @@ public final class RetentionCatalog {
         info("today-panel-snapshots", "today_panel_snapshots", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Sizin için — bugün paneli dünden bugüne görüntüsü (2026-09-23): saatte bir satır, kartların satır "
                 + "KİMLİKLERİ (JSON). TodayPanelService her kayıtta 72 saatten eskileri siler → en fazla ~72 satır."),
+        info("user-bulk-operations", "user_bulk_operations", Mode.BOUNDED, DataClass.PERSONAL,
+                "Sistem geneli toplu pasife alma kayıtları (2026-10-02): çalıştırma başına TEK satır — yönetici, ölçüt, not, "
+                + "pasife alınan kullanıcı kimlikleri. ASLA silinmez: 'kim, ne zaman, kimleri kapattı' sorusunun ve geri "
+                + "almanın tek kaynağı (deployment_history ile aynı gerekçe). Büyüme sınırlı (yılda birkaç satır)."),
+        info("system-maintenance-windows", "system_maintenance_windows", Mode.BOUNDED, DataClass.PERSONAL,
+                "Sistem Bakım Modu pencereleri (2026-10-02): bakım başına TEK satır — plan/gerçek zamanlar, kim planladı/"
+                + "başlattı/bitirdi, kapatılan oturum, engellenen giriş, susturulan bildirim sayıları. ASLA silinmez: bakım "
+                + "geçmişinin ve denetimin tek kaynağı (user_bulk_operations ile aynı gerekçe). Büyüme sınırlı (yılda birkaç satır)."),
+        age("system-maintenance-suppressions", "system_maintenance_suppressions", "first_at",
+                "site.monitor.notification.retention-days", 365, 30, false, DataClass.OPERATIONAL,
+                "Sistem bakımında susturulan alarm bildirimleri (2026-10-02): bakım × alarm başına TEK satır — bitişteki "
+                + "bildirim telafisinin listesi ve kararı. Bildirim günlüğüyle (notification_logs) aynı süre: iz o günlükte, "
+                + "bu tablo onun bakım özetidir. Kişisel veri yok (alarm kimliği + tetik + sayaç)."),
         info("schema-table-registry", "schema_table_registry", Mode.BOUNDED, DataClass.OPERATIONAL,
                 "Tablo kayıt defteri (SQL Playground, 2026-09-11): tablo başına TEK satır — ilk görülme anı ve son veri "
                 + "değişimi. Tablo sayısı kadar satır; asla silinmez (silinirse 'oluşturma' bilgisi kaybolur)."),

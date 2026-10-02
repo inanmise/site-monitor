@@ -203,7 +203,7 @@ public class NocController {
             Object rawType = it.get("type");
             Object rawId = it.get("id");
             NocType t = NocType.parse(rawType == null ? null : rawType.toString());
-            Long id = rawId instanceof Number n ? n.longValue() : parseLong(rawId);
+            Long id = rawId instanceof Number n ? Long.valueOf(n.longValue()) : parseLong(rawId);
             if (t == null || id == null) { skipped.add(skip(rawType, rawId, "INVALID")); continue; }
             if (!permissionService.allows(session, t.permission, "edit")) { skipped.add(skip(t.name(), id, "FORBIDDEN")); continue; }
             NocTarget m = monitors.load(t, id);
@@ -321,7 +321,7 @@ public class NocController {
         if (!(body.get("userIds") instanceof List<?> raw)) return error(400, "userIds bir liste olmalı");
         List<Long> ids = new ArrayList<>();
         for (Object o : raw) {
-            Long v = o instanceof Number n ? n.longValue() : parseLong(o);
+            Long v = o instanceof Number n ? Long.valueOf(n.longValue()) : parseLong(o);
             if (v == null) return error(400, "Geçersiz kullanıcı kimliği: " + o);
             ids.add(v);
         }

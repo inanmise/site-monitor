@@ -10,7 +10,8 @@
 // KNOWN_OVERFLOW YALNIZ KÜÇÜLÜR: bilinen taşma düzeltildiğinde test KIRMIZI olur ("artık taşmıyor — listeden çıkarın"),
 // böylece liste gerçeği yansıtır; listeye yeni kayıt eklemek kural dışıdır (önce taşmayı düzelt).
 import { test, expect } from '@playwright/test'
-import { mockApi } from './support/monitorMocks.js'
+import { mockApi, MONITORS } from './support/monitorMocks.js'
+import { pathDiffers } from '../src/test/helpers/httpDiagnoseFixtures.js'
 
 /** App.jsx VALID_TABS ile aynı (sertifika, izleme, yönetim sekmelerinin HEPSİ). */
 const TABS = [
@@ -397,5 +398,462 @@ for (const vp of VIEWPORTS) {
     expect(mb.x).toBeGreaterThanOrEqual(-1)
     expect(mb.x + mb.width, `Görünümler menüsü @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
     expect(mb.y + mb.height, `Görünümler menüsü @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+  })
+}
+
+// HTTP uçtan uca tanılama penceresi (2026-10-02): detay → "Uçtan uca tanıla" → başlangıç ekranı → (mock) PATH_DIFFERS
+// sonucu (vekil yolu yanıt alamadı, doğrudan yol 24 ms'de 401). Telefonda tam ekran, tablette ortalı; başlangıç, sonuç
+// (izlemenin yolu sekmesi, takılan hop açık) ve öteki yol sekmesinde ilk hop genişletilmişken pencerenin içindeki hiçbir
+// öğe ekran dışına taşmaz, gövde kendi içinde YATAY kaymaz, pencere görünüm alanına sığar.
+const HTTPDX_DIALOG = '[role="dialog"]:has([data-slot="httpdx-body"])'
+for (const vp of VIEWPORTS) {
+  test(`http tanılama penceresi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page, { monitors: { ...MONITORS, http: MONITORS.http.map((m) => ({ ...m, can_diagnose: true })) } })
+    await page.route((u) => /^\/api\/monitoring\/http\/\d+\/diagnose$/.test(new URL(u).pathname),
+      (r) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: pathDiffers() }) }))
+    await page.goto('/?tab=http')
+    await page.locator('.upt-grid [data-slot="card"] [data-monitor-open]').first().click({ timeout: 20_000 })
+    await page.locator('[data-slot="httpdx-open"]').click()
+    const dlg = page.locator(HTTPDX_DIALOG)
+    await dlg.locator('[data-slot="httpdx-start"]').waitFor()
+
+    const check = async (stage) => {
+      await page.waitForTimeout(500)
+      const m = await page.evaluate(measure, HTTPDX_DIALOG)
+      expect(m.offenders, `tanılama ${stage} @${vp.name}: pencerede ekran dışına taşan öğe`).toEqual([])
+      const box = await dlg.boundingBox()
+      expect(box.x, `tanılama ${stage} @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, `tanılama ${stage} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      expect(box.y + box.height, `tanılama ${stage} @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+      const hScroll = await dlg.locator('[data-slot="modal-shell-body"]').evaluate((el) => el.scrollWidth - el.clientWidth)
+      expect(hScroll, `tanılama ${stage} @${vp.name}: gövde yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+    }
+    await check('başlangıç')
+    if (vp.name === 'phone') {
+      // telefonda tam ekran (kenar boşluğu yok)
+      const box = await dlg.boundingBox()
+      expect(Math.round(box.width)).toBe(vp.width)
+    }
+
+    await dlg.getByRole('button', { name: /^(Tanılamayı başlat|Start diagnosis)$/ }).click()
+    await dlg.locator('[data-slot="httpdx-result"]').waitFor()
+    await expect(dlg.locator('[data-slot="httpdx-path-card"]')).toHaveCount(2)
+    await check('sonuç')
+
+    await dlg.getByRole('tab', { name: /Öteki yol|Other route/ }).click()
+    const hop = dlg.locator('[data-slot="httpdx-path-detail"][data-path="alternate"] [data-slot="httpdx-hop"][data-hop="0"]')
+    await hop.locator('[data-slot="httpdx-hop-trigger"]').click()
+    await expect(hop).toHaveAttribute('data-state', 'open')
+    await hop.locator('[data-slot="httpdx-redirect"]').waitFor()
+    await check('öteki yol + hop açık')
+    // başlık eylemleri ve altlık düğmeleri görünür ve ekranda
+    for (const sel of ['[data-slot="httpdx-actions"]', '[data-slot="httpdx-run"]']) {
+      const b = await dlg.locator(sel).boundingBox()
+      expect(b.x + b.width, `${sel} @${vp.name}`).toBeLessThanOrEqual(vp.width + 1)
+    }
+  })
+}
+
+// Pasif hesap (2026-10-02, kullanıcı kararı): oturum açıkken sunucu 401 ACCOUNT_INACTIVE dönünce açılan BLOKLAYAN
+// "Hesabınız pasife alındı" penceresi (büyük geri sayım + "Şimdi çıkış yap") ve pasif üyeleri belirgin gösteren takım
+// üyeleri listesi telefonda / tablette taşmaz; pencere görünüm alanına sığar, çıkış düğmesi ≥ 40 px dokunma hedefi.
+const INACTIVE_401 = {
+  success: false, code: 'ACCOUNT_INACTIVE', error_code: 'ACCOUNT_INACTIVE',
+  error: 'Your account is inactive; sign-in is not allowed. Contact your administrator.',
+}
+const json = (body, status = 200) => (r) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+const inactiveMember = (id, name, active, extra = {}) => ({
+  id, username: `KULLANICI${id}`, display_name: name, first_name: name.split(' ')[0], last_name: name.split(' ').slice(1).join(' '),
+  email: `kullanici-${id}.uzun-adres@kurumsal-alan-adi.example.com`, title: 'Kıdemli Yazılım Geliştirme Uzmanı', department: 'Dijital Kanallar',
+  mudurluk_name: 'Uygulama Geliştirme Müdürlüğü', org_role: 'TECH', company_level: '6', system_role: 'USER', has_photo: false,
+  team_id: 1, team_ids: [1], active, ...extra,
+})
+const INACTIVE_TEAM_MEMBERS = [
+  inactiveMember(11, 'Kişi Ayşe Uzunsoyadlıoğulları', true, { org_role: 'PO' }),
+  inactiveMember(12, 'Kişi Bora', true),
+  inactiveMember(13, 'Kişi Cemre Pasifhesapoğlu', false, { org_role: 'MANAGER' }),
+  inactiveMember(14, 'Kişi Deniz', false),
+]
+for (const vp of VIEWPORTS) {
+  test(`pasif hesap penceresi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/session/ping', json(INACTIVE_401, 401))
+    await page.goto('/?tab=dashboard')
+    await page.locator('.app-main').waitFor({ timeout: 20_000 })
+    // SPA oturum yoklaması pencereye dönüşte hemen koşar (≈15 sn beklemeden)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    const dlg = page.locator('[data-slot="account-inactive-dialog"]')
+    await dlg.waitFor({ timeout: 10_000 })
+    await expect(page.locator('[data-slot="account-inactive-countdown"]')).toBeVisible()
+    await page.waitForTimeout(400)
+    const m = await page.evaluate(measure, '[data-slot="account-inactive-dialog"]')
+    expect(m.offenders, `pasif penceresi @${vp.name}: taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x, `pasif penceresi @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width, `pasif penceresi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(box.y + box.height, `pasif penceresi @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+    const btn = await page.locator('[data-slot="account-inactive-logout"]').boundingBox()
+    expect(btn.height, `çıkış düğmesi @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    expect(btn.x + btn.width).toBeLessThanOrEqual(vp.width + 1)
+  })
+
+  test(`pasif üyeli takım listesi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams', json({ success: true, data: [
+      { id: 1, name: 'Takım A', active: true, email: 'takim-a@example.com', leader_id: 11 },
+    ] }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams/stats',
+      json({ success: true, data: { 1: { members: 4, members_inactive: 2, domains: 3, monitors: 5, open_alerts: 0, contacts: 1, groups: 0 } } }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams/1/users', json({ success: true, data: INACTIVE_TEAM_MEMBERS }))
+    await page.route((u) => new URL(u).pathname === '/api/teams/1/members', json({ success: true, data: {
+      team: { id: 1, name: 'Takım A', email: 'takim-a@example.com', active: true, leader_id: 11, leader_display_name: 'Kişi Ayşe Uzunsoyadlıoğulları' },
+      members: INACTIVE_TEAM_MEMBERS, escalation_contacts: [],
+    } }))
+    await page.goto('/?tab=admin&g_tab=teams')
+    await page.locator('[data-slot="team-badge"]').first().click({ timeout: 20_000 })
+    await page.locator('[data-slot="team-member-inactive"]').first().waitFor()
+    await expect(page.locator('[data-slot="team-member-inactive"]')).toHaveCount(2)
+    await page.waitForTimeout(500)
+    const m = await page.evaluate(measure, '[role="dialog"]')
+    expect(m.offenders, `takım üyeleri (pasifli) @${vp.name}: pencerede taşan öğe`).toEqual([])
+    const box = await page.getByRole('dialog').last().boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width, `takım üyeleri @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    // pasif rozeti satırda görünür ve ekranda
+    const badge = await page.locator('[data-slot="team-member-inactive"]').first().boundingBox()
+    expect(badge.x + badge.width).toBeLessThanOrEqual(vp.width + 1)
+  })
+}
+
+// Toplu pasife al sihirbazı (2026-10-02, kullanıcı kararı): Yönetim → Kullanıcılar → "Toplu pasife al". Ölçüt, önizleme
+// (uzun ad/e-posta/takım adlı UZUN liste + sayfalama) ve onay adımı telefonda/tablette yatay taşmaz; uygula düğmesi ekranda
+// ve dokunulabilir. Liste tablo DEĞİL satır listesi — dar ekranda sarar.
+const BULK_TEAMS = [
+  { id: 1, name: 'Dijital Kanallar ve Mobil Bankacılık Platform Takımı' },
+  { id: 2, name: 'Kartlar ve Ödeme Sistemleri Operasyon Ekibi' },
+]
+const BULK_TARGETS = Array.from({ length: 37 }, (_, i) => ({
+  id: 100 + i, username: `KULLANICI.UZUNADLI.HESAP.${i}`, display_name: `Kişi ${i} Uzunsoyadlıoğulları-Çağlayangil`,
+  email: `kisi.${i}.cok-uzun-bir-e-posta-adresi@ornek-kurum-alan-adi.com.tr`, employee_id: `S${1000 + i}`,
+  system_role: ['USER', 'TEAM_ADMIN', 'AUDIT'][i % 3], auth_source: i % 2 ? 'LDAP' : 'LOCAL',
+  team_ids: i % 4 === 0 ? [] : [1, 2], last_login_at: i % 3 === 0 ? null : '2026-01-15T08:00:00',
+}))
+const BULK_PREVIEW = { success: true, data: {
+  total: BULK_TARGETS.length, max: 5000, over_limit: false, targets: BULK_TARGETS, targets_truncated: false,
+  excluded: { admins: 3, self: 1, already_inactive: 12 }, criteria: { scope: 'all', auth_source: 'ALL' }, inactive_cutoff: null,
+} }
+const BULK_HISTORY = { success: true, data: { operations: [
+  { id: 7, status: 'DONE', created_at: '2026-09-30T10:00:00Z', actor: 'GLOBAL.YONETICI.HESABI', ok_count: 120,
+    criteria: { scope: 'teams', team_ids: [1, 2], inactive_days: 180, auth_source: 'LDAP' },
+    note: 'Yıllık erişim gözden geçirmesi — ayrılan personel ve uzun süredir giriş yapmayan hesaplar', can_undo: true },
+  { id: 6, status: 'DONE', created_at: '2026-08-01T10:00:00Z', actor: 'admin', ok_count: 4, criteria: { scope: 'all' },
+    undone_at: '2026-08-02T10:00:00Z', can_undo: false },
+] } }
+for (const vp of VIEWPORTS) {
+  test(`toplu pasife al sihirbazı @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams', json({ success: true, data: BULK_TEAMS }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/users/search',
+      json({ success: true, data: [], total: 0, page: 0, total_pages: 0, active_admin_count: 2 }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/users/bulk-operations', json(BULK_HISTORY))
+    await page.route((u) => new URL(u).pathname === '/api/admin/users/bulk-deactivate/preview', json(BULK_PREVIEW))
+    await page.goto('/?tab=admin&g_tab=users')
+    await page.locator('[data-slot="um-bulk-deactivate"]').waitFor({ timeout: 20_000 })
+    // Kullanıcılar başlığı yeni düğmeyle de taşmaz (eylemler sarar)
+    const pm = await page.evaluate(measure)
+    expect(pm.offenders, `kullanıcılar başlığı @${vp.name}: taşan öğe`).toEqual([])
+    await page.locator('[data-slot="um-bulk-deactivate"]').click()
+    const dlg = page.getByRole('dialog').last()
+    await dlg.locator('[data-slot="ubd-history-row"]').first().waitFor()
+
+    const inViewport = async (label) => {
+      await page.waitForTimeout(400)
+      const m = await page.evaluate(measure, '[role="dialog"]')
+      expect(m.offenders, `toplu pasife al (${label}) @${vp.name}: pencerede taşan öğe`).toEqual([])
+      const box = await dlg.boundingBox()
+      expect(box.x, `${label} @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, `${label} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      expect(box.y + box.height, `${label} @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+    }
+
+    // 1) Ölçüt (+ son işlemler listesi, uzun not)
+    await inViewport('ölçüt')
+    // 2) Önizleme — uzun liste, sayfalama, arama
+    await dlg.locator('[data-slot="ubd-preview-btn"]').click()
+    await dlg.locator('[data-slot="ubd-row"]').first().waitFor()
+    await expect(dlg.locator('[data-slot="ubd-total"]')).toBeVisible()
+    await inViewport('önizleme')
+    const row = await dlg.locator('[data-slot="ubd-row"]').first().boundingBox()
+    expect(row.x + row.width, `önizleme satırı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    // 3) Onay — not + sayı yazma; uygula düğmesi ekranda ve dokunulabilir
+    await dlg.getByRole('button', { name: /^(Devam|Continue)$/ }).click()
+    await dlg.locator('input[name="ubd-confirm"]').fill(String(BULK_TARGETS.length))
+    await expect(dlg.locator('[data-slot="ubd-apply"]')).toBeEnabled()
+    await inViewport('onay')
+    const apply = await dlg.locator('[data-slot="ubd-apply"]').boundingBox()
+    expect(apply.x + apply.width, `uygula düğmesi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(apply.y + apply.height, `uygula düğmesi @${vp.name}: ekranın altında`).toBeLessThanOrEqual(vp.height + 1)
+    if (vp.name === 'phone') expect(apply.height, `uygula düğmesi @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+  })
+}
+
+// Kullanıcı düzenleyici (2026-10-02, kullanıcı isteği: "Kullanıcı Düzenle ekranını shadcn ile yeniden… mweb responsive"):
+// paylaşılan düzenleyici hem Kullanıcılar sayfasından (kart menüsü → Düzenle) hem takım üye kartının kaleminden açılır.
+// Uzun ad / e-posta / takım adı + AD kilitleri + kalıcı kilit + şifre değişimi bekleyen hesapla: telefonda TAM EKRAN,
+// tabletde ortalı; dört sekmenin her birinde pencere içinde yatay taşma yok, sekme çubuğu kendi içinde kayar, altlık
+// (Kaydet) ekranda ve dokunulabilir, sekme hedefleri ≥ 40 px.
+const UED_TEAMS = [
+  { id: 1, name: 'Dijital Kanallar ve Mobil Bankacılık Platform Takımı', active: true, email: 'dijital@example.com' },
+  { id: 2, name: 'Kartlar ve Ödeme Sistemleri Operasyon Ekibi', active: true, email: 'kartlar@example.com' },
+]
+const UED_USER = {
+  id: 501, username: 'KULLANICI.UZUNADLI.HESAP.ORNEK', display_name: 'Kişi Ayşe Uzunsoyadlıoğulları-Çağlayangil',
+  first_name: 'Kişi Ayşe', last_name: 'Uzunsoyadlıoğulları-Çağlayangil',
+  email: 'kisi.ayse.cok-uzun-bir-e-posta-adresi@ornek-kurum-alan-adi.com.tr', employee_id: 'S100501', system_role: 'TEAM_ADMIN',
+  org_role: 'MANAGER', team_ids: [1, 2], team_id: 1, active: true, auth_source: 'LDAP', locked_field_keys: ['email', 'title'],
+  role_locked: true, team_locked: true, permanent_lock: true, must_change_password: true, title: 'Kıdemli Yazılım Geliştirme Uzmanı',
+  department: 'Dijital Kanallar', mudurluk_name: 'Uygulama Geliştirme ve Dijital Dönüşüm Müdürlüğü', company_level: '6',
+  manager_sicil: 'S9000', phone: '+90 555 000 00 00', last_login_at: '2026-09-30T08:00:00', created_at: '2025-01-15T08:00:00',
+}
+async function uedCheck(page, vp, where) {
+  const dlg = page.locator('[role="dialog"]:has([data-slot="user-editor"])')
+  await dlg.locator('[data-slot="ued-header"]').waitFor({ timeout: 10_000 })
+  for (const key of ['account', 'teams', 'profile', 'security']) {
+    await dlg.locator(`[data-tab-key="${key}"]`).click()
+    await expect(dlg.locator(`[data-tab-key="${key}"]`)).toHaveAttribute('data-state', 'active')
+    await page.waitForTimeout(300)
+    const m = await page.evaluate(measure, '[role="dialog"]:has([data-slot="user-editor"])')
+    expect(m.offenders, `kullanıcı düzenleyici (${where}, ${key}) @${vp.name}: pencerede taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x, `düzenleyici (${where}) @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width, `düzenleyici (${where}, ${key}) @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(box.y + box.height, `düzenleyici (${where}, ${key}) @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+    if (vp.name === 'phone') {
+      // Telefonda tam ekran (kenar boşluğu yok)
+      expect(box.width, `düzenleyici @phone: tam ekran genişlik`).toBeGreaterThanOrEqual(vp.width - 1)
+      const tabBox = await dlg.locator(`[data-tab-key="${key}"]`).boundingBox()
+      expect(tabBox.height, `sekme "${key}" @phone: dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+    }
+  }
+  // Altlık: Kaydet + İptal ekranda; telefonda dokunulabilir
+  const save = await dlg.locator('[data-slot="ued-save"]').boundingBox()
+  expect(save.x + save.width, `Kaydet (${where}) @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+  expect(save.y + save.height, `Kaydet (${where}) @${vp.name}: ekranın altında`).toBeLessThanOrEqual(vp.height + 1)
+  if (vp.name === 'phone') expect(save.height, `Kaydet (${where}) @phone: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+  // Değişiklik sayacı: alan değişince altlıkta görünür ve ekranda kalır
+  await dlg.locator('[data-tab-key="profile"]').click()
+  await dlg.locator('[data-field="department"] input').fill('Dijital Kanallar ve Mobil Bankacılık Uygulama Geliştirme Bölümü')
+  const dirty = dlg.locator('[data-slot="ued-dirty"]')
+  await expect(dirty).toHaveAttribute('data-count', '1')
+  const db = await dirty.boundingBox()
+  expect(db.x + db.width, `değişiklik sayacı (${where}) @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+  expect(db.y + db.height, `değişiklik sayacı (${where}) @${vp.name}: ekranın altında`).toBeLessThanOrEqual(vp.height + 1)
+}
+for (const vp of VIEWPORTS) {
+  test(`kullanıcı düzenleyici (Kullanıcılar) @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams', json({ success: true, data: UED_TEAMS }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/users/search',
+      json({ success: true, data: [UED_USER], total: 1, page: 0, total_pages: 1, active_admin_count: 2 }))
+    await page.goto('/?tab=admin&g_tab=users')
+    // < 1024 px: kart listesi — kartın "İşlemler" menüsü → Düzenle
+    const card = page.locator('[data-user-card="501"]')
+    await card.waitFor({ timeout: 20_000 })
+    await card.getByRole('button', { name: /(İşlemler|İşlem|Actions)$/ }).click()
+    await page.getByRole('menuitem', { name: /^(Düzenle|Edit)$/ }).click()
+    await uedCheck(page, vp, 'kullanıcılar')
+  })
+
+  test(`kullanıcı düzenleyici (takım üyesi) @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams', json({ success: true, data: [UED_TEAMS[0]] }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams/stats',
+      json({ success: true, data: { 1: { members: 1, domains: 0, monitors: 0, open_alerts: 0, contacts: 0, groups: 0 } } }))
+    await page.route((u) => new URL(u).pathname === '/api/admin/teams/1/users', json({ success: true, data: [UED_USER] }))
+    await page.route((u) => new URL(u).pathname === '/api/teams/1/members', json({ success: true, data: {
+      team: { id: 1, name: UED_TEAMS[0].name, email: 'dijital@example.com', active: true }, members: [UED_USER], escalation_contacts: [],
+    } }))
+    await page.goto('/?tab=admin&g_tab=teams')
+    await page.locator('[data-slot="team-badge"]').first().click({ timeout: 20_000 })
+    await page.locator('[data-slot="team-member-open"]').first().click()
+    await uedCheck(page, vp, 'takım üyesi')
+  })
+}
+
+// Sistem Bakım Modu (2026-10-02, kullanıcı kararı): Ayarlar → Sistem Bakımı (durum kartı + eylemler + önizleme + geçmiş,
+// uzun takım/mesaj metinleriyle), bakım başlayınca kapatılamayan geri sayım penceresi ve giriş ekranının bakım kartı
+// telefonda / tablette taşmaz; eylem düğmeleri dokunma hedefi (≥ 40 px), pencere ekrana sığar.
+const SM_ISO = (ms) => new Date(Date.now() + ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+const SM_ACTIVE = {
+  id: 12, phase: 'active', start_at: SM_ISO(-15 * 60_000), end_at: SM_ISO(75 * 60_000), planned_start_at: SM_ISO(-15 * 60_000),
+  planned_end_at: SM_ISO(45 * 60_000), warn_minutes: 10, announce_hours: 24, mute_notifications: true, immediate: false, revision: 2,
+  message_tr: 'Veritabanı sunucusu sürüm yükseltmesi ve depolama alanı genişletmesi — tüm servisler etkilenebilir',
+  message_en: 'Database server version upgrade and storage expansion — all services may be affected',
+  contact: 'BT Destek Masası · dahili 1234 · destek-ekibi@kurumsal-alan-adi.example.com', email_team_ids: [1],
+  extended_count: 1, sessions_ended: 37, logins_blocked: 12, notifications_suppressed: 64,
+}
+const SM_OVERVIEW = { success: true, data: {
+  server_now: SM_ISO(0), current: SM_ACTIVE,
+  windows: [SM_ACTIVE, { ...SM_ACTIVE, id: 13, phase: 'planned', start_at: SM_ISO(3 * 86_400_000), end_at: SM_ISO(3 * 86_400_000 + 7_200_000) }],
+  impact: { live_sessions: 148, affected_sessions: 141, admin_sessions: 7 },
+  options: { warn_minutes: [5, 10, 15, 30], announce_hours: [0, 1, 6, 24, 48], countdown_minutes: [0, 1, 2, 5, 10, 15, 30],
+    duration_minutes: [15, 30, 60, 90, 120, 240], extend_minutes: [15, 30, 60], default_warn_minutes: 10, default_announce_hours: 24, max_duration_hours: 72 },
+  recipients: { active_users_with_email: 812, teams: [{ id: 1, name: 'Dijital Kanallar ve Mobil Bankacılık Platform Takımı', email: 'dijital@example.com' }] },
+} }
+const SM_HISTORY = { success: true, data: { total: 3, page: 1, size: 25, items: [1, 2, 3].map((i) => ({
+  ...SM_ACTIVE, id: 20 + i, phase: i === 3 ? 'cancelled' : 'ended', start_at: SM_ISO(-i * 7 * 86_400_000), end_at: SM_ISO(-i * 7 * 86_400_000 + 3_600_000),
+  created_by: 'GLOBAL.YONETICI.UZUN.KULLANICI.ADI', announce_mail_count: 812,
+})) } }
+const SM_401 = { success: false, code: 'MAINTENANCE', error_code: 'MAINTENANCE', error: 'Planned maintenance is in progress',
+  maintenance: { state: 'active', start_at: SM_ACTIVE.start_at, end_at: SM_ACTIVE.end_at, message_tr: SM_ACTIVE.message_tr,
+    message_en: SM_ACTIVE.message_en, contact: SM_ACTIVE.contact } }
+for (const vp of VIEWPORTS) {
+  test(`sistem bakımı ayarları @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/system-maintenance', json(SM_OVERVIEW))
+    await page.route((u) => new URL(u).pathname === '/api/admin/system-maintenance/history', json(SM_HISTORY))
+    await page.goto('/?tab=settings&sec=sysmaint')
+    await page.locator('[data-slot="sysmaint-status"]').waitFor({ timeout: 20_000 })
+    await page.locator('[data-slot="sysmaint-history-row"]').first().waitFor()
+    await page.waitForTimeout(600)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `sistem bakımı @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `sistem bakımı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    for (const sel of ['[data-slot="sysmaint-extend"]', '[data-slot="sysmaint-end-now"]']) {
+      const b = await page.locator(sel).first().boundingBox()
+      expect(b.x + b.width, `${sel} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      expect(b.height, `${sel} @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    }
+    // Önizleme → geri sayım penceresi ve "bakım tamamlandı" (bitiş) şeridi sekmeleri de taşmaz
+    const preview = page.locator('[data-slot="sysmaint-preview"]')
+    await preview.getByRole('tab', { name: /Geri sayım penceresi|Countdown dialog/ }).click()
+    await page.waitForTimeout(300)
+    const m2 = await page.evaluate(measure)
+    expect(m2.offenders, `önizleme (pencere) @${vp.name}: taşan öğe`).toEqual([])
+    await preview.getByRole('tab', { name: /Bitiş şeridi|Completion banner/ }).click()
+    await preview.locator('[data-slot="maint-ended"]').waitFor()
+    await page.waitForTimeout(300)
+    const m3 = await page.evaluate(measure)
+    expect(m3.offenders, `önizleme (bitiş şeridi) @${vp.name}: taşan öğe`).toEqual([])
+  })
+
+  test(`sistem bakımı geri sayım penceresi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page, { role: 'USER', globalAdmin: false })
+    await page.route((u) => new URL(u).pathname === '/api/session/ping', json(SM_401, 401))
+    await page.goto('/?tab=dashboard')
+    await page.locator('.app-main').waitFor({ timeout: 20_000 })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    const dlg = page.locator('[data-slot="maint-dialog"]')
+    await dlg.waitFor({ timeout: 10_000 })
+    await expect(page.locator('[data-slot="maint-dialog-countdown"]')).toBeVisible()
+    await page.waitForTimeout(400)
+    const m = await page.evaluate(measure, '[data-slot="maint-dialog"]')
+    expect(m.offenders, `bakım penceresi @${vp.name}: taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width, `bakım penceresi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(box.y + box.height, `bakım penceresi @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
+    const btn = await page.locator('[data-slot="maint-dialog-logout"]').boundingBox()
+    expect(btn.height, `çıkış düğmesi @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+  })
+
+  test(`giriş ekranı bakım kartı @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/me', json({ success: false, error: 'Unauthorized' }, 401))
+    await page.route((u) => new URL(u).pathname === '/api/public/system-maintenance',
+      json({ success: true, data: { ...SM_401.maintenance, server_now: SM_ISO(0) } }))
+    await page.goto('/?session=maintenance')
+    const card = page.locator('[data-slot="login-maintenance"]')
+    await card.waitFor({ timeout: 20_000 })
+    await expect(card).toHaveAttribute('data-state', 'ended')
+    await page.waitForTimeout(400)
+    const m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `giriş bakım kartı @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `giriş bakım kartı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    const box = await card.boundingBox()
+    expect(box.x + box.width, `giriş bakım kartı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+  })
+
+  // "Bakım tamamlandı" şeridi (2026-10-02, kullanıcı isteği): bakım bittikten sonra sunucunun bildirim süresince
+  // (`state: 'ended'`) oturum yoklaması ve /api/me bloğu → kapatılabilir başarı şeridi; uzun mesaj + gün aşımı penceresi
+  // telefonda / tablette taşmaz, kapatma düğmesi dokunma hedefi ≥ 40 px.
+  test(`sistem bakımı tamamlandı şeridi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page, { role: 'USER', globalAdmin: false })
+    const ended = { state: 'ended', id: 12, revision: 2, start_at: SM_ISO(-150 * 60_000), end_at: SM_ISO(-10 * 60_000),
+      planned_end_at: SM_ISO(-30 * 60_000), message_tr: SM_ACTIVE.message_tr, message_en: SM_ACTIVE.message_en, contact: SM_ACTIVE.contact }
+    await page.route((u) => new URL(u).pathname === '/api/session/ping',
+      json({ success: true, maintenance: ended, server_now: SM_ISO(0) }))
+    await page.route((u) => new URL(u).pathname === '/api/me', json({
+      success: true, username: 'demo', system_role: 'USER', global_admin: false, weekly_reports_visible: true,
+      team_id: 1, team_name: 'Takım A', team_ids: [1], team_names: ['Takım A'], tour: { status: 'dismissed', version: 99 },
+      maintenance: ended, server_now: SM_ISO(0),
+    }))
+    await page.goto('/?tab=dashboard')
+    await page.locator('.app-main').waitFor({ timeout: 20_000 })
+    const strip = page.locator('[data-slot="maint-ended"]')
+    await strip.waitFor({ timeout: 10_000 })
+    await expect(strip).toHaveAttribute('data-tone', 'success')
+    await page.waitForTimeout(400)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `bitiş şeridi @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `bitiş şeridi @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    const box = await strip.boundingBox()
+    expect(box.x + box.width, `bitiş şeridi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    const close = await strip.locator('[data-slot="maint-dismiss"]').boundingBox()
+    expect(close.x + close.width, `kapatma düğmesi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    if (vp.name === 'phone') expect(close.height, `kapatma düğmesi @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    // pencere/sayaç YOK; kapatınca kalkar
+    await expect(page.locator('[data-slot="maint-dialog"]')).toHaveCount(0)
+    await strip.locator('[data-slot="maint-dismiss"]').click()
+    await expect(page.locator('[data-slot="maint-ended"]')).toHaveCount(0)
+  })
+}
+
+// Çevrimiçi kullanıcı göstergesi (2026-10-02): telefonda üst çubukta, tablet/masaüstünde kenar çubuğu başlığında
+// görünür; tıklanınca takım dağılımı paneli ekrana sığar (uzun takım adı taşmaz), gösterge dokunma hedefi ≥ 40 px (telefon).
+const PRESENCE = {
+  success: true,
+  data: {
+    total: 23, no_team: 2, window_seconds: 120, generated_at: '2026-10-02T12:00:00Z',
+    teams: [
+      { team_id: 1, team_name: 'SY-Takım A Uygulama Geliştirme ve Operasyon Uzun Adlı Takımı', count: 9 },
+      { team_id: 2, team_name: 'SY-Takım B', count: 7 },
+      { team_id: 3, team_name: 'SY-Takım C', count: 5 },
+    ],
+  },
+}
+for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
+  test(`çevrimiçi kullanıcı göstergesi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/presence/online', json(PRESENCE))
+    await page.goto('/?tab=dashboard')
+    await page.locator('.app-main').waitFor({ timeout: 20_000 })
+    const trigger = page.locator('[data-slot="online-users"]:visible').first()
+    await expect(trigger).toBeVisible({ timeout: 10_000 })
+    await expect(trigger.locator('[data-slot="online-users-count"]')).toHaveText('23')
+    const tb = await trigger.boundingBox()
+    if (vp.width < 768) expect(tb.height, `gösterge @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    await trigger.click()
+    const panel = page.locator('[data-slot="online-users-panel"]')
+    await panel.waitFor({ timeout: 5_000 })
+    await expect(panel.locator('[data-slot="online-users-team"]')).toHaveCount(4)   // 3 takım + Takımsız
+    await page.waitForTimeout(300)
+    const m = await page.evaluate(measure, '[data-slot="online-users-panel"]')
+    expect(m.offenders, `çevrimiçi paneli @${vp.name}: taşan öğe`).toEqual([])
+    const box = await panel.boundingBox()
+    expect(box.x, `çevrimiçi paneli @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width, `çevrimiçi paneli @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(box.y + box.height, `çevrimiçi paneli @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
   })
 }

@@ -4,7 +4,10 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import LoginHelpDialog from '../components/issues/report/LoginHelpDialog.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX } from 'lucide-react'
+import { isAccountInactivePayload } from '../utils/accountInactive.js'
+import { isMaintenancePayload, lastWindow } from '../utils/systemMaintenance.js'
+import MaintenanceLoginCard from '../components/maintenance/MaintenanceLoginCard.jsx'
 // shadcn/ui (feature/shadcn-ui): giriş formu ve sorun bildirimi penceresi gerçek shadcn bileşenleri
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -23,7 +26,16 @@ const STORAGE_KEY = REMEMBER_KEY
 function readRemembered() { try { return localStorage.getItem(STORAGE_KEY) } catch { return null } }
 function writeRemembered(username) { try { if (username) localStorage.setItem(STORAGE_KEY, username); else localStorage.removeItem(STORAGE_KEY) } catch { /* yoksay */ } }
 
-export default function Login({ onLogin, sessionExpired = false }) {
+/**
+ * @param sessionExpired  oturum düştü bildirimi (`?session=expired`)
+ * @param accountInactive hesap pasife alındı bildirimi (`?session=inactive` ya da açılışta 401 ACCOUNT_INACTIVE, 2026-10-02)
+ * @param maintenanceEnded oturum sistem bakımı nedeniyle kapatıldı (`?session=maintenance` ya da açılışta 401 MAINTENANCE,
+ *                         2026-10-02) — bakım kartı "oturumunuz sonlandırıldı" kipinde
+ */
+/** Giriş sayfasının bakım durumu yoklaması (ms) — oturumsuz public uç, `no-store`. */
+const MAINT_POLL_MS = 60_000
+
+export default function Login({ onLogin, sessionExpired = false, accountInactive = false, maintenanceEnded = false }) {
   const t = useT()
   // langPending: İngilizce sözlük (ayrı chunk) iniyor — dil düğmesi kısa süre meşgul görünür (2026-10-02, öneri 22)
   const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
@@ -35,6 +47,8 @@ export default function Login({ onLogin, sessionExpired = false }) {
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(!!saved)
   const [error, setError]     = useState('')
+  // Hata türü (2026-10-02): pasif hesap mesajı "yanlış parola"dan ayrı görünür (data-code + ikon).
+  const [errorCode, setErrorCode] = useState(null)
   const [loading, setLoading] = useState(false)
   const [showPass, setShowPass] = useState(false)
   const [lockout, setLockout]           = useState(0)    // seconds remaining
@@ -42,6 +56,9 @@ export default function Login({ onLogin, sessionExpired = false }) {
   const [confirmActiveSession, setConfirmActiveSession] = useState(false) // başka yerde aktif oturum onayı
   const sessionDlgId = useId()   // aktif oturum onayı (alertdialog) başlık/açıklama bağları
   const [stats, setStats] = useState(null)   // hero istatistikleri — gerçek veriden (public endpoint)
+  // Sistem Bakım Modu (2026-10-02): public uçtan bakım durumu (yaklaşan / süren) — kart; ilk çizimde sekmenin son bildiği
+  // pencere (oturum kesilince taşınır) kullanılır, uç gelince tazelenir.
+  const [maint, setMaint] = useState(() => (maintenanceEnded ? lastWindow() : null))
   // "Sorun bildir" penceresi — LoginHelpDialog (public /api/login-help, IP oran sınırlı; 2026-09-27 yeniden tasarım:
   // bölümlü rehberli form, sürükle-bırak/yapıştır görsel, satır içi doğrulama, net hata sebebi + tekrar dene).
   // Açılışta giriş formundaki kullanıcı adı taşınır.
@@ -61,6 +78,20 @@ export default function Login({ onLogin, sessionExpired = false }) {
       } catch { /* istatistiksiz de login çalışır */ }
     })()
     return () => { alive = false }
+  }, [])
+
+  // Bakım durumu: açılışta + dakikada bir (bakım biterse kart kendiliğinden kalkar). Hata kartı bozmaz.
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await api.getSystemMaintenanceStatus?.()
+        if (alive && r?.success && r.data && typeof r.data === 'object' && !Array.isArray(r.data)) setMaint(r.data)
+      } catch { /* bakım bilgisi olmadan da giriş çalışır */ }
+    }
+    load()
+    const id = setInterval(load, MAINT_POLL_MS)
+    return () => { alive = false; clearInterval(id) }
   }, [])
 
   useEffect(() => {
@@ -120,12 +151,22 @@ export default function Login({ onLogin, sessionExpired = false }) {
     e.preventDefault()
     if (lockout > 0) return
     setError('')
+    setErrorCode(null)
     setLoading(true)
     try {
       const data = await api.login(username, password, rememberMe)
       if (data.success) {
         writeRemembered(rememberMe ? username : null)
         onLogin(data)
+      } else if (isAccountInactivePayload(data)) {
+        // 403 ACCOUNT_INACTIVE — sunucu bunu YALNIZ kimlik bilgisi doğruysa döner; yanlış parola genel mesajda kalır.
+        setErrorCode('ACCOUNT_INACTIVE')
+        setError(t('login.accountInactiveError'))
+      } else if (isMaintenancePayload(data)) {
+        // 403 MAINTENANCE (2026-10-02) — bakımda yalnız global yöneticiler girer; kart pencere bilgisiyle tazelenir.
+        setErrorCode('MAINTENANCE')
+        setError(t('sysmaint.login.error'))
+        if (data.maintenance && typeof data.maintenance === 'object') setMaint(data.maintenance)
       } else if (data.locked) {
         setPermanentLock(true)
         setLockout(0)
@@ -153,11 +194,20 @@ export default function Login({ onLogin, sessionExpired = false }) {
   async function confirmAndLogin() {
     setLoading(true)
     setError('')
+    setErrorCode(null)
     try {
       const data = await api.login(username, password, rememberMe, true)
       if (data.success) {
         writeRemembered(rememberMe ? username : null)
         onLogin(data)
+      } else if (isAccountInactivePayload(data)) {
+        setConfirmActiveSession(false)
+        setErrorCode('ACCOUNT_INACTIVE')
+        setError(t('login.accountInactiveError'))
+      } else if (isMaintenancePayload(data)) {
+        setConfirmActiveSession(false)
+        setErrorCode('MAINTENANCE')
+        setError(t('sysmaint.login.error'))
       } else {
         setConfirmActiveSession(false)
         setError(data.error || t('login.failed'))
@@ -273,6 +323,17 @@ export default function Login({ onLogin, sessionExpired = false }) {
             <Alert role="status" aria-live="polite">
               <Info />
               <AlertDescription>{t('login.sessionExpired')}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* Sistem Bakım Modu (2026-10-02): yaklaşan / süren bakım ya da bakım nedeniyle kapatılan oturum */}
+          <MaintenanceLoginCard status={maint} sessionEnded={maintenanceEnded} />
+
+          {/* Hesap pasife alındı (2026-10-02): oturum yönetici tarafından kapatıldı ya da çerez pasif hesaba ait */}
+          {accountInactive && (
+            <Alert variant="warning" role="status" aria-live="polite" data-slot="login-account-inactive">
+              <UserX />
+              <AlertDescription>{t('login.accountInactive')}</AlertDescription>
             </Alert>
           )}
 
@@ -403,8 +464,8 @@ export default function Login({ onLogin, sessionExpired = false }) {
               </div>
 
               {error && (
-                <Alert variant="destructive">
-                  <AlertCircle />
+                <Alert variant="destructive" data-code={errorCode || undefined}>
+                  {errorCode === 'ACCOUNT_INACTIVE' ? <UserX /> : errorCode === 'MAINTENANCE' ? <Wrench /> : <AlertCircle />}
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}

@@ -85,13 +85,15 @@ public class TeamAdminService {
 
     /** Takım id → {members, domains, monitors, open_alerts, contacts, groups}. Tek geçiş, takım başına sorgu yok. */
     public Map<Long, Map<String, Object>> stats() {
-        Map<Long, int[]> c = new LinkedHashMap<>();   // [members, domains, monitors, open_alerts, contacts, groups]
-        for (var t : teamRepo.findAll()) c.put(t.getId(), new int[6]);
+        // [members, domains, monitors, open_alerts, contacts, groups, members_inactive]
+        Map<Long, int[]> c = new LinkedHashMap<>();
+        for (var t : teamRepo.findAll()) c.put(t.getId(), new int[7]);
         for (AppUser u : userRepo.findAll()) {
             LinkedHashSet<Long> ids = new LinkedHashSet<>();
             if (u.getTeamId() != null) ids.add(u.getTeamId());
             if (u.getTeamIds() != null) ids.addAll(u.getTeamIds());
-            for (Long id : ids) bump(c, id, 0);
+            boolean inactive = !Boolean.TRUE.equals(u.getActive());
+            for (Long id : ids) { bump(c, id, 0); if (inactive) bump(c, id, 6); }
         }
         for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) bump(c, i.getTeamId(), 1);
         for (var e : monitorRepos().entrySet()) {
@@ -106,6 +108,8 @@ public class TeamAdminService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("members", v[0]); m.put("domains", v[1]); m.put("monitors", v[2]);
             m.put("open_alerts", v[3]); m.put("contacts", v[4]); m.put("groups", v[5]);
+            // 2026-10-02: üye sayısının pasif kısmı (members = toplam, pasifler dâhil) — arayüz "N aktif · M pasif" yazar.
+            m.put("members_inactive", v[6]);
             out.put(e.getKey(), m);
         }
         return out;

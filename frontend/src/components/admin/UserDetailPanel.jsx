@@ -47,15 +47,22 @@ let savedOverflow = ''
  * kalır. Escape yalnız EN ÜSTTEKİ katmanı kapatır (Radix DismissableLayer yığını: alttaki ModalShell'in
  * `onEscapeKeyDown`'u çağrılmaz) — gate: `TeamManager.test.jsx` "üst üste açılan detay". Bu kipte içeriden açılan bir
  * TeamBadge penceresi (2000) bu kabuğun ALTINDA kalır; takım penceresinden gelen kullanıcı için takım zaten açıktır.
+ *
+ * <p><b>`initialTab` (2026-10-02, isteğe bağlı):</b> açılış sekmesi — kullanıcı düzenleyicisindeki "AD ile karşılaştır"
+ * pencereyi doğrudan Dizin sekmesinde açar. Sekme bu kullanıcıda yoksa (ör. yerel hesapta Dizin) Genel Bakış.
  */
-export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin = false, onClose, onEdit, onChanged, onUnlock, stacked = false }) {
+export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin = false, onClose, onEdit, onChanged, onUnlock, stacked = false, initialTab = 'overview' }) {
   const t = useT()
-  const [tab, setTab] = useState('overview')
+  const showDirectory = !!isAdmin && user.auth_source === 'LDAP'
+  const [tab, setTab] = useState(() => {
+    if (initialTab === 'directory') return showDirectory ? 'directory' : 'overview'
+    if ((initialTab === 'permissions' || initialTab === 'changes') && !isAdmin) return 'overview'
+    return initialTab || 'overview'
+  })
   const bodyRef = useRef(null)
   const name = fullNameOf(user)
   const teamIds = useMemo(() => teamIdsOf(user), [user])
   const teamMap = useMemo(() => Object.fromEntries((teams || []).map((x) => [Number(x.id), x.name])), [teams])
-  const showDirectory = !!isAdmin && user.auth_source === 'LDAP'
 
   // ── Bölümler: her biri kendi durumunu taşır (yükleniyor / hata + yeniden dene / veri) ──
   // Üyelik + KAYNAK izi sunucudan TAZE okunur (yeniden eşitlemeden sonra `user` prop'u bayat kalır).

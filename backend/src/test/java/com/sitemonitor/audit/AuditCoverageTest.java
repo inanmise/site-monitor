@@ -70,6 +70,9 @@ class AuditCoverageTest {
               + "dönüştüğünde MONITOR_CREATE zaten yazılır. Silme (deleteScriptedDraft) denetleniyor.");
         EXEMPT.put("IncidentController#previewNotification",
                 "Yalnız HTML önizler: kaydetmez, göndermez, dış bağlantı açmaz — durum değişmiyor.");
+        EXEMPT.put("UserBulkDeactivationController#preview",
+                "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
+              + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");
         EXEMPT.put("SystemController#triggerHeartbeat",
                 "Yönetici tetikli sistem canlılık kaydı: sistem sağlık zaman çizelgesine tek satır "
               + "yazar, kalıcı bir yapılandırma/veri değişikliği yapmaz. Komşusu scheduler-lock "
@@ -79,6 +82,10 @@ class AuditCoverageTest {
               + "başkasının kilidini gasp etmek denetlenmeli: ayrı iş olarak not edildi.)");
         EXEMPT.put("WeeklyReportController#unlock",
                 "Kilit bırakma — kalıcı durum değişikliği değil.");
+        EXEMPT.put("AuthController#sessionLeave",
+                "Sekme kapanışı sinyali (2026-10-02, çevrimiçi göstergesi): yalnız bu oturumun lastSeenAt "
+              + "damgasını siler — oturum ping'inin (GET, denetimsiz) tersi; oturum, yetki ya da kalıcı veri "
+              + "değişmez. Her sekme kapanışında bir denetim satırı yalnız gürültü olurdu.");
         EXEMPT.put("AuditController#replayFallback",
                 "Kendisi AUDIT_REPLAY yazar ama auditService üzerinden değil replay servisinden "
               + "(Faz 5'te eklenecek; şimdilik uç yok).");

@@ -68,6 +68,9 @@ describe('UserManager — zenginleştirme', () => {
     confirmMock.mockResolvedValueOnce(true)
     fireEvent.click(within(bar).getByRole('button', { name: /Pasif yap|Deactivate/ }))
     await waitFor(() => expect(api.admin.bulkUsers).toHaveBeenCalledWith({ action: 'deactivate', ids: [1, 2] }))
+    // 2026-10-02: onay metni pasifleştirmenin sonucunu söyler (oturumlar hemen kapanır, giriş ve bildirim yok).
+    expect(confirmMock.mock.calls[0][0].message).toMatch(/oturumları hemen kapanır|signed out of every open session/)
+    expect(confirmMock.mock.calls[0][0].message).toMatch(/bildirim|notifications/)
     // Seçim temizlenir, liste tazelenir
     await waitFor(() => expect(screen.queryByTestId('bulk-bar')).toBeNull())
     expect(api.admin.searchUsers.mock.calls.length).toBeGreaterThan(1)
@@ -84,6 +87,8 @@ describe('UserManager — zenginleştirme', () => {
     fireEvent.click(within(bar).getByRole('button', { name: /Aktif yap|^Activate$/ }))
     await waitFor(() => expect(confirmMock).toHaveBeenCalled())
     expect(api.admin.bulkUsers).not.toHaveBeenCalled()
+    // Yeniden aktifleştirme erişimi açar, oturumları geri getirmez (2026-10-02).
+    expect(confirmMock.mock.calls[0][0].message).toMatch(/kapanan oturumlar geri gelmez|closed sessions do not come back/)
   })
 
   it('canManage değilse onay kutusu ve çubuk yok', async () => {

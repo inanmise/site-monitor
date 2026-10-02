@@ -97,6 +97,46 @@ public class NocNotificationService {
     @Value("${site.monitor.app.base-url:http://localhost:5173}")
     private String fallbackBaseUrl = "";
 
+    /**
+     * Sistem Bakım Modu (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN 7/24 (NOC)
+     * e-postası gitmez. Ana kapı alarm hunisinde ({@code EscalationService}); bu MERKEZÎ ağ hunin dışından gelen çağrıları
+     * (sessiz kapanışın ÇÖZÜLDÜ postası, fırtına tikleri) yakalar. Alan enjeksiyonu + isteğe bağlı: yokken davranış birebir.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    private boolean systemMaintenanceMuted() {
+        try {
+            return systemMaintenance != null && systemMaintenance.notificationsMuted();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Susturmanın izi ("never silent") — NOC kategorili {@code SKIPPED: sistem bakımı} satırı (adres yazılmaz). */
+    private void logSystemMaintenanceSkip(Long alertEventId, String trigger) {
+        try {
+            NotificationLog n = new NotificationLog();
+            n.setAlertEventId(alertEventId == null ? 0L : alertEventId);
+            n.setSentAt(now());
+            n.setRecipientName("7/24 İzleme Ekibi");
+            n.setRecipientEmail("-");
+            n.setRecipientRole(LOG_ROLE);
+            n.setSubject("Sistem bakımı — 7/24 bildirimi susturuldu");
+            n.setMessage("");
+            n.setEmailStatus(com.sitemonitor.service.SystemMaintenanceService.STATUS_SKIPPED);
+            n.setWebhookStatus("SKIPPED");
+            n.setTrigger(trigger);
+            n.setEmailFrom(email.getEmailFrom());
+            notificationLogs.save(n);
+        } catch (Exception e) {
+            log.warn("7/24 posta günlüğü yazılamadı (sistem bakımı): {}", e.getMessage());
+        }
+    }
+
     /** Zaman kaynağı — testte ilerletilebilir (bayat "gönderiliyor", güncelleme aralığı). */
     java.time.Clock clock = java.time.Clock.systemUTC();
 
@@ -152,6 +192,7 @@ public class NocNotificationService {
                                   String trigger, Map<String, Object> ctx) {
         try {
             if (event == null || event.getId() == null || !OPEN_TRIGGERS.contains(trigger)) return;
+            if (systemMaintenanceMuted()) return;   // iz alarm hunisinde (SYSTEM_MAINTENANCE satırı) yazıldı
             NocType type = NocType.forAlertType(alertType);
             if (type == null) return;
             NocConfigService.Config cfg = config.get();
@@ -213,6 +254,10 @@ public class NocNotificationService {
             if (!cfg.sendResolve()) return;
             NocDelivery open = deliveries.findByDedupeKey("alert:" + event.getId() + ":" + NocDelivery.OPEN).orElse(null);
             if (open == null || !sent(open.getStatus())) return;   // açılış NOC'a gitmediyse çözüm de gitmez
+            if (systemMaintenanceMuted()) {   // sistem bakımı (2026-10-02): ÇÖZÜLDÜ postası susturuldu — iz bırakır
+                logSystemMaintenanceSkip(event.getId(), TRIGGER_RESOLVE);
+                return;
+            }
             String key = "alert:" + event.getId() + ":" + NocDelivery.RESOLVE;
             Optional<NocDelivery> prev = deliveries.findByDedupeKey(key);
             if (prev.isPresent() && blocking(prev.get())) return;
@@ -283,6 +328,7 @@ public class NocNotificationService {
     public void onStormDispatched(AlertStorm storm, List<AlertEvent> downMembers, String scopeLabel, String rootCause) {
         try {
             if (storm == null || storm.getId() == null || downMembers == null || downMembers.isEmpty()) return;
+            if (systemMaintenanceMuted()) return;   // sistem bakımı: fırtına postası susturuldu (iz StormService'te)
             String key = "storm:" + storm.getId() + ":" + NocDelivery.OPEN;
             Optional<NocDelivery> prev = deliveries.findByDedupeKey(key);
             if (prev.isPresent() && blocking(prev.get())) return;
@@ -354,6 +400,7 @@ public class NocNotificationService {
     public void onStormTick(AlertStorm storm, List<AlertEvent> activeMembers, String scopeLabel, String rootCause) {
         try {
             if (storm == null || storm.getId() == null || activeMembers == null || activeMembers.isEmpty()) return;
+            if (systemMaintenanceMuted()) return;   // sistem bakımı: fırtına güncellemesi bakım sonrasına kalır
             NocDelivery open = deliveries.findByDedupeKey("storm:" + storm.getId() + ":" + NocDelivery.OPEN).orElse(null);
             // O-3 sessiz taşıma (D-b6): açılış ESKİ fırtınayla gittiyse yeni "FIRTINA" açılış postası YOK — taşınan üyeler
             // 7/24'e zaten bildirildi (alert:<id>:OPEN izi); yalnız sonradan katılanlar aşağıdaki toplu güncellemeyle gider.
@@ -447,6 +494,7 @@ public class NocNotificationService {
     public void onStormRecovered(AlertStorm storm, List<AlertEvent> recovered, List<AlertEvent> stillDown) {
         try {
             if (storm == null || storm.getId() == null || recovered == null || recovered.isEmpty()) return;
+            if (systemMaintenanceMuted()) return;   // sistem bakımı: fırtına çözüm postası susturuldu (iz StormService'te)
             NocConfigService.Config cfg = config.get();
             if (!cfg.sendResolve()) return;
             String key = "storm:" + storm.getId() + ":" + NocDelivery.RESOLVE;

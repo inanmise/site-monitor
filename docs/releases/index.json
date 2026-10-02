@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-02T05:26:41Z",
+  "generatedAt": "2026-10-02T20:50:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 696,
+  "count": 697,
   "releases": [
+    {
+      "version": "20.97.0",
+      "tag": "v20.97.0",
+      "releasedAt": "2026-10-02T20:50:04Z",
+      "commit": "733871fe9c192e3d6fb10d7858566e528be9f889",
+      "prevVersion": "20.96.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "733871fe",
+          "subject": "AppPreferences testinde lazy Etkinliklerim modülünü önceden ısıt"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "aa71f2f2",
+          "subject": "HTTP uçtan uca tanılama, pasif hesap kuralları, toplu pasife alma, sistem bakım modu, çevrimiçi göstergesi, yeni kullanıcı düzenleyici"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.96.1",
       "tag": "v20.96.1",

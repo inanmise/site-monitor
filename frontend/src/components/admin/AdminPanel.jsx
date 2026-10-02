@@ -113,7 +113,7 @@ export default function AdminPanel({ systemRole, ownTeamId, myTeamIds, currentUs
             <RecipientSimulator teams={teams} isAdmin={isAdmin} onNavigate={jump}
               defaultTeamId={!isAdmin && teams.length === 1 ? teams[0].id : ''} />
           )}
-          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} />}
+          {activeTab === 'teams'      && <TeamManager systemRole={systemRole} ownTeamId={ownTeamId} myTeamIds={myTeamIds} onTeamsChange={loadTeams} globalAdmin={globalAdmin} currentUsername={currentUsername} />}
           {activeTab === 'users'      && <UserManager systemRole={systemRole} ownTeamId={ownTeamId} currentUsername={currentUsername} teams={teams} globalAdmin={globalAdmin} />}
         </TabsContent>
       </Tabs>

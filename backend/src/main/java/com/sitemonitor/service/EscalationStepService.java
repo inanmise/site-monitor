@@ -101,6 +101,27 @@ public class EscalationStepService {
         this.quietHours = quietHours;
     }
 
+    /** Pasif kullanıcı süzgeci (2026-10-02) — isteğe bağlı; yokken adım kararı bugünküyle aynı. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(InactiveRecipientGuard guard) {
+        this.inactiveGuard = guard;
+    }
+
+    /**
+     * Sistem Bakım Modu (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım sürerken VE bitişteki
+     * telafi işi koşana dek adım turu BEKLER (karar sahiplenilmez, hiçbir şey kaybolmaz): bakım sonrasında adımlar kendi
+     * çapalarıyla değerlendirilir; bakımda açılan alarmın çapası telafi INITIAL'ı olur (gecikmeli kişi takımdan önce aranmaz).
+     * İsteğe bağlı; yokken davranış bayt bayt bugünkü.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    void setSystemMaintenance(SystemMaintenanceService s) {
+        this.systemMaintenance = s;
+    }
+
     /** Tur özeti (log + test). */
     public record SweepResult(int candidates, int sent, int skipped, int prior) {
         static final SweepResult EMPTY = new SweepResult(0, 0, 0, 0);
@@ -111,6 +132,10 @@ public class EscalationStepService {
     public void scheduledSweep() {
         // Bugünkü kurulum (hiçbir kişide gecikme yok): tek boolean sorgu, kilit yok, açık alarm okunmaz.
         if (!anyDelayedContact()) return;
+        if (systemMaintenanceHeld()) {
+            log.debug("Eskalasyon adımı turu sistem bakımı nedeniyle bekletildi (bildirimler susturulmuş / telafi bekleniyor)");
+            return;
+        }
         schedulerService.runWithSchedulerLock(LOCK_NAME, () -> {
             SweepResult r = sweep(Instant.now(clock));
             if (r.sent() > 0 || r.skipped() > 0) {
@@ -118,6 +143,14 @@ public class EscalationStepService {
                         r.candidates(), r.sent(), r.skipped(), r.prior());
             }
         });
+    }
+
+    private boolean systemMaintenanceHeld() {
+        try {
+            return systemMaintenance != null && systemMaintenance.notificationsHeld();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     boolean anyDelayedContact() {
@@ -298,6 +331,13 @@ public class EscalationStepService {
         if (skip != null) {
             if (claim(e, c, AlertEscalationStep.SKIPPED, skip, now) == null) return Decision.NONE;
             escalationService.recordEscalationStepSkipped(e, c, delay, skip);
+            return Decision.SKIPPED;
+        }
+        // Pasif kullanıcıya bağlı kişi (2026-10-02, kullanıcı kararı): adım gitmez, sessiz de değildir — günlükte
+        // ESCALATION_STEP + "SKIPPED: pasif kullanıcı". Karar (alarm, kişi, seviye) başına bir kez sahiplenilir.
+        if (inactiveGuard != null && inactiveGuard.isInactiveContact(c)) {
+            if (claim(e, c, AlertEscalationStep.SKIPPED, InactiveRecipientGuard.SKIP_REASON, now) == null) return Decision.NONE;
+            escalationService.recordEscalationStepSkipped(e, c, delay, InactiveRecipientGuard.SKIP_REASON);
             return Decision.SKIPPED;
         }
         // Sessiz saat: karar SAHİPLENMEDEN beklet — pencere ve özet bitince adım (özet anından itibaren gecikmesiyle) gider.

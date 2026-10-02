@@ -125,4 +125,17 @@ describe('TeamManager — süzgeç + toplu işlem (2026-09-20)', () => {
     // Standart PaginationBar (iç düzeni sayfalama ajanının elinde değişiyor → kök kancasıyla doğrulanır)
     await waitFor(() => expect(document.querySelector('[data-slot="pagination-bar"]')).not.toBeNull())
   })
+
+  it('üye sayacı pasif üye varsa "N aktif · M pasif" yazar (2026-10-02); yoksa bugünkü "N üye"', async () => {
+    api.admin.teamStats.mockResolvedValue({ success: true, data: {
+      1: { members: 3, members_inactive: 1, open_alerts: 0 }, 2: { members: 1, members_inactive: 0 }, 3: { members: 0 },
+    } })
+    render(<TeamManager systemRole="ADMIN" onTeamsChange={() => {}} />)
+    await screen.findByText('Payments')
+    await waitFor(() => expect(rows()).toHaveLength(3))
+    const statsOf = (name) => rows().find((r) => r.textContent.includes(name)).querySelector('[data-testid="team-stats"]')
+    await waitFor(() => expect(statsOf('Payments')).toHaveTextContent(/2 aktif · 1 pasif|2 active · 1 inactive/))
+    expect(statsOf('Ledger')).toHaveTextContent(/1 üye|1 members/)
+    expect(statsOf('Ledger')).not.toHaveTextContent(/pasif|inactive/)
+  })
 })

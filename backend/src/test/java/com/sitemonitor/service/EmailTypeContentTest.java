@@ -121,6 +121,27 @@ class EmailTypeContentTest {
                 .doesNotContain("Hâlâ erişilemeyen");
     }
 
+    // ── Sistem bakımı tamamlandı (2026-10-02, kullanıcı isteği) ─────────────────
+
+    @Test
+    @DisplayName("bakım tamamlandı: plan + gerçekleşen pencere, uzatma notu (TR + EN), yeşil TAMAMLANDI rozeti; boş neden yazılmaz")
+    void systemMaintenanceEnded() {
+        var info = new com.sitemonitor.service.mail.SystemMaintenanceMail.Info(
+                com.sitemonitor.service.mail.SystemMaintenanceMail.Kind.ENDED, "02.10.2026 22:00 – 23:30", "1 sa 30 dk", null, null,
+                "BT Destek · 1234", BASE, "02.10.2026 22:00 – 23:00",
+                com.sitemonitor.service.mail.SystemMaintenanceMail.EndShift.EXTENDED);
+        var m = com.sitemonitor.service.mail.SystemMaintenanceMail.build(info);
+        assertThat(com.sitemonitor.service.mail.SystemMaintenanceMail.subject(info))
+                .isEqualTo("[Site Monitor] Planlı bakım tamamlandı · 02.10.2026 22:00 – 23:30");
+        assertThat(m.html()).contains("TAMAMLANDI").contains(">Planlanan<").contains("02.10.2026 22:00 – 23:00 (İstanbul saati)")
+                .contains(">Gerçekleşen<").contains("02.10.2026 22:00 – 23:30 (İstanbul saati)")
+                .contains("uzatıldı, planlanandan geç bitti").contains("It was extended and ended later than planned")
+                .contains("Site Monitor yeniden kullanılabilir").contains("BT Destek · 1234").contains(BASE)
+                .doesNotContain("Bakım nedeni").doesNotContain("Reason:")
+                .contains("color:" + MailTokens.Tone.SUCCESS.strong);
+        assertThat(m.text()).contains("Planlı bakım tamamlandı").contains("Gerçekleşen");
+    }
+
     // ── SMTP test ────────────────────────────────────────────────────────────
 
     @Test

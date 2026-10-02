@@ -49,6 +49,10 @@ import App from '../App.jsx'
 import './appLazyWarmup.js'   // App'in lazy CertificateModal'ı — soğuk dönüşüm testin dışında (öneri 22)
 import { applyTabView } from '../utils/navigate.js'
 
+// Etkinliklerim sekmesi de LAZY (MyAuditLog): soğuk dönüşümü testin 1 sn'lik findBy beklemesinin İÇİNE düşüyor ve
+// yük altında (CI, 2026-10-02) sahte kırmızı veriyordu. appLazyWarmup ile aynı ders — maliyet dosya yüklenirken ödenir.
+await import('../components/MyAuditLog')
+
 const ME = (extra = {}) => ({ success: true, username: 'ali', system_role: 'USER', global_admin: false, team_ids: [], ...extra })
 const tabParam = () => new URLSearchParams(window.location.search).get('tab')
 
@@ -152,7 +156,8 @@ describe('App — kayıtlı görünüm uygulama', () => {
 describe('App — Etkinliklerim "Açılış sekmesi" seçicisi', () => {
   it('seçenekler görünürlüğe uyar (SQL Playground / Ayarlar yok), varsayılan Pano; seçim tercihe yazılır', async () => {
     await boot('/?tab=myactivity')
-    const select = await screen.findByLabelText(/Tab to open after signing in|Girişten sonra açılacak sekme/)
+    // Lazy sekme: ısıtılmış olsa da yük altında ilk çizim 1 sn'yi aşabilir — süre yalnız bekleme TAVANI, başarı anında döner
+    const select = await screen.findByLabelText(/Tab to open after signing in|Girişten sonra açılacak sekme/, {}, { timeout: 10_000 })
     await waitFor(() => expect(select).not.toBeDisabled())
     const values = [...select.querySelectorAll('option')].map((o) => o.value)
     expect(values[0]).toBe('')

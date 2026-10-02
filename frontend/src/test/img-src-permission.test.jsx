@@ -64,7 +64,8 @@ describe('img src yetki bekçisi', () => {
       // Takım üyeleri penceresi (kullanıcı kararı 2026-09-28: fotoğraf görünür) — authenticated uçtan.
       'components/ui/TeamMemberCards.jsx',
       'components/admin/UserManager.jsx',
-      'components/admin/UserEditModal.jsx',
+      // Paylaşılan kullanıcı düzenleyicisi (2026-10-02) avatarı userdetail/UserDetailHeader UserAvatar'ından alır.
+      'components/admin/userdetail/UserDetailHeader.jsx',
       'components/ui/UserBadge.jsx',
     ]
     for (const rel of consumers) {

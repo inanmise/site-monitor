@@ -4,7 +4,6 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
-import MultiTeamSelect from '../ui/MultiTeamSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import UserDetailPanel from './UserDetailPanel.jsx'
@@ -22,27 +21,21 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { CARD_CHECK, CARD_LAYER } from '../monitoring/MonitorCard.jsx'
-import { UserPlus, UserCog, BellOff } from 'lucide-react'
+import { UserPlus, BellOff } from 'lucide-react'
 import AdminAutoResetModal from './AdminAutoResetModal.jsx'
-import UserEditModal, { ModalHeaderAvatar } from './UserEditModal.jsx'
-import ModalShell from '../ui/ModalShell.jsx'
-import Field from '../ui/Field.jsx'
+import UserEditor from './user-editor/UserEditor.jsx'
+import BulkDeactivateWizard from './BulkDeactivateWizard.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import ToneBadge, { OrgRoleBadge, SystemRoleBadge } from './ToneBadge.jsx'
 import { ToolbarSearch, FilterPanel, FilterField } from './ListToolbar.jsx'
-import { CheckboxRow } from './SettingsControls.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
-import { Input } from '@/components/shadcn/input'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Card } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-
-const emptyUser = { username: '', password: '', display_name: '', email: '', employee_id: '', system_role: 'USER', team_ids: [], org_role: '', active: true,
-  first_name: '', last_name: '', title: '', phone: '', department: '', company_level: '', mudurluk_name: '', manager_sicil: '' }
 
 const AVATAR_PALETTE = [
   'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
@@ -124,16 +117,6 @@ function UserKpi({ kpiKey, icon: Icon, label, value, sub, tone, active = false, 
   )
 }
 
-/**
- * Düzenleme formu alanı → LDAP alan-kilidi anahtarı (backend LdapFieldLocks.FIELDS; müdürlük ad+kimlik tek kilit,
- * müdür sicil+bağ tek kilit). Formda olmayan alan (fotoğraf) kilit konusu değil.
- */
-const FORM_LOCK_KEY = {
-  display_name: 'display_name', email: 'email', employee_id: 'employee_id', first_name: 'first_name', last_name: 'last_name',
-  title: 'title', phone: 'phone', department: 'department', company_level: 'company_level', mudurluk_name: 'mudurluk',
-  manager_sicil: 'manager',
-}
-
 export default function UserManager({ systemRole, ownTeamId, currentUsername, teams, globalAdmin = false }) {
   const t = useT()
   const toast = useToast()
@@ -148,8 +131,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [modal, setModal] = useState(null)
   const [autoResetModal, setAutoResetModal] = useState(null)
   const [viewUser, setViewUser] = useState(null)   // satıra tıklayınca açılan salt-okunur detay modalı
-  const [form, setForm] = useState(emptyUser)
-  const [saving, setSaving] = useState(false)
+  // Detayın açılış sekmesi: düzenleyicideki "AD ile karşılaştır" Dizin sekmesiyle açar (2026-10-02); kapanınca sıfırlanır.
+  const [viewTab, setViewTab] = useState('overview')
+  // Sayfa düzeyi bilgi bandı — satır menüsündeki "Şifre Sıfırla"nın sonucu (düzenleyici kendi hatasını içinde gösterir).
   const [msg, setMsg] = useState(null)
 
   // Filtre + sunucu-taraflı sayfalama
@@ -160,6 +144,8 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
   const [selected, setSelected] = useState(() => new Set())                    // toplu işlem seçimi (id)
   const [bulk, setBulk] = useState(null)                                        // { action, team_id, org_role }
   const [bulkBusy, setBulkBusy] = useState(false)
+  // Sistem geneli toplu pasife alma sihirbazı (2026-10-02, kullanıcı kararı) — yalnız GLOBAL yönetici; seçimli çubuk ayrı.
+  const [bulkWizard, setBulkWizard] = useState(false)
   const [fRole, setFRole] = useState(() => readUrlParam('g_role', ''))
   const [fOrgRole, setFOrgRole] = useState(() => readUrlParam('g_org', ''))
   const [fTeam, setFTeam] = useState(() => readUrlParam('g_team', ''))
@@ -239,9 +225,13 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
 
   async function runBulk(action, extra = {}) {
     const labels = { activate: t('usr.bulkActivate'), deactivate: t('usr.bulkDeactivate'), assign_team: t('usr.bulkAssignTeam'), set_org_role: t('usr.bulkOrgRole') }
+    // Aktiflik değişiminin sonucu onay metninde AÇIKÇA yazar (2026-10-02, kullanıcı kararı): pasifleştirme oturumları
+    // hemen kapatır, girişi engeller, bildirimleri keser; yeniden aktifleştirme yalnız erişimi açar (oturumlar geri gelmez).
+    const effects = action === 'deactivate' ? t('usr.deactivateEffects')
+      : action === 'activate' ? t('usr.activateEffects') : null
     const ok = await showConfirm({
       title: t('usr.bulkTitle'),
-      message: t('usr.bulkConfirm', selected.size, labels[action] || action),
+      message: t('usr.bulkConfirm', selected.size, labels[action] || action) + (effects ? `\n\n${effects}` : ''),
       confirmText: t('usr.bulkApply'),
       variant: action === 'deactivate' ? 'danger' : undefined,
     })
@@ -281,72 +271,10 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     toast.success(t('usr.exportDone', rows.length))
   }
 
-  function openAdd() { setForm(emptyUser); setMsg(null); setModal('add') }
-  function openEdit(user) {
-    setForm({
-      username: user.username,
-      password: '',
-      display_name: user.display_name || '',
-      email: user.email || '',
-      employee_id: user.employee_id || '',
-      system_role: user.system_role || 'USER',
-      team_ids: user.team_ids ?? user.teamIds ?? (user.team_id != null ? [user.team_id] : []),
-      org_role: user.org_role || '',
-      active: user.active,
-      first_name: user.first_name || '',
-      last_name: user.last_name || '',
-      title: user.title || '',
-      phone: user.phone || '',
-      department: user.department || '',
-      company_level: user.company_level || '',
-      mudurluk_name: user.mudurluk_name || '',
-      manager_sicil: user.manager_sicil || '',
-    })
-    setMsg(null)
-    setModal(user)
-  }
-
-  async function save() {
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      setMsg(t('usr.emailInvalid'))
-      return
-    }
-    setSaving(true)
-    try {
-      const teamIds = isTeamAdmin
-        ? (ownTeamId != null ? [ownTeamId] : [])
-        : (form.team_ids || [])
-      const payload = {
-        username: form.username.trim(),
-        display_name: form.display_name,
-        email: form.email,
-        employee_id: form.employee_id,
-        system_role: form.system_role,
-        team_ids: teamIds,
-        team_id: teamIds[0] ?? null,
-        org_role: form.org_role || null,
-        active: form.active,
-        first_name: form.first_name,
-        last_name: form.last_name,
-        title: form.title,
-        phone: form.phone,
-        department: form.department,
-        company_level: form.company_level,
-        mudurluk_name: form.mudurluk_name,
-        manager_sicil: form.manager_sicil,
-      }
-      let res
-      if (modal === 'add') {
-        res = await api.admin.createUser({ ...payload, password: form.password })
-      } else {
-        res = await api.admin.updateUser(modal.id, payload)
-      }
-      if (res?.success) { setModal(null); toast.success(t('usr.saved')); refresh() }
-      else setMsg(res?.error || 'Error')
-    } finally {
-      setSaving(false)
-    }
-  }
+  // Ekle / düzenle: paylaşılan kullanıcı düzenleyicisi (user-editor/UserEditor, 2026-10-02). Form durumu, doğrulama,
+  // kayıt yükü (takım yöneticisinde kendi takımına sabitleme dâhil) ve korumalar orada — burada yalnız hangi kayıt.
+  function openAdd() { setMsg(null); setModal('add') }
+  function openEdit(user) { setMsg(null); setModal(user) }
 
   async function unlock(id) {
     const res = await api.admin.unlockUser(id)
@@ -387,32 +315,6 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
     if (res?.success) { toast.success(t('usr.deleted')); refresh() }
     else toast.error(res?.error || 'Error')
   }
-
-  const warn = (text) => <span className="text-xs text-warning">{text}</span>
-  const editingLocked = modal !== null && modal !== 'add' && (isSelf(modal) || isLastActiveAdmin(modal))
-  // LDAP alan kilidi (2026-09-30): AD kaynaklı alanın altında durum ipucu — kilitliyse "elle düzenlendi, AD ezmez",
-  // değilse "AD'den gelir, düzenlersen kilitlenir". Yalnız LDAP hesabının düzenlemesinde; kayıt davranışı değişmez
-  // (kilit sunucuda, alan GERÇEKTEN değişince konur).
-  const editingLdap = modal !== null && modal !== 'add' && modal?.auth_source === 'LDAP'
-  const lockedKeys = new Set(editingLdap ? (modal.locked_field_keys || []) : [])
-  const adHint = (formKey) => {
-    const lockKey = FORM_LOCK_KEY[formKey]
-    if (!editingLdap || !lockKey) return undefined
-    if (!lockedKeys.has(lockKey)) return t('usr.fieldFromAdHint')
-    return (
-      <span className="inline-flex flex-wrap items-center gap-1.5">
-        <Badge variant="warning" data-lock="field" data-field={lockKey} className="gap-1 px-1.5 py-0 text-[11px]">
-          <Lock aria-hidden="true" className="size-3" />{t('usr.fieldLockedBadge')}
-        </Badge>
-        {t('usr.fieldLockedHint')}
-      </span>
-    )
-  }
-  const profileField = (key, labelKey) => (
-    <Field label={t(labelKey)} hint={adHint(key)} hintTone={lockedKeys.has(FORM_LOCK_KEY[key]) ? 'warn' : undefined}>
-      {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />}
-    </Field>
-  )
 
   // ── Görünüm parçaları (2026-09-26 yeniden tasarım) ──
   const now = Date.now()
@@ -562,6 +464,12 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={exportCsv} title={t('usr.exportCsv')}><Download size={14} aria-hidden="true" /> {t('usr.exportCsv')}</Button>
+          {globalAdmin && (
+            <Button variant="outline" onClick={() => setBulkWizard(true)} title={t('ubd.openHint')} data-slot="um-bulk-deactivate"
+              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive">
+              <UserX size={14} aria-hidden="true" /> {t('ubd.open')}
+            </Button>
+          )}
           {canManage && <Button variant="success" onClick={openAdd}><UserPlus size={14} aria-hidden="true" /> {t('usr.addBtn')}</Button>}
         </div>
       </div>
@@ -738,123 +646,20 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
       {/* Kullanıcı geçmişi yalnız global ADMIN (rol/takım/parola sıfırlama kayıtları kişisel veri taşır). */}
       <AdminChangeHistory resource="USER" filter={histFilter} onClearFilter={() => setHistFilter(null)} canView={isAdmin} />
 
-      <ModalShell open={modal !== null} onClose={() => setModal(null)} size="md"
-        title={(
-          <span className="flex items-center gap-2.5">
-            {modal === 'add'
-              ? <UserPlus size={20} aria-hidden="true" />
-              : <ModalHeaderAvatar userId={modal?.id}><UserCog size={20} aria-hidden="true" /></ModalHeaderAvatar>}
-            {modal === 'add' ? t('usr.addTitle') : t('usr.editTitle')}
-          </span>
-        )}
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => setModal(null)}>{t('usr.cancel')}</Button>
-            <Button onClick={save} aria-busy={saving || undefined}
-              disabled={saving || !form.username.trim() || !form.email.trim() || (form.system_role !== 'ADMIN' && (isTeamAdmin ? !ownTeamId : form.team_ids.length === 0)) || (modal === 'add' && form.password.length < 4)}>
-              {saving ? t('usr.saving') : t('usr.save')}
-            </Button>
-          </>
-        )}>
-        {/* items-start: alanlar üstten hizalansın — "Takım"daki uyarı ipucu (teamRequired)
-            altta dururken Organizasyonel Rol ile Takım seçicileri karşılıklı kalsın */}
-        <div className="grid grid-cols-1 items-start gap-x-3 sm:grid-cols-2">
-          <Field label={t('usr.formUsername')} required>
-            {({ id }) => (
-              <Input id={id} value={form.username} disabled={modal !== 'add'}
-                onChange={(e) => setForm({ ...form, username: e.target.value })} />
-            )}
-          </Field>
-          {modal === 'add' && (
-            <Field label={t('usr.formPassword')} required>
-              {({ id }) => (
-                <Input id={id} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  autoComplete="new-password" />
-              )}
-            </Field>
-          )}
-          {profileField('display_name', 'usr.formDisplay')}
-          <Field label={t('usr.formEmail')} required hint={adHint('email')} hintTone={lockedKeys.has('email') ? 'warn' : undefined}>
-            {({ id, describedBy }) => (
-              <Input id={id} type="email" aria-describedby={describedBy} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            )}
-          </Field>
-          {profileField('employee_id', 'usr.formEmployeeId')}
-          <Field label={t('usr.formRole')} hintTone="warn"
-            hint={modal !== null && modal !== 'add' && isSelf(modal) ? t('usr.selfRoleLocked')
-              : modal !== null && modal !== 'add' && isLastActiveAdmin(modal) ? t('usr.lastAdminRoleLocked') : undefined}>
-            {({ id }) => (
-              <SearchableSelect id={id}
-                value={form.system_role}
-                onChange={v => setForm({ ...form, system_role: v })}
-                disabled={editingLocked}
-                options={isAdmin ? [
-                  { value: 'USER',       label: 'USER' },
-                  { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
-                  { value: 'AUDIT',      label: 'AUDIT' },
-                  { value: 'ADMIN',      label: 'ADMIN' },
-                ] : [
-                  { value: 'USER',       label: 'USER' },
-                  { value: 'TEAM_ADMIN', label: 'TEAM_ADMIN' },
-                ]}
-              />
-            )}
-          </Field>
-          <Field label={t('usr.orgRole')}>
-            {({ id }) => (
-              <SearchableSelect id={id}
-                value={form.org_role}
-                onChange={v => setForm({ ...form, org_role: v })}
-                options={[
-                  { value: '',              label: t('usr.orgRoleNone') },
-                  { value: 'TECH',          label: t('usr.orgRoleVal.TECH') },
-                  { value: 'PO',            label: t('usr.orgRoleVal.PO') },
-                  { value: 'MANAGER',       label: t('usr.orgRoleVal.MANAGER') },
-                  { value: 'BOLUM_BASKANI', label: t('usr.orgRoleVal.BOLUM_BASKANI') },
-                  { value: 'CLEVEL',        label: t('usr.orgRoleVal.CLEVEL') },
-                ]}
-              />
-            )}
-          </Field>
-          <Field label={t('usr.teamsLabel')} required={form.system_role !== 'ADMIN'} hintTone="warn"
-            hint={!isTeamAdmin && form.system_role !== 'ADMIN' && form.team_ids.length === 0 ? t('usr.teamsRequired') : undefined}>
-            {({ id }) => (isTeamAdmin ? (
-              <SearchableSelect id={id}
-                value={ownTeamId ?? ''}
-                onChange={() => {}}
-                disabled
-                options={[
-                  { value: ownTeamId ?? '', label: (teams || []).find(team => team.id === ownTeamId)?.name ?? t('usr.noTeam') },
-                ]}
-              />
-            ) : (
-              <MultiTeamSelect id={id}
-                value={form.team_ids}
-                onChange={ids => setForm({ ...form, team_ids: ids.map(Number) })}
-                placeholder={t('usr.teamsPlaceholder')}
-                searchThreshold={2}
-                options={(teams || []).map(team => ({ value: team.id, label: team.name }))}
-              />
-            ))}
-          </Field>
-          {/* AD'den eşlenen profil alanları (LDAP kullanıcısında bir sonraki login'de tazelenir) */}
-          {profileField('first_name', 'usr.formFirstName')}
-          {profileField('last_name', 'usr.formLastName')}
-          {profileField('title', 'usr.colTitle')}
-          {profileField('phone', 'usr.colPhone')}
-          {profileField('department', 'usr.colDept')}
-          {profileField('company_level', 'usr.formCompanyLevel')}
-          {profileField('mudurluk_name', 'usr.colMudurluk')}
-          {profileField('manager_sicil', 'usr.colManager')}
-          <div className="col-span-full mb-3.5 flex flex-wrap items-center gap-2">
-            <CheckboxRow checked={!!form.active} disabled={editingLocked} label={t('usr.formActive')}
-              onChange={(v) => setForm({ ...form, active: v })} />
-            {modal !== null && modal !== 'add' && isSelf(modal) && warn(t('usr.selfActiveLocked'))}
-            {modal !== null && modal !== 'add' && !isSelf(modal) && isLastActiveAdmin(modal) && warn(t('usr.lastAdminActiveLocked'))}
-          </div>
-        </div>
-        {msg && <AlertBanner tone="danger" className="mt-2">{msg}</AlertBanner>}
-      </ModalShell>
+      {/* Ekle / düzenle — paylaşılan kullanıcı düzenleyicisi (2026-10-02). Liste tazelenince (kilit açma, şifre sıfırlama)
+          düzenlenen kişinin GÜNCEL satırı verilir: başlık rozetleri tazelenir, yazılanlar silinmez (taban güncellenir). */}
+      {modal !== null && (
+        <UserEditor key={modal === 'add' ? 'add' : `u${modal.id}`} mode={modal === 'add' ? 'add' : 'edit'}
+          user={modal === 'add' ? null : (users.find((u) => u.id === modal.id) || modal)} teams={teams}
+          viewerRole={systemRole} globalAdmin={globalAdmin} ownTeamId={ownTeamId} currentUsername={currentUsername}
+          activeAdminCount={activeAdminCount}
+          onClose={() => setModal(null)} onSaved={refresh} onChanged={refresh}
+          onOpenDirectory={isAdmin ? (u) => { setModal(null); setViewTab('directory'); setViewUser(u) } : undefined} />
+      )}
+
+      {globalAdmin && (
+        <BulkDeactivateWizard open={bulkWizard} teams={teams} onClose={() => setBulkWizard(false)} onDone={refresh} />
+      )}
 
       {autoResetModal && (
         <AdminAutoResetModal
@@ -870,9 +675,9 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
           verilir; kilit açma MEVCUT işleyicilerle (menüdekiyle aynı yetki kapısı: canManage). */}
       {viewUser && (
         <UserDetailPanel user={users.find((u) => u.id === viewUser.id) || viewUser} teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin}
-          onClose={() => setViewUser(null)} onChanged={refresh}
+          initialTab={viewTab} onClose={() => { setViewUser(null); setViewTab('overview') }} onChanged={refresh}
           onUnlock={canManage ? { perm: unlock, role: roleUnlock, org: orgRoleUnlock, team: teamUnlock } : undefined}
-          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); openEdit(u) } : undefined} />
+          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); openEdit(u) } : undefined} />
       )}
     </section>
   )

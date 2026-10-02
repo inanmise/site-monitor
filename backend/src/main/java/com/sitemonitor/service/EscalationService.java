@@ -103,6 +103,69 @@ public class EscalationService {
     @Autowired(required = false)
     private TeamQuietHoursService quietHours;
 
+    /**
+     * Pasif kullanıcı süzgeci (2026-10-02, kullanıcı kararı: pasif kullanıcıya hiçbir bildirim gitmez) — {@code user_id}'si
+     * pasif kullanıcıya bağlı eskalasyon kişisi {@link #getContactsForLevel}'te düşer (e-postası VE webhook'u). Alan
+     * enjeksiyonu + isteğe bağlı: elle kurulan testlerde yoktur; hiç pasif kullanıcı yokken liste AYNI nesne döner.
+     */
+    @Autowired(required = false)
+    private InactiveRecipientGuard inactiveGuard;
+
+    /** Test kancası. */
+    void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
+
+    /**
+     * Sistem Bakım Modu (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN alarm
+     * bildirimleri (e-posta, kontak webhook'u, kişi push'u, 7/24) gönderilmez, her biri iz bırakır. Alan enjeksiyonu +
+     * isteğe bağlı (sessiz saat / pasif süzgeç deseni): elle kurulan testlerde yoktur; yokken ya da bakım yokken / anahtar
+     * kapalıyken gönderim yolu bayt bayt bugünküdür (karar pod önbelleğinden — gönderim başına sorgu yok).
+     */
+    @Autowired(required = false)
+    private SystemMaintenanceService systemMaintenance;
+
+    /** Test kancası. */
+    void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
+
+    /** Bu tetikteki bildirim sistem bakımı nedeniyle susturulsun mu? Elle gönderim (MANUAL) operatör iradesidir — susmaz. */
+    private boolean systemMaintenanceMuted(String trigger) {
+        if (systemMaintenance == null || TRIGGER_MANUAL.equals(trigger)) return false;
+        try {
+            return systemMaintenance.notificationsMuted();
+        } catch (Exception e) {
+            return false;   // durum okunamazsa bildirim bugünkü gibi gider (sessiz kayıp yok)
+        }
+    }
+
+    static final String TRIGGER_MANUAL = "MANUAL";
+
+    /**
+     * Sistem bakımı susturmasının İZİ ("never silent"): alarmın bildirim günlüğüne {@code SYSTEM_MAINTENANCE /
+     * SKIPPED: sistem bakımı} satırı, push kararına {@code SKIPPED_SYSTEM_MAINTENANCE}, bakım kaydına sayaç + telafi satırı
+     * (açılış INITIAL/ESCALATION ise bakım bitince BİR kez telafi edilir). Hata bildirim hattına yayılmaz.
+     */
+    void recordSystemMaintenanceSuppression(Long alertEventId, Long syTeamId, Long ugTeamId, String domain,
+                                            String level, String alertType, String trigger, String message) {
+        log.info("Sistem bakımı — alarm bildirimi susturuldu: olay={} alan={} tür={} seviye={} tetik={} "
+                + "(e-posta, webhook, push ve 7/24 atlandı)", alertEventId, domain, alertType, level, trigger);
+        if (alertEventId != null) {
+            saveLog(alertEventId, ownerTeamNames(syTeamId, ugTeamId), "",
+                    "Sistem bakımı — " + (trigger == null ? "" : trigger) + " bildirimi susturuldu",
+                    message != null ? message : "", SystemMaintenanceService.STATUS_SKIPPED, "SKIPPED",
+                    SystemMaintenanceService.TRIGGER);
+            try {
+                alertEventRepo.findById(alertEventId).ifPresent(e ->
+                        userPushService.recordSuppressedFor(e, trigger, SystemMaintenanceService.PUSH_SKIPPED));
+            } catch (Exception e) {
+                log.warn("Sistem bakımı push kararı yazılamadı (olay {}): {}", alertEventId, e.getMessage());
+            }
+        }
+        try {
+            systemMaintenance.noteSuppressed(alertEventId, trigger);
+        } catch (Exception e) {
+            log.warn("Sistem bakımı susturma kaydı yazılamadı (olay {}): {}", alertEventId, e.getMessage());
+        }
+    }
+
     // Inter-domain catch-up pacing now comes from the DB-backed SMTP settings
     // (admin Settings → SMTP → Gelişmiş), falling back to the env default.
     private long interDomainDelayMs() {
@@ -624,7 +687,7 @@ public class EscalationService {
         // Gönderimle AYNI kapsam (EscalationContactScope, 2026-09-28): takımın kendi kontakları; yedek yok. Eski
         // "contacts_fallback_global" bayrağı kalktı — başka takımın kişilerini "global" diye gösteriyordu.
         List<EscalationContact> contacts = managers
-                ? EscalationContactScope.forOwners(contactRepo, lvl, teamId, ug) : List.of();
+                ? withoutInactiveQuiet(EscalationContactScope.forOwners(contactRepo, lvl, teamId, ug)) : List.of();
         // Takım BAŞINA durum: kontak eklenecek seviyede takımda uyan kişi yoksa ekran o takım için "eskalasyon kişisi
         // tanımlı değil / bu seviyeye uyan yok — yalnız takım alıcılarına gider" der. "Tanımlı" = takımda HERHANGİ
         // bir etkin kişi var (eşiği yüksek). Birleşim listesinden değil takımın KENDİ sorgusundan hesaplanır: e-posta
@@ -632,7 +695,7 @@ public class EscalationService {
         List<Map<String, Object>> owners = new ArrayList<>();
         for (Long owner : java.util.Arrays.asList(teamId, ug)) {   // null üye (UG yok) atlanır
             if (owner == null) continue;
-            List<EscalationContact> own = managers ? EscalationContactScope.forLevel(contactRepo, lvl, owner) : List.of();
+            List<EscalationContact> own = managers ? withoutInactiveQuiet(EscalationContactScope.forLevel(contactRepo, lvl, owner)) : List.of();
             Map<String, Object> o = new LinkedHashMap<>();
             o.put("team_id", owner);
             o.put("role", owner.equals(teamId) ? "SY" : "UG");
@@ -1997,6 +2060,14 @@ public class EscalationService {
     }
 
     private void sendResolutionNotification(AlertEvent event, String resolvedBy, String trigger) {
+        // SİSTEM BAKIMI (2026-10-02, kullanıcı kararı): "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN çözüm de
+        // hiçbir kanaldan gitmez (e-posta, webhook, push, 7/24) — iz SYSTEM_MAINTENANCE satırı. Bakım içinde kapanan alarm
+        // için bakım sonrasında da bir şey gönderilmez (telafi yalnız hâlâ AÇIK alarmların açılışıdır).
+        if (event != null && systemMaintenanceMuted(trigger)) {
+            recordSystemMaintenanceSuppression(event.getId(), event.getTeamId(), null, event.getDomain(),
+                    event.getAlertLevel(), event.getAlertType(), trigger, "✅ " + event.getDomain() + " — sorun giderildi");
+            return;
+        }
         // 7/24 İzleme Ekibi: takımın çözüm e-postasından BAĞIMSIZ (aşağıdaki "alıcı yok / e-posta kapalı" erken
         // dönüşünden ÖNCE); açılışı NOC'a gitmediyse servis hiçbir şey göndermez.
         notifyNocResolved(event);
@@ -2381,9 +2452,22 @@ public class EscalationService {
      * takımın KRİTİK alarmı (ör. HOSTNAME_MISMATCH) TÜM takımların müdürlerine gidiyordu. Artık yedek YOK: kontaksız
      * takımın alarmı yalnız takımın kendi alıcılarına (takım adresi / bildirim grubu / push) gider.
      */
+    /** Önizleme (simülatör) için sessiz pasif süzgeci — gönderimle AYNI karar, günlüğe yazmaz. */
+    private List<EscalationContact> withoutInactiveQuiet(List<EscalationContact> contacts) {
+        if (inactiveGuard == null || contacts == null || contacts.isEmpty()) return contacts;
+        List<EscalationContact> out = contacts.stream().filter(c -> !inactiveGuard.isInactiveContact(c)).toList();
+        return out.size() == contacts.size() ? contacts : out;
+    }
+
     private List<EscalationContact> getContactsForLevel(String level, Long teamId, Long ugTeamId) {
         // Her sahip takım (SY + UG) yalnız KENDİ kişilerini getirir; birleşim, e-postaya göre tekil (2026-09-28).
         List<EscalationContact> contacts = EscalationContactScope.forOwners(contactRepo, level, teamId, ugTeamId);
+        // Pasif kullanıcıya bağlı kişi düşer (2026-10-02) — açılış, yeniden uyarı, seviye artışı, çözüm, elle gönderim ve
+        // simülatör hep buradan geçer. Düşen varsa WARN + liste sayıyı taşır (sendCombinedAlert "pasif kullanıcı" izi).
+        if (inactiveGuard != null) {
+            contacts = inactiveGuard.withoutInactive(contacts, "takım " + teamId + (ugTeamId != null ? " / UG " + ugTeamId : "")
+                    + " seviye " + level);
+        }
         if (contacts.isEmpty() && (teamId != null || ugTeamId != null)) {
             log.warn("Takım {} (UG {}) için {} seviyesinde eskalasyon kontağı yok — alarm yalnız takım alıcılarına "
                     + "gidiyor (başka takımın ya da takımsız kontak EKLENMEZ)", teamId, ugTeamId, level);
@@ -2618,6 +2702,15 @@ public class EscalationService {
             }
             return List.of();
         }
+        // 0.2. SİSTEM BAKIMI (2026-10-02, kullanıcı kararı) — "Bildirimler bakım boyunca sussun" açık bakım AKTİFKEN hiçbir
+        // kanal çalışmaz (e-posta, kontak webhook'u, kişi push'u, 7/24 — NOC çağrısı aşağıda olduğu için o da atlanır);
+        // kontroller ve alarm kayıtları sürer. İz: SYSTEM_MAINTENANCE / "SKIPPED: sistem bakımı" + push kararı + bakımın
+        // telafi listesi (açılış susturulduysa bakım bitince INITIAL bir kez gider). Elle gönderim (MANUAL) susmaz.
+        // Bakım yoksa / anahtar kapalıysa bu dal hiç girilmez ve akış bayt bayt bugünküdür.
+        if (systemMaintenanceMuted(trigger)) {
+            recordSystemMaintenanceSuppression(alertEventId, syTeamId, ugTeamId, domain, level, alertType, trigger, message);
+            return List.of();
+        }
         // 1. TO listesi: takım email'leri + kontaklar (dedup). excludeEmails (lowercase) — manuel
         // re-notify onay pop-up'ında kullanıcının çıkardığı adresler; takım e-postaları burada
         // çözüldüğünden filtre de burada uygulanır (kontaklar reNotify'da zaten filtrelenmiş gelir).
@@ -2827,7 +2920,11 @@ public class EscalationService {
                 subject, message, domain, level, alertType, daysRemaining, mailCtx);
         String emailStatus;
         if (skipMail) {
-            emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok";
+            // Pasif kullanıcı izi (2026-10-02): alıcı listesi pasif kişiler düştüğü için boşaldıysa neden "alıcı yok" değil
+            // "pasif kullanıcı"dır (getContactsForLevel'in döndürdüğü liste düşen sayıyı taşır; pasif yoksa 0 → bugünkü yol).
+            emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı"
+                    : InactiveRecipientGuard.droppedCount(contacts) > 0 ? InactiveRecipientGuard.STATUS_SKIPPED
+                    : "SKIPPED: alıcı yok";
             // İZ (2026-09-30): atlanan e-posta da tek satırla günlüğe girer — neden gitmediği ekranda okunur.
             // Takım adı adresten BAĞIMSIZ (collectTeamNames yalnız adresi olan takımı sayar; burada adres yok).
             String skipName = teamNames != null && !teamNames.isBlank() ? teamNames : ownerTeamNames(mailSy, mailUg);

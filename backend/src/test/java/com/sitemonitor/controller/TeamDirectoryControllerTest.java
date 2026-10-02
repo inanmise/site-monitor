@@ -57,7 +57,7 @@ class TeamDirectoryControllerTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    @DisplayName("members: beyaz-liste alanları (+ sistem rolü, has_photo) döner, telefon/sicil/foto base64 SIZMAZ; çoklu-takım üyesi dahil, pasif hariç")
+    @DisplayName("members: beyaz-liste alanları (+ sistem rolü, has_photo) döner, telefon/sicil/foto base64 SIZMAZ; çoklu-takım üyesi dahil; pasif üye active:false ile SONDA (2026-10-02)")
     void members_whitelistedProjection() {
         AppUser lead = user(7, "lead", "Lider Kişi", 1L);
         AppUser multi = user(8, "multi", "Çoklu Üye", 9L, 1L);          // birincil 9, ek üyelik 1
@@ -74,7 +74,9 @@ class TeamDirectoryControllerTest {
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<String, Object> data = (Map<String, Object>) resp.getBody().get("data");
         List<Map<String, Object>> members = (List<Map<String, Object>>) data.get("members");
-        assertThat(members).extracting(m -> m.get("username")).containsExactlyInAnyOrder("lead", "multi");
+        // 2026-10-02 kullanıcı kararı: pasif üye GİZLENMEZ — active:false bayrağıyla, aktiflerden SONRA (ada göre sıralı).
+        assertThat(members).extracting(m -> m.get("username")).containsExactly("lead", "multi", "gone");
+        assertThat(members).extracting(m -> m.get("active")).containsExactly(true, true, false);
         Map<String, Object> leadRow = members.stream().filter(m -> "lead".equals(m.get("username"))).findFirst().orElseThrow();
         assertThat(leadRow).containsKeys("display_name", "title", "department", "mudurluk_name", "org_role", "email", "company_level", "manager_id", "manager_display_name");
         assertThat(leadRow.get("manager_display_name")).isEqualTo("Müdür Kişi");
@@ -89,6 +91,26 @@ class TeamDirectoryControllerTest {
             assertThat(m.get("email")).isEqualTo("oncall@example.com");
             assertThat(m.get("min_alert_level")).isEqualTo("HIGH");
         });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("members: eskalasyon kişisi satırı bağlı kullanıcının aktifliğini taşır (user_active) — pasif → false, bağsız → null; kimlik sızmaz (2026-10-02)")
+    void members_contactsCarryUserActive() {
+        AppUser active = user(7, "lead", "Lider Kişi", 1L);
+        AppUser passive = user(10, "gone", "Ayrılmış", 1L); passive.setActive(false);
+        when(teamRepo.findById(1L)).thenReturn(Optional.of(team(1, "Payments", 7L)));
+        when(userRepo.findAll()).thenReturn(List.of(active, passive));
+        EscalationContact linkedActive = new EscalationContact(); linkedActive.setId(1L); linkedActive.setName("Lider"); linkedActive.setUserId(7L);
+        EscalationContact linkedPassive = new EscalationContact(); linkedPassive.setId(2L); linkedPassive.setName("Ayrılmış"); linkedPassive.setUserId(10L);
+        EscalationContact free = new EscalationContact(); free.setId(3L); free.setName("Nöbet kutusu"); free.setEmail("noc@example.com");
+        when(contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(1L)).thenReturn(List.of(linkedActive, linkedPassive, free));
+
+        Map<String, Object> data = (Map<String, Object>) controller.members(1L).getBody().get("data");
+        List<Map<String, Object>> contacts = (List<Map<String, Object>>) data.get("escalation_contacts");
+
+        assertThat(contacts).extracting(m -> m.get("user_active")).containsExactly(true, false, null);
+        assertThat(contacts).allSatisfy(m -> assertThat(m).doesNotContainKey("user_id"));
     }
 
     @Test

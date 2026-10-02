@@ -48,8 +48,10 @@ describe('UserEditModal', () => {
     const onClose = vi.fn()
 
     render(<UserEditModal user={sampleUser} teams={teams} onClose={onClose} onSaved={onSaved} />)
+    // 2026-10-02 (paylaşılan düzenleyici): değişiklik yokken Kaydet kapalı — önce bir alan değişir.
+    fireEvent.change(screen.getByDisplayValue('Ali V'), { target: { value: 'New Name' } })
 
-    const saveBtn = screen.getByRole('button', { name: /kaydet|save/i })
+    const saveBtn = screen.getByRole('button', { name: /^(kaydet|save)$/i })
     fireEvent.click(saveBtn)
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalledWith(
@@ -57,6 +59,7 @@ describe('UserEditModal', () => {
       expect.objectContaining({
         username: 'ali',
         email: 'ali@example.com',
+        display_name: 'New Name',
         team_id: 3,
         system_role: 'ADMIN',
         org_role: 'TECH',
@@ -72,10 +75,27 @@ describe('UserEditModal', () => {
     const onClose = vi.fn()
 
     render(<UserEditModal user={sampleUser} teams={teams} onClose={onClose} onSaved={onSaved} />)
-    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    fireEvent.change(screen.getByDisplayValue('Ali V'), { target: { value: 'New Name' } })
+    fireEvent.click(screen.getByRole('button', { name: /^(kaydet|save)$/i }))
 
     await waitFor(() => expect(api.admin.updateUser).toHaveBeenCalled())
     expect(onSaved).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  // 2026-10-02 (kullanıcı kararı): aktiflik değişiminin sonucu kaydetmeden ÖNCE formda yazar.
+  // Paylaşılan düzenleyicide aktiflik bir seçim kartındaki shadcn Switch (adı "Active").
+  it('aktif kullanıcının "Aktif" anahtarı kapatılınca pasifleştirme sonucu görünür (oturumlar kapanır, giriş/bildirim yok)', () => {
+    render(<UserEditModal user={sampleUser} teams={teams} onClose={() => {}} />)
+    expect(screen.queryByText(/signed out of every open session/i)).toBeNull()
+    fireEvent.click(screen.getByRole('switch', { name: /^Active$/ }))
+    expect(screen.getByText(/signed out of every open session/i)).toBeDefined()
+  })
+
+  it('pasif kullanıcı yeniden aktifleştirilirken "oturumlar geri gelmez" bilgisi görünür', () => {
+    render(<UserEditModal user={{ ...sampleUser, active: false }} teams={teams} onClose={() => {}} />)
+    expect(screen.queryByText(/closed sessions do not come back/i)).toBeNull()
+    fireEvent.click(screen.getByRole('switch', { name: /^Active$/ }))
+    expect(screen.getByText(/closed sessions do not come back/i)).toBeDefined()
   })
 })

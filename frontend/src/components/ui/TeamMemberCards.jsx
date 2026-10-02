@@ -1,14 +1,15 @@
 import { memo, useId, useMemo, useState } from 'react'
-import { Mail, PenLine, Search, SearchX, UserRoundSearch, Users, X } from 'lucide-react'
+import { Mail, PenLine, Search, SearchX, UserRoundSearch, UserX, Users, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import CopyButton from './CopyButton.jsx'
 import PaginationBar from './PaginationBar.jsx'
 import StatusBlock from './StatusBlock.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
-import { OrgRoleBadge, SystemRoleBadge, TONE_CLASS } from '../admin/ToneBadge.jsx'
+import { OrgRoleBadge, SystemRoleBadge } from '../admin/ToneBadge.jsx'
 import {
   FACET_ALL, FACET_SECONDARY, NO_ROLE, avatarSlot, avatarToneFor, buildSearchIndex, filterMembers, initialsOf,
-  isSecondaryMember, memberFacets, memberSeed, nameOf, sortMembers as sortMembersModel, sortMembersBy,
+  isInactiveMember, isSecondaryMember, memberActivityCounts, memberFacets, memberSeed, nameOf,
+  sortMembers as sortMembersModel, sortMembersBy, withInactiveLast,
 } from './teamMembersModel.js'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/shadcn/avatar'
 import { Badge } from '@/components/shadcn/badge'
@@ -40,6 +41,9 @@ import { cn } from '@/lib/utils'
  * ve satır sonunda "Kullanıcı detayını aç" ikon düğmesi durur; ikisi de `onView(üye)` çağırır — yönetim ekranı bunu
  * `UserDetailPanel`'e (üst üste açılan Sheet) bağlar. `onView` yoksa (kurum-geneli rozet penceresi, sıradan kullanıcı)
  * ad düz metindir ve düğme çizilmez.
+ *
+ * <p><b>Pasif üyeler (2026-10-02, kullanıcı kararı):</b> gizlenmez — satır soluk (ad + avatar), belirgin "Pasif" rozeti
+ * (`team-member-inactive`, UserX), her sıralamada aktiflerden SONRA; sayı satırı "N aktif · M pasif".
  *
  * <p>Test kancaları: `team-member-cards` (liste), `team-member-card` (satır), `team-member-name`,
  * `team-member-leader`, `team-member-manager`, `team-member-open` (yalnız canManage), `team-member-view` +
@@ -130,30 +134,38 @@ const MemberRow = memo(function MemberRow({ m, t, isLeader, isManager, secondary
   const unit = m.mudurluk_name && m.mudurluk_name !== m.department && m.mudurluk_name !== sharedUnit ? m.mudurluk_name : null
   const unitLine = [m.department, unit].filter(Boolean).join(' · ')
   const hasUnit = Boolean(unitLine || managerLabel)
+  // Pasif üye (2026-10-02, kullanıcı kararı): gizlenmez — soluk ad + avatar, belirgin "Pasif" rozeti, listede sonda.
+  const inactive = isInactiveMember(m)
   return (
-    <li data-slot="team-member-card" aria-labelledby={nameId} data-inactive={m.active === false ? 'true' : undefined}
+    <li data-slot="team-member-card" aria-labelledby={nameId} data-inactive={inactive ? 'true' : undefined}
       className={cn('grid grid-cols-[2.25rem_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-0.5 px-3 py-2.5 lg:items-center lg:gap-y-0', LG_COLS,
-        m.active === false && 'bg-muted/40')}>
+        inactive && 'bg-muted/40')}>
       <PersonAvatar name={name} seed={memberSeed(m)} initials={adSoyadInitials(m)} photoId={photoIdOf(m)}
-        className="row-span-3 mt-0.5 lg:row-span-1 lg:mt-0" />
+        className={cn('row-span-3 mt-0.5 lg:row-span-1 lg:mt-0', inactive && 'opacity-50 grayscale')} />
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           {onView ? (
             // Ad = detayı açan düğme (telefonda satır yüksekliğinde hedef; bağlantı görünümü, ad metni erişilebilir ad)
             <Button type="button" variant="link" size="sm" data-slot="team-member-view-name" onClick={() => onView(m)}
               title={t('team.memberViewDetail')}
-              className="h-auto min-h-0 min-w-0 justify-start p-0 text-left font-medium whitespace-normal text-foreground max-sm:min-h-10 pointer-coarse:min-h-10">
+              className={cn('h-auto min-h-0 min-w-0 justify-start p-0 text-left font-medium whitespace-normal max-sm:min-h-10 pointer-coarse:min-h-10',
+                inactive ? 'text-muted-foreground' : 'text-foreground')}>
               <span id={nameId} data-slot="team-member-name" className="min-w-0 break-words">{name}</span>
             </Button>
           ) : (
-            <span id={nameId} data-slot="team-member-name" className="min-w-0 font-medium break-words">{name}</span>
+            <span id={nameId} data-slot="team-member-name"
+              className={cn('min-w-0 font-medium break-words', inactive && 'text-muted-foreground')}>{name}</span>
+          )}
+          {inactive && (
+            <Badge variant="destructive" data-slot="team-member-inactive" title={t('team.memberInactiveTip')}>
+              <UserX aria-hidden="true" /> {t('team.memberInactive')}
+            </Badge>
           )}
           {isManager && <Badge variant="secondary" data-slot="team-member-manager">{t('team.colManager')}</Badge>}
           {isLeader && <Badge variant="warning" data-slot="team-member-leader">{t('team.leaderBadge')}</Badge>}
           {m.org_role && m.org_role !== 'TECH' && <OrgRoleBadge role={m.org_role}>{t('usr.orgRoleVal.' + m.org_role)}</OrgRoleBadge>}
           {m.system_role && <SystemRoleBadge role={m.system_role} data-slot="team-member-system-role" />}
           {secondary && <Badge variant="outline" data-slot="team-member-secondary">{t('team.memberSecondary')}</Badge>}
-          {m.active === false && <Badge variant="outline" className={TONE_CLASS.muted}>{t('usr.inactive')}</Badge>}
         </div>
         {m.title && <div className="truncate text-sm text-muted-foreground" title={m.title}>{m.title}</div>}
       </div>
@@ -205,9 +217,11 @@ export default function TeamMemberCards({ members = [], leaderId, managerUserId 
   const facets = useMemo(() => memberFacets(members, teamId), [members, teamId])
   // Yeniden yüklemede seçili çip kaybolduysa (üye ayrıldı) sessizce "Tümü"ne dön.
   const activeFacet = facets.some((f) => f.value === facet) ? facet : FACET_ALL
+  // Pasif üyeler her sıralamada SONDA (2026-10-02, kullanıcı kararı); grup içi sıra seçilen sıralamadır.
   const visible = useMemo(
-    () => sortMembersBy(filterMembers(members, { query, facet: activeFacet, teamId, index }), sort),
+    () => withInactiveLast(sortMembersBy(filterMembers(members, { query, facet: activeFacet, teamId, index }), sort)),
     [members, query, activeFacet, teamId, index, sort])
+  const activity = useMemo(() => memberActivityCounts(members), [members])
   // Görünüm (arama/çip/sıra) değişince 1. sayfaya dönülür. Hook erken return'den ÖNCE.
   const pager = usePagination(visible, { listKey: 'team-members', preset: 'modal', defaultSize: PAGE,
     resetDeps: [query, activeFacet, sort] })
@@ -267,7 +281,9 @@ export default function TeamMemberCards({ members = [], leaderId, managerUserId 
         <span data-slot="team-member-results" role="status" aria-live="polite" className="tabular-nums">
           {filtering
             ? t(count === 1 ? 'team.results.one' : 'team.results', count)
-            : t(count === 1 ? 'team.membersCount.one' : 'team.membersCount', count)}
+            : activity.inactive > 0
+              ? t('team.membersActiveInactive', activity.active, activity.inactive)
+              : t(count === 1 ? 'team.membersCount.one' : 'team.membersCount', count)}
         </span>
         {filtering && count > 0 && (
           <Button type="button" variant="link" size="sm" onClick={clearAll} className="h-auto px-0 max-sm:min-h-10 pointer-coarse:min-h-10">

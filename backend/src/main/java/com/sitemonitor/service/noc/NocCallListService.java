@@ -56,6 +56,13 @@ public class NocCallListService {
     private final TeamRepository teamRepo;
     private final EscalationContactRepository contactRepo;
 
+    /** Pasif kullanıcı süzgeci (2026-10-02, kullanıcı kararı): pasif kullanıcıya bağlı eskalasyon kişisi 7/24 postasının
+     *  eskalasyon bloğunda yer almaz. Alan enjeksiyonu, isteğe bağlı (yapıcı büyümez); null ise liste aynen. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.InactiveRecipientGuard inactiveGuard;
+
+    void setInactiveGuard(com.sitemonitor.service.InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
+
     // ── Üyelik ───────────────────────────────────────────────────────────────
 
     /** Aktif ÜYE mi — birincil takım ya da çoklu üyelik ({@code app_user_teams}); TeamDirectory ile aynı yüklem. */
@@ -169,7 +176,9 @@ public class NocCallListService {
         }
         NocMailComposer.Person manager = resolveManager(team).map(NocCallListService::person).orElse(null);
         List<NocMailComposer.Contact> esc = new ArrayList<>();
-        for (EscalationContact c : contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId)) {
+        List<EscalationContact> escContacts = contactRepo.findByTeamIdAndActiveTrueOrderByRoleAsc(teamId);
+        if (inactiveGuard != null) escContacts = inactiveGuard.withoutInactive(escContacts, "7/24 eskalasyon bloğu takım " + teamId);
+        for (EscalationContact c : escContacts) {
             esc.add(new NocMailComposer.Contact(c.getName(), roleLabel(c.getRole()), c.getEmail()));
         }
         return new NocMailComposer.TeamBlock(team.getName(), calls, !entries.isEmpty() && !calls.isEmpty(), manager, esc);

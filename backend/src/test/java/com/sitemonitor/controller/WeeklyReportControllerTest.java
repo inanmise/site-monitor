@@ -552,6 +552,55 @@ class WeeklyReportControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("geçersiz")));
     }
+
+    // ── Pasif hesabın onay bağlantısı (2026-10-02, kullanıcı kararı) ──────────
+
+    @Test
+    @DisplayName("GET /approve-link sahibi pasif → ret sayfası (form YOK) + WEEKLY_REPORT_LINK_DENIED denetimi")
+    void approveLinkPage_approverInactive_refusedAndAudited() throws Exception {
+        when(service.approvalTokenStatus("T1")).thenReturn(Map.of(
+                "valid", false, "reason", "approver_inactive", "report_id", 5L, "team_name", "TakimA", "week_label", "2026-W24"));
+
+        mvc.perform(get("/api/weekly-reports/approve-link").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("pasif durumda")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("Raporu Onayla"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("approve-link/confirm"))));
+
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), contains("approver_inactive"));
+    }
+
+    @Test
+    @DisplayName("POST /approve-link/confirm sahibi pasif → 'Onay Verilemez' sayfası + WEEKLY_REPORT_LINK_DENIED (onay denetimi YOK)")
+    void approveLinkConfirm_approverInactive_refusedAndAudited() throws Exception {
+        when(service.approveViaToken("T1")).thenThrow(new WeeklyReportService.ApproverInactiveException(
+                "Bu onay bağlantısının sahibi olan hesap pasif durumda; onay verilemez.", 5L, 2L));
+
+        mvc.perform(post("/api/weekly-reports/approve-link/confirm").param("token", "T1"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Onay Verilemez")))
+                .andExpect(content().string(containsString("pasif durumda")));
+
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), contains("approve"));
+        org.mockito.Mockito.verify(auditService, org.mockito.Mockito.never()).recordTokenAction(
+                eq("WEEKLY_REPORT_APPROVE"), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("POST /approve-link/reject sahibi pasif → iade de reddedilir + WEEKLY_REPORT_LINK_DENIED")
+    void approveLinkReject_approverInactive_refusedAndAudited() throws Exception {
+        when(service.rejectViaToken(any(), any())).thenThrow(new WeeklyReportService.ApproverInactiveException(
+                "Bu onay bağlantısının sahibi olan hesap pasif durumda; onay verilemez.", 5L, 2L));
+
+        mvc.perform(post("/api/weekly-reports/approve-link/reject").param("token", "T1").param("reason", "x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("pasif durumda")));
+
+        org.mockito.Mockito.verify(auditService).recordSecurityEvent(eq("WEEKLY_REPORT_LINK_DENIED"), any(), isNull(),
+                eq("WEEKLY_REPORT"), eq("5"), contains("reject"));
+    }
     @Test
     @DisplayName("2026-09-12: GET /weekly-reports/deadline canlı ayardan gün/saat + TR/EN gün adı döner")
     void deadline_fromLiveSettings() throws Exception {

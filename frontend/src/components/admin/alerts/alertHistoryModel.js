@@ -329,6 +329,7 @@ export const PUSH_STATUS_KEYS = new Set([
   'SKIPPED_REALERT_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_TYPE_OFF', 'SKIPPED_USER_OPT_OUT',
   'SKIPPED_STORM', 'SKIPPED_NO_TEAM',   // 2026-09-30: açılışta hiçbir kanal koşmadan verilen kararlar
   'SKIPPED_TEAM_QUIET', 'SKIPPED_USER_QUIET_HOURS',   // 2026-10-01: takım / kişisel sessiz saat
+  'SKIPPED_SYSTEM_MAINTENANCE',   // 2026-10-02: sistem bakımı — bildirimler bakım boyunca susturuldu
 ])
 
 /** Bildirim günlüğü tetiği "bildirim fırtınaya devredildi" kararı mı (e-posta değil, karar satırı — backend STORM). */

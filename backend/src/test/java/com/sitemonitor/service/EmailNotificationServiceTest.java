@@ -1346,4 +1346,60 @@ class EmailNotificationServiceTest {
 
         assertThat(text).contains("HÂLÂ ERİŞİLEMEYEN (2)").doesNotContain("monitör daha");
     }
+
+    // ── Pasif kullanıcı ağı (2026-10-02, kullanıcı kararı): her giden e-posta doSend'den geçer ─────────────
+
+    private void realMessagesWithPassive(String... passiveEmails) {
+        when(settingsService.getOrDefaults()).thenReturn(settings(true));
+        when(smtpMailService.currentSender()).thenReturn(sender);
+        when(sender.createMimeMessage()).thenAnswer(i ->
+                new jakarta.mail.internet.MimeMessage(jakarta.mail.Session.getInstance(new java.util.Properties())));
+        com.sitemonitor.repository.AppUserRepository users = mock(com.sitemonitor.repository.AppUserRepository.class);
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        long id = 500;
+        for (String e : passiveEmails) rows.add(new Object[]{id++, e});
+        when(users.findInactiveIdsAndEmails()).thenReturn(rows);
+        service.setInactiveRecipientGuard(new InactiveRecipientGuard(users));
+    }
+
+    @Test
+    @DisplayName("Pasif ağı: TÜM alıcılar pasif kullanıcıya aitse SMTP'ye hiç gidilmez → 'SKIPPED: pasif kullanıcı'")
+    void doSend_allRecipientsPassive_skipped() throws Exception {
+        realMessagesWithPassive("gone@test.com");
+
+        String result = service.sendAlert(new String[]{"gone@test.com"}, "Konu", "Gövde",
+                "x.example.com", "HIGH", "EXPIRY", 5, null);
+
+        assertThat(result).isEqualTo(InactiveRecipientGuard.STATUS_SKIPPED);
+        verify(sender, never()).send(any(jakarta.mail.internet.MimeMessage.class));
+    }
+
+    @Test
+    @DisplayName("Pasif ağı: kısmi — pasif adres TO/CC'den düşer, takım kutusu gider (SENT)")
+    void doSend_partialPassive_sentToRemaining() throws Exception {
+        realMessagesWithPassive("gone@test.com");
+        ArgumentCaptor<jakarta.mail.internet.MimeMessage> cap = ArgumentCaptor.forClass(jakarta.mail.internet.MimeMessage.class);
+        doNothing().when(sender).send(cap.capture());
+
+        String result = service.sendHtml(new String[]{"team@test.com", "GONE@test.com"}, new String[]{"gone@test.com"},
+                "Konu", "<html><body>x</body></html>", null);
+
+        assertThat(result).isEqualTo("SENT");
+        jakarta.mail.internet.MimeMessage sent = cap.getValue();
+        assertThat(sent.getRecipients(jakarta.mail.Message.RecipientType.TO)).extracting(Object::toString)
+                .containsExactly("team@test.com");
+        assertThat(sent.getRecipients(jakarta.mail.Message.RecipientType.CC)).isNull();
+    }
+
+    @Test
+    @DisplayName("Pasif ağı: pasif kullanıcı yokken mesaj aynen gider (bayt bayt bugünkü yol)")
+    void doSend_noPassive_unchanged() throws Exception {
+        realMessagesWithPassive();
+        ArgumentCaptor<jakarta.mail.internet.MimeMessage> cap = ArgumentCaptor.forClass(jakarta.mail.internet.MimeMessage.class);
+        doNothing().when(sender).send(cap.capture());
+
+        assertThat(service.sendHtml(new String[]{"a@test.com", "b@test.com"}, null, "Konu", "<html/>", null)).isEqualTo("SENT");
+        assertThat(cap.getValue().getRecipients(jakarta.mail.Message.RecipientType.TO)).extracting(Object::toString)
+                .containsExactly("a@test.com", "b@test.com");
+    }
 }

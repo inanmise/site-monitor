@@ -106,6 +106,18 @@ public class EmailNotificationService {
     /** Bekleyen 421-retry görev sayısı — test ve bellek örnekleyicisi için. */
     int pendingRetryCount() { return pendingRetries.get(); }
 
+    /**
+     * Pasif kullanıcı ağı (2026-10-02, kullanıcı kararı): her giden e-posta {@link #doSend}'den geçer ve YALNIZ pasif
+     * kullanıcılara ait adresler alıcılardan çıkarılır; hepsi düşerse gönderim yapılmaz, durum
+     * {@link InactiveRecipientGuard#STATUS_SKIPPED} döner. Alan enjeksiyonu + isteğe bağlı: elle kurulan birim testlerinde
+     * yoktur ve gönderim bugünküyle aynıdır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InactiveRecipientGuard inactiveRecipientGuard;
+
+    /** Test kancası. */
+    void setInactiveRecipientGuard(InactiveRecipientGuard guard) { this.inactiveRecipientGuard = guard; }
+
     @PreDestroy
     void shutdownRetryExecutor() {
         mailRetryExecutor.shutdown();
@@ -234,7 +246,15 @@ public class EmailNotificationService {
         }
     }
 
-    private String doSend(String to, MimeMessage msg, int attempt) {
+    private String doSend(String toLabel, MimeMessage msg, int attempt) {
+        // Pasif kullanıcı ağı — yalnız İLK denemede (421 yeniden denemesi aynı, zaten süzülmüş mesajı gönderir).
+        String filteredTo = toLabel;
+        if (attempt == 1 && inactiveRecipientGuard != null) {
+            InactiveRecipientGuard.MailFilterResult f = inactiveRecipientGuard.filter(msg);
+            if (f.skipStatus() != null) return f.skipStatus();
+            if (f.dropped() > 0 && f.remainingTo() != null && !f.remainingTo().isBlank()) filteredTo = f.remainingTo();
+        }
+        final String to = filteredTo;
         long t0 = System.currentTimeMillis();
         if (MAIL_LOG.isTraceEnabled()) {
             MAIL_LOG.trace("→ SMTP gönderim: TO={} | deneme={}/{} | {} | {}",
@@ -2119,10 +2139,29 @@ public class EmailNotificationService {
         return sendHtmlInternal(to, cc, subject, html, null, inline, force, attachments);
     }
 
+    /**
+     * Toplu duyuru — alıcılar GİZLİ (BCC): kurum geneli duyuruda (sistem bakımı, 2026-10-02) herkesin adresi herkese
+     * görünmesin. Aynı huniden geçer: mail kapalıysa {@code SKIPPED_DISABLED}, pasif kullanıcı ağı ({@code doSend} →
+     * {@code InactiveRecipientGuard} TO/CC/BCC süzgeci) ve 421 yeniden denemesi aynen işler. Marka logosu CID olarak eklenir.
+     */
+    public String sendHtmlBcc(String[] bcc, String subject, String html, String plainText) {
+        if (bcc == null || bcc.length == 0) return "SKIPPED: alıcı yok";
+        // Ayrı bir MimeMessageHelper KURMAZ (EmailBrandCidTest huni sayısı): tek huninin BCC kipi — marka CID'i,
+        // multipart/alternative, mail kapalı → SKIPPED_DISABLED ve doSend ağı birebir aynı yoldan geçer.
+        return sendHtmlInternal(new String[0], null, bcc, subject, html, plainText, null, false, null);
+    }
+
     private String sendHtmlInternal(String[] to, String[] cc, String subject, String html, String plainText,
                                     List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
+        return sendHtmlInternal(to, cc, null, subject, html, plainText, inline, force, attachments);
+    }
+
+    private String sendHtmlInternal(String[] to, String[] cc, String[] bcc, String subject, String html, String plainText,
+                                    List<InlineImage> inline, boolean force, List<MailAttachment> attachments) {
+        boolean bccOnly = (to == null || to.length == 0) && bcc != null && bcc.length > 0;
         if (!force && !isEnabled()) {
-            log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
+            if (bccOnly) log.info("⚠ Email devre dışı — BCC={} alıcı | KONU={}", bcc.length, subject);
+            else log.info("⚠ Email devre dışı — TO={} CC={} | KONU={}",
                     SecretMask.maskEmails(to), SecretMask.maskEmails(cc), subject);
             return "SKIPPED_DISABLED";
         }
@@ -2130,8 +2169,9 @@ public class EmailNotificationService {
             MimeMessage msg = currentSender().createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(
                     msg, MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED, "UTF-8");
-            helper.setTo(to);
+            if (to != null && to.length > 0) helper.setTo(to);
             if (cc != null && cc.length > 0) helper.setCc(cc);
+            if (bcc != null && bcc.length > 0) helper.setBcc(bcc);
             applyFrom(helper);
             helper.setSubject(subject);
             // Çağıran metin vermediyse MailDoc'un aynı belge için yazdığı metin (yoksa HTML'den türetilir)
@@ -2157,9 +2197,10 @@ public class EmailNotificationService {
                     helper.addAttachment(a.fileName(), new ByteArrayResource(a.data()), a.contentType());
                 }
             }
-            return doSend(Arrays.toString(to), msg, 1);
+            return doSend(bccOnly ? "BCC×" + bcc.length : Arrays.toString(to), msg, 1);
         } catch (Exception e) {
-            log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
+            if (bccOnly) log.error("✗ Toplu (BCC) e-posta hazırlanamadı: {} alıcı | HATA={}", bcc.length, e.getMessage(), e);
+            else log.error("✗ HTML e-posta hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getMessage(), e);
             return "FAILED: " + e.getMessage();
         }
     }

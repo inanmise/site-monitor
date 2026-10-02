@@ -215,4 +215,39 @@ class IncidentNotificationServiceTest {
         service.doNotify(dto(), "NEW");
         verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
     }
+
+    @Test
+    @DisplayName("Pasif takım lideri (2026-10-02): alıcı OLMAZ ve e-postada müdür adı geçmez; takım adresi yine gider")
+    void notify_passiveLeader_skipped() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", 42L)));
+        AppUser mgr = new AppUser();
+        mgr.setId(42L);
+        mgr.setUsername("MUDUR");
+        mgr.setDisplayName("Müdür Bey");
+        mgr.setEmail("mudur@bank.com");
+        mgr.setActive(false);
+        when(userRepo.findById(42L)).thenReturn(Optional.of(mgr));
+
+        service.doNotify(dto(), "NEW");
+
+        ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
+        verify(emailService).sendHtml(to.capture(), isNull(), anyString(), anyString(), isNull());
+        assertThat(to.getValue()).containsExactly("takim@bank.com");
+        verify(emailService).buildIncidentNotificationHtml(anyMap(), isNull(), eq("NEW"), anyString());
+    }
+
+    @Test
+    @DisplayName("Takım adresi yok + lider PASİF → alıcı kalmaz → mail gönderilmez")
+    void notify_passiveLeaderOnly_noMail() {
+        when(teamRepo.findById(7L)).thenReturn(Optional.of(team(null, 42L)));
+        AppUser mgr = new AppUser();
+        mgr.setId(42L);
+        mgr.setEmail("mudur@bank.com");
+        mgr.setActive(false);
+        when(userRepo.findById(42L)).thenReturn(Optional.of(mgr));
+
+        service.doNotify(dto(), "NEW");
+
+        verify(emailService, never()).sendHtml(any(), any(), anyString(), anyString(), any());
+    }
 }

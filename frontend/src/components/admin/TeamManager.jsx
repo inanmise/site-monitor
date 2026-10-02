@@ -76,7 +76,7 @@ function WeeklySwitch({ on, disabled, onToggle, label, short }) {
 }
 
 
-export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false }) {
+export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null }) {
   const t = useT()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
@@ -108,6 +108,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [editingUser, setEditingUser]   = useState(null)
   // Üyeler sekmesinden açılan kullanıcı detayı (2026-09-30): takım penceresinin ÜSTÜNE Sheet (UserManager ile aynı panel).
   const [viewUser, setViewUser]         = useState(null)
+  // Detayın açılış sekmesi — düzenleyicideki "AD ile karşılaştır" Dizin sekmesiyle açar (2026-10-02); kapanınca sıfırlanır.
+  const [viewTab, setViewTab]           = useState('overview')
 
   // İstemci-taraflı filtre + sayfalama (getTeams tüm listeyi döndürür — dropdown kaynağı bozulmasın)
   const [histFilter, setHistFilter] = useState(null)   // { id, name } — satırdan "Geçmiş"
@@ -179,6 +181,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   // kararlı kalır ve üye satırlarının `memo(MemberRow)`'u her render'da yeniden çizilmez.
   const userMap = useMemo(() => Object.fromEntries(users.map(u => [u.id, u.display_name || u.username])), [users])
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
+  // Düzenlenen üye: üye satırına yerel kullanıcı listesinin TAZE kaydı bindirilir (kilit açma sonrası `loadUsers` →
+  // düzenleyici başlığı güncellenir; formdaki yazılanlar korunur). Pasif üye yerel listede yoksa satırın kendisi.
+  const editingUserRow = useMemo(() => (editingUser && usersById[editingUser.id]
+    ? { ...editingUser, ...usersById[editingUser.id] } : editingUser), [editingUser, usersById])
 
   /** Üye satırından kullanıcı detayına (2026-09-30). Yönetim yükleyicisi (`/admin/teams/{id}/users`) tam kaydı verir;
    *  yine de yerel kullanıcı listesi (taze, kilit/AD alanlarıyla) üste bindirilir. Satır kısmi bir projeksiyonsa
@@ -640,19 +646,24 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
           açık kalır. Düzenle: detay kapanır, paylaşılan UserEditModal açılır (üye kartındaki kalemle aynı yol). */}
       {viewUser && (
         <UserDetailPanel stacked user={usersById[viewUser.id] ? { ...viewUser, ...usersById[viewUser.id] } : viewUser}
-          teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin}
-          onClose={() => setViewUser(null)}
+          teams={teams} isAdmin={isAdmin} globalAdmin={globalAdmin} initialTab={viewTab}
+          onClose={() => { setViewUser(null); setViewTab('overview') }}
           onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
-          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setEditingUser(u) } : undefined} />
+          onEdit={canManage ? () => { const u = viewUser; setViewUser(null); setViewTab('overview'); setEditingUser(u) } : undefined} />
       )}
+      {/* Paylaşılan kullanıcı düzenleyicisi (2026-10-02): Kullanıcılar sekmesiyle AYNI korumalar — görüntüleyenin rolü
+          (takım yöneticisi yalnız USER/TEAM_ADMIN verir, kayıtta takım kendi takımına sabitlenir), kendi hesabı kilidi. */}
       <UserEditModal
-        user={editingUser}
+        user={editingUserRow}
         teams={teams}
+        viewerRole={systemRole} globalAdmin={globalAdmin} ownTeamId={ownTeamId} currentUsername={currentUsername}
         onClose={() => setEditingUser(null)}
         onSaved={() => {
           loadUsers()
           setMembersNonce(n => n + 1)
         }}
+        onChanged={() => { loadUsers(); setMembersNonce(n => n + 1) }}
+        onOpenDirectory={isAdmin ? (u) => { setEditingUser(null); setViewTab('directory'); setViewUser(u) } : undefined}
       />
     </div>
   )
@@ -662,18 +673,22 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
  *  Tıklanabilen sayaç shadcn Button (outline, hap biçimi), bilgi sayacı shadcn Badge. */
 function TeamStats({ s, t, onMembers, onDomains, onAlerts }) {
   if (!s) return null
-  const chip = (key, val, onClick, tip, alert = false) => {
+  const chip = (key, val, onClick, tip, alert = false, labelOverride = null) => {
     const n = Number(val ?? 0)
     const cls = cn('h-auto rounded-full px-2 py-px text-[0.76em] font-semibold', n === 0 && 'opacity-55',
       alert && 'border-destructive/40 text-destructive')
-    const label = t(`team.stat.${key}`, n)
+    const label = labelOverride || t(`team.stat.${key}`, n)
     return onClick
       ? <Button type="button" key={key} variant="outline" size="xs" className={cn(cls, 'hover:border-primary hover:text-primary')} onClick={onClick} title={tip}>{label}</Button>
       : <Badge key={key} variant="outline" className={cls} title={tip}>{label}</Badge>
   }
+  // Pasif üyeler (2026-10-02): toplam üyeye dâhil; varsa sayaç "N aktif · M pasif" yazar (members_inactive ek alan).
+  const inactiveMembers = Number(s.members_inactive ?? 0)
+  const membersLabel = inactiveMembers > 0
+    ? t('team.stat.membersSplit', Math.max(0, Number(s.members ?? 0) - inactiveMembers), inactiveMembers) : null
   return (
     <div className="flex max-w-[260px] flex-wrap gap-1" data-testid="team-stats">
-      {chip('members', s.members, onMembers, t('team.statMembersTip'))}
+      {chip('members', s.members, onMembers, t('team.statMembersTip'), false, membersLabel)}
       {chip('domains', s.domains, onDomains, t('team.statDomainsTip'))}
       {chip('monitors', s.monitors)}
       {chip('open_alerts', s.open_alerts, onAlerts, t('team.statAlertsTip'), Number(s.open_alerts) > 0)}
