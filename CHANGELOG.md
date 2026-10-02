@@ -15,6 +15,16 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.96.1] — 2026-10-02
+
+### Changed
+- **Varsayılan dil İngilizce** (ürün kararı): dil seçmemiş kullanıcı arayüzü İngilizce görür, seçilen dil kalıcıdır.
+  Davranış zaten buydu; karar belgelendi ve testle kilitlendi.
+
+### Fixed
+- Docker imajı açılış testi main sürümlerinde de koşuyor: Release, yayınladığı sürüm imajını yayından sonra boş bir
+  PostgreSQL'e karşı prod profiliyle açıp denetler (sürümü bloklamaz). 20.96.0 imajı bu testi görmeden yayınlanmıştı.
+
 ## [20.96.0] — 2026-10-02
 
 Uçtan uca incelemeden çıkan ve onaylanan 16 öneri. Hepsi mevcut akışı bozmayacak şekilde yapıldı: yeni davranışlar
@@ -2027,7 +2037,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.96.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.96.1...HEAD
+[20.96.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.1
 [20.96.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.0
 [20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0
 [20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0

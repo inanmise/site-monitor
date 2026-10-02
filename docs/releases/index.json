@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-02T02:37:02Z",
+  "generatedAt": "2026-10-02T05:26:41Z",
   "repo": "inanmise/site-monitor",
-  "count": 695,
+  "count": 696,
   "releases": [
+    {
+      "version": "20.96.1",
+      "tag": "v20.96.1",
+      "releasedAt": "2026-10-02T05:26:34Z",
+      "commit": "0082270ddb7554dcab8c311dc353cc9750672762",
+      "prevVersion": "20.96.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "0082270d",
+          "subject": "imaj açılış testi main sürümlerinde de koşuyor; varsayılan dil İngilizce olarak sabitlendi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.96.0",
       "tag": "v20.96.0",

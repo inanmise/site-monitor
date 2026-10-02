@@ -24,9 +24,10 @@ jobs:
     permissions:
       contents: read
       packages: write   # required for ghcr.io push
-    # image-boot-test işi tam olarak bu push'un birincil etiketini çeker ve açar.
+    # image-boot-test işi tam olarak bu push'un birincil etiketini (image çıktısı) çeker ve açar.
     outputs:
       primary: ${{ steps.tags.outputs.primary }}
+      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.primary }}
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -133,119 +134,13 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # ──────────────────────────────────────────────
-  # İmaj açılış testi (2026-10-02, onaylı öneri 28)
-  #
-  # Az önce itilen imajı (birincil etiket) BOŞ bir postgres:16'ya karşı prod profiliyle, Helm'deki gibi salt-okunur
-  # kök dosya sistemiyle (yalnız /tmp ve /var/log yazılabilir) ve release ortamının bellek/CPU tavanıyla açar;
-  # /health/readiness UP olunca scripts/image-boot-check.sh: /health UP, /api/branding 200, oturumsuz /api 401,
-  # sitemonitor_schema_patch_failed = 0 / _locked = 1, günlükte "Şema yamaları:" özeti var ve BAŞARISIZ yok,
-  # ERROR satırı / açılış istisnası yok. Hata olursa son 200 günlük satırı basılır, tam günlük artefakt olur.
-  # Bu workflow sürüm kapısı DEĞİL (release.yml yalnız ci.yml'i bekler) — yeni iş hiçbir yayını bloklamaz.
-  # Kimlik bilgileri tek kullanımlık sahte değerlerdir (servis konteyneri iş bitince yok olur).
-  # ──────────────────────────────────────────────
+  # İmaj açılış testi (2026-10-02, onaylı öneri 28) — adımlar ortak image-boot-test.yml'de (release.yml de çağırır).
+  # Bu workflow sürüm kapısı DEĞİL; iş imaj itildikten sonra koşar ve hiçbir yayını bloklamaz.
   image-boot-test:
-    name: Image boot test (prod profile / postgres:16)
     needs: docker
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     permissions:
       contents: read
       packages: read   # ghcr.io pull
-
-    services:
-      postgres:
-        image: postgres:16.15-trixie@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
-        env:
-          POSTGRES_DB: sitemonitor
-          POSTGRES_USER: sitemonitor
-          POSTGRES_PASSWORD: boot-test-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U sitemonitor -d sitemonitor"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    env:
-      PRIMARY_TAG: ${{ needs.docker.outputs.primary }}
-
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      # REGISTRY / IMAGE_NAME iş akışı düzeyi env'den (adımlarda kabuk değişkeni); iş düzeyi env'de env bağlamı yok.
-      - name: Resolve image reference
-        run: |
-          [ -n "$PRIMARY_TAG" ] || { echo "::error::docker işi birincil etiketi vermedi"; exit 1; }
-          echo "IMAGE=${REGISTRY}/${IMAGE_NAME}:${PRIMARY_TAG}" >> "$GITHUB_ENV"
-          echo "Boot test image: ${REGISTRY}/${IMAGE_NAME}:${PRIMARY_TAG}"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull image
-        run: docker pull "$IMAGE"
-
-      # --network host: servis konteynerinin 5432'si runner'da localhost'ta; uygulama 8080'i doğrudan açar.
-      - name: Start container (prod profile, read-only root FS)
-        run: |
-          SECRET_KEY="$(openssl rand -hex 32)"
-          docker run -d --name sm --network host \
-            --read-only --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /var/log:rw,mode=1777 \
-            --memory 1g --cpus 2 \
-            -e SPRING_PROFILES_ACTIVE=prod \
-            -e LOG_LEVEL=INFO \
-            -e DB_HOST=localhost -e DB_PORT=5432 -e DB_NAME=sitemonitor \
-            -e DB_USER=sitemonitor -e DB_PASSWORD=boot-test-only \
-            -e ADMIN_USERNAME=boottest -e ADMIN_PASSWORD=BootTest-Only-2026 \
-            -e SITE_MONITOR_SECRET_KEY="$SECRET_KEY" \
-            -e SITE_MONITOR_EMAIL_ENABLED=false \
-            -e SPRING_SESSION_STORE_TYPE=jdbc \
-            -e STARTUP_CHECK_DELAY_MS=600000 \
-            -e JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0 -Xss512k -XX:+ExitOnOutOfMemoryError" \
-            "$IMAGE"
-
-      - name: Wait for readiness (max 180 s)
-        run: |
-          for i in $(seq 1 90); do
-            if curl -fsS --max-time 3 http://localhost:8080/health/readiness 2>/dev/null | grep -q '"status":"UP"'; then
-              echo "Ready after ~$((i * 2)) s"
-              exit 0
-            fi
-            if [ "$(docker inspect -f '{{.State.Running}}' sm 2>/dev/null)" != "true" ]; then
-              echo "::error::Container exited during startup (exit code $(docker inspect -f '{{.State.ExitCode}}' sm 2>/dev/null))"
-              exit 1
-            fi
-            sleep 2
-          done
-          echo "::error::/health/readiness did not report UP within 180 s"
-          exit 1
-
-      - name: Boot checks (health, auth gate, schema patches, startup log)
-        run: |
-          docker logs sm > boot.log 2>&1
-          bash scripts/image-boot-check.sh http://localhost:8080 boot.log
-
-      - name: Container log (last 200 lines)
-        if: failure()
-        run: |
-          docker logs sm > boot.log 2>&1 || true
-          tail -n 200 boot.log || true
-
-      - name: Upload boot log
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: image-boot-log
-          path: boot.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Stop container
-        if: always()
-        run: docker rm -f sm >/dev/null 2>&1 || true
+    uses: ./.github/workflows/image-boot-test.yml
+    with:
+      image: ${{ needs.docker.outputs.image }}
