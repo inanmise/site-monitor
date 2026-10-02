@@ -25,6 +25,8 @@ import com.sitemonitor.service.MonitoringOutageService;
 import com.sitemonitor.service.SchedulerService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.MonitoringGroupService;
+import com.sitemonitor.service.http.HttpRequestOptions;
+import com.sitemonitor.service.http.HttpRequestRules;
 import com.sitemonitor.util.MonitorUrls;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -3179,6 +3181,26 @@ public class MonitoringController {
 
     // ── HTTP / Website Monitors (serbest-form) ────────────────────────────────
 
+    /**
+     * HTTP'ye özgü geçmiş/denetim alanları (2026-10-01, onaylı öneri 9) — MON_FIELDS'e EKLENİR (bkz. HTTP_FIELDS).
+     * Sırlar değer olarak yazılmaz: {@code basicAuthPassEnc} AuditDiff'te "_pass_" diye maskelenir; {@code customHeadersEnc}
+     * anlık görüntüde {@code customHeadersSecret} adına taşınır ({@link #httpSnapshot}) ve "secret" diye maskelenir —
+     * değişiklik ŞİFRELİ metin farkından algılanır, çıktıda yalnız {@code ***} görünür. Geri yükleme (restore) bu
+     * alanlara DOKUNMAZ (MON_FIELDS ile sınırlı kalır): gövde 512 karakterde kırpılmış olabilir, sırlar maskelidir.
+     */
+    private static final String[] HTTP_EXTRA_FIELDS = {
+            "requestBody", "requestContentType", "basicAuthUser", "basicAuthPassEnc", "customHeadersEnc",
+            "slowResponseEnabled", "slowThresholdMs", "jsonPath", "jsonExpected" };
+    private static final String[] HTTP_FIELDS = java.util.stream.Stream.concat(
+            java.util.Arrays.stream(MON_FIELDS), java.util.Arrays.stream(HTTP_EXTRA_FIELDS)).toArray(String[]::new);
+
+    /** HTTP izlemesinin geçmiş/denetim anlık görüntüsü — şifreli başlık metni adı maskelenen anahtara taşınır. */
+    static Map<String, Object> httpSnapshot(HttpMonitor m) {
+        Map<String, Object> s = AuditDiff.snapshot(m, HTTP_FIELDS);
+        if (s.containsKey("customHeadersEnc")) s.put("customHeadersSecret", s.remove("customHeadersEnc"));
+        return s;
+    }
+
     @GetMapping("/http")
     public ResponseEntity<Map<String, Object>> listHttp(HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
@@ -3186,15 +3208,106 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(HttpCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
+        boolean admin = SessionScope.isGlobalAdmin(session);
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<HttpMonitor> monitors = httpMonitorRepo.findAllByOrderByNameAsc().stream()
                 .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
-        Map<String, AlertEvent> alarms = openAlarmsByDomain(
-                monitors.stream().map(HttpMonitor::getUrl).collect(Collectors.toSet()),
-                EscalationService.TYPE_HTTP_DOWN);
+        // TEK sorgu, iki tür: HTTP_DOWN (kart alarmı — eskisiyle aynı) + HTTP_SLOW (2026-10-01 yavaşlık rozeti).
+        java.util.Set<String> urls = monitors.stream().map(HttpMonitor::getUrl).collect(Collectors.toSet());
+        List<AlertEvent> open = urls.isEmpty() ? List.of() : alertEventRepo.findOpenByDomainIn(urls);
+        Map<String, AlertEvent> alarms = openOfType(open, EscalationService.TYPE_HTTP_DOWN);
+        Map<String, AlertEvent> slowAlarms = openOfType(open, EscalationService.TYPE_HTTP_SLOW);
         List<Map<String, Object>> result = monitors.stream()
-                .map(m -> enrichHttp(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()))).toList();
+                .map(m -> enrichHttp(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()),
+                        slowAlarms.get(m.getUrl()), admin)).toList();
         return ok(withCheckFlag(session, result));
+    }
+
+    /** Açık alarm listesinden tek türün alan→olay haritası ({@link #openAlarmsByDomain} ile aynı birleştirme kuralı). */
+    private static Map<String, AlertEvent> openOfType(List<AlertEvent> open, String alertType) {
+        if (open == null || open.isEmpty()) return Map.of();
+        return open.stream()
+                .filter(e -> alertType.equals(e.getAlertType()) && e.getDomain() != null)
+                .collect(Collectors.toMap(AlertEvent::getDomain, e -> e, (a, b) -> a));
+    }
+
+    /**
+     * Gelişmiş istek alanlarının KAYIT ANI doğrulaması (2026-10-01) — ilk hata istek dilinde, yoksa {@code null}.
+     * Yalnız gövdede GELEN alanlar sınanır (eksik alan = dokunma). Özel başlıklar yalnız global admin'de sınanır:
+     * diğer rollerde alan zaten yok sayılıyor (Anahtar Kelime / Sayfa Hızı deseni).
+     *
+     * @param method   kaydedilecek ETKİN yöntem (gövdeden ya da mevcut kayıttan)
+     * @param jsonPath kaydedilecek ETKİN JSON yolu
+     */
+    private static String validateHttpAdvanced(Map<String, Object> body, boolean admin, String method, String jsonPath) {
+        String err = null;
+        if (admin && body.containsKey("customHeaders")) err = HttpRequestRules.validateHeaders(strOrNull(body.get("customHeaders")));
+        if (err == null && body.containsKey("requestBody")) err = HttpRequestRules.validateBody(strOrNull(body.get("requestBody")));
+        if (err == null && body.containsKey("requestContentType")) err = HttpRequestRules.validateContentType(strOrNull(body.get("requestContentType")));
+        if (err == null && body.containsKey("basicAuthUser")) err = HttpRequestRules.validateBasicAuthUser(strOrNull(body.get("basicAuthUser")));
+        if (err == null && body.containsKey("basicAuthPass")) err = HttpRequestRules.validateBasicAuthPass(strOrNull(body.get("basicAuthPass")));
+        if (err == null && body.containsKey("jsonPath")) err = HttpRequestRules.validateJsonPath(strOrNull(body.get("jsonPath")));
+        if (err == null && body.containsKey("jsonExpected")) err = HttpRequestRules.validateJsonExpected(strOrNull(body.get("jsonExpected")));
+        if (err == null && body.get("slowThresholdMs") instanceof Number n) err = HttpRequestRules.validateSlowThreshold(n.intValue());
+        if (err == null) err = HttpRequestRules.validateJsonWithMethod(method, jsonPath);
+        return err;
+    }
+
+    private static String strOrNull(Object v) { return v == null ? null : v.toString(); }
+
+    /** Gövdeden HTTP ETKİN JSON yolu: gövdede varsa o (boş → null), yoksa mevcut değer. */
+    private static String effectiveJsonPath(Map<String, Object> body, String current) {
+        if (!body.containsKey("jsonPath")) return current;
+        Object v = body.get("jsonPath");
+        return v == null || v.toString().isBlank() ? null : v.toString().trim();
+    }
+
+    /**
+     * Gelişmiş istek alanlarını uygular — Sayfa Hızı'nın write-only sır deseni: parola alanı hiç gelmediyse dokunma,
+     * BOŞ geldiyse mevcut şifreli değeri KORU, doluysa şifreleyip değiştir; kullanıcı adı temizlenince parola da düşer.
+     * Özel başlıklar YALNIZ global admin (diğerinde sessizce yok sayılır — admin'in koyduğu başlıklar silinmez).
+     */
+    private void applyHttpAdvancedFields(HttpMonitor m, Map<String, Object> body, HttpSession session) {
+        if (body.containsKey("requestBody")) m.setRequestBody(blank(body.get("requestBody")) ? null : body.get("requestBody").toString());
+        if (body.containsKey("requestContentType")) m.setRequestContentType(blank(body.get("requestContentType")) ? null : body.get("requestContentType").toString().trim());
+        if (body.containsKey("basicAuthUser")) m.setBasicAuthUser(blank(body.get("basicAuthUser")) ? null : body.get("basicAuthUser").toString().trim());
+        if (body.containsKey("basicAuthPass") && body.get("basicAuthPass") != null && !body.get("basicAuthPass").toString().isEmpty()) {
+            m.setBasicAuthPassEnc(secretCipher.encrypt(body.get("basicAuthPass").toString()));
+        }
+        if (m.getBasicAuthUser() == null) m.setBasicAuthPassEnc(null);
+        if (Boolean.TRUE.equals(body.get("clearBasicAuthPass"))) m.setBasicAuthPassEnc(null);
+        if (body.containsKey("customHeaders") && SessionScope.isGlobalAdmin(session)) {
+            String raw = blank(body.get("customHeaders")) ? null : body.get("customHeaders").toString().trim();
+            m.setCustomHeadersEnc(raw == null ? null : secretCipher.encrypt(raw));
+        }
+        if (body.get("slowResponseEnabled") instanceof Boolean b) m.setSlowResponseEnabled(b);
+        if (body.get("slowThresholdMs") instanceof Number n) m.setSlowThresholdMs(n.intValue());
+        if (body.containsKey("jsonPath")) m.setJsonPath(effectiveJsonPath(body, null));
+        if (body.containsKey("jsonExpected")) m.setJsonExpected(blank(body.get("jsonExpected")) ? null : body.get("jsonExpected").toString().trim());
+    }
+
+    /** Kayıtlı izlemenin gelişmiş istek seçenekleri (sırlar çözülmüş); eklentisizse NONE. */
+    private HttpRequestOptions httpOptions(HttpMonitor m) {
+        return HttpRequestOptions.forMonitor(m, secretCipher::decrypt);
+    }
+
+    /** Eklentisiz izlemede denetleyicinin ESKİ girişi — istek/karar 2026-10-01 öncesiyle birebir. */
+    private Map<String, Object> runHttpCheck(String url, String method, String expected, int timeoutMs,
+                                             boolean verifySsl, boolean followRedirects, boolean viaProxy,
+                                             HttpRequestOptions opts) {
+        return opts == null || opts == HttpRequestOptions.NONE
+                ? httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, viaProxy)
+                : httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, viaProxy, opts);
+    }
+
+    /** Başlık ADLARI (değerler jeton taşıyabilir) — yalnız global admin'e. */
+    private List<String> httpHeaderNames(HttpMonitor m) {
+        if (m.getCustomHeadersEnc() == null || m.getCustomHeadersEnc().isBlank()) return List.of();
+        try {
+            return List.copyOf(HttpRequestRules.parseHeaders(secretCipher.decrypt(m.getCustomHeadersEnc())).keySet());
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     @PostMapping("/http")
@@ -3206,6 +3319,11 @@ public class MonitoringController {
         if (teamId == null) return badRequest("Takım seçimi zorunludur; izleme oluşturulamıyor.");
         String url = MonitorUrls.normalize(body.get("url").toString());   // şemasız girdiye https:// eklenir
         if (!MonitorUrls.isCheckable(url)) return badRequest(INVALID_URL_MSG);
+        {   // gelişmiş istek alanları (2026-10-01) — yalnız gövdede gelenler sınanır; eklentisiz gövdede hiçbir şey değişmez
+            String advErr = validateHttpAdvanced(body, SessionScope.isGlobalAdmin(session),
+                    normalizeHttpMethod(body.get("method")), effectiveJsonPath(body, null));
+            if (advErr != null) return badRequest(advErr);
+        }
         if (httpMonitorRepo.existsDuplicate(url, teamId, null))           // mükerrer kontrolü normalize edilmiş değerle
             return badRequest("Bu URL bu takımda zaten izleniyor; mükerrer HTTP monitörü oluşturulamaz.");
         String now = ISO.format(Instant.now());
@@ -3230,6 +3348,7 @@ public class MonitoringController {
         if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
         if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
         applyHttpFeatureFields(m, body);
+        applyHttpAdvancedFields(m, body, session);
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         HttpMonitor saved = httpMonitorRepo.save(m);
@@ -3239,17 +3358,24 @@ public class MonitoringController {
         // İLK DEĞERLER: denetim create'te changes=null geçiyor (güvenlik kaydı "ne oldu"yu yazar);
         // ürün geçmişi "hangi değerlerle doğdu" sorusunu cevaplamak zorunda.
         monitorHistory.record(MonitorHistoryService.HTTP, saved.getId(), saved.getName(), saved.getTeamId(),
-                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
-        return ok(enrichHttp(saved, null, teamNameMap(), null));
+                MonitorHistoryService.CREATE, null, httpSnapshot(saved), changeNote(body), session);
+        return ok(enrichHttp(saved, null, teamNameMap(), null, null, SessionScope.isGlobalAdmin(session)));
     }
 
     @PutMapping("/http/{id}")
     public ResponseEntity<Map<String, Object>> updateHttp(@PathVariable Long id, @RequestBody Map<String, Object> body, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         { var _gt = requireGroupAndTags(body, false); if (_gt != null) return _gt; }   // gönderilip boş bırakılmışsa 400 (2026-09-18)
-        java.util.Map<String, Object> _before = httpMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        java.util.Map<String, Object> _before = httpMonitorRepo.findById(id).map(MonitoringController::httpSnapshot).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
+            {   // gelişmiş istek alanları (2026-10-01) — hiçbir şeye dokunmadan ÖNCE; eklentisiz gövdede no-op
+                String effMethod = body.get("method") != null ? normalizeHttpMethod(body.get("method")) : m.getMethod();
+                String advErr = validateHttpAdvanced(body, SessionScope.isGlobalAdmin(session), effMethod,
+                        effectiveJsonPath(body, m.getJsonPath()));
+                if (advErr != null) return badRequest(advErr);
+            }
+            boolean slowWasOn = Boolean.TRUE.equals(m.getSlowResponseEnabled());
             if (body.get("name")            != null) m.setName((String) body.get("name"));
             if (body.get("url")             != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -3265,7 +3391,7 @@ public class MonitoringController {
             if (body.containsKey("teamId"))          m.setTeamId(resolveTeamChange(session, m.getTeamId(), body.get("teamId")));
             m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
-            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY), ownerCtx(m.getId(), m.getTeamId(), null));
+            closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW, EscalationService.TYPE_DOMAIN_EXPIRY), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active")          instanceof Boolean b) m.setActive(b);
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
@@ -3274,17 +3400,27 @@ public class MonitoringController {
             if (body.get("recoveryChecks") != null)         m.setRecoveryChecks(clampRecovery(((Number) body.get("recoveryChecks")).intValue()));
             if (body.get("recoveryIntervalSeconds") != null) m.setRecoveryIntervalSeconds(clampInterval(((Number) body.get("recoveryIntervalSeconds")).intValue()));
             applyHttpFeatureFields(m, body);
+            applyHttpAdvancedFields(m, body, session);
+            // Yavaş yanıt alarmı KAPATILDIYSA (açık→kapalı) bu izlemenin açık HTTP_SLOW olayı sessizce kapanır: kapalı izleme
+            // sweep'te yavaşlık kalemi üretmez (bugünkü davranış korunsun diye), yani kurtarma yolu onu kapatamazdı.
+            if (slowWasOn && !Boolean.TRUE.equals(m.getSlowResponseEnabled())) {
+                escalationService.resolveOpenAlertsSilently(m.getUrl(), Set.of(EscalationService.TYPE_HTTP_SLOW),
+                        "Sistem (yavaş yanıt alarmı kapatıldı)", ownerCtx(m.getId(), m.getTeamId(), null));
+            }
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             HttpMonitor saved = httpMonitorRepo.save(m);
             auditService.recordAction("MONITOR_UPDATE", session, "HTTP_MONITOR", String.valueOf(saved.getId()), saved.getName(),
-                    AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
+                    AuditDiff.diff(_before, httpSnapshot(saved)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.
             var changeRow = monitorHistory.record(MonitorHistoryService.HTTP, saved.getId(), saved.getName(), saved.getTeamId(),
-                    MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
+                    MonitorHistoryService.UPDATE, _before, httpSnapshot(saved), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.HTTP, saved.getUrl(), session);
+            AlertEvent slowOpen = Boolean.TRUE.equals(saved.getSlowResponseEnabled())
+                    ? alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_HTTP_SLOW).orElse(null) : null;
             return ok(enrichHttp(saved, httpCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
-                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
+                    alertEventRepo.findOpenAlert(saved.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null),
+                    slowOpen, SessionScope.isGlobalAdmin(session)));
         }).orElse(notFound("HTTP monitor not found"));
     }
 
@@ -3292,18 +3428,19 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> deleteHttp(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         // Silme ÖNCESİ durum: aşağıda active=false yapılıyor, sonra almak farkı kaybettirirdi.
-        Map<String, Object> _before = httpMonitorRepo.findById(id).map(x -> AuditDiff.snapshot(x, MON_FIELDS)).orElse(null);
+        Map<String, Object> _before = httpMonitorRepo.findById(id).map(MonitoringController::httpSnapshot).orElse(null);
         return httpMonitorRepo.findById(id).map(m -> {
             if (!SessionScope.canManage(session, m.getTeamId())) throw new SecurityException("Silme yetkisi yok (yalnız takım yöneticisi/ADMIN)");
             escalationService.resolveOpenAlertsSilently(m.getUrl(),
-                    Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_DOMAIN_EXPIRY),
+                    Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL, EscalationService.TYPE_HTTP_SLOW,
+                            EscalationService.TYPE_DOMAIN_EXPIRY),
                     "Sistem (izleme silindi)", ownerCtx(m.getId(), m.getTeamId(), null));   // D-b1
             httpMonitorRepo.delete(m);
             activityLog.recordLifecycle(ActivityLogService.HTTP, m.getId(), m.getName(),
                     m.getUrl(), m.getTeamId(), "DELETED", actor(session));
             auditService.recordAction("MONITOR_DELETE", session, "HTTP_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             monitorHistory.record(MonitorHistoryService.HTTP, m.getId(), m.getName(), m.getTeamId(),
-                    MonitorHistoryService.DELETE, _before, AuditDiff.snapshot(m, MON_FIELDS), null, session);
+                    MonitorHistoryService.DELETE, _before, httpSnapshot(m), null, session);
             return ok(Map.of("deleted", true));
         }).orElse(notFound("HTTP monitor not found"));
     }
@@ -3330,7 +3467,7 @@ public class MonitoringController {
         };
         return runHistory(session, mon.getTeamId(), src, "http",
                 mon.getUrl(), Set.of(EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SSL,
-                        EscalationService.TYPE_DOMAIN_EXPIRY),
+                        EscalationService.TYPE_HTTP_SLOW, EscalationService.TYPE_DOMAIN_EXPIRY),
                 from, to, days, status, page, size, format, "http-history-" + id, List.of(
                 new CsvColumn<>("checked_at", HttpCheck::getCheckedAt),
                 new CsvColumn<>("ok", HttpCheck::getOk),
@@ -3345,9 +3482,11 @@ public class MonitoringController {
         return httpMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
             // İLK kontrol burada koşar: kullanıcı sonucu ANINDA görsün (kart boş dönmesin).
-            Map<String, Object> r = httpChecker.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
+            // Gelişmiş istek alanı yoksa (NONE) denetleyicinin eski girişi — istek/karar birebir eskisi (2026-10-01).
+            Map<String, Object> r = runHttpCheck(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000,
-                    Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()), viaProxy(m.getUrl(), m.getUseProxy()));
+                    Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()), viaProxy(m.getUrl(), m.getUseProxy()),
+                    httpOptions(m));
             HttpCheck res = new HttpCheck();
             res.setMonitorId(m.getId());
             res.setOk(Boolean.TRUE.equals(r.get("ok")));
@@ -3364,8 +3503,11 @@ public class MonitoringController {
             // üretiyordu. Yeni alarm sonraki zamanlanmış turun normal teyit kurallarıyla açılır.
             // Senkron beklenemez: doğrulama varsayılan 3 × 30 sn sürer.
             schedulerService.evaluateHttpNow(m, r);   // AYNI sonuç — ikinci kontrol/kayıt YOK
+            AlertEvent slowOpen = Boolean.TRUE.equals(m.getSlowResponseEnabled())
+                    ? alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_SLOW).orElse(null) : null;
             return ok(enrichHttp(m, res, teamNameMap(),
-                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null)));
+                    alertEventRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_HTTP_DOWN).orElse(null),
+                    slowOpen, SessionScope.isGlobalAdmin(session)));
         }).orElse(notFound("HTTP monitor not found"));
     }
 
@@ -3381,6 +3523,12 @@ public class MonitoringController {
         int timeoutMs = clampTimeoutMs(body.get("timeoutMs"), 10000);   // N3: test ucu da tavanlı
         boolean verifySsl = Boolean.TRUE.equals(body.get("verifySsl"));
         boolean followRedirects = !Boolean.FALSE.equals(body.get("followRedirects"));
+        // Gelişmiş istek alanları (2026-10-01): kayıtla AYNI doğrulama; deneme YALNIZ formda yazılı değerleri kullanır
+        // (kayıtlı parola/başlık okunmaz — Sayfa Hızı denemesiyle aynı). Alan yoksa istek eskisinin birebir aynısı.
+        boolean admin = SessionScope.isGlobalAdmin(session);
+        String advErr = validateHttpAdvanced(body, admin, method, effectiveJsonPath(body, null));
+        if (advErr != null) return badRequest(advErr);
+        HttpRequestOptions opts = testHttpOptions(body, admin);
         com.sitemonitor.service.ProxyPolicyService.Decision pd = proxyDecision(url, body.get("useProxy"));
         // N1: oturum başına tek eşzamanlı test — istek iş parçacığı havuzu tek oturumca tüketilemesin.
         String slot = testSlot(session, "http");
@@ -3393,7 +3541,7 @@ public class MonitoringController {
                     AuditDetail.of("url", AuditDetail.safeTarget(url), "method", method,
                             "expected", expected, "verify_ssl", verifySsl,
                             "follow_redirects", followRedirects, "via", pd.via()), null);
-            r = httpChecker.check(url, method, expected, timeoutMs, verifySsl, followRedirects, pd.viaProxy());
+            r = runHttpCheck(url, method, expected, timeoutMs, verifySsl, followRedirects, pd.viaProxy(), opts);
         } finally {
             TEST_IN_FLIGHT.remove(slot);
         }
@@ -3406,7 +3554,21 @@ public class MonitoringController {
         out.put("expected_status", expected);
         out.put("error",           r.get("error"));
         out.put("error_detail",    r.get("error_detail"));   // form testinde de tanı paneli (2026-09-22)
+        if (Boolean.TRUE.equals(r.get("json_assertion_failed"))) out.put("json_assertion_failed", true);
         return ok(out);
+    }
+
+    /** Form denemesi için seçenekler — yalnız gövdede yazılı değerler (sırlar düz gelir, hiçbir yere yazılmaz). */
+    private static HttpRequestOptions testHttpOptions(Map<String, Object> body, boolean admin) {
+        HttpRequestOptions o = new HttpRequestOptions(
+                admin ? strOrNull(body.get("customHeaders")) : null,
+                blank(body.get("basicAuthUser")) ? null : body.get("basicAuthUser").toString().trim(),
+                strOrNull(body.get("basicAuthPass")),
+                strOrNull(body.get("requestBody")),
+                blank(body.get("requestContentType")) ? null : body.get("requestContentType").toString().trim(),
+                effectiveJsonPath(body, null),
+                blank(body.get("jsonExpected")) ? null : body.get("jsonExpected").toString().trim());
+        return o.isEmpty() ? HttpRequestOptions.NONE : o;
     }
 
     @GetMapping("/http/{id}/response-series")
@@ -3466,7 +3628,8 @@ public class MonitoringController {
         if (!blank(body.get("domainReminderDays"))) m.setDomainReminderDays(body.get("domainReminderDays").toString().trim());
     }
 
-    private Map<String, Object> enrichHttp(HttpMonitor m, HttpCheck latest, Map<Long, String> teams, AlertEvent openAlarm) {
+    private Map<String, Object> enrichHttp(HttpMonitor m, HttpCheck latest, Map<Long, String> teams, AlertEvent openAlarm,
+                                           AlertEvent slowAlarm, boolean admin) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("id",               m.getId());
         item.put("name",             m.getName());
@@ -3498,16 +3661,35 @@ public class MonitoringController {
         item.put("domain_expiry_reminders",   m.getDomainExpiryReminders());
         item.put("ssl_reminder_days",         m.getSslReminderDays());
         item.put("domain_reminder_days",      m.getDomainReminderDays());
+        // Gelişmiş istek (2026-10-01, onaylı öneri 9). SIRLAR ASLA dönmez (şifreli hâli bile): yalnız "kayıtlı mı"
+        // bayrakları ve — yalnız global admin'e — başlık ADLARI (Sayfa Hızı / Anahtar Kelime ile aynı adlandırma).
+        item.put("request_body",          m.getRequestBody());
+        item.put("request_content_type",  m.getRequestContentType());
+        item.put("basic_auth_user",       m.getBasicAuthUser());
+        item.put("has_basic_auth_pass",   m.getBasicAuthPassEnc() != null && !m.getBasicAuthPassEnc().isBlank());
+        item.put("has_custom_headers",    m.getCustomHeadersEnc() != null && !m.getCustomHeadersEnc().isBlank());
+        item.put("custom_header_names",   admin ? httpHeaderNames(m) : List.of());
+        item.put("slow_response_enabled", Boolean.TRUE.equals(m.getSlowResponseEnabled()));
+        item.put("slow_threshold_ms",     m.getSlowThresholdMs());
+        item.put("json_path",             m.getJsonPath());
+        item.put("json_expected",         m.getJsonExpected());
+        item.put("slow_alarm",            slowAlarm != null);
         item.put("active_alarm",       openAlarm != null);
         item.put("alarm_level",        openAlarm != null ? openAlarm.getAlertLevel() : null);
         item.put("alarm_acknowledged", openAlarm != null ? openAlarm.getAcknowledged() : null);
         if (latest != null) {
-            item.put("status",      latest.getError() != null ? "error" : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
+            // JSON doğrulaması (2026-10-01): yanıt GELDİ (durum kodu var) ama gövde doğrulanamadı → "down" + neden; "error"
+            // yalnız yanıt hiç gelmediğinde (bugüne dek her hata satırında durum kodu boştu — eski satırlar aynı okunur).
+            boolean jsonFail = latest.getError() != null
+                    && latest.getError().startsWith(com.sitemonitor.service.http.JsonAssertion.FAIL_PREFIX);
+            item.put("status",      latest.getError() != null && !(jsonFail && latest.getHttpStatus() != null) ? "error"
+                                    : (Boolean.TRUE.equals(latest.getOk()) ? "up" : "down"));
             item.put("ok",          latest.getOk());
             item.put("http_status", latest.getHttpStatus());
             item.put("response_ms", latest.getResponseMs());
             item.put("error",       latest.getError());
             item.put("checked_at",  latest.getCheckedAt());
+            if (jsonFail) item.put("json_assertion_failed", true);
         } else {
             item.put("status", "unknown");
             item.put("ok", null); item.put("http_status", null);
@@ -4497,7 +4679,8 @@ public class MonitoringController {
         // Uyarılar YANITTA taşınır, istekte değil: kaydetme payload'ının şekli değişmez
         // (frontend testi create payload'ını tam eşitlikle pinliyor).
         Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved, null, teamNameMap(), null));
-        if (!diag.warnings().isEmpty()) out.put("warnings", diag.warnings());
+        List<String> warnings = withFileReadWarning(body.get("script"), diag.warnings());
+        if (!warnings.isEmpty()) out.put("warnings", warnings);
         return ok(out);
     }
 
@@ -4580,7 +4763,8 @@ public class MonitoringController {
             Map<String, Object> out = new LinkedHashMap<>(enrichScripted(saved,
                     scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(),
                     alertEventRepo.findOpenAlert(saved.getName(), EscalationService.TYPE_SCRIPTED_FAIL).orElse(null)));
-            if (!diag.warnings().isEmpty()) out.put("warnings", diag.warnings());
+            List<String> warnings = withFileReadWarning(body.get("script"), diag.warnings());
+            if (!warnings.isEmpty()) out.put("warnings", warnings);
             return ok(out);
         }).orElse(notFound("Sentetik izleme bulunamadı"));
     }
@@ -5019,6 +5203,16 @@ public class MonitoringController {
     /** Script gövde desen taraması → BLOCK politikasında hit varsa hata mesajı, aksi halde null (WARN sadece bilgi). */
     private String scanScriptOrError(Object script) {
         if (script == null) return null;
+        // Dosya okuma (2026-10-01, onaylı öneri 1): yalnız ayar BLOCK iken kayıt reddedilir; REPORT'ta (varsayılan)
+        // kayıt sürer ve yanıta uyarı eklenir (withFileReadWarning).
+        if (scriptedChecker != null && scriptedChecker.fileReadBlocking()) {
+            List<String> fr = com.sitemonitor.service.ScriptedCheckerService.scanFileReads(script.toString());
+            if (!fr.isEmpty()) return com.sitemonitor.util.Msg.t(
+                    "Betik dosya okuyor (" + String.join(", ", fr) + "). Güvenlik ayarı gereği dosya okuyan betik "
+                            + "kaydedilemez; veriyi ortam değişkeniyle (__ENV) ya da betiğin içinde verin.",
+                    "The script reads files (" + String.join(", ", fr) + "). By security policy a script that reads "
+                            + "files can't be saved; pass the data as an environment variable (__ENV) or inside the script.");
+        }
         List<String> hits = com.sitemonitor.service.ScriptedCheckerService.scanHardcodedSecrets(script.toString());
         if (hits.isEmpty()) return null;
         String policy = appSettings.getString("site.monitor.scripted.hardcoded-secret-policy", "WARN");
@@ -5026,6 +5220,23 @@ public class MonitoringController {
             return "Script gövdesinde sabit-kodlu gizli değer tespit edildi (" + String.join(", ", hits)
                     + "). Bunları ortam değişkeni (secret) olarak tanımlayın ve script'te __ENV üzerinden kullanın.";
         return null;   // WARN: kaydı engelleme (frontend uyarısı gösterir)
+    }
+
+    /**
+     * REPORT modunda (varsayılan) dosya okuma uyarısı — kayıt engellenmez, yanıttaki {@code warnings}'e eklenir
+     * (2026-10-01, onaylı öneri 1). BLOCK modunda bu noktaya gelinmez: {@link #scanScriptOrError} kaydı reddeder.
+     */
+    private List<String> withFileReadWarning(Object script, List<String> warnings) {
+        if (script == null) return warnings;
+        List<String> fr = com.sitemonitor.service.ScriptedCheckerService.scanFileReads(script.toString());
+        if (fr.isEmpty()) return warnings;
+        List<String> out = new ArrayList<>(warnings);
+        out.add(com.sitemonitor.util.Msg.t(
+                "Betik dosya okuyor (" + String.join(", ", fr) + "). Bu, sunucudaki dosyalara erişim demektir ve güvenlik "
+                        + "nedeniyle ileride engellenebilir; veriyi ortam değişkeniyle (__ENV) ya da betiğin içinde verin.",
+                "The script reads files (" + String.join(", ", fr) + "). That gives it access to files on the server and "
+                        + "may be blocked for security later; pass the data as an environment variable (__ENV) or inside the script."));
+        return out;
     }
 
     /**

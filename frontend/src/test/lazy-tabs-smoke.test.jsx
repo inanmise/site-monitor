@@ -70,12 +70,35 @@ const LAZY = lazyPathsFromApp()
 /** Mount edilemeyen bileşenler — her biri gerekçeli. Boş kalması hedeftir. */
 const EXEMPT = new Set([])
 
+/**
+ * Sekme OLMAYAN lazy ekranların zorunlu verisi (2026-10-02, öneri 22: pencereler de lazy oldu). App bunları
+ * yalnız verisiyle bağlar (`caModal && …certs`, `planRow && …row`); CertificateModal alan adı yokken null çizer —
+ * gerçek gövde yolu çalışsın diye bir alan adı verilir. Sekme bileşenleri ortak `systemRole/globalAdmin` ile kalır.
+ */
+const PROPS = {
+  CertificateModal: { domain: 'example.com', onClose: () => {} },
+  CaDiversityModal: { certs: [], onClose: () => {} },
+  RenewalPlanModal: { row: { domain: 'example.com' }, onClose: () => {} },
+}
+
 beforeEach(() => { cleanup() })
 
 describe('lazy sekme mount bekçisi', () => {
   it('App.jsx\'ten lazy sekme listesi çıkarılabiliyor', () => {
     // Regex bozulursa liste boşalır ve test sessizce yeşil kalırdı — bu assert onu engeller.
     expect(LAZY.length).toBeGreaterThanOrEqual(20)
+  })
+
+  it('özel veri tablosu yalnız gerçek lazy bileşenleri anar (ölü kayıt yok)', () => {
+    const names = new Set(LAZY.map(l => l.name))
+    expect(Object.keys(PROPS).filter(n => !names.has(n))).toEqual([])
+  })
+
+  it('pano dışı ekranlar ve isteğe bağlı pencereler de lazy (öneri 22 — açılış paketine geri girmesin)', () => {
+    const names = new Set(LAZY.map(l => l.name))
+    const expected = ['StatsView', 'CertificatesTable', 'RenewalAdvice', 'CertRenewalGuide',
+      'CertificateModal', 'CaDiversityModal', 'RenewalPlanModal']
+    expect(expected.filter(n => !names.has(n)), 'App.jsx bu bileşenleri yeniden eager import ediyor').toEqual([])
   })
 
   it('her lazy sekmenin modülü glob ile çözülebiliyor', () => {
@@ -93,9 +116,11 @@ describe('lazy sekme mount bekçisi', () => {
     // Konsol gürültüsünü bastır ama HATAYI YUTMA: render throw ederse test kırılır.
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
-      render(<Component systemRole="ADMIN" globalAdmin />)
+      render(<Component systemRole="ADMIN" globalAdmin {...PROPS[name]} />)
     } finally {
       spy.mockRestore()
     }
-  })
+    // Süre tavanı yalnız SOĞUK modül dönüşümü için: CertificateModal'ın zinciri (Markdown editörü + sözdizimi
+    // renklendirici) tek başına ~9 sn sürüyor; tam koşunun yükü altında 15 sn'lik genel tavanı sahte kırmızıya çevirirdi.
+  }, 60000)
 })

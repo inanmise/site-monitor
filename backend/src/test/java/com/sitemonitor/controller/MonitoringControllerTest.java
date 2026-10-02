@@ -4879,4 +4879,274 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.skipped").value(true))
                 .andExpect(jsonPath("$.data.skipped_code").value("MANUAL_POOL_BUSY"));
     }
+
+    // ── HTTP gelişmiş istek (2026-10-01, onaylı öneri 9): doğrulama, sır maskeleme, geriye uyum ──────────────
+
+    private static final String HTTP_BASE = "\"groupName\":\"Grup A\",\"tags\":\"t1\",\"url\":\"https://adv.example.com/health\",\"teamId\":3";
+
+    private void stubHttpSave() {
+        when(httpMonitorRepo.existsDuplicate(anyString(), any(), any())).thenReturn(false);
+        when(httpMonitorRepo.save(any(com.sitemonitor.model.HttpMonitor.class)))
+                .thenAnswer(a -> { com.sitemonitor.model.HttpMonitor h = a.getArgument(0); if (h.getId() == null) h.setId(77L); return h; });
+    }
+
+    private void stubCipher() {
+        org.mockito.Mockito.lenient().when(secretCipher.encrypt(anyString())).thenAnswer(a -> "ENC(" + a.getArgument(0) + ")");
+        org.mockito.Mockito.lenient().when(secretCipher.decrypt(anyString())).thenAnswer(a -> {
+            String s = a.getArgument(0);
+            return s.startsWith("ENC(") ? s.substring(4, s.length() - 1) : s;
+        });
+    }
+
+    @Test
+    @DisplayName("POST /http gelişmiş alan doğrulaması: bozuk başlık / CR-LF / kısıtlı başlık / büyük gövde / bozuk JSON yolu / HEAD+JSON / eşik → 400, kayıt YOK")
+    void createHttp_advancedValidation_400() throws Exception {
+        stubHttpSave();
+        String bigBody = "a".repeat(com.sitemonitor.service.http.HttpRequestRules.MAX_BODY_BYTES + 1);
+        String[][] cases = {
+                {"\"customHeaders\":\"bozuk satır\"", "Ad: değer"},
+                {"\"customHeaders\":\"X-A: a\\rInjected: 1\"", "CR/LF"},
+                {"\"customHeaders\":\"Host: evil.example.com\"", "elle ayarlanamaz"},
+                {"\"customHeaders\":\"Content-Length: 10\"", "elle ayarlanamaz"},
+                {"\"customHeaders\":\"Connection: close\"", "elle ayarlanamaz"},
+                {"\"method\":\"POST\",\"requestBody\":\"" + bigBody + "\"", "64 KB"},
+                {"\"jsonPath\":\"$.items[x]\"", "Geçersiz JSON yolu"},
+                {"\"method\":\"HEAD\",\"jsonPath\":\"$.status\"", "HEAD"},
+                {"\"slowResponseEnabled\":true,\"slowThresholdMs\":50", "Yavaş yanıt eşiği"},
+                {"\"basicAuthUser\":\"a:b\"", "iki nokta"},
+        };
+        for (String[] c : cases) {
+            mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .content("{" + HTTP_BASE + "," + c[0] + "}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(c[1])));
+        }
+        verify(httpMonitorRepo, never()).save(any(com.sitemonitor.model.HttpMonitor.class));
+    }
+
+    @Test
+    @DisplayName("POST /http doğrulama iletisi istek dilinde (X-Lang: en)")
+    void createHttp_advancedValidation_english() throws Exception {
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN")).header("X-Lang", "en")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{" + HTTP_BASE + ",\"jsonPath\":\"$..a\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Invalid JSON path")));
+    }
+
+    @Test
+    @DisplayName("POST /http gelişmiş alanlar: sırlar ŞİFRELİ saklanır, yanıtta yalnız bayrak + (admin'e) başlık ADI görünür")
+    void createHttp_advanced_secretsEncryptedAndMasked() throws Exception {
+        stubHttpSave();
+        stubCipher();
+        String res = mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{" + HTTP_BASE + ",\"method\":\"POST\",\"customHeaders\":\"X-Api-Key: gizli-anahtar-1\","
+                        + "\"basicAuthUser\":\"izleme\",\"basicAuthPass\":\"gizli-parola-2\",\"requestBody\":\"{\\\"probe\\\":true}\","
+                        + "\"slowResponseEnabled\":true,\"slowThresholdMs\":4000,\"jsonPath\":\" $.status \",\"jsonExpected\":\"ok\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.has_custom_headers").value(true))
+                .andExpect(jsonPath("$.data.has_basic_auth_pass").value(true))
+                .andExpect(jsonPath("$.data.custom_header_names[0]").value("X-Api-Key"))
+                .andExpect(jsonPath("$.data.basic_auth_user").value("izleme"))
+                .andExpect(jsonPath("$.data.request_body").value("{\"probe\":true}"))
+                .andExpect(jsonPath("$.data.slow_response_enabled").value(true))
+                .andExpect(jsonPath("$.data.slow_threshold_ms").value(4000))
+                .andExpect(jsonPath("$.data.json_path").value("$.status"))
+                .andExpect(jsonPath("$.data.json_expected").value("ok"))
+                .andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(res).doesNotContain("gizli-anahtar-1").doesNotContain("gizli-parola-2").doesNotContain("ENC(");
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo).save(cap.capture());
+        com.sitemonitor.model.HttpMonitor saved = cap.getValue();
+        assertThat(saved.getCustomHeadersEnc()).isEqualTo("ENC(X-Api-Key: gizli-anahtar-1)");
+        assertThat(saved.getBasicAuthPassEnc()).isEqualTo("ENC(gizli-parola-2)");
+        assertThat(saved.getJsonPath()).isEqualTo("$.status");
+        assertThat(saved.getRequestContentType()).isNull();
+
+        // Geçmiş anlık görüntüsünde sırlar DEĞER olarak yok (AuditDiff maskesi) — şifreli metin bile yazılmaz
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> snap = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.HTTP), any(), any(), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.CREATE), any(), snap.capture(), any(), any());
+        assertThat(snap.getValue()).doesNotContainKey("customHeadersEnc").containsKey("customHeadersSecret");
+        String json = com.sitemonitor.service.AuditDiff.snapshotJson(snap.getValue());
+        assertThat(json).doesNotContain("gizli").doesNotContain("ENC(")
+                .contains("\"customHeadersSecret\":\"***\"").contains("\"basicAuthPassEnc\":\"***\"");
+    }
+
+    @Test
+    @DisplayName("POST /http: global admin OLMAYAN kullanıcının özel başlığı sessizce yok sayılır (bozuk olsa da 400 değil)")
+    void createHttp_nonAdmin_customHeadersIgnored() throws Exception {
+        stubHttpSave();
+        mvc.perform(post("/api/monitoring/http").session(multiTeamUser(3L, 3L))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{" + HTTP_BASE + ",\"customHeaders\":\"bozuk satır\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.has_custom_headers").value(false))
+                .andExpect(jsonPath("$.data.custom_header_names").isEmpty());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getCustomHeadersEnc()).isNull();
+        verify(secretCipher, never()).encrypt(anyString());
+    }
+
+    @Test
+    @DisplayName("POST /http eklentisiz gövde: yeni alanlar varsayılanda (kapalı/boş), şifreleme hiç çağrılmaz")
+    void createHttp_plain_defaultsOff() throws Exception {
+        stubHttpSave();
+        mvc.perform(post("/api/monitoring/http").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{" + HTTP_BASE + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.slow_response_enabled").value(false))
+                .andExpect(jsonPath("$.data.has_custom_headers").value(false))
+                .andExpect(jsonPath("$.data.has_basic_auth_pass").value(false))
+                .andExpect(jsonPath("$.data.json_path").doesNotExist())
+                .andExpect(jsonPath("$.data.slow_alarm").value(false));
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.HttpMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.HttpMonitor.class);
+        verify(httpMonitorRepo).save(cap.capture());
+        com.sitemonitor.model.HttpMonitor m = cap.getValue();
+        assertThat(m.getRequestBody()).isNull();
+        assertThat(m.getBasicAuthUser()).isNull();
+        assertThat(m.getCustomHeadersEnc()).isNull();
+        assertThat(m.getJsonPath()).isNull();
+        assertThat(m.getSlowResponseEnabled()).isFalse();
+        assertThat(com.sitemonitor.service.http.HttpRequestOptions.forMonitor(m, s -> s))
+                .isSameAs(com.sitemonitor.service.http.HttpRequestOptions.NONE);
+        verify(secretCipher, never()).encrypt(anyString());
+    }
+
+    private com.sitemonitor.model.HttpMonitor storedAdvanced() {
+        com.sitemonitor.model.HttpMonitor m = new com.sitemonitor.model.HttpMonitor();
+        m.setId(78L); m.setName("Adv"); m.setUrl("https://adv.example.com/health"); m.setTeamId(3L); m.setActive(true);
+        m.setMethod("GET");
+        m.setBasicAuthUser("izleme");
+        m.setBasicAuthPassEnc("ENC(eski-parola)");
+        m.setSlowResponseEnabled(true);
+        return m;
+    }
+
+    @Test
+    @DisplayName("PUT /http: BOŞ parola kayıtlı şifreli parolayı KORUR; kullanıcı adı silinince parola da düşer")
+    void updateHttp_blankPasswordKeepsStored() throws Exception {
+        com.sitemonitor.model.HttpMonitor m = storedAdvanced();
+        when(httpMonitorRepo.findById(78L)).thenReturn(Optional.of(m));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        stubCipher();
+
+        mvc.perform(put("/api/monitoring/http/78").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"basicAuthUser\":\"izleme\",\"basicAuthPass\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.has_basic_auth_pass").value(true));
+        assertThat(m.getBasicAuthPassEnc()).isEqualTo("ENC(eski-parola)");
+        verify(secretCipher, never()).encrypt(anyString());
+
+        mvc.perform(put("/api/monitoring/http/78").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"basicAuthUser\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.has_basic_auth_pass").value(false));
+        assertThat(m.getBasicAuthPassEnc()).isNull();
+    }
+
+    @Test
+    @DisplayName("PUT /http: yavaş yanıt alarmı KAPATILINCA bu izlemenin açık HTTP_SLOW olayı sessizce kapanır; açık kalırsa dokunulmaz")
+    void updateHttp_disableSlow_closesSlowAlarm() throws Exception {
+        com.sitemonitor.model.HttpMonitor m = storedAdvanced();
+        when(httpMonitorRepo.findById(78L)).thenReturn(Optional.of(m));
+        when(httpMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        mvc.perform(put("/api/monitoring/http/78").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"slowThresholdMs\":5000}"))
+                .andExpect(status().isOk());
+        verify(escalationService, never()).resolveOpenAlertsSilently(any(), anySet(), any(), any());
+
+        mvc.perform(put("/api/monitoring/http/78").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"slowResponseEnabled\":false}"))
+                .andExpect(status().isOk());
+        verify(escalationService).resolveOpenAlertsSilently(eq("https://adv.example.com/health"),
+                eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_HTTP_SLOW)), contains("yavaş"),
+                argThat(c -> c != null && Long.valueOf(78L).equals(c.get("monitor_id"))));
+    }
+
+    @Test
+    @DisplayName("PUT /http: mevcut JSON yolu varken yöntem HEAD'e çevrilemez (400)")
+    void updateHttp_headWithStoredJsonPath_400() throws Exception {
+        com.sitemonitor.model.HttpMonitor m = storedAdvanced();
+        m.setJsonPath("$.status");
+        when(httpMonitorRepo.findById(78L)).thenReturn(Optional.of(m));
+        mvc.perform(put("/api/monitoring/http/78").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"method\":\"HEAD\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("HEAD")));
+        verify(httpMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST /http/{id}/check: eklentisiz izleme ESKİ girişi kullanır; gelişmiş izleme seçeneklerle (sırlar çözülmüş) yeni girişi")
+    void triggerHttp_legacyVsAdvanced() throws Exception {
+        com.sitemonitor.model.HttpMonitor plain = new com.sitemonitor.model.HttpMonitor();
+        plain.setId(79L); plain.setUrl("https://plain.example.com/"); plain.setMethod("GET"); plain.setTeamId(3L); plain.setActive(true);
+        when(httpMonitorRepo.findById(79L)).thenReturn(Optional.of(plain));
+        when(httpChecker.check(anyString(), anyString(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
+                .thenReturn(java.util.Map.of("ok", true, "http_status", 200));
+        mvc.perform(post("/api/monitoring/http/79/check").session(session("ADMIN"))).andExpect(status().isOk());
+        verify(httpChecker).check(anyString(), anyString(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean());
+        verify(httpChecker, never()).check(anyString(), anyString(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(com.sitemonitor.service.http.HttpRequestOptions.class));
+
+        stubCipher();
+        com.sitemonitor.model.HttpMonitor adv = storedAdvanced();
+        when(httpMonitorRepo.findById(78L)).thenReturn(Optional.of(adv));
+        when(httpChecker.check(anyString(), anyString(), any(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(com.sitemonitor.service.http.HttpRequestOptions.class)))
+                .thenReturn(java.util.Map.of("ok", true, "http_status", 200, "response_ms", 50L));
+        mvc.perform(post("/api/monitoring/http/78/check").session(session("ADMIN"))).andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.http.HttpRequestOptions> opts =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.http.HttpRequestOptions.class);
+        verify(httpChecker).check(eq("https://adv.example.com/health"), anyString(), any(), anyInt(), anyBoolean(), anyBoolean(),
+                anyBoolean(), opts.capture());
+        assertThat(opts.getValue().basicAuthUser()).isEqualTo("izleme");
+        assertThat(opts.getValue().basicAuthPass()).isEqualTo("eski-parola");
+    }
+
+    @Test
+    @DisplayName("GET /http: JSON doğrulaması düşen son kontrol 'down' (yanıt geldi) + işaret; yanıtsız hata yine 'error'; açık HTTP_SLOW → slow_alarm")
+    void listHttp_jsonFailureIsDown_andSlowAlarmFlag() throws Exception {
+        com.sitemonitor.model.HttpMonitor a = new com.sitemonitor.model.HttpMonitor();
+        a.setId(1L); a.setName("A"); a.setUrl("https://a.example.com/"); a.setTeamId(3L); a.setActive(true);
+        com.sitemonitor.model.HttpMonitor b = new com.sitemonitor.model.HttpMonitor();
+        b.setId(2L); b.setName("B"); b.setUrl("https://b.example.com/"); b.setTeamId(3L); b.setActive(true);
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+        com.sitemonitor.model.HttpCheck ca = new com.sitemonitor.model.HttpCheck();
+        ca.setMonitorId(1L); ca.setOk(false); ca.setHttpStatus(200); ca.setResponseMs(80L);
+        ca.setError("JSON doğrulaması başarısız: $.status = \"degraded\" (beklenen \"ok\")"); ca.setCheckedAt("2026-10-01T08:00:00");
+        com.sitemonitor.model.HttpCheck cb = new com.sitemonitor.model.HttpCheck();
+        cb.setMonitorId(2L); cb.setOk(false); cb.setError("Connect timed out"); cb.setCheckedAt("2026-10-01T08:00:00");
+        when(httpCheckRepo.findLatestPerMonitor()).thenReturn(List.of(ca, cb));
+        com.sitemonitor.model.AlertEvent slow = new com.sitemonitor.model.AlertEvent();
+        slow.setDomain("https://a.example.com/"); slow.setAlertType(com.sitemonitor.service.EscalationService.TYPE_HTTP_SLOW);
+        when(alertEventRepo.findOpenByDomainIn(any())).thenReturn(List.of(slow));
+
+        mvc.perform(get("/api/monitoring/http").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].status").value("down"))
+                .andExpect(jsonPath("$.data[0].json_assertion_failed").value(true))
+                .andExpect(jsonPath("$.data[0].slow_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].active_alarm").value(false))
+                .andExpect(jsonPath("$.data[1].status").value("error"))
+                .andExpect(jsonPath("$.data[1].json_assertion_failed").doesNotExist())
+                .andExpect(jsonPath("$.data[1].slow_alarm").value(false));
+        verify(alertEventRepo, org.mockito.Mockito.times(1)).findOpenByDomainIn(any());
+    }
 }

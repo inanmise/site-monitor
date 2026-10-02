@@ -34,12 +34,16 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Input } from '@/components/shadcn/input'
 import { Switch } from '@/components/shadcn/switch'
 import { FieldSet, FieldLegend } from '@/components/shadcn/field'
+import QuietHoursFields, { QuietIcon } from '../ui/QuietHoursFields.jsx'
+import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { EMPTY_QUIET, quietFromTeam, quietEqual, quietErrors, quietTeamPayload } from '../../utils/quietHours.js'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 
 // Haftalık e-postalar opt-in: YENİ takım ikisi de kapalı doğar (backend de createTeam'de false yazar).
+// quiet: sessiz saat form değeri (2026-10-01) — yalnız DEĞİŞTİYSE gövdeye girer (dokunulmamış form = bugünkü gövde).
 const emptyTeam = { name: '', email: '', description: '', active: true, leader_id: '', manager_id: '',
-  weekly_reminder_enabled: false, weekly_availability_enabled: false, weekly_channels: '' }
+  weekly_reminder_enabled: false, weekly_availability_enabled: false, weekly_channels: '', quiet: EMPTY_QUIET }
 
 /** Takım kanal şablonu (2026-09-13): sunucu JSON dizi metni tutar (`weekly_channels`); formda CSV. */
 export function channelsCsv(team) {
@@ -94,6 +98,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
   const [form, setForm]     = useState(emptyTeam)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState(null)
+  // Alan-bazlı hatalar (sessiz saat) — pencere her açılışta (modal değişince) temizlenir.
+  const fe = useFormErrors(modal)
   // Üye kartları artık MODALDA (satır-içi genişletme yerine): takım adı tıklanır, TeamMembersModal
   // açılır. Yönetim ekranı kapsamlı /admin/teams/{id}/users ile tam alanları (telefon/sicil/rol)
   // gösterir; eskalasyon kişileri kurum-geneli uçtan gelir.
@@ -278,7 +284,8 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       manager_id: String(team.managerId ?? team.manager_id ?? ''),
       weekly_reminder_enabled: weeklyFlag(team, 'reminder'),
       weekly_availability_enabled: weeklyFlag(team, 'availability'),
-      weekly_channels: channelsCsv(team) })
+      weekly_channels: channelsCsv(team),
+      quiet: quietFromTeam(team) })
     setModal(team)
     setMsg(null)
   }
@@ -290,6 +297,10 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
       setMsg(t('team.emailInvalid'))
       return
     }
+    // Sessiz saat: yalnız değiştiyse doğrulanır ve gönderilir — dokunulmamış form bugünkü gövdeyi yollar.
+    const initialQuiet = modal === 'add' ? EMPTY_QUIET : quietFromTeam(modal)
+    const quietDirty = !quietEqual(form.quiet || EMPTY_QUIET, initialQuiet)
+    if (quietDirty && fe.check(quietErrors(form.quiet, t))) return
     setSaving(true)
     try {
       const payload = {
@@ -301,6 +312,7 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
         manager_id: form.manager_id ? Number(form.manager_id) : null,  // elle müdür; null → AD zincirinden türet
         weekly_reminder_enabled: !!form.weekly_reminder_enabled,
         weekly_availability_enabled: !!form.weekly_availability_enabled,
+        ...(quietDirty ? quietTeamPayload(form.quiet) : {}),
       }
       const isAdd = modal === 'add'
       const editedId = isAdd ? null : modal.id
@@ -586,6 +598,16 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                 onChange={(v) => setForm({ ...form, weekly_channels: v })} placeholder={t('team.weeklyChannelsPh')} />
               <span className="text-xs text-muted-foreground">{t('team.weeklyChannelsHint')}</span>
             </div>
+          </FieldSet>
+          {/* Sessiz saatler (2026-10-01, onaylı öneri 15) — opt-in; boş = bildirim zamanı bugünkü gibi. Pencerede KRİTİK OLMAYAN
+              alarm bildirimleri ertelenir ve pencere bitince tek özet e-postasıyla gider. */}
+          <FieldSet className="col-span-full mt-2 gap-2 border-t pt-3" data-testid="tm-quiet-form">
+            <FieldLegend variant="label" className="mb-0.5 flex items-center gap-1.5 text-[13px] font-semibold">
+              <QuietIcon aria-hidden="true" className="size-4 text-muted-foreground" /> {t('team.quietTitle')}
+            </FieldLegend>
+            <span className="text-xs text-muted-foreground">{t('team.quietDesc')}</span>
+            <QuietHoursFields value={form.quiet || EMPTY_QUIET} fieldProps={fe.fieldProps}
+              onChange={(next, key) => { setForm({ ...form, quiet: next }); if (key === 'clear') fe.reset(); else if (key) fe.clear(key) }} />
           </FieldSet>
         </div>
         {msg && <AlertBanner tone={formMsgTone} className="mt-2">{msg}</AlertBanner>}

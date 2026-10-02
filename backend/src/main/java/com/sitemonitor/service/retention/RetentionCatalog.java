@@ -133,6 +133,22 @@ public final class RetentionCatalog {
                 + "maskeli). Bildirim geçmişiyle AYNI pencere (aynı ayar anahtarı). HÂLÂ AÇIK alarmın ya da sürmekte olan "
                 + "fırtınanın satırı SİLİNMEZ: açılış izi giderse aynı alarm için NOC'a ikinci açılış gider, kapanışta da "
                 + "'açılış gitmedi' sanılıp ÇÖZÜLDÜ hiç gitmez."),
+        guarded("alert-escalation-steps", "alert_escalation_steps", "sent_at", "site.monitor.notification.retention-days",
+                365, 30,
+                "{t} AND alert_event_id NOT IN (SELECT id FROM alert_events WHERE resolved = false)",
+                DataClass.OPERATIONAL,
+                "Zamana bağlı eskalasyon adımı kararları (2026-10-01): alarm × gecikmeli kişi × seviye başına adımın "
+                + "gönderildiği / neden atlandığı ve tekilleştirme kilidi (kişi kimliği, adres YOK — alıcı ve gövde "
+                + "notification_logs'ta). Bildirim geçmişiyle AYNI pencere (aynı ayar anahtarı). HÂLÂ AÇIK alarmın satırı "
+                + "SİLİNMEZ: silinirse aynı alarm için aynı kişiye ikinci adım gider ve kişi alarmın 'döngüsünden' düşer."),
+        guarded("quiet-digest-items", "quiet_digest_items", "deferred_at", "site.monitor.notification.retention-days",
+                365, 30,
+                "{t} AND digest_sent_at IS NOT NULL",
+                DataClass.OPERATIONAL,
+                "Sessiz saat özetine ertelenen alarmlar (2026-10-01): alarm × takım × pencere başına erteleme kaydı, "
+                + "özetin gönderim durumu ve tekilleştirme kilidi (adres YOK — alıcı ve gövde notification_logs'ta). Bildirim "
+                + "geçmişiyle AYNI pencere (aynı ayar anahtarı). Özeti HENÜZ GİTMEMİŞ satır SİLİNMEZ: silinirse ertelenen "
+                + "bildirim hiç teslim edilmez ve çözümü ayrı posta olarak gider."),
         age("sql-query-history", "sql_query_history", "executed_at", "site.monitor.sql-history.retention-days",
                 365, 7, false, DataClass.SECURITY_AUDIT,
                 "Admin SQL çalışma alanı geçmişi (kullanıcı + serbest SQL metni). Denetim penceresiyle "
@@ -311,6 +327,10 @@ public final class RetentionCatalog {
                 30, 1, false, DataClass.CONTENT,
                 "k6 script düzenleme formunun otomatik kaydedilen taslakları. Kaydedilince silinirler; "
                 + "burada kalanlar terk edilmiş oturumlardır (incident-images-draft ile aynı mantık)."),
+        orphan("user-preferences-orphan", "user_preferences",
+                "user_id NOT IN (SELECT id FROM app_users)", DataClass.PERSONAL,
+                "Kişisel arayüz tercihleri (favori izlemeler, açılış sekmesi, kayıtlı görünümler, tarayıcı tercihleri aynası) — "
+                + "kullanıcı başına tek satır. Kullanıcı silinince öksüz kalır ve burada temizlenir."),
         orphan("scripted-versions-orphan", "scripted_script_versions",
                 "monitor_id NOT IN (SELECT id FROM scripted_monitors)",
                 DataClass.CONTENT,

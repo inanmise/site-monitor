@@ -100,6 +100,7 @@ class MonitoringAlertLevelWordTest {
         m.put(EscalationService.TYPE_PING_SLOW, Map.of("host", "app.example.com"));
         m.put(EscalationService.TYPE_HTTP_DOWN, Map.of("url", "https://app.example.com/"));
         m.put(EscalationService.TYPE_HTTP_SSL, Map.of("url", "https://app.example.com/"));
+        m.put(EscalationService.TYPE_HTTP_SLOW, Map.of("url", "https://app.example.com/", "response_ms", 4200, "threshold_ms", 3000));
         m.put(EscalationService.TYPE_PAGE_DOWN, Map.of("url", "https://app.example.com/"));
         m.put(EscalationService.TYPE_PAGE_INTEGRITY, Map.of("url", "https://app.example.com/"));
         m.put(EscalationService.TYPE_PAGESPEED_DOWN, Map.of("url", "https://app.example.com/"));

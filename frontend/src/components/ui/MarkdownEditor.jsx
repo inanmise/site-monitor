@@ -10,6 +10,7 @@ import ModalShell from './ModalShell.jsx'
 import Field from './Field.jsx'
 import { clipboardToMarkdownTable } from '../../utils/pasteTable'
 import { downscaleImage } from '../../utils/imageDownscale'
+import { formatFileSize } from '../../utils/formatBytes.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -25,12 +26,8 @@ const OUTDENT_ICON = (
   </svg>
 )
 
-function fmtFileSize(bytes) {
-  if (bytes == null) return '—'
-  return bytes >= 1024 * 1024
-    ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
-    : Math.max(1, Math.round(bytes / 1024)) + ' KB'
-}
+// Dosya boyutu metni: ortak utils/formatBytes.formatFileSize (öneri 29 — WeeklyMdField ile birebir aynı kopya kaldırıldı).
+const fmtFileSize = formatFileSize
 
 /** Seçimi tam satırlara genişletip her satıra fn uygular (girinti komutları). */
 function transformSelectedLines(state, api, fn) {

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   eventClass, eventLabel, parseDetail, fmtValue, actionSentence,
 } from '../components/admin/audit/auditFormat.js'
-import { TR } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
 
 /** Gerçek TR sözlüğüyle çeviri — etiket kuralının sözlükle GERÇEKTEN buluştuğunu doğrular. */
 const tr = (k) => (TR[k] ?? k)

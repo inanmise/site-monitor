@@ -99,10 +99,12 @@ Sunucu-global ayarları **ops uygular** (uygulama değiştiremez). Önerilen ba�
 - `shared_preload_libraries = 'pg_stat_statements'` (en yavaş sorgu teşhisi + `db-health.sql` bölüm 4)
 - `max_connections` ≥ (Hikari pool × replica) + admin/monitoring headroom
 
-**Bağlantı matematiği (kritik):** Hikari `DB_POOL_MAX=25`. App tek-pod tasarımı (base `replicaCount=1`)
-ama prod overlay (`helm/.../environments/master.yaml`) `replicaCount: 3` → 3×25 = 75 bağlantı.
-`max_connections` ≥ 75 + headroom (≥100, tercihen 150) olmalı; aksi halde pod'lar bağlantı bulamaz.
-Çok-pod'a çıkarken pool veya max_connections'ı buna göre boyutlandırın.
+**Bağlantı matematiği (kritik, 2026-10-02 güncel değerler):** prod overlay (`helm/.../environments/master.yaml`)
+`replicaCount: 1`, `dbPoolMax: "30"` → 30 bağlantı; release overlay `replicaCount: 2` + HPA `maxReplicas: 5`
+→ en kötü 5 × havuz. Formül: `max_connections` ≥ (Hikari havuzu × en yüksek pod sayısı) + admin/izleme payı
+(≥ 20). Bu 30 bağlantı 100 Tomcat iş parçacığına, 50 yürütücü iş parçacığına ve 8 zamanlayıcıya hizmet eder ve
+JDBC oturum deposu her istekte DB'ye gider; çok-pod'a çıkarken havuzu ve max_connections'ı buna göre
+boyutlandırın.
 
 ## 4. Teşhis & migration script'leri (`scripts/`)
 
@@ -139,9 +141,9 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
    psql -h <prod-host> -U sitemonitor -d sitemonitor -v ON_ERROR_STOP=1 -f scripts/perf-indexes.sql
    ```
    Böylece startup patch'i no-op olur. (Taze/küçük DB'de gerek yok.)
-2. **Bağlantı matematiğini doğrula.** Prod 3 replika × Hikari pool 25 = **75 bağlantı**.
-   `max_connections ≥ 75 + admin/monitoring headroom` (≥100, tercihen 150) olduğunu teyit et; değilse
-   pod'lar bağlantı bulamaz. (Bkz. §3 bağlantı matematiği.)
+2. **Bağlantı matematiğini doğrula.** Prod bugün 1 replika × Hikari havuzu 30 = **30 bağlantı**; replika
+   sayısı ya da HPA açılırsa çarpım ona göre büyür. `max_connections ≥ havuz × en yüksek pod sayısı + pay`
+   olduğunu teyit et; değilse pod'lar bağlantı bulamaz. (Bkz. §3 bağlantı matematiği.)
 3. **(Önerilen) Dış DB sunucu tuning'i** uygula (§3): `shared_buffers` ~RAM %25, `effective_cache_size`
    ~RAM %75, `work_mem` 16–32MB, `maintenance_work_mem` 128–256MB.
 4. **(Opsiyonel) `pg_stat_statements` preload** (`shared_preload_libraries`) — `db-health.sql` bölüm 4

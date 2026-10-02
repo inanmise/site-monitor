@@ -28,7 +28,7 @@ import {
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
-import { useElementWidth } from './forecast/forecastUi.jsx'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 
 /**
  * **7/24 Kapsamı** (`?tab=noc`, 2026-09-27; `.migration/noc/CONTRACT.md`).
@@ -84,7 +84,7 @@ export default function NocCoveragePage({
   const copyLink = useCopyLink()
   const isMobile = useIsMobile()
   const dir = useTeamDirectory()
-  const [listWidth, listRef] = useElementWidth()
+  const [listWidth, listRef] = useElementWidthState()
   // Tablo ~880 px ister (seçim · tür · izleme · takım · durum · eylem); daha dar kapta kartlar
   const narrow = isMobile || (listWidth > 0 && listWidth < 880)
 

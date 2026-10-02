@@ -33,3 +33,15 @@ export function formatBytesAxis(b) {
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
   return `${Math.round(n / (1024 * 1024))} MB`
 }
+
+/**
+ * Yüklenen dosya boyutu (Markdown düzenleyicilerinde görsel küçültme bildirimi): ≥ 1 MB ise 1 ondalıklı MB, aksi KB
+ * (en az 1 KB — B birimi yok). `formatBytes`'tan bilinçli farklı; iki düzenleyici (ui/MarkdownEditor, weekly/WeeklyMdField)
+ * eskiden birebir aynı kopyayı taşıyordu (öneri 29 — çıktı aynı, kilit `test/formatFileSize.characterization.test.js`).
+ */
+export function formatFileSize(bytes) {
+  if (bytes == null) return '—'
+  return bytes >= 1024 * 1024
+    ? (bytes / 1024 / 1024).toFixed(1) + ' MB'
+    : Math.max(1, Math.round(bytes / 1024)) + ' KB'
+}

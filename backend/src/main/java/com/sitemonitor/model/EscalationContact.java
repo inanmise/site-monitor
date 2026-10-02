@@ -51,4 +51,14 @@ public class EscalationContact {
     private Boolean active = true;
 
     private String createdAt;
+
+    /**
+     * Zamana bağlı eskalasyon adımı (2026-10-01, opt-in). {@code null} ya da {@code 0} = BUGÜNKÜ davranış: kişi alarm
+     * açılır açılmaz (ve seviye artışı / günlük hatırlatma / çözümde) bilgilendirilir. Değer (1–1440 dk) verilirse kişi
+     * ANLIK bildirimlere girmez; alarm AÇIK ve ONAYSIZ olarak bu kadar dakika beklerse {@code EscalationStepService} ona
+     * BİR kez "eskalasyon adımı" gönderir — adım gittikten sonra o alarmın normal alıcısıdır. Kapsam/seviye kuralları
+     * ({@code EscalationContactScope}) aynen geçerlidir. Şema: {@code SchedulerService.applySchemaPatches}.
+     */
+    @Column(name = "delay_minutes")
+    private Integer delayMinutes;
 }

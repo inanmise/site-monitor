@@ -928,7 +928,95 @@ public class ScriptedCheckerService {
 
     /** İzin alındıktan sonraki k6 koşumu — izleme havuzunun TEK yürütme noktası (paket-özel: kota testi süreci taklit eder). */
     ScriptedResult runProcess(String script, List<EnvVar> env, int timeoutSec, ProxyUse viaProxy) {
+        // Dosya okuma engeli (2026-10-01, onaylı öneri 1) — YALNIZ ayar BLOCK iken. Tüm k6 koşumları (zamanlanmış, elle,
+        // kaydetmeden deneme) buradan geçer. Sonuç "yürütülmedi" (SKIPPED): kayıt / alarm üretmez.
+        if (fileReadBlocking()) {
+            List<String> hits = scanFileReads(script);
+            if (!hits.isEmpty()) return err(FILE_READ_BLOCKED_MSG + " (" + String.join(", ", hits) + ")");
+        }
         return execute(script, env, timeoutSec, viaProxy);
+    }
+
+    // ── Dosya okuma taraması (2026-10-01, onaylı öneri 1) ────────────────────────────────────
+    //
+    // k6 betiği JVM ile aynı kullanıcıyla çalışır; init bağlamındaki open() pod'daki HER okunabilir dosyayı okuyabilir
+    // (/proc/1/environ → SITE_MONITOR_SECRET_KEY, DB_PASSWORD). Betikler veritabanında durur ve tek dosya olarak koşar:
+    // meşru bir dosya okuma ihtiyacı yoktur (veri ortam değişkeni ya da betik içinde gelir). Varsayılan REPORT: kayıtta
+    // uyarı + açılış özeti + yönetici raporu, davranış DEĞİŞMEZ. BLOCK: kayıt reddedilir, koşum yürütülmez. Sezgiseldir
+    // (karartılmış erişimi yakalamaz); kalıcı çözüm k6'yı sır taşımayan ayrı bir konteynerde koşturmaktır.
+
+    public static final String FILE_READ_POLICY_KEY = "site.monitor.scripted.file-read-policy";
+    static final String FILE_READ_BLOCKED_MSG =
+            "Betik dosya okuyor; güvenlik ayarı gereği çalıştırılmadı (Ayarlar → Sentetik → Betikte dosya okuma)";
+
+    private static final Pattern FR_OPEN = Pattern.compile("(?<![\\w$.])open\\s*\\(");
+    private static final Pattern FR_OPEN_INDIRECT = Pattern.compile("\\[\\s*['\"`]open['\"`]\\s*\\]");
+    private static final Pattern FR_FS_MODULE = Pattern.compile("['\"`]k6/(?:experimental/)?fs['\"`]");
+    private static final Pattern FR_LOCAL_IMPORT =
+            Pattern.compile("(?:\\bfrom|\\brequire\\s*\\(|\\bimport)\\s*['\"`](?:/|\\.{1,2}/|file:)");
+    private static final Pattern FR_SYSTEM_PATH =
+            Pattern.compile("['\"`]/(?:proc|etc|sys|root|home|var/run/secrets|run/secrets|tmp|app)(?:/|['\"`])");
+
+    /** Ayar BLOCK mu? (varsayılan REPORT — yalnız raporla). */
+    public boolean fileReadBlocking() {
+        return "BLOCK".equalsIgnoreCase(appSettings.getString(FILE_READ_POLICY_KEY, "REPORT"));
+    }
+
+    /**
+     * Betikteki dosya okuma yapıları — bulunanların kısa adları (içerik değil). Yorumlar atlanır; metin içindeki
+     * {@code //} (ör. {@code 'https://…'}) yorum SAYILMAZ, aksi hâlde aynı satıra yazılmış {@code open()} gizlenirdi.
+     */
+    public static List<String> scanFileReads(String script) {
+        List<String> hits = new ArrayList<>();
+        if (script == null || script.isBlank()) return hits;
+        String code = stripJsComments(script, false);
+        // open( çağrısı metin İÇERİĞİ maskelenmiş kodda aranır: check(r, {'kapı open (200)': …}) gibi bir ad yakalanmasın.
+        String bare = stripJsComments(script, true);
+        if (FR_OPEN.matcher(bare).find() || FR_OPEN_INDIRECT.matcher(code).find()) hits.add("open()");
+        if (FR_FS_MODULE.matcher(code).find()) hits.add("k6/fs");
+        if (FR_LOCAL_IMPORT.matcher(code).find()) hits.add("yerel dosya importu");
+        if (FR_SYSTEM_PATH.matcher(code).find()) hits.add("sistem dosya yolu");
+        return hits;
+    }
+
+    static String stripJsComments(String s) { return stripJsComments(s, false); }
+
+    /**
+     * JS yorumlarını metin/şablon dizgelerine dokunmadan siler (kaçışlı tırnaklar dahil). {@code maskStrings}: dizge
+     * İÇERİKLERİ boşlukla değiştirilir (tırnaklar kalır) — çağrı aramasını metinlerdeki benzer sözcüklerden ayırmak için.
+     */
+    static String stripJsComments(String s, boolean maskStrings) {
+        StringBuilder out = new StringBuilder(s.length());
+        char quote = 0;
+        int i = 0, n = s.length();
+        while (i < n) {
+            char c = s.charAt(i);
+            if (quote != 0) {
+                if (c == '\\' && i + 1 < n) {
+                    if (maskStrings) out.append("  "); else out.append(c).append(s.charAt(i + 1));
+                    i += 2;
+                    continue;
+                }
+                if (c == quote) { quote = 0; out.append(c); }
+                else out.append(maskStrings && c != '\n' ? ' ' : c);
+                i++;
+                continue;
+            }
+            if (c == '\'' || c == '"' || c == '`') { quote = c; out.append(c); i++; continue; }
+            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '/') {
+                while (i < n && s.charAt(i) != '\n') i++;
+                continue;
+            }
+            if (c == '/' && i + 1 < n && s.charAt(i + 1) == '*') {
+                int end = s.indexOf("*/", i + 2);
+                i = end < 0 ? n : end + 2;
+                out.append(' ');
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
     }
 
     /**

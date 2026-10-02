@@ -293,7 +293,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
   )
   const search = (
     <InputGroup className="w-full sm:w-64">
-      <InputGroupInput type="search" placeholder={t('alh.searchPlaceholder')} aria-label={t('alh.searchPlaceholder')}
+      <InputGroupInput type="search" placeholder={t('alh.searchPlaceholder')} aria-label={t('alh.searchPlaceholder')} data-page-search=""
         value={draft} onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyNow() } }} />
       <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>

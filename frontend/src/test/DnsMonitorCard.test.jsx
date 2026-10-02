@@ -5,7 +5,7 @@ import { formatTtl, responseTone, splitValues, unexpectedValues, mxParts, LONG_V
 import { MonitorStatusBadge } from '../components/monitoring/MonitorCard.jsx'
 import MonitorCardMeta from '../components/MonitorCardMeta.jsx'
 import MonitorCardActions from '../components/MonitorCardActions.jsx'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 

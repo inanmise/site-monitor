@@ -3,6 +3,7 @@ import { ShieldAlert, ShieldCheck, LogIn, Clock } from 'lucide-react'
 import { formatDate, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
+import { agoText, zonedMs } from '../utils/relativeTime.js'
 
 /**
  * Kullanıcının kendi giriş güvenliği özeti — backend `login_info` bloğunun üç sunumu.
@@ -30,18 +31,11 @@ function reasonLabel(t, reason) {
 /**
  * "3 dk önce" — ActivityLog.jsx'teki `rel()` mantığının aynısı, mevcut `act.rel.*` anahtarlarıyla
  * (yeni anahtar gerekmez). Backend UTC'yi 'Z'siz döndürdüğü için ekleniyor; aksi halde tarayıcı
- * yerel saat sanar ve 3 saatlik kayma çıkar.
+ * yerel saat sanar ve 3 saatlik kayma çıkar. Okuma + çekirdek ortak (utils/relativeTime — öneri 29); boş/bozuk → null.
  */
 function relativeTime(t, iso) {
-  if (!iso) return null
-  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z'
-  const then = new Date(s).getTime()
-  if (isNaN(then)) return null
-  const sec = Math.floor(Math.max(0, Date.now() - then) / 1000)
-  if (sec < 60) return t('act.rel.now')
-  const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
-  const hr = Math.floor(min / 60);  if (hr < 24)  return t('act.rel.hour', hr)
-  return t('act.rel.day', Math.floor(hr / 24))
+  const then = zonedMs(iso)
+  return Number.isNaN(then) ? null : agoText(then, t)
 }
 
 /** Kart içindeki tek bir ölçü: büyük değer + küçük etiket + isteğe bağlı alt satır. */

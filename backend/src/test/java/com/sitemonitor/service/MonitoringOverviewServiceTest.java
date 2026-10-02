@@ -389,4 +389,28 @@ class MonitoringOverviewServiceTest {
         assertThat(MonitoringOverviewService.isStale(ago(170), null, now)).isFalse();
         assertThat(MonitoringOverviewService.isStale(ago(190), null, now)).isTrue();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Durum Sayfası (2026-10-01): satır izleme grubunu taşır (group_name, kırpılmış; boş → null) — dokuz türün hepsinde, ek sorgu yok")
+    void rowsCarryGroupName() {
+        HttpMonitor grouped = http(1, "https://a.example.com", 14L, true, 300); grouped.setGroupName("  Ödeme  ");
+        HttpMonitor blank = http(2, "https://b.example.com", 14L, true, 300); blank.setGroupName("   ");
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(grouped, blank));
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) svc.build(team -> true, true, 24).get("monitors");
+        assertThat(rows).extracting(r -> r.get("group_name")).containsExactly("Ödeme", null);
+
+        com.sitemonitor.model.PingMonitor ping = new com.sitemonitor.model.PingMonitor(); ping.setGroupName("g1");
+        PortMonitor port = new PortMonitor(); port.setGroupName("g2");
+        com.sitemonitor.model.DnsMonitor dns = new com.sitemonitor.model.DnsMonitor(); dns.setGroupName("g3");
+        com.sitemonitor.model.DomainMonitor domain = new com.sitemonitor.model.DomainMonitor(); domain.setGroupName("g4");
+        com.sitemonitor.model.KeywordMonitor keyword = new com.sitemonitor.model.KeywordMonitor(); keyword.setGroupName("g5");
+        com.sitemonitor.model.PageMonitor page = new com.sitemonitor.model.PageMonitor(); page.setGroupName("g6");
+        com.sitemonitor.model.PageSpeedMonitor speed = new com.sitemonitor.model.PageSpeedMonitor(); speed.setGroupName("g7");
+        ScriptedMonitor scripted = new ScriptedMonitor(); scripted.setGroupName("g8");
+        assertThat(List.<Object>of(ping, port, dns, domain, keyword, page, speed, scripted)).extracting(m -> MonitoringOverviewService.groupNameOf(m))
+                .containsExactly("g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8");
+        assertThat(MonitoringOverviewService.groupNameOf(null)).isNull();
+        assertThat(MonitoringOverviewService.groupNameOf("başka nesne")).isNull();
+    }
 }

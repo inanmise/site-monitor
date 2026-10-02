@@ -48,7 +48,7 @@ public final class MonitorTypeCatalog {
     public static final Map<String, Set<String>> ALERT_TYPES = Map.of(
             "cert",     Set.of("EXPIRY", "CHAIN_BROKEN", "REVOKED", "MISMATCH",
                                    "HOSTNAME_MISMATCH", "UNTRUSTED_CA"),
-            "http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "DOMAIN_EXPIRY"),
+            "http",     Set.of("ACCESSIBILITY", "HTTP_DOWN", "HTTP_SSL", "HTTP_SLOW", "DOMAIN_EXPIRY"),
             "port",     Set.of("PORT_DOWN", "PORT_SLOW"),
             "dns",      Set.of("DNS_FAILURE", "DNS_CHANGED", "DNS_SLOW", "DNS_UNEXPECTED", "DNS_INCONSISTENT"),
             "keyword",  Set.of("KEYWORD", "KEYWORD_SLOW", "KEYWORD_SSL", "KEYWORD_DOMAIN_EXPIRY"),

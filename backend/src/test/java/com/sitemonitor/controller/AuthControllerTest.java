@@ -644,6 +644,54 @@ class AuthControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ── Kişisel push sessiz saati (2026-10-01, onaylı öneri 15) ──
+
+    @Test
+    @DisplayName("POST /api/me/push-quiet-hours: kullanıcı KENDİ penceresini yazar (normalize), yanıt push_quiet döner; denetim izi")
+    void pushQuietHours_savesOwnWindow() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        when(userService.savePushQuietHours(any(), any())).thenAnswer(inv -> {
+            com.sitemonitor.model.AppUser u = inv.getArgument(0);
+            com.sitemonitor.service.QuietHours.Config c = inv.getArgument(1);
+            u.setPushQuietStart(c.start()); u.setPushQuietEnd(c.end());
+            u.setPushQuietDays(c.days()); u.setPushQuietMinLevel(c.minLevel());
+            return u;
+        });
+        mvc.perform(post("/api/me/push-quiet-hours")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"start\":\"22:00\",\"end\":\"07:00\",\"days\":[\"fri\",\"MON\"],\"min_level\":\"CRITICAL\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.push_quiet.start").value("22:00"))
+                .andExpect(jsonPath("$.push_quiet.days").value("MON,FRI"))
+                .andExpect(jsonPath("$.push_quiet.min_level").value("CRITICAL"));
+        verify(userService).savePushQuietHours(any(),
+                eq(new com.sitemonitor.service.QuietHours.Config("22:00", "07:00", "MON,FRI", "CRITICAL")));
+        verify(auditService).recordAction(eq("USER_PUSH_QUIET_HOURS"), any(jakarta.servlet.http.HttpSession.class),
+                eq("USER"), anyString(), anyString(), isNull());
+    }
+
+    @Test
+    @DisplayName("POST /api/me/push-quiet-hours: hatalı pencere 400 ve kayıt YOK; boş başlangıç+bitiş = kaldır")
+    void pushQuietHours_validatesAndClears() throws Exception {
+        when(userService.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+        mvc.perform(post("/api/me/push-quiet-hours")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"start\":\"22:00\",\"end\":\"22:00\"}"))
+                .andExpect(status().isBadRequest());
+        verify(userService, never()).savePushQuietHours(any(), any());
+
+        when(userService.savePushQuietHours(any(), any())).thenAnswer(inv -> inv.getArgument(0));
+        mvc.perform(post("/api/me/push-quiet-hours")
+                        .session(selfSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"start\":\"\",\"end\":\"\"}"))
+                .andExpect(status().isOk());
+        verify(userService).savePushQuietHours(any(), eq(com.sitemonitor.service.QuietHours.Config.NONE));
+    }
+
     // ── Ürün turu durumu (2026-09-13) ─────────────────────────────────────────
 
     @Test

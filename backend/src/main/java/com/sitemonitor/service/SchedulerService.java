@@ -90,6 +90,9 @@ public class SchedulerService {
     /** Keyword özel başlıklarının şifreli kaynağı — alan enjeksiyonu (constructor/test büyütmemek için). */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private KeywordHeaderSecrets keywordHeaderSecrets;
+    /** HTTP izlemesinin şifreli başlık / Basic auth parolası (2026-10-01) — alan enjeksiyonu (aynı gerekçe); yoksa sırsız. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SecretCipher secretCipher;
     private final LatestCheckRepository latestCheckRepo;
     private final AlertThresholdRepository thresholdRepo;
     private final JdbcTemplate jdbcTemplate;
@@ -343,7 +346,11 @@ public class SchedulerService {
         // bu pod'a yönlenmez (ilk tıklama askıda kalmaz). Bitince finally'de ACCEPTING → sıcak servis.
         AvailabilityChangeEvent.publish(eventPublisher, this, ReadinessState.REFUSING_TRAFFIC);
         try {
-            applySchemaPatches();
+            // Tek pod + görünürlük (2026-10-01, onaylı öneri 4): yamalar PostgreSQL advisory lock altında koşar
+            // (alınamazsa eskisi gibi kilitsiz); gerçek hatalar WARN + özet + sitemonitor.schema.patch.* metrikleri.
+            var patchRun = patchRunner();
+            patchRun.runExclusive(this::applySchemaPatches);
+            patchRun.finish();
             auditService.recordSystemEvent("SCHEMA_PATCH", "SYSTEM", "db", "başlangıç şema yamaları uygulandı");
             // Dağıtım kaydı: şema yamalarından SONRA (tablo/indeks hazır). Hata içeride yutulur — açılışı
             // hiçbir koşulda durdurmaz (K2). Tür (UPGRADE/RESTART/ROLLBACK) satırlardan türetilir, burada değil.
@@ -715,6 +722,17 @@ public class SchedulerService {
         // İzleme başına kurumsal vekil kipi (2026-09-21): HTTP/Keyword/Sayfa NULL = AUTO (envanterle aynı), Sayfa Hızı NULL = OFF
         // (doğrudan). ddl-auto da ekler; açık patch proje geleneği (idempotent, kolon varsa noop).
         patch("ALTER TABLE http_monitors ADD COLUMN use_proxy VARCHAR(10)");
+        // HTTP gelişmiş istek (2026-10-01, onaylı öneri 9): hepsi NULL'a izin verir, varsayılan KAPALI — mevcut satırlarda
+        // istek ve karar değişmez. ddl-auto da ekler; açık patch proje geleneği (idempotent, kolon varsa noop).
+        patch("ALTER TABLE http_monitors ADD COLUMN request_body TEXT");
+        patch("ALTER TABLE http_monitors ADD COLUMN request_content_type VARCHAR(100)");
+        patch("ALTER TABLE http_monitors ADD COLUMN custom_headers_enc TEXT");
+        patch("ALTER TABLE http_monitors ADD COLUMN basic_auth_user VARCHAR(255)");
+        patch("ALTER TABLE http_monitors ADD COLUMN basic_auth_pass_enc TEXT");
+        patch("ALTER TABLE http_monitors ADD COLUMN slow_response_enabled BOOLEAN DEFAULT false");
+        patch("ALTER TABLE http_monitors ADD COLUMN slow_threshold_ms INTEGER DEFAULT 3000");
+        patch("ALTER TABLE http_monitors ADD COLUMN json_path VARCHAR(300)");
+        patch("ALTER TABLE http_monitors ADD COLUMN json_expected VARCHAR(500)");
         patch("ALTER TABLE keyword_monitors ADD COLUMN use_proxy VARCHAR(10)");
         // Keyword özel başlıkları ŞİFRELİ kolona taşınıyor (kardeşi pagespeed_monitors ile
         // aynı desen). Düz kolon göç kaynağı olarak DURUYOR; KeywordHeaderSecrets açılışta
@@ -855,6 +873,58 @@ public class SchedulerService {
                 + "(SELECT r.team_id FROM weekly_reports r WHERE r.id = i.report_id) "
                 + "WHERE i.team_id IS NULL");
         patch("ALTER TABLE escalation_contacts ADD COLUMN team_id INTEGER");
+        // Zamana bağlı eskalasyon adımı (2026-10-01, opt-in): NULL/0 = bugünkü davranış (anlık bildirim); 1–1440 dk =
+        // kişi yalnız alarm o kadar onaysız kalırsa EscalationStepService'ten BİR adım alır. Varsayılan YOK (NULL).
+        patch("ALTER TABLE escalation_contacts ADD COLUMN delay_minutes INTEGER");
+        // Adım kararları + tekilleştirme kilidi — UNIQUE(alarm, kişi, seviye); ddl-auto aynı tabloyu entity'den de kurar.
+        patch("""
+            CREATE TABLE IF NOT EXISTS alert_escalation_steps (
+                id BIGSERIAL PRIMARY KEY,
+                alert_event_id BIGINT NOT NULL,
+                contact_id BIGINT NOT NULL,
+                alert_level VARCHAR(16) NOT NULL,
+                delay_minutes INTEGER,
+                team_id BIGINT,
+                outcome VARCHAR(16) NOT NULL,
+                reason VARCHAR(300),
+                sent_at VARCHAR(30) NOT NULL,
+                CONSTRAINT ux_aes_event_contact_level UNIQUE (alert_event_id, contact_id, alert_level)
+            )
+            """);
+        // Saklama süpürmesi sent_at aralığıyla siler; alarm başına okuma UNIQUE indeksin öndeki alert_event_id'sini kullanır.
+        patch("CREATE INDEX IF NOT EXISTS idx_aes_sent_at ON alert_escalation_steps(sent_at)");
+        // Sessiz saatler (2026-10-01, onaylı öneri 15, opt-in): takım ve kişi (push) penceresi. Hepsi NULL doğar = pencere
+        // YOK = bildirim zamanı bugünküyle aynı. Varsayılan değer bilinçli olarak verilmez.
+        patch("ALTER TABLE teams ADD COLUMN quiet_start VARCHAR(5)");
+        patch("ALTER TABLE teams ADD COLUMN quiet_end VARCHAR(5)");
+        patch("ALTER TABLE teams ADD COLUMN quiet_days VARCHAR(30)");
+        patch("ALTER TABLE teams ADD COLUMN quiet_min_level VARCHAR(16)");
+        patch("ALTER TABLE app_users ADD COLUMN push_quiet_start VARCHAR(5)");
+        patch("ALTER TABLE app_users ADD COLUMN push_quiet_end VARCHAR(5)");
+        patch("ALTER TABLE app_users ADD COLUMN push_quiet_days VARCHAR(30)");
+        patch("ALTER TABLE app_users ADD COLUMN push_quiet_min_level VARCHAR(16)");
+        // Ertelenen alarmlar + özet tekilleştirme kilidi — UNIQUE(alarm, takım, pencere): özet her (takım, pencere, alarm)
+        // için en fazla BİR kez gider (pod/yeniden başlatma fark etmez). ddl-auto aynı tabloyu entity'den de kurar.
+        patch("""
+            CREATE TABLE IF NOT EXISTS quiet_digest_items (
+                id BIGSERIAL PRIMARY KEY,
+                alert_event_id BIGINT NOT NULL,
+                team_id BIGINT NOT NULL,
+                window_key VARCHAR(20) NOT NULL,
+                window_end VARCHAR(30) NOT NULL,
+                alert_level VARCHAR(16),
+                first_trigger VARCHAR(30),
+                opening_deferred BOOLEAN,
+                deferred_at VARCHAR(30) NOT NULL,
+                superseded_at VARCHAR(30),
+                digest_sent_at VARCHAR(30),
+                digest_status VARCHAR(300),
+                CONSTRAINT ux_qdi_event_team_window UNIQUE (alert_event_id, team_id, window_key)
+            )
+            """);
+        // Dakikalık işin "vakti gelmiş bekleyen" sorgusu + saklama süpürmesinin deferred_at aralığı.
+        patch("CREATE INDEX IF NOT EXISTS idx_qdi_pending ON quiet_digest_items(digest_sent_at, window_end)");
+        patch("CREATE INDEX IF NOT EXISTS idx_qdi_deferred_at ON quiet_digest_items(deferred_at)");
         // LDAP users carry no app password → password_hash must allow NULL on existing tables.
         patch("ALTER TABLE app_users ALTER COLUMN password_hash DROP NOT NULL");
         // Username'leri tek-bicim BUYUK harfe cek (case tutarsizligi -> ayni kullanici tek kimlik; aktif-oturum
@@ -1010,6 +1080,10 @@ public class SchedulerService {
         patch("ALTER TABLE incident_records ADD COLUMN team_id BIGINT");
         patch("ALTER TABLE incident_records ADD COLUMN team_name TEXT");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_team ON incident_records(team_id)");
+        // Alarmdan açılan olay kaydı (2026-10-01): kaynak alarm (opsiyonel, FK yok — alarm saklama süresiyle silinse de
+        // kayıt kalır) + alarm detayının "bağlı olay kaydı" sorgusu (findLinkedToAlert) için index.
+        patch("ALTER TABLE incident_records ADD COLUMN alert_event_id BIGINT");
+        patch("CREATE INDEX IF NOT EXISTS idx_inc_alert_event ON incident_records(alert_event_id)");
         // Olay görseli taslak yüklemesi: yeni olay henüz kaydedilmeden görsel eklenir (incident_id=null,
         // kaydedince linkImages bağlar). Eski NOT NULL kısıtı taslakları reddediyordu → kaldır (idempotent).
         patch("ALTER TABLE incident_images ALTER COLUMN incident_id DROP NOT NULL");
@@ -1383,6 +1457,16 @@ public class SchedulerService {
                 note VARCHAR(500)
             )
             """);
+        // ── Kişisel tercihler (2026-10-02, öneri 23): kullanıcı başına TEK JSON belgesi (favoriler, açılış sekmesi,
+        //    kayıtlı görünümler, tarayıcı tercihleri aynası) — UserPreference entity'si; ddl-auto'ya tek başına güvenilmez.
+        //    Kullanıcı silinince öksüz satır 'user-preferences-orphan' kuralıyla temizlenir. ──
+        patch("""
+            CREATE TABLE IF NOT EXISTS user_preferences(
+                user_id BIGINT PRIMARY KEY,
+                prefs TEXT,
+                updated_at VARCHAR(40)
+            )
+            """);
 
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
@@ -1497,16 +1581,7 @@ public class SchedulerService {
         }
     }
 
-    private static final java.util.regex.Pattern ADD_COL_RE =
-            java.util.regex.Pattern.compile("(?i)ALTER\\s+TABLE\\s+(\\w+)\\s+ADD\\s+COLUMN\\s+(\\w+)");
-    private static final java.util.regex.Pattern CREATE_TBL_RE =
-            java.util.regex.Pattern.compile("(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(\\w+)");
 
-    /**
-     * Idempotent şema/veri yaması. INFO "applied" YALNIZ gerçekten bir değişiklik olduğunda yazılır;
-     * her boot'ta tekrar eden no-op'lar (zaten var olan kolon/tablo, 0 satır etkileyen UPDATE,
-     * CREATE ... IF NOT EXISTS index'ler) DEBUG'a iner → log gürültüsü gider, davranış aynı kalır.
-     */
     /**
      * Envanter-türevi port/dns monitörlerinde MÜKERRER kaydı temizler ve tekrarını DB düzeyinde
      * imkânsız kılar.
@@ -1613,51 +1688,19 @@ public class SchedulerService {
         }
     }
 
+    /**
+     * Idempotent şema/veri yaması — {@link com.sitemonitor.service.schema.SchemaPatchRunner#patch} (davranış aynı:
+     * kolon/tablo varsa atla, hata açılışı durdurmaz; 2026-10-01'den beri gerçek hatalar WARN + sayaç).
+     */
     private void patch(String ddl) {
-        String shortDdl = ddl.length() > 60 ? ddl.substring(0, 60) + "…" : ddl;
-        String head = ddl.trim().toUpperCase(java.util.Locale.ROOT);
-        try {
-            if (head.startsWith("ALTER TABLE") && head.contains(" ADD COLUMN ")) {
-                var m = ADD_COL_RE.matcher(ddl);
-                if (m.find() && columnExists(m.group(1), m.group(2))) {     // kolon zaten var → hiç çalıştırma (hata gürültüsü de biter)
-                    log.debug("Schema patch noop (column exists): {}", shortDdl); return;
-                }
-                jdbcTemplate.execute(ddl);
-                log.info("Schema patch applied (column added): {}", shortDdl);
-            } else if (head.startsWith("CREATE TABLE")) {
-                var m = CREATE_TBL_RE.matcher(ddl);
-                if (m.find() && tableExists(m.group(1))) {                  // tablo zaten var → atla
-                    log.debug("Schema patch noop (table exists): {}", shortDdl); return;
-                }
-                jdbcTemplate.execute(ddl);
-                log.info("Schema patch applied (table created): {}", shortDdl);
-            } else if (head.startsWith("UPDATE") || head.startsWith("INSERT") || head.startsWith("DELETE")) {
-                int rows = jdbcTemplate.update(ddl);                        // gerçek değişiklik = etkilenen satır > 0
-                if (rows > 0) log.info("Schema patch applied ({} row(s)): {}", rows, shortDdl);
-                else          log.debug("Schema patch noop (0 rows): {}", shortDdl);
-            } else {
-                jdbcTemplate.execute(ddl);   // CREATE [UNIQUE] INDEX IF NOT EXISTS, DROP ..., ALTER ... TYPE — idempotent, sessiz
-                log.debug("Schema patch ran: {}", shortDdl);
-            }
-        } catch (Exception e) {
-            log.debug("Schema patch skipped: {}", e.getMessage());
-        }
+        patchRunner().patch(ddl);
     }
 
-    private boolean columnExists(String table, String col) {
-        Integer n = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM information_schema.columns "
-              + "WHERE lower(table_schema)='public' AND lower(table_name)=lower(?) AND lower(column_name)=lower(?)",
-                Integer.class, table, col);
-        return n != null && n > 0;
-    }
+    private com.sitemonitor.service.schema.SchemaPatchRunner schemaPatchRunner;
 
-    private boolean tableExists(String table) {
-        Integer n = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM information_schema.tables "
-              + "WHERE lower(table_schema)='public' AND lower(table_name)=lower(?)",
-                Integer.class, table);
-        return n != null && n > 0;
+    private com.sitemonitor.service.schema.SchemaPatchRunner patchRunner() {
+        if (schemaPatchRunner == null) schemaPatchRunner = new com.sitemonitor.service.schema.SchemaPatchRunner(jdbcTemplate);
+        return schemaPatchRunner;
     }
 
     /** Full sweep: runs at the top of every hour (configurable via site.monitor.scheduler.cron). */
@@ -3182,6 +3225,9 @@ public class SchedulerService {
         if (monitors.isEmpty()) return;
         int checked = 0;
         List<MonitoringOutageService.SweepItem> sweep = new ArrayList<>();
+        // HTTP_SLOW (2026-10-01, onaylı öneri 9): YALNIZ yavaşlık alarmını AÇIKÇA açmış izlemeler kalem üretir. Kimse
+        // açmamışsa liste boş kalır ve handleSweepResults hiç çağrılmaz — bugünkü sweep'in birebir aynısı (ek sorgu yok).
+        List<MonitoringOutageService.SweepItem> slowSweep = new ArrayList<>();
         // Faz 1: gating sweep thread'inde; ağ kontrolü certCheckExecutor'da paralel başlar (F1).
         List<Map.Entry<HttpMonitor, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (HttpMonitor m : monitors) {
@@ -3194,6 +3240,8 @@ public class SchedulerService {
             try {
                 Map<String, Object> r = entry.getValue().get();
                 sweep.add(httpSweepItem(m, r));
+                MonitoringOutageService.SweepItem slow = httpSlowSweepItem(m, r);
+                if (slow != null) slowSweep.add(slow);
                 checked++;
             } catch (Exception e) {
                 log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
@@ -3203,6 +3251,13 @@ public class SchedulerService {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_DOWN, sweep);
         } catch (Exception e) {
             log.warn("HTTP outage processing failed: {}", e.getMessage(), e);
+        }
+        if (!slowSweep.isEmpty()) {
+            try {
+                monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SLOW, slowSweep);
+            } catch (Exception e) {
+                log.warn("HTTP slow outage processing failed: {}", e.getMessage());
+            }
         }
         log.debug("HTTP checks complete: {} monitors", checked);
     }
@@ -3246,6 +3301,8 @@ public class SchedulerService {
         out.put("http_status", r.get("http_status"));
         out.put("response_ms", r.get("response_ms"));
         if (cfgError) out.put(MonitoringOutageService.CTX_CONFIG_ERROR, true);
+        // JSON doğrulaması düştü (2026-10-01): yalnız bayrak taşınır — ileti "istek başarısız" yerine nedeni söylesin.
+        if (Boolean.TRUE.equals(r.get("json_assertion_failed"))) out.put("json_assertion_failed", true);
         return out;
     }
 
@@ -3638,11 +3695,92 @@ public class SchedulerService {
         if (r.get("http_status") != null) ctx.put("http_status", r.get("http_status"));
         if (r.get("response_ms") != null) ctx.put("response_ms", r.get("response_ms"));
         if (Boolean.TRUE.equals(r.get(MonitoringOutageService.CTX_CONFIG_ERROR))) ctx.put(MonitoringOutageService.CTX_CONFIG_ERROR, true);   // D-A3-6
+        if (Boolean.TRUE.equals(r.get("json_assertion_failed"))) ctx.put("json_assertion_failed", true);   // 2026-10-01: ileti nedeni söylesin
         return new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_HTTP_DOWN, m.getUrl(),
                 m.getMethod() != null ? m.getMethod() : "GET",
                 "up".equals(r.get("status")), (String) r.get("error"),
                 chanCtx(ctx, m), () -> recheckHttp(m));
+    }
+
+    /**
+     * HTTP_SLOW kalemi (2026-10-01, onaylı öneri 9) — KEYWORD_SLOW deseninin ikizi, bir farkla: yavaşlık alarmı
+     * KAPALI izleme HİÇ kalem üretmez ({@code null}). Böylece özelliği kullanmayan filoda sweep ve alarm hattı
+     * bugünküyle birebir aynı kalır; özellik kapatılınca açık alarm güncelleme ucunda sessizce kapanır
+     * ({@code MonitoringController.updateHttp}), izleme silinince/duraklayınca da aynı tip kümesiyle kapanır.
+     *
+     * <p>D-7: hata / süre yok = ÖLÇÜLEMEDİ, "sağlıklı" DEĞİL → kalem yok (açık yavaşlık alarmı hedef düşükken
+     * "ÇÖZÜLDÜ" diye kapanmaz). JSON doğrulaması düşen yanıt da {@code error} taşıdığı için ölçülmüş sayılmaz.
+     *
+     * <p>{@code detail} eşik metnidir (ölçülen süre DEĞİL): teyit zinciri anahtarı ({@code tip:alan:detail}) her
+     * sweep'te değişmesin — PAGESPEED_SLOW'da yaşanan çift-zincir kusuru burada baştan kapalı.
+     */
+    MonitoringOutageService.SweepItem httpSlowSweepItem(HttpMonitor m, Map<String, Object> r) {
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) return null;
+        Long respMs = r.get("response_ms") instanceof Number rn ? rn.longValue() : null;
+        boolean measured = r.get("error") == null && respMs != null;
+        if (!measured) return null;
+        int slowTh = httpSlowThreshold(m);
+        Map<String, Object> slowCtx = new LinkedHashMap<>();
+        slowCtx.put("monitor_name", m.getName());
+        slowCtx.put("url", m.getUrl());
+        slowCtx.put("monitor_id", m.getId());
+        slowCtx.put("monitor_confirm_attempts", m.getConfirmAttempts());
+        slowCtx.put("monitor_confirm_interval_ms", m.getConfirmIntervalSeconds() != null ? m.getConfirmIntervalSeconds() * 1000L : null);
+        slowCtx.put("monitor_recovery_checks", m.getRecoveryChecks());
+        slowCtx.put("monitor_recovery_interval_ms", m.getRecoveryIntervalSeconds() != null ? m.getRecoveryIntervalSeconds() * 1000L : null);
+        if (m.getTeamId() != null) slowCtx.put("team_id", m.getTeamId());
+        if (m.getNotificationGroupId() != null) slowCtx.put("notification_group_id", m.getNotificationGroupId());
+        slowCtx.put("threshold_ms", slowTh);
+        slowCtx.put("response_ms", respMs);
+        return new MonitoringOutageService.SweepItem(
+                EscalationService.TYPE_HTTP_SLOW, m.getUrl(), "> " + slowTh + " ms",
+                respMs <= slowTh, null,
+                chanCtx(slowCtx, m), () -> evalHttpSlow(m));
+    }
+
+    private static int httpSlowThreshold(HttpMonitor m) {
+        return m.getSlowThresholdMs() != null && m.getSlowThresholdMs() > 0
+                ? m.getSlowThresholdMs() : com.sitemonitor.service.http.HttpRequestRules.DEFAULT_SLOW_MS;
+    }
+
+    /** Yavaş yanıt yeniden-ölçümü (HTTP_SLOW teyit/kurtarma re-check'i) — taze istek, HttpCheck PERSIST ETMEZ.
+     *  {"status":"up"|"down"|"skipped","response_ms"?,"threshold_ms"} döner. Yavaşlık kapalı → up; hata / süre yok →
+     *  "skipped" (D-7: ölçülemedi = kanıt yok). JSON doğrulaması bu ölçümde YAPILMAZ (gövde boşuna tamponlanmasın). */
+    private Map<String, Object> evalHttpSlow(HttpMonitor m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        int th = httpSlowThreshold(m);
+        out.put("threshold_ms", th);
+        if (!Boolean.TRUE.equals(m.getSlowResponseEnabled())) { out.put("status", "up"); return out; }
+        Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m).withoutJsonAssertion());
+        Long ms = r.get("response_ms") instanceof Number n ? n.longValue() : null;
+        if (ms != null) out.put("response_ms", ms);
+        if (r.get("error") != null || ms == null) {
+            out.put("status", "skipped");
+            return out;
+        }
+        out.put("status", ms > th ? "down" : "up");
+        return out;
+    }
+
+    /** İzlemenin gelişmiş istek seçenekleri; hiçbiri yoksa {@code HttpRequestOptions.NONE} (aynı örnek). */
+    private com.sitemonitor.service.http.HttpRequestOptions httpRequestOptions(HttpMonitor m) {
+        return com.sitemonitor.service.http.HttpRequestOptions.forMonitor(m,
+                secretCipher == null ? null : secretCipher::decrypt);
+    }
+
+    /**
+     * Tek HTTP kontrolü. Eklentisiz izlemede (NONE) denetleyicinin ESKİ 7 argümanlı girişi çağrılır — istek ve karar
+     * 2026-10-01 öncesinin birebir aynısı; yalnız gelişmiş alan kullanan izleme yeni girişe gider.
+     */
+    private Map<String, Object> runHttpCheck(HttpMonitor m, com.sitemonitor.service.http.HttpRequestOptions opts) {
+        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        boolean verify = Boolean.TRUE.equals(m.getVerifySsl());
+        boolean follow = !Boolean.FALSE.equals(m.getFollowRedirects());
+        boolean viaProxy = viaProxyFor(m.getUrl(), m.getUseProxy());
+        return opts == com.sitemonitor.service.http.HttpRequestOptions.NONE
+                ? httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(), timeout, verify, follow, viaProxy)
+                : httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(), timeout, verify, follow, viaProxy, opts);
     }
 
     /**
@@ -3661,6 +3799,12 @@ public class SchedulerService {
             Map<String, Object> r = httpOutcome(rawCheckResult);
             monitoringOutageService.handleSweepResults(
                     EscalationService.TYPE_HTTP_DOWN, List.of(httpSweepItem(m, r)), true);
+            // Yavaşlık da yalnız KAPANIŞ için (elle kontrol alarm açmaz). Yavaşlık kapalı / ölçülemedi → kalem yok:
+            // boş liste handleSweepResults'ta anında döner (yavaşlığı kullanmayan izlemede davranış aynı).
+            MonitoringOutageService.SweepItem slowItem = httpSlowSweepItem(m, r);
+            if (slowItem != null) {
+                monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SLOW, List.of(slowItem), true);
+            }
         } catch (Exception e) {
             log.warn("Manuel HTTP değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
         }
@@ -3668,10 +3812,7 @@ public class SchedulerService {
 
     /** HTTP uptime check + http_checks persist'i. {"status","error","http_status","response_ms"} döner. */
     private Map<String, Object> recheckHttp(HttpMonitor m) {
-        int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
-        Map<String, Object> r = httpCheckerService.check(m.getUrl(), m.getMethod(), m.getExpectedStatus(),
-                timeout, Boolean.TRUE.equals(m.getVerifySsl()), !Boolean.FALSE.equals(m.getFollowRedirects()),
-                viaProxyFor(m.getUrl(), m.getUseProxy()));
+        Map<String, Object> r = runHttpCheck(m, httpRequestOptions(m));
         boolean ok = Boolean.TRUE.equals(r.get("ok"));
         try {
             HttpCheck res = new HttpCheck();

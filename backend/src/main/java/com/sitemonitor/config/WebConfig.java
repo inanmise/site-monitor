@@ -178,9 +178,11 @@ public class WebConfig implements WebMvcConfigurer {
                 res.setHeader("Permissions-Policy", "geolocation=(), camera=(), microphone=(), payment=()");
                 // HSTS — 1 year, includes subdomains, preload-ready
                 res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-                // CSP — React SPA + same-origin API
+                // CSP — React SPA + same-origin API. script-src'de 'unsafe-inline' YOK (2026-10-01, onaylı öneri 5):
+                // index.html yalnız harici modül yükler, sunucu HTML'inde ve ön yüzde satır içi betik / olay işleyicisi
+                // yok. Stil tarafı açık kalır: shadcn Chart <style> enjekte eder, mail önizlemeleri satır içi stil taşır.
                 res.setHeader("Content-Security-Policy",
-                        "default-src 'self'; script-src 'self' 'unsafe-inline'; " +
+                        "default-src 'self'; script-src 'self'; " +
                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
                         "connect-src 'self'; font-src 'self'; frame-ancestors 'none'; " +
                         // frame-src 'self': Sorun Bildirimleri mail geçmişindeki sandbox'lı srcdoc iframe

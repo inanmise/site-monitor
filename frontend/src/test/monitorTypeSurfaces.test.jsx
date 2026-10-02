@@ -165,7 +165,8 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
     const chips = valuesIn(read('pages/Login.jsx'), "key: 'login.pillarMonitor'", '],',
       /key: 'login\.(cap\w+)'/g, 'Login İzle vitrini').length
 
-    const i18n = read('i18n/index.jsx')
+    // İki sözlük ayrı dosyalarda (2026-10-02, öneri 22: EN lazy chunk) — ikisi birlikte taranır.
+    const i18n = read('i18n/tr.js') + '\n' + read('i18n/en.js')
     // Kaçışlı tırnağa dikkat: TR metni "uptime\'a" içeriyor ve naif [^']* orada kesiliyor.
     const claims = [...i18n.matchAll(/'login\.pillarMonitorDesc':\s*'((?:[^'\\]|\\.)*)'/g)].map(m => m[1])
     expect(claims.length, 'pillarMonitorDesc iki dilde de bulunmalı').toBe(2)

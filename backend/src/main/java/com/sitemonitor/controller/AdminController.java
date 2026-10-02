@@ -8,6 +8,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.ClientIpResolver;
 import com.sitemonitor.service.ConnectionDiagnosticsService;
+import com.sitemonitor.service.EscalationDelay;
 import com.sitemonitor.service.MonitorHistoryService;
 import com.sitemonitor.service.DiagnosticHistoryService;
 import com.sitemonitor.service.DomainExpiryDiagnosticsService;
@@ -135,6 +136,10 @@ public class AdminController {
     private final PermissionService permissionService;
     private final MonitoringGroupService monitoringGroupService;
     private final SchedulerService schedulerService;
+
+    /** Takım sessiz saati önbelleği (2026-10-01) — kayıttan sonra bu pod'da hemen düşürülür. İsteğe bağlı (WebMvcTest'te yok). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.TeamQuietHoursService teamQuietHours;
 
     /** "Uzun süredir açık" eşiği (saat) — bu yaştan eski AÇIK alarm unutulmuş kabul edilir. */
     private static final int ALERT_STALE_HOURS = 24;
@@ -1865,7 +1870,7 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
         requirePerm(session, "contacts.crud", "edit");
-        String[] cf = {"name", "email", "role", "minAlertLevel", "webhookType", "active", "teamId", "userId"};
+        String[] cf = {"name", "email", "role", "minAlertLevel", "webhookType", "active", "teamId", "userId", "delayMinutes"};
         java.util.Map<String, Object> _before = AuditDiff.snapshot(existing, cf);
         applyContactFields(existing, body, session);
         EscalationContact saved = contactRepo.save(existing);
@@ -1898,6 +1903,9 @@ public class AdminController {
         c.setWebhookType((String) body.get("webhook_type"));
         Object active = body.get("active");
         c.setActive(active instanceof Boolean ? (Boolean) active : (c.getActive() != null ? c.getActive() : true));
+        // Zamana bağlı eskalasyon adımı (2026-10-01, opt-in): anahtar GÖNDERİLMEZSE dokunulmaz (eski istemci / form gecikmesiz
+        // bırakıldı → bugünkü davranış). Gönderilirse: boş/null/0 = anlık (gecikmeyi kaldır), 1–1440 = dakika; aksi 400.
+        if (body.containsKey("delay_minutes")) c.setDelayMinutes(EscalationDelay.parse(body.get("delay_minutes")));
         // Takım (F1, 2026-09-28): global admin serbest. Kapsamlı müdür kişiyi yalnız YÖNETTİĞİ takıma açar/taşır —
         // kapsam dışı hedef 403 (eskiden team_id'si sessizce yok sayılıyordu). TEAM_ADMIN'in takımı gövdeden
         // değişmez (createUser/updateUser ile aynı: kendi takımı zorlanır).
@@ -2602,6 +2610,8 @@ public class AdminController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         requireAdmin(session);
         requirePerm(session, "teams.lifecycle", "execute");
+        // Sessiz saat (2026-10-01): gövdede varsa ÖNCE doğrulanır — hatalı pencere takımı yarım oluşturmasın (400).
+        com.sitemonitor.service.QuietHours.Config quietCfg = quietConfigFrom(body);
         // Haftalık e-posta anahtarları burada OKUNMAZ: yeni takım her zaman ikisi de kapalı doğar
         // (createTeam açıkça false yazar), açma işi takımın kendi üyelerinde.
         Team team = userService.createTeam(
@@ -2610,6 +2620,10 @@ public class AdminController {
                 (String) body.get("description"),
                 toLong(body.get("leader_id")));
         if (body.containsKey("manager_id")) team = userService.updateTeamManager(team.getId(), toLong(body.get("manager_id")));
+        if (quietCfg != null && quietCfg.isSet()) {
+            team = userService.updateTeamQuietHours(team.getId(), quietCfg);
+            if (teamQuietHours != null) teamQuietHours.invalidate();
+        }
         auditService.recordAction("TEAM_CREATE", session, request,
                 "TEAM", team.getId().toString(),
                 "{\"name\":\"" + team.getName() + "\",\"leaderId\":" + team.getLeaderId() + "}");
@@ -2685,6 +2699,9 @@ public class AdminController {
         Map<String, Object> teamBefore = teamRepo.findById(id)
                 .map(t -> AuditDiff.snapshot(t, TEAM_AUDIT_FIELDS))
                 .orElseGet(java.util.LinkedHashMap::new);
+        // Sessiz saat (2026-10-01): anahtarlar gövdede YOKSA dokunulmaz (toplu işlem, eski istemci). Varsa diğer alanlardan
+        // ÖNCE doğrulanır — hatalı pencere 400 döner ve hiçbir alan yarım kaydedilmez. İzin: teams.update (bu uçla aynı).
+        com.sitemonitor.service.QuietHours.Config quietCfg = quietConfigFrom(body);
         Team team = userService.updateTeam(id,
                 (String) body.get("name"),
                 (String) body.get("email"),
@@ -2696,6 +2713,10 @@ public class AdminController {
         // manager_id: anahtar gövdede VARSA uygulanır (null = temizle). leader_id'den farklı: lider null'da
         // dokunulmaz, müdür ise bilinçli olarak temizlenebilmeli (AD zincirine geri dönmek için).
         if (body.containsKey("manager_id")) team = userService.updateTeamManager(id, toLong(body.get("manager_id")));
+        if (quietCfg != null) {
+            team = userService.updateTeamQuietHours(id, quietCfg);
+            if (teamQuietHours != null) teamQuietHours.invalidate();
+        }
         auditService.recordAction("TEAM_UPDATE", session, "TEAM", id.toString(),
                 AuditDetail.of("name", team.getName()),
                 AuditDiff.diff(teamBefore, AuditDiff.snapshot(team, TEAM_AUDIT_FIELDS)));
@@ -2738,6 +2759,20 @@ public class AdminController {
     /** Gövdeden boolean okuma — Boolean değilse null ("bu alana dokunma"). */
     private static Boolean bool(Object raw) {
         return raw instanceof Boolean b ? b : null;
+    }
+
+    /** Takım gövdesindeki sessiz saat anahtarları (2026-10-01). */
+    static final List<String> TEAM_QUIET_KEYS = List.of("quiet_start", "quiet_end", "quiet_days", "quiet_min_level");
+
+    /**
+     * Gövdede sessiz saat anahtarı yoksa {@code null} ("dokunma"); varsa doğrulanmış/normalize ayar
+     * ({@link com.sitemonitor.service.QuietHours#normalize} — hata 400, mesaj arayüz dilinde). Başlangıç ve bitiş boş = kaldır.
+     */
+    static com.sitemonitor.service.QuietHours.Config quietConfigFrom(Map<String, Object> body) {
+        if (body == null || TEAM_QUIET_KEYS.stream().noneMatch(body::containsKey)) return null;
+        Object s = body.get("quiet_start"), e = body.get("quiet_end"), lvl = body.get("quiet_min_level");
+        return com.sitemonitor.service.QuietHours.normalize(s == null ? null : s.toString(), e == null ? null : e.toString(),
+                body.get("quiet_days"), lvl == null ? null : lvl.toString());
     }
 
     /** Oturumdaki kullanıcı bu takımın GERÇEK üyesi mi (birincil takım veya çoklu üyelik)? */
@@ -2795,7 +2830,8 @@ public class AdminController {
      *  ki "silinen takimda ne vardi" ile "takimda ne degisti" karsilastirilabilir kalsin. */
     private static final String[] TEAM_AUDIT_FIELDS = {
             "name", "email", "description", "active", "leaderId", "managerId",
-            "weeklyReminderEnabled", "weeklyAvailabilityEnabled", "weeklyChannels" };
+            "weeklyReminderEnabled", "weeklyAvailabilityEnabled", "weeklyChannels",
+            "quietStart", "quietEnd", "quietDays", "quietMinLevel" };
 
     // ── Takım sayaçları / etki önizleme / taşıma / üyelik (2026-09-20) ────────────
 

@@ -1,4 +1,5 @@
 import { buildYearSummaryCsv, buildYearSummaryHtml } from './weeklyModel.js'
+import { downloadCsv as downloadCsvFile } from '../../utils/csvExport.js'
 
 /*
  * Yönetici yıl özeti eylemleri (2026-09-13, ikinci tur; 2026-09-27 başlığın "Dışa aktar" menüsüne taşındı):
@@ -6,14 +7,12 @@ import { buildYearSummaryCsv, buildYearSummaryHtml } from './weeklyModel.js'
  * CSS'inden bağımsız; gizli iframe → tarayıcı "PDF olarak kaydet").
  */
 
-/** Tarayıcıda dosya indirir (BOM'lu UTF-8 CSV — Excel Türkçe karakterleri doğru açar). */
+/**
+ * Tarayıcıda dosya indirir (BOM'lu UTF-8 CSV — Excel Türkçe karakterleri doğru açar). Argüman sırası (csv, ad) bu modülün
+ * sözleşmesi; indirme ortak `utils/csvExport.downloadCsv(ad, csv)` (öneri 29 — dosya aynı).
+ */
 export function downloadCsv(csv, fileName) {
-  try {
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch { /* jsdom */ }
+  downloadCsvFile(fileName, '﻿' + csv)
 }
 
 export function downloadYearSummaryCsv(data, t) {

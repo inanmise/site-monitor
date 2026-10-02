@@ -30,4 +30,7 @@ public interface NetworkOutageEventRepository extends JpaRepository<NetworkOutag
 
     @Query("SELECT e FROM NetworkOutageEvent e ORDER BY e.id DESC")
     List<NetworkOutageEvent> findRecent(Pageable pageable);
+
+    /** Duruma göre TÜM kayıtlar — eskalasyon adımı işi açık toplu-kesinti bastırmalarını tek sorguda okur (2026-10-01). */
+    List<NetworkOutageEvent> findByStatus(String status);
 }

@@ -1243,12 +1243,13 @@ public class EmailNotificationService {
      */
     MailDoc.Mail alertMail(String subject, String message, String domain, String level, String alertType,
                            Integer daysRemaining, Map<String, Object> ctx) {
+        // Runbook notu (2026-10-01): tür-özel belgelerde de gövdenin SONUNA (RunbookNote.appendTo — rehber yoksa no-op).
         if (alertType != null && MONITORING_OUTAGE_TYPES.contains(alertType)) {
-            return outageAlertDoc(message, domain, alertType, level, ctx).build();
+            return withRunbook(outageAlertDoc(message, domain, alertType, level, ctx), ctx).build();
         }
-        if ("KEYWORD".equals(alertType)) return keywordAlertDoc(message, domain, level, ctx).build();
-        if ("PING_DOWN".equals(alertType)) return pingAlertDoc(message, domain, level, ctx).build();
-        if ("DNS_CHANGED".equals(alertType)) return dnsChangedDoc(message, domain, level, ctx).build();
+        if ("KEYWORD".equals(alertType)) return withRunbook(keywordAlertDoc(message, domain, level, ctx), ctx).build();
+        if ("PING_DOWN".equals(alertType)) return withRunbook(pingAlertDoc(message, domain, level, ctx), ctx).build();
+        if ("DNS_CHANGED".equals(alertType)) return withRunbook(dnsChangedDoc(message, domain, level, ctx), ctx).build();
         if (domain == null) {
             // Ton konu metninden TAHMİN EDİLMEZ (eski "KRİTİK geçiyor mu" taraması); seviye açıkça verilir.
             Tone tone = EmailTemplateBuilder.severityTone(level);
@@ -1258,6 +1259,12 @@ public class EmailNotificationService {
         EmailTemplateBuilder.AlertMail m = new EmailTemplateBuilder.AlertMail(
                 alertType, level, domain, message, daysRemaining, ctx, teamNameOf(ctx));
         return new MailDoc.Mail(templateBuilder.buildHtml(m), templateBuilder.buildText(m));
+    }
+
+    /** Alarm belgesinin sonuna runbook notu ("Ne yapılmalı") — bağlamda rehber yoksa belge DEĞİŞMEZ. */
+    private static MailDoc withRunbook(MailDoc d, Map<String, Object> ctx) {
+        com.sitemonitor.service.mail.RunbookNote.appendTo(d, ctx);
+        return d;
     }
 
     public String buildAlertEmailHtml(String subject, String message,
@@ -2560,6 +2567,74 @@ public class EmailNotificationService {
                 + "3. Transfer kilidi yoksa registrar'dan kilidi açtırın.");
         d.footerMeta("Site Monitor — Otomatik Hatırlatma", "Oluşturuldu: " + nowStamp());
         return d.html();
+    }
+
+    // ── Sessiz saat özeti (2026-10-01, onaylı öneri 15) ─────────────────────────────
+
+    /**
+     * Özetin tek satırı. {@code openedAt}/{@code resolvedAt} UTC ISO (gösterimde Europe/Istanbul); {@code target} = görünen
+     * hedef adı (monitör adı ya da şema-soyulmuş adres); {@code typeLabel} = okunur alarm türü.
+     */
+    public record QuietDigestRow(Long alertId, String level, String target, String typeLabel,
+                                 String openedAt, String resolvedAt, boolean resolved) {}
+
+    /** Sessiz saat özeti konusu — gönderim ve galeri aynı metni kullanır. */
+    public static String quietDigestSubject(String teamName, List<QuietDigestRow> rows) {
+        int total = rows == null ? 0 : rows.size();
+        long open = rows == null ? 0 : rows.stream().filter(r -> !r.resolved()).count();
+        return "[Site Monitor] Sessiz saat özeti · " + nzs(teamName) + " · " + total + " alarm"
+                + (open > 0 ? " (" + open + " açık)" : " (tümü çözüldü)");
+    }
+
+    /**
+     * Takımın sessiz saat penceresi bitince giden TEK özet: pencerede bildirimi ertelenen alarmlar, "hâlâ açık" ve
+     * "pencerede çözüldü" olarak iki tabloda; her satır Alarm Geçmişi'ndeki kayda derin bağlantı. KRİTİK alarmlar bu
+     * özete hiç girmez (pencerede de hemen gönderilir) — not bunu söyler.
+     */
+    public String buildQuietDigestHtml(String teamName, String windowLabel, List<QuietDigestRow> rows) {
+        List<QuietDigestRow> all = rows == null ? List.of() : rows;
+        List<QuietDigestRow> open = all.stream().filter(r -> !r.resolved()).toList();
+        List<QuietDigestRow> closed = all.stream().filter(QuietDigestRow::resolved).toList();
+        String base = liveBaseUrl();
+        MailDoc d = MailDoc.create(quietDigestSubject(teamName, all))
+                .preheader(all.size() + " alarm sessiz saatte ertelendi · " + open.size() + " hâlâ açık · " + closed.size() + " çözüldü")
+                .kicker("Sessiz Saat Özeti");
+        d.badges(open.isEmpty() ? Badge.tint("TÜMÜ ÇÖZÜLDÜ", Tone.SUCCESS) : Badge.tint(open.size() + " AÇIK", Tone.WARNING),
+                Badge.outline("Pencere · " + nzs(windowLabel)));
+        d.title(nzs(teamName) + " — sessiz saat özeti",
+                "Sessiz saat penceresinde (" + nzs(windowLabel) + ", Europe/Istanbul) bildirimi ertelenen alarmlar.");
+        d.stats(List.of(Stat.of("Ertelenen alarm", String.valueOf(all.size())),
+                new Stat("Hâlâ açık", String.valueOf(open.size()), open.isEmpty() ? null : Tone.WARNING.strong, null),
+                new Stat("Pencerede çözüldü", String.valueOf(closed.size()), closed.isEmpty() ? null : Tone.SUCCESS.strong, null)));
+        List<Col> cols = List.of(Col.nw("Seviye"), Col.of("Hedef"), Col.opt("Tür"), Col.nw("Açıldı"));
+        if (!open.isEmpty()) {
+            d.heading("Hâlâ açık", "Ertelenen bildirim bu özettir; günlük hatırlatma bu andan itibaren normal aralığıyla sürer.");
+            d.table(cols, open.stream().map(r -> quietDigestCells(r, base, false)).toList());
+        }
+        if (!closed.isEmpty()) {
+            d.heading("Pencerede çözüldü", "Bu alarmlar için ayrıca \"çözüldü\" e-postası gönderilmedi.");
+            List<Col> closedCols = List.of(Col.nw("Seviye"), Col.of("Hedef"), Col.opt("Tür"), Col.nw("Açıldı"), Col.nw("Çözüldü"));
+            d.table(closedCols, closed.stream().map(r -> quietDigestCells(r, base, true)).toList());
+        }
+        d.note("KRİTİK alarmlar sessiz saatte de hemen gönderilir ve bu özete girmez. Sessiz saat penceresini takım ayarlarından "
+                + "(Takım Yönetimi → takımı düzenle) değiştirebilir ya da kaldırabilirsiniz.");
+        d.button(base.isBlank() ? "" : base + "/?tab=alerthistory", "Alarm Geçmişini aç →");
+        d.footerMeta("Site Monitor — Sessiz Saat Özeti", "Oluşturuldu: " + nowStamp());
+        return d.html();
+    }
+
+    private List<Cell> quietDigestCells(QuietDigestRow r, String base, boolean withResolved) {
+        Tone tone = EmailTemplateBuilder.severityTone(r.level());
+        String target = nzs(r.target());
+        String url = base.isBlank() || r.alertId() == null ? ""
+                : base + "/?tab=alerthistory&alert=" + r.alertId() + (r.resolved() ? "&view=closed" : "");
+        List<Cell> cells = new ArrayList<>(List.of(
+                Cell.of(EscalationService.levelWordTr(r.level()), tone.strong, true),
+                url.isBlank() ? Cell.of(target) : Cell.html(MailKit.link(url, target), target),
+                Cell.of(nzs(r.typeLabel())),
+                Cell.of(fmtOrDash(formatIstanbul(r.openedAt())))));
+        if (withResolved) cells.add(Cell.of(fmtOrDash(formatIstanbul(r.resolvedAt()))));
+        return cells;
     }
 
     // ── Haftalık Erişilebilirlik (availability) e-postası ───────────────────────

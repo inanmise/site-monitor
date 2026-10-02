@@ -29,7 +29,10 @@ const FLOOR = 40          // satır kapsamı %
 
 /** Ölçüye hiç girmeyenler — gerekçesiyle. */
 const EXCLUDED = new Set([
-  'src/i18n/index.jsx',   // saf çeviri sözlüğü; mantık yok, kapsam anlamsız
+  // Saf çeviri sözlükleri; mantık yok, kapsam anlamsız. (2026-10-02'ye dek ikisi de i18n/index.jsx'teydi —
+  // öneri 22 ile ayrıldılar; index.jsx artık yalnız sağlayıcı/yükleyici mantığı ve ölçüye girer.)
+  'src/i18n/tr.js',
+  'src/i18n/en.js',
   // Yapı/araç script'leri UYGULAMA KODU DEĞİL: tarayıcıda çalışmazlar, vitest onları hiç
   // yüklemez ve kapsamları yapısal olarak %0'dır. Eşik 250'ye inince ölçüye girdiler.
   'scripts/gen-whitepaper-pdf.mjs',

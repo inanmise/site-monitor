@@ -181,7 +181,7 @@ export default function CertTableToolbar({
           <div className="flex flex-wrap items-center gap-2">
             <InputGroup className="w-full sm:w-auto sm:min-w-[240px] sm:flex-[1_1_280px] sm:max-w-[560px]">
               <InputGroupInput id="ct-f-domain" type="search" value={filters.domain} placeholder={t('tbl.searchPh')}
-                aria-label={t('tbl.searchLabel')} onChange={(e) => set('domain', e.target.value)} onKeyDown={escClears('domain')} />
+                aria-label={t('tbl.searchLabel')} onChange={(e) => set('domain', e.target.value)} onKeyDown={escClears('domain')} data-page-search="" />
               <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
               {filters.domain && (
                 <InputGroupAddon align="inline-end">

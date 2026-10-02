@@ -4,6 +4,7 @@
  * <p>Saf olması bilinçli: etiket sözlüğü, sınıf eşlemesi ve ayrıntı ayrıştırması render
  * edilmeden test edilebilsin. Ekran bileşenleri bunları yalnız çağırır.
  */
+import { agoText } from '../../../utils/relativeTime.js'
 
 /**
  * Olay türü → renk sınıfı.
@@ -150,6 +151,8 @@ const SPECIAL = {
   DOMAIN_DELETE_CHECK: 'audit.ev.DOMAIN_DELETE_CHECK',
   USER_PASSWORD_AUTO_RESET: 'audit.ev.USER_PASSWORD_AUTO_RESET',
   USER_PUSH_OPT_OUT: 'audit.ev.USER_PUSH_OPT_OUT',
+  USER_PUSH_QUIET_HOURS: 'audit.ev.USER_PUSH_QUIET_HOURS',
+  USER_PREFERENCES_UPDATE: 'audit.ev.USER_PREFERENCES_UPDATE',   // favoriler / açılış sekmesi / kayıtlı görünümler (2026-10-02)
   LOGIN_DISPUTED: 'audit.ev.LOGIN_DISPUTED',
   ISSUE_REPORT: 'audit.ev.ISSUE_REPORT',
   CA_PINNED: 'audit.ev.CA_PINNED',
@@ -296,18 +299,12 @@ export function eventDate(iso) {
 
 /**
  * "3 dk önce" — `act.rel.*` anahtarları (Aktivite Logu ve Son Giriş ile aynı dil). Gelecekteki
- * damga (saat kayması) "az önce" okunur; bozuk damga null.
+ * damga (saat kayması) "az önce" okunur; bozuk damga null. Eşik/sözcük çekirdeği ortak: utils/relativeTime.agoText.
  */
 export function relativeTime(iso, t, now = Date.now()) {
   const d = eventDate(iso)
   if (!d) return null
-  const sec = Math.floor(Math.max(0, now - d.getTime()) / 1000)
-  if (sec < 60) return t('act.rel.now')
-  const min = Math.floor(sec / 60)
-  if (min < 60) return t('act.rel.min', min)
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return t('act.rel.hour', hr)
-  return t('act.rel.day', Math.floor(hr / 24))
+  return agoText(d.getTime(), t, now)
 }
 
 /** "alice · güncelledi · PORT_MONITOR:7 — warningDays: 30 → 15" tarzı tek satırlık özet. */

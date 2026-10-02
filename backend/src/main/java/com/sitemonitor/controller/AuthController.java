@@ -417,6 +417,8 @@ public class AuthController {
             resp.put("mudurluk_name", u.getMudurlukName());
             // E1: kişi kendi push tercihi — Ayarlar sayfasındaki anahtar bunu okur.
             resp.put("push_opt_out", Boolean.TRUE.equals(u.getPushOptOut()));
+            // Kişisel push sessiz saati (2026-10-01) — null = tanımsız (bugünkü davranış). Etkinliklerim kartı bunu okur.
+            resp.put("push_quiet", pushQuietOf(u));
             // Ürün turu durumu (null = hiç görmedi → istemci karşılama kartını gösterir)
             resp.put("tour", com.sitemonitor.service.TourStateService.parse(u.getTourState()));
             resp.put("manager_sicil", u.getManagerSicil());
@@ -494,6 +496,46 @@ public class AuthController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("push_opt_out", optOut);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** {@code /me} ve kayıt yanıtındaki kişisel push sessiz saati: tanımsızsa null. */
+    static Map<String, Object> pushQuietOf(com.sitemonitor.model.AppUser u) {
+        if (u == null || u.getPushQuietStart() == null || u.getPushQuietEnd() == null) return null;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("start", u.getPushQuietStart());
+        m.put("end", u.getPushQuietEnd());
+        m.put("days", u.getPushQuietDays());
+        m.put("min_level", u.getPushQuietMinLevel());
+        return m;
+    }
+
+    /**
+     * Kişisel push sessiz saati (2026-10-01, onaylı öneri 15) — kullanıcı YALNIZ kendi satırını yazar (push-opt-out deseni;
+     * id/sicil parametresi yok → IDOR yüzeyi yok). Gövde: {start, end, days[], min_level}; start ve end boş = kaldır.
+     * Doğrulama hatası 400 (mesaj arayüz dilinde). Pencerede bastırılan push teslimat günlüğünde
+     * {@code SKIPPED_USER_QUIET_HOURS} olarak görünür; KRİTİK ve çözüm push'u etkilenmez.
+     */
+    @PostMapping("/me/push-quiet-hours")
+    public ResponseEntity<Map<String, Object>> setPushQuietHours(
+            @RequestBody Map<String, Object> body, HttpSession session) {
+        String username = (String) session.getAttribute("username");
+        if (username == null) throw new SecurityException("Not authenticated");
+        var userOpt = userService.findByUsername(username);
+        if (userOpt.isEmpty()) throw new SecurityException("Not authenticated");
+        Object s = body.get("start"), e = body.get("end"), lvl = body.get("min_level");
+        var cfg = com.sitemonitor.service.QuietHours.normalize(s == null ? null : s.toString(),
+                e == null ? null : e.toString(), body.get("days"), lvl == null ? null : lvl.toString());
+        var u = userService.savePushQuietHours(userOpt.get(), cfg);
+        auditService.recordAction("USER_PUSH_QUIET_HOURS", session, "USER", String.valueOf(u.getId()),
+                cfg.isSet()
+                        ? "Kişisel push sessiz saati: " + cfg.start() + "–" + cfg.end()
+                                + (cfg.days() == null ? " (her gün)" : " (" + cfg.days() + ")")
+                                + " · hemen giden en düşük seviye " + (cfg.minLevel() == null ? "HIGH" : cfg.minLevel())
+                        : "Kişisel push sessiz saati kaldırıldı", null);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("push_quiet", pushQuietOf(u));
         return ResponseEntity.ok(resp);
     }
 

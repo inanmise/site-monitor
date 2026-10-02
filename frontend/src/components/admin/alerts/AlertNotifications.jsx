@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning } from 'lucide-react'
+import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../../utils/mailPreview.js'
 import UserBadge from '../../ui/UserBadge.jsx'
@@ -27,6 +27,7 @@ const NOTIF_TONE = {
   manual:     { card: 'border-blue-300 dark:border-blue-900',     open: 'bg-blue-500/5',   badge: 'border-blue-300 bg-blue-500/10 text-blue-700 dark:border-blue-900 dark:text-blue-300' },
   resolution: { card: 'border-green-300 dark:border-green-900',   open: 'bg-green-500/5',  badge: 'border-green-300 bg-green-500/10 text-green-700 dark:border-green-900 dark:text-green-300' },
   storm:      { card: 'border-violet-300 dark:border-violet-900', open: 'bg-violet-500/5', badge: 'border-violet-300 bg-violet-500/10 text-violet-700 dark:border-violet-900 dark:text-violet-300' },
+  quiet:      { card: 'border-indigo-300 dark:border-indigo-900', open: 'bg-indigo-500/5', badge: 'border-indigo-300 bg-indigo-500/10 text-indigo-700 dark:border-indigo-900 dark:text-indigo-300' },
   other:      { card: 'border-border',                           open: 'bg-muted/40',     badge: 'border-border bg-muted text-muted-foreground' },
 }
 
@@ -46,6 +47,11 @@ const MAIL_TRIGGER = {
   STORM_INITIAL: { Icon: CloudLightning, textKey: 'alh.trigger.stormInitial', cls: 'storm' },
   STORM_REALERT: { Icon: CloudLightning, textKey: 'alh.trigger.stormRealert', cls: 'storm' },
   STORM_RESOLVE: { Icon: CloudLightning, textKey: 'alh.trigger.stormResolve', cls: 'resolution' },
+  // 2026-10-01: zamana bağlı eskalasyon adımı — gecikmeli kişiye giden (ya da "SKIPPED: <neden>" ile atlanan) adım.
+  ESCALATION_STEP: { Icon: Timer, textKey: 'alh.trigger.escalationStep', cls: 'escalation' },
+  // 2026-10-01: sessiz saat — bildirim takımın özetine devredildi (KARAR satırı) ve pencere sonunda giden özet e-postası.
+  QUIET_HOURS:   { Icon: Moon, textKey: 'alh.trigger.quietHours',  cls: 'quiet' },
+  QUIET_DIGEST:  { Icon: Moon, textKey: 'alh.trigger.quietDigest', cls: 'quiet' },
 }
 
 /** E-posta tetiğinin okunur adı (bilinmeyen tetik ham adıyla). */

@@ -3,7 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { MAIN_STEPS, PAGE_TOURS } from '../components/tour/tourSteps.js'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 

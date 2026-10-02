@@ -1,5 +1,8 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.service.http.HttpRequestOptions;
+import com.sitemonitor.service.http.HttpRequestRules;
+import com.sitemonitor.service.http.JsonAssertion;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +36,9 @@ import java.util.regex.Pattern;
  * HTTP / Website uptime checker — bir URL'ye istek atıp yanıt durum kodunu + süresini ölçer.
  * SAĞLIKLI (ok) = durum kodu {@code expectedStatus} pattern'ine uyuyor ve hata yok.
  * Gövde saklanmaz (yalnız durum kodu); bağlantı havuza dönsün diye tüketilir ama SÜRE SINIRIYLA
- * ({@link #sendDrained} — akış yapan hedef sweep'i donduramaz) → düşük maliyet.
+ * ({@link #sendDrained} — akış yapan hedef sweep'i donduramaz) → düşük maliyet. İSTİSNA (2026-10-01): izlemede JSON
+ * doğrulaması tanımlıysa gövde tavanlı (2 MB) okunup doğrulanır; özel başlık / Basic auth / POST gövdesi de
+ * {@link HttpRequestOptions} ile opsiyoneldir — tanımsızken istek ve karar eskisinin birebir aynısıdır.
  *
  * {@code verifySsl=false} (varsayılan) → trust-all SSL (yalnız erişilebilirlik; iç-CA/self-signed dahil);
  * {@code verifySsl=true} → JVM cacerts VEYA Genel Ayarlar kurumsal CA paketi VEYA host'un otomatik
@@ -191,6 +196,22 @@ public class HttpCheckerService {
      */
     public Map<String, Object> check(String url, String method, String expectedStatus,
                                      int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
+        return check(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, HttpRequestOptions.NONE);
+    }
+
+    /**
+     * Gelişmiş istek seçenekleriyle kontrol (2026-10-01, onaylı öneri 9): özel başlıklar + Basic auth (yalnız İLK
+     * host'a), POST gövdesi (yalnız POST + dolu gövde) ve JSON doğrulaması (yalnız durum kodu uyduysa; gövde
+     * {@link HttpRequestRules#MAX_RESPONSE_BYTES} tavanıyla okunur). {@link HttpRequestOptions#NONE} ile davranış
+     * yukarıdaki 7 argümanlı girişin BİREBİR aynısıdır; çağıranlar eklentisiz izlemede yine o girişi kullanır.
+     *
+     * <p>JSON doğrulaması düşerse sonuç {@code ok=false} + {@code error} (neden) + {@code json_assertion_failed=true}
+     * olur — mevcut HTTP_DOWN kesinti yolundan geçer, yeni alarm türü yoktur.
+     */
+    public Map<String, Object> check(String url, String method, String expectedStatus,
+                                     int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy,
+                                     HttpRequestOptions options) {
+        final HttpRequestOptions opts = options == null ? HttpRequestOptions.NONE : options;
         // Tanıdaki `via` GERÇEKTEN vekil kullanıldı mı sorusunu yanıtlar (2026-09-22): izlemede useProxy=ON olsa da
         // sistemde vekil tanımlı değilse istek doğrudan gider. doCheck aynı ifadeyi kullanıyor; erken dönen iki dal
         // (config_error / SSRF) ham bayrağı geçtiği için tanı panelinde "via: proxy, proxy: null" gösteriyordu.
@@ -221,7 +242,7 @@ public class HttpCheckerService {
         // drain haritayı topluca boşaltıyordu ve paralel sweep'te bir monitör diğerinin kaydını
         // çalıyordu; watermark + kaynak filtresi kaydı sahibine bağlar.
         long trustWatermark = System.currentTimeMillis();
-        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
+        Attempt a1 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts);
         if (Boolean.TRUE.equals(a1.result().get("ok")) || !verifySsl
                 || !isTrustFailure(a1.cause()) || !caAutoPinService.isEnabled()) {
             return a1.result();
@@ -246,7 +267,7 @@ public class HttpCheckerService {
             } catch (NumberFormatException ignore) { /* bozuk anahtar — atla */ }
         }
         if (!pinned) return a1.result();
-        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy);
+        Attempt a2 = doCheck(url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, viaProxy, opts);
         a2.result().put("repinned", true);
         return a2.result();
     }
@@ -273,7 +294,8 @@ public class HttpCheckerService {
     }
 
     private Attempt doCheck(String url, String method, String expectedStatus,
-                            int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy) {
+                            int timeoutMs, boolean verifySsl, boolean followRedirects, boolean viaProxy,
+                            HttpRequestOptions opts) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         boolean proxied = viaProxy && client(verifySsl, true) != client(verifySsl, false);
@@ -282,17 +304,31 @@ public class HttpCheckerService {
         HttpFailureDiagnostics.Trace trace = newTrace(url, method, timeoutMs, verifySsl, followRedirects, proxied);
         trace.expectedStatus = expectedStatus;
         Exception failure = null;
+        // Gövde YALNIZ JSON doğrulaması tanımlıysa tamponlanır; aksi hâlde bugünkü gibi süre sınırıyla tüketilir.
+        BodyCapture capture = opts.hasJsonAssertion() ? new BodyCapture() : null;
         try {
             String m = method == null ? "GET" : method.trim().toUpperCase(Locale.ROOT);
             HttpResponse<java.io.InputStream> resp = sendFollowing(
-                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace);
+                    URI.create(url.trim()), m, timeoutMs, verifySsl, followRedirects, viaProxy, trace, opts, capture);
             long ms = System.currentTimeMillis() - start;
             int status = resp.statusCode();
             result.put("http_status", status);
             result.put("response_ms", ms);
             boolean ok = matchesStatus(status, expectedStatus);
+            // JSON doğrulaması (2026-10-01): durum kodu UYDUYSA gövdeye bakılır. Düşerse aynı HTTP_DOWN yolu — neden
+            // `error`'da (kart/geçmiş/e-posta onu gösterir), tanı BODY_ASSERTION.
+            String assertionFailure = ok && capture != null
+                    ? (capture.failure != null ? capture.failure
+                       : JsonAssertion.evaluate(capture.bytes, capture.truncated, opts.jsonPath(), opts.jsonExpected()))
+                    : null;
+            if (assertionFailure != null) ok = false;
             result.put("ok", ok);
-            if (!ok) {
+            if (assertionFailure != null) {
+                result.put("error", assertionFailure);
+                result.put("json_assertion_failed", true);
+                trace.httpStatus = status; trace.elapsedMs = ms;
+                result.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forBodyAssertion(trace, assertionFailure)));
+            } else if (!ok) {
                 trace.httpStatus = status; trace.elapsedMs = ms;
                 result.put("error_detail", HttpFailureDiagnostics.toJson(HttpFailureDiagnostics.forStatusMismatch(trace)));
             }
@@ -330,9 +366,14 @@ public class HttpCheckerService {
      */
     private HttpResponse<java.io.InputStream> sendFollowing(URI baseUri, String method, int timeoutMs,
                                              boolean verifySsl, boolean followRedirects, boolean viaProxy,
-                                             HttpFailureDiagnostics.Trace trace)
+                                             HttpFailureDiagnostics.Trace trace, HttpRequestOptions opts,
+                                             BodyCapture capture)
             throws java.io.IOException, InterruptedException {
-        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy, trace);
+        if (!followRedirects) return sendMultiAware(baseUri, method, timeoutMs, verifySsl, viaProxy, trace, opts, true, capture);
+        // Özel başlıklar, Basic auth ve gövde YALNIZ ilk host'a gider (Anahtar Kelime ile aynı kural): yönlendirme başka
+        // bir host'a çıkınca onları da göndermek kimliği yabancıya teslim etmek olurdu — tarayıcıların cross-origin
+        // yönlendirmede Authorization düşürmesiyle aynı.
+        final String originHost = baseUri.getHost();
         URI current = baseUri;
         String m = method;
         for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
@@ -343,7 +384,8 @@ public class HttpCheckerService {
                     throw new SsrfGuard.BlockedException("geçersiz yönlendirme hedefi: " + current);
                 ssrfGuard.validate(host);
             }
-            HttpResponse<java.io.InputStream> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace);
+            boolean origin = originHost != null && originHost.equalsIgnoreCase(current.getHost());
+            HttpResponse<java.io.InputStream> resp = sendMultiAware(current, m, timeoutMs, verifySsl, viaProxy, trace, opts, origin, capture);
             if (!SafeRedirect.isRedirect(resp.statusCode())) return resp;
             URI next = SafeRedirect.nextHop(current, resp.headers().firstValue("location").orElse(null));
             if (trace != null) trace.hop(next);
@@ -356,22 +398,23 @@ public class HttpCheckerService {
     }
 
     private HttpResponse<java.io.InputStream> sendMultiAware(URI baseUri, String method, int timeoutMs, boolean verifySsl, boolean viaProxy,
-                                              HttpFailureDiagnostics.Trace trace)
+                                              HttpFailureDiagnostics.Trace trace, HttpRequestOptions opts, boolean origin,
+                                              BodyCapture capture)
             throws java.io.IOException, InterruptedException {
         HttpClient shared = client(verifySsl, viaProxy);
         String host = baseUri.getHost();
         // Vekil yolunda çok-A pin uygulanmaz: hedefi vekil çözer, IP'ye yeniden yazmak CONNECT'i bozar.
         if (viaProxy && shared != client(verifySsl, false)) {
-            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null, opts, origin), timeoutMs, capture);
         }
         if (host == null || NetworkResolver.isIpLiteral(host)) {
-            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null, opts, origin), timeoutMs, capture);
         }
         long dns0 = System.currentTimeMillis();
         List<InetAddress> addrs = NetworkResolver.allAddresses(host);
         if (trace != null && trace.resolvedIps.isEmpty()) trace.resolved(addrs, System.currentTimeMillis() - dns0);
         if (addrs.size() <= 1) {
-            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
+            return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null, opts, origin), timeoutMs, capture);
         }
         // Strict (verifySsl) doğrulama host-bazlı auto-pin'e dayanır; IP'ye pinlemek trust manager'ın
         // gördüğü host'u (=IP) pin anahtarından (=hostname) ayırıp pin lookup'ını bozar. Bu yüzden çok-A
@@ -387,7 +430,7 @@ public class HttpCheckerService {
             try {
                 URI pinnedUri = rewriteHostToIp(baseUri, reachable, port);
                 HttpResponse<java.io.InputStream> r = sendDrained(
-                        pinned, buildRequest(pinnedUri, method, timeoutMs, host), timeoutMs);
+                        pinned, buildRequest(pinnedUri, method, timeoutMs, host, opts, origin), timeoutMs, capture);
                 // Strict HTTPS: SNI=domain gönderdik ama URI=IP olduğundan yerleşik hostname doğrulaması
                 // kapalı → peer sertifikayı domain'e göre elle doğrula (güven zinciri TM'de zaten kontrol edildi).
                 if (!verifySsl || !https || peerHostnameMatches(r, host)) {
@@ -401,7 +444,7 @@ public class HttpCheckerService {
             }
         }
         // Fallback: bugünkü paylaşılan-client davranışı (pin başarısız/uygun değilse bugünden kötü değil).
-        return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null), timeoutMs);
+        return sendDrained(shared, buildRequest(baseUri, method, timeoutMs, null, opts, origin), timeoutMs, capture);
     }
 
     /**
@@ -415,9 +458,15 @@ public class HttpCheckerService {
      * kapsar). Süre dolarsa akış kesilir; sonuç YİNE durum koduna göre verilir — bu kontrolün sözleşmesi
      * "yalnız durum kodu"dur ve akış yapan bir uç ayakta sayılmalıdır.
      */
-    private static HttpResponse<java.io.InputStream> sendDrained(HttpClient client, HttpRequest req, int timeoutMs)
+    private static HttpResponse<java.io.InputStream> sendDrained(HttpClient client, HttpRequest req, int timeoutMs,
+                                                                 BodyCapture capture)
             throws java.io.IOException, InterruptedException {
         HttpResponse<java.io.InputStream> resp = client.send(req, HttpResponse.BodyHandlers.ofInputStream());
+        if (capture != null) {
+            // JSON doğrulaması (2026-10-01): gövde TAVANLI ve SÜRE SINIRLI okunur (Anahtar Kelime ile aynı 2 MB).
+            capture.read(resp.body(), Math.max(1000, timeoutMs));
+            return resp;
+        }
         boolean complete = com.sitemonitor.util.HttpBodies.drain(resp.body(), Math.max(1000, timeoutMs), "HTTP");
         if (!complete) {
             log.debug("HTTP check: {} gövdesi {} ms içinde bitmedi — akış kesildi, durum kodu {} kullanılıyor",
@@ -426,7 +475,14 @@ public class HttpCheckerService {
         return resp;
     }
 
-    private HttpRequest buildRequest(URI uri, String method, int timeoutMs, String hostHeader) {
+    /**
+     * İstek kurucusu. {@code applyExtras=false} ya da {@link HttpRequestOptions#NONE} ile çıktı 2026-10-01 öncesinin
+     * BİREBİR aynısıdır (User-Agent + gerekiyorsa Host; POST gövdesiz) — {@code HttpRequestBuildTest} kilitler.
+     *
+     * @param applyExtras özel başlık / Basic auth / gövde bu hop'a uygulanır mı (yalnız İLK host)
+     */
+    static HttpRequest buildRequest(URI uri, String method, int timeoutMs, String hostHeader,
+                                    HttpRequestOptions opts, boolean applyExtras) {
         HttpRequest.Builder rb = HttpRequest.newBuilder()
                 .uri(uri)
                 .timeout(Duration.ofMillis(Math.max(1000, timeoutMs)))
@@ -437,12 +493,57 @@ public class HttpCheckerService {
             try { rb.header("Host", hostHeader); }
             catch (IllegalArgumentException ignore) { /* kısıtlı header kapalı — SNI'ye güven */ }
         }
+        boolean extras = applyExtras && opts != null && !opts.isEmpty();
+        boolean sendBody = extras && opts.sendsBody(method);
+        if (extras) {
+            String auth = HttpRequestRules.basicAuthHeader(opts.basicAuthUser(), opts.basicAuthPass());
+            if (auth != null) trySetHeader(rb, "Authorization", auth);
+            if (sendBody) trySetHeader(rb, "Content-Type", opts.effectiveContentType());
+            // Kullanıcı başlıkları EN SON (Sayfa Hızı ile aynı): aynı adı taşıyan başlık Authorization / Content-Type /
+            // User-Agent'ı bilinçli ezebilsin (özel jeton şeması kullanan iç servisler).
+            for (Map.Entry<String, String> h : HttpRequestRules.parseHeaders(opts.headers()).entrySet()) {
+                trySetHeader(rb, h.getKey(), h.getValue());
+            }
+        }
         switch (method) {
             case "HEAD" -> rb.method("HEAD", HttpRequest.BodyPublishers.noBody());
-            case "POST" -> rb.POST(HttpRequest.BodyPublishers.noBody());
+            case "POST" -> rb.POST(sendBody
+                    ? HttpRequest.BodyPublishers.ofString(opts.body(), java.nio.charset.StandardCharsets.UTF_8)
+                    : HttpRequest.BodyPublishers.noBody());
             default     -> rb.GET();
         }
         return rb.build();
+    }
+
+    /** Kısıtlı/geçersiz başlığı (HttpClient reddederse) sessizce atlar — kayıt anında zaten doğrulandı. */
+    private static void trySetHeader(HttpRequest.Builder rb, String name, String value) {
+        try { rb.setHeader(name, value); }
+        catch (IllegalArgumentException ignore) { /* kısıtlı/geçersiz — atla */ }
+    }
+
+    /**
+     * JSON doğrulaması için yanıt gövdesi tamponu. Yönlendirme zincirinde her hop üzerine yazar — son yanıtın gövdesi
+     * kalır. Tavan aşılırsa {@code truncated}; süre dolarsa {@code failure} (gövde doğrulanamadı → DOWN).
+     */
+    static final class BodyCapture {
+        byte[] bytes;
+        boolean truncated;
+        String failure;
+
+        void read(java.io.InputStream body, long timeoutMs) throws java.io.IOException {
+            bytes = null; truncated = false; failure = null;
+            try (java.io.InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(body, timeoutMs, "HTTP")) {
+                byte[] b = is.readNBytes(HttpRequestRules.MAX_RESPONSE_BYTES + 1);
+                if (b.length > HttpRequestRules.MAX_RESPONSE_BYTES) {
+                    truncated = true;
+                    bytes = java.util.Arrays.copyOf(b, HttpRequestRules.MAX_RESPONSE_BYTES);
+                } else {
+                    bytes = b;
+                }
+            } catch (com.sitemonitor.util.HttpBodies.BodyDeadlineException te) {
+                failure = JsonAssertion.FAIL_PREFIX + "yanıt gövdesi " + timeoutMs + " ms içinde tamamen okunamadı";
+            }
+        }
     }
 
     /** Per-host pinned client: SNI=host, yerleşik endpoint-identification kapalı (URI=IP). Güven paylaşılan ctx'ten. */

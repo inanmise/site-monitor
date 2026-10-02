@@ -59,7 +59,7 @@ const TD = 'px-2 py-2 align-top'
  */
 const RANGES = ['24h', '7d', '30d']
 const STATUSES = ['SENT', 'FAILED', 'SKIPPED', 'QUEUED']
-const TRIGGERS = ['INITIAL', 'ESCALATION', 'DAILY_REALERT', 'MANUAL', 'RESOLUTION']
+const TRIGGERS = ['INITIAL', 'ESCALATION', 'ESCALATION_STEP', 'DAILY_REALERT', 'MANUAL', 'RESOLUTION']
 const ERROR_CLASSES = ['AUTH', 'TIMEOUT', 'CONNECT', 'RECIPIENT', 'RATE', 'OTHER']
 const REFRESH_MS = 60_000
 const STATUS_META = {
@@ -80,7 +80,9 @@ function rangeFrom(range, now = new Date()) {
 }
 
 export function triggerLabel(trigger, t) {
-  const map = { INITIAL: 'health.triggerInitial', ESCALATION: 'health.triggerEscalation', DAILY_REALERT: 'health.triggerDailyRealert', MANUAL: 'health.triggerManual', RESOLUTION: 'health.triggerResolution' }
+  const map = { INITIAL: 'health.triggerInitial', ESCALATION: 'health.triggerEscalation', ESCALATION_STEP: 'health.triggerEscalationStep', DAILY_REALERT: 'health.triggerDailyRealert', MANUAL: 'health.triggerManual', RESOLUTION: 'health.triggerResolution',
+    // 2026-10-01: sessiz saat — karar satırı ve pencere sonunda giden özet e-postası
+    QUIET_HOURS: 'health.triggerQuietHours', QUIET_DIGEST: 'health.triggerQuietDigest' }
   return map[trigger] ? t(map[trigger]) : (trigger || '—')
 }
 

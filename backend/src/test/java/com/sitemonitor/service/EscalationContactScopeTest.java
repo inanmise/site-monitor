@@ -65,6 +65,41 @@ class EscalationContactScopeTest {
         verifyNoMoreInteractions(repo);
     }
 
+    private static EscalationContact contact(long id, Long team, String minLevel, boolean active) {
+        EscalationContact c = new EscalationContact();
+        c.setId(id); c.setTeamId(team); c.setMinAlertLevel(minLevel); c.setActive(active);
+        return c;
+    }
+
+    @Test
+    @DisplayName("Bellek-içi eş (eskalasyon adımı işi): seviye eşiği ve 'her sahip takım kendi kişisi' kuralı sorgulu yolla AYNI")
+    void inMemoryForOwners_matchesRepositoryRule() {
+        // Takım 7: UYARI / YÜKSEK / KRİTİK eşikli + pasif kişi; takım 8: UG kişisi; takım 9: yabancı takım.
+        EscalationContact w = contact(1, 7L, "WARNING", true), h = contact(2, 7L, "HIGH", true),
+                c = contact(3, 7L, "CRITICAL", true), off = contact(4, 7L, "WARNING", false),
+                ug = contact(5, 8L, "HIGH", true), foreign = contact(6, 9L, "WARNING", true);
+        java.util.Map<Long, List<EscalationContact>> byTeam = java.util.Map.of(
+                7L, List.of(w, h, c, off), 8L, List.of(ug), 9L, List.of(foreign));
+
+        EscalationContactRepository repo = mock(EscalationContactRepository.class);
+        when(repo.findByTeamIdAndActiveTrueOrderByRoleAsc(7L)).thenReturn(List.of(w, h, c));
+        when(repo.findByTeamIdAndActiveTrueOrderByRoleAsc(8L)).thenReturn(List.of(ug));
+        when(repo.findByTeamIdAndMinAlertLevelInAndActiveTrue(7L, List.of("WARNING", "HIGH"))).thenReturn(List.of(w, h));
+        when(repo.findByTeamIdAndMinAlertLevelInAndActiveTrue(8L, List.of("WARNING", "HIGH"))).thenReturn(List.of(ug));
+        when(repo.findByTeamIdAndMinAlertLevelAndActiveTrue(7L, "WARNING")).thenReturn(List.of(w));
+        when(repo.findByTeamIdAndMinAlertLevelAndActiveTrue(8L, "WARNING")).thenReturn(List.of());
+
+        for (String lvl : new String[]{"CRITICAL", "HIGH", "WARNING", null, "bogus"}) {
+            assertThat(EscalationContactScope.forOwners(byTeam, lvl, 7L, 8L))
+                    .as("seviye %s", lvl)
+                    .containsExactlyElementsOf(EscalationContactScope.forOwners(repo, lvl, 7L, 8L));
+        }
+        assertThat(EscalationContactScope.forOwners(byTeam, "CRITICAL", null, null)).as("sahipsiz alarm").isEmpty();
+        assertThat(EscalationContactScope.forOwners(byTeam, "CRITICAL", 7L, null)).doesNotContain(foreign, ug, off);
+        // Haritaya yanlış takım altında konmuş kişi bile alınmaz (kişinin KENDİ takımı esas).
+        assertThat(EscalationContactScope.forOwners(java.util.Map.of(7L, List.of(foreign)), "CRITICAL", 7L, null)).isEmpty();
+    }
+
     /** Takım süzgeçli sorgu adı: {@code findBy|existsBy|countBy} + {@code TeamId} / {@code TeamIdIn} + And / OrderBy / son. */
     private static final java.util.regex.Pattern TEAM_SCOPED_QUERY =
             java.util.regex.Pattern.compile("(findBy|existsBy|countBy)TeamId(In)?(And.*|OrderBy.*)?");
@@ -72,7 +107,10 @@ class EscalationContactScopeTest {
     /** Takım süzgeci taşımayan okuma sorguları — yalnız bunlar; biri eklenirse bilinçli karar gerekir. */
     private static final Set<String> UNSCOPED_READS_ALLOWED = Set.of(
             "findByActiveTrueOrderByRoleAsc",   // yönetim listesi (global görüntüleyici) — alıcı çözümünde YASAK
-            "findByUserId");                     // kullanıcı adı/e-posta eşitlemesi (UserService.updateUser)
+            "findByUserId",                      // kullanıcı adı/e-posta eşitlemesi (UserService.updateUser)
+            // Zamana bağlı eskalasyon adımı işinin ön kapısı (2026-10-01): yalnız boolean, alıcı DÖNDÜRMEZ. Adımın
+            // alıcıları alarmın sahip takımlarından (findByTeamIdInAndActiveTrue… + kapsam sınıfı) çözülür.
+            "existsByActiveTrueAndDelayMinutesGreaterThan");
 
     @Test
     @DisplayName("Depo: takım süzgeçsiz okuma yalnız izinli listede (yeni bir 'findBy…ActiveTrue' ancak bilinçli eklenir)")

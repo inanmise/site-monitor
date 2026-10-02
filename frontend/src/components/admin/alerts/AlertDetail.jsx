@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall, CloudLightning,
+  X, Siren, Mail, BellRing, UserCheck, CheckCircle2, Clock, Hash, CalendarClock, BellPlus, PhoneCall, CloudLightning, Moon,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -20,6 +20,7 @@ import { Card } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import AlertSignatureStrip from './AlertSignatureStrip.jsx'
+import AlertIncidentLink from './AlertIncidentLink.jsx'
 import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
@@ -38,6 +39,8 @@ const EVENT_STYLE = {
   push:         { Icon: BellRing,     ink: 'border-border bg-muted text-muted-foreground' },
   // Bildirim fırtınaya devredildi (2026-09-30): bireysel e-posta/push gitmedi — neden burada okunur.
   storm:        { Icon: CloudLightning, ink: 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
+  // Bildirim takımın sessiz saat özetine devredildi (2026-10-01): ŞİMDİ gitmedi, pencere sonunda özetle gider.
+  quiet:        { Icon: Moon,         ink: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300' },
   acknowledged: { Icon: UserCheck,    ink: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' },
   resolved:     { Icon: CheckCircle2, ink: 'border-success/40 bg-success/10 text-success' },
 }
@@ -146,6 +149,8 @@ export function AlertDetailBody({
           </Button>
         )}
         <AlertSourceLink alert={a} className="h-9 pointer-coarse:h-10" />
+        {/* Olay kaydı (2026-10-01): "Olay kaydı aç" (incidents.manage) ya da bağlı kaydın bağlantısı "Olay kaydı #N" */}
+        <AlertIncidentLink alert={a} teamName={teamName} />
         {/* Sahiplen/çöz/tekrar bildir kapalı (7/24 operatörü başka takımın uyarısında ya da alerts.actions izni yok) — nedeni yazılır */}
         {open && actBlocked && <ActBlockedNote reason={actBlocked === true ? 'team' : actBlocked} />}
         <CopyLinkButton variant="outline" className="h-9 pointer-coarse:h-10" url={alertLink(a)} />
@@ -259,6 +264,7 @@ export function AlertDetailBody({
                     {ev.kind === 'mail' && t('alh.ev.mail', ev.recipient || '—')}
                     {ev.kind === 'push' && (ev.people > 0 ? t('alh.ev.push', ev.people) : t('alh.ev.pushSystem'))}
                     {ev.kind === 'storm' && t('alh.ev.storm')}
+                    {ev.kind === 'quiet' && (ev.resolution ? t('alh.ev.quietResolution') : t('alh.ev.quiet'))}
                     {ev.kind === 'acknowledged' && t('alh.ev.ack')}
                     {ev.kind === 'resolved' && t('alh.ev.resolved')}
                   </span>
@@ -274,6 +280,11 @@ export function AlertDetailBody({
                 {ev.kind === 'storm' && (
                   <p data-tl-storm="" className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                     {t('alh.ev.stormDetail', ev.stormId ?? '?')}{ev.backfilled ? ' ' + t('alh.ev.stormBackfilled') : ''}
+                  </p>
+                )}
+                {ev.kind === 'quiet' && (
+                  <p data-tl-quiet="" className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {ev.resolution ? t('alh.ev.quietResolutionDetail', ev.recipient || '—') : t('alh.ev.quietDetail', ev.recipient || '—')}
                   </p>
                 )}
                 {ev.kind === 'acknowledged' && ev.by && <p className="mt-1 text-xs"><UserBadge username={ev.by} inline size="sm" /></p>}

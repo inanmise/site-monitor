@@ -184,4 +184,64 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
             """)
     long countOpen(@Param("since") String since, @Param("until") String until,
                    @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    /**
+     * Bir alarmdan açılmış olay kayıtları (2026-10-01) — alarm detayının "Olay kaydı #N" bağlantısı. TEK sorgu
+     * ({@code idx_inc_alert_event}); takım kapsamı listeyle aynı kural (kayıt takımı ya da girenin takımı). Yalnız
+     * alarm DETAYI çağırır — liste satırları için çağrılmaz (N+1 yok).
+     */
+    @Query("""
+            SELECT i FROM IncidentRecord i
+             WHERE i.alertEventId = :alertEventId
+               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
+             ORDER BY i.id DESC
+            """)
+    List<IncidentRecord> findLinkedToAlert(@Param("alertEventId") Long alertEventId,
+                                           @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
+
+    // ── Kurum içi Durum Sayfası (2026-10-01) ─────────────────────────────────────────────────────────────────────
+    // YALNIZ özet sütunlar (projeksiyon): açıklama / kök neden / çözüm / iş etkisi / kod alanları YÜKLENMEZ — sayfa
+    // kurumdaki herkese açık olduğu için bu metinler yanıta sızamaz. Kapsamsız (kurum geneli) ve sayfalı (tavanlı).
+
+    // Satırlar görüntüleyicinin olay kapsamına göre (IncidentController.canReadIncident: kayıt takımı YA DA giren takım)
+    // SUNUCUDA süzülür; kapsam dışı olay yalnız sayıya katılır — bu yüzden iki takım sütunu da seçilir ve sayılar
+    // (kayıt takımı, giren takım) başına gruplu döner (tam kapsam-içi/dışı sayısı, satır tavanından bağımsız).
+
+    /** Çözülmemiş olaylar: [id, title, severity, status, occurredAt, service, teamId, teamName, createdByTeamId] — önem
+     *  sonra en yeni. */
+    @Query("""
+            SELECT i.id, i.title, i.severity, i.status, i.occurredAt, i.service, i.teamId, i.teamName, i.createdByTeamId
+              FROM IncidentRecord i
+             WHERE i.status <> 'RESOLVED'
+             ORDER BY CASE UPPER(i.severity) WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
+                      WHEN 'LOW' THEN 3 ELSE 4 END, i.occurredAt DESC
+            """)
+    List<Object[]> statusPageActive(Pageable pageable);
+
+    /** Çözülmemiş olay sayısı (kayıt takımı, giren takım) başına: [teamId, createdByTeamId, count]. */
+    @Query("""
+            SELECT i.teamId, i.createdByTeamId, COUNT(i) FROM IncidentRecord i
+             WHERE i.status <> 'RESOLVED'
+             GROUP BY i.teamId, i.createdByTeamId
+            """)
+    List<Object[]> statusPageActiveCounts();
+
+    /** {@code since} (UTC ISO) sonrasında çözülen olaylar: [id, title, severity, occurredAt, resolvedAt, durationMinutes,
+     *  service, teamId, teamName, createdByTeamId] — en son çözülen önce. */
+    @Query("""
+            SELECT i.id, i.title, i.severity, i.occurredAt, i.resolvedAt, i.durationMinutes, i.service, i.teamId, i.teamName,
+                   i.createdByTeamId
+              FROM IncidentRecord i
+             WHERE i.status = 'RESOLVED' AND i.resolvedAt IS NOT NULL AND i.resolvedAt >= :since
+             ORDER BY i.resolvedAt DESC
+            """)
+    List<Object[]> statusPageResolvedSince(@Param("since") String since, Pageable pageable);
+
+    /** {@code since} sonrasında çözülen olay sayısı (kayıt takımı, giren takım) başına: [teamId, createdByTeamId, count]. */
+    @Query("""
+            SELECT i.teamId, i.createdByTeamId, COUNT(i) FROM IncidentRecord i
+             WHERE i.status = 'RESOLVED' AND i.resolvedAt IS NOT NULL AND i.resolvedAt >= :since
+             GROUP BY i.teamId, i.createdByTeamId
+            """)
+    List<Object[]> statusPageResolvedSinceCounts(@Param("since") String since);
 }

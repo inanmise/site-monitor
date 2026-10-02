@@ -6,6 +6,7 @@ import {
 import { useT } from '../../../i18n/index.jsx'
 import { api, formatDateSec, formatDateOnly } from '../../../api/client'
 import { useUrlQuerySync, readUrlParam } from '../../../hooks/useUrlQuerySync.js'
+import { downloadCsv } from '../../../utils/csvExport.js'
 import { useToast } from '../../ui/Toast.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import UserBadge from '../../ui/UserBadge.jsx'
@@ -180,11 +181,7 @@ export default function UserActivityPanel({ data, error, refreshing, onRefresh, 
     } catch (e) { toast.error(e?.message || t('uact.loadError')) } finally { setAckBusy(null) }
   }
   function download(name, csv) {
-    try {
-      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch { /* jsdom */ }
+    downloadCsv(name, '﻿' + csv)   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29, dosya aynı)
     setExportOpen(false)
   }
   async function copyLink() {

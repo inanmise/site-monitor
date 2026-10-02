@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
+import { useElementWidth } from '../../../hooks/useElementWidth.js'
 import { Badge } from '@/components/shadcn/badge'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import {
@@ -24,23 +25,7 @@ const BUCKET_MS = { minute: 60_000, hour: 3_600_000 }
 const VIEW_FACTOR = 3
 const SPARSE = 60
 
-function useWidth() {
-  const [width, setWidth] = useState(0)
-  const ro = useRef(null)
-  const ref = useCallback((el) => {
-    ro.current?.disconnect()
-    ro.current = null
-    if (!el) return
-    const measure = () => setWidth(el.clientWidth || 0)
-    measure()
-    if (typeof ResizeObserver !== 'undefined') {
-      ro.current = new ResizeObserver(measure)
-      ro.current.observe(el)
-    }
-  }, [])
-  useEffect(() => () => ro.current?.disconnect(), [])
-  return [ref, width]
-}
+// Kap genişliği (callback ref, clientWidth): tek kaynak hooks/useElementWidth.js (öneri 29 — buradaki `useWidth` kopyası kaldırıldı).
 
 function Row({ label, value, shape, color, strong }) {
   return (
@@ -91,7 +76,7 @@ function TipCard({ active, payload, t, fmt, bucketMs, classes, showOther, showUn
 export default function HttpTrafficChart({ t, model, fmt, statusFilter, busy, summaryText }) {
   const uid = useId().replace(/:/g, '')
   const gradId = `hreq-lat-${uid}`
-  const [measureRef, width] = useWidth()
+  const [measureRef, width] = useElementWidth()
   const [hidden, setHidden] = useState(() => new Set())
   const points = model.points
   const bucketMs = BUCKET_MS[model.granularity] ?? 60_000

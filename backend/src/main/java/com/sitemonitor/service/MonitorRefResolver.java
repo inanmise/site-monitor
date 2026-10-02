@@ -98,7 +98,7 @@ public class MonitorRefResolver {
         if (type.startsWith("PAGESPEED_")) return "pagespeed";   // PAGE_ önekinden ÖNCE: "PAGESPEED_DOWN".startsWith("PAGE_") false ama okunurluk
         if (type.startsWith("PAGE_"))      return "page";
         if (type.startsWith("SCRIPTED_"))  return "scripted";
-        if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
+        if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "HTTP_SLOW".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";
     }
 

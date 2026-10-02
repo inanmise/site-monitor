@@ -3,8 +3,12 @@
  * otomatik başlatma kararı, "yenilikler" farkı ve localStorage aynası. TourProvider bunları çizer.
  */
 
-/** Tur içeriği büyüyünce artır → tamamlamış kullanıcılara yalnız yeni adımlar "Yenilikler" olarak sunulur. */
-export const TOUR_VERSION = 1
+/**
+ * Tur içeriği büyüyünce artır → tamamlamış kullanıcılara yalnız yeni adımlar "Yenilikler" olarak sunulur.
+ * 2 (2026-10-02, öneri 24): İzleme Panosu, Favoriler, Görünümler, Durum Sayfası, Alarm Geçmişi, klavye kısayolları.
+ * Kapatan (dismissed) kullanıcıya hiçbir şey çıkmaz; hiç görmemiş/ertelemiş kullanıcı tam turu (yeni adımlarla) görür.
+ */
+export const TOUR_VERSION = 2
 export const SNOOZE_MAX = 3
 export const LS_KEY = 'sm.tour'
 export const MOBILE_MAX = 640

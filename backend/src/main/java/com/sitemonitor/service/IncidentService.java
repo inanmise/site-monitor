@@ -389,6 +389,8 @@ public class IncidentService {
         if (body.containsKey("channel"))                    e.setChannel(str(body, "channel"));
         if (body.containsKey("team_id"))                    e.setTeamId(toLong(body.get("team_id")));
         if (body.containsKey("team_name"))                  e.setTeamName(str(body, "team_name"));
+        // Kaynak alarm bağı — varlık + görünürlük doğrulaması controller'da (IncidentAlertLinkService.validate).
+        if (body.containsKey("alert_event_id"))             e.setAlertEventId(toLong(body.get("alert_event_id")));
         if (body.containsKey("detected_at"))                e.setDetectedAt(str(body, "detected_at"));
         if (body.containsKey("resolved_at"))                e.setResolvedAt(str(body, "resolved_at"));
         if (body.containsKey("rca_summary"))                e.setRcaSummary(str(body, "rca_summary"));

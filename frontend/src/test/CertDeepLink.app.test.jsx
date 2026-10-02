@@ -39,6 +39,7 @@ vi.mock('../api/client', () => {
 })
 
 import App from '../App.jsx'
+import './appLazyWarmup.js'   // App'in lazy CertificateModal'ı — soğuk dönüşüm testin dışında (öneri 22)
 
 const NOT_FOUND = /^(Monitor not found, or you don’t have access to it|İzleme bulunamadı ya da erişiminiz yok)$/
 const certDialog = (d) => screen.queryAllByRole('dialog').find((x) => x.textContent.includes(d)) || null

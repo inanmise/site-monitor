@@ -2,9 +2,11 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Pencil, Trash2, Siren, Eye, CheckCircle2, Clock, Hourglass, Users, Receipt, Gauge, Hash, CircleDot, Search, ShieldHalf,
-  FileText, Stethoscope, Wrench, Briefcase, Tags,
+  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing,
 } from 'lucide-react'
 import { formatDate } from '../../api/client'
+import { navigateTo } from '../../utils/navigate.js'
+import { alertNavParams } from '../admin/alerts/alertHistoryModel.js'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import UserBadge from '../ui/UserBadge.jsx'
@@ -150,6 +152,14 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
               </Button>
             )}
             <CopyLinkButton variant="outline" className="h-9" url={detailLink(r.id)} />
+            {/* Kaynak alarm (2026-10-01): kayıt Alarm Geçmişi'ndeki bir alarmdan açıldıysa o alarma geri bağlantı */}
+            {r.alert_event_id != null && r.alert_event_id !== '' && (
+              <Button type="button" variant="outline" size="sm" className="h-9" data-slot="ih-source-alert"
+                data-alert-id={r.alert_event_id} title={t('inc.sourceAlertHint')}
+                onClick={() => navigateTo('alerthistory', alertNavParams({ id: r.alert_event_id }))}>
+                <BellRing aria-hidden="true" />{t('inc.sourceAlert', r.alert_event_id)}
+              </Button>
+            )}
             {allowDelete && (
               <Button type="button" variant="ghost" size="sm"
                 className="ml-auto h-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"

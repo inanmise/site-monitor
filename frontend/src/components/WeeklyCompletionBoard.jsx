@@ -5,7 +5,7 @@ import { useT } from '../i18n/index.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import HintPopover from './ui/HintPopover.jsx'
-import { useElementWidth } from './weekly/useElementWidth.js'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
@@ -40,7 +40,7 @@ const PHONE_WEEKS = 6
 export default function WeeklyCompletionBoard({ year, onPick, data: dataProp }) {
   const t = useT()
   const isMobile = useIsMobile()
-  const [width, setBox] = useElementWidth()
+  const [width, setBox] = useElementWidthState()
   const [own, setOwn] = useState(null)
   const external = dataProp !== undefined
   const data = external ? dataProp : own

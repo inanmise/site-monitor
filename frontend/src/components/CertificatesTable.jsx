@@ -16,6 +16,7 @@ import { useServerPagination } from '../hooks/useServerPagination.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { copyText } from '../utils/copyText.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import { isInsecure, securityTitle } from '../utils/certSecurity.js'
 import CertTableToolbar from './certtable/CertTableToolbar.jsx'
 import CertBulkBar from './certtable/CertBulkBar.jsx'
@@ -214,11 +215,7 @@ export default function CertificatesTable({ onRowClick, refreshKey, onCheckNow, 
   })
 
   function download(name, csv) {
-    try {
-      const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch { /* jsdom */ }
+    downloadCsv(name, '﻿' + csv)   // BOM'lu UTF-8; ortak indirme (utils/csvExport — öneri 29, dosya aynı)
   }
   async function copyRowLink(domain) {
     const u = new URL(window.location.href)

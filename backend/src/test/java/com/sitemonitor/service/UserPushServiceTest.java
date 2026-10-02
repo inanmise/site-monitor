@@ -101,6 +101,65 @@ class UserPushServiceTest {
                     && (d.getNextAttemptAt() == null || d.getNextAttemptAt().compareTo(now) <= 0)).toList();
         });
         when(deliveryRepo.existsByAlertEventIdAndStatus(anyLong(), anyString())).thenReturn(true);
+        // claimDue / kiralananları okuma — JPQL'in aynası (sorgu UserPushDeliveryRepositoryTest'te H2 üstünde).
+        // Kimliksiz satırlarda servis eski yola düşer (okunan satırlar); bu taklit kimlikli satırlar içindir.
+        when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            String now = inv.getArgument(1);
+            String lease = inv.getArgument(2);
+            int n = 0;
+            for (UserPushDelivery d : store) {
+                if (d.getId() != null && ids.contains(d.getId()) && "PENDING".equals(d.getStatus())
+                        && (d.getNextAttemptAt() == null || d.getNextAttemptAt().compareTo(now) <= 0)) {
+                    d.setNextAttemptAt(lease);
+                    n++;
+                }
+            }
+            return n;
+        });
+        when(deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(any(), anyString())).thenAnswer(inv -> {
+            java.util.Collection<Long> ids = inv.getArgument(0);
+            String lease = inv.getArgument(1);
+            return store.stream().filter(d -> d.getId() != null && ids.contains(d.getId())
+                    && lease.equals(d.getNextAttemptAt())).toList();
+        });
+    }
+
+    @Test
+    @DisplayName("Öneri 3 (2026-10-01): iki pod aynı zamanı gelmiş satırları okusa da YALNIZ biri kiralar ve gönderir")
+    void claim_twoPods_onlyOneGetsTheRows() {
+        for (long id = 1; id <= 3; id++) {
+            UserPushDelivery d = new UserPushDelivery();
+            d.setId(id);
+            d.setStatus("PENDING");
+            d.setUsername("N0000" + id);
+            store.add(d);
+        }
+        UserPushService pod2 = new UserPushService(appSettings, deliveryRepo, scopeRepo, resolver,
+                alertEventRepo, secretCipher, trustEvaluator, caAutoPinService);
+        String now = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
+        List<UserPushDelivery> due = deliveryRepo.findDuePending(now, null);   // iki pod da aynı listeyi okudu
+        assertThat(due).hasSize(3);
+
+        List<UserPushDelivery> first = service.claim(due);
+        List<UserPushDelivery> second = pod2.claim(due);
+
+        assertThat(first).extracting(UserPushDelivery::getId).containsExactly(1L, 2L, 3L);
+        assertThat(second).isEmpty();
+        // kira damgası "şimdi"den ileride → tarama kira bitene dek satırları vermez
+        assertThat(deliveryRepo.findDuePending(now, null)).isEmpty();
+        assertThat(first.get(0).getNextAttemptAt()).startsWith("20").contains(".").hasSize(29);
+    }
+
+    @Test
+    @DisplayName("Öneri 3: sahiplenme sorgusu düşerse eski yol — okunan satırlar gönderilir (tek pod'da davranış aynı)")
+    void claim_queryFailure_fallsBackToReadRows() {
+        UserPushDelivery d = new UserPushDelivery();
+        d.setId(9L);
+        d.setStatus("PENDING");
+        when(deliveryRepo.claimDue(any(), anyString(), anyString())).thenThrow(new RuntimeException("db kapalı"));
+        assertThat(service.claim(List.of(d))).containsExactly(d);
     }
 
     @AfterEach

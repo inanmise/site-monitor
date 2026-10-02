@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import TeamMembersModal from '../components/ui/TeamMembersModal.jsx'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 import {
   commonUnit, filterMembers, foldText, groupContactsByLevel, memberFacets, resolveModalManager, sortMembersBy,
 } from '../components/ui/teamMembersModel.js'

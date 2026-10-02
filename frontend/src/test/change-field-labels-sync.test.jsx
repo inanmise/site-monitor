@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * DİLLER-ARASI BEKÇİ: değişiklik geçmişinde görünebilecek HER alanın etiketi olmalı.
@@ -20,6 +21,8 @@ const SOURCES = [
   { file: 'controller/MonitoringController.java', name: 'MON_FIELDS' },
   { file: 'controller/MonitoringController.java', name: 'SCRIPTED_FIELDS' },
   { file: 'controller/MonitoringController.java', name: 'PAGESPEED_FIELDS' },
+  // HTTP gelişmiş istek alanları (2026-10-01) — MON_FIELDS'e eklenerek HTTP geçmişine yazılır
+  { file: 'controller/MonitoringController.java', name: 'HTTP_EXTRA_FIELDS' },
   { file: 'controller/AdminController.java', name: 'INVENTORY_FIELDS' },
   // İçe aktarma da envanter geçmişine YAZAR (2026-09-28: ugTeamId etiketsiz ham anahtar olarak görünüyordu)
   { file: 'service/InventoryImportService.java', name: 'HISTORY_FIELDS' },

@@ -2,6 +2,8 @@ import {
   useState, useEffect, useRef } from 'react'
 import { useT } from '../i18n/index.jsx'
 import CommandPalette from './CommandPalette.jsx'
+import KeyboardShortcuts from './KeyboardShortcuts.jsx'
+import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import InboxBell from './InboxBell.jsx'
 import {
   LayoutDashboard, ShieldCheck, FileBadge, Boxes, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
@@ -10,7 +12,7 @@ import {
   ChartColumn, ChartPie, ShieldAlert, FileChartColumn, FileClock,
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Search, Users, Radar, CloudLightning,
+  LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh,
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -76,6 +78,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
       items: [
         // İzleme Panosu (2026-09-30): 9 türün tek ekranda durumu — bölümün ilk sırasında, ara başlıksız.
         { id: 'monitoring', Icon: Radar,        labelKey: 'nav.monitoringOverview', show: true },
+        // Kurum içi Durum Sayfası (2026-10-01): hizmet düzeyinde özet — oturum açmış HERKES (operasyon dışı takımlar, yönetim)
+        { id: 'status',    Icon: SignalHigh,    labelKey: 'nav.statusPage', show: true },
         { id: 'http',      Icon: Globe,         labelKey: 'nav.http',      show: true, section: 'nav.secAvailability' },
         { id: 'ping',      Icon: Radio,     labelKey: 'nav.ping',      show: true },
         { id: 'port',      Icon: EthernetPort,  labelKey: 'nav.port',      show: true },
@@ -259,6 +263,7 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
             onReportIssue={() => { closeMobile(); setIssueOpen(true) }}
             onChangePassword={() => { closeMobile(); onChangePassword?.() }}
             onStartTour={() => { closeMobile(); tour.start('main') }}
+            onShowShortcuts={() => { closeMobile(); window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT)) }}
             onLogout={logout} />
         </SidebarFooter>
         <SidebarRail />
@@ -266,6 +271,8 @@ export default function Nav({ activeTab, onTabChange, username, teamName, myTeam
 
       {/* Kenar çubuğunun DIŞINDA: telefonda çekmece kapanınca içeriği DOM'dan çıkar — palet ve pencereler yaşasın. */}
       <CommandPalette tabs={paletteTabs} onTabChange={go} globalAdmin={globalAdmin} systemRole={systemRole} />
+      {/* Genel klavye kısayolları (öneri 24): paletle AYNI sekme listesi → `g`+harf yalnız açık sekmelere gider */}
+      <KeyboardShortcuts tabs={paletteTabs} onTabChange={go} />
       <IssueReportModal open={issueOpen} onClose={() => setIssueOpen(false)} />
       <ModalShell open={teamsOpen} onClose={() => setTeamsOpen(false)} title={t('nav.myTeamsTitle')} icon={Users} size="sm">
         <p className="text-sm text-muted-foreground">{t('nav.myTeamsHint')}</p>

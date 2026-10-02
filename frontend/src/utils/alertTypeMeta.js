@@ -47,6 +47,8 @@ export const ALERT_TYPE_META = {
   // ── HTTP / Website ────────────────────────────────────────────────────────
   HTTP_DOWN:         { icon: Globe,        color: '#b91c1c' },
   HTTP_SSL:          { icon: ShieldAlert,  color: '#a16207' },
+  // Yavaş yanıt (2026-10-01, opt-in): kesinti değil — turuncu, diğer *_SLOW ailesiyle aynı ikon.
+  HTTP_SLOW:         { icon: Gauge,        color: '#ea580c' },
 
   // ── Kelime (içerik doğrulama) ─────────────────────────────────────────────
   KEYWORD:               { icon: Target,     color: '#7e22ce' },

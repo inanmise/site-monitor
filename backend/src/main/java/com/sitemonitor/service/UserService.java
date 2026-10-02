@@ -162,6 +162,33 @@ public class UserService {
         userRepo.save(user);
     }
 
+    /**
+     * Kişisel push sessiz saati (2026-10-01, onaylı öneri 15) — kullanıcı YALNIZ kendi satırını yazar (çağıran uç oturumdan
+     * okur). {@code cfg} {@link QuietHours#normalize} çıktısıdır; {@link QuietHours.Config#NONE} = kaldır.
+     */
+    @Transactional
+    public AppUser savePushQuietHours(AppUser user, QuietHours.Config cfg) {
+        QuietHours.Config c = cfg == null ? QuietHours.Config.NONE : cfg;
+        user.setPushQuietStart(c.start());
+        user.setPushQuietEnd(c.end());
+        user.setPushQuietDays(c.days());
+        user.setPushQuietMinLevel(c.minLevel());
+        return userRepo.save(user);
+    }
+
+    /** Takım sessiz saati (2026-10-01) — {@code cfg} doğrulanmış/normalize ({@link QuietHours#normalize}); NONE = kaldır. */
+    @Transactional
+    public Team updateTeamQuietHours(Long id, QuietHours.Config cfg) {
+        Team team = teamRepo.findById(id).orElseThrow(() -> new NoSuchElementException("Team not found: " + id));
+        QuietHours.Config c = cfg == null ? QuietHours.Config.NONE : cfg;
+        team.setQuietStart(c.start());
+        team.setQuietEnd(c.end());
+        team.setQuietDays(c.days());
+        team.setQuietMinLevel(c.minLevel());
+        team.setUpdatedAt(now());
+        return teamRepo.save(team);
+    }
+
     public Optional<AppUser> findByUsername(String username) {
         return userRepo.findByUsername(username);
     }

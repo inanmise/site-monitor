@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -73,5 +74,43 @@ public final class EscalationContactScope {
             case "HIGH"     -> repo.findByTeamIdAndMinAlertLevelInAndActiveTrue(teamId, HIGH_LEVELS);
             default         -> repo.findByTeamIdAndMinAlertLevelAndActiveTrue(teamId, "WARNING");
         };
+    }
+
+    /**
+     * {@link #forLevel} sorgularının BELLEK-İÇİ aynası (2026-10-01, zamana bağlı eskalasyon adımı): kişi bu seviyedeki
+     * alarmı alır mı? KRİTİK → her etkin kişi; YÜKSEK → eşiği UYARI ya da YÜKSEK; diğer (UYARI / boş / bilinmeyen) →
+     * yalnız eşiği tam olarak UYARI. Etkin olmayan kişi hiçbir seviyede almaz. Eşdeğerlik {@code EscalationContactScopeTest}'te.
+     */
+    public static boolean matchesLevel(EscalationContact c, String level) {
+        if (c == null || !Boolean.TRUE.equals(c.getActive())) return false;
+        String lvl = level == null ? "" : level.trim().toUpperCase(Locale.ROOT);
+        return switch (lvl) {
+            case "CRITICAL" -> true;
+            case "HIGH"     -> HIGH_LEVELS.contains(c.getMinAlertLevel());
+            default         -> "WARNING".equals(c.getMinAlertLevel());
+        };
+    }
+
+    /**
+     * {@link #forOwners(EscalationContactRepository, String, Long, Long)} kuralının ÖNCEDEN YÜKLENMİŞ kişilerle çalışan
+     * eşi — toplu iş (eskalasyon adımı süpürmesi) alarm başına sorgu atmasın diye. {@code byTeam}: takım kimliği → o
+     * takımın etkin kişileri (çağıran {@code findByTeamIdInAndActiveTrueOrderByRoleAsc} ile TEK sorguda yükler). Kural
+     * birebir aynı: SY ve UG yalnız KENDİ kişileri, birleşim kayıt düzeyinde tekil, sahipsiz alarm → boş.
+     */
+    public static List<EscalationContact> forOwners(Map<Long, List<EscalationContact>> byTeam, String level,
+                                                    Long syTeamId, Long ugTeamId) {
+        List<Long> owners = new ArrayList<>(2);
+        if (syTeamId != null) owners.add(syTeamId);
+        if (ugTeamId != null && !ugTeamId.equals(syTeamId)) owners.add(ugTeamId);
+        List<EscalationContact> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Long team : owners) {
+            for (EscalationContact c : byTeam.getOrDefault(team, List.of())) {
+                if (!team.equals(c.getTeamId()) || !matchesLevel(c, level)) continue;   // başka takımın kişisi asla
+                String key = c.getId() != null ? "i:" + c.getId() : "o:" + System.identityHashCode(c);
+                if (seen.add(key)) out.add(c);
+            }
+        }
+        return out;
     }
 }

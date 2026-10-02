@@ -16,7 +16,7 @@ import { mockApi } from './support/monitorMocks.js'
 const TABS = [
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'monitoring', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted',
+  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted',
   'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ]
@@ -309,6 +309,26 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
   })
 }
 
+// HTTP izleme formu, Gelişmiş istek bölümü (2026-10-01, onaylı öneri 9): telefonda ve tablette form penceresi bölüm
+// AÇIKKEN de ekrana sığar; başlık, kimlik doğrulama, gövde, JSON ve yavaşlık alanları taşmaz.
+for (const vp of VIEWPORTS) {
+  test(`http formu gelişmiş istek bölümü @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=http')
+    await page.getByRole('button', { name: /^(Yeni Monitör|New Monitor)$/ }).first().click({ timeout: 20_000 })
+    const section = page.locator('[data-slot="http-advanced"]')
+    await section.waitFor()
+    await section.getByRole('button').first().click()
+    await page.waitForTimeout(500)
+    const m = await page.evaluate(measure, '[role="dialog"]')
+    expect(m.offenders, `http formu @${vp.name}: pencerede taşan öğe`).toEqual([])
+    const box = await page.getByRole('dialog').last().boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(-1)
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+  })
+}
+
 for (const vp of [{ name: 'laptop', width: 1280, height: 800 }, { name: 'desktop', width: 1440, height: 900 }]) {
   test(`monitoring @${vp.name} ${vp.width}×${vp.height}: tablo görünümü, sayfa taşmaz`, async ({ page }) => {
     await page.setViewportSize({ width: vp.width, height: vp.height })
@@ -325,5 +345,57 @@ for (const vp of [{ name: 'laptop', width: 1280, height: 800 }, { name: 'desktop
       return box.scrollWidth - box.clientWidth
     })
     expect(tableOverflow, `monitoring@${vp.name}: tablo yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+  })
+}
+
+// Kişisel tercih yüzeyleri (2026-10-02, öneri 23): "Görünümler" düğmesi (4 liste + 9 izleme başlığı), kart/başlık favori
+// yıldızı, İzleme Panosu'nun "Favoriler" hızlı görünümü ve Etkinliklerim'deki "Açılış sekmesi" — DOLU tercihlerle
+// (support/monitorMocks PREFS: favoriler + kayıtlı görünümler → "Görünümler (N)" en geniş hâli). Sayfa taşması yukarıdaki
+// sekme döngüsünde ölçülüyor; burada yeni öğelerin GERÇEKTEN çizildiği ve görünüm alanında kaldığı doğrulanır (çizilmeseler
+// döngü boşuna yeşil kalırdı). Telefonda "Görünümler" menüsü açılınca da ekrana sığmalı.
+const PREF_SURFACES = [
+  { tab: 'http', sel: '[data-slot="saved-views-trigger"]' },
+  { tab: 'http', sel: '[data-slot="favorite-toggle"]' },
+  { tab: 'ping', sel: '[data-slot="saved-views-trigger"]' },
+  { tab: 'monitoring', sel: '[data-slot="saved-views-trigger"]' },
+  { tab: 'monitoring', sel: '[data-slot="mo-views"] [data-view="favorites"]', scroller: true },
+  { tab: 'alerthistory', sel: '[data-slot="saved-views-trigger"]' },
+  // Olay & Hata Geçmişi izin ister (izinsiz "erişiminiz yok" çizilir) — başlık + Görünümler izinle ölçülür
+  { tab: 'incident-history', sel: '[data-slot="saved-views-trigger"]', opts: { perms: { 'incidents.view': { view: true }, 'incidents.manage': { edit: true } } } },
+  { tab: 'myactivity', sel: '[data-slot="landing-tab"]' },
+]
+for (const vp of VIEWPORTS) {
+  // Yüzey başına AYRI test: tek testte sekiz sayfa açılışı 30 sn'lik test süresini aşıyordu.
+  for (const s of PREF_SURFACES) {
+    test(`kişisel tercih yüzeyi ${s.tab} ${s.sel} @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await mockApi(page, s.opts)
+      await page.goto(`/?tab=${s.tab}`)
+      const el = page.locator(s.sel).first()
+      await el.waitFor({ state: 'attached', timeout: 20_000 })
+      await el.scrollIntoViewIfNeeded()
+      await expect(el, `${s.tab} ${s.sel} @${vp.name}`).toBeVisible()
+      const box = await el.boundingBox()
+      expect(box.x, `${s.tab} ${s.sel} @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, `${s.tab} ${s.sel} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      const m = await page.evaluate(measure)
+      expect(m.pageOverflow, `${s.tab}@${vp.name}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+      expect(m.offenders, `${s.tab}@${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+    })
+  }
+  // "Görünümler" menüsü açıkken (kayıtlı görünümler + kaydet + yeniden adlandır / sil) ekrana sığar
+  test(`Görünümler menüsü @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=http')
+    const trigger = page.locator('[data-slot="saved-views-trigger"]').first()
+    await trigger.waitFor({ timeout: 20_000 })
+    await trigger.click()
+    const menu = page.locator('[data-slot="saved-views-menu"]')
+    await expect(menu).toBeVisible()
+    const mb = await menu.boundingBox()
+    expect(mb.x).toBeGreaterThanOrEqual(-1)
+    expect(mb.x + mb.width, `Görünümler menüsü @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(mb.y + mb.height, `Görünümler menüsü @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
   })
 }

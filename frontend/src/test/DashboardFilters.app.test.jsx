@@ -46,6 +46,7 @@ vi.mock('../api/client', () => {
 })
 
 import App from '../App.jsx'
+import './appLazyWarmup.js'   // App'in lazy CertificateModal'ı — soğuk dönüşüm testin dışında (öneri 22)
 
 const ALL = ['a', 'b', 'c', 'd', 'e']
 /** Kart ızgarasındaki alan adları, DOM SIRASIYLA (a…e kısaltması). */

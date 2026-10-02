@@ -328,10 +328,17 @@ export const PUSH_STATUS_KEYS = new Set([
   'SKIPPED_NO_PRIOR', 'SKIPPED_NO_RECIPIENT', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_QUIET_HOURS',
   'SKIPPED_REALERT_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_TYPE_OFF', 'SKIPPED_USER_OPT_OUT',
   'SKIPPED_STORM', 'SKIPPED_NO_TEAM',   // 2026-09-30: açılışta hiçbir kanal koşmadan verilen kararlar
+  'SKIPPED_TEAM_QUIET', 'SKIPPED_USER_QUIET_HOURS',   // 2026-10-01: takım / kişisel sessiz saat
 ])
 
 /** Bildirim günlüğü tetiği "bildirim fırtınaya devredildi" kararı mı (e-posta değil, karar satırı — backend STORM). */
 export const STORM_SUPPRESSED_TRIGGER = 'STORM'
+/** Bildirim günlüğü tetiği "bildirim sessiz saat özetine devredildi" (karar satırı — backend QUIET_HOURS, 2026-10-01). */
+export const QUIET_HOURS_TRIGGER = 'QUIET_HOURS'
+/** Sessiz saat karar satırı ÇÖZÜMÜN özete katlanması mı ("SKIPPED: sessiz saat (çözüm özete eklendi)")? */
+export function isQuietResolutionFold(status) {
+  return /çözüm|cozum|resolution/i.test(String(status || ''))
+}
 /** "SKIPPED: fırtına #17 — …" → 17; eşleşmezse null. */
 export function stormIdFromStatus(status) {
   const m = /f[ıi]rt[ıi]na\s*#(\d+)/i.exec(String(status || ''))
@@ -424,6 +431,12 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
       items.push({ id: `n-${n.id}`, kind: 'storm', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,
         stormId: stormIdFromStatus(n.email_status) ?? a.storm_id ?? null, status: n.email_status || null,
         backfilled: /geriye d[öo]n[üu]k|backfill/i.test(String(n.email_status || '')) })
+      continue
+    }
+    if (n.trigger === QUIET_HOURS_TRIGGER) {
+      // 2026-10-01: e-posta değil KARAR — "bildirim takımın sessiz saat özetine devredildi" (ya da çözümü özete katlandı).
+      items.push({ id: `n-${n.id}`, kind: 'quiet', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,
+        recipient: n.recipient_name || '', status: n.email_status || null, resolution: isQuietResolutionFold(n.email_status) })
       continue
     }
     items.push({ id: `n-${n.id}`, kind: 'mail', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,

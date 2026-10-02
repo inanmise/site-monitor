@@ -125,6 +125,53 @@ public class HttpMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTarge
     @Column(name = "domain_reminder_days")
     private String domainReminderDays = "30,14,7";
 
+    // ── Gelişmiş istek (2026-10-01, onaylı öneri 9) ─────────────────────────────────────────
+    // HEPSİ OPSİYONEL ve varsayılanı KAPALI: alanlar boşken istek ve karar bugünküyle birebir aynıdır
+    // (ek başlık yok, POST gövdesiz, gövde okunmaz, yeni alarm yok). Bkz. service.http.HttpRequestOptions.
+
+    /** POST gövdesi — YALNIZ method=POST ve dolu iken gönderilir (en çok 64 KB). ŞİFRELENMEZ: sır koyulmamalı
+     *  (sırlar için özel başlıklar / Basic auth); listede düz döner, değişiklik geçmişinde görünür. */
+    @Column(name = "request_body", columnDefinition = "TEXT")
+    private String requestBody;
+
+    /** Gövdenin içerik türü; boşsa application/json. */
+    @Column(name = "request_content_type", length = 100)
+    private String requestContentType;
+
+    /**
+     * Satır başına "Ad: değer" özel HTTP başlıkları — {@code SecretCipher} ile ŞİFRELİ (Anahtar Kelime / Sayfa Hızı ile
+     * aynı desen). YALNIZ global admin yazabilir; API değeri asla döndürmez (yalnız {@code has_custom_headers} ve
+     * admin'e başlık ADLARI). Başlıklar ve Basic auth yalnız İLK host'a gider — başka host'a yönlendirmede düşer.
+     */
+    @Column(name = "custom_headers_enc", columnDefinition = "TEXT")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String customHeadersEnc;
+
+    /** HTTP Basic auth kullanıcı adı (boş = kimliksiz). */
+    @Column(name = "basic_auth_user")
+    private String basicAuthUser;
+
+    /** Basic auth parolası — ŞİFRELİ; API'den asla düz dönmez (yalnız {@code has_basic_auth_pass}). */
+    @Column(name = "basic_auth_pass_enc", columnDefinition = "TEXT")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String basicAuthPassEnc;
+
+    /** Yavaş yanıt alarmı açık mı: açıksa response_ms eşiği aşılınca HTTP_SLOW (Anahtar Kelime KEYWORD_SLOW ikizi). */
+    @Column(name = "slow_response_enabled")
+    private Boolean slowResponseEnabled = false;
+
+    /** Yavaş yanıt eşiği (ms). */
+    @Column(name = "slow_threshold_ms")
+    private Integer slowThresholdMs = 3000;
+
+    /** JSON doğrulama yolu ($.a.b[0].c) — boşsa doğrulama YOK. Başarısızlık HTTP_DOWN yolundan DOWN sayılır. */
+    @Column(name = "json_path", length = 300)
+    private String jsonPath;
+
+    /** Beklenen metin değeri; boşsa "yol var ve null değil". */
+    @Column(name = "json_expected", length = 500)
+    private String jsonExpected;
+
     @Column(name = "created_at")
     private String createdAt;
 

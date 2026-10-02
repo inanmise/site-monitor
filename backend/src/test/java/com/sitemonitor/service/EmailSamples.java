@@ -249,6 +249,22 @@ final class EmailSamples {
                 "new.example.com", "HIGH", "DNS_CHANGED", null, map("record_type", "CNAME", "old_values", List.of(), "new_values", List.of("edge.example.net")));
         alert("alert-simple", "[Site Monitor] KRİTİK — Sistem bildirimi",
                 "Genel bildirim metni.\nİkinci satır: ayrıntılar burada.\n\n" + TR, null, "CRITICAL", null, null, null);
+        // Runbook notu (2026-10-01): izlemenin "Rehber & Notlar" rehberi varsa gövde sonunda "Ne yapılmalı" kartı —
+        // tür-özel MailDoc belgesi (içerik doğrulama) ve EmailTemplateBuilder ailesi (HTTP) birer örnek; uzun metin
+        // tavana (1000) kırpılmış hâliyle sözleşme/galeri kapılarından geçer.
+        String runbook = com.sitemonitor.service.mail.RunbookNote.truncate(
+                com.sitemonitor.service.mail.RunbookNote.toPlainText("## Alarm gelince\n1. **Ödeme servisini** kontrol et: `systemctl status odeme`\n"
+                        + "2. Yanıt yoksa [runbook sayfası](https://wiki.example.com/odeme) adımlarını uygula <b>(eşik < 5 dk)</b>\n"
+                        + "3. Çözülmezse nöbetçi DBA'yı ara — " + TR + "\n\n" + "Ayrıntı: bağlantı havuzu, kuyruk derinliği, son dağıtım. ".repeat(30)),
+                com.sitemonitor.service.mail.RunbookNote.EMAIL_MAX);
+        alert("alert-keyword-runbook", "[Site Monitor KRİTİK] keyword", "KRİTİK: kelime bulunamıyor.", "https://www.example.com/", "CRITICAL", "KEYWORD", null,
+                map("keyword", "Giriş Yap", "operator", "GTE", "match_count", 1, "occurrences", 0, "http_status", 200,
+                        "first_failure_at", "2026-09-26T07:00:00", "monitor_id", 42, "team_name", "Takım A", "alert_event_id", 92L,
+                        com.sitemonitor.service.mail.RunbookNote.CTX_KEY, runbook));
+        alert("alert-http-runbook", "[Site Monitor] KRİTİK · Ödeme portalı · HTTP/Website erişilemez", "KRİTİK: " + LONG_URL + " erişilemiyor (HTTP 503).",
+                LONG_URL, "CRITICAL", "HTTP_DOWN", null,
+                map("monitor_name", "Ödeme portalı", "http_status", 503, "first_failure_at", "2026-09-26T07:00:00", "monitor_id", 43,
+                        "team_name", "Takım A", "alert_event_id", 93L, com.sitemonitor.service.mail.RunbookNote.CTX_KEY, runbook));
     }
 
     // ── #7–10 Çözüm ailesi ───────────────────────────────────────────────────
@@ -395,6 +411,21 @@ final class EmailSamples {
                         "Örnek Registrar Ltd. Şti.", "WARNING", 17L), "ok");
         addHtml("reminder-domain-expired", "reminder", "[Site Monitor] " + LONG_HOST + " — alan adı kaydı doldu",
                 svc.buildDomainExpiryReminderHtml(TR, LONG_HOST, -3, "2026-09-23T00:00:00Z", 0, null, "CRITICAL", 18L), "critical");
+        // Sessiz saat özeti (2026-10-01, onaylı öneri 15): açık + pencerede çözülmüş karışık; uzun ad/hedef ve tümü çözülmüş.
+        List<EmailNotificationService.QuietDigestRow> mixed = List.of(
+                new EmailNotificationService.QuietDigestRow(41L, "WARNING", "Kurumsal Web Sitesi", "Erişim Kesintisi",
+                        "2026-09-30T20:12:00", null, false),
+                new EmailNotificationService.QuietDigestRow(42L, "HIGH", LONG_HOST, "Port Kesintisi",
+                        "2026-09-30T22:40:00", null, false),
+                new EmailNotificationService.QuietDigestRow(43L, "WARNING", "ödeme-api.example.com/health", "HTTP Yavaş Yanıt",
+                        "2026-09-30T23:05:00", "2026-09-30T23:41:00", true));
+        addHtml("reminder-quiet-digest", "reminder", EmailNotificationService.quietDigestSubject("Takım A", mixed),
+                svc.buildQuietDigestHtml("Takım A", "30.09.2026 22:00–07:00", mixed), "ok");
+        List<EmailNotificationService.QuietDigestRow> allResolved = List.of(
+                new EmailNotificationService.QuietDigestRow(44L, "WARNING", TR, "Sertifika Süre Bitişi",
+                        "2026-09-30T19:30:00", "2026-09-30T21:10:00", true));
+        addHtml("reminder-quiet-digest-resolved", "reminder", EmailNotificationService.quietDigestSubject(TR, allResolved),
+                svc.buildQuietDigestHtml(TR, "30.09.2026 22:00–07:00", allResolved), "ok");
     }
 
     // ── #33 Olay & Hata bildirimi ────────────────────────────────────────────

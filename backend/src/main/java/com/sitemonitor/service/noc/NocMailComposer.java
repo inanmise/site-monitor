@@ -78,7 +78,7 @@ public final class NocMailComposer {
             case "PAGE_INTEGRITY" -> "Sayfada kırık kaynak / karışık içerik";
             case "SCRIPTED_FAIL" -> "Sentetik senaryo başarısız";
             case "PAGESPEED_DOWN" -> "Sayfa hızı ölçülemiyor";
-            case "PORT_SLOW", "PING_SLOW", "DNS_SLOW", "KEYWORD_SLOW", "SCRIPTED_SLOW" -> "Yavaş yanıt";
+            case "PORT_SLOW", "PING_SLOW", "DNS_SLOW", "KEYWORD_SLOW", "HTTP_SLOW", "SCRIPTED_SLOW" -> "Yavaş yanıt";
             case "PAGESPEED_SLOW" -> "Sayfa hızı eşiği aşıldı";
             case "DNS_CHANGED" -> "DNS kaydı değişti";
             case "DNS_UNEXPECTED" -> "DNS beklenmeyen değer döndürüyor";

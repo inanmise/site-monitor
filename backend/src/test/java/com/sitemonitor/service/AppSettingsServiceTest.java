@@ -72,6 +72,22 @@ class AppSettingsServiceTest {
     }
 
     @Test
+    @DisplayName("Tür bazlı yeniden uyarı (2026-10-01): 0 ya da 15–10080 dk kaydedilir, aralık dışı 400; varsayılan 0")
+    void realertMinutes_rangeValidated() {
+        String key = "site.monitor.realert.http-minutes";
+        assertThat(service.getInt(key, 0)).isZero();
+        service.save(values(key, "15"), "admin");
+        assertThat(service.getInt(key, 0)).isEqualTo(15);
+        service.save(values(key, "0"), "admin");
+        assertThat(service.getInt(key, -1)).isZero();
+        for (String bad : new String[]{"14", "10081", "-5"}) {
+            assertThatThrownBy(() -> service.save(values(key, bad), "admin")).as(bad)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(service.getInt(key, -1)).as("reddedilen değer yazılmadı").isZero();
+    }
+
+    @Test
     @DisplayName("katalog dışı key reddedilir")
     void unknownKey_throws() {
         assertThatThrownBy(() -> service.save(values("some.random.key", "x"), "admin"))

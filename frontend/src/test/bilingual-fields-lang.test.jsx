@@ -34,7 +34,8 @@ const ENTITY = path.resolve(
 /** Dil seçimini TANIMLAYAN modül ile sözlük ve testler kuralın dışındadır. */
 const EXEMPT = [
   path.join('utils', 'scriptSourceOptions.js'),   // pickLang'in kendisi burada tanımlı
-  path.join('i18n', 'index.jsx'),                 // 'tpl.nameEn' ETİKET anahtarı, veri değil
+  path.join('i18n', 'tr.js'),                     // sözlükler: 'tpl.nameEn' ETİKET anahtarı, veri değil
+  path.join('i18n', 'en.js'),                     // (2026-10-02'ye dek index.jsx'teydi; index.jsx artık taranıyor)
   `test${path.sep}`,                              // testler kasten ham alanla çalışır
 ]
 

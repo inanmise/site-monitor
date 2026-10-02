@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * Localization regression guard.
@@ -19,11 +20,16 @@ describe('i18n parity (TR ↔ EN)', () => {
    * Vite yalnız derleme UYARISI basıyor (kimse görmüyor), bu yüzden kaynak metin taranır.
    */
   it('aynı anahtar bir sözlükte iki kez tanımlanmaz (sonraki sessizce kazanır)', () => {
-    const src = fs.readFileSync(path.resolve(__dirname, '../i18n/index.jsx'), 'utf8')
-    const start = (marker) => src.indexOf(marker)
+    // Sözlükler 2026-10-02'den beri ayrı dosyalarda (öneri 22: EN lazy chunk) — her blok KENDİ dosyasından,
+    // tanım satırından dosya sonuna kadar okunur (eskiden tek dosyanın iki yarısıydı; kapsam aynı).
+    const read = (file, marker) => {
+      const src = fs.readFileSync(path.resolve(__dirname, '../i18n', file), 'utf8')
+      expect(src.split(marker).length, `${file} tam bir kez '${marker}' içermeli`).toBe(2)
+      return src.slice(src.indexOf(marker))
+    }
     const blocks = {
-      TR: src.slice(start('export const TR = {'), start('export const EN = {')),
-      EN: src.slice(start('export const EN = {')),
+      TR: read('tr.js', 'export const TR = {'),
+      EN: read('en.js', 'export const EN = {'),
     }
     const dups = {}
     for (const [lang, body] of Object.entries(blocks)) {

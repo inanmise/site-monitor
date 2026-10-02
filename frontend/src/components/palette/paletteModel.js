@@ -5,7 +5,7 @@ import {
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
   Logs, UserCheck, Fingerprint, FilePenLine,
   Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
-  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning,
+  LifeBuoy, Settings, LayoutGrid, ShieldCheck, Users, UserRound, Activity, CloudLightning, SignalHigh,
 } from 'lucide-react'
 import { personalKey } from '../../utils/personalStorage.js'
 
@@ -25,6 +25,7 @@ export const TAB_META = {
   forecast:           { Icon: CalendarRange, section: 'nav.groupCertificates' },
   renewal:            { Icon: RefreshCw,     section: 'nav.groupCertificates' },
   'renewal-guide':    { Icon: BookOpenText,  section: 'nav.groupCertificates' },
+  status:             { Icon: SignalHigh,    section: 'nav.groupMonitoring' },   // Durum Sayfası (2026-10-01)
   http:               { Icon: Globe,         section: 'nav.groupMonitoring' },
   ping:               { Icon: Radio,         section: 'nav.groupMonitoring' },
   port:               { Icon: EthernetPort,  section: 'nav.groupMonitoring' },

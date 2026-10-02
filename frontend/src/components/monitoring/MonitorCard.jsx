@@ -7,6 +7,7 @@ import { Button } from '@/components/shadcn/button'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import NocStatus from '../noc/NocStatus.jsx'
+import FavoriteToggle from './FavoriteToggle.jsx'
 import { cn } from '@/lib/utils'
 
 /**
@@ -182,10 +183,15 @@ export function MonitorCardHeader({ className, children }) {
 export function MonitorCardTop({ end, className, children }) {
   const { noc, density } = useMonitorCard()
   const nocStatus = noc ? <NocStatus {...noc} compact={density === 'compact'} /> : null
+  // Favori yıldızı (2026-10-02, öneri 23): dokuz kart `noc` bağlamıyla türünü, kimliğini ve satır adını zaten veriyor —
+  // yıldız buradan tek yerde çizilir (kart dosyası elle koymaz). Tercihler hazır değilse FavoriteToggle hiç çizilmez.
+  const favorite = noc?.monitor?.id != null
+    ? <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} name={noc.rowLabel ?? noc.monitor.name} />
+    : null
   return (
     <div className={cn('mb-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1', className)}>
       {children}
-      {(end || nocStatus) && <span className={cn(CARD_LAYER, 'ml-auto flex shrink-0 items-center gap-1.5')}>{nocStatus}{end}</span>}
+      {(end || nocStatus || favorite) && <span className={cn(CARD_LAYER, 'ml-auto flex shrink-0 items-center gap-1.5')}>{nocStatus}{favorite}{end}</span>}
     </div>
   )
 }

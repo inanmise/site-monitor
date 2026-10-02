@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
+import { useVisibleInterval } from './hooks/useVisibleInterval'
 import { BarChart3, AlertOctagon, Inbox, CalendarDays, Plus, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
@@ -13,10 +14,14 @@ import { teamsFromMe } from './hooks/useMonitorTeamPick.js'
 import { matchesTag, tagNamesOf, matchesGroupOrTagText } from './utils/monitorFilters.js'
 import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
+import { useUserPrefsController, UserPrefsContext } from './hooks/useUserPrefs.js'   // kişisel tercihler (2026-10-02, öneri 23)
+import { resolveLandingTab } from './hooks/userPrefsModel.js'
+import { landingTabOptions } from './utils/landingTabs.js'
+import { APPLY_VIEW_EVENT } from './utils/navigate.js'
 import DashboardFilters from './components/dashboard/DashboardFilters.jsx'   // Genel Bakış kart araç çubuğu (2026-09-28)
 import { PLATFORM_NONE, PLATFORM_URL_KEY, parsePlatformParam, serializePlatformParam, matchesPlatform, countPlatforms, buildPlatformOptions } from './utils/platformFilter.js'
 import Login, { REMEMBER_KEY } from './pages/Login'
-import { claimPersonalStorage, clearPersonalStorage } from './utils/personalStorage.js'
+import { claimPersonalStorage, clearPersonalStorage, storageOwner } from './utils/personalStorage.js'
 import Nav from './components/Nav'
 import MobileTopBar from './components/nav/MobileTopBar.jsx'
 import BrandLogo from './components/BrandLogo.jsx'
@@ -24,18 +29,27 @@ import { useStatusFavicon } from './hooks/useStatusFavicon.js'
 import { useCertDeepLink } from './hooks/useCertDeepLink.js'
 import { runWithConcurrency } from './utils/concurrentQueue.js'
 import StatsPanel from './components/StatsPanel'
-import StatsView from './components/StatsView'
 import CertificateCard from './components/CertificateCard'
-import CertificatesTable from './components/CertificatesTable'
 const SharedCertificateModal = lazy(() => import('./components/SharedCertificateModal'))   // kart çipi → paylaşılan sertifika (2026-09-22)
-import CertificateModal from './components/CertificateModal'
-import CaDiversityModal from './components/CaDiversityModal'
-import RenewalPlanModal from './components/RenewalPlanModal.jsx'   // Genel Bakış kartı 'Planla' (2026-09-19)
+// Açılış paketini küçült (2026-10-02, performans önerisi 22): yalnız kendi sekmesinde ya da isteğe bağlı açılan
+// pencerede görünen ekranlar LAZY. Pano'nun ilk çiziminde görünen hiçbir şey burada değil (StatsPanel, kartlar,
+// filtreler, Bugün paneli eager kalır — varsayılan ekranda yeni yükleme göstergesi yok).
+//  • StatsView ('stats' sekmesi; recharts/shadcn chart'ı çeken tek eager yoldu) · CertificatesTable ('all') ·
+//    RenewalAdvice ('renewal') · CertRenewalGuide ('renewal-guide') — aşağıdaki sekme <Suspense> sınırında.
+//  • CertificateModal: HER ZAMAN bağlı (alan adı yokken null çizer, durumu açılışlar arasında korunur) — kendi
+//    fallback={null} sınırında; chunk ilk çizimle birlikte arka planda iner, kart tıklandığında hazırdır. Pano
+//    paketindeki en büyük kalemdi (Alarm geçmişi + Markdown editörü + sözdizimi renklendirici zinciri).
+//  • CaDiversityModal / RenewalPlanModal: açıldıklarında bağlanır — kendi fallback={null} sınırlarında.
+const StatsView = lazy(() => import('./components/StatsView'))
+const CertificatesTable = lazy(() => import('./components/CertificatesTable'))
+const CertificateModal = lazy(() => import('./components/CertificateModal'))
+const CaDiversityModal = lazy(() => import('./components/CaDiversityModal'))
+const RenewalPlanModal = lazy(() => import('./components/RenewalPlanModal'))   // Genel Bakış kartı 'Planla' (2026-09-19)
+const RenewalAdvice = lazy(() => import('./components/RenewalAdvice'))
+const CertRenewalGuide = lazy(() => import('./components/CertRenewalGuide'))
 import CardDensityToggle from './components/ui/CardDensityToggle.jsx'
 import { useNewDomainWarmup } from './hooks/useNewDomainWarmup.js'   // yeni alan adı kartı ısınırken kısa tazeleme (2026-09-28)
 import { expiryKey } from './pages/forecastModel.js'   // bitiş günü YEREL gün (UTC dilimi geç saatte bir gün erken)
-import RenewalAdvice from './components/RenewalAdvice'
-import CertRenewalGuide from './components/CertRenewalGuide.jsx'
 import PasswordChangeModal from './components/admin/PasswordChangeModal.jsx'
 import { PermissionsProvider } from './contexts/PermissionsProvider.jsx'
 import { UserDirectoryProvider } from './components/ui/UserDirectory.jsx'
@@ -68,6 +82,7 @@ const PingMonitorPage = lazy(() => import('./components/PingMonitorPage'))
 const PageMonitorPage = lazy(() => import('./components/PageMonitorPage'))
 const PageSpeedMonitorPage = lazy(() => import('./components/PageSpeedMonitorPage'))
 const MonitoringOverviewPage = lazy(() => import('./components/MonitoringOverviewPage'))   // İzleme Panosu (2026-09-30)
+const StatusPage = lazy(() => import('./components/StatusPage'))   // Kurum içi Durum Sayfası (2026-10-01) — oturum açmış herkes
 const StormStatusPage = lazy(() => import('./components/StormStatusPage'))   // Alarm Fırtınası (2026-09-30)
 const ScriptedMonitorPage = lazy(() => import('./components/ScriptedMonitorPage'))
 
@@ -149,7 +164,7 @@ export const NAVIGATE_EVENT = 'sm:navigate'
 const VALID_TABS = new Set([
   'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
-  'health', 'uptime', 'monitoring', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
+  'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
 ])
 /** Genel Bakış kart listesinin paylaşılabilir sayfa/boyut adresi (usePagination `url`; sabit referans). */
@@ -160,6 +175,26 @@ function initialTabFromUrl() {
     const t = new URLSearchParams(window.location.search).get('tab')
     return t && VALID_TABS.has(t) ? t : null
   } catch { return null }
+}
+
+/**
+ * Açılış sekmesi tercihi (2026-10-02, öneri 23) uygulanabilir mi: adreste `?tab=` YOK ve başka bir derin bağlantı paramı da
+ * yok (`?domain=` e-posta bağlantısı da bir Pano derin bağlantısıdır). Yalnız oturum bildirimi (`session`) sayılmaz.
+ * Derin bağlantı her zaman kazanır.
+ */
+function landingEligibleFromUrl() {
+  try {
+    return [...new URLSearchParams(window.location.search).keys()].every((k) => k === 'session')
+  } catch { return false }
+}
+
+/**
+ * Tarayıcının kişisel kayıt sahibi (utils/personalStorage) bu kullanıcı mı — ya da henüz kimse değil mi (B9 öncesi
+ * kayıtlar). Değilse tarayıcıdaki tercihler önceki kişiye ait: kişisel tercih belgesine TAŞINMAZ (öneri 23).
+ */
+function sameStorageOwner(username) {
+  const owner = storageOwner()
+  return !owner || owner === String(username || '').trim()
 }
 
 /** /me ve giriş yanıtından kullanıcı menüsünün ihtiyaç duyduğu profil alanları (beyaz liste; telefon/sicil YOK). */
@@ -207,6 +242,8 @@ export default function App() {
   const [profile, setProfile] = useState(null)
   // E1: kişi webhook push tercihi — /me ve login yanıtından gelir, Etkinliklerim'den yazılır.
   const [pushOptOut, setPushOptOut] = useState(false)
+  // Kişisel push sessiz saati (2026-10-01) — /me `push_quiet` (null = tanımsız); Etkinliklerim kartından yazılır.
+  const [pushQuiet, setPushQuiet] = useState(null)
   // Ürün turu durumu (2026-09-13): doğruluk kaynağı sunucu (/me + login yanıtı), localStorage yalnız ayna.
   const [tourState, setTourState] = useState(() => readMirror())
   const persistTourRef = useRef(null)   // openCertModal (useCallback, []) güncel persistTour'a ref'ten ulaşır
@@ -214,6 +251,12 @@ export default function App() {
   // Oturum düşüşünde (401 → /?session=expired) giriş formunda "oturum süresi doldu" bildirimi göster (AUTH-1).
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState(initialSessionExpired)
   const [tab, setTab] = useState('dashboard')
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+  // Açılış sekmesi kararı oturum (giriş) başına bir kez: uygun mu (adreste derin bağlantı yok) + uygulandı mı.
+  const landingRef = useRef({ eligible: false, done: true })
+  // Kayıtlı görünüm uygulandığında sayfanın yeniden bağlanması için (ErrorBoundary anahtarı) — bkz. APPLY_VIEW_EVENT.
+  const [viewNonce, setViewNonce] = useState(0)
   const [pendingAddDomain, setPendingAddDomain] = useState(false)  // dashboard "domain ekle" → envantere geç + add modal
   const [wrResetNonce, setWrResetNonce] = useState(0)
   // Weekly Reports sekmesi zaten açıkken menüye tekrar tıklanınca açık raporu listeye döndür.
@@ -265,6 +308,15 @@ export default function App() {
   const [statsVisible, setStatsVisible] = useState(false)
   const [selfPwdModalOpen, setSelfPwdModalOpen] = useState(false)
   const [mustChangePwd, setMustChangePwd] = useState(false)
+  // Kişisel tercihler (2026-10-02, öneri 23): girişten sonra BİR KEZ yüklenir, ilk boyamayı bekletmez; favoriler, açılış
+  // sekmesi, kayıtlı görünümler ve beyaz listeli tarayıcı tercihlerinin sunucu aynası. Hook auth erken-return'lerinden ÖNCE.
+  // Zorunlu parola değişimi sürerken uç kapalı (AuthInterceptor) — değişimden sonra yüklenir.
+  // Paylaşılan makine: tarayıcının kişisel kayıt sahibi (personalStorage) girişten ÖNCE başka biriyse önceki kişinin
+  // tarayıcı tercihleri bu kullanıcının belgesine taşınmaz (sunucudakiler yine yazılır). Girişte belirlenir.
+  const prefsMigrateRef = useRef(true)
+  const prefsCtl = useUserPrefsController(mustChangePwd ? null : user, { canMigrate: () => prefsMigrateRef.current })
+  const prefsFlushRef = useRef(null)
+  prefsFlushRef.current = prefsCtl.flush
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [sortOrder, setSortOrder] = useState('default')
   const [modalCert, setModalCert] = useState(null)
@@ -332,6 +384,7 @@ export default function App() {
   useEffect(() => {
     api.getMe().then((res) => {
       if (res?.success) {
+        prefsMigrateRef.current = sameStorageOwner(res.username)   // öneri 23: claim'den ÖNCE okunur
         claimPersonalStorage(res.username)   // B9: başka kullanıcının tarayıcıda kalan kişisel kayıtları silinir
         setUser(res.username)
         setSystemRole(res.system_role || 'USER')
@@ -348,11 +401,13 @@ export default function App() {
         setLoginInfo(res.login_info ?? null)
         setProfile(profileFrom(res))
         setPushOptOut(!!res.push_opt_out)
+        setPushQuiet(res.push_quiet ?? null)
         { const ts = mergeState(res.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
         // Oturum aktif bayrağı: login yalnız bu sekmede yapılmamış olabilir (cookie reauth ya da
         // başka sekmede login). Bayrağı burada da set et ki oturum sonradan düş/süpersede olunca
         // client.js 401'i yakalayıp temiz /?session=expired'a yönlendirsin ("Yüklenemedi" yerine).
         try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+        landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
         // Mail "tıklayınız" linki: ?tab=weeklyreports → doğrudan ilgili sekme
         const dl = initialTabFromUrl()
         if (dl) setTab(dl)
@@ -409,11 +464,70 @@ export default function App() {
     return () => window.removeEventListener(NAVIGATE_EVENT, onNav)
   }, [])
 
+  // Kayıtlı görünüm uygulama (2026-10-02, öneri 23 — utils/navigate.applyTabView): sekmenin TÜM sayfa-durumu paramları
+  // silinir, görünümünkiler yazılır ve sayfa YENİDEN BAĞLANIR (ErrorBoundary anahtarı viewNonce) — sayfalar durumlarını
+  // bağlanırken URL'den okur. Aynı sekmede geçmiş kaydı eklenmez (replaceState); başka sekmeye geçişte eklenir.
+  useEffect(() => {
+    const onApply = (e) => {
+      const target = e?.detail?.tab
+      if (!target || !VALID_TABS.has(target)) return
+      const params = e.detail.params || {}
+      try {
+        const url = new URL(window.location.href)
+        url.searchParams.set('tab', target)
+        for (const p of PAGE_STATE_PARAMS) url.searchParams.delete(p)
+        for (const k of [...url.searchParams.keys()]) {
+          if (PAGE_STATE_PREFIXES.some((pre) => k.startsWith(pre))) url.searchParams.delete(k)
+        }
+        for (const [k, v] of Object.entries(params)) if (v != null && v !== '') url.searchParams.set(k, String(v))
+        const qs = url.searchParams.toString()
+        const path = url.pathname + (qs ? `?${qs}` : '') + url.hash
+        if (target === tabRef.current) window.history.replaceState(window.history.state, '', path)
+        else window.history.pushState({ tab: target }, '', path)
+      } catch { /* history yoksay */ }
+      setTab(target)
+      setViewNonce((n) => n + 1)
+    }
+    window.addEventListener(APPLY_VIEW_EVENT, onApply)
+    return () => window.removeEventListener(APPLY_VIEW_EVENT, onApply)
+  }, [])
+
+  // Kenar çubuğu tercihi sunucudan geldiyse (başka cihazda değiştirilmiş) hemen uygulanır — diğer ekranlar bir sonraki
+  // açılışlarında localStorage'dan okur.
+  useEffect(() => {
+    if (!prefsCtl.hydratedKeys.includes('sidebar-open')) return
+    try { setSidebarOpen(localStorage.getItem('sidebar-open') !== 'false') } catch { /* depolama yok */ }
+  }, [prefsCtl.hydratedKeys])
+
+  // Açılış sekmesi (öneri 23): YALNIZ adreste derin bağlantı yokken, tercihler yüklendikten sonra, girişte bir kez ve
+  // kullanıcı bu arada başka sekmeye geçmediyse. Değer görünür sekmeler listesine karşı doğrulanır (bilinmeyen/yasak →
+  // Pano). Saklanan değer yoksa davranış bugünküyle aynıdır. Geçmişe kayıt eklenmez (Geri seçilmemiş Pano'ya dönmesin).
+  const landingIds = useMemo(
+    () => landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible }).map((o) => o.id).filter((id) => VALID_TABS.has(id)),
+    [systemRole, globalAdmin, weeklyReportsVisible])
+  useEffect(() => {
+    const L = landingRef.current
+    if (!user || !prefsCtl.ready || L.done) return
+    L.done = true
+    if (!L.eligible || tabRef.current !== 'dashboard' || !landingEligibleFromUrl()) return
+    const target = resolveLandingTab(prefsCtl.landingTab, landingIds)
+    if (!target) return
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('session')
+      url.searchParams.set('tab', target)
+      const qs = url.searchParams.toString()
+      window.history.replaceState({ tab: target }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+    } catch { /* history yoksay */ }
+    setTab(target)
+  }, [user, prefsCtl.ready, prefsCtl.landingTab, landingIds])
+
   useEffect(() => {
     if (!user) return
 
     const doAutoLogout = async () => {
       clearInterval(countdownInterval.current)
+      const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23)
       await api.logout()
       try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı */ }
       clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
@@ -491,14 +605,23 @@ export default function App() {
     // networkStatus → 60 sn tick (dedup); weakAlgStats → login'de bir kez ayrı effect (aşağıda).
   }, [])
 
+  // Tam veri yenilemesi (5 dk) GÖRÜNÜRLÜĞE DUYARLI (2026-10-01): gizli sekmede durur. Sekmeye dönünce yalnız süre
+  // dolmuşsa yeniler — her sekme geçişinde 6 isteklik tam yükleme tetiklenmesin. İlk yükleme girişte (aşağıdaki effect).
+  const DATA_REFRESH_MS = Number(import.meta.env.VITE_DATA_REFRESH_MS ?? 300_000)
+  const lastDataLoadRef = useRef(0)
   useEffect(() => {
     if (user) {
       loadAliveRef.current = true
+      lastDataLoadRef.current = Date.now()
       loadData()
-      const interval = setInterval(loadData, Number(import.meta.env.VITE_DATA_REFRESH_MS ?? 300_000))
-      return () => clearInterval(interval)
     }
   }, [user, loadData])
+  const refreshDataIfDue = useCallback(() => {
+    if (Date.now() - lastDataLoadRef.current < DATA_REFRESH_MS - 1000) return
+    lastDataLoadRef.current = Date.now()
+    loadData()
+  }, [loadData, DATA_REFRESH_MS])
+  useVisibleInterval(refreshDataIfDue, user ? DATA_REFRESH_MS : 0, false)
 
   // Yeni eklenen alan adı "ısınıyor" (2026-09-28): ilk kontrol arka planda biterken kart boş değil "hesaplanıyor"
   // gösterir; veri gelene dek sertifika + kart ekleri kısa aralıklarla yeniden istenir. Döngü + oturuma bağlılık
@@ -516,22 +639,18 @@ export default function App() {
   const warmingDomains = useNewDomainWarmup(Boolean(user), warmRefresh, loadData)
 
   // Lightweight 60s poll just for network outage status — keeps banner in sync
-  // without waiting for the 5-minute full data refresh
-  useEffect(() => {
-    if (!user) return
-    const tick = async () => {
-      const res = await api.getNetworkStatus()
-      if (res?.success) {
-        setNetworkStatus(prev => {
-          if (res.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
-          return res.data
-        })
-      }
+  // without waiting for the 5-minute full data refresh. Görünürlüğe duyarlı (2026-10-01): gizli sekmede durur, dönünce
+  // hemen bir kez sorar (tek hafif istek). Girişte hemen (ms 0 → 60 sn geçişi ilk çağrıyı yapar).
+  const networkTick = useCallback(async () => {
+    const res = await api.getNetworkStatus()
+    if (res?.success) {
+      setNetworkStatus(prev => {
+        if (res.data?.alarm && !prev?.alarm) setNetworkBannerDismissed(false)
+        return res.data
+      })
     }
-    tick()   // login'de hemen (loadData'dan çıkarıldı → ağ durumu 60 sn beklemesin)
-    const id = setInterval(tick, 60_000)
-    return () => clearInterval(id)
-  }, [user])
+  }, [])
+  useVisibleInterval(networkTick, user ? 60_000 : 0)
 
   // Zayıf-algoritma rozetleri: login'de BİR KEZ (5 dk'lık loadData'dan çıkarıldı). Zayıf-algoritma
   // verisi ancak cert sweep'iyle (~saatlik) değişir → sık çekmeye gerek yok; sayfa yenilenince tazelenir.
@@ -586,6 +705,7 @@ export default function App() {
     clearTimeout(warnTimer.current)
     clearInterval(countdownInterval.current)
     clearInterval(refreshPollRef.current)
+    const pf = prefsFlushRef.current?.(); if (pf) await pf.catch(() => {})   // bekleyen tercih yazımı (öneri 23, ≤2 sn)
     await api.logout()
     try { localStorage.removeItem(REMEMBER_KEY) } catch { /* depolama kapalı: çıkış yine tamamlanır */ }
     clearPersonalStorage()   // B9: paylaşılan makinede sonraki kişiye son kullanılanlar / taslak yedeği kalmasın
@@ -821,7 +941,9 @@ export default function App() {
     try { sessionStorage.removeItem('sm.banner.heroShown') } catch { /* yoksay */ }
     try { sessionStorage.removeItem('sm.login.noticeShown') } catch { /* yoksay */ }
     // B9: oturum düşüp BAŞKA biri girdiyse öncekinin kişisel kayıtları silinir; aynı kişide (kesinti yedeği) korunur.
+    prefsMigrateRef.current = sameStorageOwner(userData.username)   // öneri 23: claim'den ÖNCE okunur
     claimPersonalStorage(userData.username)
+    landingRef.current = { eligible: landingEligibleFromUrl(), done: false }
     setTab(initialTabFromUrl() || 'dashboard')
     setUser(userData.username)
     setSystemRole(userData.system_role || 'USER')
@@ -836,6 +958,7 @@ export default function App() {
     setLoginInfo(userData.login_info ?? null)
     setProfile(profileFrom(userData))
     setPushOptOut(!!userData.push_opt_out)
+    setPushQuiet(userData.push_quiet ?? null)
     { const ts = mergeState(userData.tour ?? null, readMirror()); setTourState(ts); writeMirror(ts) }
   }
 
@@ -1126,6 +1249,7 @@ export default function App() {
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
     <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>
+    <UserPrefsContext.Provider value={prefsCtl}>
     <SidebarProvider open={sidebarOpen} onOpenChange={onSidebarOpenChange} className="app-layout">
 
       {inactivityWarning && (
@@ -1241,7 +1365,8 @@ export default function App() {
           )}
 
           <div className="content">
-           <ErrorBoundary key={tab} onReload={() => setTab(tab)}>
+           {/* Anahtar sekme + görünüm sayacı: kayıtlı görünüm uygulanınca sayfa yeniden bağlanır ve URL'den okur (öneri 23) */}
+           <ErrorBoundary key={viewNonce ? `${tab}#${viewNonce}` : tab} onReload={() => setTab(tab)}>
             <Suspense fallback={<LoadingBlock label={t('tbl.loading')} fullWidth />}>
             {tab === 'dashboard' && (
               <div className="tab-content active">
@@ -1405,7 +1530,16 @@ export default function App() {
                     // yazmada kullanıcı "kapattım" sanıp push almaya devam ederdi (tersi de kötü).
                     const res = await api.me.setPushOptOut(v)
                     if (res?.success) setPushOptOut(!!res.push_opt_out)
-                  }} />
+                  }}
+                  pushQuiet={pushQuiet}
+                  onPushQuietSave={async (body) => {
+                    // Sunucu onayıyla güncellenir (iyimser değil); kart sonucu tost olarak bildirir.
+                    const res = await api.me.setPushQuietHours(body)
+                    if (res?.success) setPushQuiet(res.push_quiet ?? null)
+                    return res
+                  }}
+                  // Açılış sekmesi (öneri 23): yalnız açabildiği sekmeler (Pano varsayılan seçenek, listede yok)
+                  landingOptions={landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible }).filter((o) => VALID_TABS.has(o.id))} />
               </div>
             )}
 
@@ -1557,6 +1691,7 @@ export default function App() {
             {tab === 'help'     && <HelpPage />}
             {tab === 'uptime'   && <UptimePage   systemRole={systemRole} />}
             {tab === 'monitoring' && <MonitoringOverviewPage />}
+            {tab === 'status' && <StatusPage />}
             {tab === 'storms' && <StormStatusPage />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={myTeams} globalAdmin={globalAdmin} />}
@@ -1582,15 +1717,22 @@ export default function App() {
       {/* Çalıştır/Düzenle KARTLA AYNI kaynaktan (`cardActions`) gelir — modal içinde ikinci bir
           kontrol/düzenleme yolu tanımlanmaz. Önizleme (envanterde olmayan domain) modunda ikisi
           de anlamsız: kayıtlı adres yok, düzenlenecek envanter satırı yok. */}
+      {/* Lazy (öneri 22) ama HER ZAMAN bağlı: kapalıyken null çizer; kendi sınırı — sekme sınırına bağlanmaz. */}
+      <Suspense fallback={null}>
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab}
         refreshSignal={certModalRefresh}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}
         {...(modalCert && !modalCert._preview && !modalCert._readOnly ? cardActions(modalCert) : {})} />
-      {caModal && <CaDiversityModal certs={certs} onClose={() => setCaModal(false)} />}
-      {planRow && <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
-        onSaved={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }}
-        onCleared={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }} />}
+      </Suspense>
+      {caModal && <Suspense fallback={null}><CaDiversityModal certs={certs} onClose={() => setCaModal(false)} /></Suspense>}
+      {planRow && (
+        <Suspense fallback={null}>
+          <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
+            onSaved={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }}
+            onCleared={async () => { setPlanRow(null); const x = await api.getCardExtras(); if (x?.success) setCardExtras(x.data || {}) }} />
+        </Suspense>
+      )}
 
       {/* Kart → envanter formu (Düzenle / Kopyala). Kendi Suspense sınırı: yukarıdaki sınır sekme
           içeriğiyle birlikte kapanıyor ve eager import MDEditor'ü dashboard'un ilk chunk'ına sokardı. */}
@@ -1636,6 +1778,7 @@ export default function App() {
         onClose={() => { checkCancelRef.current = true; setCheckRun(null) }}
       />
     </SidebarProvider>
+    </UserPrefsContext.Provider>
     </TourProvider>
     </TeamDirectoryProvider>
     </UserDirectoryProvider>

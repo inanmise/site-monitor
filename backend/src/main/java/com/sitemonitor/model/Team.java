@@ -57,6 +57,26 @@ public class Team {
     @Column(name = "weekly_channels", columnDefinition = "TEXT")
     private String weeklyChannels;
 
+    /**
+     * Sessiz saatler (2026-10-01, onaylı öneri 15) — OPT-IN, varsayılan YOK (dört alan da null = bildirim zamanı
+     * bugünküyle aynı). "HH:mm" Europe/Istanbul; pencere gece yarısını geçebilir. Pencere içinde takımın alıcılarına
+     * giden KRİTİK OLMAYAN alarm bildirimleri ertelenir ve pencere bitince tek özet e-postasıyla gider
+     * ({@code TeamQuietHoursService}, {@code QuietDigestService}). Kural: {@code QuietHours}.
+     */
+    @Column(name = "quiet_start", length = 5)
+    private String quietStart;
+
+    @Column(name = "quiet_end", length = 5)
+    private String quietEnd;
+
+    /** "MON,TUE,…" (pencerenin başladığı gün); null = her gün. */
+    @Column(name = "quiet_days", length = 30)
+    private String quietDays;
+
+    /** Pencerede HEMEN giden en düşük seviye: null/HIGH = yalnız UYARI ertelenir; CRITICAL = UYARI + YÜKSEK. */
+    @Column(name = "quiet_min_level", length = 16)
+    private String quietMinLevel;
+
     private String createdAt;
     private String updatedAt;
 }

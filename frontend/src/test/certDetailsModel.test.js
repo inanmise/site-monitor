@@ -3,7 +3,8 @@ import {
   DAY_MS, clean, detailTone, filterSan, formatRelative, hexGroups, hostCoverage, isBlank, issuerOf, keyInfo, lifetimeOf,
   relativeUnit, safeHttpUrl, sanCovers, sanEntries, statusChip, subjectOf, tlsInfo, trustCode, trustSummary, usageItems, KU_IDS, EKU_IDS,
 } from '../components/certmodal/certDetailsModel.js'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * "Sertifika Detayları" sekmesinin saf modeli (certmodal/certDetailsModel.js). Tarihler SABİT DEĞİL: her test kendi `now`

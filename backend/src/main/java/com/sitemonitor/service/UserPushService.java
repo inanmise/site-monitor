@@ -353,6 +353,11 @@ public class UserPushService {
         // Sessiz saat ÇÖZÜMÜ tutmaz: açılış push'u gitmişse (simetri kuralı) telefondaki alarm gece de
         // kapanmalı; aksi halde kullanıcı sabaha kadar "düştü" ekranına bakıyordu (karar 2026-09-10).
         if (!"RESOLVE".equals(trigger) && quietHoursBlock(event.getAlertLevel())) return "SKIPPED_QUIET_HOURS";
+        // Takım sessiz saati (2026-10-01, onaylı öneri 15): e-posta hunisi bu bildirimi takımın özetine erteledi — push da
+        // ŞİMDİ gitmez, karar satırı kalır. İşaret yalnız ertelenen gönderimin ctx kopyasında bulunur (EscalationService);
+        // çözümde, elle gönderimde ve önizlemede hiç yoktur → bu dal pencere tanımsızken hiç çalışmaz.
+        if (ctx != null && Boolean.TRUE.equals(ctx.get(EscalationService.CTX_QUIET_DEFERRED)))
+            return EscalationService.PUSH_SKIPPED_TEAM_QUIET;
         return null;
     }
 
@@ -542,7 +547,13 @@ public class UserPushService {
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
         if (teamId == null) { out.put("reason", "SKIPPED_NO_TEAM"); return out; }
-        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, alertLevel);
+        // Kişisel sessiz saat (2026-10-01) global sessiz saatin AYNASIDIR: global pencere takım bildirimlerini (haftalık rapor
+        // onayı, zayıf algoritma raporu) susturmaz, kişisel pencere de susturmaz — kişi kararı burada "alıcı"ya döner
+        // (opt-out'tan SONRA verildiği için başka bir red nedenini ezmez).
+        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, alertLevel).stream()
+                .map(r -> UserPushRecipientResolver.SKIPPED_USER_QUIET_HOURS.equals(r.skipReason())
+                        ? new UserPushRecipientResolver.Recipient(r.username(), r.displayName(), null) : r)
+                .toList();
         if (recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
         return writeTeamRows(out, teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey,
                 recipients, excluded, false);
@@ -837,13 +848,16 @@ public class UserPushService {
         try {
             // Yalnız ZAMANI GELMİŞ satırlar: fail()'in backoff'u satıra yazılır; süpürme/enqueue/açılış turları
             // bekleyen retry'ı erken göndermesin (2026-09-28). Yeni satırlar (damgasız) hemen gelir.
-            List<UserPushDelivery> pending = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE);
-            if (pending.isEmpty()) return;
+            List<UserPushDelivery> due = deliveryRepo.findDuePending(ISO.format(Instant.now()), OUTBOX_PAGE);
+            if (due.isEmpty()) return;
             if (circuitOpen()) {   // kuyruktakiler BEKLER (kaybolmaz); cooldown sonunda tekrar bak
                 worker.schedule(this::drainOutbox, Math.max(1,
                         (circuitOpenUntil - System.currentTimeMillis()) / 1000), TimeUnit.SECONDS);
                 return;
             }
+            // Çok pod güvenliği (2026-10-01, öneri 3): yalnız BU turun kiraladığı satırlar gönderilir.
+            List<UserPushDelivery> pending = claim(due);
+            if (pending.isEmpty()) return;   // başka bir pod aldı
             Map<String, List<UserPushDelivery>> byBatch = new LinkedHashMap<>();
             for (UserPushDelivery d : pending)
                 byBatch.computeIfAbsent(d.getBatchId() == null ? "solo-" + d.getId() : d.getBatchId(),
@@ -867,6 +881,30 @@ public class UserPushService {
     }
 
     /** TEK toplu istek (K9): batch'in tüm alıcıları tek userIds dizisinde. */
+    /** Kira süresi: gönderim süresinin (bağlantı + gövde) iki katı + pay, en az 2 dk. */
+    private long claimLeaseSec() { return Math.max(120L, totalTimeout() * 2L + 30L); }
+
+    /**
+     * Zamanı gelmiş satırları bu tur için kiralar ({@link UserPushDeliveryRepository#claimDue}) ve YALNIZ kiralananları
+     * döner — iki pod aynı satırı göndermez. Kira damgası tur başına tekildir (saniye + rastgele kesir; metin
+     * karşılaştırması {@code findDuePending}'in "şimdi" damgasıyla sıralı kalır). Sahiplenme sorgusu düşerse eski yol
+     * (okunan satırlar) — tek pod'da davranış birebir aynıdır.
+     */
+    List<UserPushDelivery> claim(List<UserPushDelivery> due) {
+        List<Long> ids = due.stream().map(UserPushDelivery::getId).filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) return due;
+        Instant now = Instant.now();
+        String lease = ISO.format(now.plusSeconds(claimLeaseSec()))
+                + "." + String.format("%09d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1_000_000_000));
+        try {
+            if (deliveryRepo.claimDue(ids, ISO.format(now), lease) == 0) return List.of();
+            return deliveryRepo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, lease);
+        } catch (Exception e) {
+            log.debug("user-push sahiplenme yapılamadı ({} satır) — okunan satırlarla devam: {}", ids.size(), e.toString());
+            return due;
+        }
+    }
+
     private void sendBatch(List<UserPushDelivery> rows) {
         List<String> userIds = rows.stream().map(UserPushDelivery::getUsername).distinct().toList();
         UserPushDelivery first = rows.get(0);

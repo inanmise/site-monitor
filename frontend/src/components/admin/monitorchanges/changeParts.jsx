@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import HintPopover from '../../ui/HintPopover.jsx'
 import MaskedValue from '../../ui/MaskedValue.jsx'
 import { clockOf, eventLabel } from './changeModel.js'
+import { relTimeOrRaw as relTime, zonedMs as toMs } from '../../../utils/relativeTime.js'
 
 export { eventLabel }
 
@@ -57,23 +58,10 @@ export function KindIcon({ kind, className }) {
 
 export const kindLabel = (t, kind) => t('chg.kind.' + String(kind || '').toLowerCase())
 
-/** Sunucu UTC saklar ve Z'siz gönderir; göreli zaman için Z eklenir. */
-function toMs(iso) {
-  if (!iso) return NaN
-  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z'
-  return new Date(s).getTime()
-}
-
-/** "3 dk önce" — Aktivite Logu ile aynı `act.rel.*` dağarcığı; tam zaman ipucunda ve ayrıntı panelinde. */
-export function relTime(iso, t, now = Date.now()) {
-  const then = toMs(iso)
-  if (Number.isNaN(then)) return iso || '—'
-  const sec = Math.floor(Math.max(0, now - then) / 1000)
-  if (sec < 60) return t('act.rel.now')
-  const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
-  const hr = Math.floor(min / 60); if (hr < 24) return t('act.rel.hour', hr)
-  return t('act.rel.day', Math.floor(hr / 24))
-}
+// Sunucu UTC saklar ve Z'siz gönderir; göreli zaman için Z eklenir (`toMs`). "3 dk önce" — Aktivite Logu ile aynı
+// `act.rel.*` dağarcığı; boş damga "—", çözülemeyen damga olduğu gibi (`relTime`). İkisi de ortak yardımcıdan
+// (utils/relativeTime.js — öneri 29, çıktı aynı); `relTime` adıyla dışa aktarım korunur (DNS kartı bunu kullanır).
+export { relTime }
 
 /** Göreli zaman; makine-okunur tam değer `<time dateTime>`, insan-okunur tam değer ipucunda. */
 export function TimeAgo({ at, t, now, className }) {

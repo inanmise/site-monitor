@@ -27,6 +27,24 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     List<UserPushDelivery> findDuePending(@Param("now") String now, Pageable pageable);
 
     /**
+     * Outbox SAHİPLENME (2026-10-01, onaylı öneri 3): zamanı gelmiş PENDING satırları bu tur için KİRALAR —
+     * {@code nextAttemptAt}'a tur başına tekil bir kira damgası yazılır; {@link #findDuePending} kira bitene dek satırı
+     * vermez. İki pod aynı satırı aynı anda okuyup ikisi de göndermesin (release ortamı iki replika). Koşul aynı:
+     * yalnız hâlâ PENDING ve zamanı gelmiş satır kiralanır; başka pod'un kiraladığı satır atlanır. Gönderim sonucu
+     * (SENT / backoff / FAILED) damgayı her zamanki gibi ezer; pod gönderirken ölürse kira bitince satır yeniden alınır.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.nextAttemptAt = :lease
+           WHERE d.id IN :ids AND d.status = 'PENDING' AND (d.nextAttemptAt IS NULL OR d.nextAttemptAt <= :now)
+           """)
+    int claimDue(@Param("ids") java.util.Collection<Long> ids, @Param("now") String now, @Param("lease") String lease);
+
+    /** Bu turun kiraladığı satırlar — kira damgası tur başına tekil olduğundan yalnız bu pod'un aldıkları döner. */
+    List<UserPushDelivery> findByIdInAndNextAttemptAtOrderByIdAsc(java.util.Collection<Long> ids, String nextAttemptAt);
+
+    /**
      * Gönderim sonucunun DAR yazımı — tam satır kaydı düştüğünde yedek (2026-09-28): durum ve deneme sayacı yine
      * ilerler. Yazılmazsa satır PENDING + eski sayaçla kalır ve her süpürmede yeniden gönderilir (zehirli satır).
      */

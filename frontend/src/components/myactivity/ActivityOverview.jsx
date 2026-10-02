@@ -1,7 +1,11 @@
-import { useId } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
-  ShieldCheck, ShieldAlert, BellOff, BellRing, MonitorSmartphone, Monitor, Smartphone, ListChecks, KeyRound, ShieldX,
+  ShieldCheck, ShieldAlert, BellOff, BellRing, MonitorSmartphone, Monitor, Smartphone, ListChecks, KeyRound, ShieldX, Moon,
 } from 'lucide-react'
+import { useToast } from '../ui/Toast.jsx'
+import QuietHoursFields from '../ui/QuietHoursFields.jsx'
+import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { quietFromMe, quietEqual, quietErrors, quietIsSet, quietSummary, quietUserPayload } from '../../utils/quietHours.js'
 import { formatDateSec } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -277,6 +281,69 @@ export function NotificationCard({ pushOptOut, onChange }) {
         <Switch id={switchId} checked={!!pushOptOut} aria-describedby={hintId} className="mt-0.5 shrink-0"
           onCheckedChange={(v) => onChange(v)} />
       </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Kişisel push sessiz saati (2026-10-01, onaylı öneri 15) — kullanıcı YALNIZ kendi penceresini yazar (POST
+ * /me/push-quiet-hours). Global push sessiz saatinin kişi eşi: pencerede seçilen seviyenin altındaki push bu kişiye gitmez
+ * (teslimat günlüğünde SKIPPED_USER_QUIET_HOURS); KRİTİK ve "düzeldi" push'u etkilenmez. Boş = bugünkü davranış.
+ * Kayıt sunucu onayıyla görünür (iyimser güncelleme yok); doğrulama hatası alanın altında.
+ */
+export function PushQuietHoursCard({ value, onSave }) {
+  const t = useT()
+  const toast = useToast()
+  const saved = useMemo(() => quietFromMe(value), [value])
+  const [draft, setDraft] = useState(saved)
+  const [busy, setBusy] = useState(false)
+  const fe = useFormErrors(saved)
+  useEffect(() => { setDraft(saved) }, [saved])
+  const dirty = !quietEqual(draft, saved)
+  const keys = { start: 'start', end: 'end', days: 'days' }
+
+  async function save() {
+    if (fe.check(quietErrors(draft, t, keys))) return
+    setBusy(true)
+    try {
+      const res = await onSave?.(quietUserPayload(draft))
+      if (res?.success) toast.success(t('quiet.saved'))
+      else toast.error(res?.error || t('quiet.saveError'))
+    } catch (e) {
+      toast.error(e?.message || t('quiet.saveError'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card data-slot="push-quiet" data-set={quietIsSet(saved) || undefined} className={CARD}>
+      <CardHeader className={CARD_HEAD}>
+        <CardTitle className={CARD_TITLE}>
+          <Moon aria-hidden="true" className={cn('size-4', quietIsSet(saved) ? 'text-primary' : 'text-muted-foreground')} />
+          {t('quiet.pushCard')}
+        </CardTitle>
+        <p className="m-0 text-xs leading-snug text-muted-foreground" data-slot="push-quiet-summary">
+          {t('quiet.current', quietSummary(saved, t))}
+        </p>
+      </CardHeader>
+      <CardContent className="flex min-w-0 flex-col gap-1 px-4">
+        <span className="mb-2 text-xs leading-snug text-muted-foreground">{t('quiet.pushDesc')}</span>
+        <QuietHoursFields value={draft} keys={keys} fieldProps={fe.fieldProps} levelHintKey="quiet.levelHintPush" disabled={busy}
+          onChange={(next, key) => { setDraft(next); if (key === 'clear') fe.reset(); else if (key) fe.clear(key) }} />
+      </CardContent>
+      <CardFooter className="flex flex-wrap justify-end gap-2 px-4">
+        {dirty && (
+          <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" disabled={busy}
+            onClick={() => { setDraft(saved); fe.reset() }}>
+            {t('quiet.revert')}
+          </Button>
+        )}
+        <Button type="button" size="sm" className="pointer-coarse:h-10" disabled={!dirty || busy} aria-busy={busy || undefined}
+          onClick={save}>
+          {busy ? t('quiet.saving') : t('quiet.save')}
+        </Button>
+      </CardFooter>
     </Card>
   )
 }

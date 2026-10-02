@@ -7,6 +7,7 @@ import { useT } from '../../i18n/index.jsx'
 import { api } from '../../api/client'
 import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { parseCsv, mapCsv, importTemplateCsv, IMPORT_COLUMNS } from './inventoryModel.js'
+import { downloadCsv } from '../../utils/csvExport.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
@@ -63,11 +64,8 @@ export default function InventoryImportModal({ onClose, onDone }) {
     finally { setBusy(false) }
   }
   function downloadTemplate() {
-    try {
-      const blob = new Blob(['\uFEFF' + importTemplateCsv()], { type: 'text/csv;charset=utf-8' })
-      const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'site-monitor-inventory-template.csv'; document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch { /* jsdom */ }
+    // BOM'lu UTF-8; ortak indirme (utils/csvExport \u2014 \u00F6neri 29, dosya ayn\u0131)
+    downloadCsv('site-monitor-inventory-template.csv', '\uFEFF' + importTemplateCsv())
   }
 
   const rows = result?.rows || plan?.rows || []

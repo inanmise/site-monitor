@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import userEvent from '@testing-library/user-event'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))

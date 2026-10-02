@@ -9,7 +9,7 @@ import { localDayKey } from '../../utils/localDay.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { alertNavParams } from '../admin/alerts/alertHistoryModel.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
-import { useElementWidth } from '../weekly/useElementWidth.js'
+import { useElementWidthState } from '../../hooks/useElementWidth.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import DateTimeRangePicker from '../ui/DateTimeRangePicker.jsx'
@@ -183,7 +183,7 @@ export default function CheckHistoryTab({
   const t = useT()
   const isMobile = useIsMobile()
   // Kap genişliği (yalnız `cardsBelow` verildiyse ölçülür; 0 = ölçüm yok → görünüm alanı kuralı).
-  const [boxWidth, setBoxEl] = useElementWidth()
+  const [boxWidth, setBoxEl] = useElementWidthState()
   const asCards = cardsBelow && boxWidth > 0 ? boxWidth < cardsBelow : isMobile
   const h = useCheckHistory({ kind, id: monitorId, listKey, presets, defaultPreset, filterMode, extraParams,
     live: range ? false : live, fixed: range, reloadSignal })

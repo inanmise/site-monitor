@@ -100,21 +100,25 @@ export function buildView(data) {
       excluded.push({ key: `contact:${c?.id}`, channel: 'email', name: c?.name || '—', sub: c?.role || '', reason: 'NO_EMAIL' })
       continue
     }
-    const host = byAddress.get(address)
+    // Zamana bağlı eskalasyon adımı (2026-10-01): gecikmeli kişi ilk e-postaya GİRMEZ — kendi satırında "N dk onaysız
+    // kalırsa" rozetiyle görünür, başka satıra katlanmaz ve e-posta toplamına (sunucunun email_total'ı) sayılmaz.
+    const delayMinutes = Number(c?.delay_minutes) > 0 ? Number(c.delay_minutes) : null
+    const host = delayMinutes == null ? byAddress.get(address) : null
     if (host) {   // sunucu "email_duplicate" der: aynı adrese tek e-posta gider
       host.also.push({ id: c.id, name: c.name || address })
       continue
     }
     const row = {
       key: `contact:${c.id}`, email: String(c.email).trim(), name: c.name || String(c.email).trim(),
-      source: 'contact', role: c.role || null, minLevel: c.min_level || null, also: [],
+      source: 'contact', role: c.role || null, minLevel: c.min_level || null, also: [], delayMinutes,
     }
     emails.push(row)
-    byAddress.set(address, row)
+    if (delayMinutes == null) byAddress.set(address, row)
   }
 
   const webhooks = rawWebhooks.map((w, i) => ({
     key: `webhook:${w?.id ?? i}`, name: w?.name || '—', type: String(w?.type || '').toUpperCase(), target: w?.target || '',
+    delayMinutes: Number(w?.delay_minutes) > 0 ? Number(w.delay_minutes) : null,
   }))
 
   const channel = buildPushChannel(data?.push_channel)
@@ -151,7 +155,8 @@ export function buildView(data) {
   const emailCount = Number.isFinite(Number(data?.email_total)) && data?.email_total != null ? Number(data.email_total) : emails.length
   const counts = {
     email: emailCount, push: pushRecipients.length, pushNot: pushNonRecipients.length,
-    webhook: webhooks.length, excluded: excluded.length,
+    // Gecikmeli kişinin webhook'u ilk bildirime girmez (yalnız eskalasyon adımında) — sayı anlık kanalları gösterir.
+    webhook: webhooks.filter((w) => w.delayMinutes == null).length, excluded: excluded.length,
   }
   return {
     emails, webhooks, excluded, counts, teamContacts, owners,

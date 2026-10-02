@@ -15,6 +15,48 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+Uçtan uca incelemeden çıkan ve onaylanan 16 öneri. Hepsi mevcut akışı bozmayacak şekilde yapıldı: yeni davranışlar
+ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekranlar ve dosyalar bugünkü gibi.
+
+### Added
+- **HTTP izlemede gelişmiş istek:** özel başlıklar (şifreli, yalnız global yönetici), Basic kimlik doğrulama, POST
+  gövdesi, JSON yanıt doğrulaması ve isteğe bağlı yavaş yanıt alarmı (`HTTP_SLOW`). Alanlar boşken istek ve karar
+  bugünküyle bayt bayt aynı.
+- **Zamana bağlı eskalasyon:** eskalasyon kişisine "N dakika sahiplenilmezse bildir" gecikmesi verilebilir; boşsa
+  bugünkü gibi hemen. Ayrıca izleme türü başına yeniden uyarı sıklığı (dakika; 0 = genel ayar).
+- **Alarmdan olay kaydı:** alarm ayrıntısında "Olay kaydı aç"; form alarmın bilgileriyle dolu açılır, kayıttan sonra
+  bağlantı görünür. **Runbook notu:** izlemeye rehber yazılmışsa alarm e-postası ve Teams/Slack mesajının sonuna kısa
+  "Ne yapılmalı" bölümü eklenir; rehber yoksa bildirim aynen.
+- **Sessiz saatler:** takım bazlı sessiz saat penceresi (uyarı seviyesindeki alarmlar pencere bitince tek bir özet
+  e-postasında gelir; kritik alarmlar her zaman hemen gider) ve kişi bazlı push sessiz saatleri. Ertelenen her
+  bildirim alarm zaman çizelgesinde görünür.
+- **Kurum içi durum sayfası** (`Durum Sayfası`): hizmetlerin anlık durumu, açık ve son çözülen olaylar, bakım
+  pencereleri, 7 günlük erişilebilirlik. Giriş gerektirir; olay ve bakım ayrıntıları yalnız bugün de görülebilen
+  kayıtlar için gösterilir, diğerleri yalnız sayı olarak.
+- **Favori izlemeler, açılış sekmesi, kayıtlı görünümler:** kartlarda yıldız, İzleme Panosu'nda "Favoriler"
+  görünümü, komut paletinde favoriler; kişisel açılış sekmesi; izleme sayfaları, İzleme Panosu, Alarm Geçmişi ve
+  Olay Geçmişi'nde "Görünümler". Tarayıcıdaki tercihler sunucuda saklanır (ilk girişte taşınır), cihazlar arası
+  taşınır.
+- **Klavye kısayolları:** `?` kısayol listesi, `/` sayfa araması, `g` + harf ile sık sekmeler. Tanıtım turuna yeni
+  ekranlar eklendi; turu bitirmiş kullanıcılar yalnız "Yenilikler" kartını görür.
+- **Gerçek PostgreSQL entegrasyon testleri** (CI'da, release'i bloklayan iş) ve Docker imajı açılış testi.
+
+### Changed
+- İzleme sayfaları geri sayım için artık saniyede bir baştan çizilmiyor; ana veri yoklaması gizli sekmede duruyor.
+- **Açılış paketi küçüldü** (gzip 1.666 kB → 720 kB): İngilizce sözlük, grafik kütüphanesi ve sekmeye özel ekranlar
+  ayrı parçalarda. Kayıtlı dili İngilizce olan kullanıcı açılışta kısa bir yükleme ekranı görebilir.
+- Göreli zaman, CSV indirme ve genişlik ölçümü için ortak yardımcılar (çıktılar birebir aynı).
+- Belgeler güncellendi; eski hata raporları `docs/archive/bug-reports/` altına taşındı.
+
+### Security
+- İçerik güvenlik politikasından (CSP) satır içi betik izni kaldırıldı.
+- Sentetik (k6) betiklerde dosya okuma taraması: varsayılan "Raporla" (kayıtta uyarı, açılışta özet, yönetici
+  raporu); "Engelle" seçilirse dosya okuyan betik kaydedilmez ve çalıştırılmaz.
+
+### Fixed
+- Push bildirim kuyruğu satır sahiplenmesiyle çalışıyor: birden çok pod aynı bildirimi iki kez gönderemez.
+- Şema yamalarının gerçek hataları artık uyarı olarak görünür ve sayılır; yamalar aynı anda tek pod'da koşar.
+
 ## [20.95.0] — 2026-10-01
 
 ### Changed

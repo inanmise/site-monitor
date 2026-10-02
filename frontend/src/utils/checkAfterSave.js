@@ -27,7 +27,9 @@
 
 /** Tür → kontrolün SONUCUNU etkileyen satır alanları (snake_case, enrich* çıktısı). */
 export const CHECK_FIELDS = Object.freeze({
-  http: ['url', 'method', 'expected_status', 'follow_redirects', 'verify_ssl', 'use_proxy', 'timeout_ms'],
+  http: ['url', 'method', 'expected_status', 'follow_redirects', 'verify_ssl', 'use_proxy', 'timeout_ms',
+    // gelişmiş istek (2026-10-01): gövde / içerik türü / Basic auth kullanıcısı / JSON doğrulaması sonucu değiştirir
+    'request_body', 'request_content_type', 'basic_auth_user', 'json_path', 'json_expected'],
   ping: ['host', 'ip_version', 'packet_count', 'timeout_ms'],
   keyword: ['url', 'keyword', 'condition', 'operator', 'match_count', 'case_sensitive', 'use_proxy', 'timeout_ms'],
   port: ['host', 'port', 'protocol', 'expect', 'send_data', 'use_proxy', 'ip_version', 'timeout_ms'],

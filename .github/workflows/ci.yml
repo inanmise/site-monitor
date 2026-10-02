@@ -86,6 +86,88 @@ jobs:
           retention-days: 7
 
   # ──────────────────────────────────────────────
+  # 1b. Backend — GERÇEK PostgreSQL entegrasyon testleri (2026-10-02, onaylı öneri 28)
+  #
+  # Neden ayrı iş: yukarıdaki suit H2'de (PostgreSQL uyumluluk modu) koşar ve SchemaPatchRunner H2'de
+  # PostgreSQL'e özgü her yama hatasını "beklenen" sayıp yutar — bozuk bir yama ilk kez prod pod'unun WARN
+  # satırında görülürdü. Bu iş BOŞ bir postgres:16'da tam uygulama bağlamını iki kez açar (0 başarısız yama +
+  # idempotentlik + adı geçen her indeks/kolon/kısıt gerçekten var), PostgreSQL'e özgü SQL'i (ON CONFLICT,
+  # kısmi indeks, LATERAL, advisory lock) ve yoklanan ekranların ağır sorgularını koşar.
+  # Yalnız @Tag("postgres") testleri (-Ppostgres-it; varsayılan `mvn verify` onları DIŞARIDA bırakır).
+  # IT_DB_REQUIRED=true: bağlantı kurulamazsa testler atlanmaz, iş KIRMIZI olur ("0 test, yeşil" olmasın).
+  # Kapı: release.yml bu workflow'un sonucunu bekler; suit yerelde gerçek PostgreSQL 16'da yeşil doğrulandı.
+  # Servis imajı Dockerfile gibi TAM etiket + çoklu-mimari index digest'iyle sabit (yenileme: Dockerfile başı).
+  # ──────────────────────────────────────────────
+  backend-postgres-it:
+    name: Backend PostgreSQL IT (Java 25 / postgres:16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16.15-trixie@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_DB: sitemonitor_it
+          POSTGRES_USER: sitemonitor_it
+          # Yalnız bu işin tek kullanımlık servis konteyneri — gizli değil.
+          POSTGRES_PASSWORD: sitemonitor_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sitemonitor_it -d sitemonitor_it"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Java 25
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          java-version: "25"
+          distribution: temurin
+          cache: maven
+
+      - name: Configure Maven mirror & retry
+        run: |
+          mkdir -p $HOME/.m2
+          cat > $HOME/.m2/settings.xml << 'SETTINGS'
+          <settings>
+            <mirrors>
+              <mirror>
+                <id>central</id>
+                <mirrorOf>central</mirrorOf>
+                <url>https://repo1.maven.org/maven2</url>
+              </mirror>
+            </mirrors>
+          </settings>
+          SETTINGS
+
+      - name: PostgreSQL integration tests
+        env:
+          MAVEN_OPTS: >-
+            -Dmaven.wagon.http.retryHandler.count=3
+            -Dmaven.wagon.http.connectionTimeout=60000
+            -Dmaven.wagon.http.readTimeout=180000
+          IT_DB_URL: jdbc:postgresql://localhost:5432/sitemonitor_it
+          IT_DB_USER: sitemonitor_it
+          IT_DB_PASSWORD: sitemonitor_it
+          IT_DB_REQUIRED: "true"
+        run: mvn -B -Ppostgres-it test
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: backend-postgres-it-report
+          path: backend/target/surefire-reports/
+          retention-days: 7
+
+  # ──────────────────────────────────────────────
   # 2. Frontend — Node build + lint
   # ──────────────────────────────────────────────
   frontend:

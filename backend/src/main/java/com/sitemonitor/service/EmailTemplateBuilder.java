@@ -223,6 +223,8 @@ public class EmailTemplateBuilder {
         changeDescSection(d, m);
         actionSection(d, m, expiryIso, href);
         MailCta.appendIncidentActions(d, liveBaseUrl(), m.ctx() == null ? null : m.ctx().get("alert_event_id"));
+        // Runbook notu (2026-10-01): izlemenin rehberi varsa gövdenin SONUNA "Ne yapılmalı"; yoksa hiçbir şey eklenmez.
+        com.sitemonitor.service.mail.RunbookNote.appendTo(d, m.ctx());
         d.footerWhy(m.teamName())
          .footerMeta("Bu e-posta Site Monitor " + subsystemLabel(m.alertType()) + " tarafından otomatik gönderilmiştir",
                  checkedAt != null ? "Son kontrol: " + formatHuman(checkedAt) : null,
@@ -306,6 +308,8 @@ public class EmailTemplateBuilder {
         sb.append(liveBaseUrl()).append(alertQuery(m.alertType(), m.domain(), m.ctx())).append('\n');
         // HTML/metin paritesi: olay aksiyon linkleri metin sürümde de bulunur (kimlik yoksa "").
         sb.append(MailCta.incidentActionText(liveBaseUrl(), m.ctx() == null ? null : m.ctx().get("alert_event_id")));
+        // HTML paritesi: runbook notu (rehber yoksa "" — metin bugünküyle aynı).
+        sb.append(com.sitemonitor.service.mail.RunbookNote.textBlock(m.ctx()));
         sb.append("\n— Site Monitor ").append(subsystemLabel(m.alertType()));
         return sb.toString();
     }

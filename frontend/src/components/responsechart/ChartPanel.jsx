@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo } from 'react'
 import { Info } from 'lucide-react'
 import { Card } from '@/components/shadcn/card'
 import { Badge } from '@/components/shadcn/badge'
@@ -12,26 +12,8 @@ import { dateLocale } from '../../i18n/dateLocale.js'
 import { TooltipCard } from './ChartTooltipCard.jsx'
 import { SeriesKey } from './SeriesKey.jsx'
 import { axisWidth, formatLoss, formatTick, maxTicksFor, niceTimeTicks } from './responseChartModel.js'
-
-/** Kabın genişliği (ResizeObserver) — x etiket yoğunluğu çizim alanına göre seçilir. */
-function useElementWidth() {
-  const [width, setWidth] = useState(0)
-  const roRef = useRef(null)
-  const ref = useCallback((el) => {
-    roRef.current?.disconnect()
-    roRef.current = null
-    if (!el) return
-    const measure = () => setWidth(el.clientWidth || 0)
-    measure()
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure)
-      ro.observe(el)
-      roRef.current = ro
-    }
-  }, [])
-  useEffect(() => () => roRef.current?.disconnect(), [])
-  return [ref, width]
-}
+// Kabın genişliği (ResizeObserver, clientWidth) — x etiket yoğunluğu çizim alanına göre seçilir. Tek kaynak (öneri 29).
+import { useElementWidth } from '../../hooks/useElementWidth.js'
 
 /** Etiket çipte cümle başı: çağıranın etiketi küçük harfle gelebilir (`pspd.budgetLine` "bütçe (eşik)"). */
 const capitalise = (s) => (s ? s.charAt(0).toLocaleUpperCase(dateLocale()) + s.slice(1) : s)

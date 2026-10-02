@@ -7,6 +7,7 @@ import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import ModalShell from '../ui/ModalShell.jsx'
 import SimpleTooltip from '../ui/SimpleTooltip.jsx'
 import NocStatus from '../noc/NocStatus.jsx'
+import FavoriteToggle from './FavoriteToggle.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Separator } from '@/components/shadcn/separator'
@@ -62,6 +63,11 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
       title={<>{badge}<span className="min-w-0 truncate text-lg font-bold tracking-[-.02em]">{title}</span></>}
       headerExtra={(actions || noc) ? <>
         {noc && <NocStatus {...noc} />}
+        {/* Favori yıldızı (2026-10-02, öneri 23) — kartla AYNI anahtar; tercihler hazır değilse çizilmez */}
+        {noc?.monitor?.id != null && (
+          <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} size="header"
+            name={typeof title === 'string' ? title : (noc.monitor.name || noc.monitor.url || noc.monitor.host || noc.monitor.domain)} />
+        )}
         {actions && <div className="ml-auto flex shrink-0 items-center">{actions}</div>}
       </> : null}
     >

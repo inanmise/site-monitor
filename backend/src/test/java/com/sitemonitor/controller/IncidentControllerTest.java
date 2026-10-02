@@ -33,6 +33,8 @@ class IncidentControllerTest {
     @MockitoBean PermissionService permissionService;
     @MockitoBean AuditService auditService;
     @MockitoBean com.sitemonitor.service.IncidentNotificationService notificationService;
+    /** Alarm bağı doğrulaması (2026-10-01) — bu dosyanın senaryoları alert_event_id göndermez; davranışı IncidentAlertLinkControllerTest'te. */
+    @MockitoBean com.sitemonitor.service.IncidentAlertLinkService alertLinks;
     @MockitoBean RememberMeService rememberMeService;
     @MockitoBean UserService userService;
     @MockitoBean HttpMetricsService httpMetricsService;

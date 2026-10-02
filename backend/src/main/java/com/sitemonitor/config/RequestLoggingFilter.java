@@ -77,6 +77,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             "mail_password|mailPassword|mail_pass|mailPass|" +
             "proxy_password|proxyPassword|proxy_pass|proxyPass|" +
             "ldap_password|ldapPassword|" +
+            // İzleme formlarının write-only sırları (HTTP / Sayfa Hızı: Basic auth parolası; özel başlıklar
+            // Authorization / X-Api-Key taşır) — 2026-10-01
+            "basicAuthPass|basic_auth_pass|customHeaders|custom_headers|" +
             // Tokens, bearer
             "token|access_token|accessToken|refresh_token|refreshToken|" +
             "auth_token|authToken|bearer|bearer_token|bearerToken|" +

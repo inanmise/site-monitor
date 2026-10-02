@@ -71,6 +71,24 @@ public class UserPushRecipientResolver {
     private final AppUserRepository userRepo;
     private final AppSettingsService appSettings;
 
+    /** Kişisel push sessiz saati karar kodu (2026-10-01, onaylı öneri 15). */
+    public static final String SKIPPED_USER_QUIET_HOURS = "SKIPPED_USER_QUIET_HOURS";
+
+    /** Test kancası (paket-özel) — kişisel sessiz saat penceresi bu saatle değerlendirilir. */
+    java.time.Clock clock = java.time.Clock.systemUTC();
+
+    /**
+     * Kişinin KENDİ push sessiz saati şu an bu seviyeyi bastırıyor mu? Global push sessiz saatinin kişi eşi: pencere
+     * içinde asgari seviyenin altındaki push bu kişiye gitmez (satır {@code SKIPPED_USER_QUIET_HOURS}); KRİTİK asla
+     * bastırılmaz. Alan boşsa (varsayılan) hiçbir şey değişmez — ek sorgu da yok (kullanıcı satırı zaten elde).
+     */
+    static boolean personalQuietBlocks(AppUser u, String level, java.time.Instant now) {
+        if (u == null || u.getPushQuietStart() == null || u.getPushQuietEnd() == null) return false;
+        QuietHours q = QuietHours.parse(u.getPushQuietStart(), u.getPushQuietEnd(), u.getPushQuietDays(),
+                u.getPushQuietMinLevel());
+        return q != null && q.defers(level) && q.activeAt(now);
+    }
+
     /** Çözüm sonucu: gönderilecekler + nedenleriyle atlananlar (görünmez sessizlik yok). */
     public record Recipient(String username, String displayName, String skipReason) {}
 
@@ -101,6 +119,7 @@ public class UserPushRecipientResolver {
         if (groups.values().stream().noneMatch(g -> g.enabled)) return List.of();
 
         int level = levelValue(alertLevel);
+        java.time.Instant now = java.time.Instant.now(clock);
         // Tekilleştirme: çoklu takım üyeliğinde aynı kişi bir kez (LinkedHashMap sıra korur).
         Map<String, Recipient> out = new LinkedHashMap<>();
         for (AppUser u : userRepo.findByMembershipTeamId(teamId)) {
@@ -114,6 +133,9 @@ public class UserPushRecipientResolver {
                 out.putIfAbsent("(bos)#" + u.getId(), new Recipient("-", display, "SKIPPED_NO_ID"));
             } else if (Boolean.TRUE.equals(u.getPushOptOut())) {
                 out.putIfAbsent(username, new Recipient(username, display, "SKIPPED_USER_OPT_OUT"));
+            } else if (personalQuietBlocks(u, alertLevel, now)) {
+                // Kişisel sessiz saat (2026-10-01): kişi penceresinde, seviye asgari seviyesinin altında — satır kalır.
+                out.putIfAbsent(username, new Recipient(username, display, SKIPPED_USER_QUIET_HOURS));
             } else {
                 out.put(username, new Recipient(username, display, null));       // opt-out satırını ezebilir mi?
             }
@@ -135,6 +157,7 @@ public class UserPushRecipientResolver {
         Map<String, GroupRule> groups = groupRules();
         boolean anyEnabled = groups.values().stream().anyMatch(g -> g.enabled);
         int level = levelValue(alertLevel);
+        java.time.Instant now = java.time.Instant.now(clock);
         java.util.Set<String> seen = new java.util.LinkedHashSet<>();   // id null olabilir → ad+id anahtarı
         for (AppUser u : userRepo.findByMembershipTeamId(teamId)) {
             String username = u.getUsername() == null ? "" : u.getUsername().trim();
@@ -151,6 +174,7 @@ public class UserPushRecipientResolver {
             else if (level < levelValue(match.minLevel)) decision = "BELOW_MIN_LEVEL";
             else if (username.isEmpty()) decision = "SKIPPED_NO_ID";
             else if (optOut) decision = "SKIPPED_USER_OPT_OUT";
+            else if (personalQuietBlocks(u, alertLevel, now)) decision = SKIPPED_USER_QUIET_HOURS;   // resolve() ile aynı sıra
             else decision = "RECIPIENT";
             seen.add(seenKey(u));
             out.add(new Explanation(username.isEmpty() ? "-" : username, display, u.getTitle(), u.getOrgRole(), active,

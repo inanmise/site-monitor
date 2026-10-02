@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 
 /**
  * Uyarılar sayfasında 7/24 göstergesi (2026-09-28, 20.89.0'ın açık noktası): uyarı satırı artık `noc_notify` +

@@ -29,4 +29,12 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
 
     /** Haftalık rapor akışı: takımın PO / MANAGER kontaklarını çözer. */
     List<EscalationContact> findByTeamIdAndRoleAndActiveTrue(Long teamId, String role);
+
+    /**
+     * Zamana bağlı eskalasyon adımı işinin UCUZ ön kapısı (2026-10-01): herhangi bir etkin kişide gecikme tanımlı mı?
+     * Takım süzgeci BİLİNÇLİ yok — yalnız boolean döner, alıcı DÖNDÜRMEZ (gecikme tanımsız kurulumda iş kilit almadan tek
+     * sorguyla biter). Alıcılar yine alarmın sahip takımlarından ({@code findByTeamIdInAndActiveTrueOrderByRoleAsc} +
+     * {@code EscalationContactScope}) çözülür. {@code EscalationContactScopeTest.UNSCOPED_READS_ALLOWED} listesinde.
+     */
+    boolean existsByActiveTrueAndDelayMinutesGreaterThan(Integer minutes);
 }
