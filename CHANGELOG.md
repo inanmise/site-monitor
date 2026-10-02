@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.96.0] — 2026-10-02
+
 Uçtan uca incelemeden çıkan ve onaylanan 16 öneri. Hepsi mevcut akışı bozmayacak şekilde yapıldı: yeni davranışlar
 ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekranlar ve dosyalar bugünkü gibi.
 
@@ -2025,7 +2027,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.95.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.96.0...HEAD
+[20.96.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.0
 [20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0
 [20.94.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.94.0
 [20.93.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.93.1
