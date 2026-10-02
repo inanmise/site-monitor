@@ -26,8 +26,16 @@ export const MAIN_STEPS = [
   { id: 'modal',     target: 'cert-modal-tabs', placement: 'bottom', since: 1, help: '14.5', requires: '[data-tour="cert-modal-tabs"]',
     after: { closeModal: true } },
   { id: 'all',       target: 'nav-tab-all', placement: 'right', since: 1, help: '14.8', before: { reveal: 'all' } },
-  { id: 'monitoring', target: 'nav-tab-http', placement: 'right', since: 1, help: '14.14', before: { reveal: 'http' } },
+  // Güncel ana ekranlar (2026-10-02, öneri 24): `since: 2` adımlar turu v1'de tamamlamış kullanıcıya "Yenilikler" olarak
+  // sunulur (TOUR_VERSION 2; tamamı değil yalnız bu adımlar). `monitoring` kimliği korunur — hedefi HTTP sekmesi yerine
+  // bölümün ilk sırasındaki İzleme Panosu. Favoriler / Görünümler adımları İzleme Panosu sayfasında gösterilir; telefonda
+  // açık çekmece kapatılır (conceal), masaüstünde zararsız. Hedef yoksa (izleme/favori/tercih yok) adım atlanır.
+  { id: 'monitoring', target: 'nav-tab-monitoring', placement: 'right', since: 2, help: '14.14', before: { reveal: 'monitoring' } },
+  { id: 'favorites', target: 'mo-views', tab: 'monitoring', placement: 'bottom', since: 2, help: '14.14', before: { conceal: true } },
+  { id: 'saved-views', target: 'saved-views', tab: 'monitoring', placement: 'bottom', since: 2, help: '14.14', before: { conceal: true } },
+  { id: 'status-page', target: 'nav-tab-status', placement: 'right', since: 2, before: { reveal: 'status' } },
   { id: 'alerts',    target: 'nav-tab-incidents', placement: 'right', since: 1, help: '14.15', before: { reveal: 'incidents' } },
+  { id: 'alert-history', target: 'nav-tab-alerthistory', placement: 'right', since: 2, help: '14.17', before: { reveal: 'alerthistory' } },
   { id: 'reports',   target: 'nav-tab-weeklyreports', placement: 'right', since: 1, help: '14.18', before: { reveal: 'weeklyreports' } },
   { id: 'admin',     target: 'nav-tab-admin', placement: 'right', since: 1, help: '14.24', when: isAdminCtx, before: { reveal: 'admin' } },
   { id: 'health',    target: 'nav-tab-health', placement: 'right', since: 1, help: '14.27', when: isAdminCtx, before: { reveal: 'health' } },
@@ -35,6 +43,8 @@ export const MAIN_STEPS = [
   { id: 'palette',   target: 'nav-search', placement: 'right', since: 1, mobile: false,
     // Palet shadcn Dialog (2026-09-26): açık palet `[data-command-palette]` taşır (CommandPalette.jsx), sınıf adı yok.
     advanceOn: { selector: '[data-command-palette]' }, doIt: { click: 'nav-search' }, after: { closePalette: true } },
+  // Klavye kısayolları (öneri 24): hedefsiz bilgi adımı; telefonda klavye yok → atlanır.
+  { id: 'shortcuts', center: true, since: 2, mobile: false },
   // Telefonda zil üst çubukta, yardım düğmesi sayfada → açık çekmece kapatılır (conceal); kullanıcı kartı
   // çekmecede → yalnız menü açılır (reveal '*'). Masaüstünde ikisi de zararsız. (2026-09-26, yeni kenar çubuğu)
   { id: 'inbox',     target: 'nav-inbox', placement: 'right', since: 1, help: '14.2', before: { conceal: true } },

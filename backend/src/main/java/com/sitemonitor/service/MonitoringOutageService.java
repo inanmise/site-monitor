@@ -1381,6 +1381,7 @@ public class MonitoringOutageService {
                     appSettings.getBoolean("site.monitor.ping.alert-enabled", pingAlertEnabled);
             case EscalationService.TYPE_HTTP_DOWN,
                  EscalationService.TYPE_HTTP_SSL,
+                 EscalationService.TYPE_HTTP_SLOW,
                  EscalationService.TYPE_DOMAIN_EXPIRY ->
                     appSettings.getBoolean("site.monitor.http.alert-enabled", true);
             case EscalationService.TYPE_PAGE_DOWN,

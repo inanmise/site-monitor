@@ -14,6 +14,8 @@ import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { copyText } from '../../utils/copyText.js'
 import PageHeader from '../ui/PageHeader.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
+import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
+import { VIEW_SPECS } from '../../hooks/userPrefsModel.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import MonitorStatsBar from '../MonitorStatsBar.jsx'
@@ -647,6 +649,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
           ) : summaryLoading ? <Skeleton className="h-5 w-64" aria-hidden="true" /> : null}
           actions={(
             <>
+              {/* Kayıtlı görünümler (2026-10-02, öneri 23) — tercihler hazır değilse çizilmez */}
+              <SavedViewsMenu listKey="alerthistory" tab="alerthistory" {...VIEW_SPECS.alerthistory} size="default" />
               <Button type="button" variant="outline" onClick={refreshAll} aria-busy={loading || undefined}>
                 <RefreshCcw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('alh.refresh')}
               </Button>

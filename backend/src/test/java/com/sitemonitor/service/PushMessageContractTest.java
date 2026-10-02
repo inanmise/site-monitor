@@ -247,6 +247,7 @@ class PushMessageContractTest {
                 Map.entry("PING_SLOW", "slow"),
                 Map.entry("PORT_SLOW", "slow"),
                 Map.entry("KEYWORD_SLOW", "slow"),
+                Map.entry("HTTP_SLOW", "slow"),   // 2026-10-01, onaylı öneri 9
                 Map.entry("DNS_SLOW", "slow"),
                 Map.entry("PAGESPEED_SLOW", "slow"),
                 Map.entry("SCRIPTED_SLOW", "slow"),
@@ -386,6 +387,7 @@ class PushMessageContractTest {
         ctxByType.put(EscalationService.TYPE_PING_SLOW,     Map.of("rtt_ms", 240L, "limit_ms", 180L));
         ctxByType.put(EscalationService.TYPE_PORT_SLOW,     Map.of("response_ms", 4200L, "threshold_ms", 3000));
         ctxByType.put(EscalationService.TYPE_KEYWORD_SLOW,  Map.of("response_ms", 4200L, "threshold_ms", 3000));
+        ctxByType.put(EscalationService.TYPE_HTTP_SLOW,     Map.of("response_ms", 4200L, "threshold_ms", 3000));
         ctxByType.put(EscalationService.TYPE_DNS_SLOW,      Map.of("response_ms", 1200L, "slow_threshold_ms", 800));
         ctxByType.put(EscalationService.TYPE_SCRIPTED_SLOW, Map.of("duration_ms", 12000L, "threshold_ms", 9000));
 

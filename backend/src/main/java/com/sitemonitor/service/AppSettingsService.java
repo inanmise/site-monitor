@@ -281,6 +281,8 @@ public class AppSettingsService {
                     "Ortam adı geçersiz: yalnız küçük harf, rakam ve '-' kullanılabilir (en fazla 40 karakter)",
                     "Invalid environment name: use lower-case letters, digits and '-' only (40 characters at most)"));
         }
+        // Tür bazlı yeniden uyarı sıklığı (2026-10-01): 0 (genel aralık) ya da 15–10080 dakika.
+        if (ReAlertIntervals.isKey(s.key())) ReAlertIntervals.validate(s.key(), val);
         switch (s.type()) {
             case INT -> {
                 try { Integer.parseInt(val); }

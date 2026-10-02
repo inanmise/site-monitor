@@ -3,7 +3,8 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 import { toast as sonnerToast } from 'sonner'
 import { ToastProvider, useToast } from '../components/ui/Toast.jsx'
 import { ThemeProvider } from '../i18n/theme.jsx'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /*
  * Görünüm shadcn Sonner. Seçiciler legacy sınıflar yerine Sonner'ın KENDİ öznitelikleri:

@@ -59,6 +59,8 @@ public final class HttpFailureDiagnostics {
         PROTOCOL_ERROR(Phase.RESPONSE),
         TOO_MANY_REDIRECTS(Phase.REDIRECT),
         STATUS_MISMATCH(Phase.RESPONSE),
+        /** Durum kodu uydu ama yanıt gövdesi JSON doğrulamasından geçmedi (2026-10-01, onaylı öneri 9). */
+        BODY_ASSERTION(Phase.RESPONSE),
         INTERRUPTED(Phase.REQUEST),
         UNKNOWN(Phase.REQUEST);
 
@@ -199,6 +201,13 @@ public final class HttpFailureDiagnostics {
     /** Yanıt geldi ama beklenen durum koduyla eşleşmedi. */
     public static Map<String, Object> forStatusMismatch(Trace tr) {
         return base(tr, Kind.STATUS_MISMATCH);
+    }
+
+    /** Yanıt geldi, durum kodu uydu ama gövde JSON doğrulamasından geçmedi — {@code message} doğrulamanın nedeni. */
+    public static Map<String, Object> forBodyAssertion(Trace tr, String message) {
+        Map<String, Object> m = base(tr, Kind.BODY_ASSERTION);
+        m.put("message", message);
+        return m;
     }
 
     private static Map<String, Object> base(Trace tr, Kind k) {

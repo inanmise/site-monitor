@@ -127,7 +127,7 @@ export default function DashboardFilters({
   const search = (
     <InputGroup data-slot="dashboard-domain-search"
       className={phone ? 'h-12 w-full' : 'h-8 w-full sm:w-80 lg:w-[26rem] pointer-coarse:h-10'}>
-      <InputGroupInput type="text" placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchPlaceholder')}
+      <InputGroupInput type="text" placeholder={t('app.searchPlaceholder')} aria-label={t('app.searchPlaceholder')} data-page-search=""
         value={values.search} className={phone ? 'h-full text-base' : undefined}
         onChange={(e) => setters.search(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Escape' && values.search) { e.preventDefault(); e.stopPropagation(); setters.search('') } }} />

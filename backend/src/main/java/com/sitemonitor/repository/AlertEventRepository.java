@@ -94,6 +94,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     /** D9: otomatik kapanışın manuel resolve'a karşı serileştirilmesi — yalnız hâlâ AÇIKSA
      *  kapatır; 0 dönerse yarışı başkası kazanmış demektir (ikinci "çözüldü" maili gitmez,
      *  resolvedBy ezilmez). */
+    /**
+     * Sessiz saat özeti gönderildi (2026-10-01): hâlâ AÇIK alarmlar bu andan itibaren "bildirilmiş" sayılır — günlük
+     * yeniden uyarı kadansı özet anından başlar. Tek toplu UPDATE (alarm başına sorgu yok).
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AlertEvent e SET e.lastReAlertAt = :at WHERE e.id IN :ids AND e.resolved = false")
+    int stampNotifiedByQuietDigest(@Param("ids") Collection<Long> ids, @Param("at") String at);
+
     @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE AlertEvent e SET e.resolved = true, e.resolvedAt = :at, e.resolvedBy = :by "

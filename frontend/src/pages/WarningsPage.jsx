@@ -6,6 +6,7 @@ import {
 import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { usePagination } from '../hooks/usePagination.js'
@@ -21,7 +22,7 @@ import NetworkOutageHistory from '../components/NetworkOutageHistory.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
-import { useElementWidth } from './forecast/forecastUi.jsx'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 import WarningsToolbar from './warnings/WarningsToolbar.jsx'
 import AttentionList from './warnings/AttentionList.jsx'
 import { EMPTY_ICONS, attentionCsv } from './warnings/AttentionParts.jsx'
@@ -86,7 +87,7 @@ export default function WarningsPage({
   const t = useT()
   const isMobile = useIsMobile()
   // Kart/tablo kararı KAP genişliğinden (tablette kenar çubuğu açıkken içerik ~440 px) — Vade Takvimi ile aynı
-  const [listWidth, listRef] = useElementWidth()
+  const [listWidth, listRef] = useElementWidthState()
   const narrow = isMobile || (listWidth > 0 && listWidth < 640)
 
   // ── Veri ──────────────────────────────────────────────────────────────────────────────────────
@@ -202,13 +203,8 @@ export default function WarningsPage({
   })
   function exportCsv() {
     try {
-      const blob = new Blob([attentionCsv(items, t)], { type: 'text/csv;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `certificates-needing-attention-${new Date().toISOString().slice(0, 10)}.csv`
-      document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      // İndirme ortak (utils/csvExport — öneri 29): Blob + DOM'da tıklama + 1 sn sonra iptal; dosya ve ad aynı.
+      downloadCsv(`certificates-needing-attention-${new Date().toISOString().slice(0, 10)}.csv`, attentionCsv(items, t))
     } catch { /* jsdom / kısıtlı ortam */ }
   }
 

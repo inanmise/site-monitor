@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 import {
   NOTE_RULE, javaTrim, noteRuleState, isNoteValid, ACK_CHIPS, RESOLVE_CHIPS, chipsFor, applyTemplate, hasTemplate,
   contextFromAlert, contextFromIncident, levelMix, isLongMessage, focusReturnPlan, returnFocus,

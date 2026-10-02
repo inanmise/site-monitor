@@ -1,5 +1,6 @@
 import { csvRows } from '../../../utils/csv.js'
 import { localDayKey } from '../../../utils/localDay.js'
+import { roundedAgoParts } from '../../../utils/relativeTime.js'
 
 /**
  * Kullanıcı / Oturum paneli saf modeli (2026-09-13 zenginleştirme) — React'siz, test edilebilir.
@@ -36,7 +37,7 @@ export function rowMatches(row, f) {
 
 /** Sekme anahtarı → nav etiketi anahtarı (Nav.jsx ile aynı liste; kapı testi kaynağı okur). */
 export const TAB_LABEL_KEYS = Object.freeze({
-  dashboard: 'nav.dashboard', all: 'nav.all', domains: 'nav.domains', uptime: 'nav.uptime', monitoring: 'nav.monitoringOverview', storms: 'nav.storms', forecast: 'nav.forecast',
+  dashboard: 'nav.dashboard', all: 'nav.all', domains: 'nav.domains', uptime: 'nav.uptime', monitoring: 'nav.monitoringOverview', status: 'nav.statusPage', storms: 'nav.storms', forecast: 'nav.forecast',
   renewal: 'nav.renewal', 'renewal-guide': 'nav.renewalGuide', http: 'nav.http', domain: 'nav.domainmon', port: 'nav.port',
   dns: 'nav.dns', keyword: 'nav.keyword', ping: 'nav.ping', page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted',
   warnings: 'nav.warnings', incidents: 'nav.incidents', maintenance: 'nav.maintenance', alerthistory: 'nav.alertHistory', noc: 'nav.noc',
@@ -78,18 +79,12 @@ export function loginStatus(row, activeSet = new Set(), now = Date.now()) {
 }
 export const STATUS_ORDER = ['active', 'today', 'week', 'month', 'dormant', 'never']
 
-/** Göreli zaman: {unit, n} — çağıran t('uact.rel.<unit>', n) ile yazar. */
+/** Göreli zaman: {unit, n} — çağıran t('uact.rel.<unit>', n) ile yazar (çekirdek ortak: utils/relativeTime.roundedAgoParts). */
 export function relTime(iso, now = Date.now()) {
   if (!iso) return null
   const t = Date.parse(iso.endsWith('Z') ? iso : iso + 'Z')
   if (Number.isNaN(t)) return null
-  const s = Math.max(0, Math.round((now - t) / 1000))
-  if (s < 60) return { unit: 'sec', n: s }
-  const m = Math.round(s / 60); if (m < 60) return { unit: 'min', n: m }
-  const h = Math.round(m / 60); if (h < 24) return { unit: 'hour', n: h }
-  const d = Math.round(h / 24); if (d < 30) return { unit: 'day', n: d }
-  const mo = Math.round(d / 30); if (mo < 12) return { unit: 'month', n: mo }
-  return { unit: 'year', n: Math.round(mo / 12) }
+  return roundedAgoParts(t, now)
 }
 
 /** Süre (sn) → "1 sa 05 dk" parçaları. */

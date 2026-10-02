@@ -7,6 +7,8 @@ import CheckAllButton from '../check/CheckAllButton.jsx'
 import CopyLinkButton, { useCopyLink } from '../ui/CopyLinkButton.jsx'
 import MonitorGuideButton, { MonitorGuideDialog, hasMonitorGuide } from '../ui/MonitorGuideButton.jsx'
 import { TAB_META } from '../palette/paletteModel.js'
+import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
+import { MONITOR_TYPES, VIEW_SPECS } from '../../hooks/userPrefsModel.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -86,6 +88,7 @@ export default function MonitorPageHeader({
   const openedFromMenu = useRef(false)
   const Icon = icon || TAB_META[type]?.Icon
   const guide = hasMonitorGuide(type)
+  const savedViews = MONITOR_TYPES.includes(type)
 
   const countText = count == null ? null
     : countUnit === 'sites'
@@ -172,6 +175,12 @@ export default function MonitorPageHeader({
             onClick={check.onOpen} size="default" className={cn(H, 'max-sm:flex-1')} />
         )}
         {extraActions}
+        {/* Kayıtlı görünümler (2026-10-02, öneri 23) — yalnız dokuz izleme türünde; tercihler hazır değilse çizilmez.
+            lg altında yalnız ikon (+ sayı); ad aria-label'da. */}
+        {savedViews && (
+          <SavedViewsMenu listKey={type} tab={type} {...VIEW_SPECS.monitor}
+            size="default" className={H} labelClassName="hidden lg:inline" />
+        )}
         {phone ? secondaryMenu : secondaryInline}
       </div>
       {canWrite && onNew && (

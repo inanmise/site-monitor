@@ -8,9 +8,12 @@
  * up|down|error|unknown (error = istisna — yanıt yok; down = yanıt geldi ama beklenen koda uymadı), `ok`,
  * `http_status`, `response_ms` (hata anında da dolu: hataya kadar geçen süre), `error` (istisna metni), `checked_at`.
  *
+ * <p>Gelişmiş istek (2026-10-01): `slow_response_enabled` + `slow_threshold_ms` (açıksa süre kutusu Anahtar Kelime
+ * kartıyla aynı kuralla tonlanır — üstü "Yavaş"), `slow_alarm` (açık HTTP_SLOW), `basic_auth_user` / `has_custom_headers`
+ * (değerler ASLA gelmez), `json_path` / `json_expected`, son kontrolde `json_assertion_failed` (neden `error`'da).
+ *
  * <p>Satırda OLMAYANLAR (kart uydurmaz — API boşluğu): TTFB, yönlendirme sayısı, içerik boyutu, TLS kalan gün,
- * yavaşlık eşiği (`slow_response_enabled`/`slow_threshold_ms` HTTP izlemesinde yok; gelirse süre kutusu Anahtar
- * Kelime kartıyla aynı kuralla tonlanır), gövde doğrulaması, hata tanısı (`error_detail` yalnız geçmiş satırında).
+ * hata tanısı (`error_detail` yalnız geçmiş satırında).
  *
  * <p>Genel HTTP yardımcıları Anahtar Kelime / Ping / Sayfa Hızı modellerinden GELİR (kopya yok): durum sınıfı,
  * süre biçimi, hata sınıflandırması, vekil kipi, URL parçaları, sıklık metni, 24 sa gecikme tabanı.
@@ -69,6 +72,12 @@ export function statusVerdict(m) {
 export function httpFailureReason(m) {
   const status = m?.status
   if (status !== 'down' && status !== 'error') return null
+  // JSON doğrulaması düştü (2026-10-01): yanıt geldi ama gövde doğrulanamadı — hata metni TLS/zaman aşımı sözcüğü
+  // içerse bile (yol adı "$.timeout" olabilir) sınıflandırmaya sokulmaz; neden önekten arındırılıp gösterilir.
+  if (m?.json_assertion_failed) {
+    const err = String(m?.error || '')
+    return { kind: 'json', detail: err.replace(/^JSON doğrulaması başarısız:\s*/, '').split(/\r?\n/)[0] || err }
+  }
   const expected = expectedOf(m)
   const r = failureReason(m)
   if (r && (r.kind === 'http4xx' || r.kind === 'http5xx')) return { ...r, expected }
@@ -118,6 +127,11 @@ export function requestChips(m) {
     const variant = tlsErrors && (sslExpiry || domainExpiry) ? 'both' : tlsErrors ? 'tls' : 'expiry'
     chips.push({ key: 'alerts', variant, tlsErrors, sslExpiry, domainExpiry })
   }
+  // Gelişmiş istek (2026-10-01): yalnız KULLANILIYORSA — eklentisiz kartta hiçbir çip eklenmez.
+  if (m?.basic_auth_user || m?.has_custom_headers) chips.push({ key: 'auth' })
+  const jsonPath = String(m?.json_path ?? '').trim()
+  // Çip metni kısa (dar kartta sığsın), tam yol dokun-gör balonunda (`full`)
+  if (jsonPath) chips.push({ key: 'json', value: jsonPath.length > 32 ? `${jsonPath.slice(0, 31)}…` : jsonPath, full: jsonPath })
   return chips
 }
 

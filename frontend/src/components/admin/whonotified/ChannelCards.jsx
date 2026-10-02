@@ -1,5 +1,5 @@
 import { forwardRef } from 'react'
-import { Mail, Users, Webhook, BellRing } from 'lucide-react'
+import { Mail, Users, Webhook, BellRing, Timer } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import CopyButton from '../../ui/CopyButton.jsx'
 import HintPopover from '../../ui/HintPopover.jsx'
@@ -100,6 +100,18 @@ export function LevelBadge({ level, prefix = '', className }) {
 }
 
 const none = (t) => <p className="px-1 py-2 text-sm text-muted-foreground">{t('sim.none')}</p>
+
+/** Gecikmeli eskalasyon kişisi (2026-10-01): ilk bildirime girmez, alarm N dk onaysız kalırsa bir kez bilgilendirilir. */
+function DelayBadge({ minutes }) {
+  const t = useT()
+  if (minutes == null) return null
+  return (
+    <Badge variant="outline" data-slot="wn-delay" title={t('wn.delayBadgeTitle', minutes)}
+      className="gap-1 font-medium text-muted-foreground">
+      <Timer aria-hidden="true" />{t('wn.delayBadge', minutes)}
+    </Badge>
+  )
+}
 const roleLabel = (t, role) => (role ? t(`ec.role.${String(role).toLowerCase()}`) : '')
 
 // 'globalContact' kaynağı 2026-09-28'de kalktı: eskalasyon kişileri yalnız takımın kendi kişileridir (sunucu kuralı).
@@ -129,6 +141,7 @@ export function EmailCard({ view, level, cardRef }) {
                   <WhyBadge tone={SOURCE_TONE[r.source]} label={label} why={whyOf(r)} who={r.name || r.email} />
                   {r.role && <OrgRoleBadge role={r.role}>{roleLabel(t, r.role)}</OrgRoleBadge>}
                   {r.minLevel && <LevelBadge level={r.minLevel} prefix="≥ " />}
+                  <DelayBadge minutes={r.delayMinutes ?? null} />
                 </>}
                 description={r.email}
                 extra={r.also.length > 0 && (
@@ -167,6 +180,7 @@ export function WebhookCard({ view, cardRef, className }) {
                 {/* E-posta kartındaki aynı kişinin rozetinden AYRI ad (aynı ad iki düğmede = belirsiz) */}
                 <WhyBadge label={t('wn.src.contact')} why={t('wn.why.webhook', w.name)} who={w.name}
                   ariaLabel={t('wn.whyWebhookAria', t('wn.src.contact'), w.name)} />
+                <DelayBadge minutes={w.delayMinutes ?? null} />
               </>}
               description={w.target}
             />

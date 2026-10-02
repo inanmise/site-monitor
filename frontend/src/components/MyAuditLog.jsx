@@ -17,8 +17,9 @@ import LoginHeatmap from './admin/LoginHeatmap.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import ActivityTimeline from './myactivity/ActivityTimeline.jsx'
 import ActivityFilters from './myactivity/ActivityFilters.jsx'
-import { SignInSummary, SecurityCallout, DevicesCard, TypeBreakdownCard, NotificationCard } from './myactivity/ActivityOverview.jsx'
+import { SignInSummary, SecurityCallout, DevicesCard, TypeBreakdownCard, NotificationCard, PushQuietHoursCard } from './myactivity/ActivityOverview.jsx'
 import { useActivitySummary } from './myactivity/useActivitySummary.js'
+import LandingTabCard from './myactivity/LandingTabCard.jsx'
 import {
   presetRange, DEFAULT_RANGE, EV, matchesQuery, deviceStats, heatmapOf, relTime, typeBreakdown,
 } from './myactivity/activityModel.js'
@@ -46,7 +47,8 @@ const CORE_TYPES = [EV.SIGN_IN, EV.SIGN_IN_FAILED, EV.SIGN_OUT, EV.PASSWORD]
  * <p>Uç sınırları (dürüstçe): tür ve sonuç süzgeci TEK değer (çoklu tür yok), metin/IP araması sunucuda yok →
  * yalnız görünen sayfada ve bunu söyler; özet ucu yok → `useActivitySummary` sınırlı ek çekim yapar.
  */
-export default function MyAuditLog({ loginInfo = null, onChangePassword = null, pushOptOut = false, onPushOptOutChange = null }) {
+export default function MyAuditLog({ loginInfo = null, onChangePassword = null, pushOptOut = false, onPushOptOutChange = null,
+  pushQuiet = null, onPushQuietSave = null, landingOptions = null }) {
   const t = useT()
   const locale = useDateLocale()
   const phone = useIsMobile()
@@ -287,6 +289,10 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null, 
           <TypeBreakdownCard summary={s} loading={summary.loading} activeType={outcome ? null : eventType}
             onPick={(type) => { setEventType(type); setOutcome('') }} />
           {onPushOptOutChange && <NotificationCard pushOptOut={pushOptOut} onChange={onPushOptOutChange} />}
+          {/* Kişisel push sessiz saati (2026-10-01) — yalnız kayıt işlevi verildiyse (App) */}
+          {onPushQuietSave && <PushQuietHoursCard value={pushQuiet} onSave={onPushQuietSave} />}
+          {/* Açılış sekmesi (2026-10-02, öneri 23) — seçenekler App'ten (görünürlük kuralları); kişisel tercih belgesine yazılır */}
+          {landingOptions && <LandingTabCard options={landingOptions} />}
         </aside>
       </div>
 

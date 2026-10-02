@@ -139,7 +139,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   const [detailTab, setDetailTab] = useState('control')
   const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
@@ -176,7 +176,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -199,7 +199,6 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
   useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   useEffect(() => {
     if (!isAdmin) return
@@ -654,7 +653,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     <div className="upt-page">
       <MonitorPageHeader type="ping" title={t('ping.title')} subtitle={t('ping.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('ping.addMonitor')} />
 
@@ -675,7 +674,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('ping.searchPlaceholder')} aria-label={t('ping.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

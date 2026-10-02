@@ -3,7 +3,7 @@ import {
   Play, Server, ShieldAlert, ShieldX, Stethoscope, TextSearch, Wifi, WifiOff, Wrench, CalendarClock, Boxes,
 } from 'lucide-react'
 import { formatDate, formatDateOnly } from '../../api/client'
-import { csvCell } from '../../utils/csv.js'
+import { csvRows } from '../../utils/csv.js'
 import { useT } from '../../i18n/index.jsx'
 import KebabMenu from '../../components/ui/KebabMenu.jsx'
 import { Spinner } from '../../components/ui/Progress.jsx'
@@ -182,7 +182,7 @@ const CSV_COLS = ['domain', 'section', 'reasons', 'next', 'days', 'expires', 'te
 
 /**
  * CSV gövdesi (UTF-8 BOM + CRLF — Excel beklentisi): süzülmüş + sıralı TÜM öğeler (yalnız görünen sayfa değil).
- * Hücre kaçışı + formül nötrleme tek yerde (`utils/csv.js`).
+ * Hücre kaçışı + formül nötrleme + CRLF birleştirme tek yerde (`utils/csv.js` csvRows — öneri 29, bayt aynı).
  */
 export function attentionCsv(items, t) {
   const head = CSV_COLS.map((k) => t(`attn.csv.${k}`))
@@ -192,5 +192,5 @@ export function attentionCsv(items, t) {
     plan?.planned_at ? formatDateOnly(plan.planned_at) : '', row.issuer_cn || row.issuer || '', row.checked_at ? formatDate(row.checked_at) : '',
     row.error || '',
   ])
-  return '﻿' + [head, ...body].map((r) => r.map(csvCell).join(',')).join('\r\n')
+  return '﻿' + csvRows([head, ...body])
 }

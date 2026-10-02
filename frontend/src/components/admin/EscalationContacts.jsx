@@ -9,9 +9,10 @@ import UserBadge from '../ui/UserBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
 import { formatDateSec } from '../../api/client'
-import { ArrowRight, Download, UserPlus, Users } from 'lucide-react'
+import { ArrowRight, Download, Timer, UserPlus, Users } from 'lucide-react'
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
+import { useFormErrors } from '../../hooks/useFormErrors.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -30,7 +31,25 @@ const ROLES  = ['PO', 'TECH', 'MANAGER', 'CLEVEL']
 const LEVELS = ['WARNING', 'HIGH', 'CRITICAL']
 /** Alarm seviyesi rozeti — dolgulu ton (eski `.level-badge` renkleri: amber / turuncu / kırmızı). */
 const LEVEL_CLS = { WARNING: 'bg-amber-500 text-white', HIGH: 'bg-orange-600 text-white', CRITICAL: 'bg-red-700 text-white' }
-const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', webhook_url: '', webhook_type: 'TEAMS', active: true, team_id: '' }
+const emptyContact = { user_id: '', role: 'TECH', min_alert_level: 'WARNING', webhook_url: '', webhook_type: 'TEAMS', active: true, team_id: '', delay_minutes: '' }
+
+/** Zamana bağlı eskalasyon adımı (2026-10-01): boş = anlık (bugünkü davranış); 1–1440 dk. Sunucu aynı aralığı uygular. */
+export const DELAY_MIN = 1
+export const DELAY_MAX = 1440
+/** Kişinin etkin gecikmesi (dk) ya da null (anlık). */
+export const contactDelay = (c) => (Number(c?.delay_minutes) > 0 ? Number(c.delay_minutes) : null)
+
+/**
+ * Formdaki gecikme metni → { value, invalid }. Boş = null (anlık). Değer 1–1440 tam sayı olmalı; 0 da geçersiz
+ * (anlık için alan boş bırakılır).
+ */
+export function parseDelayInput(raw) {
+  const s = String(raw ?? '').trim()
+  if (s === '') return { value: null, invalid: false }
+  const n = Number(s)
+  const ok = /^\d+$/.test(s) && Number.isInteger(n) && n >= DELAY_MIN && n <= DELAY_MAX
+  return { value: ok ? n : null, invalid: !ok }
+}
 
 /**
  * @param onOpenSimulator (g_* paramları) → "Kim bilgilendirilir?" sekmesine geçer (AdminPanel.jump). Simülatör
@@ -50,6 +69,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
   const [form, setForm]     = useState(emptyContact)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState(null)
+  // Alan-bazlı doğrulama (2026-09-30 kuralı): hata alanın altında, modal yeniden açılınca sıfırlanır.
+  const fe = useFormErrors(modal)
 
   // İstemci-taraflı filtre + sayfalama (getContacts tüm listeyi döndürür)
   // Süzgeçler URL'de (g_*): derin bağlantı + yenileme korur (2026-09-20).
@@ -145,11 +166,15 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       webhook_type: c.webhook_type || 'TEAMS',
       active: c.active !== false,
       team_id: c.team_id ?? '',
+      delay_minutes: contactDelay(c) != null ? String(contactDelay(c)) : '',
     })
     setModal(c)
   }
 
   async function save() {
+    // Gecikme alanı: hata alanın altında (tost değil); ilk hatalı alana kaydırılır.
+    const delay = parseDelayInput(form.delay_minutes)
+    if (fe.check({ delay_minutes: delay.invalid && t('ec.delayInvalid') })) return
     setSaving(true)
     try {
       const payload = {
@@ -161,6 +186,10 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
         active: form.active,
         team_id: form.team_id ? Number(form.team_id) : null,
       }
+      // Gecikme YALNIZ gerektiğinde gönderilir: boş alan + gecikmesiz kişi → payload bugünküyle AYNI (anahtar yok;
+      // sunucu anahtar yoksa alana dokunmaz). Var olan gecikme silindiyse açıkça null gider (anlık davranışa dönüş).
+      if (delay.value != null) payload.delay_minutes = delay.value
+      else if (modal !== 'add' && contactDelay(modal) != null) payload.delay_minutes = null
       const res = modal === 'add'
         ? await api.admin.addContact(payload)
         : await api.admin.updateContact(modal.id, payload)
@@ -221,8 +250,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
           )}
           <Button variant="outline" title={t('ec.exportCsv')} onClick={() => {
             const rows = filteredContacts.map(c => [c.name, c.email, teamMap[c.team_id] || '', roleLabelMap[c.role] || c.role, levelLabelMap[c.min_alert_level] || c.min_alert_level,
-              c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive')])
-            downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive')], rows))
+              c.webhook_url ? c.webhook_type : '', c.active ? t('ec.active') : t('ec.inactive'), contactDelay(c) ?? ''])
+            downloadCsv(stampedName('eskalasyon-kisileri'), toCsv([t('ec.colName'), t('ec.colEmail'), t('ec.colTeam'), t('ec.colRole'), t('ec.colLevel'), t('ec.colWebhook'), t('ec.colActive'), t('ec.colDelay')], rows))
           }}><Download aria-hidden="true" /> {t('ec.exportCsv')}</Button>
           {canManage && <Button variant="success" onClick={openAdd}><UserPlus aria-hidden="true" /> {t('ec.addBtn')}</Button>}
         </div>
@@ -289,9 +318,18 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                 </TableCell>
                 <TableCell><OrgRoleBadge role={c.role}>{roleLabelMap[c.role] || c.role}</OrgRoleBadge></TableCell>
                 <TableCell>
-                  <Badge data-level={c.min_alert_level} className={cn('font-bold', LEVEL_CLS[c.min_alert_level] || 'bg-muted-foreground text-white')}>
-                    {levelLabelMap[c.min_alert_level] || c.min_alert_level}
-                  </Badge>
+                  {/* Seviye + (varsa) eskalasyon gecikmesi — telefonda da görünen sütun, rozetler alt satıra kayar */}
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Badge data-level={c.min_alert_level} className={cn('font-bold', LEVEL_CLS[c.min_alert_level] || 'bg-muted-foreground text-white')}>
+                      {levelLabelMap[c.min_alert_level] || c.min_alert_level}
+                    </Badge>
+                    {contactDelay(c) != null && (
+                      <Badge variant="outline" data-slot="ec-delay" title={t('ec.delayBadgeTitle', contactDelay(c))}
+                        className="gap-1 font-medium whitespace-nowrap text-muted-foreground">
+                        <Timer aria-hidden="true" />{t('ec.delayBadge', contactDelay(c))}
+                      </Badge>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="hidden md:table-cell">{c.webhook_url ? <ToneBadge tone="success">{c.webhook_type}</ToneBadge> : '—'}</TableCell>
                 <TableCell className="hidden md:table-cell">{(() => {
@@ -387,6 +425,16 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
                   { value: 'CRITICAL', label: t('ec.levelCrit') },
                 ]}
               />
+            )}
+          </Field>
+          {/* Zamana bağlı eskalasyon adımı (2026-10-01, opt-in): boş = bugünkü anlık davranış */}
+          <Field label={t('ec.formDelay')} hint={t('ec.formDelayHint')} className="sm:col-span-2"
+            {...fe.fieldProps('delay_minutes')}>
+            {({ id, describedBy, invalid }) => (
+              <Input id={id} type="number" inputMode="numeric" min={DELAY_MIN} max={DELAY_MAX} step={1}
+                className="h-10 sm:max-w-48 md:h-9" aria-describedby={describedBy} aria-invalid={invalid}
+                value={form.delay_minutes} placeholder={t('ec.formDelayPlaceholder')}
+                onChange={(e) => { setForm({ ...form, delay_minutes: e.target.value }); fe.clear('delay_minutes') }} />
             )}
           </Field>
           <Field label={t('ec.formWebhook')}>

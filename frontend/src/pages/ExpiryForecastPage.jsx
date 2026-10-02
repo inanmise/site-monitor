@@ -20,7 +20,8 @@ import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { buildIcs, downloadIcs } from '../utils/ics.js'
-import { csvCell } from '../utils/csv.js'
+import { csvRows as csvBody } from '../utils/csv.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import {
   EMPTY_FILTERS, filtersToParams, paramsToFilters, applyFilters, computeKpis, batches, upcoming, nextExpiry, expiryKey,
   icsEvents, csvRows, todayKey, dayDiff,
@@ -34,7 +35,8 @@ import ForecastToolbar, { SORT_KEYS } from './forecast/ForecastToolbar.jsx'
 import ForecastList from './forecast/ForecastList.jsx'
 import ForecastDaySheet from './forecast/ForecastDaySheet.jsx'
 import ForecastInsights from './forecast/ForecastInsights.jsx'
-import { TILE_KEYS, matchesTile, calTone, sortRows, useElementWidth } from './forecast/forecastUi.jsx'
+import { TILE_KEYS, matchesTile, calTone, sortRows } from './forecast/forecastUi.jsx'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 
 /**
  * Sertifika Takvimi / Vade Takvimi (Expiry Forecast) — 2026-09-27 shadcn + mobil web yeniden tasarımı.
@@ -82,7 +84,7 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   const locale = dateLocale()
   const isMobile = useIsMobile()
   // Liste kartları: telefonda ya da kap dar olduğunda (tablette kenar çubuğu açıkken içerik ~440 px) — tablo yerine
-  const [listWidth, listRef] = useElementWidth()
+  const [listWidth, listRef] = useElementWidthState()
   const listCards = isMobile || (listWidth > 0 && listWidth < 640)
   const [data, setData] = useState(null)
   const [loadError, setLoadError] = useState(null)
@@ -240,11 +242,8 @@ export default function ExpiryForecastPage({ onSelectDomain }) {
   function exportIcs() { downloadIcs('renewal-plan.ics', buildIcs(icsEvents(list, t), { calName: t('forecast.icsCal') })) }
   function exportCsv() {
     try {
-      const rows = csvRows(list, t)
-      const csv = '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')   // escaping + formula neutralisation in one place (utils/csv.js)
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = `renewal-plan-${today}.csv`; document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      // BOM + CRLF; kaçış + formül nötrleme utils/csv.js'te. İndirme ortak (utils/csvExport — öneri 29; dosya aynı).
+      downloadCsv(`renewal-plan-${today}.csv`, '﻿' + csvBody(csvRows(list, t)))
     } catch { /* jsdom */ }
   }
   async function copyLink() { if (await copyText(window.location.href)) toast.success(t('inv.copied')); else toast.error(t('inv.copyFailed')) }

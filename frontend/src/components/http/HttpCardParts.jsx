@@ -1,5 +1,5 @@
 import {
-  BellRing, CircleAlert, CornerDownRight, LockKeyhole, LockKeyholeOpen, SearchX, ServerCrash, ShieldAlert,
+  BellRing, Braces, CircleAlert, CornerDownRight, KeyRound, LockKeyhole, LockKeyholeOpen, SearchX, ServerCrash, ShieldAlert,
   ShieldCheck, Target, Timer, TimerOff, TriangleAlert, Unplug,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
@@ -48,6 +48,9 @@ const CHIP_VIEW = {
   redirects: { Icon: CornerDownRight, tone: 'neutral', label: 'http.card.noRedirects', hint: () => 'http.card.noRedirectsHint' },
   strictTls: { Icon: ShieldCheck, tone: 'neutral', label: 'http.card.strictTls', hint: () => 'http.card.strictTlsHint' },
   alerts: { Icon: BellRing, tone: 'neutral', label: null, hint: null },
+  // Gelişmiş istek (2026-10-01): yalnız kullanılıyorsa çizilir (httpCardModel.requestChips)
+  auth: { Icon: KeyRound, tone: 'neutral', label: 'http.card.auth', hint: () => 'http.card.authHint' },
+  json: { Icon: Braces, tone: 'primary', label: 'http.card.json', hint: () => 'http.card.jsonHint' },
 }
 const ALERTS_LABEL = { both: 'http.card.tlsExpiryAlerts', tls: 'http.card.tlsAlerts', expiry: 'http.card.expiryAlerts' }
 
@@ -60,7 +63,7 @@ function RequestChip({ chip, rowLabel }) {
     ? [chip.tlsErrors && t('http.card.hintTlsErrors'),
       chip.sslExpiry && t('http.card.hintSslExpiry', daysText(chip.sslExpiry)),
       chip.domainExpiry && t('http.card.hintDomainExpiry', daysText(chip.domainExpiry))].filter(Boolean).join('\n')
-    : t(view.hint(), chip.value)
+    : t(view.hint(), chip.full ?? chip.value)
   const Icon = view.Icon
   // Beklenen kod HER kartta (2026-09-30): varsayılan aralık nötr, elle değiştirilmiş vurgulu — `data-custom` test kancası.
   const tone = chip.key === 'expected' && !chip.custom ? 'neutral' : view.tone
@@ -80,7 +83,7 @@ function RequestChip({ chip, rowLabel }) {
  * alarmları) · sağda kontrol sıklığı. Dar kartta SARAR (rozet dizisi `flex-wrap`).
  *
  * <p>Test kancaları: `data-slot="http-request"`, `http-method` (`data-method`), `http-chip` (`data-chip`
- * plain|expected|redirects|strictTls|alerts), `http-interval`.
+ * plain|expected|redirects|strictTls|alerts|auth|json), `http-interval`.
  */
 export function HttpRequestRow({ monitor: m, rowLabel }) {
   const t = useT()
@@ -184,6 +187,7 @@ export function HttpMetricTiles({ monitor: m, verdict, reason, spark }) {
 const REASON_ICON = {
   timeout: TimerOff, dns: SearchX, tls: LockKeyhole, refused: Unplug, blocked: ShieldAlert, config: CircleAlert,
   http4xx: TriangleAlert, http5xx: ServerCrash, mismatch: Target, error: CircleAlert, down: CircleAlert,
+  json: Braces,   // JSON doğrulaması (2026-10-01)
 }
 
 /**
@@ -204,6 +208,7 @@ export function httpReasonText(reason, t) {
     mismatch: t('http.card.reasonMismatch', reason.detail, reason.expected),
     error: t('keyword.card.reasonError', reason.detail),
     down: t('http.card.reasonDown'),
+    json: t('http.card.reasonJson', reason.detail),
   }[reason.kind] || t('keyword.card.reasonError', reason.detail)
 }
 export const httpReasonIcon = (kind) => REASON_ICON[kind] || CircleAlert

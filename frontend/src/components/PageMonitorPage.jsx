@@ -47,7 +47,8 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { csvCell } from '../utils/csv.js'
+import { csvRows } from '../utils/csv.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
 import { Badge } from '@/components/shadcn/badge'
@@ -184,7 +185,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -203,7 +204,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -235,7 +236,6 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)
 
   useEffect(() => {
     if (!isAdmin) return
@@ -560,14 +560,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     if (!issues.length) return
     const head = ['resource_url', 'resource_type', 'source_page', 'issue_type', 'first_party', 'http_status', 'duration_ms', 'checked_at']
     // Ortak kaçış: formül nötrleme + CR/LF tırnaklama (utils/csv.js). Satır sonu CRLF ve
-    // başta BOM — Excel Türkçe karakterleri ancak öyle doğru açıyor (envanter dışa aktarımıyla aynı).
-    const body = issues.map(r => head.map(k => csvCell(r[k])).join(',')).join('\r\n')
-    const blob = new Blob(['﻿' + head.map(csvCell).join(',') + '\r\n' + body],
-      { type: 'text/csv;charset=utf-8' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `page-issues-${selected?.id ?? 'x'}.csv`
-    a.click(); URL.revokeObjectURL(a.href)
+    // başta BOM — Excel Türkçe karakterleri ancak öyle doğru açıyor (envanter dışa aktarımıyla aynı). Gövde csvRows,
+    // indirme ortak downloadCsv (öneri 29 — dosya baytları ve adı aynı).
+    downloadCsv(`page-issues-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...issues.map(r => head.map(k => r[k]))]))
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
@@ -849,7 +844,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     <div className="upt-page">
       <MonitorPageHeader type="page" title={t('page.title')} subtitle={t('page.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('page.addMonitor')} />
 
@@ -871,7 +866,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:min-w-[200px]" placeholder={t('page.searchPlaceholder')} aria-label={t('page.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

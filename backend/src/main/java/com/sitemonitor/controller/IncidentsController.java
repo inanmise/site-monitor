@@ -538,7 +538,7 @@ public class IncidentsController {
         if (type.startsWith("PAGESPEED_")) return "pagespeed";
         if (type.startsWith("PAGE_"))     return "page";
         if (type.startsWith("SCRIPTED_")) return "scripted";
-        if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
+        if ("HTTP_DOWN".equals(type) || "HTTP_SSL".equals(type) || "HTTP_SLOW".equals(type) || "DOMAIN_EXPIRY".equals(type)) return "http";
         return "cert";   // EXPIRY / CHAIN_BROKEN / REVOKED / MISMATCH / ACCESSIBILITY
     }
 

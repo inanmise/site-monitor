@@ -11,6 +11,8 @@ import {
   CheckCircle, AlertTriangle, XCircle, HelpCircle, ChevronDown, ChevronRight,
   Download, X, RefreshCw, Clock, User, Inbox, ExternalLink } from 'lucide-react'
 import { csvCell } from '../utils/csv.js'
+import { downloadCsv } from '../utils/csvExport.js'
+import { relTimeOrRaw } from '../utils/relativeTime.js'
 import TeamBadge from './ui/TeamBadge.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
@@ -131,13 +133,8 @@ function exportCsv(rows) {
     r.activity_time, r.monitor_type, r.monitor_name, r.target, r.action,
     r.result_status, r.result_summary, r.error_message,
   ].map(csvCell).join(',')))
-  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'activity-log.csv'
-  a.click()
-  URL.revokeObjectURL(url)
+  // Dosya bugünkü gibi: BOM + LF satır sonu (bilinçli olarak CRLF'e çevrilmedi). İndirme ortak (öneri 29).
+  downloadCsv('activity-log.csv', '﻿' + lines.join('\n'))
 }
 
 /**
@@ -195,17 +192,8 @@ export default function ActivityLog({ refreshTrigger }) {
   const [openId, setOpenId]   = useState(null)
   const [details, setDetails] = useState({})   // id → {data, recent}
 
-  const rel = useCallback((iso) => {
-    if (!iso) return '—'
-    const s = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z'
-    const then = new Date(s).getTime()
-    if (isNaN(then)) return iso
-    const sec = Math.floor(Math.max(0, Date.now() - then) / 1000)
-    if (sec < 60) return t('act.rel.now')
-    const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
-    const hr = Math.floor(min / 60);  if (hr < 24)  return t('act.rel.hour', hr)
-    return t('act.rel.day', Math.floor(hr / 24))
-  }, [t])
+  // Ortak yardımcı (utils/relativeTime.relTimeOrRaw — öneri 29): boş damga "—", çözülemeyen damga olduğu gibi; çıktı aynı.
+  const rel = useCallback((iso) => relTimeOrRaw(iso, t), [t])
 
   const params = useMemo(() => {
     const { from, to } = rangeToFromTo(filters.range)

@@ -22,7 +22,8 @@ import lombok.NoArgsConstructor;
         @Index(name = "idx_inc_status",      columnList = "status"),
         @Index(name = "idx_inc_service",     columnList = "service"),
         @Index(name = "idx_inc_channel",     columnList = "channel"),
-        @Index(name = "idx_inc_team",        columnList = "teamId")
+        @Index(name = "idx_inc_team",        columnList = "teamId"),
+        @Index(name = "idx_inc_alert_event", columnList = "alertEventId")
     }
 )
 @Data
@@ -85,6 +86,14 @@ public class IncidentRecord {
 
     @Column(length = 255)
     private String teamName;
+
+    /**
+     * Kaynak alarm (2026-10-01, "alarmdan olay kaydı aç") — kayıt Alarm Geçmişi'ndeki bir alarmdan açıldıysa o
+     * {@code alert_events.id}. Opsiyonel; FK YOK: alarm saklama süresiyle silinse de olay kaydı (kalıcı ledger) kalır.
+     * Yazılırken alarmın varlığı ve kullanıcının onu görebilmesi doğrulanır ({@code IncidentAlertLinkService}).
+     */
+    @Column(name = "alert_event_id")
+    private Long alertEventId;
 
     /** Sade dille kök neden (Layer-1 executive). */
     @Column(columnDefinition = "TEXT")

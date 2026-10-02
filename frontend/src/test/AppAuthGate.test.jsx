@@ -15,6 +15,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import App from '../App.jsx'
+import './appLazyWarmup.js'   // App'in lazy CertificateModal'ı — soğuk dönüşüm testin dışında (öneri 22)
 import { api } from '../api/client'
 
 describe('App auth gate — logged out shows the login form', () => {

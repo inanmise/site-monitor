@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FolderOpen, Tag, History, Trash2, Plus, Globe, RefreshCw, Bug, Sun, Moon, Languages, LifeBuoy, Compass,
-  SearchX, ChevronDown,
+  SearchX, ChevronDown, Star, Keyboard,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { useUserPrefs } from '../hooks/useUserPrefs.js'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useTheme } from '../i18n/theme.jsx'
 import { navigateTo } from '../utils/navigate.js'
+import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import IssueReportModal from './IssueReportModal.jsx'
 import TeamBadge from './ui/TeamBadge.jsx'
@@ -29,7 +31,8 @@ import {
  * Komut paleti (2026-09-12 #1; 2026-09-26 shadcn yeniden tasarımı): Ctrl/Cmd+K ya da kenar çubuğu / mobil üst
  * çubuk düğmesi (`sm:palette` olayı) → tek kutu.
  *
- * İçerik: Son kullanılanlar (localStorage, yalnız bu tarayıcı) · Hızlı eylemler · Sayfalar (görünür sekmeler,
+ * İçerik: Favoriler (boş sorguda; kişisel tercihlerden, sunucuda — 2026-10-02 öneri 23) · Son kullanılanlar (localStorage,
+ * yalnız bu tarayıcı) · Hızlı eylemler · Sayfalar (görünür sekmeler,
  * bölüm alt başlığıyla) · 2+ karakterde canlı veri: Sertifikalar (durum rozeti + kalan gün), İzlemeler (tür
  * ikonu), Takımlar (TeamBadge), Kullanıcılar (yalnız global admin, dizinden istemcide süzülür).
  *
@@ -215,6 +218,10 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
       { id: 'lang', Icon: Languages, label: t('nav.langSwitch'), run: toggleLang },
       { id: 'help', Icon: LifeBuoy, label: t('nav.help'), run: () => dispatch('sm:help', {}) },
       { id: 'tour', Icon: Compass, label: t('tour.paletteCmd'), run: () => dispatch('sm:tour-start', { kind: 'main' }) },
+      // Klavye kısayolları listesi (öneri 24; `?` ile de açılır). Açılıştaki öğeye odak iadesi yapılmaz — yoksa kapanış
+      // animasyonu bitince odak, yeni açılan pencereden açan öğeye geri çekilirdi.
+      { id: 'shortcuts', Icon: Keyboard, label: t('shortcuts.title'), trailing: <Kbd className="hidden md:inline-flex">?</Kbd>,
+        run: () => { openerRef.current = null; dispatch(SHORTCUTS_EVENT) } },
     ].filter(Boolean)
     return list.filter((a) => matches(needle, a.label))
   }, [t, needle, theme, toggleTheme, toggleLang, onTabChange, canCreateMonitor])
@@ -238,7 +245,15 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
   }, [active, remote, users, isAdmin, needle])
 
   const showRecents = !needle && recents.length > 0
+  // Favori izlemeler (2026-10-02, öneri 23): boş sorguda en üstte; seçilince türün sayfasına o izlemenin adıyla aranmış
+  // olarak gider (İzleme Panosu satırının "aç"ı ile aynı). Adı bilinmeyen (eski kayıt) favori derin bağlantıyla açılır.
+  const prefs = useUserPrefs()
+  const favItems = useMemo(() => prefs.favorites.map((f) => ({
+    ...f, label: f.name || t('palette.favUnnamed', t(MONITOR_LABEL_KEY[f.type] || 'nav.http'), f.id),
+  })), [prefs.favorites, t])
+  const showFavorites = !needle && favItems.length > 0
   const totalCount = pageItems.length + actions.length + liveGroups.reduce((n, g) => n + g.items.length, 0) + (showRecents ? recents.length : 0)
+    + (showFavorites ? favItems.length : 0)
 
   const remember = useCallback((it) => {
     const next = pushRecent(readRecents(), it)
@@ -255,6 +270,11 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
   }, [onTabChange, remember])
 
   const runAction = useCallback((a) => { setOpen(false); a.run() }, [])
+
+  const goFavorite = useCallback((f) => {
+    setOpen(false)
+    navigateTo(f.type, f.name ? { q: f.name } : { monitor: String(f.id) })
+  }, [])
 
   const clearRecents = useCallback(() => { writeRecents([]); setRecents([]) }, [])
 
@@ -335,7 +355,7 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
   const actionsGroup = actions.length > 0 ? (
     <CommandGroup heading={t('palette.actions')}>
       {actions.map((a) => (
-        <PaletteRow key={`action:${a.id}`} value={`action:${a.id}`} Icon={a.Icon} label={a.label} onSelect={() => runAction(a)} />
+        <PaletteRow key={`action:${a.id}`} value={`action:${a.id}`} Icon={a.Icon} label={a.label} trailing={a.trailing} onSelect={() => runAction(a)} />
       ))}
     </CommandGroup>
   ) : null
@@ -382,6 +402,17 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
                     title={active ? t('palette.noResultsFor', needle) : t('palette.hint')}
                     description={active ? t('palette.noResultsHint') : null} />
                 </CommandEmpty>
+              )}
+
+              {showFavorites && (
+                <CommandGroup heading={t('palette.favorites')} data-group="favorites">
+                  {favItems.map((f) => (
+                    <PaletteRow key={`fav:${f.type}:${f.id}`} value={`fav:${f.type}:${f.id}`} Icon={iconFor(f.type)}
+                      label={f.label} sub={t(MONITOR_LABEL_KEY[f.type] || 'nav.http')}
+                      trailing={<Star aria-hidden="true" className="size-3.5 fill-current text-amber-500 dark:text-amber-400" />}
+                      onSelect={() => goFavorite(f)} />
+                  ))}
+                </CommandGroup>
               )}
 
               {showRecents && (

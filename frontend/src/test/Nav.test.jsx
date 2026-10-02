@@ -202,7 +202,7 @@ describe('Nav — nav-main yapısı ve ikonlar (2026-09-26)', () => {
   const SECTIONS = ['certificates', 'monitoring', 'alerts', 'reports', 'logs', 'management']
   /** App.jsx VALID_TABS'ın kenar çubuğunda duranları ('settings' kullanıcı menüsünde). */
   const TABS = ['dashboard', 'all', 'domains', 'uptime', 'forecast', 'renewal', 'renewal-guide',
-    'http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted',
+    'status', 'http', 'ping', 'port', 'dns', 'domain', 'keyword', 'page', 'pagespeed', 'scripted',
     'warnings', 'incidents', 'maintenance', 'alerthistory', 'storms', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
     'activity', 'myactivity', 'system', 'monitorchanges', 'admin', 'health', 'permissions', 'sqlplayground', 'login-issues', 'help']
 
@@ -504,7 +504,7 @@ describe('Nav — ikon kipi: ipuçları ve yana açılan bölüm menüsü', () =
     pressMenuTrigger(mon)
     const menu = screen.getByRole('menu')
     expect(within(menu).getByText(/^(Availability|Erişilebilirlik)$/)).toBeInTheDocument()
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(10)   // 9 tür + İzleme Panosu (2026-09-30)
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(11)   // 9 tür + İzleme Panosu (2026-09-30) + Durum Sayfası (2026-10-01)
     fireEvent.click(within(menu).getByRole('menuitem', { name: /^Ping$/ }))
     expect(onTabChange).toHaveBeenCalledWith('ping')
   })

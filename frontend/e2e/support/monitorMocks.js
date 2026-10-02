@@ -617,8 +617,89 @@ function weeklyRows() {
   return out
 }
 
+/** Durum Sayfası yanıtı (StatusPageService sözleşmesi) — taşma ölçümü için UZUN takım/hizmet/izleme/olay adlarıyla. */
+function statusPageMock() {
+  const svc = (o) => ({ ungrouped: false, monitors_total: 3, monitors_active: 3, up: 3, degraded: 0, down: 0, maintenance: 0, unknown: 0, paused: 0,
+    types: ['http', 'ping', 'port'], since: null, maintenance_until: null, uptime_7d: 99.97, monitors_visible: false, ...o })
+  const LONG_TEAM = 'Altyapı ve Ağ Operasyonları Takımı (Kurumsal Uygulamalar)'
+  const services = [
+    svc({ key: '1|ödeme', name: 'Ödeme Geçidi ve Mobil Ödeme Platformu (Kurumsal + Bireysel Kanallar)', team_id: 1, team_name: 'Takım A',
+      state: 'major_outage', down: 2, up: 1, since: iso(25 * 60000), uptime_7d: 97.41, monitors_visible: true,
+      monitors: [
+        { name: 'raporlama-ve-analitik-platformu.ic-servisler.example.com/health/readiness', type: 'http', status: 'down' },
+        { name: 'odeme-gecidi-uygulama-sunucusu-01 ping', type: 'ping', status: 'down' },
+        { name: 'Ödeme DB 5432', type: 'port', status: 'up' },
+      ] }),
+    svc({ key: '1|kart', name: 'Kart İşlemleri', team_id: 1, team_name: 'Takım A', state: 'degraded', degraded: 1, up: 2, since: iso(8 * 60000),
+      monitors_visible: true, monitors: [{ name: 'kart-api yavaş yanıt', type: 'http', status: 'degraded' }, { name: 'kart ping', type: 'ping', status: 'up' },
+        { name: 'kart sentetik akış', type: 'scripted', status: 'up' }] }),
+    svc({ key: '1|', name: null, ungrouped: true, team_id: 1, team_name: 'Takım A', state: 'operational', monitors_total: 2, monitors_active: 2, up: 2,
+      monitors_visible: true, monitors: [{ name: 'eski-izleme-1', type: 'dns', status: 'up' }, { name: 'eski-izleme-2', type: 'domain', status: 'unknown' }] }),
+    svc({ key: '2|ağ', name: 'Çekirdek Ağ ve Veri Merkezi Bağlantıları (İstanbul + Ankara Felaket Kurtarma)', team_id: 2, team_name: LONG_TEAM,
+      state: 'maintenance', maintenance: 3, up: 0, maintenance_until: iso(-45 * 60000) }),
+    svc({ key: '2|dns', name: 'Kurumsal DNS', team_id: 2, team_name: LONG_TEAM, state: 'partial_outage', down: 1, up: 2, since: iso(90 * 60000), uptime_7d: 99.12 }),
+    ...['Bireysel İnternet Şubesi', 'Çağrı Merkezi IVR', 'Dijital Kanallar API Geçidi', 'E-posta Altyapısı'].map((n, i) =>
+      svc({ key: `3|${i}`, name: n, team_id: 3, team_name: 'Takım C', state: 'operational' })),
+    svc({ key: '-|ortak', name: 'Ortak Hizmetler', team_id: null, team_name: null, state: 'no_data', unknown: 3, up: 0, uptime_7d: null }),
+  ]
+  return {
+    generated_at: iso(30_000),
+    overall: { state: 'major_outage', services_total: services.length,
+      by_state: { no_data: 1, operational: 5, maintenance: 1, degraded: 1, partial_outage: 1, major_outage: 1 },
+      monitors_active: 30, monitors_down: 3, monitors_degraded: 1, monitors_maintenance: 3, active_incidents: 5, active_maintenance: 2, upcoming_maintenance: 4 },
+    services,
+    incidents: {
+      active: [
+        { id: 11, title: 'Ödeme onaylarında gecikme — mobil ve internet şubesi kanallarında 3D Secure doğrulaması zaman aşımına uğruyor', severity: 'CRITICAL',
+          status: 'INVESTIGATING', started_at: iso(50 * 60000), services: ['Ödeme API', 'Mobil Bankacılık Uygulaması (iOS + Android)', 'İnternet Şubesi'], team_id: 1, team_name: 'Takım A' },
+        { id: 12, title: 'DNS çözümleme yavaşlığı', severity: 'MEDIUM', status: 'MITIGATED', started_at: iso(3 * HOUR), services: [], team_id: 2, team_name: LONG_TEAM },
+      ],
+      // Kapsam dışı (başka takımın) kayıtlar yalnız sayı (2026-10-01 "mevcudu bozma")
+      active_total: 5, active_visible: 2, active_hidden: 3,
+      resolved: [
+        { id: 9, title: 'Kart provizyon servisinde bağlantı havuzu tükenmesi (gece yarısı batch işlemi sırasında)', severity: 'HIGH',
+          started_at: iso(50 * HOUR), resolved_at: iso(48 * HOUR), duration_minutes: 120, services: ['Kart İşlemleri'], team_id: 1, team_name: 'Takım A' },
+      ],
+      resolved_total: 3, resolved_visible: 1, resolved_hidden: 2, days: 7,
+    },
+    maintenance: {
+      active: [{ id: 1, name: 'Çekirdek switch değişimi ve veri merkezi bağlantı testleri (planlı kesinti penceresi)', state: 'active',
+        starts_at: iso(15 * 60000), ends_at: iso(-45 * 60000), recurrence: 'NONE', all_monitors: false, monitor_count: 3, team_id: 2, team_name: LONG_TEAM,
+        services: [{ key: '2|ağ', name: 'Çekirdek Ağ ve Veri Merkezi Bağlantıları (İstanbul + Ankara Felaket Kurtarma)', ungrouped: false, team_name: LONG_TEAM }], services_total: 1 }],
+      active_total: 2, active_hidden: 1,
+      upcoming: [
+        { id: 2, name: 'Gece DB yamaları', state: 'upcoming', starts_at: iso(-10 * HOUR), ends_at: iso(-12 * HOUR), recurrence: 'WEEKLY', all_monitors: true,
+          monitor_count: null, team_id: null, team_name: null, services: [], services_total: 0 },
+        { id: 3, name: 'Ödeme geçidi sertifika yenileme', state: 'upcoming', starts_at: iso(-30 * HOUR), ends_at: iso(-31 * HOUR), recurrence: 'NONE', all_monitors: false,
+          monitor_count: 12, team_id: 1, team_name: 'Takım A',
+          services: Array.from({ length: 8 }, (_, i) => ({ key: `1|s${i}`, name: `Ödeme alt hizmeti ${i + 1} (uzun ad örneği)`, ungrouped: false, team_name: 'Takım A' })),
+          services_total: 11 },
+      ],
+      upcoming_total: 4, upcoming_hidden: 2, days: 7,
+    },
+    uptime: { available: true, days: 7, from: '2026-09-24', to: '2026-09-30', source: 'daily_rollup' },
+  }
+}
+
+/**
+ * Kişisel tercihler (2026-10-02, öneri 23) — `/api/me/preferences`: favoriler ve kayıtlı görünümler DOLU gelir ki kart
+ * yıldızı (basılı/basılı değil), İzleme Panosu'nun "Favoriler" hızlı görünümü ve araç çubuklarındaki "Görünümler (N)"
+ * düğmeleri telefon/tablet ölçümünde en geniş hâlleriyle çizilsin. PUT sunucu gibi birleştirir (üst düzey değiştirir,
+ * `local` girdi bazında).
+ */
+export const PREFS = {
+  favorites: [{ type: 'http', id: 100, name: 'https://www.example.com/' }, { type: 'ping', id: 101 }, { type: 'dns', id: 102 }],
+  savedViews: {
+    http: [{ name: 'Takım A — kritik API izlemeleri', params: { team: '1', stat: 'down' } }, { name: 'Ödeme', params: { group: 'Ödeme Sistemleri' } }],
+    monitoring: [{ name: 'Sorunlu HTTP', params: { mo_type: 'http', mo_status: 'down' } }],
+    alerthistory: [{ name: 'Kritik açıklar', params: { level: 'CRITICAL' } }],
+    'incident-history': [{ name: 'Açık olaylar', params: { ih_open: 'true' } }],
+  },
+}
+
 export async function mockApi(page, opts = {}) {
   const { role = 'ADMIN', globalAdmin = role === 'ADMIN', teamIds = [1], monitors = MONITORS, perms = null } = opts
+  let prefsDoc = JSON.parse(JSON.stringify(opts.prefs ?? PREFS))
   await page.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
   })
@@ -633,6 +714,22 @@ export async function mockApi(page, opts = {}) {
         team_ids: teamIds, team_names: teamIds.map((id) => (id === 1 ? 'Takım A' : `Takım ${id}`)),
         tour: { status: 'dismissed', version: 99 },
       }
+    } else if (p === '/api/me/preferences') {
+      if (route.request().method() === 'PUT') {
+        let patch = {}
+        try { patch = JSON.parse(route.request().postData() || '{}') } catch { /* boş */ }
+        const next = { ...prefsDoc }
+        for (const [k, v] of Object.entries(patch)) {
+          if (k === 'local') {
+            const local = { ...(next.local || {}) }
+            for (const [lk, lv] of Object.entries(v || {})) { if (lv == null) delete local[lk]; else local[lk] = lv }
+            next.local = local
+          } else if (v == null) delete next[k]
+          else next[k] = v
+        }
+        prefsDoc = next
+      }
+      body = { success: true, prefs: prefsDoc, updated_at: iso(0) }
     } else if (p === '/api/admin/system') {
       // Sistem Sağlığı: Entegrasyonlar → haftalık e-posta kartı (gönderim logu penceresinin CTA'sı) görünsün
       body = { success: true, data: { weekly_availability: { enabled: true, cron: '0 30 10 * * MON', next_run: iso(-5 * 24 * HOUR),
@@ -660,6 +757,9 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/monitoring/overview') {
       // İzleme Panosu (2026-09-30): 9 tür + izleme satırları — telefon/tablet taşma ölçümü dolu verilerle
       body = { success: true, data: overviewMock(monitors) }
+    } else if (p === '/api/status-page') {
+      // Kurum içi Durum Sayfası (2026-10-01): sorunlu + bakımdaki + sağlıklı takımlar, uzun adlar, açık/çözülen olay, bakım
+      body = { success: true, data: statusPageMock() }
     } else if (p === '/api/monitoring/storm/status') {
       // Alarm Fırtınası (2026-09-30): fırtınalı + eşiğe yakın + sakin takım — kart/pencere/mühür ölçümü dolu veriyle
       body = { success: true, data: {

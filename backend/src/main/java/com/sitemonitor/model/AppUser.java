@@ -152,6 +152,24 @@ public class AppUser {
     @Column(name = "push_opt_out")
     private Boolean pushOptOut = false;
 
+    /**
+     * Kişisel push sessiz saatleri (2026-10-01, onaylı öneri 15) — OPT-IN, varsayılan YOK (null = bugünkü davranış).
+     * Global push sessiz saatiyle aynı anlam: pencere içinde asgari seviyenin ALTINDAKİ push bu kişi için gönderilmez,
+     * teslimat günlüğünde {@code SKIPPED_USER_QUIET_HOURS} görünür; çözüm push'u etkilenmez; KRİTİK her zaman gider.
+     * Kural: {@code QuietHours} (HH:mm Europe/Istanbul, gece yarısını geçebilir, gün süzgeci, asgari seviye).
+     */
+    @Column(name = "push_quiet_start", length = 5)
+    private String pushQuietStart;
+
+    @Column(name = "push_quiet_end", length = 5)
+    private String pushQuietEnd;
+
+    @Column(name = "push_quiet_days", length = 30)
+    private String pushQuietDays;
+
+    @Column(name = "push_quiet_min_level", length = 16)
+    private String pushQuietMinLevel;
+
     /** Ürün turu durumu (JSON; bkz. TourStateService) — "bir daha gösterme" cihazdan bağımsız kalıcı. */
     @Column(name = "tour_state", columnDefinition = "TEXT")
     private String tourState;

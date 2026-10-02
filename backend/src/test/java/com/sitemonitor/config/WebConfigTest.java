@@ -105,6 +105,23 @@ class WebConfigTest {
         assertThat(shell.getHeader("Cache-Control")).contains("no-store");
     }
 
+    /**
+     * CSP (2026-10-01, onaylı öneri 5): betik yalnız aynı kaynaktan; satır içi betik ve olay işleyicisi izni YOK.
+     * Stil tarafındaki 'unsafe-inline' bilerek kalır (shadcn Chart &lt;style&gt; enjekte eder, mail önizlemeleri).
+     */
+    @Test
+    @DisplayName("CSP: script-src 'self' — 'unsafe-inline' ve 'unsafe-eval' yok; çerçeveleme kapalı")
+    void csp_scriptSrc_hasNoUnsafeInline() throws Exception {
+        var res = new org.springframework.mock.web.MockHttpServletResponse();
+        new WebConfig().securityHeadersFilter().doFilter(
+                new org.springframework.mock.web.MockHttpServletRequest("GET", "/"), res,
+                new org.springframework.mock.web.MockFilterChain());
+        String csp = res.getHeader("Content-Security-Policy");
+        String scriptSrc = group(csp, "script-src ([^;]*);");
+        assertThat(scriptSrc.trim()).isEqualTo("'self'");
+        assertThat(csp).doesNotContain("unsafe-eval").contains("frame-ancestors 'none'");
+    }
+
     private static String group(String text, String regex) {
         Matcher m = Pattern.compile(regex).matcher(text);
         assertThat(m.find()).as("desen bulunmalı: " + regex).isTrue();

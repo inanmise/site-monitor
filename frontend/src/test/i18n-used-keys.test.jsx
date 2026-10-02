@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { TR, EN } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 
 /**
  * Kullanılan-anahtar denetimi: parity testi yalnız TR↔EN eşliğine bakar; kodda t('...')

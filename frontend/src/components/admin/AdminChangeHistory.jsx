@@ -21,6 +21,7 @@ import { Toggle } from '@/components/shadcn/toggle'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import MaskedValue from '../ui/MaskedValue.jsx'
+import { relTimeOrRaw as relTime } from '../../utils/relativeTime.js'
 
 /** Tablo ölçüleri (shadcn Data Table görünümü: soluk başlık, satır vurgusu) + ikincil metin + dipnot. */
 const TH = 'h-9 px-3 text-[0.75em] tracking-wide text-muted-foreground uppercase'
@@ -57,18 +58,8 @@ function fmt(t, v) {
   if (typeof v === 'object') return JSON.stringify(v)
   return String(v)
 }
-/** "3 dk önce" — Aktivite Logu ile aynı `act.rel.*` dağarcığı; tam zaman ipucunda / açılımda. */
-function relTime(iso, t, now = Date.now()) {
-  if (!iso) return '—'
-  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z'
-  const then = new Date(s).getTime()
-  if (Number.isNaN(then)) return iso
-  const sec = Math.floor(Math.max(0, now - then) / 1000)
-  if (sec < 60) return t('act.rel.now')
-  const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
-  const hr = Math.floor(min / 60); if (hr < 24) return t('act.rel.hour', hr)
-  return t('act.rel.day', Math.floor(hr / 24))
-}
+// "3 dk önce" — Aktivite Logu ile aynı `act.rel.*` dağarcığı; tam zaman ipucunda / açılımda. `relTime` ortak
+// yardımcıdan (utils/relativeTime.relTimeOrRaw — öneri 29): boş damga "—", çözülemeyen damga olduğu gibi; çıktı aynı.
 
 /**
  * Alan çipleri: fark kaydında "alan eski → yeni", anlık görüntüde yalnız alan adı. Uzun değer kırpılır,

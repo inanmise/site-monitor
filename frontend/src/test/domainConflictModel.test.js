@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { domainConflictOf, conflictActions, composeTransferRequest, JUSTIFICATION_MAX, DOMAIN_EXISTS } from '../components/inventory/domainConflictModel.js'
-import { TR } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
 
 /**
  * Mükerrer alan adı deneyiminin SAF modeli (2026-09-28): 409 tanıma, eylem matrisi (görüntüle / geri yükle / aktar /

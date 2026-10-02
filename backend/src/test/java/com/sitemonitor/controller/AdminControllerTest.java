@@ -2193,6 +2193,59 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.success").value(true));
     }
 
+    // ── Zamana bağlı eskalasyon adımı: kişi gecikmesi (2026-10-01, opt-in) ─────────────────────
+
+    @Test
+    @DisplayName("PUT contact: delay_minutes 30 kaydedilir; anahtar gönderilmezse DOKUNULMAZ; boş/0 gecikmeyi kaldırır")
+    void updateContact_delayMinutes_setKeptCleared() throws Exception {
+        EscalationContact existing = contact("mgr@test.com", "MANAGER");
+        existing.setId(1L);
+        existing.setTeamId(1L);
+        when(contactRepo.findById(1L)).thenReturn(Optional.of(existing));
+        when(contactRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"delay_minutes\":30}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.delay_minutes").value(30));
+        assertThat(existing.getDelayMinutes()).isEqualTo(30);
+
+        // Eski istemci / gecikmesiz form: anahtar YOK → değer korunur.
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\"}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getDelayMinutes()).isEqualTo(30);
+
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"delay_minutes\":null}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getDelayMinutes()).isNull();
+
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"delay_minutes\":0}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getDelayMinutes()).isNull();
+    }
+
+    @Test
+    @DisplayName("Kişi gecikmesi 1–1440 dışında → 400 (kullanıcının dilinde mesaj), kayıt yapılmaz")
+    void contact_delayMinutes_outOfRange_returns400() throws Exception {
+        EscalationContact existing = contact("mgr@test.com", "MANAGER");
+        existing.setId(1L);
+        existing.setTeamId(1L);
+        when(contactRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/contacts/1").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Lang", "en")
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"delay_minutes\":1441}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("between 1 and 1440")));
+        mvc.perform(post("/api/admin/contacts").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"M\",\"email\":\"mgr@test.com\",\"role\":\"MANAGER\",\"team_id\":1,\"delay_minutes\":\"abc\"}"))
+                .andExpect(status().isBadRequest());
+        verify(contactRepo, never()).save(any());
+    }
+
     @Test
     @DisplayName("DELETE /api/admin/contacts/{id} returns 200")
     void deleteContact_authenticated_returns200() throws Exception {
@@ -3219,6 +3272,45 @@ class AdminControllerTest {
                         .content("{\"name\":\"Renamed\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(2));
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id} sessiz saat (2026-10-01): anahtarlar varsa normalize edilip yazılır; yoksa dokunulmaz")
+    void updateTeam_quietHours_appliedOnlyWhenPresent() throws Exception {
+        Team updated = new Team();
+        updated.setId(2L);
+        updated.setName("Ödeme");
+        when(userService.updateTeam(eq(2L), any(), any(), any(), any(), any(), any(), any())).thenReturn(updated);
+        when(userService.updateTeamQuietHours(eq(2L), any())).thenReturn(updated);
+
+        mvc.perform(put("/api/admin/teams/2")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Ödeme\",\"quiet_start\":\"22:00\",\"quiet_end\":\"07:00\","
+                                + "\"quiet_days\":[\"FRI\",\"MON\"],\"quiet_min_level\":\"\"}"))
+                .andExpect(status().isOk());
+        verify(userService).updateTeamQuietHours(2L,
+                new com.sitemonitor.service.QuietHours.Config("22:00", "07:00", "MON,FRI", null));
+
+        org.mockito.Mockito.clearInvocations(userService);
+        mvc.perform(put("/api/admin/teams/2")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Ödeme\"}"))
+                .andExpect(status().isOk());
+        verify(userService, never()).updateTeamQuietHours(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("PUT /teams/{id} hatalı sessiz saat → 400 ve HİÇBİR alan yazılmaz (doğrulama önce)")
+    void updateTeam_invalidQuietHours_400_nothingSaved() throws Exception {
+        mvc.perform(put("/api/admin/teams/2")
+                        .session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Yeni Ad\",\"quiet_start\":\"22:00\",\"quiet_end\":\"\"}"))
+                .andExpect(status().isBadRequest());
+        verify(userService, never()).updateTeam(anyLong(), any(), any(), any(), any(), any(), any(), any());
+        verify(userService, never()).updateTeamQuietHours(anyLong(), any());
     }
 
     @Test

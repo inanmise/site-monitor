@@ -96,17 +96,23 @@ class SourceControlCharTest {
     @Test
     @DisplayName("i18n paketi de temiz olmalı — çeviri dosyasına sızan NUL tüm arayüzü etkiler")
     void frontendI18nHasNoRawControlCharacters() throws IOException {
-        Path i18n = Path.of("../frontend/src/i18n/index.jsx");
-        if (!Files.exists(i18n)) return;   // backend tek başına çıkarıldığında atla
-        byte[] data = Files.readAllBytes(i18n);
+        Path dir = Path.of("../frontend/src/i18n");
+        if (!Files.isDirectory(dir)) return;   // backend tek başına çıkarıldığında atla
+        // 2026-10-02 (performans önerisi 22): TR ve EN sözlükleri index.jsx'ten tr.js / en.js'e ayrıldı (EN lazy
+        // chunk). Üçü de taranır; sözlük dosyalarından biri yoksa kapı sessizce boşa düşmesin diye KIRMIZI.
         List<String> violations = new ArrayList<>();
-        int line = 1;
-        for (byte b : data) {
-            if (b == '\n') { line++; continue; }
-            if (b == '\t' || b == '\r') continue;
-            if (b >= 0 && b < 0x20) violations.add(String.format("i18n/index.jsx:%d → 0x%02X", line, b));
+        for (String name : List.of("index.jsx", "tr.js", "en.js")) {
+            Path file = dir.resolve(name);
+            assertThat(file).as("i18n dosyası bulunamadı (taşındıysa bu listeyi güncelleyin)").exists();
+            byte[] data = Files.readAllBytes(file);
+            int line = 1;
+            for (byte b : data) {
+                if (b == '\n') { line++; continue; }
+                if (b == '\t' || b == '\r') continue;
+                if (b >= 0 && b < 0x20) violations.add(String.format("i18n/%s:%d → 0x%02X", name, line, b));
+            }
+            assertThat(new String(data, StandardCharsets.UTF_8)).as(name).isNotEmpty();
         }
         assertThat(violations).as("i18n paketinde ham kontrol karakteri: %s", violations).isEmpty();
-        assertThat(new String(data, StandardCharsets.UTF_8)).isNotEmpty();
     }
 }

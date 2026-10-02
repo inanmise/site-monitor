@@ -302,7 +302,7 @@ export default function UptimePage({ systemRole }) {
           </div>
           <Input type="text" className="w-auto min-w-[200px]"
             placeholder={t('uptime.searchPlaceholder')} aria-label={t('uptime.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

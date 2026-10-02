@@ -193,7 +193,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   // Dışa aktarım menüsü (2026-09-22, D): görünen (süzülmüş + sıralanmış) liste CSV/PDF. shadcn DropdownMenu —
   // dış tıklama / Escape / odak iadesi Radix'te (eskiden elle document dinleyicileri vardı).
   const [planRow, setPlanRow] = useState(null)   // yenileme planı modalı: izleme satırı (2026-09-22, H)
@@ -217,7 +217,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -250,7 +250,6 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da gizli sekmede durur
 
   useEffect(() => {
     if (!isAdmin) return
@@ -834,7 +833,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     <div className="upt-page">
       <MonitorPageHeader type="domain" title={t('dom.title')} subtitle={t('dom.subtitle')}
         count={loading ? null : monitors.length}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('dom.addMonitor')}
         extraActions={(
@@ -879,7 +878,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dom.searchPlaceholder')} aria-label={t('dom.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

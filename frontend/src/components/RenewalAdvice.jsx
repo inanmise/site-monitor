@@ -11,6 +11,7 @@ import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { buildIcs, downloadIcs } from '../utils/ics.js'
 import { csvRows } from '../utils/csv.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import { copyText } from '../utils/copyText.js'
 import { navigateTo } from '../utils/navigate.js'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
@@ -199,12 +200,7 @@ export default function RenewalAdvice({ onSelectDomain }) {
     const head = ['domain', 'priority', 'reason', 'days_remaining', 'not_after', 'team', 'tier', 'group', 'tags', 'issuer', 'action']
     const rows = filtered.map((a) => [a.domain, a.priority, a.code, a.days_remaining ?? '', a.not_after ? formatDateOnly(a.not_after) : '', a.team_name || '', a.tier ?? '', a.group_name || '', a.tags || '', a.issuer_cn || '', adviceText(a).action || ''])
     const csv = '﻿' + csvRows([head, ...rows])
-    try {
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const el = document.createElement('a'); el.href = url; el.download = 'yenileme-onerileri.csv'; document.body.appendChild(el); el.click(); el.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-    } catch { /* jsdom */ }
+    downloadCsv('yenileme-onerileri.csv', csv)   // ortak indirme (öneri 29): hata yutulur, dosya aynı
   }
 
   // ── Yükleniyor: gerçek yerleşimle aynı boyda iskelet (zıplama yok) ──

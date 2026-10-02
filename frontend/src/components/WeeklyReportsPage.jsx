@@ -45,7 +45,7 @@ import {
   statusFacets, approvalQueue, filterByStatus, sortReports, parsePrevContent, buildYearCsv, toUrlMapping, isoWeekLabel,
   matchesSearch, thisWeekSummary,
 } from './weekly/weeklyModel.js'
-import { useElementWidth } from './weekly/useElementWidth.js'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 import ModalShell from './ui/ModalShell.jsx'
 import Field from './ui/Field.jsx'
 import AlertBanner from './ui/AlertBanner.jsx'
@@ -95,7 +95,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
   const phone = useIsMobile()
   const summaryBodyId = useId()
   // Liste görünümü kaba göre: 768 px tablette kenar çubuğu açıkken içerik ~440 px → kart (ölçüm yoksa useIsMobile)
-  const [listWidth, setListBox] = useElementWidth()
+  const [listWidth, setListBox] = useElementWidthState()
   const narrow = listWidth > 0 ? listWidth < 640 : phone
 
   const [teams, setTeams] = useState([])

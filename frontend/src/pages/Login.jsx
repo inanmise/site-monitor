@@ -25,7 +25,8 @@ function writeRemembered(username) { try { if (username) localStorage.setItem(ST
 
 export default function Login({ onLogin, sessionExpired = false }) {
   const t = useT()
-  const { lang, toggle: toggleLang } = useLanguage()
+  // langPending: İngilizce sözlük (ayrı chunk) iniyor — dil düğmesi kısa süre meşgul görünür (2026-10-02, öneri 22)
+  const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
   // Branding (beyaz etiket): dolu değer varsa onu, boşsa i18n varsayılanını kullan (auth ÖNCESİ public).
   const { get: brand, branding } = useBranding()
   const appVersion = useAppVersion()   // sunucudan; gömülü değer yalnız yedek
@@ -253,8 +254,9 @@ export default function Login({ onLogin, sessionExpired = false }) {
               <span className="lp-footer-meta">
                 {brand('footer_text', `v${appVersion} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
               </span>
-              <Button type="button" variant="ghost" size="sm" className="lp-lang-btn" onClick={toggleLang}>
-                <Globe />
+              <Button type="button" variant="ghost" size="sm" className="lp-lang-btn" onClick={toggleLang}
+                disabled={!!langPending} aria-busy={langPending ? true : undefined}>
+                {langPending ? <Spinner size={16} inline label={t('nav.langLoading')} /> : <Globe />}
                 {lang === 'tr' ? 'English' : 'Türkçe'}
               </Button>
             </div>

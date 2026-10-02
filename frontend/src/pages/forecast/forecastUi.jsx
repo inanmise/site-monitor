@@ -1,4 +1,3 @@
-import { useLayoutEffect, useState } from 'react'
 import { AlertTriangle, CalendarCheck, CheckCircle2, ShieldOff } from 'lucide-react'
 import { formatDateOnly } from '../../api/client'
 import { Badge } from '@/components/shadcn/badge'
@@ -127,26 +126,9 @@ export function horizonBuckets(certs, th, range, today, locale = 'en-GB', t) {
 
 function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
-/**
- * Kabın GERÇEK genişliği (px) — `[width, setEl]`; `ref={setEl}` ile bağlanır (öğe sonradan mount olsa da ölçülür).
- * Neden: tablette (768) kenar çubuğu açıkken içerik ~440 px kalıyor; görünüm alanı kırılma noktası (`useIsMobile`)
- * tabloyu seçiyor ve kullanıcı eylem sütununa yatay kaydırarak ulaşıyordu. Liste kart/tablo kararını kabın
- * genişliğiyle verir. jsdom'da genişlik 0 = bilinmiyor (çağıran görünüm alanı kararına düşer).
- */
-export function useElementWidth() {
-  const [el, setEl] = useState(null)
-  const [width, setWidth] = useState(0)
-  useLayoutEffect(() => {
-    if (!el) return undefined
-    const measure = () => setWidth(Math.round(el.getBoundingClientRect().width))
-    measure()
-    if (typeof ResizeObserver === 'undefined') return undefined
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [el])
-  return [width, setEl]
-}
+// Kabın GERÇEK genişliği: eskiden burada da bir kopya vardı (`useElementWidth`, `[width, setEl]`). Neden: tablette (768)
+// kenar çubuğu açıkken içerik ~440 px kalıyor; görünüm alanı kırılma noktası (`useIsMobile`) tabloyu seçiyor ve kullanıcı
+// eylem sütununa yatay kaydırarak ulaşıyordu. Tek kaynak artık hooks/useElementWidth.js `useElementWidthState` (öneri 29).
 
 /** Liste sıralaması: aciliyet (varsayılan sıra = upcoming()), bitiş, alan adı, takım, veren. */
 export function sortRows(rows, { key, dir }) {

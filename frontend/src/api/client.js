@@ -1,14 +1,17 @@
 // Tarih yereli i18n'den CANLI okunur: bu dosyadaki formatlayicilar duz fonksiyon,
 // hook degil — sabit 'tr-TR' yazdiklari icin Ingilizce arayuzde ayni ekranda iki
 // farkli tarih bicimi goruluyordu (bkz. i18n/dateLocale.js).
-import { dateLocale, LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
+import { dateLocale, LANG_STORAGE_KEY, sessionLangOverride } from '../i18n/dateLocale.js'
 import { toUtc, localDayKey } from '../utils/localDay.js'
 import { announceNocCoverageChange, isNocCoverageWrite } from '../utils/nocCoverageEvent.js'
 import { announceInventoryAdded, inventoryAddedDomain } from '../utils/inventoryEvent.js'
 
 /** Arayüz dili (tr|en) — i18n/index.jsx'teki storedLang ile aynı anahtar; i18n modülünü
- *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur. */
+ *  import etmemek için (React bağımlılığı, dairesel import riski) burada yalın okunur.
+ *  Oturumluk zorlama yalnız açılışta İngilizce sözlük inemediğinde kurulur (dateLocale.setSessionLang). */
 function uiLang() {
+  const forced = sessionLangOverride()
+  if (forced) return forced
   try { return localStorage.getItem(LANG_STORAGE_KEY) || 'en' } catch { return 'en' }
 }
 
@@ -146,6 +149,10 @@ export const api = {
   users: {
     directory: () => request('/users/directory'),
   },
+  /** Kurum içi Durum Sayfası (2026-10-01) — oturum açmış HERKES; sunucu 30 sn paylaşır, `fresh=true` (Yenile) belleği atlar. */
+  statusPage: {
+    get: (fresh = false) => request(fresh === true ? '/status-page?fresh=1' : '/status-page'),
+  },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
     getVersion: () => request('/system/version'),
@@ -170,6 +177,15 @@ export const api = {
     // 2026-09-10: yol '/auth/me/push-opt-out' idi — AuthController '/api' tabanlı, uç '/api/me/push-opt-out'
     // → 404; sunucu onayı gelmediği için "Webhook push istemiyorum" kutusu HİÇ işaretlenmiyordu.
     setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
+    // 2026-10-01: kişisel push sessiz saati — gövde { start, end, days[], min_level }; start+end boş = kaldır.
+    setPushQuietHours: (body) => request('/me/push-quiet-hours', { method: 'POST', body: JSON.stringify(body) }),
+    // 2026-10-02 (öneri 23): kişisel tercihler — yalnız oturumdaki kullanıcının belgesi. PUT kısmi: üst düzey anahtar
+    // değiştirilir, `local` girdi bazında birleşir. withStatus: 4xx (doğrulama) ile ağ hatası ayrılsın (hooks/useUserPrefs).
+    getPreferences: () => request('/me/preferences'),
+    // keepalive: sayfa gizlenirken / kapanırken gönderilen son toplu yazım tarayıcı gezinmesiyle iptal olmasın.
+    savePreferences: (patch, opts = {}) => request('/me/preferences', {
+      method: 'PUT', body: JSON.stringify(patch), withStatus: true, ...(opts.keepalive ? { keepalive: true } : {}),
+    }),
     changePassword: (currentPwd, newPwd) => request('/me/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password: currentPwd, new_password: newPwd }),
@@ -402,6 +418,8 @@ export const api = {
       return request(`/incidents${qs ? '?' + qs : ''}`)
     },
     get: (id) => request(`/incidents/${id}`),
+    /** Bir alarmdan açılmış (takım kapsamında görünen) olay kayıtları — yalnız alarm DETAYI çağırır. */
+    byAlert: (alertId) => request(`/incidents/by-alert/${encodeURIComponent(alertId)}`),
     options: (type) => request(`/incidents/options?type=${encodeURIComponent(type)}`),
     addOption: (type, value) =>
       request('/incidents/options', { method: 'POST', body: JSON.stringify({ type, value }) }),

@@ -1,4 +1,5 @@
 import { toUtc, localDayKey } from '../../utils/localDay.js'
+import { agoText } from '../../utils/relativeTime.js'
 import { eventLabel } from '../admin/audit/auditFormat.js'
 
 /**
@@ -195,16 +196,12 @@ export function fmtValue(v) {
   return String(v)
 }
 
-/** "3 sa önce" — ActivityLog `rel()` ile aynı kural ve anahtarlar. */
+/** "3 sa önce" — ActivityLog `rel()` ile aynı kural ve anahtarlar (çekirdek ortak: utils/relativeTime.agoText). */
 export function relTime(iso, t, now = Date.now()) {
   if (!iso) return null
   const then = new Date(toUtc(iso)).getTime()
   if (Number.isNaN(then)) return null
-  const sec = Math.floor(Math.max(0, now - then) / 1000)
-  if (sec < 60) return t('act.rel.now')
-  const min = Math.floor(sec / 60); if (min < 60) return t('act.rel.min', min)
-  const hr = Math.floor(min / 60); if (hr < 24) return t('act.rel.hour', hr)
-  return t('act.rel.day', Math.floor(hr / 24))
+  return agoText(then, t, now)
 }
 
 /** Yerel saat "14:04" (gün başlığı tarihi zaten söyler). */

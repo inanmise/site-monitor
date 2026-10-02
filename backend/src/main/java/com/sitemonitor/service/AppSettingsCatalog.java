@@ -174,6 +174,9 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.scripted.manual-wait-seconds", "scripted", Type.INT),
         new Setting("site.monitor.scripted.k6-bin",                  "scripted", Type.STRING),
         new Setting("site.monitor.scripted.hardcoded-secret-policy", "scripted", Type.ENUM, java.util.List.of("WARN", "BLOCK")),
+        // Betikte dosya okuma (2026-10-01, öneri 1): REPORT = uyar + raporla (varsayılan, davranış aynı) · BLOCK = kayıt
+        // reddedilir, koşum yürütülmez. Önce /api/admin/scripted/file-read-report ile mevcut betikler denetlenir.
+        new Setting("site.monitor.scripted.file-read-policy",        "scripted", Type.ENUM, java.util.List.of("REPORT", "BLOCK")),
         // Koştu ama hiç check() çalıştırmadı: WARN = kayıt hatalı sayılır, alarm YOK (varsayılan) ·
         // FAIL = alarm da üret · PASS = eski davranış (yeniden dağıtım gerektirmeyen geri dönüş).
         new Setting("site.monitor.scripted.no-checks-policy",        "scripted", Type.ENUM, java.util.List.of("WARN", "FAIL", "PASS")),
@@ -301,6 +304,19 @@ public final class AppSettingsCatalog {
         // 2026-09-30: fırtına ömür sınırı — son üye katılımından bu kadar dakika sonra yeni üye gelmediyse fırtına
         // mühürlenir ve kapanır (kalıcı başarısız üyeler fırtınayı süresiz açık tutup yeni alarmları yutmasın).
         new Setting("site.monitor.storm.quiet-minutes",          "storm",      Type.INT),
+        // ── Tür bazlı yeniden uyarı sıklığı (2026-10-01, opt-in) — ReAlertIntervals. Dakika; 0 = genel aralık (eşik
+        //    tablosundaki reAlertIntervalHours, varsayılan 24 saat — bugünkü davranış); aksi 15–10080. EscalationService
+        //    yeniden uyarı kararında CANLI okur. GLOBAL_ONLY değil: sır taşımaz, fırtına / alert-enabled ayarlarıyla aynı sınıf.
+        new Setting("site.monitor.realert.cert-minutes",         "realert",    Type.INT),
+        new Setting("site.monitor.realert.domain-minutes",       "realert",    Type.INT),
+        new Setting("site.monitor.realert.http-minutes",         "realert",    Type.INT),
+        new Setting("site.monitor.realert.ping-minutes",         "realert",    Type.INT),
+        new Setting("site.monitor.realert.port-minutes",         "realert",    Type.INT),
+        new Setting("site.monitor.realert.dns-minutes",          "realert",    Type.INT),
+        new Setting("site.monitor.realert.keyword-minutes",      "realert",    Type.INT),
+        new Setting("site.monitor.realert.page-minutes",         "realert",    Type.INT),
+        new Setting("site.monitor.realert.pagespeed-minutes",    "realert",    Type.INT),
+        new Setting("site.monitor.realert.scripted-minutes",     "realert",    Type.INT),
         // Kurumsal/iç kök+ara CA paketi (PEM) — bu CA ile imzalı host'lar TRUSTED sayılır.
         // TrustEvaluator okuma anında okur (canlı reload). Boş = yalnız public CA'lar (cacerts).
         // Yeni cihazdan giriş bilgi e-postası (E1). Varsayılan KAPALI: kurumsal kurulumda
@@ -457,6 +473,7 @@ public final class AppSettingsCatalog {
         "site.monitor.scripted.k6-bin",
         "site.monitor.scripted.k6-api-address",
         "site.monitor.scripted.hardcoded-secret-policy",
+        "site.monitor.scripted.file-read-policy",
         "site.monitor.userpush.url",
         "site.monitor.userpush.headers",
         "site.monitor.app.base-url",

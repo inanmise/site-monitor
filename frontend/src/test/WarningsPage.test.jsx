@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 import WarningsPage from '../pages/WarningsPage.jsx'
 import { analyze, enrich, groupOf, nextStepOf, reasonsOf, sortItems } from '../pages/warnings/warningsModel.js'
 import { attentionCsv } from '../pages/warnings/AttentionParts.jsx'

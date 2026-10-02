@@ -53,6 +53,20 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     """)
     List<Object[]> countByAlertIds(@Param("ids") Collection<Long> ids);
 
+    /**
+     * Zamana bağlı eskalasyon adımının SAAT ÇAPASI (2026-10-01): alarm başına verilen tetiklerdeki (INITIAL / ESCALATION)
+     * EN SON satır anı — [alertEventId, max(sentAt)]. Seviye artışı yeni çapadır (onay da o anda düşer); bakımda ertelenmiş
+     * ilk bildirim gerçekten gittiği andan sayılır. Aday alarmların hepsi için TEK sorgu (idx_nl_alert_event_id).
+     */
+    @Query("""
+       SELECT n.alertEventId, MAX(n.sentAt)
+       FROM NotificationLog n
+       WHERE n.alertEventId IN :ids AND n.trigger IN :triggers
+       GROUP BY n.alertEventId
+    """)
+    List<Object[]> latestSentAtByAlertIds(@Param("ids") Collection<Long> ids,
+                                          @Param("triggers") Collection<String> triggers);
+
     @Query("SELECT COUNT(n) FROM NotificationLog n WHERE (n.emailStatus = 'SENT' OR n.emailStatus LIKE 'FAILED%') AND n.sentAt >= :cutoff")
     long countAttemptedSince(@Param("cutoff") String cutoff);
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { EN, TR } from '../i18n/index.jsx'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 import {
   presetRange, toUtcIso, eventKind, deviceText, locationText, reasonText, parseFlags, isUnusualSignIn, sentence,
   targetText, recordLink, diffOf, detailOf, groupByDay, dayLabel, matchesQuery, deviceStats, typeBreakdown, heatmapOf,

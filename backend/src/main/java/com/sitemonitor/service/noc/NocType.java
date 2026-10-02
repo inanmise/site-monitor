@@ -88,6 +88,7 @@ public enum NocType {
         if (t.startsWith("PING_")) return PING;
         if (t.startsWith("DOMAINMON_")) return DOMAIN;
         if (t.equals(EscalationService.TYPE_HTTP_DOWN) || t.equals(EscalationService.TYPE_HTTP_SSL)
+                || t.equals(EscalationService.TYPE_HTTP_SLOW)
                 || t.equals(EscalationService.TYPE_DOMAIN_EXPIRY)) return HTTP;
         if (t.equals(EscalationService.TYPE_ACCESSIBILITY) || CERT_TYPES.contains(t)) return SSL;
         return null;

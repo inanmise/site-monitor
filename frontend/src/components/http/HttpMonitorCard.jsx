@@ -1,5 +1,7 @@
+import { Gauge } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { monitorDeepLink } from '../../utils/monitorDeepLink.js'
+import { Badge } from '@/components/shadcn/badge'
 import { tagsOf } from '../../utils/monitorFilters.js'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyButton from '../ui/CopyButton.jsx'
@@ -71,6 +73,13 @@ export default function HttpMonitorCard({
           {select || null}
           {badge}
           <MonitorAlarmIcon monitor={m} label={alarmLabel} />
+          {/* Açık HTTP_SLOW (2026-10-01, opt-in yavaşlık alarmı): kesinti değil — amber rozet, kırmızı alarm ikonundan ayrı */}
+          {m.slow_alarm && (
+            <Badge variant="outline" data-slot="http-slow-alarm"
+              className="h-5 gap-1 rounded-md border-amber-500/40 bg-amber-500/10 px-1.5 text-[10.5px] font-semibold text-amber-800 dark:text-amber-300">
+              <Gauge aria-hidden="true" className="size-3" />{t('http.card.slowAlarm')}
+            </Badge>
+          )}
           <span className={CARD_LAYER}><MaintenanceBadge target={m.url} /></span>
         </MonitorCardTop>
         {/* URL: host vurgulu, yol soluk, uzunsa kırpılır — tam metin başlığın title'ında ve detay penceresinde.

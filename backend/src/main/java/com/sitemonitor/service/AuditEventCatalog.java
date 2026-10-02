@@ -246,8 +246,10 @@ public final class AuditEventCatalog {
             "USER_LDAP_SYNC",             // giriş/müdür provizyonunda LDAP kaynaklı üyelik/müdür değişikliği (2026-09-26)
             "USER_ORG_ROLE_UNLOCK",
             "USER_PASSWORD_AUTO_RESET",
+            "USER_PREFERENCES_UPDATE",    // kişi favorilerini / açılış sekmesini / kayıtlı görünümlerini değiştirdi (2026-10-02)
             "USER_PUSH_EXPORT",
             "USER_PUSH_OPT_OUT",
+            "USER_PUSH_QUIET_HOURS",      // kişi kendi push sessiz saatini kaydetti/kaldırdı (2026-10-01)
             "USER_PUSH_REQUEUE",
             "USER_PUSH_SCOPES",
             "USER_PUSH_SETTINGS",

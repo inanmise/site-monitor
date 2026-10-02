@@ -79,6 +79,30 @@ public class EscalationService {
     @Autowired(required = false)
     private com.sitemonitor.service.noc.NocNotificationService nocNotifications;
 
+    /**
+     * Zamana bağlı eskalasyon adımı kararları (2026-10-01) — anlık yolların "bu gecikmeli kişi alarmın döngüsünde mi?"
+     * sorusu. Alan enjeksiyonu + isteğe bağlı (NOC deseni): testler servisi elle kuruyor. YALNIZ alıcı listesinde gecikmeli
+     * kişi varken okunur; gecikme tanımsız kurulumda hiç dokunulmaz. Yokken (null) gecikmeli kişiler anlık listeden düşer.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.repository.AlertEscalationStepRepository escalationStepRepo;
+
+    /**
+     * Runbook notu (2026-10-01) — hedefin "Rehber &amp; Notlar" rehberini alarm e-postasının / webhook mesajının sonuna
+     * ekler. Alan enjeksiyonu + isteğe bağlı (NOC deseni): testler servisi elle kuruyor; yokken (null) not hiç
+     * eklenmez ve bildirimler bugünküyle bayt bayt aynıdır.
+     */
+    @Autowired(required = false)
+    private RunbookNoteService runbookNotes;
+
+    /**
+     * Takım sessiz saatleri (2026-10-01, onaylı öneri 15) — opt-in erteleme kararı. Alan enjeksiyonu + isteğe bağlı (NOC
+     * deseni): testler servisi elle kuruyor; yokken (null) ya da hiçbir takımda pencere tanımlı değilken gönderim yolu
+     * bugünküyle bayt bayt aynıdır (karar bellek-içi önbellekten — gönderim başına sorgu yok).
+     */
+    @Autowired(required = false)
+    private TeamQuietHoursService quietHours;
+
     // Inter-domain catch-up pacing now comes from the DB-backed SMTP settings
     // (admin Settings → SMTP → Gelişmiş), falling back to the env default.
     private long interDomainDelayMs() {
@@ -145,6 +169,10 @@ public class EscalationService {
     /** HTTP monitörü TLS sertifika hatası/bitişi alarmı — yavaş SSL döngüsü tarafından yönetilir. */
     public static final String TYPE_HTTP_SSL = "HTTP_SSL";
 
+    /** HTTP monitörü yavaş yanıt alarmı (2026-10-01, onaylı öneri 9) — OPT-IN (slowResponseEnabled); KEYWORD_SLOW'un
+     *  ikizi. Kesinti DEĞİLDİR: fırtına sayımına girmez (DOWN_ALERT_TYPES dışında). */
+    public static final String TYPE_HTTP_SLOW = "HTTP_SLOW";
+
     /** Domain (registrar/WHOIS) kayıt bitişi alarmı — yavaş domain döngüsü tarafından yönetilir. */
     public static final String TYPE_DOMAIN_EXPIRY = "DOMAIN_EXPIRY";
 
@@ -194,7 +222,7 @@ public class EscalationService {
     public static final Set<String> MONITORING_ALERT_TYPES =
             Set.of(TYPE_ACCESSIBILITY, TYPE_PORT_DOWN, TYPE_DNS_FAILURE, TYPE_DNS_CHANGED,
                    TYPE_DNS_SLOW, TYPE_DNS_UNEXPECTED, TYPE_DNS_INCONSISTENT,
-                   TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY,
+                   TYPE_KEYWORD, TYPE_PING_DOWN, TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY,
                    TYPE_DOMAINMON_EXPIRY, TYPE_DOMAINMON_UNKNOWN, TYPE_DOMAINMON_STATUS, TYPE_DOMAINMON_CHANGED,
                    TYPE_DOMAINMON_TRANSFER_LOCK, TYPE_DOMAINMON_BLACKLIST,
                    TYPE_KEYWORD_SLOW, TYPE_KEYWORD_SSL, TYPE_KEYWORD_DOMAIN_EXPIRY, TYPE_PORT_SLOW, TYPE_PING_SLOW,
@@ -341,7 +369,9 @@ public class EscalationService {
                             .orElse(null));
                     event = alertEventRepo.save(event);
 
-                    List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                    // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → henüz döngüde kimse yok; sorgu yok).
+                    List<EscalationContact> contacts = EscalationDelay.immediateOnly(
+                            getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
                     sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType, message,
                             "", event.getId(), "INITIAL", daysRemaining, result);
 
@@ -378,7 +408,7 @@ public class EscalationService {
                         event.setAcknowledgedAt(null);
                         event.setAcknowledgedBy(null);
 
-                        List<EscalationContact> contacts = getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                        List<EscalationContact> contacts = recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                         // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
                         // (UserPushService.enqueueAlert) olayı DB'den yeniden yükleyip alıcıyı event.alertLevel ile
                         // çözer; save gönderimden sonra kaldığında eski seviye (WARNING) okunuyor ve ESCALATION
@@ -418,7 +448,7 @@ public class EscalationService {
                         // damgalar; arada süreç ölürse (deploy/restart/OOM) alarm açık görünür ama hiçbir kanal
                         // duyurmamıştır. Eskiden createdAt'e düşülüp bir re-alert aralığı (24 saat) susuluyordu.
                         if (initialNotificationMissing(event, now())) {
-                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId, ugTeamId);
+                            List<EscalationContact> contacts = recipientsNow(sendLevel, domainTeamId, ugTeamId, event.getId());
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
                                     sendMessage, "", event.getId(), "INITIAL", daysRemaining, result);
                             event.setNotifiedContacts(serializeContacts(contacts));
@@ -433,8 +463,8 @@ public class EscalationService {
                         }
                         String lastAlertTime = event.getLastReAlertAt() != null
                                 ? event.getLastReAlertAt() : event.getCreatedAt();
-                        if (reAlertDue(lastAlertTime, now(), reAlertIv)) {
-                            List<EscalationContact> contacts = getContactsForLevel(sendLevel, domainTeamId, ugTeamId);
+                        if (reAlertDueFor(alertType, lastAlertTime, now(), reAlertIv)) {
+                            List<EscalationContact> contacts = recipientsNow(sendLevel, domainTeamId, ugTeamId, event.getId());
                             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, sendLevel, alertType,
                                     "[RE-ALERT] " + sendMessage, "[RE-ALERT] ",
                                     event.getId(), "DAILY_REALERT", daysRemaining, result);
@@ -517,8 +547,9 @@ public class EscalationService {
     private ReNotifyTargets resolveReNotifyTargets(AlertEvent event) {
         boolean standalone = isStandaloneMon(event.getAlertType());
         if (standalone) {
+            // Gecikmeli kişi yalnız "döngüdeyse" (adımı gitmiş) elle gönderime de girer — önizleme aynı listeyi gösterir.
             List<EscalationContact> contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
-                    ? getContactsForLevel(event.getAlertLevel(), event.getTeamId(), null)
+                    ? recipientsNow(event.getAlertLevel(), event.getTeamId(), null, event.getId())
                     : List.of();
             return new ReNotifyTargets(event.getTeamId(), null, contacts, event.getNotificationGroupId());
         }
@@ -532,7 +563,8 @@ public class EscalationService {
                 ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                 : null;
         return new ReNotifyTargets(domainTeamId, ugTeamId,
-                contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId),   // O-1 + her sahip kendi kişisi
+                dueNow(contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId),   // O-1 + her sahip kendi kişisi
+                        event.getId()),
                 event.getNotificationGroupId());
     }
 
@@ -619,13 +651,18 @@ public class EscalationService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", c.getId()); m.put("name", c.getName()); m.put("email", c.getEmail());
             m.put("role", c.getRole()); m.put("min_level", c.getMinAlertLevel()); m.put("team_id", c.getTeamId());
-            boolean dup = c.getEmail() != null && !seen.add(c.getEmail().trim().toLowerCase());
+            // Zamana bağlı eskalasyon adımı (2026-10-01): gecikmeli kişi ilk e-postaya GİRMEZ — satırı "N dk sonra (onaysızsa)"
+            // diye işaretlenir, e-posta toplamına ve tekilleştirmeye katılmaz. Gecikme yoksa satır bugünküyle aynı.
+            boolean delayed = EscalationDelay.isDelayed(c);
+            boolean dup = !delayed && c.getEmail() != null && !seen.add(c.getEmail().trim().toLowerCase());
             m.put("email_duplicate", dup);   // takım adresiyle aynıysa tek mail gider
+            if (delayed) m.put("delay_minutes", c.getDelayMinutes());
             contactRows.add(m);
             if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
                 Map<String, Object> w = new LinkedHashMap<>();
                 w.put("id", c.getId()); w.put("name", c.getName()); w.put("type", c.getWebhookType());
                 w.put("target", WebhookService.maskUrl(c.getWebhookUrl()));
+                if (delayed) w.put("delay_minutes", c.getDelayMinutes());
                 webhooks.add(w);
             }
         }
@@ -642,6 +679,7 @@ public class EscalationService {
         out.put("owners", owners);
         out.put("webhooks", webhooks);
         out.put("email_total", emails.size() + contactRows.stream().filter(r -> !Boolean.TRUE.equals(r.get("email_duplicate"))
+                && !r.containsKey("delay_minutes")
                 && r.get("email") != null && !String.valueOf(r.get("email")).isBlank()).count());
         return out;
     }
@@ -814,7 +852,7 @@ public class EscalationService {
             boolean initialMissing = initialNotificationMissing(event, now());
             String lastAlertTime = event.getLastReAlertAt() != null
                     ? event.getLastReAlertAt() : event.getCreatedAt();
-            if (!initialMissing && !reAlertDue(lastAlertTime, now(), reAlertIv)) {
+            if (!initialMissing && !reAlertDueFor(event.getAlertType(), lastAlertTime, now(), reAlertIv)) {
                 log.debug("Catch-up: {} re-alert interval not elapsed, skipping", event.getDomain());
                 continue;
             }
@@ -823,7 +861,7 @@ public class EscalationService {
             Long domainTeamId = event.getTeamId() != null ? event.getTeamId()
                     : inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
             Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
-            List<EscalationContact> contacts = getContactsForLevel(event.getAlertLevel(), domainTeamId, ugTeamId);
+            List<EscalationContact> contacts = recipientsNow(event.getAlertLevel(), domainTeamId, ugTeamId, event.getId());
             Map<String, Object> certContext = Optional.ofNullable(latestByDomain.get(event.getDomain()))
                     .map(this::latestToCertContext).orElse(null);
             Integer freshDays     = certContext != null ? toInt(certContext.get("days_remaining")) : null;
@@ -1144,12 +1182,13 @@ public class EscalationService {
         Set<String> orphanDomains = new HashSet<>();
         for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
             if (!TYPE_HTTP_DOWN.equals(e.getAlertType()) && !TYPE_HTTP_SSL.equals(e.getAlertType())
+                    && !TYPE_HTTP_SLOW.equals(e.getAlertType())
                     && !TYPE_DOMAIN_EXPIRY.equals(e.getAlertType())) continue;
             if (e.getDomain() == null || existingUrls.contains(e.getDomain())) continue;  // eşleşen monitör var → dokunma
             orphanDomains.add(e.getDomain());
         }
         for (String d : orphanDomains) {
-            resolveOpenAlertsSilently(d, Set.of(TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_DOMAIN_EXPIRY),
+            resolveOpenAlertsSilently(d, Set.of(TYPE_HTTP_DOWN, TYPE_HTTP_SSL, TYPE_HTTP_SLOW, TYPE_DOMAIN_EXPIRY),
                     "Sistem (öksüz alarm — eşleşen HTTP izlemesi yok)");
         }
         if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz HTTP alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
@@ -1322,7 +1361,9 @@ public class EscalationService {
                 log.info("🌩 İzleme alarmı storm'a eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
                         domain, alertType, event.getStormId());
             } else {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → sorgu yok; adım EscalationStepService'ten).
+                List<EscalationContact> contacts = teamOnly ? List.of()
+                        : EscalationDelay.immediateOnly(getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         message, "", event.getId(), "INITIAL", null, outageContext);
 
@@ -1348,7 +1389,9 @@ public class EscalationService {
             // olayları her değişikliği bildirir: olaya dokunmadan, bağlamın SAHİBİNE (bağımsızsa kendi takımı, envanter
             // türeviyse envanterin takımı — yukarıda çözüldü) olaysız tekil bildirim gider; başka takıma sızma yok.
             if (TYPE_DNS_CHANGED.equals(alertType) && isOtherMonitorsChange(event, outageContext)) {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                // Olaysız tekil bildirim: adımı olmayan gecikmeli kişi buraya da girmez.
+                List<EscalationContact> contacts = teamOnly ? List.of()
+                        : EscalationDelay.immediateOnly(getContactsForLevel(alertLevel, domainTeamId, ugTeamId));
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         message, "", null, "INITIAL", null, outageContext);
                 log.warn("DNS değişikliği bildirildi (açık olay #{} başka izlemenin — olaysız tekil bildirim, bağlamın sahibine "
@@ -1413,7 +1456,8 @@ public class EscalationService {
                 alertEventRepo.save(event);
                 boolean stormMember = event.getStormId() != null && stormService.isActive(event.getStormId());
                 if (!stormMember) {
-                    List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                    List<EscalationContact> contacts = teamOnly ? List.of()
+                            : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                     sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                             message, "", event.getId(), "ESCALATION", null, outageContext);
                     event.setNotifiedContacts(serializeContacts(contacts));
@@ -1443,7 +1487,8 @@ public class EscalationService {
             // baslatildi; alarm ekranda "acik" gorunuyor ama bildirim gecmisi bos ve sistem
             // "bugun zaten gonderildi" diyordu.
             if (event.getLastReAlertAt() == null) {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+                List<EscalationContact> contacts = teamOnly ? List.of()
+                        : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         message, "", event.getId(), "INITIAL", null, outageContext);
                 event.setNotifiedContacts(serializeContacts(contacts));
@@ -1455,8 +1500,9 @@ public class EscalationService {
                 return;
             }
             String lastAlertTime = event.getLastReAlertAt();
-            if (reAlertDue(lastAlertTime, now(), reAlertIntervalHours())) {
-                List<EscalationContact> contacts = teamOnly ? List.of() : getContactsForLevel(alertLevel, domainTeamId, ugTeamId);
+            if (reAlertDueFor(alertType, lastAlertTime, now(), reAlertIntervalHours())) {
+                List<EscalationContact> contacts = teamOnly ? List.of()
+                        : recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                 sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
                         "[RE-ALERT] " + message, "[RE-ALERT] ",
                         event.getId(), "DAILY_REALERT", null, outageContext);
@@ -1710,6 +1756,15 @@ public class EscalationService {
             case TYPE_HTTP_DOWN -> {
                 Object url = ctx.getOrDefault("url", domain);
                 Object status = ctx.get("http_status");
+                // JSON doğrulaması (2026-10-01): yanıt GELDİ ama gövde doğrulamadan geçmedi — "istek başarısız" yanıltır.
+                if (Boolean.TRUE.equals(ctx.get("json_assertion_failed"))) {
+                    Object why = ctx.get("last_error");
+                    return "KRİTİK: " + url + " yanıtı JSON doğrulamasından geçmedi" +
+                            (status != null ? " (durum " + status + ")" : "") +
+                            (why != null ? " — " + why : "") + ". " +
+                            "Ardışık doğrulama denemeleri başarısız oldu. " +
+                            "Yanıt yeniden doğrulandığında alarm otomatik kapanacaktır.";
+                }
                 return "KRİTİK: " + url + " adresine HTTP isteği başarısız" +
                         (status != null ? " (durum " + status + ")" : "") + ". " +
                         "Ardışık doğrulama denemeleri başarısız oldu. " +
@@ -1722,6 +1777,14 @@ public class EscalationService {
                 return "YÜKSEK: " + url + " için TLS sertifikası sorunu" +
                         (days != null ? " — bitişe " + days + " gün" : (detail != null ? " — " + detail : "")) + ". " +
                         "Sertifika yenilendiğinde/düzeldiğinde alarm otomatik kapanır.";
+            }
+            case TYPE_HTTP_SLOW -> {
+                Object url = ctx.getOrDefault("url", domain);
+                Object ms = ctx.get("response_ms");
+                Object th = ctx.get("threshold_ms");
+                return "YÜKSEK: " + url + " HTTP izlemesinde yanıt süresi eşiği aşıldı" +
+                        (ms != null ? " — " + ms + " ms" : "") + (th != null ? " (eşik " + th + " ms)" : "") + ". " +
+                        "Bu bir kesinti değildir; yanıt süresi eşiğin altına indiğinde alarm otomatik kapanır.";
             }
             case TYPE_PAGE_DOWN -> {
                 Object url = ctx.getOrDefault("url", domain);
@@ -1946,8 +2009,9 @@ public class EscalationService {
             if (standalone) {
                 domainTeamId = event.getTeamId();
                 ugTeamId = null;
+                // Gecikmeli kişi çözümü YALNIZ adımını aldıysa alır (açılışı hiç görmediği alarmın "çözüldü"sü gitmez).
                 contacts = includeManagerContacts(event.getAlertType(), event.getAlertLevel())
-                        ? getContactsForLevel(event.getAlertLevel(), domainTeamId, null)
+                        ? recipientsNow(event.getAlertLevel(), domainTeamId, null, event.getId())
                         : List.of();
             } else {
                 // Bağımsız olay envanterden takım ALMAZ (2026-09-28; açılış ve tekrar bildir ile aynı kural).
@@ -1964,7 +2028,8 @@ public class EscalationService {
                         ? inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null)
                         : null;
                 // Açılışla AYNI kontak kararı (O-1): bağımsız PORT/DNS izlemesinde (bağlamda team_id) WARNING yalnız takım.
-                contacts = contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId);
+                contacts = dueNow(contactsFor(isStandaloneEvent(event), event.getAlertLevel(), domainTeamId, ugTeamId),
+                        event.getId());
                 // Damgasız eski olayı çözümde tek seferlik damgala: push satırı ve "tekrar bildir"
                 // aynı takımı görsün (açılış yolundaki geri doldurmanın çözüm eşleniği).
                 if (event.getTeamId() == null && invTeamId != null) {
@@ -1980,10 +2045,46 @@ public class EscalationService {
                 return;
             }
 
+            // SESSİZ SAAT (2026-10-01, onaylı öneri 15): açılışı sessiz saat özetine ertelenmiş ve özeti HENÜZ gitmemiş alarmın
+            // çözümü o takıma ayrı "çözüldü" postası olarak GİTMEZ — takım hiç duymadığı alarmın çözümünü almaz; özet onu
+            // "çözüldü" diye gösterir. Açılışı ertelenmemiş (takım duymuş) alarmda çözüm bugünkü gibi gider. Sorgu yalnız sahip
+            // takımda pencere TANIMLIYSA atılır (tanımsız kurulumda sıfır ek sorgu).
+            Long mailSy = domainTeamId, mailUg = ugTeamId;
+            QuietFold fold = quietResolutionFold(event, domainTeamId, ugTeamId);
+            if (!fold.folded().isEmpty()) {
+                recordQuietResolutionFold(event, fold.folded(), domainTeamId);
+                boolean allFolded = (domainTeamId == null || fold.folded().contains(domainTeamId))
+                        && (ugTeamId == null || fold.folded().contains(ugTeamId));
+                if (allFolded) {
+                    log.info("Sessiz saat — çözüm bildirimi özete katlandı: olay={} alan={}", event.getId(), event.getDomain());
+                    // Push simetri kuralı aynen: açılış push'u ertelendiyse SENT yok → SKIPPED_NO_PRIOR (bugünkü karar satırı).
+                    try {
+                        userPushService.enqueueResolve(event, deserializeContext(event.getContextJson()), domainTeamId);
+                    } catch (Exception ex) {
+                        log.warn("user-push çözüm tetiği atlandı (sessiz saat dalı): {}", ex.toString());
+                    }
+                    return;
+                }
+                if (domainTeamId != null && fold.folded().contains(domainTeamId)) mailSy = null;
+                if (ugTeamId != null && fold.folded().contains(ugTeamId)) mailUg = null;
+                Set<Long> foldedTeams = fold.folded();
+                contacts = contacts.stream()
+                        .filter(c -> c.getTeamId() == null || !foldedTeams.contains(c.getTeamId()))
+                        .toList();
+            }
+            // Açılışı duyulmuş ama pencerede bir hatırlatması ertelenmiş takım çözümü ŞİMDİ normal alır → özet tekrar etmez.
+            if (!fold.supersede().isEmpty()) {
+                try {
+                    quietHours.supersede(event.getId(), fold.supersede(), quietHours.now());
+                } catch (Exception ex) {
+                    log.warn("Sessiz saat özet kaydı geçersizleştirilemedi (olay {}): {}", event.getId(), ex.toString());
+                }
+            }
+
             // Build combined TO: team emails + contact emails (deduped)
             // Cozum bildirimi alarmin DAMGASINI kullanir: alarm surerken monitorun grubu
             // degistiyse bile kapanis, acilisi ogrenen ekibe gider.
-            List<String> teamEmails = collectTeamEmails(domainTeamId, ugTeamId, event.getNotificationGroupId());
+            List<String> teamEmails = collectTeamEmails(mailSy, mailUg, event.getNotificationGroupId());
             Set<String> seen = new HashSet<>();
             List<String> allEmails = new ArrayList<>();
             for (String e : teamEmails) {
@@ -2057,7 +2158,7 @@ public class EscalationService {
             // Çözüm postasında da olay kimliği taşınır (aksiyon butonları için); ctx null olabildiği
             // için kopya map'e sarılır — MONITORING tiplerinde yukarıda bilerek null'a çekiliyor.
             certContext = withAlertEventId(certContext, event.getId());
-            String teamNames = collectTeamNames(domainTeamId, ugTeamId, event.getNotificationGroupId());
+            String teamNames = collectTeamNames(mailSy, mailUg, event.getNotificationGroupId());
             // Recovery erişilebilirlik özeti — yalnız HTTP uptime örneği olan tipte (ACCESSIBILITY); veri yoksa null.
             EmailNotificationService.UptimeSummary uptime = null;
             if (TYPE_ACCESSIBILITY.equals(event.getAlertType())) {
@@ -2290,6 +2391,163 @@ public class EscalationService {
         return contacts;
     }
 
+    // ── Zamana bağlı eskalasyon adımı (2026-10-01, opt-in) ───────────────────────────────────────────
+    //
+    // Ürün güvencesi: "Adım tanımlanmadıkça kimseye yeni bildirim gitmez." Hiçbir kişide gecikme yoksa aşağıdaki süzgeç
+    // listeyi AYNI NESNE olarak döndürür ve hiçbir sorgu atmaz — anlık yolların alıcıları, iletileri ve günlük satırları
+    // bugünküyle birebir aynıdır (kapı: EscalationStepRegressionTest). Gecikmeli kişinin adımı EscalationStepService'ten
+    // gider; adım gittikten sonra kişi o alarmın normal alıcısıdır (yeniden uyarı, seviye artışı, çözüm, elle gönderim).
+
+    /** Bildirim günlüğü tetiği: gecikmeli eskalasyon kişisine giden ya da (nedeniyle) atlanan adım. */
+    public static final String TRIGGER_ESCALATION_STEP = "ESCALATION_STEP";
+
+    /** Anlık bildirim kişileri: {@link #getContactsForLevel} + gecikmeli kişi süzgeci ({@link #dueNow}). */
+    private List<EscalationContact> recipientsNow(String level, Long teamId, Long ugTeamId, Long alertEventId) {
+        return dueNow(getContactsForLevel(level, teamId, ugTeamId), alertEventId);
+    }
+
+    /**
+     * Gecikmeli kişilerden yalnız bu alarmın "döngüsünde" olanlar kalır (adımı gitmiş ya da alarmı gecikme tanımlanmadan
+     * önce zaten almış). Listede gecikmeli kişi YOKSA aynı liste döner ve adım tablosu hiç okunmaz.
+     */
+    List<EscalationContact> dueNow(List<EscalationContact> contacts, Long alertEventId) {
+        if (!EscalationDelay.anyDelayed(contacts)) return contacts;
+        return EscalationDelay.withoutPending(contacts, loopContactIds(alertEventId));
+    }
+
+    private Set<Long> loopContactIds(Long alertEventId) {
+        if (alertEventId == null || escalationStepRepo == null) return Set.of();
+        try {
+            List<Long> ids = escalationStepRepo.findNotifiedContactIds(alertEventId);
+            return ids == null ? Set.of() : new HashSet<>(ids);
+        } catch (Exception e) {
+            log.warn("Eskalasyon adımı kayıtları okunamadı (olay {}) — gecikmeli kişiler bu gönderime girmiyor: {}",
+                    alertEventId, e.getMessage());
+            return Set.of();
+        }
+    }
+
+    /** Adım işinin sahip takımları — {@link #resolveReNotifyTargets} ile AYNI kural, envanter önceden yüklenmiş. */
+    public record StepOwners(Long syTeamId, Long ugTeamId) {}
+
+    /**
+     * Alarmın sahip takımları (SY + UG) — elle yeniden gönderim / çözüm yoluyla birebir aynı karar: bağımsız izleme türü
+     * ya da bağlam damgası → takım YALNIZ olaydan, UG yok; envanter türevi → damga önce, yoksa envanterin SY'si; UG yalnız
+     * bağımsız işareti yokken. {@code inventory}: alan adının envanter satırı (çağıran toplu yükler; yoksa null). Sorgu atmaz.
+     */
+    public StepOwners stepOwners(AlertEvent event, com.sitemonitor.model.CertificateInventory inventory) {
+        if (event == null) return new StepOwners(null, null);
+        if (isStandaloneMon(event.getAlertType())) return new StepOwners(event.getTeamId(), null);
+        com.sitemonitor.model.CertificateInventory inv = isStandaloneEvent(event) ? null : inventory;
+        Long invTeamId = inv != null ? inv.getTeamId() : null;
+        Long sy = event.getTeamId() != null ? event.getTeamId() : invTeamId;
+        Long ug = inv != null && includeInventoryUgTeam(event, invTeamId) ? inv.getUgTeamId() : null;
+        return new StepOwners(sy, ug);
+    }
+
+    /** Adım e-postasının ve webhook'unun başındaki açıklama — "neden bana geldi?" sorusunun cevabı. */
+    static String escalationStepNote(int delayMinutes) {
+        return "ESKALASYON ADIMI: Bu alarm " + delayMinutes + " dakikadır kimse tarafından onaylanmadı (sahiplenilmedi). "
+                + "Eskalasyon kişisi olarak bilgilendiriliyorsunuz — alarmı inceleyip onaylayın ya da sorumlu ekiple "
+                + "iletişime geçin.";
+    }
+
+    /** Adım konusu: "[ESKALASYON · 30 dk onaysız] [Site Monitor] KRİTİK · ad · tür". */
+    static String escalationStepSubject(int delayMinutes, String level, String alertType,
+                                        Map<String, Object> ctx, String domain) {
+        return "[ESKALASYON · " + delayMinutes + " dk onaysız] [Site Monitor] " + levelWordTr(level) + " · "
+                + subjectDisplayName(ctx, domain) + " · " + resolvedTypeLabel(alertType);
+    }
+
+    /**
+     * Zamana bağlı eskalasyon adımını TEK kişiye gönderir — kişinin kendi kanalları: e-posta ve (varsa) Teams/Slack
+     * webhook'u. Takım adresi, 7/24 (NOC) ve kişi push'u bu adımın parçası DEĞİLDİR (onlar alarm açılışında
+     * bilgilendirildi). İzlemede "E-posta" kanalı kapalıysa e-posta atlanır, webhook gider (anlık yolla aynı kural).
+     * Sonuç tek bir {@link #TRIGGER_ESCALATION_STEP} satırıyla bildirim günlüğüne yazılır. İstisna yaymaz.
+     *
+     * @return e-posta durumu (SENT / FAILED… / SKIPPED…)
+     */
+    public String sendEscalationStep(AlertEvent event, EscalationContact contact, int delayMinutes,
+                                     Long syTeamId, Long ugTeamId) {
+        if (event == null || contact == null) return "SKIPPED";
+        String domain = event.getDomain();
+        String type = event.getAlertType();
+        String level = event.getAlertLevel();
+        Map<String, Object> snapshot = deserializeContext(event.getContextJson());
+        boolean mailDisabled = snapshot != null && Boolean.TRUE.equals(snapshot.get("mail_disabled"));
+        Map<String, Object> ctx;
+        try {
+            if (isDomainMon(type)) ctx = reconstructDomainContext(domain);
+            else if (MONITORING_ALERT_TYPES.contains(type)) ctx = snapshot;
+            else ctx = domain == null ? null : latestCheckRepo.findById(domain).map(this::latestToCertContext).orElse(null);
+        } catch (Exception e) {
+            ctx = snapshot;   // zenginleştirme düşerse adım alarm anı bağlamıyla yine gider
+        }
+        Map<String, Object> mailCtx = new LinkedHashMap<>();
+        if (ctx != null) mailCtx.putAll(ctx);
+        try {
+            String teamNames = collectTeamNames(syTeamId, ugTeamId, event.getNotificationGroupId());
+            if (teamNames != null && !teamNames.isBlank()) mailCtx.putIfAbsent("team_name", teamNames);
+        } catch (Exception ignore) { /* takım adı yalnız etiket */ }
+        if (event.getCreatedAt() != null) mailCtx.putIfAbsent("first_alert_at", event.getCreatedAt());
+        if (event.getId() != null) mailCtx.put("alert_event_id", event.getId());
+        Integer freshDays = toInt(mailCtx.get("days_remaining"));
+        Integer days = freshDays != null ? freshDays : event.getDaysRemaining();
+
+        String subject = escalationStepSubject(delayMinutes, level, type, mailCtx, domain);
+        String body = event.getMessage() != null && !event.getMessage().isBlank()
+                ? event.getMessage() : buildMessage(domain, type, level, days);
+        String message = escalationStepNote(delayMinutes) + "\n\n" + body;
+        // Runbook notu (2026-10-01) — anlık yolla (sendCombinedAlert) aynı kural: rehber varsa e-posta ve webhook
+        // sonuna "Ne yapılmalı"; yoksa ikisi de bugünküyle aynı. Adım başına tek sorgu.
+        String runbook = runbookNotes != null ? runbookNotes.plainGuide(type, domain, mailCtx) : null;
+        mailCtx = withRunbook(mailCtx, runbook);
+        String webhookMessage = com.sitemonitor.service.mail.RunbookNote.webhookMessage(message, runbook);
+
+        String email = contact.getEmail() != null ? contact.getEmail().trim() : "";
+        String emailStatus;
+        String htmlBody = message;
+        if (mailDisabled) {
+            emailStatus = "SKIPPED: e-posta kanalı kapalı";
+        } else if (email.isEmpty()) {
+            emailStatus = "SKIPPED: alıcı yok";
+        } else {
+            try {
+                htmlBody = emailService.buildAlertEmailHtml(subject, message, domain, level, type, days, mailCtx);
+            } catch (Exception ignore) { /* günlük gövdesi düz metin kalır */ }
+            try {
+                emailStatus = emailService.sendAlert(new String[]{email}, subject, message, domain, level, type, days, mailCtx);
+            } catch (Exception e) {
+                emailStatus = "FAILED: " + e.getMessage();
+            }
+        }
+        String webhookStatus = "SKIPPED";
+        if (contact.getWebhookUrl() != null && !contact.getWebhookUrl().isBlank()) {
+            try {
+                webhookService.send(contact.getWebhookType(), contact.getWebhookUrl(), subject, webhookMessage, level);
+                webhookStatus = "SENT";
+            } catch (Exception e) {
+                webhookStatus = "FAILED: " + e.getMessage();
+            }
+        }
+        saveLog(event.getId(), contact, subject, htmlBody, emailStatus, webhookStatus, TRIGGER_ESCALATION_STEP);
+        log.warn("⏫ Eskalasyon adımı: olay #{} {} [{}] {} → kişi #{} ({} dk onaysız) e-posta={} webhook={}",
+                event.getId(), domain, type, level, contact.getId(), delayMinutes, emailStatus, webhookStatus);
+        return emailStatus;
+    }
+
+    /**
+     * Atlanan adımın İZİ (CLAUDE.md: gönderilmeyen bildirim nedenini {@code notification_logs}'ta söyler) —
+     * {@link #TRIGGER_ESCALATION_STEP} tetikli, {@code SKIPPED: <neden>} durumlu tek satır. İstisna yaymaz.
+     */
+    public void recordEscalationStepSkipped(AlertEvent event, EscalationContact contact, int delayMinutes, String reason) {
+        if (event == null || event.getId() == null || contact == null) return;
+        String why = reason == null || reason.isBlank() ? "bilinmeyen neden" : reason;
+        saveLog(event.getId(), contact, "",
+                "Eskalasyon adımı (" + delayMinutes + " dk) gönderilmedi — " + why,
+                "SKIPPED: " + why, "SKIPPED", TRIGGER_ESCALATION_STEP);
+    }
+
     private List<Map<String, String>> sendCombinedAlert(
                                                           Long syTeamId, Long ugTeamId,
                                                           List<EscalationContact> contacts,
@@ -2302,6 +2560,20 @@ public class EscalationService {
         // INITIAL/ESCALATION/DAILY_REALERT yolları hariç tutmasız — mevcut imza korunur.
         return sendCombinedAlert(syTeamId, ugTeamId, contacts, domain, level, alertType, message,
                 subjectPrefix, alertEventId, trigger, daysRemaining, certContext, Set.of(), Set.of());
+    }
+
+    /**
+     * Alarm e-postasının bağlamı + runbook notu. Not yoksa {@code ctx}'in KENDİSİ döner (kopya bile yok → şablon
+     * bugünküyle aynı girdiyi görür); varsa kopyaya {@link com.sitemonitor.service.mail.RunbookNote#CTX_KEY} eklenir
+     * (e-posta tavanına kırpılmış). Çağıranın haritası değişmez — push/NOC ona bakmaya devam eder.
+     */
+    static Map<String, Object> withRunbook(Map<String, Object> ctx, String plainGuide) {
+        if (plainGuide == null || plainGuide.isBlank()) return ctx;
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (ctx != null) out.putAll(ctx);
+        out.put(com.sitemonitor.service.mail.RunbookNote.CTX_KEY,
+                com.sitemonitor.service.mail.RunbookNote.truncate(plainGuide, com.sitemonitor.service.mail.RunbookNote.EMAIL_MAX));
+        return out;
     }
 
     /** Subject'te görünen hedef adı: monitör adı > şema-soyulmuş adres. Çıplak http(s):// subject'e girmez. */
@@ -2358,16 +2630,47 @@ public class EscalationService {
 
         // 7/24 İzleme Ekibi: takım e-postasının atlanıp atlanmayacağından BAĞIMSIZ (aşağıdaki skipMail erken
         // dönüşünden ÖNCE). Kurallar/tekilleştirme/bakım NocNotificationService'te; istisna buraya taşmaz.
+        // 7/24 ekibi takım sessiz saatinden ETKİLENMEZ (kendi kuralları var; takımın penceresi onun değil).
         notifyNocOpen(stampEvent, syTeamId, domain, level, alertType, trigger, certContext);
 
-        List<String> teamEmails = collectTeamEmails(syTeamId, ugTeamId, stampedGroupId);
+        // 0.5. SESSİZ SAAT (2026-10-01, onaylı öneri 15) — opt-in. Pencere tanımlı değilse (servis yok / takımda ayar yok /
+        // pencere dışı / KRİTİK / elle gönderim) harita BOŞ döner ve aşağıdaki akış bayt bayt bugünküdür (karar bellek-içi
+        // önbellekten — ek sorgu yok). Doluysa: ertelenen takımın alıcıları (takım adresi / grup, o takımın kişileri, push)
+        // bu bildirimi ŞİMDİ almaz; alarm takımın özetine yazılır ve günlüğe QUIET_HOURS satırı düşer (sessiz karar yok).
+        Map<Long, QuietHours.Occurrence> quietDeferred = quietDeferrals(syTeamId, ugTeamId, level, trigger, alertEventId);
+        Long mailSy = syTeamId, mailUg = ugTeamId;
+        List<EscalationContact> sendContacts = contacts;
+        boolean pushQuiet = false;
+        if (!quietDeferred.isEmpty()) {
+            recordQuietDeferrals(quietDeferred, alertEventId, syTeamId, stampedGroupId, contacts, level, trigger, message);
+            Long pushTeam = stampEvent != null && stampEvent.getTeamId() != null ? stampEvent.getTeamId() : syTeamId;
+            pushQuiet = pushTeam != null && quietDeferred.containsKey(pushTeam);
+            boolean allDeferred = (syTeamId == null || quietDeferred.containsKey(syTeamId))
+                    && (ugTeamId == null || quietDeferred.containsKey(ugTeamId));
+            if (allDeferred) {
+                log.info("Sessiz saat — bildirim özete ertelendi: olay={} alan={} seviye={} tetik={} takım(lar)={}",
+                        alertEventId, domain, level, trigger, quietDeferred.keySet());
+                // Push kanalı da kararını kendi günlüğüne yazar (SKIPPED_TEAM_QUIET, doğru tetik/dedupe ile).
+                triggerUserPush(alertEventId, trigger, syTeamId, quietCtx(certContext), excludeUsernames);
+                return List.of();
+            }
+            // Kısmi (SY/UG'den yalnız biri pencerede): ertelenen takımın adresleri ve kişileri düşer, diğer takım bugünkü gibi alır.
+            if (syTeamId != null && quietDeferred.containsKey(syTeamId)) mailSy = null;
+            if (ugTeamId != null && quietDeferred.containsKey(ugTeamId)) mailUg = null;
+            Set<Long> deferredTeams = quietDeferred.keySet();
+            sendContacts = contacts.stream()
+                    .filter(c -> c.getTeamId() == null || !deferredTeams.contains(c.getTeamId()))
+                    .toList();
+        }
+
+        List<String> teamEmails = collectTeamEmails(mailSy, mailUg, stampedGroupId);
         Set<String> seen = new HashSet<>();
         List<String> allEmails = new ArrayList<>();
         for (String e : teamEmails) {
             if (excludeEmails.contains(e.trim().toLowerCase())) continue;
             if (seen.add(e.toLowerCase())) allEmails.add(e);
         }
-        for (EscalationContact c : contacts) {
+        for (EscalationContact c : sendContacts) {
             if (c.getEmail() != null && !c.getEmail().isBlank()
                     && !excludeEmails.contains(c.getEmail().trim().toLowerCase())
                     && seen.add(c.getEmail().trim().toLowerCase()))
@@ -2377,7 +2680,7 @@ public class EscalationService {
         // bugüne kadar hiçbir yerde okunmuyordu; kutu süstü, kapatmak maili durdurmuyordu.
         boolean mailDisabled = certContext != null && Boolean.TRUE.equals(certContext.get("mail_disabled"));
         boolean skipMail = mailDisabled || allEmails.isEmpty();
-        boolean anyContactWebhook = contacts.stream()
+        boolean anyContactWebhook = sendContacts.stream()
                 .anyMatch(c -> c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank());
         if (skipMail) {
             // KANAL BAĞIMSIZLIĞI: mailin atlanması webhook'u DÜŞÜRMEZ.
@@ -2401,7 +2704,7 @@ public class EscalationService {
         // DAILY_REALERT tetiklemesinde saklanan değerin +1'idir.
         Map<String, Object> enrichedCtx = new LinkedHashMap<>();
         if (certContext != null) enrichedCtx.putAll(certContext);
-        String teamNames = collectTeamNames(syTeamId, ugTeamId, stampedGroupId);
+        String teamNames = collectTeamNames(mailSy, mailUg, stampedGroupId);
         if (teamNames != null && !teamNames.isBlank()) enrichedCtx.putIfAbsent("team_name", teamNames);
         if (stampEvent != null) {
             if (stampEvent.getCreatedAt() != null)
@@ -2459,6 +2762,7 @@ public class EscalationService {
             case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
             case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
             case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+            case TYPE_HTTP_SLOW     -> "HTTP Yavaş Yanıt";
             case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
             case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü Sorunu";
             case TYPE_SCRIPTED_FAIL -> "Sentetik Test Başarısız";
@@ -2508,21 +2812,29 @@ public class EscalationService {
         String subject = subjectPrefix + "[Site Monitor] " + daysSeg + " · "
                 + subjectDisplayName(certContext, domain) + " · " + summaryTr;
 
+        // 2.5. Runbook notu (2026-10-01): hedefin "Rehber & Notlar" rehberi varsa e-postanın ve Teams/Slack mesajının
+        // SONUNA "Ne yapılmalı" eklenir. Gönderim başına TEK sorgu — sonuç aşağıdaki tüm e-posta/webhook alıcılarında
+        // yeniden kullanılır. Rehber yoksa (yaygın durum) mailCtx == certContext ve webhookMessage == message: çıktı
+        // bayt bayt bugünküyle aynı. Kişi push'u ve 7/24 (NOC) bu notu ALMAZ (kendi uzunluk sözleşmeleri var).
+        String runbook = runbookNotes != null ? runbookNotes.plainGuide(alertType, domain, certContext) : null;
+        Map<String, Object> mailCtx = withRunbook(certContext, runbook);
+        String webhookMessage = com.sitemonitor.service.mail.RunbookNote.webhookMessage(message, runbook);
+
         // 3. Tek email — tüm alıcılara. skipMail ise gövde YİNE kurulur: webhook satırlarının
         // saveLog'u ve Bildirim Geçmişi önizlemesi aynı gövdeyi kullanıyor.
         String[] toArr     = allEmails.toArray(new String[0]);
         String htmlBody    = emailService.buildAlertEmailHtml(
-                subject, message, domain, level, alertType, daysRemaining, certContext);
+                subject, message, domain, level, alertType, daysRemaining, mailCtx);
         String emailStatus;
         if (skipMail) {
             emailStatus = mailDisabled ? "SKIPPED: e-posta kanalı kapalı" : "SKIPPED: alıcı yok";
             // İZ (2026-09-30): atlanan e-posta da tek satırla günlüğe girer — neden gitmediği ekranda okunur.
             // Takım adı adresten BAĞIMSIZ (collectTeamNames yalnız adresi olan takımı sayar; burada adres yok).
-            String skipName = teamNames != null && !teamNames.isBlank() ? teamNames : ownerTeamNames(syTeamId, ugTeamId);
+            String skipName = teamNames != null && !teamNames.isBlank() ? teamNames : ownerTeamNames(mailSy, mailUg);
             saveLog(alertEventId, skipName, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
         } else {
             emailStatus = emailService.sendAlert(
-                    toArr, subject, message, domain, level, alertType, daysRemaining, certContext);
+                    toArr, subject, message, domain, level, alertType, daysRemaining, mailCtx);
             // 4. Email log — tek kayıt (teamNames yukarıda ctx zenginleştirmesinde hesaplandı)
             saveLog(alertEventId, teamNames, String.join(", ", allEmails), subject, htmlBody, emailStatus, "SKIPPED", trigger);
         }
@@ -2533,7 +2845,7 @@ public class EscalationService {
         // kanalını gösterebilir. Çözüm (sendResolutionWebhooks) ve fırtına zaten adrese göre tekilleştiriyordu; açılış
         // iki kez gönderiyordu. Tekrar eden adres günlüğe "SKIPPED: aynı webhook" olarak yazılır (denetim izi kalır).
         Set<String> sentWebhookUrls = new HashSet<>();
-        for (EscalationContact c : contacts) {
+        for (EscalationContact c : sendContacts) {
             String webhookStatus = "SKIPPED";
             if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()
                     && !sentWebhookUrls.add(c.getWebhookUrl().trim())) {
@@ -2541,7 +2853,7 @@ public class EscalationService {
                 saveLog(alertEventId, c, subject, htmlBody, "SKIPPED", webhookStatus, trigger);
             } else if (c.getWebhookUrl() != null && !c.getWebhookUrl().isBlank()) {
                 try {
-                    webhookService.send(c.getWebhookType(), c.getWebhookUrl(), subject, message, level);
+                    webhookService.send(c.getWebhookType(), c.getWebhookUrl(), subject, webhookMessage, level);
                     webhookStatus = "SENT";
                 } catch (Exception e) {
                     webhookStatus = "FAILED: " + e.getMessage();
@@ -2561,10 +2873,175 @@ public class EscalationService {
         // Alıcı ADRESLERİ günlüğe yazılmaz — tam liste INFO seviyesinde 30 gün saklanıyordu ve
         // kubectl logs ile okunabiliyordu. Adresler zaten notification_log'da; burada sayı yeter.
         log.info("Combined alert: {} [{}] → alıcı={} | webhooks={} | olay={} | trigger={}",
-                domain, level, allEmails.size(), contacts.size(), alertEventId, trigger);
+                domain, level, allEmails.size(), sendContacts.size(), alertEventId, trigger);
 
-        triggerUserPush(alertEventId, trigger, syTeamId, certContext, excludeUsernames);
+        triggerUserPush(alertEventId, trigger, syTeamId, pushQuiet ? quietCtx(certContext) : certContext, excludeUsernames);
+        // Sessiz saat: pencere İÇİNDEKİ takım bu alarm için ertelenmeyen bir bildirim aldı (YÜKSEK/KRİTİK, elle gönderim) →
+        // bekleyen özet kaydı geçersizleşir (özet tekrar etmez, çözüm de normal yoldan gider). Pencere dışı = sorgu yok.
+        supersedeQuietItems(alertEventId, syTeamId, ugTeamId, quietDeferred.keySet());
         return details;
+    }
+
+    // ── Sessiz saat yardımcıları (2026-10-01, onaylı öneri 15) ──────────────────────────────────────────────────
+
+    /**
+     * Bu gönderimde ERTELENEN sahip takımlar → pencere oluşumu. Boş harita = bugünkü yol. Ertelenmez: servis yoksa,
+     * olaysız tekil bildirimde (özete yazılacak olay yok), ertelenemez tetikte (MANUAL — elle gönderim bilinçli
+     * eylemdir), takımın penceresi yoksa/dışındaysa ya da seviye ertelenemezse (KRİTİK asla). Hata = erteleme yok.
+     */
+    private Map<Long, QuietHours.Occurrence> quietDeferrals(Long syTeamId, Long ugTeamId, String level, String trigger,
+                                                           Long alertEventId) {
+        if (quietHours == null || alertEventId == null || trigger == null
+                || !TeamQuietHoursService.DEFERRABLE_TRIGGERS.contains(trigger)) return Map.of();
+        try {
+            if (!quietHours.isConfigured(syTeamId) && !quietHours.isConfigured(ugTeamId)) return Map.of();
+            Instant now = quietHours.now();
+            Map<Long, QuietHours.Occurrence> out = new LinkedHashMap<>();
+            for (Long team : new LinkedHashSet<>(Arrays.asList(syTeamId, ugTeamId))) {
+                if (team == null) continue;
+                QuietHours.Occurrence occ = quietHours.deferral(team, level, now);
+                if (occ != null) out.put(team, occ);
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("Sessiz saat kararı verilemedi — bildirim normal gönderiliyor (olay {}): {}", alertEventId, e.toString());
+            return Map.of();
+        }
+    }
+
+    /**
+     * Ertelemenin İZİ: takım başına özet kaydı ({@code quiet_digest_items}, pencere başına tek) + bildirim günlüğüne
+     * {@code QUIET_HOURS / SKIPPED: sessiz saat (özete eklendi)} satırı — alıcı alanı ertelenen adresleri taşır. Her
+     * ertelenen gönderim bir satır bırakır ("ertelenen her bildirim kayda geçer"). Hata bildirim hattını etkilemez.
+     */
+    private void recordQuietDeferrals(Map<Long, QuietHours.Occurrence> deferred, Long alertEventId, Long syTeamId,
+                                      Long stampedGroupId, List<EscalationContact> contacts, String level,
+                                      String trigger, String message) {
+        Instant now = quietHours.now();
+        for (Map.Entry<Long, QuietHours.Occurrence> d : deferred.entrySet()) {
+            Long teamId = d.getKey();
+            QuietHours.Occurrence occ = d.getValue();
+            try {
+                quietHours.recordDeferral(alertEventId, teamId, occ, level, trigger, now);
+            } catch (Exception e) {
+                log.warn("Sessiz saat özet kaydı yazılamadı (olay {} takım {}): {}", alertEventId, teamId, e.toString());
+            }
+            try {
+                List<String> emails = new ArrayList<>();
+                String[] teamName = {"-"};
+                teamRepo.findById(teamId).ifPresent(team -> {
+                    if (team.getName() != null && !team.getName().isBlank()) teamName[0] = team.getName().trim();
+                    emails.addAll(teamRecipientEmails(teamId, syTeamId, stampedGroupId, team));
+                });
+                for (EscalationContact c : contacts) {
+                    if (!teamId.equals(c.getTeamId()) || c.getEmail() == null || c.getEmail().isBlank()) continue;
+                    String e = c.getEmail().trim();
+                    if (emails.stream().noneMatch(x -> x.equalsIgnoreCase(e))) emails.add(e);
+                }
+                String note = quietTriggerLabel(trigger) + " sessiz saat nedeniyle ertelendi: " + teamName[0]
+                        + " takımının penceresi " + occ.label() + " (Europe/Istanbul). Alarm, pencere bitiminde ("
+                        + occ.endLabel() + ") gönderilecek sessiz saat özetine eklendi.";
+                saveLog(alertEventId, teamName[0], String.join(", ", emails), "",
+                        note + (message != null && !message.isBlank() ? "\n\n" + message : ""),
+                        STATUS_QUIET_DEFERRED, "SKIPPED", TRIGGER_QUIET_HOURS);
+            } catch (Exception e) {
+                log.warn("Sessiz saat ertelemesi günlüğe yazılamadı (olay {} takım {}): {}", alertEventId, teamId, e.toString());
+            }
+        }
+    }
+
+    private static String quietTriggerLabel(String trigger) {
+        return switch (trigger == null ? "" : trigger) {
+            case "INITIAL" -> "İlk bildirim";
+            case "ESCALATION" -> "Seviye artışı bildirimi";
+            case "DAILY_REALERT" -> "Günlük hatırlatma";
+            case TeamQuietHoursService.STEP_TRIGGER -> "Eskalasyon adımı";
+            default -> "Bildirim";
+        };
+    }
+
+    /** Push tetiğine giden bağlamın KOPYASI + sessiz saat işareti (çağıranın haritası değişmez). */
+    private static Map<String, Object> quietCtx(Map<String, Object> ctx) {
+        Map<String, Object> m = ctx == null ? new LinkedHashMap<>() : new LinkedHashMap<>(ctx);
+        m.put(CTX_QUIET_DEFERRED, true);
+        return m;
+    }
+
+    /** Çözüm kararı: {@code folded} = açılışı ertelenmiş (çözüm özete katlanır); {@code supersede} = duymuş ama bir hatırlatması bekleyen. */
+    record QuietFold(Set<Long> folded, Set<Long> supersede) {
+        static final QuietFold NONE = new QuietFold(Set.of(), Set.of());
+    }
+
+    /** Sahip takımlardan biri pencere TANIMLAMIŞSA bekleyen özet kayıtlarını okur (tek sorgu); değilse sorgusuz NONE. */
+    private QuietFold quietResolutionFold(AlertEvent event, Long syTeamId, Long ugTeamId) {
+        if (quietHours == null || event == null || event.getId() == null) return QuietFold.NONE;
+        try {
+            if (!quietHours.isConfigured(syTeamId) && !quietHours.isConfigured(ugTeamId)) return QuietFold.NONE;
+            Set<Long> owners = new HashSet<>();
+            if (syTeamId != null) owners.add(syTeamId);
+            if (ugTeamId != null) owners.add(ugTeamId);
+            Set<Long> folded = new LinkedHashSet<>(), supersede = new LinkedHashSet<>();
+            for (com.sitemonitor.model.QuietDigestItem i : quietHours.pendingForEvent(event.getId())) {
+                if (!owners.contains(i.getTeamId())) continue;
+                if (Boolean.TRUE.equals(i.getOpeningDeferred())) folded.add(i.getTeamId());
+                else supersede.add(i.getTeamId());
+            }
+            supersede.removeAll(folded);
+            return folded.isEmpty() && supersede.isEmpty() ? QuietFold.NONE : new QuietFold(folded, supersede);
+        } catch (Exception e) {
+            log.warn("Sessiz saat çözüm kararı verilemedi — çözüm normal gönderiliyor (olay {}): {}", event.getId(), e.toString());
+            return QuietFold.NONE;
+        }
+    }
+
+    /** Katlanan çözümün izi: takım başına {@code QUIET_HOURS / SKIPPED: sessiz saat (çözüm özete eklendi)} satırı. */
+    private void recordQuietResolutionFold(AlertEvent event, Set<Long> teams, Long syTeamId) {
+        for (Long teamId : teams) {
+            try {
+                List<String> emails = new ArrayList<>();
+                String[] teamName = {"-"};
+                teamRepo.findById(teamId).ifPresent(team -> {
+                    if (team.getName() != null && !team.getName().isBlank()) teamName[0] = team.getName().trim();
+                    emails.addAll(teamRecipientEmails(teamId, syTeamId, event.getNotificationGroupId(), team));
+                });
+                saveLog(event.getId(), teamName[0], String.join(", ", emails), "",
+                        "Çözüm bildirimi ayrı gönderilmedi: alarmın açılışı " + teamName[0] + " takımının sessiz saatinde "
+                                + "ertelenmişti ve özet henüz gitmedi. Alarm, sessiz saat özetinde \"çözüldü\" olarak yer alacak.",
+                        STATUS_QUIET_RESOLUTION_FOLDED, "SKIPPED", TRIGGER_QUIET_HOURS);
+            } catch (Exception e) {
+                log.warn("Sessiz saat çözüm katlaması günlüğe yazılamadı (olay {} takım {}): {}", event.getId(), teamId, e.toString());
+            }
+        }
+    }
+
+    /** Pencere içindeki (ertelenmeyen) sahip takımların bekleyen özet kayıtlarını geçersizleştirir. */
+    private void supersedeQuietItems(Long alertEventId, Long syTeamId, Long ugTeamId, Set<Long> deferredTeams) {
+        if (quietHours == null || alertEventId == null) return;
+        try {
+            if (!quietHours.isConfigured(syTeamId) && !quietHours.isConfigured(ugTeamId)) return;
+            Instant now = quietHours.now();
+            List<Long> reached = new ArrayList<>();
+            for (Long team : new LinkedHashSet<>(Arrays.asList(syTeamId, ugTeamId))) {
+                if (team == null || deferredTeams.contains(team)) continue;
+                if (quietHours.activeWindow(team, now) != null) reached.add(team);
+            }
+            if (!reached.isEmpty()) quietHours.supersede(alertEventId, reached, now);
+        } catch (Exception e) {
+            log.warn("Sessiz saat özet kaydı geçersizleştirilemedi (olay {}): {}", alertEventId, e.toString());
+        }
+    }
+
+    /**
+     * Eskalasyon adımı sessiz saat yüzünden pencere sonuna BEKLETİLDİ (2026-10-01) — iz satırı (adım başına, ilk
+     * beklemede bir kez; adım işi tekrarlarda yazmaz). Adım pencere bitip özet gittikten sonra gecikmesiyle yeniden değerlendirilir.
+     */
+    public void recordQuietStepHold(AlertEvent event, EscalationContact contact, int delayMinutes, QuietHours.Occurrence occ) {
+        if (event == null || event.getId() == null || contact == null || occ == null) return;
+        saveLog(event.getId(), contact, "",
+                "Eskalasyon adımı (" + delayMinutes + " dk) sessiz saat nedeniyle bekletiliyor: takımın penceresi "
+                        + occ.label() + " (Europe/Istanbul). Alarm sessiz saat özetine eklendi; adım özetten sonra gecikmesiyle "
+                        + "yeniden değerlendirilir.",
+                STATUS_QUIET_DEFERRED, "SKIPPED", TRIGGER_QUIET_HOURS);
     }
 
     /**
@@ -2635,6 +3112,20 @@ public class EscalationService {
     /** Push karar satırı nedenleri (2026-09-30). */
     public static final String PUSH_SKIPPED_STORM = "SKIPPED_STORM";
     public static final String PUSH_SKIPPED_NO_TEAM = "SKIPPED_NO_TEAM";
+
+    // ── Sessiz saatler (2026-10-01, onaylı öneri 15) ─────────────────────────────────────────────────────────
+    /** Bildirim günlüğü tetiği: bildirim takımın sessiz saat özetine devredildi (satır e-posta değil, KARARdır). */
+    public static final String TRIGGER_QUIET_HOURS = "QUIET_HOURS";
+    /** Bildirim günlüğü tetiği: pencere sonunda giden sessiz saat özeti e-postası (alarm başına bir satır). */
+    public static final String TRIGGER_QUIET_DIGEST = "QUIET_DIGEST";
+    /** Ertelenen alarm bildiriminin durumu — ön yüz {@code SKIPPED:} ile başlayanı "atlandı" tonuyla çizer. */
+    public static final String STATUS_QUIET_DEFERRED = "SKIPPED: sessiz saat (özete eklendi)";
+    /** Açılışı ertelenmiş alarmın çözümü ayrı posta yerine özete katlandı. */
+    public static final String STATUS_QUIET_RESOLUTION_FOLDED = "SKIPPED: sessiz saat (çözüm özete eklendi)";
+    /** Push kararı: takımın sessiz saati — push da özete devredildi. */
+    public static final String PUSH_SKIPPED_TEAM_QUIET = "SKIPPED_TEAM_QUIET";
+    /** Push tetiğine giden bağlam işareti (ctx kopyasında; çağıranın haritası değişmez). */
+    public static final String CTX_QUIET_DEFERRED = "quiet_deferred";
 
     /**
      * Fırtına devrinin izi (2026-09-30): olayın bildirim günlüğüne {@code STORM} tetikli, {@code SKIPPED: fırtına #N}
@@ -2934,6 +3425,8 @@ public class EscalationService {
             case TYPE_HTTP_SSL -> "YÜKSEK: " + domain +
                     " için TLS sertifikası hata veriyor ya da süresi dolmak üzere. " +
                     "Sertifika düzeldiğinde alarm otomatik kapanır.";
+            case TYPE_HTTP_SLOW -> "YÜKSEK: " + domain +
+                    " HTTP izlemesinde yanıt süresi eşiği aşıldı (yavaş). Yanıt hızlandığında alarm otomatik kapanır.";
             case TYPE_DOMAIN_EXPIRY -> "YÜKSEK: " + domain +
                     " domain kaydının (registrar) süresi dolmak üzere. Kayıt yenilendiğinde alarm otomatik kapanır.";
             case TYPE_KEYWORD_SLOW -> "YÜKSEK: " + domain +
@@ -3018,6 +3511,7 @@ public class EscalationService {
                 case TYPE_PING_SLOW     -> "Ping Yavaş Yanıt";
                 case TYPE_HTTP_DOWN     -> "HTTP/Website Erişilemez";
                 case TYPE_HTTP_SSL      -> "SSL Sertifika Sorunu";
+                case TYPE_HTTP_SLOW     -> "HTTP Yavaş Yanıt";
                 case TYPE_PAGE_DOWN     -> "Sayfa Yüklenemiyor";
                 case TYPE_PAGE_INTEGRITY -> "Sayfa Bütünlüğü";
                 case TYPE_SCRIPTED_FAIL -> "Sentetik İzleme";
@@ -3140,7 +3634,8 @@ public class EscalationService {
         // PING_SLOW (prod kapısı 2026-09-25, O-1): ping izlemesi HER ZAMAN bağımsızdır; PING_DOWN listedeydi,
         // yavaşlık alarmı değildi — WARNING yavaşlık maili takım kontağı yoksa GLOBAL kontaklara düşüyordu.
         return TYPE_KEYWORD.equals(alertType) || TYPE_PING_DOWN.equals(alertType) || TYPE_PING_SLOW.equals(alertType)
-                || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_DOMAIN_EXPIRY.equals(alertType)
+                || TYPE_HTTP_DOWN.equals(alertType) || TYPE_HTTP_SSL.equals(alertType) || TYPE_HTTP_SLOW.equals(alertType)
+                || TYPE_DOMAIN_EXPIRY.equals(alertType)
                 || isDomainMon(alertType) || isKeywordAux(alertType) || isPage(alertType) || isScripted(alertType)
                 || isPageSpeed(alertType);
     }
@@ -3351,6 +3846,41 @@ public class EscalationService {
             return !now.isBefore(last.plusHours(iv));
         } catch (Exception e) {
             return true;   // ayrıştırılamazsa re-alert'e izin ver (bayat alarmın süresiz susmasını önle)
+        }
+    }
+
+    /** {@link #reAlertDue}'nun DAKİKA eşi (tür bazlı geçersiz kılma, 2026-10-01; saf). Ayrıştırılamazsa true (aynı tercih). */
+    static boolean reAlertDueMinutes(String lastAlertIso, String nowIso, int intervalMinutes) {
+        int iv = Math.max(1, intervalMinutes);
+        try {
+            LocalDateTime last = LocalDateTime.parse(lastAlertIso, LDT);
+            LocalDateTime now  = LocalDateTime.parse(nowIso, LDT);
+            return !now.isBefore(last.plusMinutes(iv));
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Tür bazlı yeniden uyarı kararı (2026-10-01, opt-in): alarm tipinin ailesi için
+     * {@code site.monitor.realert.<aile>-minutes} 0 ise (varsayılan) karar bugünkü {@link #reAlertDue} çağrısının
+     * KENDİSİDİR — aynı argümanlarla, genel saat aralığıyla. Değer verilmişse yalnız o ailenin alarmı o dakika aralığıyla
+     * hatırlatılır; diğer aileler etkilenmez. Kapı: {@code ReAlertIntervalOverrideTest}.
+     */
+    boolean reAlertDueFor(String alertType, String lastAlertIso, String nowIso, int globalHours) {
+        int minutes = familyReAlertMinutes(alertType);
+        return minutes > 0 ? reAlertDueMinutes(lastAlertIso, nowIso, minutes)
+                           : reAlertDue(lastAlertIso, nowIso, globalHours);
+    }
+
+    /** Ailenin etkin yeniden uyarı aralığı (dk); 0 = geçersiz kılma yok (genel aralık). Ayar okunamazsa 0. */
+    int familyReAlertMinutes(String alertType) {
+        String key = ReAlertIntervals.keyForAlertType(alertType);
+        if (key == null || appSettings == null) return 0;
+        try {
+            return ReAlertIntervals.effective(appSettings.getInt(key, 0));
+        } catch (Exception e) {
+            return 0;
         }
     }
 

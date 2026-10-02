@@ -129,11 +129,18 @@ public class MaintenanceController {
         // izlemelerini de bastırdığı için gizlenmesi zarar verir (alarm neden gelmiyor sorusu cevapsız
         // kalır); takımsız legacy kayıtlar da aynı nedenle görünür bırakılıyor. Global admin/AUDIT hepsini görür.
         List<Map<String, Object>> data = repo.findAllByOrderByStartAtDesc().stream()
-                .filter(w -> SessionScope.canView(session, w.getTeamId())
-                        || Boolean.TRUE.equals(w.getAllMonitors())
-                        || w.getTeamId() == null)
+                .filter(w -> canSeeWindow(session, w.getTeamId(), w.getAllMonitors()))
                 .map(w -> dto(w, now)).toList();
         return ok(Map.of("data", data));
+    }
+
+    /**
+     * Pencere görünürlük kuralı — TEK kaynak (liste ucu ve Durum Sayfası, 2026-10-01): kendi (görüş kapsamındaki)
+     * takımının penceresi, "tüm izlemeler" penceresi ve takımsız (legacy) pencere. {@code maintenance.view} izni
+     * ayrıca çağıranda aranır.
+     */
+    public static boolean canSeeWindow(HttpSession session, Long teamId, Boolean allMonitors) {
+        return SessionScope.canView(session, teamId) || Boolean.TRUE.equals(allMonitors) || teamId == null;
     }
 
     /**

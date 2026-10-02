@@ -28,8 +28,8 @@ k6 run -e BASE_URL=http://localhost:8080 ./perf/k6-smoke.js
 
 | Category | Status | Where |
 |----------|--------|-------|
-| **Unit** | **1686 backend tests** (JUnit 5 + Mockito + AssertJ), **399 frontend tests** (Vitest). Backend line coverage **67.2%** (enforced floor, see below); frontend line coverage **57.1%**. | `backend/src/test/`, `frontend/src/test/` |
-| **Integration** | `@DataJpaTest` slices (H2 in PostgreSQL-compat mode) for repositories, `@WebMvcTest` slices for controllers, one full `@SpringBootTest` (`SqlSamplesIntegrationTest`). Real-PostgreSQL Testcontainers under an opt-in `it` Maven profile is **planned** (targeted at native/`@Query` repos). | `backend/src/test/` |
+| **Unit** | **5426 backend tests** in 453 classes (JUnit 5 + Mockito + AssertJ), **5299 frontend tests** in 482 files (Vitest), measured 2026-10-02. Backend coverage **85.1% line / 68.5% branch** (bundle floor 71% line, 69% instruction, plus per-class floors); frontend floor 65% line and branch (`vite.config.js`). | `backend/src/test/`, `frontend/src/test/` |
+| **Integration** | `@DataJpaTest` slices (H2 in PostgreSQL-compat mode) for repositories, `@WebMvcTest` slices for controllers, one full `@SpringBootTest` (`SqlSamplesIntegrationTest`). **Real PostgreSQL** (2026-10-02): the `postgres-it` Maven profile runs the `@Tag("postgres")` suite (`SchemaPatchPostgresTest`, `PostgresOnlySqlPostgresTest`, `PolledQueriesPostgresTest`, 27 tests) against a throwaway PostgreSQL 16; CI job `backend-postgres-it` gates the release. Plain `mvn verify` excludes the tag. | `backend/src/test/.../it/` |
 | **Network isolation (TLS/HTTPS)** | This is a monitoring app that opens outbound TLS/HTTPS connections on schedules — **no test ever touches a real external host.** Certificate/handshake behaviour is exercised against a **local self-signed HTTPS server** (`com.sun.net.httpserver.HttpsServer`) with certs generated at runtime via BouncyCastle at precise `notAfter` offsets (`HttpCheckerServiceTest`, `HstsDiagnosticsServiceTest`, `CertificateCheckerServiceTest`); expiry-day math is verified by feeding those certs through the real parse path. SSRF policy is unit-tested directly (`SsrfGuardTest`). | `backend/src/test/.../service/` |
 | **Sanity / Smoke** | `scripts/smoke.ps1` hits `/health`, login gate, and a small list of APIs. Run after every deploy. | `scripts/smoke.ps1` |
 | **Regression** | Built up organically — every bug fix lands with a test that pins the behaviour. Examples: `SchedulerServiceTest`'s outage detection paths, `EscalationServiceTest`'s daily-realert dedupe, and the 2026-08 chart-crash locks: `MonitoringControllerTest.responseSeries_contract_allEndpoints` (all 7 `response-series` endpoints must return the bucket envelope — a reflective mapping-count assert forces new monitor types to register) plus `ResponseTimeChart.test.jsx` (malformed records are dropped, never crash the screen). | Throughout the suite |
@@ -151,9 +151,9 @@ that dips below fails.
 
 | Area | Today (measured) | Enforced floor | Direction |
 |------|------------------|----------------|-----------|
-| Backend line coverage | 67.2% | ≥ 65% bundle + per-class | ratchet toward 75% |
-| Frontend line coverage | 57.1% | ≥ 55% | ratchet toward 65% |
-| Critical-path E2E | none | none | login + cert lifecycle |
+| Backend line coverage | 85.1% (branch 68.5%) | ≥ 71% line bundle + per-class | hold, raise floors as classes grow |
+| Frontend line coverage | run `npm run test:coverage` | ≥ 65% line and branch | hold |
+| Critical-path E2E | 16 Playwright specs, 201 tests (200 pass, 1 env-gated skip: `email-gallery`) | `responsive.spec.js` must stay green | login + cert lifecycle |
 | A11y violations on dashboard | none | none | 0 serious / 0 critical |
 
 ## Phase roadmap
@@ -176,7 +176,7 @@ that dips below fails.
 - Full k6 profiles (read-heavy dashboard, write-heavy bulk add) + nightly perf workflow.
 
 **Phase 3** — operator confidence and business acceptance:
-- Playwright cross-browser E2E (Chromium / Firefox / WebKit), nightly with a PR subset.
+- Playwright cross-browser E2E (Firefox / WebKit; Chromium specs already exist under `frontend/e2e/`), nightly with a PR subset.
 - Cucumber BDD stub so business analysts can author UAT scenarios in Gherkin.
 - JDK + PostgreSQL version matrix in CI.
 - Pa11y full WCAG AA audit + planned in-person usability sessions (5 × 30min).

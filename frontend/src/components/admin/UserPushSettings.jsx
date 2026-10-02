@@ -64,7 +64,8 @@ const KEY = (k) => `site.monitor.userpush.${k}`
 const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'cert', 'resolved', 'test']
 const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OPEN',
   'SKIPPED_TYPE_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_MONITOR_OFF', 'SKIPPED_QUIET_HOURS',
-  'SKIPPED_REALERT_OFF', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_USER_OPT_OUT', 'SKIPPED_NO_PRIOR']
+  'SKIPPED_REALERT_OFF', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_USER_OPT_OUT', 'SKIPPED_NO_PRIOR',
+  'SKIPPED_TEAM_QUIET', 'SKIPPED_USER_QUIET_HOURS']   // 2026-10-01: takım / kişisel sessiz saat
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST']   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */

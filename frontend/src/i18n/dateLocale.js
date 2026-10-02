@@ -31,6 +31,23 @@ export function setDateLocale(lang) {
 }
 
 /**
+ * Oturumluk arayüz dili zorlaması — YALNIZ açılışta İngilizce sözlük indirilemediğinde kurulur
+ * (i18n/index.jsx LangProvider, 2026-10-02 öneri 22). O durumda arayüz Türkçe açılır ama saklı tercih 'en'
+ * kalır (geçici bir ağ hatası kullanıcının tercihini kalıcı değiştirmesin). `api/client.js` X-Lang'i önce
+ * buradan okur ki sunucu iletileri arayüzle aynı dilde kalsın (QA ISSUE-001 sınıfı). null = zorlama yok;
+ * başarılı her dil geçişi temizler. Normal akışta HİÇ kurulmaz → X-Lang eskisi gibi saklı tercihten gelir.
+ */
+let sessionLang = null
+
+export function setSessionLang(lang) {
+  sessionLang = lang || null
+}
+
+export function sessionLangOverride() {
+  return sessionLang
+}
+
+/**
  * Yüzde biçimi (QA 2026-09-12, ISSUE-001/007/010): Türkçe "%100", İngilizce "100%".
  * `%${v}` şablonu İngilizce arayüzde Türkçe sırayı sızdırıyordu (Statistics, SMTP, gürültü tablosu…).
  * null/undefined/'' → tire.

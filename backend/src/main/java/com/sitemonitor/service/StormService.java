@@ -972,7 +972,7 @@ public class StormService {
         try {
             String d = event.getDomain();
             return switch (event.getAlertType()) {
-                case EscalationService.TYPE_HTTP_DOWN ->
+                case EscalationService.TYPE_HTTP_DOWN, EscalationService.TYPE_HTTP_SLOW ->
                         httpRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null);
                 case EscalationService.TYPE_PAGE_DOWN, EscalationService.TYPE_PAGE_INTEGRITY ->
                         pageRepo != null ? pageRepo.findFirstByUrlOrderByIdAsc(d).map(m -> m.getGroupName()).orElse(null) : null;
@@ -1346,7 +1346,9 @@ public class StormService {
      * süzgeçsiz sorgulara düşüyor, toplu kesinti postasına TÜM takımların müdürlerini ekliyordu.
      */
     private List<EscalationContact> contactsForLevel(String level, Long teamId) {
-        return EscalationContactScope.forLevel(contactRepo, level, teamId);
+        // Zamana bağlı eskalasyon adımı (2026-10-01): gecikmeli kişi toplu fırtına postasına GİRMEZ — fırtına üyesi alarm
+        // adım üretmez ("fırtınaya devredilen alarm eskale olmaz"). Gecikme tanımsızsa liste aynen döner.
+        return EscalationDelay.immediateOnly(EscalationContactScope.forLevel(contactRepo, level, teamId));
     }
 
     // isTeamOnly kaldırıldı (Y4): EscalationService.teamOnlyRecipients tek doğruluk kaynağı.

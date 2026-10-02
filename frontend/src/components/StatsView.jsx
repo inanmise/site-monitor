@@ -5,7 +5,7 @@ import { useIsMobile } from '../hooks/use-mobile.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { readUrlParam, useUrlQuerySync } from '../hooks/useUrlQuerySync.js'
 import { downloadCsv, stampedName } from '../utils/csvExport.js'
-import { useElementWidth } from '../pages/forecast/forecastUi.jsx'
+import { useElementWidthState } from '../hooks/useElementWidth.js'
 import CollapsibleSection from './ui/CollapsibleSection.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
@@ -96,8 +96,8 @@ export default function StatsView({ certs = [], teamStats, onRowClick, onAddDoma
   })
 
   // ── Yerleşim: kart/tablo kararı KAP genişliğinden (tablette kenar çubuğu açıkken içerik dar) ─────────────
-  const [listWidth, setListWidthEl] = useElementWidth()
-  const [matrixWidth, setMatrixEl] = useElementWidth()
+  const [listWidth, setListWidthEl] = useElementWidthState()
+  const [matrixWidth, setMatrixEl] = useElementWidthState()
   const listEl = useRef(null)
   const setListNode = useCallback((el) => { listEl.current = el; setListWidthEl(el) }, [setListWidthEl])
   const narrowList = isMobile || (listWidth > 0 && listWidth < NARROW_PX)

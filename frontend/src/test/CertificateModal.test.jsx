@@ -71,7 +71,7 @@ import CertificateModal from '../components/CertificateModal.jsx'
 import { healthyPreview } from './helpers/sslPreviewFixture.js'
 import { resetNocStateForTests } from '../components/noc/useNocState.js'
 import { consumeNocFieldFocus } from '../components/noc/forms/nocFieldFocus.js'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 
 describe('CertificateModal', () => {
   beforeEach(() => {

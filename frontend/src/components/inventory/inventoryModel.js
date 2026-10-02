@@ -2,6 +2,7 @@ import { INVENTORY_FLAGS } from '../../utils/inventoryFlags.js'
 import { CONTACT_FIELDS } from '../../utils/inventoryContacts.js'
 import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
 import { daysFromToday } from '../../utils/localDay.js'
+import { csvRows } from '../../utils/csv.js'
 
 /**
  * Envanter sayfası saf modeli (2026-09-12, envanter zenginleştirme #1/#4/#5/#9/#12/#13/#6):
@@ -424,8 +425,11 @@ export function mapCsv(rows, labels = {}) {
   return { rows: out, unknown, columns: header.filter(Boolean) }
 }
 
-/** İndirilebilir şablon: başlık satırı + bir örnek. */
+/**
+ * İndirilebilir şablon: başlık satırı + bir örnek (CRLF, sonda CRLF). Hücreler ortak kaçıştan (utils/csv.csvRows — öneri
+ * 29): bugünkü sabit değerlerde bayt aynı, ileride eklenecek bir örnek değer de tırnaklanır / formülü nötrlenir.
+ */
 export function importTemplateCsv() {
   const example = { domain: 'www.example.com', port: '443', team: 'Takım A', tier: '1', active: 'evet', group: '', svc_mgmt_contact: 'ops@example.com', netscaler: 'evet', waf_enabled: 'hayır' }
-  return IMPORT_COLUMNS.join(',') + '\r\n' + IMPORT_COLUMNS.map((k) => example[k] ?? '').join(',') + '\r\n'
+  return csvRows([IMPORT_COLUMNS, IMPORT_COLUMNS.map((k) => example[k] ?? '')]) + '\r\n'
 }

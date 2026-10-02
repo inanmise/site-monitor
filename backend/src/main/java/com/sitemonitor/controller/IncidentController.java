@@ -3,6 +3,7 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.IncidentImage;
 import com.sitemonitor.model.IncidentRecord;
 import com.sitemonitor.service.AuditService;
+import com.sitemonitor.service.IncidentAlertLinkService;
 import com.sitemonitor.service.IncidentNotificationService;
 import com.sitemonitor.service.IncidentService;
 import com.sitemonitor.service.PermissionService;
@@ -41,6 +42,8 @@ public class IncidentController {
     private final PermissionService permissionService;
     private final AuditService auditService;
     private final IncidentNotificationService notificationService;
+    /** Alarmdan açılan kayıt (2026-10-01): alert_event_id doğrulaması + alarm detayının bağlı-kayıt sorgusu. */
+    private final IncidentAlertLinkService alertLinks;
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
@@ -118,6 +121,16 @@ public class IncidentController {
         return ok(Map.of("message", "Deleted"));
     }
 
+    /**
+     * Bir alarmdan açılmış olay kayıtları (2026-10-01) — alarm detayının "Olay kaydı #N" bağlantıları. Yalnız alarm
+     * DETAYI çağırır (liste satırı başına istek yok). Kapı listeyle aynı: incidents.view + olay kaydı takım kapsamı.
+     */
+    @GetMapping("/by-alert/{alertEventId}")
+    public ResponseEntity<Map<String, Object>> byAlert(@PathVariable Long alertEventId, HttpSession session) {
+        requireView(session);
+        return ok(Map.of("data", alertLinks.linked(alertEventId, incidentViewScope(session))));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id, HttpSession session) {
         requireView(session);
@@ -134,12 +147,15 @@ public class IncidentController {
         // USER'da açık → kullanıcı Takım B'nin team_id'siyle sahte olay açıp (send_notification ile) B'nin
         // ekibine/müdürüne mail attırabiliyor, B'nin SLA/ledger'ını kirletebiliyordu. Kural /transfer ile AYNI.
         if (body.containsKey("team_id")) requireTransferTarget(session, longVal(body.get("team_id")));
+        // Alarmdan açılan kayıt: alarm var mı (400) ve kullanıcı onu görebiliyor mu (403) — kayıttan ÖNCE.
+        alertLinks.validate(session, body, null);
         IncidentRecord e = service.create(body,
                 (String) session.getAttribute("username"),
                 longAttr(session, "userId"), longAttr(session, "teamId"));
         auditService.recordAction("INCIDENT_CREATE", session, request,
                 "INCIDENT", String.valueOf(e.getId()),
-                "{\"severity\":\"" + e.getSeverity() + "\",\"category\":\"" + e.getCategory() + "\"}");
+                "{\"severity\":\"" + e.getSeverity() + "\",\"category\":\"" + e.getCategory() + "\""
+                        + (e.getAlertEventId() != null ? ",\"alert_event_id\":" + e.getAlertEventId() : "") + "}");
         Map<String, Object> created = dto(e);
         // Mail YALNIZ kullanıcı "Mail gönder"i seçtiyse gider (varsayılan: kayıtta mail yok).
         if (Boolean.TRUE.equals(body.get("send_notification")))
@@ -158,6 +174,8 @@ public class IncidentController {
         // Aynı team_id'yi geri göndermek (form her kayıtta tüm alanları yollar) taşıma değildir → kapıya takılmaz.
         if (body.containsKey("team_id") && !java.util.Objects.equals(longVal(body.get("team_id")), cur.getTeamId()))
             requireTransferTarget(session, longVal(body.get("team_id")));
+        // Kaynak alarm DEĞİŞİYORSA yeni alarm doğrulanır (aynı değeri geri göndermek kapıya takılmaz).
+        alertLinks.validate(session, body, cur.getAlertEventId());
         String prevStatus = cur.getStatus(); // RESOLVED'e GEÇİŞ tespiti için
         IncidentRecord e = service.update(id, body, (String) session.getAttribute("username"));
         auditService.recordAction("INCIDENT_UPDATE", session, request,
@@ -294,10 +312,19 @@ public class IncidentController {
         return SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
     }
     private void requireIncidentRead(HttpSession session, IncidentRecord e) {
-        if (SessionScope.isGlobalViewer(session)) return;
-        List<Long> v = SessionScope.viewTeamIds(session);
-        if (v != null && (v.contains(e.getTeamId()) || v.contains(e.getCreatedByTeamId()))) return;
+        if (SessionScope.isGlobalViewer(session)) return;   // kayda dokunmadan (eski sıra korunur)
+        if (canReadIncident(session, e.getTeamId(), e.getCreatedByTeamId())) return;
         throw new SecurityException("Bu olay kaydı sizin takım(lar)ınıza ait değil");
+    }
+    /**
+     * Olay kaydı OKUMA kuralı — TEK kaynak (bu denetleyici ve Durum Sayfası, 2026-10-01): global görüntüleyici hepsini;
+     * diğerleri kaydın takımı YA DA giren takım görüş kapsamındaysa ({@code findFiltered}'ın {@code :scope} koşuluyla
+     * aynı). {@code incidents.view} izni ayrıca çağıranda aranır.
+     */
+    public static boolean canReadIncident(HttpSession session, Long teamId, Long createdByTeamId) {
+        if (SessionScope.isGlobalViewer(session)) return true;
+        List<Long> v = SessionScope.viewTeamIds(session);
+        return v != null && ((teamId != null && v.contains(teamId)) || (createdByTeamId != null && v.contains(createdByTeamId)));
     }
     /** Yazma sınırı = okuma sınırı (takım üyeliği). Eylem yetkisini requireManage/requireDelete kontrol eder. */
     private void requireIncidentWrite(HttpSession session, IncidentRecord e) {
@@ -341,6 +368,7 @@ public class IncidentController {
         m.put("channel", e.getChannel());
         m.put("team_id", e.getTeamId());
         m.put("team_name", e.getTeamName());
+        m.put("alert_event_id", e.getAlertEventId());
         m.put("rca_summary", e.getRcaSummary());
         m.put("description", e.getDescription());
         m.put("resolution_steps", e.getResolutionSteps());

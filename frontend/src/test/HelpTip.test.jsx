@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, act, within } from '@testing-library/react'
 import HelpTip from '../components/ui/HelpTip.jsx'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 
 /**
  * HelpTip — ayar alanlarının yanındaki açıklama baloncuğu.

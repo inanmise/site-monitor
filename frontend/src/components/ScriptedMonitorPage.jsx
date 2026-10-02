@@ -288,7 +288,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — sayfa HER AÇILIŞTA Zengin başlar; Kompakt seçimi yalnız sayfada
   // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
   const [density, setDensity] = useCardDensity('scripted')
@@ -365,7 +365,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
 
@@ -388,7 +388,6 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
   useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)   // gizli sekmede polling durur
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da durur
 
   const loadDrafts = useCallback(async () => {
     if (!k6.canManage) return
@@ -1114,7 +1113,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         </>}
         showActions={view === 'monitors'}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={k6.canManage && k6.available} onNew={openNew} newLabel={t('scripted.addMonitor')}>
         {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi — bir EYLEM değil görünüm seçicisi, yeri başlığın
@@ -1175,7 +1174,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('scripted.searchPlaceholder')} aria-label={t('scripted.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo } from 'react'
 import { RefreshCcw } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatDate } from '../../api/client'
@@ -14,26 +14,8 @@ import {
 import { cn } from '@/lib/utils'
 import { daysDomain } from './certHistoryModel.js'
 import { daysText } from './CertHistoryRow.jsx'
-
-/** Kabın genişliği (ResizeObserver) — x etiket yoğunluğu çizim alanına göre (responsechart/ChartPanel ile aynı kural). */
-function useElementWidth() {
-  const [width, setWidth] = useState(0)
-  const roRef = useRef(null)
-  const ref = useCallback((el) => {
-    roRef.current?.disconnect()
-    roRef.current = null
-    if (!el) return
-    const measure = () => setWidth(el.clientWidth || 0)
-    measure()
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure)
-      ro.observe(el)
-      roRef.current = ro
-    }
-  }, [])
-  useEffect(() => () => roRef.current?.disconnect(), [])
-  return [ref, width]
-}
+// Kabın genişliği (ResizeObserver, clientWidth) — x etiket yoğunluğu çizim alanına göre (ChartPanel ile aynı kanca, öneri 29).
+import { useElementWidth } from '../../hooks/useElementWidth.js'
 
 /** Az noktalı seride her ölçüm işaretlenir (seyrek veri okunur kalsın) — ChartPanel SPARSE_POINTS eşdeğeri. */
 const SPARSE_POINTS = 40

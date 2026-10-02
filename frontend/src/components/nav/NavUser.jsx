@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   ChevronsUpDown, Users, MonitorSmartphone, Settings, Bug, Lock, Compass, Sun, Moon, Languages, LogOut, BookOpenText,
-  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen,
+  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard,
 } from 'lucide-react'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
@@ -10,6 +10,7 @@ import { adSoyadInitials, avatarStyleFor } from '../ui/TeamMemberCards.jsx'
 import { SystemRoleBadge } from '../admin/ToneBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
+import { Spinner } from '../ui/Progress.jsx'
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/shadcn/sidebar'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
@@ -68,11 +69,16 @@ function Item({ icon, children, shortcut, className, ...rest }) {
 function GroupLabel({ children }) {
   return <DropdownMenuLabel className="px-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{children}</DropdownMenuLabel>
 }
-/** Radyo seçeneği: etkin olan noktayla işaretli; seçim menüyü KAPATMAZ (değişiklik anında görülsün). */
-function Radio({ value, children }) {
+/**
+ * Radyo seçeneği: etkin olan noktayla işaretli; seçim menüyü KAPATMAZ (değişiklik anında görülsün).
+ * `busy`: seçilen dilin sözlüğü iniyor (İngilizce ayrı chunk, 2026-10-02 öneri 22) — satır sonunda kısa meşgul göstergesi.
+ */
+function Radio({ value, children, busy = false, busyLabel }) {
   return (
-    <DropdownMenuRadioItem value={value} className="h-9 rounded-md" onSelect={(e) => e.preventDefault()}>
+    <DropdownMenuRadioItem value={value} className="h-9 rounded-md" onSelect={(e) => e.preventDefault()}
+      aria-busy={busy || undefined}>
       {children}
+      {busy && <span className="ml-auto flex items-center"><Spinner size={14} label={busyLabel} /></span>}
     </DropdownMenuRadioItem>
   )
 }
@@ -99,15 +105,20 @@ function Caption({ children }) {
  *
  * İçerik: başlık kartı ("Oturum açan" · büyük avatar · ad soyad · e-posta/kullanıcı adı · rol + takım rozeti ·
  * son giriş satırı — veri yalnız App'in /me yükünden, ek istek YOK) → Hesap (takımlarım, cihaz geçmişi, Ayarlar [ADMIN],
- * parola) → Yardım ve destek (kılavuz, ürün turu, sorun bildir) → Tercihler (Tema ve Dil alt menüde radyo — etkin olan
- * işaretli; kenar çubuğu Ctrl+B) → en altta Çıkış (yıkıcı). Sol şerit YOK.
+ * parola) → Yardım ve destek (kılavuz, ürün turu, [masaüstü] klavye kısayolları, sorun bildir) → Tercihler (Tema ve Dil
+ * alt menüde radyo — etkin olan işaretli; kenar çubuğu Ctrl+B) → en altta Çıkış (yıkıcı). Sol şerit YOK.
+ * Klavye kısayolları (öneri 24) yalnız masaüstü menüsünde — telefon sayfası dokunmatik içindir.
  */
 export default function NavUser({
   username, profile = null, teamName, myTeams = [], systemRole, loginInfo, isMobile,
-  onGo, onOpenTeams, onReportIssue, onChangePassword, onStartTour, onLogout,
+  onGo, onOpenTeams, onReportIssue, onChangePassword, onStartTour, onShowShortcuts, onLogout,
 }) {
   const t = useT()
-  const { lang, toggle: toggleLang } = useLanguage()
+  // Kısayol listesi menüden açılınca Radix menünün odak iadesi (kapanış animasyonu sonunda tetiğe) pencerenin
+  // odağını çalmasın — MonitorPageHeader / KebabMenu kalıbı; diğer öğelerin davranışı değişmez.
+  const openedDialog = useRef(false)
+  // langPending: seçilen dilin sözlüğü iniyor (İngilizce ayrı chunk) — dil denetiminde kısa meşgul göstergesi
+  const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
   const { theme, toggle: toggleTheme } = useTheme()
   const { state: sidebarState, toggleSidebar } = useSidebar()
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -221,7 +232,10 @@ export default function NavUser({
                   </div>
                   <div className="flex min-h-11 items-center gap-3 px-2 py-1">
                     <IconTile className="size-8"><Languages /></IconTile>
-                    <span className="min-w-0 flex-1 text-[15px]">{t('nav.language')}</span>
+                    <span className="flex min-w-0 flex-1 items-center gap-2 text-[15px]">
+                      {t('nav.language')}
+                      {langPending && <Spinner size={14} label={t('nav.langLoading')} />}
+                    </span>
                     <SegmentedControl ariaLabel={t('nav.language')} value={lang} onChange={setLang} options={LANGS} />
                   </div>
                 </div>
@@ -245,6 +259,7 @@ export default function NavUser({
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
           <DropdownMenuContent side="right" align="end" sideOffset={8} collisionPadding={8}
+            onCloseAutoFocus={(e) => { if (openedDialog.current) { openedDialog.current = false; e.preventDefault() } }}
             className="z-(--z-menu) flex max-h-[calc(100vh-1rem)] w-72 flex-col overflow-y-auto rounded-xl p-0 shadow-lg">
             <DropdownMenuLabel className="p-0 font-normal">{header}</DropdownMenuLabel>
             <DropdownMenuSeparator className="my-0" />
@@ -265,6 +280,11 @@ export default function NavUser({
                 <Item icon={<BookOpenText />} onSelect={() => onGo('help')}>{t('nav.userGuide')}</Item>
                 {/* Ürün turu (2026-09-13): kapatan kullanıcı istediğinde yeniden bulabilsin */}
                 <Item icon={<Compass />} onSelect={onStartTour}>{t('tour.restart')}</Item>
+                {/* Klavye kısayolları listesi (öneri 24) — `?` ile de açılır */}
+                {onShowShortcuts && (
+                  <Item icon={<Keyboard />} data-slot="user-menu-shortcuts"
+                    onSelect={() => { openedDialog.current = true; onShowShortcuts() }}>{t('shortcuts.title')}</Item>
+                )}
                 {/* Kalıcı "Sorun Bildir" — çökme OLMAYAN sorunlar (yanlış veri, yavaşlık, görsel bozukluk) */}
                 <Item icon={<Bug />} onSelect={onReportIssue}>{t('nav.reportIssue')}</Item>
               </DropdownMenuGroup>
@@ -293,7 +313,9 @@ export default function NavUser({
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="z-(--z-menu) min-w-40" sideOffset={6}>
                     <DropdownMenuRadioGroup value={lang} onValueChange={setLang}>
-                      {LANGS.map((l) => <Radio key={l.value} value={l.value}>{l.label}</Radio>)}
+                      {LANGS.map((l) => (
+                        <Radio key={l.value} value={l.value} busy={langPending === l.value} busyLabel={t('nav.langLoading')}>{l.label}</Radio>
+                      ))}
                     </DropdownMenuRadioGroup>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>

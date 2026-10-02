@@ -164,7 +164,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -184,7 +184,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       setLoadError(e?.message || 'network error')
     } finally {
       setLoading(false)
-      setSecondsSince(0)
+      setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -217,7 +217,6 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da gizli sekmede durur
 
   // Takım atama seçici yalnız admin'e — takımları bir kez yükle.
   useEffect(() => {
@@ -719,7 +718,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     <div className="mon-page">
       <MonitorPageHeader type="port" title={t('port.title')} subtitle={t('port.subtitle')}
         count={loading ? null : monitors.length} down={portCounts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('port.addMonitor')} />
 
@@ -744,7 +743,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
           )}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('port.searchPlaceholder')} aria-label={t('port.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

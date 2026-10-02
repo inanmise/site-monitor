@@ -59,6 +59,8 @@ import { TabsContent } from '@/components/shadcn/tabs'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import HttpMonitorCard from './http/HttpMonitorCard.jsx'
 import { metaRow as httpMetaRow } from './http/httpCardModel.js'
+import HttpAdvancedRequestSection from './http/HttpAdvancedRequestSection.jsx'
+import { ADV_EMPTY, advFormFrom, httpAdvancedPayload, httpAdvancedTestPayload, validateHttpAdvanced } from './http/httpAdvancedModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, InlineField, LabelSlot,
@@ -95,6 +97,7 @@ const emptyForm = {
   intervalSeconds: 300, timeoutMs: 10000,
   confirmAttempts: 3, confirmIntervalSeconds: 30, recoveryChecks: 3, recoveryIntervalSeconds: 30, active: true,
   nocNotify: false, nocGroupIds: [],   // 7/24 izleme ekibi (2026-09-27): varsayılan KAPALI; [] = varsayılan gruplar
+  ...ADV_EMPTY,   // Gelişmiş istek (2026-10-01): hepsi boş/kapalı — dokunulmazsa yüke HİÇ girmez (httpAdvancedModel)
 }
 
 export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams = [], globalAdmin = false }) {
@@ -145,6 +148,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [testing, setTesting] = useState(false)
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
+  const [advOpen, setAdvOpen] = useState(false)   // "Gelişmiş istek" bölümü — her form açılışında KAPALI başlar
   const [detailTab, setDetailTab] = useState('control')
   const deepLinkTab = useDeepLinkTab()   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
@@ -159,7 +163,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
 
   const load = useCallback(async () => {
     // HATA DALI: eskiden else yoktu → API düşünce liste boş kalıyor ve ekran
@@ -178,7 +182,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -211,7 +215,6 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     return () => { alive = false }
   }, [modal, form.teamId])
 
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)   // countdown da gizli sekmede durur
 
   useEffect(() => {
     if (!isAdmin) return
@@ -232,7 +235,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   function closeDetail() { setSelected(null); setSelCheck(null) }
 
   function openNew() {
-    setTestResult(null); setDupSource(null)
+    setTestResult(null); setDupSource(null); setAdvOpen(false)
     setForm({ ...emptyForm, teamId: isAdmin ? '' : (defaultTeamId != null ? String(defaultTeamId) : ''),
       intervalSeconds: defaults?.intervalSeconds ?? emptyForm.intervalSeconds,
       timeoutMs: defaults?.timeoutMs ?? emptyForm.timeoutMs })
@@ -250,10 +253,12 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       confirmAttempts: m.confirm_attempts ?? 3, confirmIntervalSeconds: m.confirm_interval_seconds ?? 30,
       recoveryChecks: m.recovery_checks ?? 3, recoveryIntervalSeconds: m.recovery_interval_seconds ?? 30,
       active: m.active !== false,
-      nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids) }
+      nocNotify: !!m.noc_notify, nocGroupIds: nocIdsFrom(m.noc_group_ids),
+      // Gelişmiş istek (2026-10-01): sırlar (parola/başlık) write-only — boş başlar; Kopyala onları TAŞIMAZ.
+      ...advFormFrom(m) }
   }
   function openEdit(m) {
-    setTestResult(null); setDupSource(null)
+    setTestResult(null); setDupSource(null); setAdvOpen(false)
     setForm(formFrom(m))
     setChangeNote('')
     setModal(m)
@@ -261,7 +266,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   /** Kopyala: kaynağın birebir kopyası, YENİ kayıt modunda (create). Ad "(Kopya)" sonekli;
    *  kullanıcı genelde yalnız URL'i değiştirip kaydeder. Mükerrer koruması backend'de. */
   function openDuplicate(m) {
-    setTestResult(null); setDupSource(m)
+    setTestResult(null); setDupSource(m); setAdvOpen(false)
     setForm({ ...formFrom(m), name: duplicateName(m.name || m.url) })
     setModal('new')
   }
@@ -274,6 +279,8 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       const res = await api.monitoring.testHttp({
         url: normalizeUrl(form.url), method: form.method, expectedStatus: form.expectedStatus?.trim() || '200-399',
         timeoutMs: Number(form.timeoutMs), verifySsl: form.verifySsl, followRedirects: form.followRedirects, useProxy: form.useProxy || 'AUTO',
+        // Gelişmiş istek (2026-10-01): yalnız formda YAZILI dolu değerler — boş bölüm eski yükü üretir
+        ...httpAdvancedTestPayload(form, { canEditHeaders: globalAdmin, method: form.method }),
       })
       setTestResult(res?.success ? res.data : { error: res?.error || t('http.testError') })
     } finally {
@@ -282,12 +289,16 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
   }
 
   async function save() {
+    // Gelişmiş istek alanları (2026-10-01): hatalıysa bölüm AÇILIR ki alanın altındaki hata görünsün ve odak oraya gitsin.
+    const advErrors = validateHttpAdvanced(form, { method: form.method, canEditHeaders: globalAdmin, t })
+    if (Object.values(advErrors).some(Boolean)) setAdvOpen(true)
     // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
     if (fe.check({
       url: !form.url.trim() && t('mon.fieldRequired'),
       teamId: (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
+      ...advErrors,
     })) return
     setSaving(true)
     try {
@@ -306,6 +317,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         recoveryChecks: Number(form.recoveryChecks), recoveryIntervalSeconds: Number(form.recoveryIntervalSeconds),
         active: form.active,
         nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),
+        // Gelişmiş istek (2026-10-01): YALNIZ değişen alanlar (yeni/kopya: boştan farklı olanlar) + yazılmış sırlar.
+        // Bölüme dokunulmadıysa hiçbir anahtar eklenmez → yük 2026-10-01 öncesiyle birebir aynı.
+        ...httpAdvancedPayload(form, modal === 'new' ? ADV_EMPTY : advFormFrom(modal), { canEditHeaders: globalAdmin }),
       }
       // Not yalnız YAZILDIYSA gönderilir — boş alan payload'a girmez.
       if (changeNote.trim()) payload.changeNote = changeNote.trim()
@@ -316,8 +330,10 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       toast.success(t('http.saved')); closeEdit()
       // İlk / taze kontrol (2026-09-28): yeni kart boş kalmasın, hedefi değişen kart eski sonucu göstermesin. Liste
-      // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave).
-      if (shouldCheckAfterSave('http', { isNew: modal === 'new', before: modal, after: res.data })) startCheckAfterSave(checkNow, res.data)
+      // YÜKLENDİKTEN sonra başlar → kart ızgarada, dönen göstergeyle bekler (bkz. utils/checkAfterSave). Gizli
+      // parola/başlık satırda geri okunamaz → yazıldıysa ayrıca bildirilir.
+      if (shouldCheckAfterSave('http', { isNew: modal === 'new', before: modal, after: res.data,
+        extraChanged: payload.basicAuthPass !== undefined || payload.customHeaders !== undefined })) startCheckAfterSave(checkNow, res.data)
     } finally {
       setSaving(false)
     }
@@ -652,6 +668,14 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         </FormField>
         <CheckField checked={form.active} onCheckedChange={v => setForm(f => ({ ...f, active: v }))} label={t('http.active')} className="self-center" />
         <FormHint>ⓘ {t('http.confirmHint')}</FormHint>
+
+        {/* Gelişmiş istek (2026-10-01, onaylı öneri 9): başlık / Basic auth / POST gövdesi / JSON doğrulaması / yavaş
+            yanıt alarmı — varsayılan KAPALI, hepsi isteğe bağlı (components/http/HttpAdvancedRequestSection) */}
+        <HttpAdvancedRequestSection form={form} setForm={setForm} fe={fe} method={form.method}
+          canEditHeaders={globalAdmin} open={advOpen} onOpenChange={setAdvOpen}
+          stored={modal && modal !== 'new'
+            ? { hasHeaders: !!modal.has_custom_headers, headerNames: modal.custom_header_names, hasPass: !!modal.has_basic_auth_pass }
+            : {}} />
       </FormGrid>
 
       {testResult && (
@@ -684,7 +708,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     <div className="upt-page">
       <MonitorPageHeader type="http" title={t('http.pageTitle')} subtitle={t('http.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('http.addMonitor')} />
 
@@ -706,7 +730,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('http.searchPlaceholder')} aria-label={t('http.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 
@@ -790,6 +814,14 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
             selected.proxy_effective && [t('mon.proxy.label'),
               <span key="px"><ProxyViaBadge via={selected.proxy_effective} source={selected.proxy_source} bypassed={selected.proxy_bypassed} /> <span className="text-muted-foreground">· {t(`mon.proxy.${selected.use_proxy || 'AUTO'}`)}</span></span>],
             [t('http.sslSectionTitle'), [selected.check_ssl_errors && t('http.checkSslErrors'), selected.ssl_expiry_reminders && t('http.sslExpiryReminders'), selected.domain_expiry_reminders && t('http.domainExpiryReminders')].filter(Boolean).join(' · ') || t('http.none')],
+            // Gelişmiş istek (2026-10-01) — yalnız KULLANILIYORSA satır çizilir; sır değerleri hiç gelmez
+            (selected.basic_auth_user || selected.has_custom_headers) && [t('http.adv.detailAuth'),
+              [selected.basic_auth_user && t('http.adv.detailBasic', selected.basic_auth_user), selected.has_custom_headers && t('http.adv.detailHeaders')].filter(Boolean).join(' · ')],
+            selected.method === 'POST' && selected.request_body && [t('http.adv.detailBody'),
+              t('http.adv.detailBodyValue', selected.request_content_type || 'application/json', String(selected.request_body).length)],
+            selected.json_path && [t('http.adv.detailJson'),
+              selected.json_expected ? `${selected.json_path} = "${selected.json_expected}"` : t('http.adv.detailJsonExists', selected.json_path)],
+            selected.slow_response_enabled && [t('http.adv.detailSlow'), t('http.adv.detailSlowValue', selected.slow_threshold_ms ?? 3000)],
           ]} />
           {/* Sekme değişince seçili kontrol DÜŞER. Tanı penceresi `detailTab === 'control'`
               koşuluyla gizleniyordu ama `selCheck` ayakta kalıyordu: kullanıcı pencere açıkken
@@ -817,7 +849,9 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
                   const detailText = c.error || (c.response_ms != null ? `${c.response_ms} ms` : '—')
                   return (<>
                     <span className="upt-rt-time" {...clk}>{formatDateSec(c.checked_at)}</span>
-                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk}>{c.ok ? t('http.statusOk') : (c.error ? t('http.statusError') : t('http.statusDown'))}</span>
+                    {/* Yanıt GELDİYSE (durum kodu var) hata metni "Hata" değil "Kapalı"dır — JSON doğrulaması (2026-10-01).
+                        Bu tarihten önce hatalı satırların hiçbirinde durum kodu yoktu: eski satırlar aynı okunur. */}
+                    <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'} {...clk}>{c.ok ? t('http.statusOk') : (c.error && c.http_status == null ? t('http.statusError') : t('http.statusDown'))}</span>
                     <span className="upt-rt-ms" {...clk}>{c.http_status ?? '—'}</span>
                     {bad
                       ? <Button type="button" variant="ghost" size="xs" onClick={open} title={c.error || undefined}
@@ -839,7 +873,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
 
             <TabsContent value="chart">
               <Suspense fallback={<LoadingBlock label={t('modal.loading')} className="upt-modal-loading" />}>
-                <ResponseTimeChart monitorId={selected.id} kind="http" />
+                <ResponseTimeChart monitorId={selected.id} kind="http" slowThreshold={selected.slow_response_enabled ? selected.slow_threshold_ms : null} />
               </Suspense>
             </TabsContent>
 

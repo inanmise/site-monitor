@@ -8,7 +8,7 @@ import StatusBlock from '../ui/StatusBlock.jsx'
 import { MarkdownView, MdField } from './WeeklyMdField.jsx'
 import { PrevNoteToggle } from './WeeklyListExtras.jsx'
 import { domainSummary, duplicateChannelIndexes } from './editorModel.js'
-import { useElementWidth } from './useElementWidth.js'
+import { useElementWidthState } from '../../hooks/useElementWidth.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
@@ -60,7 +60,7 @@ function FilledBadge({ filled }) {
 /** Dar kap kararı: ölçülen kap < 640 px ya da (ölçüm yoksa) telefon. */
 function useNarrow() {
   const phone = useIsMobile()
-  const [width, ref] = useElementWidth()
+  const [width, ref] = useElementWidthState()
   return [width > 0 ? width < 640 : phone, ref]
 }
 

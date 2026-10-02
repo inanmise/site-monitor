@@ -194,7 +194,8 @@ describe('sayfalama standart kapısı', () => {
   }
 
   it('sözlükte el yapımı çubuk anahtarı kalmaz (x.pageInfo / prevPage / nextPage / perPage — pg.* hariç)', () => {
-    const dict = fs.readFileSync(path.join(SRC, 'i18n', 'index.jsx'), 'utf8')
+    // TR ve EN sözlükleri ayrı dosyalarda (2026-10-02, öneri 22) — ikisi birlikte taranır.
+    const dict = ['tr.js', 'en.js'].map((f) => fs.readFileSync(path.join(SRC, 'i18n', f), 'utf8')).join('\n')
     const dead = uniq([...dict.matchAll(/^\s*'((?!pg\.)[\w.]+\.(?:pageInfo|prevPage|nextPage|perPage))'\s*:/gm)].map(m => m[1]))
     expect(dead).toEqual([])
   })

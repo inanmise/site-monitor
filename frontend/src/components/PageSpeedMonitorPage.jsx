@@ -50,7 +50,8 @@ import MonitorCardActions from './MonitorCardActions.jsx'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
 import { shouldCheckAfterSave, startCheckAfterSave } from '../utils/checkAfterSave.js'
 import ChangeNoteField from './history/ChangeNoteField.jsx'
-import { csvCell } from '../utils/csv.js'
+import { csvRows } from '../utils/csv.js'
+import { downloadCsv } from '../utils/csvExport.js'
 import { formatBytes } from '../utils/formatBytes.js'
 import { suggestThresholds, suggestionIsPartial } from '../utils/pageSpeedThresholds.js'
 import { useMonitorTeamPick } from '../hooks/useMonitorTeamPick.js'
@@ -233,7 +234,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [proxyFilter, setProxyFilter] = useState(() => readUrlParam('via', 'all'))   // vekil süzgeci (2026-09-22): all | proxy | direct
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
   const [statsVisible, setStatsVisible] = useState(false)
-  const [secondsSince, setSecondsSince] = useState(0)
+  const [loadNonce, setLoadNonce] = useState(0)   // her başarılı yüklemede artar: başlık çipi geri sayımı kendisi sayar, sayfa saniyede bir çizilmez (2026-10-01)
   // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — sayfa HER AÇILIŞTA Zengin başlar; Kompakt seçimi yalnız sayfada
   // kalındığı sürece geçerli, kalıcı DEĞİL (kullanıcı kararı; bkz. hooks/useCardDensity)
   const [density, setDensity] = useCardDensity('pagespeed')
@@ -254,7 +255,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     } catch (e) {
       setLoadError(e?.message || 'network error')
     } finally {
-      setLoading(false); setSecondsSince(0)
+      setLoading(false); setLoadNonce((n) => n + 1)
     }
   }, [])
   // Duraklatılmış kartta / detayda tek tıkla "Sürdür" (2026-09-26, tüm izleme sayfalarında varsayılan): toplu işlem
@@ -277,7 +278,6 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // Koşum bitince ms 0'dan geri dönerken hook bir kez tetiklenir → merge edilmiş satırların
   // üzerine kanonik sunucu verisi gelir (panodaki açık yeniden çekmenin karşılığı).
   useVisibleInterval(load, checkRun.running ? 0 : REFRESH_INTERVAL * 1000)
-  useVisibleInterval(() => setSecondsSince(s => s + 1), 1000, false)
 
   useEffect(() => {
     if (!modal || form.teamId === '' || form.teamId == null) { setTeamGroups([]); setTeamTags([]); return }
@@ -557,13 +557,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   function exportResourcesCsv() {
     if (!resources.length) return
     const head = ['url', 'type', 'bytes', 'duration_ms', 'http_status', 'third_party', 'checked_at']
-    const body = resources.map(r => head.map(k => csvCell(r[k])).join(',')).join('\r\n')
-    const blob = new Blob(['﻿' + head.map(csvCell).join(',') + '\r\n' + body],
-      { type: 'text/csv;charset=utf-8' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `pagespeed-resources-${selected?.id ?? 'x'}.csv`
-    a.click(); URL.revokeObjectURL(a.href)
+    // BOM + CRLF; gövde csvRows, indirme ortak downloadCsv (öneri 29 — dosya baytları ve adı aynı).
+    downloadCsv(`pagespeed-resources-${selected?.id ?? 'x'}.csv`, '﻿' + csvRows([head, ...resources.map(r => head.map(k => r[k]))]))
   }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
@@ -963,7 +958,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     <div className="upt-page">
       <MonitorPageHeader type="pagespeed" title={t('pspd.title')} subtitle={t('pspd.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshIn={REFRESH_INTERVAL - secondsSince} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('pspd.addMonitor')} />
 
@@ -986,7 +981,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
           <SearchableSelect value={proxyFilter} onChange={setProxyFilter} options={proxyFilterOptions} ariaLabel={t('mon.proxy.label')} />
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('pspd.searchPlaceholder')} aria-label={t('pspd.searchPlaceholder')}
-            value={search} onChange={e => setSearch(e.target.value)} />
+            value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
         </div>
       )}
 

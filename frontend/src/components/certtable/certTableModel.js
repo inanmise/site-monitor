@@ -7,6 +7,7 @@
  */
 import { csvRows } from '../../utils/csv.js'
 import { mergeNewDefaultCols } from '../../utils/columnPrefs.js'
+import { roundedAgoParts } from '../../utils/relativeTime.js'
 
 /** Sütun kataloğu — `sort`: sunucu sıralama anahtarı (yoksa başlık tıklanmaz). */
 export const TABLE_COLUMNS = [
@@ -238,17 +239,11 @@ export function isStale(cert, now = Date.now()) {
   return now - t > (hours * 2 * 3600 + 1800) * 1000
 }
 
-/** Göreli zaman parçası — çağıran t('tbl.rel.<unit>', n) ile yazar. */
+/** Göreli zaman parçası — çağıran t('tbl.rel.<unit>', n) ile yazar (çekirdek ortak: utils/relativeTime.roundedAgoParts). */
 export function relTime(iso, now = Date.now()) {
   const t = toMs(iso)
   if (t == null) return null
-  const s = Math.max(0, Math.round((now - t) / 1000))
-  if (s < 60) return { unit: 'sec', n: s }
-  const m = Math.round(s / 60); if (m < 60) return { unit: 'min', n: m }
-  const h = Math.round(m / 60); if (h < 24) return { unit: 'hour', n: h }
-  const d = Math.round(h / 24); if (d < 30) return { unit: 'day', n: d }
-  const mo = Math.round(d / 30); if (mo < 12) return { unit: 'month', n: mo }
-  return { unit: 'year', n: Math.round(mo / 12) }
+  return roundedAgoParts(t, now)
 }
 
 /** Sunucu zaman damgası UTC (saat dilimi eki yok) — `Z` eklenerek okunur (api/client toUtc sözleşmesi). */

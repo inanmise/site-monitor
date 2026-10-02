@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Radar, RefreshCw, Search, PauseCircle, CircleAlert, Clock, CheckCircle2, BellRing, Boxes, Activity, ListChecks,
-  ShieldAlert, FilterX, Download, LayoutGrid, Gauge, HeartPulse, Users,
+  ShieldAlert, FilterX, Download, LayoutGrid, Gauge, HeartPulse, Users, Star,
 } from 'lucide-react'
 import { api } from '../api/client'
+import { useUserPrefs } from '../hooks/useUserPrefs.js'
+import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
+import SavedViewsMenu from './ui/SavedViewsMenu.jsx'
 import { useT, useDateLocale } from '../i18n/index.jsx'
 import { useIsMobile } from '../hooks/use-mobile.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
+import { useElementWidth } from '../hooks/useElementWidth.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { navigateTo } from '../utils/navigate.js'
 import { downloadCsv, stampedName } from '../utils/csvExport.js'
@@ -80,7 +84,9 @@ export { TYPE_META, TYPE_ORDER, STATUS_META, successPct } from './monitoring/ove
  * zaman serisi grafikleri ALINMADI: 9 depoya yeni kova sorgusu ve dakikalık yoklamada DB yükü gerektirir.
  *
  * <p>Veri: `GET /api/monitoring/overview` (dakikada bir; sekme gizliyken durur; sunucu 30 sn paylaşır). URL durumu `mo_*`
- * önekiyle (`mo_win mo_type mo_status mo_team mo_q mo_lc mo_ck mo_al mo_sort mo_dlg mo_open`).
+ * önekiyle (`mo_win mo_type mo_status mo_team mo_q mo_lc mo_ck mo_al mo_sort mo_dlg mo_open mo_fav`). Favoriler hızlı görünümü
+ * (`mo_fav=1`) ve liste araç çubuğundaki "Görünümler" (kayıtlı görünümler) kişisel tercihlerden gelir (2026-10-02, öneri 23);
+ * tercihler yüklenmeden ikisi de çizilmez.
  *
  * <p>Test kancaları: `data-slot="mo-page"`, `mo-window`, `mo-live`, `mo-sections`, `mo-sections-toggle`, `mo-section`
  * (`data-section`, `data-tone`), `mo-section-summary`, `mo-chip`, `mo-health` (`data-tone`), `mo-verdict`,
@@ -98,24 +104,7 @@ export function filterRows(rows, filters = {}, sort = { key: '', dir: 'asc' }, n
   return sortRows(applyFilters(rows, filters, { nowMs }), sort)
 }
 
-/** Öğenin genişliğini izleyen callback ref (ResizeObserver). Ölçüm yoksa (jsdom) 0. */
-function useElementWidth() {
-  const [width, setWidth] = useState(0)
-  const roRef = useRef(null)
-  const ref = useCallback((el) => {
-    roRef.current?.disconnect()
-    roRef.current = null
-    if (!el) return
-    const measure = () => setWidth(el.clientWidth || 0)
-    measure()
-    if (typeof ResizeObserver !== 'undefined') {
-      roRef.current = new ResizeObserver(measure)
-      roRef.current.observe(el)
-    }
-  }, [])
-  useEffect(() => () => roRef.current?.disconnect(), [])
-  return [ref, width]
-}
+// Öğenin genişliğini izleyen callback ref: hooks/useElementWidth.js (öneri 29 — buradaki birebir kopya kaldırıldı).
 
 function OverviewSkeleton({ label }) {
   return (
@@ -151,10 +140,17 @@ export default function MonitoringOverviewPage() {
   const [kpi, setKpi] = useState(() => (KPI_DIALOG_KINDS.includes(readUrlParam('mo_dlg', '')) ? readUrlParam('mo_dlg', '') : ''))
   // Bölümler akordiyonu: varsayılan yalnız KPI şeridi açık (2026-10-01 kullanıcı isteği); URL'de mo_open
   const [openSections, setOpenSections] = useState(() => parseOpenSections(readUrlParam('mo_open', '')))
+  // "Favoriler" hızlı görünümü (2026-10-02, öneri 23): satırları kullanıcının favori izlemelerine süzer (URL mo_fav=1).
+  // Yalnız en az bir favori varken görünür; tercihler yüklenince favori kalmamışsa kendiliğinden kapanır.
+  const prefs = useUserPrefs()
+  const [favOnly, setFavOnly] = useState(() => readUrlParam('mo_fav', '') === '1')
+  const showFavView = prefs.ready && prefs.favorites.length > 0
+  const favActive = favOnly && showFavView
+  useEffect(() => { if (prefs.ready && prefs.favorites.length === 0 && favOnly) setFavOnly(false) }, [prefs.ready, prefs.favorites.length, favOnly])
   useUrlQuerySync({
     mo_win: windowHours === 24 ? null : String(windowHours), mo_type: types.join(',') || null, mo_status: statuses.join(',') || null,
     mo_team: teamsSel.join(',') || null, mo_q: q || null, mo_lc: lastSel || null, mo_ck: checksSel || null, mo_al: alertSel || null,
-    mo_sort: sortValue(sort) || null, mo_dlg: kpi || null, mo_open: openSectionsParam(openSections),
+    mo_sort: sortValue(sort) || null, mo_dlg: kpi || null, mo_open: openSectionsParam(openSections), mo_fav: favOnly ? '1' : null,
   })
   // Eski tek değerli adlar (araç çubuğu seçicileri) — dizinin tek elemanı ya da boş
   const type = types.length === 1 ? types[0] : ''
@@ -190,18 +186,24 @@ export default function MonitoringOverviewPage() {
     [types, statuses, teamsSel, q, lastSel, checksSel, alertSel])
   // "Şimdi" veri yüklendiğinde sabitlenir — son kontrol süzgeci her çizimde kaymasın (yoklama 60 sn'de tazeler)
   const nowMs = useMemo(() => (state.at ? state.at.getTime() : Date.now()), [state.at])
-  const filtered = useMemo(() => filterRows(rows, filters, sort, nowMs), [rows, filters, sort, nowMs])
+  // Favori satırlar (tür + kimlik); "Favoriler" görünümünde liste ve sütun süzgeci sayıları bunlardan
+  const favRows = useMemo(() => {
+    const set = new Set(prefs.favorites.map((f) => `${f.type}:${f.id}`))
+    return set.size ? rows.filter((r) => set.has(`${r.type}:${Number(r.id)}`)) : []
+  }, [rows, prefs.favorites])
+  const listRows = favActive ? favRows : rows
+  const filtered = useMemo(() => filterRows(listRows, filters, sort, nowMs), [listRows, filters, sort, nowMs])
   const pager = usePagination(filtered, { listKey: 'monitoring-overview', preset: 'page',
-    resetDeps: [types.join(','), statuses.join(','), teamsSel.join(','), q, lastSel, checksSel, alertSel, windowHours, sortValue(sort)] })
+    resetDeps: [types.join(','), statuses.join(','), teamsSel.join(','), q, lastSel, checksSel, alertSel, windowHours, sortValue(sort), favActive] })
   const totals = data?.totals || {}
   const columnFilterCount = activeColumnFilterCount(filters)
-  const anyFilter = !!(columnFilterCount || q)
-  const clearFilters = () => { setTypes([]); setStatuses([]); setTeamsSel([]); setQ(''); setLastSel(''); setChecksSel(''); setAlertSel('') }
+  const anyFilter = !!(columnFilterCount || q || favActive)
+  const clearFilters = () => { setTypes([]); setStatuses([]); setTeamsSel([]); setQ(''); setLastSel(''); setChecksSel(''); setAlertSel(''); setFavOnly(false) }
   const onSort = (key) => setSort((cur) => toggleSort(cur, key))
   const windowLabel = windowHours === 24 ? t('mo.win.24') : t('mo.win.168')
   const teamGroups = useMemo(() => teamHealth(rows, t('mo.colf.noTeam')), [rows, t])
   const viewCounts = useMemo(() => quickViewCounts(rows, nowMs), [rows, nowMs])
-  const activeView = matchQuickView(filters)
+  const activeView = favActive ? 'favorites' : matchQuickView(filters)
   const invInactive = Number(totals.inventory_inactive ?? 0)
 
   // Liste görünümü KABIN genişliğine göre: ≥ 720 px tablo, daha dar kartlar; ölçüm yoksa (jsdom) telefon eşiği.
@@ -211,11 +213,11 @@ export default function MonitoringOverviewPage() {
   // Sütun süzgeci grupları — başlık menüleri, süzgeç paneli ve çipler aynı tanımı kullanır. Sayılar: diğer süzgeçler
   // etkinken o değer seçilirse kalan satır (faset). Satır sayısı yüzlerle sınırlı; tek useMemo.
   const columnGroups = useMemo(() => {
-    const fc = (col, keyOf) => facetCounts(rows, filters, col, keyOf, nowMs)
+    const fc = (col, keyOf) => facetCounts(listRows, filters, col, keyOf, nowMs)
     const st = fc('status', (r) => r.status), ty = fc('type', (r) => r.type), tm = fc('team', teamKey)
-    const lc = optionCounts(rows, filters, 'last', LAST_CHECK_OPTS, matchLastCheck, nowMs)
-    const ck = optionCounts(rows, filters, 'checks', CHECKS_OPTS, (r, o) => matchChecks(r, o), nowMs)
-    const al = optionCounts(rows, filters, 'alert', ALERT_OPTS, (r, o) => matchAlert(r, o), nowMs)
+    const lc = optionCounts(listRows, filters, 'last', LAST_CHECK_OPTS, matchLastCheck, nowMs)
+    const ck = optionCounts(listRows, filters, 'checks', CHECKS_OPTS, (r, o) => matchChecks(r, o), nowMs)
+    const al = optionCounts(listRows, filters, 'alert', ALERT_OPTS, (r, o) => matchAlert(r, o), nowMs)
     const teamOpts = teams.map(([id, name]) => ({ value: id, label: name, count: tm[id] || 0 }))
     if (rows.some((r) => r.team_id == null)) teamOpts.push({ value: NO_TEAM, label: t('mo.colf.noTeam'), count: tm[NO_TEAM] || 0 })
     const LAST_LABEL = { '15m': t('mo.colf.last.15m'), '1h': t('mo.colf.last.1h'), '24h': t('mo.colf.last.24h'), older: t('mo.colf.last.older'), never: t('mo.colf.last.never') }
@@ -235,7 +237,7 @@ export default function MonitoringOverviewPage() {
       alert: { name: 'alert', label: t('mo.col.alert'), kind: 'single', value: alertSel, onChange: setAlertSel,
         options: ALERT_OPTS.map((k) => ({ value: k, label: ALERT_LABEL[k], count: al[k] })) },
     }
-  }, [rows, filters, nowMs, teams, statuses, types, teamsSel, q, lastSel, checksSel, alertSel, t])
+  }, [rows, listRows, filters, nowMs, teams, statuses, types, teamsSel, q, lastSel, checksSel, alertSel, t])
 
   // Etkin süzgeç çipleri (arama araç çubuğunda göründüğü için çip değil)
   const chips = useMemo(() => {
@@ -272,6 +274,8 @@ export default function MonitoringOverviewPage() {
   const pickType = (key) => { setTypes((cur) => (cur.length === 1 && cur[0] === key ? [] : [key])); focusList() }
   const pickTeam = (key) => { setTeamsSel((cur) => (cur.length === 1 && cur[0] === key ? [] : [key])); focusList() }
   const applyView = (key) => {
+    // "Favoriler": tüm favoriler (sütun süzgeçleri "Tümü" gibi sıfırlanır); diğer hızlı görünümler favori süzgecini kapatır
+    setFavOnly(key === 'favorites')
     const v = QUICK_VIEWS.find((x) => x.key === key)?.filters ?? {}
     setTypes(v.types ?? []); setStatuses(v.statuses ?? []); setTeamsSel(v.teams ?? [])
     setLastSel(v.last ?? ''); setChecksSel(v.checks ?? ''); setAlertSel(v.alert ?? '')
@@ -428,15 +432,19 @@ export default function MonitoringOverviewPage() {
                   </h3>
                   <p className="m-0 mt-0.5 text-xs text-muted-foreground" data-slot="mo-count">{t('mo.count', filtered.length, rows.length)}</p>
                 </div>
-                <Button type="button" variant="outline" size="sm" data-slot="mo-csv" onClick={exportCsv} disabled={filtered.length === 0}
-                  aria-label={t('mo.csv.aria', filtered.length)} className="pointer-coarse:h-10">
-                  <Download aria-hidden="true" />{t('mo.csv.button')}
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Kayıtlı görünümler (2026-10-02, öneri 23) — tercihler hazır değilse çizilmez */}
+                  <SavedViewsMenu listKey="monitoring" tab="monitoring" {...VIEW_SPECS.monitoring} className="pointer-coarse:h-10" />
+                  <Button type="button" variant="outline" size="sm" data-slot="mo-csv" onClick={exportCsv} disabled={filtered.length === 0}
+                    aria-label={t('mo.csv.aria', filtered.length)} className="pointer-coarse:h-10">
+                    <Download aria-hidden="true" />{t('mo.csv.button')}
+                  </Button>
+                </div>
               </div>
 
               {/* Hızlı görünümler — telefonda yatay kayar (kendi kabında) */}
               <div className="-mx-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin]">
-                <ToggleGroup type="single" variant="outline" size="sm" value={activeView} data-slot="mo-views"
+                <ToggleGroup type="single" variant="outline" size="sm" value={activeView} data-slot="mo-views" data-tour="mo-views"
                   onValueChange={(v) => applyView(v || 'all')} aria-label={t('mo.view.label')} className="w-max">
                   {QUICK_VIEWS.map((v) => (
                     <ToggleGroupItem key={v.key} value={v.key} data-view={v.key} className="gap-1.5 px-3 pointer-coarse:h-10">
@@ -444,6 +452,14 @@ export default function MonitoringOverviewPage() {
                       <span className="rounded-full bg-muted px-1.5 text-[11px] font-semibold text-muted-foreground tabular-nums">{viewCounts[v.key] ?? 0}</span>
                     </ToggleGroupItem>
                   ))}
+                  {/* Favoriler (öneri 23) — yalnız en az bir favori varken; diğer görünümlerin sırası değişmez (sonda) */}
+                  {showFavView && (
+                    <ToggleGroupItem value="favorites" data-view="favorites" className="gap-1.5 px-3 pointer-coarse:h-10">
+                      <Star aria-hidden="true" className="size-3.5 fill-current text-amber-500 dark:text-amber-400" />
+                      {t('mo.view.favorites')}
+                      <span className="rounded-full bg-muted px-1.5 text-[11px] font-semibold text-muted-foreground tabular-nums">{favRows.length}</span>
+                    </ToggleGroupItem>
+                  )}
                 </ToggleGroup>
               </div>
 
@@ -451,7 +467,7 @@ export default function MonitoringOverviewPage() {
                   sarmalayıcısı `w-fit` → kap `[&>*]:w-full` ile genişletilir (yoksa en uzun seçenek kadar kalır). */}
               <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
                 <InputGroup className="col-span-2 w-full sm:w-auto sm:max-w-xs sm:flex-1">
-                  <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('mo.searchPlaceholder')} aria-label={t('mo.search')} />
+                  <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('mo.searchPlaceholder')} aria-label={t('mo.search')} data-page-search="" />
                   <InputGroupAddon><Search aria-hidden="true" className="size-4" /></InputGroupAddon>
                 </InputGroup>
                 <div className="min-w-0 sm:w-44 [&>*]:w-full">

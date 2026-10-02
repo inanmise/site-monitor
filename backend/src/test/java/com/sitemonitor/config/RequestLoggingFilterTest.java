@@ -158,6 +158,20 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("TRACE: izleme formlarının write-only sırları (basicAuthPass, customHeaders) log'a düz DÜŞMEZ")
+    void trace_monitorFormSecrets_masked() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String reqJson = "{\"url\":\"https://gorunur.example.com/\",\"basicAuthPass\":\"SAHTE-PAROLA-1111\","
+                + "\"customHeaders\":\"Authorization: Bearer SAHTE-JETON-2222\",\"basic_auth_pass\":\"SAHTE-PAROLA-3333\"}";
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/monitoring/http");
+        req.setContentType("application/json");
+        req.setContent(reqJson.getBytes(StandardCharsets.UTF_8));
+        filter.doFilter(req, new MockHttpServletResponse(), (request, response) -> request.getInputStream().readAllBytes());
+        assertThat(lastResponseLogLine()).contains("gorunur.example.com")
+                .doesNotContain("SAHTE-PAROLA-1111").doesNotContain("SAHTE-JETON-2222").doesNotContain("SAHTE-PAROLA-3333");
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

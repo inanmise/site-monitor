@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
-import { EN } from '../i18n/index.jsx'
+import { EN } from '../i18n/en.js'
 
 /**
  * Genel Bakış PLATFORM süzgeci — App boru hattıyla uçtan uca (2026-09-25, kullanıcı isteği).
@@ -50,6 +50,7 @@ vi.mock('../api/client', () => {
 })
 
 import App from '../App.jsx'
+import './appLazyWarmup.js'   // App'in lazy CertificateModal'ı — soğuk dönüşüm testin dışında (öneri 22)
 
 const ALL = ['shop-a.example.com', 'shop-b.example.com', 'api-c.example.com', 'api-d.example.com']
 const shownDomains = () => ALL.filter((d) => screen.queryAllByText(d).length > 0)

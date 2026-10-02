@@ -126,4 +126,38 @@ class UserPushDeliveryRepositoryTest {
         d.setCreatedAt("2026-09-28T09:00:00");
         return repo.save(d);
     }
+
+    // ── 2026-10-01: outbox sahiplenme (onaylı öneri 3) ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Öneri 3: claimDue zamanı gelmiş PENDING satırı KİRALAR; ikinci pod alamaz; kira bitince yeniden alınır")
+    void claimDue_leasesDueRowsOnce() {
+        int n = 300;
+        UserPushDelivery fresh = pending(null, ++n);
+        UserPushDelivery elapsed = pending("2026-09-28T09:59:00", ++n);
+        UserPushDelivery backoff = pending("2026-09-28T10:05:00", ++n);   // backoff sürüyor → kiralanmaz
+        var ids = java.util.List.of(fresh.getId(), elapsed.getId(), backoff.getId());
+        String now = "2026-09-28T10:00:00";
+        String leaseA = "2026-09-28T10:02:00.000000001";
+
+        assertThat(repo.claimDue(ids, now, leaseA)).isEqualTo(2);
+        em.clear();
+        assertThat(repo.findByIdInAndNextAttemptAtOrderByIdAsc(ids, leaseA))
+                .extracting(UserPushDelivery::getId).containsExactly(fresh.getId(), elapsed.getId());
+        // ikinci pod aynı anda: kiralı satırların hiçbirini alamaz, tarama da onları vermez
+        assertThat(repo.claimDue(ids, now, "2026-09-28T10:02:00.000000002")).isZero();
+        assertThat(repo.findDuePending(now, org.springframework.data.domain.PageRequest.of(0, 50))).isEmpty();
+        // pod gönderirken öldü: kira bitince satırlar yeniden alınır (backoff'taki hâlâ beklemede)
+        assertThat(repo.findDuePending("2026-09-28T10:03:00", org.springframework.data.domain.PageRequest.of(0, 50)))
+                .extracting(UserPushDelivery::getId).containsExactly(fresh.getId(), elapsed.getId());
+    }
+
+    @Test
+    @DisplayName("Öneri 3: PENDING olmayan satır kiralanmaz (gönderilmiş / başarısız satıra dokunulmaz)")
+    void claimDue_ignoresNonPending() {
+        UserPushDelivery sent = pending(null, 400);
+        sent.setStatus("SENT");
+        repo.save(sent);
+        assertThat(repo.claimDue(java.util.List.of(sent.getId()), "2026-09-28T10:00:00", "2026-09-28T10:02:00.000000001")).isZero();
+    }
 }

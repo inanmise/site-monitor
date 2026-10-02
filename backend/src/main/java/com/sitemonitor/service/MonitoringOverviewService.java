@@ -402,6 +402,8 @@ public class MonitoringOverviewService {
             row.put("failed_window", rowFailed);
             row.put("success_rate_window", successRate(rowChecks, rowFailed));
             row.put("avg_response_ms_window", rowAvg);
+            // İzleme grubu (2026-10-01, Durum Sayfası): hizmet = takım + grup adı. Yüklenmiş entity'den — ek sorgu YOK.
+            row.put("group_name", groupNameOf(m));
             rows.add(row);
         }
 
@@ -554,4 +556,24 @@ public class MonitoringOverviewService {
     }
 
     private static String nz(String a, String b) { return a != null && !a.isBlank() ? a : b; }
+
+    /**
+     * İzlemenin grup adı (boş/boşluk → null) — dokuz türün hepsinde {@code group_name} sütunu var. {@link TypeSpec}'e yeni
+     * bileşen eklemek yerine tür deseni: tür tanımları (ve onları kuran testler) değişmez.
+     */
+    static String groupNameOf(Object m) {
+        String g = switch (m) {
+            case HttpMonitor x -> x.getGroupName();
+            case PingMonitor x -> x.getGroupName();
+            case PortMonitor x -> x.getGroupName();
+            case DnsMonitor x -> x.getGroupName();
+            case DomainMonitor x -> x.getGroupName();
+            case KeywordMonitor x -> x.getGroupName();
+            case PageMonitor x -> x.getGroupName();
+            case PageSpeedMonitor x -> x.getGroupName();
+            case ScriptedMonitor x -> x.getGroupName();
+            case null, default -> null;
+        };
+        return g == null || g.isBlank() ? null : g.trim();
+    }
 }

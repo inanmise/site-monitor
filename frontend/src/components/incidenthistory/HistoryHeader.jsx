@@ -1,6 +1,8 @@
 import { History, RefreshCw, Plus, CircleDot, Sigma, Timer, OctagonAlert } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
+import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
+import { VIEW_SPECS } from '../../hooks/userPrefsModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Skeleton } from '@/components/shadcn/skeleton'
@@ -68,6 +70,8 @@ export default function HistoryHeader({
         )}
         actions={(
           <>
+            {/* Kayıtlı görünümler (2026-10-02, öneri 23) — tercihler hazır değilse çizilmez */}
+            <SavedViewsMenu listKey="incident-history" tab="incident-history" {...VIEW_SPECS['incident-history']} />
             <Button variant="outline" size="sm" onClick={onRefresh} aria-busy={loading || undefined}>
               <RefreshCw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('inc.refresh')}
             </Button>
