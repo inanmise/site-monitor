@@ -232,6 +232,9 @@ jobs:
     permissions:
       contents: write
       packages: write
+    # image-boot-test işi tam olarak bu yayının imajını (vX.Y.Z etiketi) çeker ve açar.
+    outputs:
+      image: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -464,3 +467,17 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Prod deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "Follow \`docs/PROD_DEPLOY_CHECKLIST.md\` at \`${{ steps.ver.outputs.tag }}\` - image tag \`${{ steps.ver.outputs.tag }}\` (with the v), no \`--reuse-values\`, \`SITE_MONITOR_SECRET_KEY\` unchanged." >> "$GITHUB_STEP_SUMMARY"
+
+  # ── İmaj açılış testi (2026-10-02, onaylı öneri 28) ─────────────────────
+  # main'in imajını yalnız bu workflow üretir (docker-build.yml main'de koşmaz); 20.96.0 bu yüzden açılış testi
+  # görmeden yayınlandı. Yayınlanan sürüm imajını boş bir postgres:16'ya karşı prod profiliyle açar — adımlar ortak
+  # image-boot-test.yml'de. Yayından SONRA koşar: kırmızıysa sürüm yine yayınlanmıştır, ama o imaj prod'a
+  # dağıtılmadan önce boot günlüğü (artefakt image-boot-log) incelenmeli.
+  image-boot-test:
+    needs: release
+    permissions:
+      contents: read
+      packages: read   # ghcr.io pull
+    uses: ./.github/workflows/image-boot-test.yml
+    with:
+      image: ${{ needs.release.outputs.image }}

@@ -15,6 +15,14 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **Varsayılan dil İngilizce** (ürün kararı): dil seçmemiş kullanıcı arayüzü İngilizce görür, seçilen dil kalıcıdır.
+  Davranış zaten buydu; karar belgelendi ve testle kilitlendi.
+
+### Fixed
+- Docker imajı açılış testi main sürümlerinde de koşuyor: Release, yayınladığı sürüm imajını yayından sonra boş bir
+  PostgreSQL'e karşı prod profiliyle açıp denetler (sürümü bloklamaz). 20.96.0 imajı bu testi görmeden yayınlanmıştı.
+
 ## [20.96.0] — 2026-10-02
 
 Uçtan uca incelemeden çıkan ve onaylanan 16 öneri. Hepsi mevcut akışı bozmayacak şekilde yapıldı: yeni davranışlar
