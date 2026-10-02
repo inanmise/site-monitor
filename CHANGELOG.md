@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.97.0] — 2026-10-02
+
 ### Added
 - **HTTP izlemede uçtan uca tanılama:** izleme ayrıntısındaki "Uçtan uca tanıla" düğmesi (ve "Hata tanısı"
   penceresindeki "Canlı tanılama çalıştır") isteğin izlediği yolu adım adım gösterir: DNS, vekil/TCP bağlantısı,
@@ -2080,7 +2082,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.96.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.97.0...HEAD
+[20.97.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.97.0
 [20.96.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.1
 [20.96.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.0
 [20.95.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.95.0
