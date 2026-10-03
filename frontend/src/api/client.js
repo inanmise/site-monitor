@@ -369,6 +369,14 @@ export const api = {
   loginMethodsAdmin: {
     get: () => request('/admin/login-methods'),
     save: (settings) => request('/admin/login-methods', { method: 'PUT', body: JSON.stringify({ settings }), withStatus: true }),
+    /** Push metni taslağını YALNIZ oturumdaki yöneticiye gönderir (2026-10-03): 400 + field, 429 dakikalık tavan. */
+    pushTest: (body) => request('/admin/login-methods/push-test', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    /** Giriş istatistikleri (2026-10-03): days 1|7|30|90; fresh → 30 sn önbelleği atla (sunucu en sık 5 sn'de bir). */
+    stats: (days, fresh = false) => request(`/admin/login-methods/stats?${historyQuery({ days, fresh: fresh ? 1 : null })}`),
+    /** Kullanıcı bazlı giriş satırları: { days, q, channel, sort, page (1-tabanlı), size, fresh }. */
+    statsUsers: (params = {}) => request(`/admin/login-methods/stats/users?${historyQuery(params)}`),
+    /** Tek kullanıcının giriş istatistiği + son olaylar. */
+    statsUser: (username, days) => request(`/admin/login-methods/stats/users/${encodeURIComponent(username)}?${historyQuery({ days })}`),
   },
 
   /**

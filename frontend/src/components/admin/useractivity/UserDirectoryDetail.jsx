@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import {
-  Activity, AtSign, ChevronDown, Compass, Copy, ExternalLink, Globe, History, IdCard, LogIn, LogOut, Mail, Monitor,
+  Activity, AtSign, BarChart3, ChevronDown, Compass, Copy, ExternalLink, Globe, History, IdCard, LogIn, LogOut, Mail, Monitor,
   ShieldCheck, Smartphone, Tablet, Terminal, Unlock, UserX,
 } from 'lucide-react'
+import { navigateTo } from '../../../utils/navigate.js'
+import ChannelBadge from '../loginmethods/stats/ChannelBadge.jsx'
+import { channelOfLoginMethod, loginStatsParams } from '../loginmethods/stats/loginStatsModel.js'
 import { useT } from '../../../i18n/index.jsx'
 import { formatDateSec } from '../../../api/client'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -142,17 +145,20 @@ function AccountSection({ row, globalAdmin }) {
   )
 }
 
-function SignInSection({ row, masked = false }) {
+function SignInSection({ row, masked = false, globalAdmin = false }) {
   const t = useT()
   // Giriş IP'leri yalnız global yönetici + denetçiye (ve kişinin kendi satırında) gelir; gelmediyse "Gizli" — "kayıt yok"
   // ("—") ile karışmasın (2026-09-28c ek-6).
   const ip = (key) => (idHidden(row, key, masked) ? <MaskedValue /> : (row[key] || '—'))
   const failed = Number(row.failed_since_login) || 0
   const before = Number(row.failed_before_login) || 0
+  // 2026-10-03: son giriş yöntemi KANAL rozetiyle (PASSWORD → hesap kaynağına göre LDAP / yerel şifre)
+  const channel = channelOfLoginMethod(row.last_login_method, row.auth_source)
   return (
+    <>
     <dl className={GRID}>
       <DirField label={t('udir.lastSignIn')}>{row.last_login_at ? <Stamp iso={row.last_login_at} /> : <Pill tone="never" status="never">{t('uact.st.never')}</Pill>}</DirField>
-      <DirField label={t('udir.signInMethod')}>{row.last_login_method || '—'}</DirField>
+      <DirField label={t('udir.signInMethod')}>{channel ? <ChannelBadge channel={channel} /> : (row.last_login_method || '—')}</DirField>
       <DirField label={t('udir.lastSignInIp')} mono>{ip('last_login_ip')}</DirField>
       <DirField label={t('udir.prevSignIn')}><Stamp iso={row.prev_login_at} /></DirField>
       <DirField label={t('udir.prevSignInIp')} mono>{ip('prev_login_ip')}</DirField>
@@ -163,6 +169,14 @@ function SignInSection({ row, masked = false }) {
       <DirField label={t('udir.failedSinceLbl')}><span data-failed-count={failed} className={cn('tabular-nums', failed > 0 && 'font-semibold text-destructive')}>{failed}</span></DirField>
       {before > 0 && <DirField label={t('udir.failedBeforeLbl')}><span className="tabular-nums">{before}</span></DirField>}
     </dl>
+    {/* Giriş istatistikleri (Ayarlar → Giriş Yöntemleri → İstatistikler) yalnız global yöneticiye açık — bağlantı da öyle */}
+    {globalAdmin && (
+      <Button type="button" variant="outline" className="h-10 justify-start sm:pointer-fine:h-8" data-slot="udir-login-stats"
+        onClick={() => navigateTo('settings', loginStatsParams(row.username))}>
+        <BarChart3 aria-hidden="true" />{t('lm.stats.user.openStats')}
+      </Button>
+    )}
+    </>
   )
 }
 
@@ -238,7 +252,7 @@ export default function UserDirectoryDetail({ open, row, phone, ctx, busy, onClo
               <Section icon={Activity} title={t('uact.detailSession')}><SessionSection row={row} /></Section>
               {row.online && <Section icon={Globe} title={t('udir.secConnection')}><ConnectionSection row={row} /></Section>}
               <Section icon={IdCard} title={t('uact.detailAccount')}><AccountSection row={row} globalAdmin={!!ctx?.globalAdmin} /></Section>
-              <Section icon={LogIn} title={t('uact.detailLoginHistory')}><SignInSection row={row} masked={!!ctx?.identityMasked} /></Section>
+              <Section icon={LogIn} title={t('uact.detailLoginHistory')}><SignInSection row={row} masked={!!ctx?.identityMasked} globalAdmin={!!ctx?.globalAdmin} /></Section>
               <Section icon={Compass} title={t('udir.secTour')}>
                 <dl className={GRID}>
                   <DirField label={t('uact.colTour')}><TourPill row={row} withLabel={false} /></DirField>

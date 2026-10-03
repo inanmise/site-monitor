@@ -92,6 +92,8 @@ import static org.mockito.Mockito.when;
 class LoginOtpCodeNeverLoggedTest {
 
     static final String CODE = "583920";
+    /** Yöneticinin özel EN push şablonu (2026-10-03) — yer tutucuların hepsi + kanalın taşıyamadığı tipografi. */
+    static final String CUSTOM_EN = "SiteMonitor code {kod} (valid {sure} s, requested {saat}) – not you? Ignore ✓";
 
     @Autowired LoginOtpChallengeRepository repo;
 
@@ -178,9 +180,17 @@ class LoginOtpCodeNeverLoggedTest {
         EmailNotificationService email = new EmailNotificationService(smtpSettings, smtpMail, notificationLogRepo, appSettings, tb);
 
         audit = mock(AuditService.class);
-        LoginOtpDeliveryService delivery = new LoginOtpDeliveryService(repo, push, email, audit);
 
         methods = mock(LoginMethodsService.class);
+        // 2026-10-03: yönetici push metni — TR yerleşik varsayılan (boş kayıt), EN ÖZEL şablon ({kod} {sure} {saat} +
+        // kanalın taşıyamadığı tipografi): kod özel şablonla da hiçbir log'a / satıra / denetime sızmamalı.
+        lenient().when(methods.pushTitleTemplate(false)).thenReturn("");
+        lenient().when(methods.pushMessageTemplate(false)).thenReturn("");
+        lenient().when(methods.pushTitleTemplate(true)).thenReturn("Sign-in ✓ SiteMonitor");
+        lenient().when(methods.pushMessageTemplate(true)).thenReturn(CUSTOM_EN);
+        lenient().when(methods.pushMessageLimit()).thenReturn(200);
+        LoginOtpDeliveryService delivery = new LoginOtpDeliveryService(repo, push, email, audit, methods);
+
         lenient().when(methods.available(any())).thenReturn(true);
         lenient().when(methods.ttlSeconds(any())).thenReturn(45);
         lenient().when(methods.maxAttempts()).thenReturn(3);
@@ -257,7 +267,12 @@ class LoginOtpCodeNeverLoggedTest {
         String body = pushBodies.get(1);
         assertThat(body).startsWith("{\"title\":").contains("\"pipeline\":\"sitemonitor-pipeline\"")
                 .contains("\"userIds\":[\"ALICE\"]").contains(CODE).contains("45 s");
-        assertThat(pushBodies.get(0)).contains("SiteMonitor giriş kodunuz: " + CODE + " — 45 sn geçerli");
+        // İkinci istek İngilizce: ÖZEL şablon dolu ve kanal-süzgeçli gider (– → -, ✓ → OK), kod tam
+        assertThat(body).contains("\"title\":\"Sign-in OK SiteMonitor\"")
+                .contains("SiteMonitor code " + CODE + " (valid 45 s, requested ")
+                .contains(") - not you? Ignore OK").doesNotContain("–").doesNotContain("✓").doesNotContain("{kod}");
+        // Kanal ISO-8859-9: em-dash ağ geçidine "-" olarak gider (2026-10-03, "koddan sonra ?" hatası — LoginOtpPushSafeTextTest)
+        assertThat(pushBodies.get(0)).contains("SiteMonitor giriş kodunuz: " + CODE + " - 45 sn geçerli").doesNotContain("—");
         assertThat(pushHeaders).containsOnly("k-123");
         // teslimat günlüğüne / bildirim günlüğüne HİÇ dokunulmadı
         verifyNoInteractions(pushDeliveryRepo);

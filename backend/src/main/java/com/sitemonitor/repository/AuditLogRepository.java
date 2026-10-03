@@ -200,6 +200,27 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
             + " ORDER BY a.eventTime DESC")
     List<AuditLog> findRecentOtpActivity(@Param("types") Collection<String> types, Pageable pageable);
 
+    /**
+     * Giriş İSTATİSTİKLERİ (2026-10-03, Giriş Yöntemleri → İstatistikler) — pencerenin giriş olaylarının DAR izdüşümü
+     * (tür, zaman, aktör, sonuç, neden, ayrıntı), en yeniden. TEK sorgu ({@code idx_audit_type_time}); çağıran sayfa
+     * boyuyla tavanlar (tavan + 1 → {@code truncated}). Satır başına / gün başına sorgu YOK.
+     */
+    @Query("SELECT a.eventType, a.eventTime, a.actor, a.outcome, a.failureReason, a.detail FROM AuditLog a"
+            + " WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime DESC")
+    List<Object[]> findLoginStatRows(@Param("types") Collection<String> types, @Param("since") String since, Pageable page);
+
+    /** Giriş istatistikleri: aralıktaki tür başına adet + farklı aktör sayısı (önceki dönem karşılaştırması, kesin toplam). */
+    @Query("SELECT a.eventType, COUNT(a), COUNT(DISTINCT LOWER(a.actor)) FROM AuditLog a"
+            + " WHERE a.eventType IN :types AND a.eventTime >= :from AND a.eventTime < :to GROUP BY a.eventType")
+    List<Object[]> countLoginStatTypes(@Param("types") Collection<String> types, @Param("from") String from,
+                                       @Param("to") String to);
+
+    /** Giriş istatistikleri: TEK kullanıcının pencere içi giriş olayları (harf duyarsız aktör), en yeniden; çağıran tavanlar. */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor"
+            + " ORDER BY a.eventTime DESC")
+    List<AuditLog> findLoginStatEventsForActor(@Param("types") Collection<String> types, @Param("since") String since,
+                                               @Param("actor") String actorLower, Pageable page);
+
     /** Özet: pencere içi olay-türü dağılımı. */
     @Query("SELECT a.eventType, COUNT(a) FROM AuditLog a WHERE a.eventTime > :since GROUP BY a.eventType ORDER BY COUNT(a) DESC")
     List<Object[]> countByEventTypeSince(@Param("since") String since);

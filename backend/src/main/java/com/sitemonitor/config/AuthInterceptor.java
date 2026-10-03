@@ -243,9 +243,10 @@ public class AuthInterceptor implements HandlerInterceptor {
                 userService.recordSuccessfulLogin(user.getUsername(), newSession.getId(),
                         clientIp, UserService.LoginMethod.REMEMBER_ME);
                 if (shouldAuditReauth(user.getUsername())) {
+                    // 2026-10-03: ayrıntıda giriş kanalı REMEMBER_ME (Giriş Yöntemleri → İstatistikler parola girişinden ayırır)
                     auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
                             user.getSystemRole(), clientIp, req.getHeader("User-Agent"),
-                            newSession.getId(), true, null, null, 5);
+                            newSession.getId(), true, null, null, 5, "REMEMBER_ME");
                 }
                 // Apply the forced-password-change gate to the restored session too,
                 // so the cookie path can't sidestep the modal for one request.

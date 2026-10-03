@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { KeyRound, LockKeyhole, Mail, ShieldCheck, Smartphone, UserCog } from 'lucide-react'
+import { BarChart3, KeyRound, LockKeyhole, Mail, Settings2, ShieldCheck, Smartphone, UserCog } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -18,6 +18,12 @@ import { FIELD_GRID_3, SETTINGS_STACK, SettingsHeader, SettingsSaveBar, Settings
 import LoginMethodsPreview from './loginmethods/LoginMethodsPreview.jsx'
 import LoginMethodsActivity from './loginmethods/LoginMethodsActivity.jsx'
 import LoginMethodsCoverage from './loginmethods/LoginMethodsCoverage.jsx'
+import PushTemplateEditor from './loginmethods/PushTemplateEditor.jsx'
+import { DEFAULT_MESSAGE_MAX, PUSH_TEXT_FIELDS, validatePushTexts } from './loginmethods/pushTemplateModel.js'
+import LoginStatsTab from './loginmethods/stats/LoginStatsTab.jsx'
+import { enabledChannels } from './loginmethods/stats/loginStatsModel.js'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
+import { readUrlParam, useUrlQuerySync } from '../../hooks/useUrlQuerySync.js'
 
 /** Sayısal alanlar → sunucu sınır anahtarı (limits) + yardım anahtarı. Doğrulama sunucuyla AYNI aralıklardan. */
 export const NUMERIC_FIELDS = [
@@ -48,12 +54,37 @@ export function validateLoginMethods(form, limits, rangeMsg) {
   return errs
 }
 
-/** Gönderilecek gövde — sayılar sayı, anahtarlar boolean. */
-function payloadOf(form) {
+/** Push metni alanları (2026-10-03) — metin; sunucu göndermediyse (eski sürüm) gönderilmez. */
+export const TEXT_FIELDS = PUSH_TEXT_FIELDS
+
+/**
+ * Gönderilecek gövde — sayılar sayı, anahtarlar boolean, metinler kırpılmış dize. Push metinleri YALNIZ değiştiyse gider:
+ * push tavanı sonradan düşürüldüyse kayıtlı (artık uzun) metin ilgisiz bir kaydı (ör. LDAP'ı kapatmak) engellemesin —
+ * o durum düzenleyicide ayrıca uyarılır.
+ */
+function payloadOf(form, saved) {
   const out = {}
   for (const k of BOOL_FIELDS) out[k] = !!form[k]
   for (const { key } of NUMERIC_FIELDS) if (form[key] !== undefined) out[key] = Number(String(form[key]).trim())
+  for (const [k, v] of Object.entries(changedTexts(form, saved))) out[k] = String(v ?? '').trim()
   return out
+}
+
+/** Kayıtlıdan farklı push metni alanları (doğrulama ve gönderim yalnız bunlar için). */
+export function changedTexts(form, saved) {
+  const out = {}
+  for (const k of TEXT_FIELDS) {
+    if (form?.[k] === undefined) continue
+    if (String(form[k] ?? '').trim() !== String(saved?.[k] ?? '').trim()) out[k] = form[k]
+  }
+  return out
+}
+
+/** Hata haritasında yalnız diğer dilin push metni hatası varsa o dil (düzenleyici sekmesi o dile geçer). */
+function pushLangForErrors(errs, current) {
+  const has = (l) => !!(errs[`push_title_${l}`] || errs[`push_message_${l}`])
+  if (has(current)) return current
+  return ['tr', 'en'].find(has) || current
 }
 
 /** Durum rozeti (Açık / Kapalı / Kullanılamıyor) — literal anahtarlar. */
@@ -92,6 +123,11 @@ function MethodCard({ method, icon: Icon, title, description, state, children })
  * Ayarlar → Güvenlik → "Giriş Yöntemleri" (2026-10-02, kullanıcı isteği) — YALNIZ global yönetici (kabuk kapsamlı müdüre
  * "yalnız global yönetici" notu çizer; sunucu her uçta 403; anahtarlar GLOBAL_ONLY).
  *
+ * 2026-10-03: başlığın altında shadcn Tabs "Ayarlar | İstatistikler" (URL `lm_tab=stats`, varsayılan yazılmaz; kaydet
+ * çubuğu yalnız ayarlarda; istatistikler → `loginmethods/stats/LoginStatsTab`). Ayarlarda yöntem kartlarının ardından
+ * PUSH MESAJI düzenleyicisi (`loginmethods/PushTemplateEditor` — TR/EN başlık + metin, yer tutucular, telefon önizlemesi,
+ * kendime test gönder); push metni yalnız DEĞİŞTİYSE gönderilir ve doğrulanır, diğer dildeki hata sekmeyi o dile çevirir.
+ *
  * Düzen (mobil-önce): başlık + durum çipleri → uyarılar (LDAP kapalı ve kod yöntemi yok / gizli anahtar) → YÖNTEM
  * KARTLARI (Şifre — her zaman açık; LDAP — anahtar + kapatırken onay; Push ile kod — anahtar + süre, ağ geçidi yoksa
  * kullanılamaz + push ayarlarına bağlantı; E-posta ile kod — anahtar + süre + SMTP durumu; 2026-10-03: her iki kartta
@@ -113,6 +149,11 @@ export default function LoginMethodsSettings({ onOpenSection }) {
   const [saved, setSaved] = useState(null)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
+  // Push metni düzenleyicisinin dil sekmesi — kabukta: doğrulama hatası diğer dildeyse sekme o dile çevrilir (2026-10-03)
+  const [pushLang, setPushLang] = useState('tr')
+  // Sayfa görünümü (2026-10-03): ayarlar | istatistikler — derin bağlantı ?lm_tab=stats (Kullanıcı/Oturum'dan gelir)
+  const [view, setView] = useState(() => (readUrlParam('lm_tab') === 'stats' ? 'stats' : 'settings'))
+  useUrlQuerySync({ lm_tab: view === 'stats' ? 'stats' : null })
 
   const apply = useCallback((d) => {
     setData(d)
@@ -142,10 +183,19 @@ export default function LoginMethodsSettings({ onOpenSection }) {
     fe.clear(key)
   }
 
+  /** Alan hatalarını uygular; push metni hatası başka dildeyse düzenleyici sekmesi önce o dile geçer (alan görünür olsun). */
+  function showErrors(errs) {
+    setPushLang((cur) => pushLangForErrors(errs, cur))
+    return fe.check(errs)
+  }
+
   async function save() {
     if (!form || saving) return
-    const errs = validateLoginMethods(form, limits, (min, max) => t('lm.range', min, max))
-    if (fe.check(errs)) return
+    const errs = {
+      ...validateLoginMethods(form, limits, (min, max) => t('lm.range', min, max)),
+      ...validatePushTexts(changedTexts(form, saved), Number(data?.push_template?.message_max) || DEFAULT_MESSAGE_MAX, t),
+    }
+    if (showErrors(errs)) return
     if (saved?.ldap_enabled && !form.ldap_enabled) {
       const noCode = !(form.push_enabled && gateway) && !form.email_enabled
       const ok = await showConfirm({
@@ -159,12 +209,12 @@ export default function LoginMethodsSettings({ onOpenSection }) {
     }
     setSaving(true)
     try {
-      const r = await api.loginMethodsAdmin.save(payloadOf(form))
+      const r = await api.loginMethodsAdmin.save(payloadOf(form, saved))
       if (r?.success && r.data) {
         apply(r.data)
         toast.success(r.message || t('lm.saved'))
       } else if (r?.field) {
-        fe.check({ [r.field]: r.error || t('lm.err.save') })
+        showErrors({ [r.field]: r.error || t('lm.err.save') })
       } else {
         toast.error(r?.error || t('lm.err.save'))
       }
@@ -201,118 +251,141 @@ export default function LoginMethodsSettings({ onOpenSection }) {
           </>
         ) : null} />
 
-      {!data && !error && <LoadingBlock label={t('app.loading')} />}
-      {error && !data && (
-        <StatusBlock tone="danger" title={t('lm.err.load')} description={error}
-          actions={<Button type="button" variant="outline" onClick={load} className="min-h-10">{t('lm.retry')}</Button>} />
-      )}
-
-      {data && form && (
-        <>
-          {noCodeWithLdapOff && (
-            <div data-slot="lm-no-code-warning">
-              <AlertBanner tone="danger" title={t('lm.ldap.noCodeTitle')} role="alert" className="mb-0">
-                {t('lm.ldap.noCodeBody')}
-              </AlertBanner>
-            </div>
+      {/* 2026-10-03: "Ayarlar | İstatistikler" — URL lm_tab=stats (varsayılan yazılmaz); kaydet çubuğu yalnız ayarlarda.
+          Radix pasif sekmeyi söker: istatistik isteği yalnız sekme açıkken atılır, form durumu kabukta yaşar. */}
+      <Tabs value={view} onValueChange={setView} className="min-w-0 gap-5">
+        <TabsList aria-label={t('lm.tabs')} className="h-auto! w-full flex-row! sm:w-fit" data-slot="lm-tabs">
+          <TabsTrigger value="settings" data-tab="settings" className="min-h-10 w-auto! flex-1 justify-center! gap-1.5 px-3 sm:min-h-8 sm:flex-none">
+            <Settings2 aria-hidden="true" />{t('lm.tab.settings')}
+          </TabsTrigger>
+          <TabsTrigger value="stats" data-tab="stats" className="min-h-10 w-auto! flex-1 justify-center! gap-1.5 px-3 sm:min-h-8 sm:flex-none">
+            <BarChart3 aria-hidden="true" />{t('lm.tab.stats')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="stats" className="min-w-0">
+          <LoginStatsTab methods={enabledChannels(saved, status)} />
+        </TabsContent>
+        <TabsContent value="settings" className={cn(SETTINGS_STACK, 'mt-0')}>
+          {!data && !error && <LoadingBlock label={t('app.loading')} />}
+          {error && !data && (
+            <StatusBlock tone="danger" title={t('lm.err.load')} description={error}
+              actions={<Button type="button" variant="outline" onClick={load} className="min-h-10">{t('lm.retry')}</Button>} />
           )}
-          {status.secret_key_ephemeral && (
-            <div data-slot="lm-secret-warning">
-              <AlertBanner tone="warning" className="mb-0">{t('lm.secretEphemeral')}</AlertBanner>
-            </div>
-          )}
 
-          <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-            <MethodCard method="password" icon={LockKeyhole} title={t('lm.password.title')} description={t('lm.password.desc')}
-              state="always" />
-
-            <MethodCard method="ldap" icon={UserCog} title={t('lm.ldap.title')} description={t('lm.ldap.desc')}
-              state={form.ldap_enabled ? 'on' : 'off'}>
-              <ToggleRow checked={!!form.ldap_enabled} onChange={(v) => set('ldap_enabled', v)} label={t('lm.ldap.toggle')}
-                helpKey="help.set.site.monitor.login.ldap-enabled" touch />
-              {!status.ldap_integration_enabled && <p className="text-xs text-muted-foreground">{t('lm.ldap.integrationOff')}</p>}
-            </MethodCard>
-
-            <MethodCard method="push" icon={Smartphone} title={t('lm.push.title')} description={t('lm.push.desc')} state={pushState}>
-              <ToggleRow checked={!!form.push_enabled} onChange={(v) => set('push_enabled', v)} label={t('lm.push.toggle')}
-                helpKey="help.set.site.monitor.login.otp.push.enabled" touch disabled={!gateway && !form.push_enabled} />
-              {!gateway && (
-                <div data-slot="lm-push-no-gateway">
-                <AlertBanner tone="warning" className="mb-0"
-                  actions={onOpenSection ? (
-                    <Button type="button" variant="outline" size="sm" className="min-h-10 sm:min-h-8" onClick={() => onOpenSection('userpush')}>
-                      {t('lm.push.openSettings')}
-                    </Button>
-                  ) : undefined}>
-                  {t('lm.push.noGateway')}
-                </AlertBanner>
+          {data && form && (
+            <>
+              {noCodeWithLdapOff && (
+                <div data-slot="lm-no-code-warning">
+                  <AlertBanner tone="danger" title={t('lm.ldap.noCodeTitle')} role="alert" className="mb-0">
+                    {t('lm.ldap.noCodeBody')}
+                  </AlertBanner>
                 </div>
               )}
-              {/* 2026-10-03: kişi bilgisi doğrulaması — telefon da sorulsun; kapsam yalnız anahtar açıkken anlamlı */}
-              <div data-slot="lm-require" data-kind="phone" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
-                <ToggleRow checked={!!form.push_require_phone} onChange={(v) => set('push_require_phone', v)}
-                  label={t('lm.push.requirePhone')} helpKey="help.set.site.monitor.login.otp.push.require-phone" touch />
-                <p className="m-0 text-xs text-muted-foreground">{t('lm.push.requirePhoneHint')}</p>
-                {form.push_require_phone && <LoginMethodsCoverage coverage={data.coverage} kind="phone" />}
-              </div>
-              {numField('push_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.push.ttl-seconds',
-                { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
-            </MethodCard>
-
-            <MethodCard method="email" icon={Mail} title={t('lm.email.title')} description={t('lm.email.desc')}
-              state={form.email_enabled ? 'on' : 'off'}>
-              <ToggleRow checked={!!form.email_enabled} onChange={(v) => set('email_enabled', v)} label={t('lm.email.toggle')}
-                helpKey="help.set.site.monitor.login.otp.email.enabled" touch />
-              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground" data-slot="lm-smtp">
-                <span className="[overflow-wrap:anywhere]">{smtp.configured ? t('lm.email.smtp', smtp.host) : t('lm.email.smtpMissing')}</span>
-                {onOpenSection && (
-                  <Button type="button" variant="link" size="sm" className="min-h-10 px-0 sm:min-h-8" onClick={() => onOpenSection('smtp')}>
-                    {t('lm.email.openSmtp')}
-                  </Button>
-                )}
-              </div>
-              {smtp.configured && !smtp.alarm_mail_enabled && (
-                <p className="text-xs text-muted-foreground">{t('lm.email.alarmMuted')}</p>
+              {status.secret_key_ephemeral && (
+                <div data-slot="lm-secret-warning">
+                  <AlertBanner tone="warning" className="mb-0">{t('lm.secretEphemeral')}</AlertBanner>
+                </div>
               )}
-              {/* 2026-10-03: kişi bilgisi doğrulaması — e-posta da sorulsun; e-posta kodu her durumda kayıtlı adres ister */}
-              <div data-slot="lm-require" data-kind="email" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
-                <ToggleRow checked={!!form.email_require_email} onChange={(v) => set('email_require_email', v)}
-                  label={t('lm.email.requireEmail')} helpKey="help.set.site.monitor.login.otp.email.require-email" touch />
-                <p className="m-0 text-xs text-muted-foreground">{t('lm.email.requireEmailHint')}</p>
-                <LoginMethodsCoverage coverage={data.coverage} kind="email" />
+
+              <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+                <MethodCard method="password" icon={LockKeyhole} title={t('lm.password.title')} description={t('lm.password.desc')}
+                  state="always" />
+
+                <MethodCard method="ldap" icon={UserCog} title={t('lm.ldap.title')} description={t('lm.ldap.desc')}
+                  state={form.ldap_enabled ? 'on' : 'off'}>
+                  <ToggleRow checked={!!form.ldap_enabled} onChange={(v) => set('ldap_enabled', v)} label={t('lm.ldap.toggle')}
+                    helpKey="help.set.site.monitor.login.ldap-enabled" touch />
+                  {!status.ldap_integration_enabled && <p className="text-xs text-muted-foreground">{t('lm.ldap.integrationOff')}</p>}
+                </MethodCard>
+
+                <MethodCard method="push" icon={Smartphone} title={t('lm.push.title')} description={t('lm.push.desc')} state={pushState}>
+                  <ToggleRow checked={!!form.push_enabled} onChange={(v) => set('push_enabled', v)} label={t('lm.push.toggle')}
+                    helpKey="help.set.site.monitor.login.otp.push.enabled" touch disabled={!gateway && !form.push_enabled} />
+                  {!gateway && (
+                    <div data-slot="lm-push-no-gateway">
+                    <AlertBanner tone="warning" className="mb-0"
+                      actions={onOpenSection ? (
+                        <Button type="button" variant="outline" size="sm" className="min-h-10 sm:min-h-8" onClick={() => onOpenSection('userpush')}>
+                          {t('lm.push.openSettings')}
+                        </Button>
+                      ) : undefined}>
+                      {t('lm.push.noGateway')}
+                    </AlertBanner>
+                    </div>
+                  )}
+                  {/* 2026-10-03: kişi bilgisi doğrulaması — telefon da sorulsun; kapsam yalnız anahtar açıkken anlamlı */}
+                  <div data-slot="lm-require" data-kind="phone" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
+                    <ToggleRow checked={!!form.push_require_phone} onChange={(v) => set('push_require_phone', v)}
+                      label={t('lm.push.requirePhone')} helpKey="help.set.site.monitor.login.otp.push.require-phone" touch />
+                    <p className="m-0 text-xs text-muted-foreground">{t('lm.push.requirePhoneHint')}</p>
+                    {form.push_require_phone && <LoginMethodsCoverage coverage={data.coverage} kind="phone" />}
+                  </div>
+                  {numField('push_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.push.ttl-seconds',
+                    { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
+                </MethodCard>
+
+                <MethodCard method="email" icon={Mail} title={t('lm.email.title')} description={t('lm.email.desc')}
+                  state={form.email_enabled ? 'on' : 'off'}>
+                  <ToggleRow checked={!!form.email_enabled} onChange={(v) => set('email_enabled', v)} label={t('lm.email.toggle')}
+                    helpKey="help.set.site.monitor.login.otp.email.enabled" touch />
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground" data-slot="lm-smtp">
+                    <span className="[overflow-wrap:anywhere]">{smtp.configured ? t('lm.email.smtp', smtp.host) : t('lm.email.smtpMissing')}</span>
+                    {onOpenSection && (
+                      <Button type="button" variant="link" size="sm" className="min-h-10 px-0 sm:min-h-8" onClick={() => onOpenSection('smtp')}>
+                        {t('lm.email.openSmtp')}
+                      </Button>
+                    )}
+                  </div>
+                  {smtp.configured && !smtp.alarm_mail_enabled && (
+                    <p className="text-xs text-muted-foreground">{t('lm.email.alarmMuted')}</p>
+                  )}
+                  {/* 2026-10-03: kişi bilgisi doğrulaması — e-posta da sorulsun; e-posta kodu her durumda kayıtlı adres ister */}
+                  <div data-slot="lm-require" data-kind="email" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
+                    <ToggleRow checked={!!form.email_require_email} onChange={(v) => set('email_require_email', v)}
+                      label={t('lm.email.requireEmail')} helpKey="help.set.site.monitor.login.otp.email.require-email" touch />
+                    <p className="m-0 text-xs text-muted-foreground">{t('lm.email.requireEmailHint')}</p>
+                    <LoginMethodsCoverage coverage={data.coverage} kind="email" />
+                  </div>
+                  {numField('email_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.email.ttl-seconds',
+                    { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
+                </MethodCard>
               </div>
-              {numField('email_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.email.ttl-seconds',
-                { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
-            </MethodCard>
-          </div>
 
-          <SettingsSection title={<span className="inline-flex items-center gap-2"><ShieldCheck aria-hidden="true" className="size-4" />{t('lm.rules.title')}</span>}
-            description={t('lm.rules.desc', limits.window_minutes || 15)} contentClassName="flex min-w-0 flex-col gap-2">
-            <div className={cn(FIELD_GRID_3, 'min-w-0')}>
-              {numField('max_attempts', t('lm.maxAttempts'), 'help.set.site.monitor.login.otp.max-attempts',
-                { hint: t('lm.rangeHint', ...(limits.max_attempts || [1, 10])) })}
-              {numField('resend_cooldown_seconds', t('lm.cooldown'), 'help.set.site.monitor.login.otp.resend-cooldown-seconds',
-                { hint: t('lm.rangeHint', ...(limits.resend_cooldown || [10, 300])) })}
-              {numField('max_requests_per_user', t('lm.perUser'), 'help.set.site.monitor.login.otp.max-requests-per-user',
-                { hint: t('lm.rangeHint', ...(limits.max_requests_per_user || [1, 20])) })}
-              {numField('max_requests_per_ip', t('lm.perIp'), 'help.set.site.monitor.login.otp.max-requests-per-ip',
-                { hint: t('lm.rangeHint', ...(limits.max_requests_per_ip || [1, 500])) })}
-              {numField('max_failed_verifications', t('lm.maxFailed'), 'help.set.site.monitor.login.otp.max-failed-verifications',
-                { hint: t('lm.rangeHint', ...(limits.max_failed_verifications || [1, 20])) })}
-              {numField('max_contact_mismatches', t('lm.maxContactMismatches'), 'help.set.site.monitor.login.otp.max-contact-mismatches',
-                { hint: t('lm.rangeHint', ...(limits.max_contact_mismatches || [1, 20])) })}
-            </div>
-            <ToggleRow checked={!!form.allow_global_admins} onChange={(v) => set('allow_global_admins', v)}
-              label={t('lm.allowAdmins')} helpKey="help.set.site.monitor.login.otp.allow-global-admins" touch />
-            <p className="text-xs text-muted-foreground">{t('lm.allowAdminsHint')}</p>
-          </SettingsSection>
+              {/* 2026-10-03: kodla giriş push metni (TR / EN) — ağ geçidi yokken de hazırlanabilir; test gönderimi pasif */}
+              {form.push_title_tr !== undefined && (
+                <PushTemplateEditor form={form} onField={set} fe={fe} template={data.push_template} lang={pushLang}
+                  onLangChange={setPushLang} gateway={gateway} ttl={form.push_ttl_seconds} />
+              )}
 
-          <LoginMethodsPreview form={form} status={status} />
-          <LoginMethodsActivity rows={data.activity} types={data.activity_types} />
+              <SettingsSection title={<span className="inline-flex items-center gap-2"><ShieldCheck aria-hidden="true" className="size-4" />{t('lm.rules.title')}</span>}
+                description={t('lm.rules.desc', limits.window_minutes || 15)} contentClassName="flex min-w-0 flex-col gap-2">
+                <div className={cn(FIELD_GRID_3, 'min-w-0')}>
+                  {numField('max_attempts', t('lm.maxAttempts'), 'help.set.site.monitor.login.otp.max-attempts',
+                    { hint: t('lm.rangeHint', ...(limits.max_attempts || [1, 10])) })}
+                  {numField('resend_cooldown_seconds', t('lm.cooldown'), 'help.set.site.monitor.login.otp.resend-cooldown-seconds',
+                    { hint: t('lm.rangeHint', ...(limits.resend_cooldown || [10, 300])) })}
+                  {numField('max_requests_per_user', t('lm.perUser'), 'help.set.site.monitor.login.otp.max-requests-per-user',
+                    { hint: t('lm.rangeHint', ...(limits.max_requests_per_user || [1, 20])) })}
+                  {numField('max_requests_per_ip', t('lm.perIp'), 'help.set.site.monitor.login.otp.max-requests-per-ip',
+                    { hint: t('lm.rangeHint', ...(limits.max_requests_per_ip || [1, 500])) })}
+                  {numField('max_failed_verifications', t('lm.maxFailed'), 'help.set.site.monitor.login.otp.max-failed-verifications',
+                    { hint: t('lm.rangeHint', ...(limits.max_failed_verifications || [1, 20])) })}
+                  {numField('max_contact_mismatches', t('lm.maxContactMismatches'), 'help.set.site.monitor.login.otp.max-contact-mismatches',
+                    { hint: t('lm.rangeHint', ...(limits.max_contact_mismatches || [1, 20])) })}
+                </div>
+                <ToggleRow checked={!!form.allow_global_admins} onChange={(v) => set('allow_global_admins', v)}
+                  label={t('lm.allowAdmins')} helpKey="help.set.site.monitor.login.otp.allow-global-admins" touch />
+                <p className="text-xs text-muted-foreground">{t('lm.allowAdminsHint')}</p>
+              </SettingsSection>
 
-          <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={() => { setForm({ ...saved }); fe.reset() }} />
-        </>
-      )}
+              <LoginMethodsPreview form={form} status={status} />
+              <LoginMethodsActivity rows={data.activity} types={data.activity_types} />
+
+              <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={() => { setForm({ ...saved }); fe.reset() }} />
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
@@ -322,5 +395,6 @@ function payloadOfSafe(form) {
   const out = {}
   for (const k of BOOL_FIELDS) out[k] = !!form?.[k]
   for (const { key } of NUMERIC_FIELDS) out[key] = String(form?.[key] ?? '').trim()
+  for (const k of TEXT_FIELDS) out[k] = String(form?.[k] ?? '').trim()
   return out
 }

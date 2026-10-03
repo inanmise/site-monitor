@@ -171,8 +171,9 @@ class AuthInterceptorTest {
 
         interceptor.preHandle(req, res, new Object());
 
+        // 2026-10-03: ayrıntıda giriş kanalı REMEMBER_ME (Giriş Yöntemleri → İstatistikler parola girişinden ayırır)
         verify(auditService).recordLogin(eq("alice"), any(), any(), any(), any(), any(), any(),
-                eq(true), any(), any(), anyInt());
+                eq(true), any(), any(), anyInt(), eq("REMEMBER_ME"));
     }
 
     @Test
@@ -189,6 +190,8 @@ class AuthInterceptorTest {
         verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
         verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(),
                 anyBoolean(), any(), any(), anyInt());
+        verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), anyInt(), any());
     }
 
     @Test

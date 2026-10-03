@@ -355,6 +355,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.login.otp.push.require-phone",          "login-methods", Type.BOOL),
         new Setting("site.monitor.login.otp.email.require-email",         "login-methods", Type.BOOL),
         new Setting("site.monitor.login.otp.max-contact-mismatches",      "login-methods", Type.INT),
+        //    2026-10-03 (kullanıcı isteği): kodla giriş push BAŞLIĞI / MESAJI (TR / EN). Boş = yerleşik varsayılan; mesajda
+        //    {kod} zorunlu (tam bir kez), {sure} / {saat} isteğe bağlı — doğrulama LoginMethodsController + OtpPushTemplate.
+        new Setting("site.monitor.login.otp.push.title-tr",               "login-methods", Type.STRING),
+        new Setting("site.monitor.login.otp.push.title-en",               "login-methods", Type.STRING),
+        new Setting("site.monitor.login.otp.push.message-tr",             "login-methods", Type.STRING),
+        new Setting("site.monitor.login.otp.push.message-en",             "login-methods", Type.STRING),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
         //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),
@@ -526,7 +532,13 @@ public final class AppSettingsCatalog {
         // indiremez ya da eşleşmeme sınırını gevşetemez.
         "site.monitor.login.otp.push.require-phone",
         "site.monitor.login.otp.email.require-email",
-        "site.monitor.login.otp.max-contact-mismatches"
+        "site.monitor.login.otp.max-contact-mismatches",
+        // 2026-10-03: kodla giriş push metni — müdür kurum geneli giriş kodu iletisini değiştiremez (kimlik avı metni
+        // yazılamasın, kod kaldırılamasın).
+        "site.monitor.login.otp.push.title-tr",
+        "site.monitor.login.otp.push.title-en",
+        "site.monitor.login.otp.push.message-tr",
+        "site.monitor.login.otp.push.message-en"
     ));
 
     /**

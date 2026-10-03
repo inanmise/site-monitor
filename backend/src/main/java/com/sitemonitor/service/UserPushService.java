@@ -186,6 +186,14 @@ public class UserPushService {
     }
 
     /**
+     * Mesaj tavanı (kırpılmış, {@link #maxMessageChars}) — kodla giriş push şablonunun uzunluk doğrulaması için
+     * (2026-10-03): {@link #sendDirect} bu tavanla kırpar; şablon en kötü dolumla bu sınırı aşarsa kod kesilebilirdi.
+     */
+    public int messageCharLimit() {
+        return maxMessageChars();
+    }
+
+    /**
      * Sebep ({@code neden}/{@code degisen}) tavanı — yönetici ayarı, sunucuda kırpılır.
      *
      * <p>{@code <= 0} bilinçli "tavan yok" demektir: dıştaki mesaj tavanı zaten üç noktayla
@@ -1228,8 +1236,10 @@ public class UserPushService {
         if (userId == null || userId.isBlank()) return new DirectResult(false, null, "NO_TARGET");
         try {
             Map<String, Object> payload = new LinkedHashMap<>();   // alan SIRASI API sözleşmesine sadık (sendBatch ile aynı)
-            payload.put("title", title == null || title.isBlank() ? titleSetting() : title);
-            payload.put("message", message);
+            // Kanal ISO-8859-9 (PushText): alarm hattı gibi BURADA da süzülür — süzülmeyen "—" telefonda "?" oluyordu
+            // (2026-10-03, kullanıcı bildirimi: giriş kodundan sonra "?" geliyor). Merkezde: her sendDirect çağıranı korunur.
+            payload.put("title", PushText.pushSafe(title == null || title.isBlank() ? titleSetting() : title));
+            payload.put("message", PushText.truncate(PushText.pushSafe(message), maxMessageChars()));
             payload.put("pipeline", appSettings.getString("site.monitor.userpush.pipeline", ""));
             payload.put("userIds", List.of(userId.trim()));
             HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(targetUrl))

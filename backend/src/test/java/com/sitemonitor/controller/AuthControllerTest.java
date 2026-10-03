@@ -96,7 +96,7 @@ class AuthControllerTest {
         when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
         when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
         when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), anyInt())).thenReturn(new AuditLog());
+                anyBoolean(), any(), any(), anyInt(), any())).thenReturn(new AuditLog());
     }
 
     // ── Login ─────────────────────────────────────────────────────────────────
@@ -209,10 +209,11 @@ class AuthControllerTest {
                         .content("{\"username\":\"TESTUSER\",\"password\":\"wrongpass\"}"))
                 .andExpect(status().isUnauthorized());
 
+        // 2026-10-03: ayrıntıda denenen kanal (yerel hesap → LOCAL); neden kodu / sayaç aynen
         verify(auditService).recordLogin(eq("testuser"), any(), any(), any(), any(), any(), any(),
-                eq(false), eq("BAD_PASSWORD"), any(), anyInt());
+                eq(false), eq("BAD_PASSWORD"), any(), anyInt(), eq("LOCAL"));
         verify(auditService, never()).recordLogin(eq("TESTUSER"), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), anyInt());
+                anyBoolean(), any(), any(), anyInt(), any());
     }
 
     @Test
@@ -224,7 +225,7 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized());
 
         verify(auditService).recordLogin(eq("NOBODY"), any(), any(), any(), any(), any(), any(),
-                eq(false), eq("UNKNOWN_USER"), any(), anyInt());
+                eq(false), eq("UNKNOWN_USER"), any(), anyInt(), any());
     }
 
     @Test
@@ -234,7 +235,7 @@ class AuthControllerTest {
         AuditLog brute = new AuditLog();
         brute.setAnomalyFlags("BRUTE_FORCE");
         when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), anyInt())).thenReturn(brute);
+                anyBoolean(), any(), any(), anyInt(), any())).thenReturn(brute);
         when(userService.applyProgressiveLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 30));
 
         mvc.perform(post("/api/login")
@@ -321,6 +322,9 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.username").value("aduser"));
+        // 2026-10-03: AD bind yolu → LOGIN ayrıntısında kanal LDAP (Giriş Yöntemleri → İstatistikler)
+        verify(auditService).recordLogin(eq("aduser"), any(), any(), any(), any(), any(), any(),
+                eq(true), any(), any(), anyInt(), eq("LDAP"));
     }
 
     @Test
@@ -337,6 +341,9 @@ class AuthControllerTest {
                         .content("{\"username\":\"adbad\",\"password\":\"bad\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false));
+        // 2026-10-03: AD yolunda denendi → kanal LDAP (ad bilinmediği için neden UNKNOWN_USER; istatistikte "bilinmeyen")
+        verify(auditService).recordLogin(eq("ADBAD"), any(), any(), any(), any(), any(), any(),
+                eq(false), eq("UNKNOWN_USER"), any(), anyInt(), eq("LDAP"));
     }
 
     @Test
@@ -352,6 +359,20 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.username").value("testuser"));
+        // 2026-10-03: yerel BCrypt yolu → LOGIN ayrıntısında kanal LOCAL (LDAP açık olsa da)
+        verify(auditService).recordLogin(eq("testuser"), any(), any(), any(), any(), any(), any(),
+                eq(true), any(), any(), anyInt(), eq("LOCAL"));
+    }
+
+    @Test
+    @DisplayName("2026-10-03: oran sınırına / kilide takılan deneme hedef hesabın kanalını taşır (yerel → LOCAL, bilinmeyen → null)")
+    void rateLimited_recordsChannelOfTargetAccount() throws Exception {
+        when(userService.checkLockout("testuser")).thenReturn(new UserService.LockoutStatus(true, 30));
+        mvc.perform(post("/api/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testuser\",\"password\":\"x\"}"))
+                .andExpect(status().isLocked());
+        verify(auditService).recordRateLimited(eq("testuser"), any(), any(), eq("LOCAL"));
     }
 
     @Test
@@ -1118,7 +1139,7 @@ class AuthControllerTest {
         verify(auditService).recordInactiveLogin(eq("pasif"), eq(55L), any(), eq("USER"), any(), any(), eq("PASSWORD"));
         verify(userService).recordFailedLogin("pasif", "127.0.0.1", "ACCOUNT_INACTIVE");
         // İlerleyici kilit yanlış parolaya karşıdır: pasif hesabın (doğru parolalı) denemesi BRUTE_FORCE sayımına girmez.
-        verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt());
+        verify(auditService, never()).recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt(), any());
         verify(userService, never()).applyProgressiveLockout(any());
     }
 

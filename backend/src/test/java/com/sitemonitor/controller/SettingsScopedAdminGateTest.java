@@ -142,7 +142,12 @@ class SettingsScopedAdminGateTest {
                 // 2026-10-03: kişi bilgisi doğrulaması (telefon / e-posta da sorulsun) + eşleşmeme sınırı
                 "site.monitor.login.otp.push.require-phone",
                 "site.monitor.login.otp.email.require-email",
-                "site.monitor.login.otp.max-contact-mismatches");
+                "site.monitor.login.otp.max-contact-mismatches",
+                // 2026-10-03: kodla giriş push metni (müdür kurum geneli giriş kodu iletisini değiştiremez)
+                "site.monitor.login.otp.push.title-tr",
+                "site.monitor.login.otp.push.title-en",
+                "site.monitor.login.otp.push.message-tr",
+                "site.monitor.login.otp.push.message-en");
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.otp.LoginMethodsService.KEYS);
         assertThat(src("LoginMethodsController")).contains("SessionScope.requireNotScopedAdmin(")
                 .contains("SessionScope.isGlobalAdmin(session)");
