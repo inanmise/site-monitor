@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-03T08:38:48Z",
+  "generatedAt": "2026-10-03T12:23:56Z",
   "repo": "inanmise/site-monitor",
-  "count": 699,
+  "count": 700,
   "releases": [
+    {
+      "version": "20.100.0",
+      "tag": "v20.100.0",
+      "releasedAt": "2026-10-03T12:23:51Z",
+      "commit": "1df44a77b773208591e71a608f118b8b48cb15e1",
+      "prevVersion": "20.99.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1df44a77",
+          "subject": "giriş istatistikleri (kanal bazlı, kullanıcı ayrıntılı) ve düzenlenebilir push kodu metni"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.99.0",
       "tag": "v20.99.0",

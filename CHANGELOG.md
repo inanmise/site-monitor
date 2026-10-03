@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.100.0] — 2026-10-03
+
 ### Added
 - **Giriş Yöntemleri → İstatistikler sekmesi:** kanal başına (LDAP, yerel şifre, push kodu, e-posta kodu, beni hatırla)
   giriş denemesi, başarılı / başarısız sayısı, başarı oranı ve başarısızlık nedenleri; önceki döneme göre değişimli
@@ -2128,7 +2130,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.99.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.100.0...HEAD
+[20.100.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.100.0
 [20.99.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.99.0
 [20.98.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.98.0
 [20.97.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.97.0
