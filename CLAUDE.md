@@ -69,6 +69,19 @@ Frontend ships **inside** the backend jar (`spring.web.resources.static-location
   - **Storage:** the DB holds only `HMAC(SITE_MONITOR_SECRET_KEY sub-key, challengeId:code)` in `login_otp_challenges`. State changes are conditional UPDATEs: 3 attempts by default, single use.
   - **Limits:** counted in a 15-minute window from the DB. The IP limit returns 429. The per-user request limit, the resend cooldown and the failed-verification suspension are SILENT.
   - **No enumeration:** the request endpoint returns the SAME 200 body for eligible, ineligible and unknown users. An ineligible request creates a DECOY row (`user_id=null`, `SUPPRESSED_*`) whose verification behaves exactly like a wrong code. Ineligible means passive, locked, global admin while `allow-global-admins` is off (default), `mustChangePassword` (2026-10-03: use the temporary password), or no target. Delivery is async (`LoginOtpDeliveryService`). Never add a short-circuit (`LoginOtpServiceFlowTest`).
+  - **Contact verification (2026-10-03, user request):**
+    - **Switches:** `site.monitor.login.otp.push.require-phone` / `.email.require-email`, default ON, GLOBAL_ONLY.
+    - **Request:** while a switch is on, the request also carries `phone` / `email`. The code is sent only if the value matches the username's account.
+    - **Matching (`OtpContactMatcher`):**
+      - phone: digits only; drop `0090`, `90` (when ≥ 10 digits remain) and the trunk `0`; ≥ 10 digits; compare the last 10; constant-time. `AppUser.phone` = AD `mobile`.
+      - e-mail: trim + case-insensitive.
+    - **Same answer every time:** a mismatch, no usable registered value, or an unknown user returns the SAME 200 plus a decoy (`SUPPRESSED_CONTACT_MISMATCH` / `NO_PHONE` / `NO_TARGET` / `UNKNOWN_USER`).
+    - **Blank but required:** 400 `PHONE_REQUIRED` / `EMAIL_REQUIRED` + `field`. Writes no row and uses no IP quota.
+    - **Anti-guessing:** `max-contact-mismatches` (1–20, default 5) per username per 15 min → silent `CONTACT_LOCK`. Requests made while locked are not counted. Password login is unaffected.
+    - **Timing:** the mismatch count query runs on EVERY request while the switch is on — no short-circuit. Switch OFF ≡ the old behaviour (no query, no `contact` audit key).
+    - **Privacy:** the ENTERED value is never stored, logged or audited; audit gets only `contact`=MATCHED/MISMATCH/MISSING/LOCKED/NOT_CHECKED.
+    - **Admin view:** adds `coverage` {active_users, with_phone, with_email} from one aggregate query. The UI warns below 80 %.
+    - **Gates:** `LoginOtpContactVerificationTest`, `OtpContactMatcherTest`, `LoginOtpCodeNeverLoggedTest.enteredContactNeverLeaks`.
   - **Session:** a successful verification goes through `AuthController.establishSession`, the SAME path as password login (409/forceLogin, remember-me, maintenance, passive, lock, LOGIN method=OTP_*).
   - **The code is never written anywhere:** not to logs, DB columns, `notification_logs`, push delivery rows or audit (`LoginOtpCodeNeverLoggedTest`). `RequestLoggingFilter` skips `/api/login/otp/` bodies. Push goes straight to the gateway (identifier = username, no outbox row). E-mail goes through the funnel with `force=true`.
   - **Lockout:** OTP failures are not `LOGIN_FAILED` and never feed the password lockout.

@@ -117,7 +117,7 @@ class AuthControllerOtpTest {
         body.put("channel", "push");
         body.put("expires_in", 45);
         body.put("resend_in", 30);
-        when(loginOtp.request(eq("alice"), eq("push"), eq("10.0.0.5"), any(), eq(true)))
+        when(loginOtp.request(eq("alice"), eq("push"), any(), any(), eq("10.0.0.5"), any(), eq(true)))
                 .thenReturn(new LoginOtpService.Result(200, body));
         mvc.perform(post("/api/login/otp/request").header("X-Lang", "en").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"alice\",\"channel\":\"push\"}"))
@@ -125,6 +125,38 @@ class AuthControllerOtpTest {
                 .andExpect(jsonPath("$.challenge_id").value(CID))
                 .andExpect(jsonPath("$.expires_in").value(45))
                 .andExpect(jsonPath("$.resend_in").value(30));
+    }
+
+    @Test
+    @DisplayName("2026-10-03: gövdedeki phone / email servise AYNEN iletilir (kişi bilgisi yoksa null); 400 PHONE_REQUIRED alan adıyla döner")
+    void request_forwardsContact() throws Exception {
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("challenge_id", CID);
+        when(loginOtp.request(any(), any(), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new LoginOtpService.Result(200, ok));
+        mvc.perform(post("/api/login/otp/request").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"alice\",\"channel\":\"push\",\"phone\":\"0500 000 00 00\"}"))
+                .andExpect(status().isOk());
+        verify(loginOtp).request(eq("alice"), eq("push"), eq("0500 000 00 00"), org.mockito.ArgumentMatchers.isNull(), eq("10.0.0.5"), any(), anyBoolean());
+        mvc.perform(post("/api/login/otp/request").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"alice\",\"channel\":\"email\",\"email\":\"alice@example.com\"}"))
+                .andExpect(status().isOk());
+        verify(loginOtp).request(eq("alice"), eq("email"), org.mockito.ArgumentMatchers.isNull(), eq("alice@example.com"), eq("10.0.0.5"), any(), anyBoolean());
+
+        Map<String, Object> bad = new LinkedHashMap<>();
+        bad.put("success", false);
+        bad.put("code", "PHONE_REQUIRED");
+        bad.put("error_code", "PHONE_REQUIRED");
+        bad.put("error", "Enter your registered mobile number.");
+        bad.put("field", "phone");
+        when(loginOtp.request(eq("bob"), eq("push"), any(), any(), any(), any(), anyBoolean()))
+                .thenReturn(new LoginOtpService.Result(400, bad));
+        mvc.perform(post("/api/login/otp/request").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"bob\",\"channel\":\"push\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error_code").value("PHONE_REQUIRED"))
+                .andExpect(jsonPath("$.field").value("phone"));
     }
 
     // ── Doğrulama ucu ─────────────────────────────────────────────────────────

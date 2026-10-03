@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-03T00:30:28Z",
+  "generatedAt": "2026-10-03T08:38:48Z",
   "repo": "inanmise/site-monitor",
-  "count": 698,
+  "count": 699,
   "releases": [
+    {
+      "version": "20.99.0",
+      "tag": "v20.99.0",
+      "releasedAt": "2026-10-03T08:38:38Z",
+      "commit": "c239557a58a4993125792b4ee5b3bd27669ca382",
+      "prevVersion": "20.98.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "c239557a",
+          "subject": "kodla girişte kişi bilgisi doğrulaması (push: kayıtlı cep telefonu, e-posta: kayıtlı adres)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.98.0",
       "tag": "v20.98.0",

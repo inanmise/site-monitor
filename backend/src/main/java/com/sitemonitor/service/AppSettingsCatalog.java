@@ -350,6 +350,11 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.login.otp.max-requests-per-ip",         "login-methods", Type.INT),
         new Setting("site.monitor.login.otp.max-failed-verifications",    "login-methods", Type.INT),
         new Setting("site.monitor.login.otp.allow-global-admins",         "login-methods", Type.BOOL),
+        //    2026-10-03 (kullanıcı isteği): kod isteğinde kayıtlı cep telefonu (push) / e-posta (e-posta) da sorulur, kod
+        //    yalnız eşleşirse gider; 15 dk'da kullanıcı başına eşleşmeyen deneme sınırı.
+        new Setting("site.monitor.login.otp.push.require-phone",          "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.otp.email.require-email",         "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.otp.max-contact-mismatches",      "login-methods", Type.INT),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
         //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),
@@ -516,7 +521,12 @@ public final class AppSettingsCatalog {
         "site.monitor.login.otp.max-requests-per-user",
         "site.monitor.login.otp.max-requests-per-ip",
         "site.monitor.login.otp.max-failed-verifications",
-        "site.monitor.login.otp.allow-global-admins"
+        "site.monitor.login.otp.allow-global-admins",
+        // 2026-10-03: kişi bilgisi doğrulaması — müdür telefon/e-posta sorgusunu kapatıp kodu yalnız kullanıcı adına
+        // indiremez ya da eşleşmeme sınırını gevşetemez.
+        "site.monitor.login.otp.push.require-phone",
+        "site.monitor.login.otp.email.require-email",
+        "site.monitor.login.otp.max-contact-mismatches"
     ));
 
     /**

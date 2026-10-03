@@ -1,6 +1,7 @@
 package com.sitemonitor.service.otp;
 
 import com.sitemonitor.model.SmtpSettings;
+import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.service.AppSettingsCatalog;
 import com.sitemonitor.service.AppSettingsService;
 import com.sitemonitor.service.SmtpSettingsService;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -29,6 +31,7 @@ class LoginMethodsServiceTest {
     AppSettingsService settings;
     UserPushService push;
     SmtpSettingsService smtp;
+    AppUserRepository userRepo;
     LoginMethodsService svc;
 
     @BeforeEach
@@ -36,11 +39,12 @@ class LoginMethodsServiceTest {
         settings = mock(AppSettingsService.class);
         push = mock(UserPushService.class);
         smtp = mock(SmtpSettingsService.class);
+        userRepo = mock(AppUserRepository.class);
         // Gerçek fallback davranışı: override yoksa varsayılan döner
         when(settings.getBoolean(org.mockito.ArgumentMatchers.anyString(), anyBoolean()))
                 .thenAnswer(inv -> inv.getArgument(1));
         when(settings.getInt(org.mockito.ArgumentMatchers.anyString(), anyInt())).thenAnswer(inv -> inv.getArgument(1));
-        svc = new LoginMethodsService(settings, push, smtp);
+        svc = new LoginMethodsService(settings, push, smtp, userRepo);
     }
 
     @Test
@@ -57,6 +61,41 @@ class LoginMethodsServiceTest {
         assertThat(svc.maxRequestsPerIp()).isEqualTo(20);
         assertThat(svc.maxFailedVerifications()).isEqualTo(5);
         assertThat(svc.allowGlobalAdmins()).isFalse();
+        // 2026-10-03: kişi bilgisi doğrulaması varsayılan AÇIK, eşleşmeme sınırı 5
+        assertThat(svc.pushRequiresPhone()).isTrue();
+        assertThat(svc.emailRequiresEmail()).isTrue();
+        assertThat(svc.requiresContact(LoginOtpService.Channel.PUSH)).isTrue();
+        assertThat(svc.requiresContact(LoginOtpService.Channel.EMAIL)).isTrue();
+        assertThat(svc.maxContactMismatches()).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("2026-10-03: kişi bilgisi anahtarları kanal başına; eşleşmeme sınırı 1–20'ye kırpılır")
+    void contactSettings() {
+        when(settings.getBoolean(eq(LoginMethodsService.KEY_PUSH_REQUIRE_PHONE), anyBoolean())).thenReturn(false);
+        assertThat(svc.requiresContact(LoginOtpService.Channel.PUSH)).isFalse();
+        assertThat(svc.requiresContact(LoginOtpService.Channel.EMAIL)).isTrue();
+        when(settings.getInt(eq(LoginMethodsService.KEY_MAX_CONTACT_MISMATCHES), anyInt())).thenReturn(0);
+        assertThat(svc.maxContactMismatches()).isEqualTo(1);
+        when(settings.getInt(eq(LoginMethodsService.KEY_MAX_CONTACT_MISMATCHES), anyInt())).thenReturn(500);
+        assertThat(svc.maxContactMismatches()).isEqualTo(20);
+        assertThat(svc.settingsView()).containsEntry("push_require_phone", false).containsEntry("email_require_email", true)
+                .containsEntry("max_contact_mismatches", 20);
+        assertThat(LoginMethodsService.limitsView()).containsEntry("max_contact_mismatches", List.of(1, 20));
+        assertThat(svc.publicView()).containsEntry("push_requires_phone", false).containsEntry("email_requires_email", true);
+    }
+
+    @Test
+    @DisplayName("2026-10-03: kapsam TEK toplu sorgudan (aktif / telefonlu / e-postalı); sorgu düşerse sıfırlar, kişi bilgisi yok")
+    void contactCoverage() {
+        when(userRepo.contactCoverage()).thenReturn(java.util.Collections.singletonList(new Object[] { 120L, 90L, 118L }));
+        assertThat(svc.contactCoverage()).containsExactly(
+                java.util.Map.entry("active_users", 120L), java.util.Map.entry("with_phone", 90L),
+                java.util.Map.entry("with_email", 118L));
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.times(1)).contactCoverage();
+        when(userRepo.contactCoverage()).thenThrow(new RuntimeException("db down"));
+        assertThat(svc.contactCoverage()).containsEntry("active_users", 0L).containsEntry("with_phone", 0L)
+                .containsEntry("with_email", 0L);
     }
 
     @Test
@@ -89,7 +128,8 @@ class LoginMethodsServiceTest {
     @DisplayName("PUBLIC görünüm: sabit anahtar kümesi — yalnız yapılandırma")
     void publicViewKeys() {
         assertThat(svc.publicView().keySet())
-                .containsExactly("ldap", "otp_push", "otp_email", "push_ttl", "email_ttl", "resend_cooldown");
+                .containsExactly("ldap", "otp_push", "otp_email", "push_ttl", "email_ttl", "resend_cooldown",
+                        "push_requires_phone", "email_requires_email");
     }
 
     @Test
@@ -109,7 +149,7 @@ class LoginMethodsServiceTest {
     @DisplayName("KAPI: sayfanın her anahtarı katalogda ve GLOBAL_ONLY; saklama anahtarı da katalogda")
     void keysAreCataloguedAndGlobalOnly() {
         Set<String> catalog = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).collect(Collectors.toSet());
-        assertThat(LoginMethodsService.KEYS).hasSize(11);
+        assertThat(LoginMethodsService.KEYS).hasSize(14);
         for (String k : LoginMethodsService.KEYS) {
             assertThat(catalog).as("katalogda: " + k).contains(k);
             assertThat(AppSettingsCatalog.isGlobalOnly(k)).as("GLOBAL_ONLY: " + k).isTrue();

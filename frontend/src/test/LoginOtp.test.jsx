@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, act, within } from './test-utils.jsx'
 import Login from '../pages/Login.jsx'
 import { sanitizeOtp } from '../components/login/OtpCodeInput.jsx'
 import { announceMilestone, secondsLeft } from '../components/login/OtpCountdown.jsx'
@@ -230,6 +230,172 @@ describe('Login — kodla giriş', () => {
     })
     expect(alert).toHaveTextContent(/LDAP sign-in is currently disabled|LDAP ile giriş şu an kapalı/)
     expect(document.querySelector('[data-slot="login-otp-methods"]')).not.toBeNull()
+  })
+})
+
+/**
+ * Kişi bilgisi doğrulaması (2026-10-03, kullanıcı isteği): ayar açıksa push isteğinde "Kayıtlı cep telefonu", e-posta
+ * isteğinde "Kayıtlı e-posta adresi" de sorulur. Alan kanal başına, bayrak kapalıyken yok; doğrulama alanın YANINDA;
+ * telefon yazarken hafif biçimlenir, başka biçimin yapıştırılması engellenmez; değer isteğe eklenir; eşleşip eşleşmediğini
+ * ekran asla söylemez (sunucu her durumda aynı 200'ü döner → aynı "hesabınız uygunsa" metni).
+ */
+describe('Login — kodla giriş: kişi bilgisi', () => {
+  const FLAGS = { ...METHODS, push_requires_phone: true, email_requires_email: true }
+  const flow = () => document.querySelector('[data-slot="otp-flow"]')
+  const contact = (kind) => document.querySelector(`[data-slot="otp-contact"][data-kind="${kind}"]`)
+  const phoneInput = () => screen.getByRole('textbox', { name: /^Registered mobile number$|^Kayıtlı cep telefonu$/ })
+  const emailInput = () => screen.getByRole('textbox', { name: /^Registered email address$|^Kayıtlı e-posta adresi$/ })
+  const userInput = () => screen.getByRole('textbox', { name: /^Username$|^Kullanıcı adı$/ })
+  const send = () => fireEvent.click(document.querySelector('[data-slot="otp-send"]'))
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    onLogin = vi.fn()
+    api.getLoginMethods.mockResolvedValue(FLAGS)
+    api.loginOtp.request.mockResolvedValue(CHALLENGE)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('push: kullanıcı adının altında "Kayıtlı cep telefonu" (tel, autocomplete tel) + yardım metni; e-posta alanı YOK', async () => {
+    await openFlow()
+    const input = phoneInput()
+    expect(input).toHaveAttribute('type', 'tel')
+    expect(input).toHaveAttribute('inputmode', 'tel')
+    expect(input).toHaveAttribute('autocomplete', 'tel')
+    expect(input).toHaveAttribute('placeholder', '05xx xxx xx xx')
+    expect(contact('phone')).not.toBeNull()
+    expect(contact('email')).toBeNull()
+    expect(flow()).toHaveTextContent(/registered in the system; if it matches|Sistemde kayıtlı numaranızı girin; eşleşirse kod gönderilir/)
+    expect(document.querySelector('[data-slot="otp-desc"]')).toHaveTextContent(/registered mobile number|kayıtlı cep telefonu/)
+    // DOM sırası: kullanıcı adı → telefon
+    expect(userInput().compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('kanal değişince kullanıcı adı ve yazılan değerler korunur, doğru alan görünür', async () => {
+    await openFlow()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    fireEvent.change(phoneInput(), { target: { value: '05000000000' } })
+    fireEvent.click(within(flow()).getByRole('button', { name: /^Email$|^E-posta$/ }))
+    expect(contact('phone')).toBeNull()
+    expect(emailInput()).toHaveAttribute('type', 'email')
+    expect(emailInput()).toHaveAttribute('autocomplete', 'email')
+    expect(userInput()).toHaveValue('alice')
+    fireEvent.change(emailInput(), { target: { value: 'alice@example.com' } })
+    fireEvent.click(within(flow()).getByRole('button', { name: /^Push notification$|^Push bildirimi$/ }))
+    expect(phoneInput()).toHaveValue('0500 000 00 00')
+    fireEvent.click(within(flow()).getByRole('button', { name: /^Email$|^E-posta$/ }))
+    expect(emailInput()).toHaveValue('alice@example.com')
+  })
+
+  it('bayrak kapalı → alan yok, istek eskisi gibi yalnız (ad, kanal)', async () => {
+    api.getLoginMethods.mockResolvedValue({ ...METHODS, push_requires_phone: false, email_requires_email: false })
+    await openFlow()
+    expect(document.querySelector('[data-slot="otp-contact"]')).toBeNull()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    send()
+    await waitFor(() => expect(api.loginOtp.request).toHaveBeenCalledWith('alice', 'push'))
+    expect(api.loginOtp.request.mock.calls[0]).toHaveLength(2)
+  })
+
+  it('doğrulama ALANIN YANINDA: boş → "girin", kısa → "geçerli numara"; istek gitmez; düzeltince hata kalkar', async () => {
+    await openFlow()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    send()
+    await waitFor(() => expect(phoneInput()).toHaveAttribute('aria-invalid', 'true'))
+    const describedBy = phoneInput().getAttribute('aria-describedby').split(' ')
+    expect(describedBy.map((id) => document.getElementById(id)?.textContent).join(' '))
+      .toMatch(/Enter your registered mobile number|Kayıtlı cep telefonu numaranızı girin/)
+    expect(document.querySelector('[data-field="phone"]')).toHaveAttribute('data-invalid', 'true')
+    expect(document.querySelector('[data-slot="otp-error"]')).toBeNull()   // tost / genel hata değil
+    fireEvent.change(phoneInput(), { target: { value: '0500 000' } })
+    expect(phoneInput()).not.toHaveAttribute('aria-invalid')                // düzenleyince kalkar
+    send()
+    await waitFor(() => expect(document.querySelector('[data-field="phone"]')).toHaveTextContent(/valid mobile number|Geçerli bir cep telefonu/))
+    expect(api.loginOtp.request).not.toHaveBeenCalled()
+  })
+
+  it('hata odak: ilk hatalı alana odaklanır (ad boş → ad; ad dolu, telefon boş → telefon)', async () => {
+    await openFlow()
+    send()
+    await waitFor(() => expect(userInput()).toHaveAttribute('aria-invalid', 'true'))
+    await waitFor(() => expect(document.activeElement).toBe(userInput()))
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    send()
+    await waitFor(() => expect(document.activeElement).toBe(phoneInput()))
+  })
+
+  it('telefon hafif biçim: düz rakam gruplanır; "+90 (500) …" yapıştırma AYNEN kalır; istek gövdesi { phone } taşır', async () => {
+    await openFlow()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    fireEvent.change(phoneInput(), { target: { value: '05000000000' } })
+    expect(phoneInput()).toHaveValue('0500 000 00 00')
+    fireEvent.change(phoneInput(), { target: { value: '+90 (500) 000-00-00' } })
+    expect(phoneInput()).toHaveValue('+90 (500) 000-00-00')
+    // Enter (form gönderimi) isteği atar
+    fireEvent.submit(phoneInput().closest('form'))
+    await waitFor(() => expect(api.loginOtp.request).toHaveBeenCalledWith('alice', 'push', { phone: '+90 (500) 000-00-00' }))
+    await waitFor(() => expect(flow()).toHaveAttribute('data-step', 'code'))
+    // "Bilgileri değiştir" istek adımına döner; ad ve telefon korunur
+    const change = document.querySelector('[data-slot="otp-change-user"]')
+    expect(change).toHaveTextContent(/Change details|Bilgileri değiştir/)
+    fireEvent.click(change)
+    expect(flow()).toHaveAttribute('data-step', 'request')
+    expect(userInput()).toHaveValue('alice')
+    expect(phoneInput()).toHaveValue('+90 (500) 000-00-00')
+  })
+
+  it('e-posta: biçim doğrulaması alan yanında; geçerli adres { email } olarak gider', async () => {
+    await openFlow(/Get a code by email|E-posta ile kod al/)
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    fireEvent.change(emailInput(), { target: { value: 'alice@' } })
+    send()
+    await waitFor(() => expect(document.querySelector('[data-field="email"]')).toHaveTextContent(/valid email address|Geçerli bir e-posta/))
+    expect(api.loginOtp.request).not.toHaveBeenCalled()
+    fireEvent.change(emailInput(), { target: { value: ' Alice@Example.com ' } })
+    send()
+    await waitFor(() => expect(api.loginOtp.request).toHaveBeenCalledWith('alice', 'email', { email: 'Alice@Example.com' }))
+  })
+
+  it('genel mesaj DEĞİŞMEZ: sunucu (eşleşse de eşleşmese de) aynı 200 → aynı "hesabınız uygunsa" metni; numara ima edilmez', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    await openFlow()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    fireEvent.change(phoneInput(), { target: { value: '0500 000 00 01' } })
+    send()
+    const info = await waitFor(() => {
+      const el = document.querySelector('[data-slot="otp-sent-info"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(info).toHaveTextContent(/If your account is eligible, a 6-digit code has been sent by push|Hesabınız uygunsa push bildirimiyle 6 haneli bir kod gönderildi/)
+    expect(flow()).not.toHaveTextContent(/0500 000 00 01/)
+    expect(flow()).not.toHaveTextContent(/match|eşleş/i)
+    // "Yeniden gönder" aynı telefonla tekrar ister
+    await act(async () => { vi.advanceTimersByTime(31_000) })
+    expect(document.querySelector('[data-slot="otp-resend"]')).not.toBeDisabled()
+    fireEvent.click(document.querySelector('[data-slot="otp-resend"]'))
+    await waitFor(() => expect(api.loginOtp.request).toHaveBeenCalledTimes(2))
+    expect(api.loginOtp.request).toHaveBeenLastCalledWith('alice', 'push', { phone: '0500 000 00 01' })
+  })
+
+  it('sunucu 400 PHONE_REQUIRED (ayar sayfa açıkken açıldı) → alan yine de çizilir, hata alanın altında', async () => {
+    api.getLoginMethods.mockResolvedValue({ ...METHODS })   // bayraklar yok: alan çizilmedi
+    api.loginOtp.request.mockResolvedValueOnce({ success: false, status: 400, code: 'PHONE_REQUIRED', error_code: 'PHONE_REQUIRED', field: 'phone' })
+    await openFlow()
+    expect(document.querySelector('[data-slot="otp-contact"]')).toBeNull()
+    fireEvent.change(userInput(), { target: { value: 'alice' } })
+    send()
+    await waitFor(() => expect(contact('phone')).not.toBeNull())
+    await waitFor(() => expect(phoneInput()).toHaveAttribute('aria-invalid', 'true'))
+    expect(document.querySelector('[data-field="phone"]')).toHaveTextContent(/Enter your registered mobile number|Kayıtlı cep telefonu numaranızı girin/)
+  })
+
+  it('kullanıcı adı ana formdan dolu gelirse odak doğrudan telefon alanında', async () => {
+    render(<Login onLogin={onLogin} />)
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'alice' } })
+    fireEvent.click(await screen.findByRole('button', { name: /Get a code by push|Push ile kod al/ }))
+    await waitFor(() => expect(document.activeElement).toBe(phoneInput()))
   })
 })
 

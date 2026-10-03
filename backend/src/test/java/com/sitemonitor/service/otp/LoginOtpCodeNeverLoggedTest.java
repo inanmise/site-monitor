@@ -113,6 +113,9 @@ class LoginOtpCodeNeverLoggedTest {
     private JavaMailSenderImpl sender;
     private LoginOtpService svc;
     private LoginOtpServiceFlowTest.MutableClock clock;
+    private LoginMethodsService methods;
+    private UserService users;
+    private AppUser alice;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -177,7 +180,7 @@ class LoginOtpCodeNeverLoggedTest {
         audit = mock(AuditService.class);
         LoginOtpDeliveryService delivery = new LoginOtpDeliveryService(repo, push, email, audit);
 
-        LoginMethodsService methods = mock(LoginMethodsService.class);
+        methods = mock(LoginMethodsService.class);
         lenient().when(methods.available(any())).thenReturn(true);
         lenient().when(methods.ttlSeconds(any())).thenReturn(45);
         lenient().when(methods.maxAttempts()).thenReturn(3);
@@ -185,8 +188,8 @@ class LoginOtpCodeNeverLoggedTest {
         lenient().when(methods.maxRequestsPerUser()).thenReturn(5);
         lenient().when(methods.maxRequestsPerIp()).thenReturn(20);
         lenient().when(methods.maxFailedVerifications()).thenReturn(5);
-        UserService users = mock(UserService.class);
-        AppUser alice = LoginOtpServiceFlowTest.user(7L, "ALICE", "USER", "alice@example.com");
+        users = mock(UserService.class);
+        alice = LoginOtpServiceFlowTest.user(7L, "ALICE", "USER", "alice@example.com");
         lenient().when(users.findByUsername(anyString())).thenReturn(Optional.empty());
         lenient().when(users.findByUsername("alice")).thenReturn(Optional.of(alice));
         lenient().when(users.findByUsername("ALICE")).thenReturn(Optional.of(alice));
@@ -293,5 +296,95 @@ class LoginOtpCodeNeverLoggedTest {
         for (String x : reason.getAllValues()) assertThat(String.valueOf(x)).doesNotContain(CODE);
         for (String x : detail.getAllValues()) assertThat(String.valueOf(x)).doesNotContain(CODE);
         verify(audit, never()).recordAction(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    /**
+     * Kullanıcının GİRDİĞİ kişi bilgisinin ayırt edici yazımları (2026-10-03) — kayıtlı değerlerden farklı biçimde yazıldı
+     * ki kayıtlı adres / numara bir yerde görünse bile tarama yanlış alarm vermesin. Yer tutucu değerler (gerçek veri yok).
+     */
+    static final List<String> ENTERED = List.of("0 (500) 000-00-00", "0500 999 99 99", "5009999999", "0500 111 11 11",
+            "5001111111", "ALICE@Example.COM", "mallory@example.org");
+
+    @Test
+    @DisplayName("2026-10-03: GİRİLEN telefon / e-posta hiçbir log'a (TRACE dahil), DB alanına, denetim argümanına, push gövdesine yazılmaz — yalnız sonuç")
+    void enteredContactNeverLeaks() throws Exception {
+        lenient().when(methods.requiresContact(any())).thenReturn(true);
+        lenient().when(methods.maxContactMismatches()).thenReturn(5);
+        alice.setPhone("+90 500 000 00 00");
+        pushStatus.set(200);
+
+        // 1) push — kayıtlı numara, başka biçimde → gönderildi
+        String id1 = (String) svc.request("alice", "push", "0 (500) 000-00-00", null, "10.0.0.1", "JUnit", false)
+                .body().get("challenge_id");
+        assertThat(awaitDelivery(id1)).isEqualTo("SENT");
+        // 2) push — eşleşmeyen numara → tuzak
+        String id2 = (String) svc.request("alice", "push", "0500 999 99 99", null, "10.0.0.1", "JUnit", false)
+                .body().get("challenge_id");
+        assertThat(repo.findById(id2).orElseThrow().getDeliveryStatus()).isEqualTo("SUPPRESSED_CONTACT_MISMATCH");
+        // 3) e-posta — kayıtlı adres (büyük harf + boşluk) → gönderildi
+        String id3 = (String) svc.request("alice", "email", null, "  ALICE@Example.COM ", "10.0.0.1", "JUnit", false)
+                .body().get("challenge_id");
+        assertThat(awaitDelivery(id3)).isEqualTo("SENT");
+        // 4) e-posta — başka adres → tuzak
+        String id4 = (String) svc.request("alice", "email", null, "mallory@example.org", "10.0.0.1", "JUnit", false)
+                .body().get("challenge_id");
+        assertThat(repo.findById(id4).orElseThrow().getDeliveryStatus()).isEqualTo("SUPPRESSED_CONTACT_MISMATCH");
+        // 5) bilinmeyen kullanıcı → tuzak
+        String id5 = (String) svc.request("ghost", "push", "0500 111 11 11", null, "10.0.0.1", "JUnit", false)
+                .body().get("challenge_id");
+        assertThat(repo.findById(id5).orElseThrow().getDeliveryStatus()).isEqualTo("SUPPRESSED_UNKNOWN_USER");
+        // 6) istek loglama filtresi TRACE'te: istek ucunun gövdesi (telefon / e-posta) ATLANIR
+        RequestLoggingFilter filter = new RequestLoggingFilter();
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", "/api/login/otp/request");
+        req.setContentType("application/json");
+        req.setContent("{\"username\":\"alice\",\"channel\":\"push\",\"phone\":\"0500 999 99 99\",\"email\":\"mallory@example.org\"}"
+                .getBytes(StandardCharsets.UTF_8));
+        filter.doFilter(req, new MockHttpServletResponse(), (rq, rs) -> rq.getInputStream().readAllBytes());
+
+        // ── Log taraması ──
+        List<String> leaks = new ArrayList<>();
+        for (ILoggingEvent e : appender.list) {
+            String text = e.getFormattedMessage() + (e.getThrowableProxy() == null ? "" : ThrowableProxyUtil.asString(e.getThrowableProxy()));
+            for (String v : ENTERED) if (text.contains(v)) leaks.add(e.getLoggerName() + " " + e.getLevel() + ": " + text);
+        }
+        assertThat(appender.list).as("loglar yakalandı").isNotEmpty();
+        assertThat(leaks).as("GİRİLEN kişi bilgisi log'a sızdı").isEmpty();
+
+        // ── DB: hiçbir satırın hiçbir metin alanı girilen değeri taşımıyor ──
+        assertThat(repo.count()).isEqualTo(5);
+        for (LoginOtpChallenge c : repo.findAll()) {
+            for (Field f : LoginOtpChallenge.class.getDeclaredFields()) {
+                if (f.getType() != String.class || java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                String v = String.valueOf(f.get(c));
+                for (String x : ENTERED) assertThat(v).as("alan " + f.getName()).doesNotContain(x);
+            }
+        }
+
+        // ── Denetim: her çağrının BÜTÜN metin argümanları — yalnız sonuç (contact=MATCHED / MISMATCH) ──
+        ArgumentCaptor<String> type = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> actor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> role = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> outcome = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> ip = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> ua = ArgumentCaptor.forClass(String.class);
+        verify(audit, org.mockito.Mockito.atLeast(5)).recordOtp(type.capture(), actor.capture(), any(), any(), role.capture(),
+                outcome.capture(), reason.capture(), detail.capture(), ip.capture(), ua.capture());
+        List<String> all = new ArrayList<>();
+        for (ArgumentCaptor<String> cap : List.of(type, actor, role, outcome, reason, detail, ip, ua)) {
+            cap.getAllValues().forEach(s -> all.add(String.valueOf(s)));
+        }
+        for (String x : ENTERED) assertThat(all).as("denetim: " + x).noneMatch(s -> s.contains(x));
+        assertThat(detail.getAllValues()).anyMatch(s -> s.contains("\"contact\":\"MATCHED\""))
+                .anyMatch(s -> s.contains("\"contact\":\"MISMATCH\""));
+        verify(audit, never()).recordAction(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        // ── Push gövdesi ve bildirim günlükleri ──
+        assertThat(pushBodies).hasSize(1);
+        for (String x : ENTERED) assertThat(pushBodies.get(0)).doesNotContain(x);
+        verifyNoInteractions(pushDeliveryRepo);
+        verifyNoInteractions(notificationLogRepo);
     }
 }

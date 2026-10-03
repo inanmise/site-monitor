@@ -15,6 +15,21 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.99.0] — 2026-10-03
+
+### Added
+- **Kodla girişte kişi bilgisi doğrulaması:** push ile kod isterken kayıtlı cep telefonu, e-posta ile kod isterken
+  kayıtlı e-posta adresi de sorulur; kod yalnız kullanıcı adının hesabıyla eşleşirse gönderilir. Eşleşmeme ekrandan
+  ayırt edilemez (her durumda aynı yanıt). Telefon her biçimde kabul edilir ("0500 000 00 00", "+90 (500) 000-00-00").
+  Girilen bilgi hiçbir yerde saklanmaz ya da loglanmaz; denetimde yalnız sonuç (eşleşti / eşleşmedi) görünür.
+- **Ayarlar → Giriş Yöntemleri:** "Telefon numarası da sorulsun" / "E-posta adresi de sorulsun" anahtarları (varsayılan
+  açık), 15 dakikada kullanıcı başına eşleşmeyen deneme sınırı (varsayılan 5, aşılınca kod sessizce gönderilmez),
+  aktif kullanıcıların kayıtlı telefon / e-posta kapsamı (%80'in altında uyarı), önizlemede yeni alanlar.
+
+### Changed
+- Push ile kod alabilmek için hesapta kayıtlı cep telefonu (AD `mobile`) gerekir; telefonu olmayan kullanıcılar
+  anahtar kapatılana kadar push kodu alamaz. Kapsamı ayar sayfasından kontrol edin.
+
 ## [20.98.0] — 2026-10-03
 
 ### Added
@@ -2095,7 +2110,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.98.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.99.0...HEAD
+[20.99.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.99.0
 [20.98.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.98.0
 [20.97.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.97.0
 [20.96.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.1

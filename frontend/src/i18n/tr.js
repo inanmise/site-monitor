@@ -14778,6 +14778,7 @@ export const TR = {
   'otp.newCode': 'Yeni kod iste',
   'otp.newCodeIn': 'Yeni kod iste ({0} sn)',
   'otp.changeUser': 'Kullanıcı adını değiştir',
+  'otp.changeDetails': 'Bilgileri değiştir',
   'otp.backToPassword': 'Şifreyle giriş yap',
   'otp.err.invalid': 'Kod hatalı. Kalan deneme: {0}',
   'otp.err.expired': 'Kodun süresi doldu ya da kod artık geçerli değil. Yeni bir kod isteyin.',
@@ -14786,6 +14787,19 @@ export const TR = {
   'otp.err.methodDisabled': 'Bu giriş yöntemi şu an kapalı.',
   'otp.err.usernameRequired': 'Kullanıcı adınızı girin.',
   'otp.err.accountLocked': 'Hesabınız geçici olarak kilitli. Bir süre sonra yeniden deneyin ya da yöneticinize başvurun.',
+  // Kodla giriş — kişi bilgisi doğrulaması (2026-10-03)
+  'otp.desc.phone': 'Kullanıcı adınızı ve kayıtlı cep telefonu numaranızı girin; bilgiler eşleşirse 6 haneli, tek kullanımlık bir kod gönderelim.',
+  'otp.desc.email': 'Kullanıcı adınızı ve kayıtlı e-posta adresinizi girin; bilgiler eşleşirse 6 haneli, tek kullanımlık bir kod gönderelim.',
+  'otp.phone.label': 'Kayıtlı cep telefonu',
+  'otp.phone.placeholder': '05xx xxx xx xx',
+  'otp.phone.hint': 'Sistemde kayıtlı numaranızı girin; eşleşirse kod gönderilir.',
+  'otp.email.label': 'Kayıtlı e-posta adresi',
+  'otp.email.placeholder': 'ad.soyad@example.com',
+  'otp.email.hint': 'Sistemde kayıtlı e-posta adresinizi girin; eşleşirse kod gönderilir.',
+  'otp.err.phoneRequired': 'Kayıtlı cep telefonu numaranızı girin.',
+  'otp.err.phoneInvalid': 'Geçerli bir cep telefonu numarası girin (ör. 0532 123 45 67).',
+  'otp.err.emailRequired': 'Kayıtlı e-posta adresinizi girin.',
+  'otp.err.emailInvalid': 'Geçerli bir e-posta adresi girin (ör. ad.soyad@example.com).',
   'lastLogin.methodOtpPush': 'Push ile kod',
   'lastLogin.methodOtpEmail': 'E-posta ile kod',
   'audit.ev.LOGIN_OTP_REQUESTED': 'Giriş kodu istendi',
@@ -14852,6 +14866,17 @@ export const TR = {
   'lm.err.load': 'Giriş yöntemleri yüklenemedi',
   'lm.err.save': 'Giriş yöntemleri kaydedilemedi',
   'lm.retry': 'Yeniden dene',
+  // Giriş Yöntemleri — kişi bilgisi doğrulaması (2026-10-03)
+  'lm.push.requirePhone': 'Telefon numarası da sorulsun',
+  'lm.push.requirePhoneHint': 'Kod yalnız kullanıcı adı ve kayıtlı telefon eşleşirse gönderilir.',
+  'lm.email.requireEmail': 'E-posta adresi de sorulsun',
+  'lm.email.requireEmailHint': 'Kod yalnız kullanıcı adı ve kayıtlı e-posta adresi eşleşirse gönderilir.',
+  'lm.maxContactMismatches': 'Kullanıcı başına eşleşmeyen telefon / e-posta',
+  'lm.coverage.label': 'Kişi bilgisi kapsamı',
+  'lm.coverage.phone': 'Kayıtlı cep telefonu olan aktif kullanıcı: {0} / {1} (%{2})',
+  'lm.coverage.email': 'Kayıtlı e-postası olan aktif kullanıcı: {0} / {1} (%{2})',
+  'lm.coverage.phoneLow': "Telefonu kayıtlı olmayan kullanıcılar push ile kod alamaz; numaralar AD'deki mobile alanından eşitlenir.",
+  'lm.coverage.emailLow': 'E-postası kayıtlı olmayan kullanıcılar e-posta ile kod alamaz.',
   'help.set.site.monitor.login.ldap-enabled':
     'Ne işe yarar: LDAP (Active Directory) hesaplarının şifreyle girişini açar ya da kapatır; kapalıyken bu hesaplar yalnız kodla girer.\nFaydası: LDAP sunucusunda sorun varken ya da kurum politikası gereği şifre girişi tek tıkla durdurulur; dizin eşitlemesi etkilenmez.\nÖnerilen değer: true (varsayılan). Kapatmadan önce en az bir kod yöntemini açın; yerel hesaplar ve kurulumdaki yönetici her zaman girer.',
   'help.set.site.monitor.login.otp.push.enabled':
@@ -14874,6 +14899,12 @@ export const TR = {
     'Ne işe yarar: Bir kullanıcı için 15 dakikada izin verilen toplam hatalı kod sayısı; aşılınca kodla giriş o kullanıcı için askıya alınır.\nFaydası: Kodu tahmin etmeyi pratikte imkânsız kılar; şifre girişi ve hesap kilidi etkilenmez.\nÖnerilen değer: 5 (varsayılan). Aralık 1–20.',
   'help.set.site.monitor.login.otp.allow-global-admins':
     'Ne işe yarar: Global yöneticilerin de kodla giriş yapabilmesine izin verir.\nFaydası: Yöneticiler LDAP sorununda da girebilir; kapalıyken en yetkili hesaplar yalnız şifreyle korunur.\nÖnerilen değer: false (varsayılan). Kurulumdaki yönetici her durumda şifreyle girebilir.',
+  'help.set.site.monitor.login.otp.push.require-phone':
+    'Ne işe yarar: Push ile kod isteğinde kullanıcı adının yanında kayıtlı cep telefonu numarası da sorulur; kod yalnız ikisi aynı hesaba aitse gönderilir.\nFaydası: Yalnız kullanıcı adını bilen biri başkasının telefonuna kod gönderemez; eşleşmeyen numara ekranda belli edilmez.\nÖnerilen değer: true (varsayılan). Kapatılırsa kod yalnız kullanıcı adıyla istenir.',
+  'help.set.site.monitor.login.otp.email.require-email':
+    'Ne işe yarar: E-posta ile kod isteğinde kullanıcı adının yanında kayıtlı e-posta adresi de sorulur; kod yalnız ikisi aynı hesaba aitse gönderilir.\nFaydası: Yalnız kullanıcı adını bilen biri başkasının posta kutusuna kod gönderemez; eşleşmeyen adres ekranda belli edilmez.\nÖnerilen değer: true (varsayılan). Kapatılırsa kod yalnız kullanıcı adıyla istenir.',
+  'help.set.site.monitor.login.otp.max-contact-mismatches':
+    'Ne işe yarar: Bir kullanıcı adı için 15 dakikada kabul edilen eşleşmeyen telefon / e-posta denemesi; aşılınca o kullanıcı için kod istekleri sessizce bastırılır.\nFaydası: Kayıtlı numarayı ya da adresi deneme yoluyla bulmayı engeller; şifre girişi ve hesap kilidi etkilenmez.\nÖnerilen değer: 5 (varsayılan). Aralık 1–20.',
   'help.set.site.monitor.login.otp.retention-days':
     'Ne işe yarar: Kodla giriş isteklerinin (kodun özeti, durum, IP) kaç gün saklanacağı; daha eskisi gece temizliğinde silinir.\nFaydası: İstek satırları yalnız birkaç dakika işe yarar; kalıcı iz zaten denetim kaydındadır.\nÖnerilen değer: 30 gün (varsayılan).',
 }

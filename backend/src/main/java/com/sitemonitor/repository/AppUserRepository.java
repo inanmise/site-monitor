@@ -45,6 +45,18 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
          + " AND u.activeSessionId NOT LIKE 'TERMINATED:%' AND u.lastSeenAt >= :threshold GROUP BY u.teamId")
     List<Object[]> countOnlineByPrimaryTeam(@Param("threshold") String threshold);
 
+    /**
+     * Kodla giriş kişi bilgisi KAPSAMI (2026-10-03, Giriş Yöntemleri ayar sayfası) — TEK satır:
+     * {@code [Long aktif kullanıcı, Long kayıtlı telefonu olan, Long kayıtlı e-postası olan]}. Tek toplu sorgu: satır /
+     * kişi bilgisi taşınmaz. Telefon "kayıtlı" = boş değil ve kırpılmış hâli en az 10 karakter (eşleştirici en az 10
+     * hane ister — dahili / kısa numara sayılmaz); e-posta = '@' ilk karakterden sonra. Yaklaşık bir ipucudur.
+     */
+    @Query("SELECT COUNT(u), "
+         + "COALESCE(SUM(CASE WHEN u.phone IS NOT NULL AND LENGTH(TRIM(u.phone)) >= 10 THEN 1 ELSE 0 END), 0), "
+         + "COALESCE(SUM(CASE WHEN u.email IS NOT NULL AND LOCATE('@', TRIM(u.email)) > 1 THEN 1 ELSE 0 END), 0) "
+         + "FROM AppUser u WHERE u.active = true")
+    List<Object[]> contactCoverage();
+
     /** Verilen (küçük harf, kırpılmış) adreslerden AKTİF bir kullanıcıya ait olanlar — "yalnız pasife ait adres"
      *  kararı için (aynı adresi aktif biri de kullanıyorsa adres düşürülmez). */
     @Query("SELECT DISTINCT LOWER(TRIM(u.email)) FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL "

@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { FIELD_GRID_3, SETTINGS_STACK, SettingsHeader, SettingsSaveBar, SettingsSection, ToggleRow, helpLabel } from './SettingsControls.jsx'
 import LoginMethodsPreview from './loginmethods/LoginMethodsPreview.jsx'
 import LoginMethodsActivity from './loginmethods/LoginMethodsActivity.jsx'
+import LoginMethodsCoverage from './loginmethods/LoginMethodsCoverage.jsx'
 
 /** Sayısal alanlar → sunucu sınır anahtarı (limits) + yardım anahtarı. Doğrulama sunucuyla AYNI aralıklardan. */
 export const NUMERIC_FIELDS = [
@@ -27,12 +28,18 @@ export const NUMERIC_FIELDS = [
   { key: 'max_requests_per_user', limit: 'max_requests_per_user' },
   { key: 'max_requests_per_ip', limit: 'max_requests_per_ip' },
   { key: 'max_failed_verifications', limit: 'max_failed_verifications' },
+  { key: 'max_contact_mismatches', limit: 'max_contact_mismatches' },   // 2026-10-03
 ]
+
+/** Açık/kapalı alanlar (gönderimde boolean). 2026-10-03: kişi bilgisi doğrulaması anahtarları eklendi. */
+export const BOOL_FIELDS = ['ldap_enabled', 'push_enabled', 'email_enabled', 'allow_global_admins',
+  'push_require_phone', 'email_require_email']
 
 /** Formdaki sayısal alan geçerli mi → hata haritası (boş = geçerli). Saf; testte doğrudan sınanır. */
 export function validateLoginMethods(form, limits, rangeMsg) {
   const errs = {}
   for (const { key, limit } of NUMERIC_FIELDS) {
+    if (form?.[key] === undefined) continue   // sunucu bu alanı hiç göndermedi (eski sürüm) — doğrulanmaz, gönderilmez
     const [min, max] = limits?.[limit] || [1, 1000]
     const raw = String(form?.[key] ?? '').trim()
     const n = Number(raw)
@@ -44,8 +51,8 @@ export function validateLoginMethods(form, limits, rangeMsg) {
 /** Gönderilecek gövde — sayılar sayı, anahtarlar boolean. */
 function payloadOf(form) {
   const out = {}
-  for (const k of ['ldap_enabled', 'push_enabled', 'email_enabled', 'allow_global_admins']) out[k] = !!form[k]
-  for (const { key } of NUMERIC_FIELDS) out[key] = Number(String(form[key]).trim())
+  for (const k of BOOL_FIELDS) out[k] = !!form[k]
+  for (const { key } of NUMERIC_FIELDS) if (form[key] !== undefined) out[key] = Number(String(form[key]).trim())
   return out
 }
 
@@ -87,8 +94,10 @@ function MethodCard({ method, icon: Icon, title, description, state, children })
  *
  * Düzen (mobil-önce): başlık + durum çipleri → uyarılar (LDAP kapalı ve kod yöntemi yok / gizli anahtar) → YÖNTEM
  * KARTLARI (Şifre — her zaman açık; LDAP — anahtar + kapatırken onay; Push ile kod — anahtar + süre, ağ geçidi yoksa
- * kullanılamaz + push ayarlarına bağlantı; E-posta ile kod — anahtar + süre + SMTP durumu) → ORTAK GÜVENLİK KURALLARI
- * (deneme, bekleme, 15 dk sınırları, global yönetici izni) → giriş ekranı ÖNİZLEMESİ (TR/EN, kaydedilmemiş değerlerle) →
+ * kullanılamaz + push ayarlarına bağlantı; E-posta ile kod — anahtar + süre + SMTP durumu; 2026-10-03: her iki kartta
+ * "telefon / e-posta da sorulsun" anahtarı + kişi bilgisi KAPSAMI ipucu — aktif kullanıcıların kaçında kayıtlı telefon /
+ * e-posta var, %80 altı uyarı tonu) → ORTAK GÜVENLİK KURALLARI (deneme, bekleme, 15 dk sınırları — eşleşmeyen telefon /
+ * e-posta sınırı dahil — global yönetici izni) → giriş ekranı ÖNİZLEMESİ (TR/EN, kaydedilmemiş değerlerle) →
  * SON ETKİNLİK (denetimden son 20 olay + Denetim Logu bağlantısı) → yapışkan kaydet çubuğu. Doğrulama alanın altında
  * (useFormErrors); sunucu reddi de alan adıyla döner.
  *
@@ -239,6 +248,13 @@ export default function LoginMethodsSettings({ onOpenSection }) {
                 </AlertBanner>
                 </div>
               )}
+              {/* 2026-10-03: kişi bilgisi doğrulaması — telefon da sorulsun; kapsam yalnız anahtar açıkken anlamlı */}
+              <div data-slot="lm-require" data-kind="phone" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
+                <ToggleRow checked={!!form.push_require_phone} onChange={(v) => set('push_require_phone', v)}
+                  label={t('lm.push.requirePhone')} helpKey="help.set.site.monitor.login.otp.push.require-phone" touch />
+                <p className="m-0 text-xs text-muted-foreground">{t('lm.push.requirePhoneHint')}</p>
+                {form.push_require_phone && <LoginMethodsCoverage coverage={data.coverage} kind="phone" />}
+              </div>
               {numField('push_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.push.ttl-seconds',
                 { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
             </MethodCard>
@@ -258,6 +274,13 @@ export default function LoginMethodsSettings({ onOpenSection }) {
               {smtp.configured && !smtp.alarm_mail_enabled && (
                 <p className="text-xs text-muted-foreground">{t('lm.email.alarmMuted')}</p>
               )}
+              {/* 2026-10-03: kişi bilgisi doğrulaması — e-posta da sorulsun; e-posta kodu her durumda kayıtlı adres ister */}
+              <div data-slot="lm-require" data-kind="email" className="flex min-w-0 flex-col gap-1.5 border-t pt-3">
+                <ToggleRow checked={!!form.email_require_email} onChange={(v) => set('email_require_email', v)}
+                  label={t('lm.email.requireEmail')} helpKey="help.set.site.monitor.login.otp.email.require-email" touch />
+                <p className="m-0 text-xs text-muted-foreground">{t('lm.email.requireEmailHint')}</p>
+                <LoginMethodsCoverage coverage={data.coverage} kind="email" />
+              </div>
               {numField('email_ttl_seconds', t('lm.ttl'), 'help.set.site.monitor.login.otp.email.ttl-seconds',
                 { min: ttlRange[0], max: ttlRange[1], hint: t('lm.rangeHint', ttlRange[0], ttlRange[1]) })}
             </MethodCard>
@@ -276,6 +299,8 @@ export default function LoginMethodsSettings({ onOpenSection }) {
                 { hint: t('lm.rangeHint', ...(limits.max_requests_per_ip || [1, 500])) })}
               {numField('max_failed_verifications', t('lm.maxFailed'), 'help.set.site.monitor.login.otp.max-failed-verifications',
                 { hint: t('lm.rangeHint', ...(limits.max_failed_verifications || [1, 20])) })}
+              {numField('max_contact_mismatches', t('lm.maxContactMismatches'), 'help.set.site.monitor.login.otp.max-contact-mismatches',
+                { hint: t('lm.rangeHint', ...(limits.max_contact_mismatches || [1, 20])) })}
             </div>
             <ToggleRow checked={!!form.allow_global_admins} onChange={(v) => set('allow_global_admins', v)}
               label={t('lm.allowAdmins')} helpKey="help.set.site.monitor.login.otp.allow-global-admins" touch />
@@ -295,7 +320,7 @@ export default function LoginMethodsSettings({ onOpenSection }) {
 /** Kirlilik karşılaştırması için tutarlı biçim (sayı alanları metin olarak gelebilir). */
 function payloadOfSafe(form) {
   const out = {}
-  for (const k of ['ldap_enabled', 'push_enabled', 'email_enabled', 'allow_global_admins']) out[k] = !!form?.[k]
+  for (const k of BOOL_FIELDS) out[k] = !!form?.[k]
   for (const { key } of NUMERIC_FIELDS) out[key] = String(form?.[key] ?? '').trim()
   return out
 }

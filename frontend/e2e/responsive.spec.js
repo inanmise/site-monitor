@@ -861,16 +861,21 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
 // Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02): giriş ekranında "veya" + yöntem düğmeleri, istek adımı ve
 // kod adımı (6 kutu + geri sayım + yeniden gönder) telefonda / tablette taşmaz; dokunma hedefleri ≥ 40 px. Ayarlar →
 // Giriş Yöntemleri sayfası (yöntem kartları, kurallar, TR/EN önizleme, son etkinlik) de taşmaz.
-const OTP_METHODS = { success: true, ldap: true, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 45, resend_cooldown: 30 }
+// 2026-10-03: istek adımında kişi bilgisi alanı (push → "Kayıtlı cep telefonu", e-posta → "Kayıtlı e-posta adresi") ve
+// ayar sayfasında "telefon / e-posta da sorulsun" anahtarları + kapsam ipucu + eşleşmeyen deneme sınırı da taşmaz.
+const OTP_METHODS = { success: true, ldap: true, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 45, resend_cooldown: 30,
+  push_requires_phone: true, email_requires_email: true }
 const LM_ADMIN = { success: true, data: {
   settings: { ldap_enabled: false, push_enabled: true, email_enabled: true, push_ttl_seconds: 45, email_ttl_seconds: 120,
     max_attempts: 3, resend_cooldown_seconds: 30, max_requests_per_user: 5, max_requests_per_ip: 20, max_failed_verifications: 5,
-    allow_global_admins: false },
+    allow_global_admins: false, push_require_phone: true, email_require_email: true, max_contact_mismatches: 5 },
   limits: { ttl: [30, 300], max_attempts: [1, 10], resend_cooldown: [10, 300], max_requests_per_user: [1, 20],
-    max_requests_per_ip: [1, 500], max_failed_verifications: [1, 20], window_minutes: 15 },
+    max_requests_per_ip: [1, 500], max_failed_verifications: [1, 20], max_contact_mismatches: [1, 20], window_minutes: 15 },
   status: { push_gateway_configured: true, smtp: { host: 'smtp-relay.very-long-corporate-domain.internal.example.com', configured: true,
     alarm_mail_enabled: false }, ldap_integration_enabled: true, secret_key_ephemeral: true },
-  public: { ldap: false, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 120, resend_cooldown: 30 },
+  public: { ldap: false, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 120, resend_cooldown: 30,
+    push_requires_phone: true, email_requires_email: true },
+  coverage: { active_users: 12480, with_phone: 9150, with_email: 12466 },
   activity: Array.from({ length: 8 }, (_, i) => ({ id: i + 1, event_type: ['LOGIN_OTP_REQUESTED', 'LOGIN_OTP_VERIFY_FAILED', 'LOGIN', 'LOGIN_OTP_LOCKED'][i % 4],
     event_time: '2026-10-02T10:0' + i + ':00', actor: 'GLOBAL.YONETICI.UZUN.KULLANICI.ADI.' + i, outcome: ['SUCCESS', 'FAILURE', 'SUCCESS', 'BLOCKED'][i % 4],
     ip_address: '2001:db8:85a3::8a2e:370:733' + i, failure_reason: i % 4 === 1 ? 'OTP_INVALID: yanlış kod' : null,
@@ -905,6 +910,41 @@ for (const vp of VIEWPORTS) {
     await flow.locator('input[autocomplete="username"]').fill('kullanici.adi.uzun')
     m = await page.evaluate(measure, 'body')
     expect(m.offenders, `kod isteği adımı @${vp.name}: taşan öğe`).toEqual([])
+    // Kişi bilgisi alanı (2026-10-03): push → kayıtlı cep telefonu — görünür, tam genişlik, ≥ 40 px, taşmaz
+    const phone = flow.locator('[data-slot="otp-contact"][data-kind="phone"] input')
+    await expect(phone).toBeVisible()
+    await expect(phone).toHaveAttribute('type', 'tel')
+    const user = await flow.locator('input[autocomplete="username"]').boundingBox()
+    let cbox = await flow.locator('[data-slot="otp-contact"][data-kind="phone"]').boundingBox()
+    expect(cbox.height, `telefon alanı @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    expect(cbox.x + cbox.width, `telefon alanı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(cbox.y, `telefon alanı @${vp.name}: kullanıcı adının ALTINDA`).toBeGreaterThan(user.y)
+    expect(Math.abs(cbox.width - user.width), `telefon alanı @${vp.name}: kullanıcı adıyla aynı genişlik`).toBeLessThanOrEqual(2)
+    await phone.fill('+90 (500) 000-00-00 / dahili 1234')   // uzun değer de kutuda kalır
+    await phone.fill('05000000000')
+    await expect(phone).toHaveValue('0500 000 00 00')
+    // Boş gönderim: hata metni alanın altında, taşmaz
+    await phone.fill('')
+    await flow.locator('[data-slot="otp-send"]').click()
+    await expect(flow.locator('[data-field="phone"]')).toHaveAttribute('data-invalid', 'true')
+    m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `telefon hatası @${vp.name}: taşan öğe`).toEqual([])
+    // Kanal seçici (telefonda 40 px) → e-posta alanı
+    const seg = flow.getByRole('button', { name: /^Email$|^E-posta$/ })
+    const segBox = await seg.boundingBox()
+    if (vp.width < 640) expect(segBox.height, `kanal seçici @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    await seg.click()
+    const mail = flow.locator('[data-slot="otp-contact"][data-kind="email"] input')
+    await expect(mail).toBeVisible()
+    await expect(mail).toHaveAttribute('type', 'email')
+    await mail.fill('cok.uzun.bir.kullanici.adi.soyadi@kurumsal-alan-adi.example.com')
+    cbox = await flow.locator('[data-slot="otp-contact"][data-kind="email"]').boundingBox()
+    expect(cbox.x + cbox.width, `e-posta alanı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `e-posta alanı @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `e-posta alanı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    await flow.getByRole('button', { name: /^Push notification$|^Push bildirimi$/ }).click()
+    await phone.fill('0500 000 00 00')
     await flow.locator('[data-slot="otp-send"]').click()
     await expect(flow).toHaveAttribute('data-step', 'code')
     await page.locator('[data-slot="otp-countdown"]').waitFor()
@@ -944,6 +984,16 @@ for (const vp of VIEWPORTS) {
     }
     const link = await page.locator('[data-slot="lm-activity-audit-link"]').boundingBox()
     expect(link.height, `denetim bağlantısı @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    // 2026-10-03: "da sorulsun" anahtarları + kapsam ipuçları (telefon %73 → uyarı tonu) + önizlemedeki kişi bilgisi alanı
+    await expect(page.locator('[data-slot="lm-require"]')).toHaveCount(2)
+    const cov = page.locator('[data-slot="lm-coverage"][data-kind="phone"]')
+    await expect(cov).toHaveAttribute('data-tone', 'warn')
+    for (const c of await page.locator('[data-slot="lm-coverage"]').all()) {
+      const b = await c.boundingBox()
+      expect(b.x + b.width, `kapsam ipucu @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    await expect(page.locator('[data-slot="lm-preview-request"] [data-slot="otp-contact"][data-kind="phone"]')).toBeVisible()
+    await expect(page.locator('[data-field="max_contact_mismatches"]')).toBeVisible()
     // Önizleme EN'e geçince de taşmaz
     await page.locator('[data-slot="lm-preview"]').getByRole('button', { name: 'EN' }).click()
     await expect(page.locator('[data-slot="lm-preview"]')).toHaveAttribute('data-lang', 'en')

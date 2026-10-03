@@ -17,8 +17,10 @@ import { cn } from '@/lib/utils'
  *  • Erişilebilirlik: Radix'in tekli kipteki radiogroup/radio rolleri yerine eski sözleşme
  *    (role="group" + aria-pressed'li düğmeler) korunur — onlarca ekran ve testi düğme adıyla
  *    seçim yapıyor; WAI-ARIA'da geçerli bir "toggle button group" kalıbıdır.
+ *  • `itemClassName` (2026-10-03, isteğe bağlı): öğe sınıfına eklenir — ör. giriş ekranında telefonda tam genişlik ve
+ *    40 px dokunma hedefi (`flex-1 max-sm:h-10`). Verilmezse çizim birebir eskisi gibi.
  */
-export default function SegmentedControl({ value, onChange, options, ariaLabel, className = '' }) {
+export default function SegmentedControl({ value, onChange, options, ariaLabel, className = '', itemClassName = '' }) {
   const activeIdx = options.findIndex((o) => o.value === value)
 
   return (
@@ -47,7 +49,7 @@ export default function SegmentedControl({ value, onChange, options, ariaLabel, 
             aria-checked={undefined}
             title={o.title}
             disabled={o.disabled || undefined}
-            className="h-7 gap-1.5 px-3 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50"
+            className={cn('h-7 gap-1.5 px-3 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50', itemClassName)}
           >
             {Icon ? <Icon className="size-3.5" aria-hidden="true" /> : null}
             {o.label}

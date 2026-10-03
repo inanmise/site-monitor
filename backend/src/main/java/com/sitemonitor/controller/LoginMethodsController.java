@@ -36,7 +36,8 @@ import java.util.Map;
  *       {@code /api} yanıtları genel {@code no-store} başlığını taşır (WebConfig). Yolda "status" geçmez (Durum sayfası
  *       kapısı: PUBLIC yolları "status" içeremez).</li>
  *   <li>{@code GET /api/admin/login-methods} — ayarlar, sınırlar, kanal durumları (push ağ geçidi, SMTP, LDAP entegrasyonu,
- *       gizli anahtar), giriş ekranı önizleme verisi ve son 20 kodla giriş olayı.</li>
+ *       gizli anahtar), giriş ekranı önizleme verisi, kişi bilgisi kapsamı ({@code coverage}: aktif kullanıcı / kayıtlı
+ *       telefonu / e-postası olan — 2026-10-03) ve son 20 kodla giriş olayı.</li>
  *   <li>{@code PUT /api/admin/login-methods} — kayıt; sunucu aralık doğrulaması alan adıyla döner (400 + {@code field},
  *       arayüz alanın altında gösterir). Denetim {@code LOGIN_METHODS_SETTINGS_SAVE} + alan farkı.</li>
  * </ul>
@@ -67,7 +68,11 @@ public class LoginMethodsController {
             "max_requests_per_user", LoginMethodsService.KEY_MAX_PER_USER,
             "max_requests_per_ip", LoginMethodsService.KEY_MAX_PER_IP,
             "max_failed_verifications", LoginMethodsService.KEY_MAX_FAILED,
-            "allow_global_admins", LoginMethodsService.KEY_ALLOW_GLOBAL_ADMINS);
+            "allow_global_admins", LoginMethodsService.KEY_ALLOW_GLOBAL_ADMINS,
+            // 2026-10-03: kişi bilgisi doğrulaması (telefon / e-posta da sorulsun) + eşleşmeme sınırı
+            "push_require_phone", LoginMethodsService.KEY_PUSH_REQUIRE_PHONE,
+            "email_require_email", LoginMethodsService.KEY_EMAIL_REQUIRE_EMAIL,
+            "max_contact_mismatches", LoginMethodsService.KEY_MAX_CONTACT_MISMATCHES);
 
     private final LoginMethodsService methods;
     private final AppSettingsService settingsService;
@@ -169,6 +174,8 @@ public class LoginMethodsController {
         status.put("secret_key_ephemeral", otpCodes.ephemeralKey());
         data.put("status", status);
         data.put("public", methods.publicView());   // giriş ekranı önizlemesi sunucunun gerçek kararından çizilir
+        // Kişi bilgisi kapsamı (2026-10-03): {active_users, with_phone, with_email} — TEK toplu sorgu, kişi bilgisi yok.
+        data.put("coverage", methods.contactCoverage());
         // Kimlik izi (IP) diğer uçlardaki gibi TEK kaynaktan maskelenir (IdentityMaskGateTest): uç bugün yalnız global
         // yöneticiye açık olduğundan değer değişmez; yetki ileride gevşerse IP'ler kendiliğinden düşer.
         Object user = session != null ? session.getAttribute("username") : null;
