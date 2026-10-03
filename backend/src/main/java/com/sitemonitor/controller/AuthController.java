@@ -99,6 +99,42 @@ public class AuthController {
     /** Test kancası. */
     void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
 
+    /**
+     * Giriş yöntemleri ayarları + kodla giriş (2026-10-02, kullanıcı isteği) — İSTEĞE BAĞLI: {@code @WebMvcTest} dilimlerinde
+     * yok → LDAP girişi açık sayılır ve kod uçları "yöntem kapalı" döner (bugünkü davranış birebir).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.otp.LoginMethodsService loginMethods;
+
+    @Autowired(required = false)
+    private com.sitemonitor.service.otp.LoginOtpService loginOtp;
+
+    /** Test kancaları. */
+    void setLoginMethods(com.sitemonitor.service.otp.LoginMethodsService s) { this.loginMethods = s; }
+    void setLoginOtp(com.sitemonitor.service.otp.LoginOtpService s) { this.loginOtp = s; }
+
+    /** LDAP hesaplarının parola girişi açık mı (Ayarlar → Giriş Yöntemleri). Okuma hatası girişi KAPATMAZ (fail-open). */
+    private boolean ldapLoginEnabled() {
+        try {
+            return loginMethods == null || loginMethods.ldapLoginEnabled();
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /** LDAP girişi kapalıyken TEK yanıt kodu — yerel olmayan her ad (var/yok) ve yerel hesabın yanlış parolası AYNI gövdeyi alır. */
+    public static final String LDAP_LOGIN_DISABLED = "LDAP_LOGIN_DISABLED";
+
+    private static ResponseEntity<Map<String, Object>> ldapDisabledResponse() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("error_code", LDAP_LOGIN_DISABLED);
+        body.put("error", com.sitemonitor.util.Msg.t(
+                "Kullanıcı adı veya parola hatalı ya da LDAP ile giriş şu an devre dışı. LDAP hesabıyla giriyorsanız kodla giriş yöntemlerini kullanın.",
+                "Invalid username or password, or LDAP sign-in is currently disabled. If you use an LDAP account, sign in with a one-time code."));
+        return ResponseEntity.status(401).body(body);
+    }
+
     /** Bakım AKTİF mi — okuma hatası girişi ENGELLEMEZ (fail-open). */
     private boolean maintenanceActive() {
         try {
@@ -167,6 +203,21 @@ public class AuthController {
                 && (existing.get().getAuthSource() == null
                     || "LOCAL".equalsIgnoreCase(existing.get().getAuthSource()));
 
+        // LDAP İLE GİRİŞ KAPALI (2026-10-02, kullanıcı isteği — Ayarlar → Giriş Yöntemleri): yerel olmayan HER kullanıcı adı
+        // (LDAP hesabı da, hiç olmayan ad da) AD'ye gitmeden AYNI yanıtı alır; yerel hesabın yanlış parolası da aynı gövdeyi
+        // alır (aşağıda) → "bu ad yerel mi / var mı" ne mesajdan ne süreden okunur (BCrypt maliyeti burada da ödenir).
+        // Yerel hesaplar ve kurulumdaki bootstrap admin ETKİLENMEZ (hiçbir ayar break-glass hesabını dışarıda bırakamaz).
+        // Denetim LOGIN_FAILED + BLOCKED → kaba kuvvet / ilerleyici kilit sayacına GİRMEZ (parola hiç denenmedi).
+        boolean ldapLoginOff = !ldapLoginEnabled();
+        if (!isLocalAccount && ldapLoginOff && !username.equalsIgnoreCase(bootstrapAdminUsername)) {
+            recordFailedAttempt(clientIp);   // IP oran sınırı (numaralandırma denemesi de yavaşlasın)
+            userService.burnPasswordCheck(password);
+            auditService.recordLdapDisabledLogin(
+                    existing.map(AppUser::getUsername).orElse(username.toUpperCase(java.util.Locale.ROOT)),
+                    clientIp, request.getHeader("User-Agent"));
+            return ldapDisabledResponse();
+        }
+
         Optional<AppUser> userOpt;
         // PASİF hesap (2026-10-02, kullanıcı kararı): kimlik bilgisi DOĞRULANDIKTAN sonra hesap pasifse giriş reddedilir
         // (403 ACCOUNT_INACTIVE). Yanlış parolada aşağıdaki genel 401 DEĞİŞMEZ — "pasif" bilgisi yalnız parolayı / AD
@@ -177,7 +228,8 @@ public class AuthController {
         if (isLocalAccount) {
             userOpt = userService.authenticate(username, password);   // local BCrypt
             if (userOpt.isEmpty()) inactive = userService.findInactiveWithValidPassword(username, password).orElse(null);
-        } else if (ldapEnabled()) {
+        } else if (ldapEnabled() && !ldapLoginOff) {
+            // (LDAP girişi kapalıyken buraya yalnız bootstrap adı düşebilir — AD'ye gitmez, yerel doğrulamaya iner.)
             LdapAttempt ldap = tryLdapLogin(username, password);      // AD bind + provision (USER)
             userOpt = Optional.ofNullable(ldap.user());
             inactive = ldap.inactive();
@@ -222,81 +274,120 @@ public class AuthController {
                         "error_code", "TEMP_PASSWORD_EXPIRED"));
             }
 
-            loginAttempts.remove(clientIp);
-            windowStart.remove(clientIp);
-            blockedUntil.remove(clientIp);
-            userService.clearLockoutOnSuccess(username);
-
             // Tek aktif oturum onayı: kullanıcının başka bir yerde aktif oturumu varsa ve henüz
             // onaylamadıysa, mevcut oturumu DÜŞÜRMEDEN 409 dön → frontend onay modalı gösterir.
             // Onaylarsa force_login=true ile tekrar gelir; o zaman aşağıdaki akış (recordActiveSession)
             // eski oturumu düşürüp girişi tamamlar. (TERMINATED sentinel'i = zaten kapatılmış, sayılmaz.)
             boolean forceLogin = Boolean.parseBoolean(body.getOrDefault("force_login", "false"));
-            // Yalnız CANLI (son ping penceresi içinde) bir aktif oturum varsa onay iste; logout'suz
-            // kapatılan/ölen oturumlar tazelik penceresi dışına düşer → yanlış onay çıkmaz.
-            boolean hasActiveElsewhere = userService.hasLiveSession(user);
-            if (hasActiveElsewhere && !forceLogin) {
-                log.info("Login needs confirmation — active session exists elsewhere: user={} IP={}", username, clientIp);
-                return ResponseEntity.status(409).body(Map.of(
-                        "success", false,
-                        "error_code", "ACTIVE_SESSION_EXISTS",
-                        "error", "An active session already exists for this account elsewhere."));
-            }
-
-            HttpSession oldSession = request.getSession(false);
-            if (oldSession != null) oldSession.invalidate();
-            HttpSession newSession = request.getSession(true);
-            populateSession(newSession, user);
-            // Tek aktif oturum (store-agnostik): bu oturumu kullanıcının "aktif" oturumu olarak kaydet —
-            // AuthInterceptor her istekte karşılaştırır, eşleşmeyen eski oturumu kapatır. Ayrıca eski
-            // remember-me token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp kicklemesin).
-            // CANONICAL username (user.getUsername()) kullan: AD/LDAP girişinde yazılan case (ör. "N12345")
-            // DB'deki canonical'dan ("n12345") farklı olabilir; recordActiveSession→findByUsername case-sensitive
-            // olduğundan yazılan case'le satır bulunamaz ve aktif-oturum/lastSeenAt set EDİLMEZ → kullanıcı
-            // "aktif" sayılmaz. populateSession + sessionPing zaten canonical kullanıyor; burada da hizala.
-            // Giriş damgası + aktif oturum kaydı TEK yazmada. Damga BURADA basılır (409 dalından
-            // SONRA): oturum kurulmadan basılsaydı, kullanıcı hiç giremediği hâlde "giriş oldu"
-            // yazılır ve gösterilecek "önceki girişiniz" değeri boşa harcanırdı.
-            UserService.LoginStamp loginStamp = userService.recordSuccessfulLogin(
-                    user.getUsername(), newSession.getId(), clientIp, UserService.LoginMethod.PASSWORD);
-            // CANONICAL username (yazılan case DEĞİL): app_users ve remember_me_tokens BÜYÜK harfe
-            // normalize ediliyor (applySchemaPatches). Yazılan case ile silmek, kullanıcı bir gün
-            // "n12345" ertesi gün "N12345" yazdığında eşleşmez ve ÖKSÜZ bir token hayatta kalır —
-            // yani "her login eski token'ları iptal eder" güvencesi sessizce delinir.
-            rememberMeService.invalidateAllForUser(user.getUsername());
-
-            log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={})",
-                    user.getUsername(), user.getSystemRole(), user.getTeamId(), rememberMe, clientIp);
-            // Audit actor'ı da CANONICAL: yazılan case ile kaydedilirse aktif-oturum kartı enrichment'i
-            // (findTopByActor(canonical, sid)) eşleşmez → login zamanı/IP boş kalır; ayrıca aynı kullanıcı
-            // audit'te iki farklı case ("N12345"/"n12345") ile görünür.
-            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
-                    user.getSystemRole(), clientIp,
-                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
-
-            if (rememberMe) {
-                String token = rememberMeService.generateToken(
-                        user.getUsername(),                       // CANONICAL — iptal yolu da bununla arıyor
-                        clientIp, request.getHeader("User-Agent"));
-                // SameSite=Strict ZORUNLU — oturum çerezi prod'da zaten Strict ve bu uygulamanın
-                // TEK CSRF savunması. Remember-me çerezi jakarta Cookie ile yazılıyordu ve o sınıfın
-                // setSameSite'ı yok; bayrak sessizce eksik kalıyordu. AuthInterceptor bu çerezle
-                // TAM OTURUMU yeniden kurduğu için, Lax-varsayılanı uygulamayan bir tarayıcıda
-                // cross-site POST kimlikli çalışıyor ve oturum çerezindeki Strict etkisiz kalıyordu.
-                // (Gövdesiz POST uçları düz HTML formuyla tetiklenebilir — purge-deleted dâhil.)
-                ResponseCookie cookie = ResponseCookie.from(RememberMeService.COOKIE_NAME, token)
-                        .maxAge(rememberTtlSeconds)
-                        .httpOnly(true)
-                        .secure(cookieSecure)
-                        .path("/")
-                        .sameSite("Strict")
-                        .build();
-                response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-            }
-            return ResponseEntity.ok(buildMeResponse(user, newSession, loginStamp));
+            return establishSession(user, username, rememberMe, forceLogin, clientIp, request, response,
+                    UserService.LoginMethod.PASSWORD);
         }
 
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
+        return failedLogin(username, clientIp, request, ldapLoginOff);
+    }
+
+    /** Başka yerde canlı oturum — onay iste (şifre ve kodla girişte AYNI gövde). */
+    private static ResponseEntity<Map<String, Object>> activeSessionConflict() {
+        return ResponseEntity.status(409).body(Map.of(
+                "success", false,
+                "error_code", "ACTIVE_SESSION_EXISTS",
+                "error", "An active session already exists for this account elsewhere."));
+    }
+
+    /**
+     * Kimlik DOĞRULANDIKTAN sonraki ORTAK yol (2026-10-02: şifre girişinden çıkarıldı — kodla giriş de AYNEN buradan geçer):
+     * IP sayaçları ve ilerleyici kilit temizliği, tek aktif oturum onayı (409), eski oturumu düşürüp yenisini kurma, giriş
+     * damgası + aktif oturum kaydı, eski remember-me token'larının iptali, {@code LOGIN} denetimi (kodla girişte ayrıntıda
+     * yöntem), istenirse remember-me çerezi ve /api/me ile aynı yanıt gövdesi. {@code mustChangePassword} oturuma
+     * {@link #populateSession} ile yazılır — interceptor kuralı her iki yolda aynı.
+     *
+     * @param lockoutKey ilerleyici kilit temizliği / log için ad (şifre yolunda yazılan ad — bugünkü davranış)
+     */
+    private ResponseEntity<Map<String, Object>> establishSession(AppUser user, String lockoutKey, boolean rememberMe,
+                                                                 boolean forceLogin, String clientIp,
+                                                                 HttpServletRequest request, HttpServletResponse response,
+                                                                 UserService.LoginMethod method) {
+        String username = lockoutKey;
+        loginAttempts.remove(clientIp);
+        windowStart.remove(clientIp);
+        blockedUntil.remove(clientIp);
+        userService.clearLockoutOnSuccess(username);
+
+        // Yalnız CANLI (son ping penceresi içinde) bir aktif oturum varsa onay iste; logout'suz
+        // kapatılan/ölen oturumlar tazelik penceresi dışına düşer → yanlış onay çıkmaz.
+        boolean hasActiveElsewhere = userService.hasLiveSession(user);
+        if (hasActiveElsewhere && !forceLogin) {
+            log.info("Login needs confirmation — active session exists elsewhere: user={} IP={}", username, clientIp);
+            return activeSessionConflict();
+        }
+
+        HttpSession oldSession = request.getSession(false);
+        if (oldSession != null) oldSession.invalidate();
+        HttpSession newSession = request.getSession(true);
+        populateSession(newSession, user);
+        // Tek aktif oturum (store-agnostik): bu oturumu kullanıcının "aktif" oturumu olarak kaydet —
+        // AuthInterceptor her istekte karşılaştırır, eşleşmeyen eski oturumu kapatır. Ayrıca eski
+        // remember-me token'larını iptal et (eski tarayıcı cookie ile sessizce geri dönüp kicklemesin).
+        // CANONICAL username (user.getUsername()) kullan: AD/LDAP girişinde yazılan case (ör. "N12345")
+        // DB'deki canonical'dan ("n12345") farklı olabilir; recordActiveSession→findByUsername case-sensitive
+        // olduğundan yazılan case'le satır bulunamaz ve aktif-oturum/lastSeenAt set EDİLMEZ → kullanıcı
+        // "aktif" sayılmaz. populateSession + sessionPing zaten canonical kullanıyor; burada da hizala.
+        // Giriş damgası + aktif oturum kaydı TEK yazmada. Damga BURADA basılır (409 dalından
+        // SONRA): oturum kurulmadan basılsaydı, kullanıcı hiç giremediği hâlde "giriş oldu"
+        // yazılır ve gösterilecek "önceki girişiniz" değeri boşa harcanırdı.
+        UserService.LoginStamp loginStamp = userService.recordSuccessfulLogin(
+                user.getUsername(), newSession.getId(), clientIp, method);
+        // CANONICAL username (yazılan case DEĞİL): app_users ve remember_me_tokens BÜYÜK harfe
+        // normalize ediliyor (applySchemaPatches). Yazılan case ile silmek, kullanıcı bir gün
+        // "n12345" ertesi gün "N12345" yazdığında eşleşmez ve ÖKSÜZ bir token hayatta kalır —
+        // yani "her login eski token'ları iptal eder" güvencesi sessizce delinir.
+        rememberMeService.invalidateAllForUser(user.getUsername());
+
+        log.info("User logged in: {} (role={}, teamId={}, rememberMe={}, IP={}, method={})",
+                user.getUsername(), user.getSystemRole(), user.getTeamId(), rememberMe, clientIp, method);
+        // Audit actor'ı da CANONICAL: yazılan case ile kaydedilirse aktif-oturum kartı enrichment'i
+        // (findTopByActor(canonical, sid)) eşleşmez → login zamanı/IP boş kalır; ayrıca aynı kullanıcı
+        // audit'te iki farklı case ("N12345"/"n12345") ile görünür.
+        if (method == UserService.LoginMethod.PASSWORD) {
+            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
+                    user.getSystemRole(), clientIp,
+                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
+        } else {
+            // Kodla giriş (2026-10-02): aynı LOGIN olayı + ayrıntıda yöntem (OTP_PUSH / OTP_EMAIL) — kod YOK.
+            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
+                    user.getSystemRole(), clientIp,
+                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5, method.name());
+        }
+
+        if (rememberMe) {
+            String token = rememberMeService.generateToken(
+                    user.getUsername(),                       // CANONICAL — iptal yolu da bununla arıyor
+                    clientIp, request.getHeader("User-Agent"));
+            // SameSite=Strict ZORUNLU — oturum çerezi prod'da zaten Strict ve bu uygulamanın
+            // TEK CSRF savunması. Remember-me çerezi jakarta Cookie ile yazılıyordu ve o sınıfın
+            // setSameSite'ı yok; bayrak sessizce eksik kalıyordu. AuthInterceptor bu çerezle
+            // TAM OTURUMU yeniden kurduğu için, Lax-varsayılanı uygulamayan bir tarayıcıda
+            // cross-site POST kimlikli çalışıyor ve oturum çerezindeki Strict etkisiz kalıyordu.
+            // (Gövdesiz POST uçları düz HTML formuyla tetiklenebilir — purge-deleted dâhil.)
+            ResponseCookie cookie = ResponseCookie.from(RememberMeService.COOKIE_NAME, token)
+                    .maxAge(rememberTtlSeconds)
+                    .httpOnly(true)
+                    .secure(cookieSecure)
+                    .path("/")
+                    .sameSite("Strict")
+                    .build();
+            response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        }
+        return ResponseEntity.ok(buildMeResponse(user, newSession, loginStamp));
+    }
+
+    /**
+     * Başarısız parola girişi — IP sayacı, kaba kuvvet tespiti, ilerleyici kilit (2026-10-02: login'den çıkarıldı, davranış
+     * aynı). {@code ldapLoginOff}: LDAP girişi kapalıyken düz 401 gövdesi yerel olmayan adlarla AYNI olur (numaralandırma yok).
+     */
+    private ResponseEntity<Map<String, Object>> failedLogin(String username, String clientIp, HttpServletRequest request,
+                                                            boolean ldapLoginOff) {
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
         // Look up user's lockout context: window start (countSince) and required failures for this level.
@@ -346,8 +437,104 @@ public class AuthController {
                 "success", false, "wait_seconds", ls.secondsRemaining(),
                 "error", "Account temporarily locked."));
         }
+        if (ldapLoginOff) return ldapDisabledResponse();
         return ResponseEntity.status(401)
                 .body(Map.of("success", false, "error", "Invalid username or password"));
+    }
+
+    // ── Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02, kullanıcı isteği) ─────────────────────────────
+    //
+    // İki uç da AuthInterceptor PUBLIC listesinde (oturumsuz). İstek ucu uygun / uygunsuz / bilinmeyen kullanıcı için
+    // AYNI 200 gövdesini döner (bkz. LoginOtpService); doğrulama başarılıysa oturum ŞİFRE GİRİŞİYLE AYNI yoldan kurulur
+    // (establishSession): 409 + forceLogin, beni hatırla, bakım 403, pasif 403 (yalnız DOĞRU koddan sonra),
+    // mustChangePassword, LOGIN denetimi (yöntem OTP_PUSH / OTP_EMAIL). Gövdeler RequestLoggingFilter'da HİÇ loglanmaz.
+
+    /** {@code {username, channel: "push"|"email"}} → 200 genel yanıt; yöntem kapalı 400; IP sınırı 429. */
+    @PostMapping("/login/otp/request")
+    public ResponseEntity<Map<String, Object>> otpRequest(@RequestBody(required = false) Map<String, Object> body,
+                                                          HttpServletRequest request) {
+        if (loginOtp == null) return otpUnavailable();
+        Map<String, Object> b = body == null ? Map.of() : body;
+        var r = loginOtp.request(str(b.get("username")), str(b.get("channel")), resolveClientIp(request),
+                request.getHeader("User-Agent"), com.sitemonitor.util.Msg.isEn());
+        return ResponseEntity.status(r.status()).body(r.body());
+    }
+
+    /**
+     * {@code {challenge_id, code, remember_me, forceLogin}} → başarı: /api/login ile AYNI gövde ve oturum; hata: 401
+     * {@code OTP_INVALID} (+ attempts_left) / {@code OTP_EXPIRED} / {@code OTP_LOCKED}; 409 başka yerde oturum (istek
+     * tüketilmez, onay süresince canlı kalır); 403 MAINTENANCE / ACCOUNT_INACTIVE ve 423 hesap kilidi yalnız DOĞRU koddan sonra.
+     */
+    @PostMapping("/login/otp/verify")
+    public ResponseEntity<Map<String, Object>> otpVerify(@RequestBody(required = false) Map<String, Object> body,
+                                                         HttpServletRequest request, HttpServletResponse response) {
+        if (loginOtp == null) return otpUnavailable();
+        Map<String, Object> b = body == null ? Map.of() : body;
+        String clientIp = resolveClientIp(request);
+        boolean rememberMe = bool(b.get("remember_me"));
+        boolean forceLogin = bool(b.get("forceLogin")) || bool(b.get("force_login"));
+        var out = loginOtp.verify(str(b.get("challenge_id")), str(b.get("code")), clientIp, request.getHeader("User-Agent"));
+        if (out.failure() != null) return ResponseEntity.status(out.failure().status()).body(out.failure().body());
+
+        var v = out.verified();
+        AppUser user = v.user();
+        UserService.LoginMethod method = v.channel().loginMethod();
+        // Kod DOĞRU — buradan sonrası şifre girişinin kimlik-doğrulama-sonrası kararlarıyla AYNI sıra.
+        if (!Boolean.TRUE.equals(user.getActive())) {
+            loginOtp.block(v.challenge());
+            return rejectInactiveLogin(user, method.name(), clientIp, request);
+        }
+        if (maintenanceBlocks(user)) {
+            loginOtp.block(v.challenge());
+            return rejectMaintenanceLogin(user, method.name(), clientIp, request);
+        }
+        UserService.LockoutStatus ls = userService.checkLockout(user.getUsername());
+        if (ls.isBlocked()) {
+            loginOtp.block(v.challenge());
+            auditService.recordLockedLogin(user.getUsername(), user.getId(), user.getTeamId(), user.getSystemRole(),
+                    clientIp, request.getHeader("User-Agent"), method.name());
+            if (ls.permanent()) {
+                return ResponseEntity.status(423).body(Map.of(
+                        "success", false, "locked", true,
+                        "error", "Account permanently locked. Contact administrator."));
+            }
+            return ResponseEntity.status(423).body(Map.of(
+                    "success", false, "wait_seconds", ls.secondsRemaining(),
+                    "error", "Account temporarily locked."));
+        }
+        if (loginOtp.globalAdminBlocked(user)) {
+            // Global yöneticiye kodla giriş istek ile doğrulama arasında kapatıldı — genel "süresi doldu" yanıtı.
+            loginOtp.block(v.challenge());
+            return ResponseEntity.status(401).body(com.sitemonitor.service.otp.LoginOtpService.expiredBody());
+        }
+        if (userService.hasLiveSession(user) && !forceLogin) {
+            // Onay penceresi: istek TÜKETİLMEZ (kullanıcı onaylayınca aynı kod + forceLogin ile gelir).
+            loginOtp.holdForConfirmation(v.challenge());
+            log.info("Kodla giriş onay bekliyor — başka yerde aktif oturum: user={} IP={}", user.getUsername(), clientIp);
+            return activeSessionConflict();
+        }
+        if (!loginOtp.consume(v.challenge())) {
+            return ResponseEntity.status(401).body(com.sitemonitor.service.otp.LoginOtpService.expiredBody());
+        }
+        return establishSession(user, user.getUsername(), rememberMe, true, clientIp, request, response, method);
+    }
+
+    private static ResponseEntity<Map<String, Object>> otpUnavailable() {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", "OTP_METHOD_DISABLED");
+        body.put("error_code", "OTP_METHOD_DISABLED");
+        body.put("error", com.sitemonitor.util.Msg.t("Bu giriş yöntemi şu an kapalı.", "This sign-in method is currently disabled."));
+        return ResponseEntity.status(400).body(body);
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : v.toString();
+    }
+
+    private static boolean bool(Object v) {
+        if (v instanceof Boolean x) return x;
+        return v != null && Boolean.parseBoolean(v.toString().trim());
     }
 
     /**

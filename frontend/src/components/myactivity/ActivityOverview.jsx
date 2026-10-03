@@ -33,6 +33,8 @@ function whereText(row, t) {
 function methodLabel(t, m) {
   if (m === 'PASSWORD') return t('lastLogin.methodPassword')
   if (m === 'REMEMBER_ME') return t('lastLogin.methodRemember')
+  if (m === 'OTP_PUSH') return t('lastLogin.methodOtpPush')     // kodla giriş (2026-10-02)
+  if (m === 'OTP_EMAIL') return t('lastLogin.methodOtpEmail')
   return null
 }
 function reasonLabel(t, r) {

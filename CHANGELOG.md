@@ -15,6 +15,17 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Kodla giriş (push / e-posta):** giriş ekranında, ana form değişmeden "Push ile kod al" / "E-posta ile kod al";
+  6 haneli tek kullanımlık kod (varsayılan 45 sn, geri sayımlı), 3 deneme, yeniden gönderme beklemesi, IP ve kullanıcı
+  sınırları. Hesap varlığı sızmaz (her durumda aynı yanıt), kod hiçbir log'a, veritabanına ya da denetime yazılmaz,
+  oturum şifre girişiyle aynı kurallardan geçer (tek oturum, bakım, pasif hesap). Global yöneticiler varsayılan olarak
+  kodla giremez (ayardan açılır); kurulum `admin` hesabı her zaman şifreyle girer.
+- **Ayarlar → Güvenlik → Giriş Yöntemleri (yalnız global yönetici):** push ile kod, e-posta ile kod ve LDAP ile giriş
+  ayrı ayrı açılıp kapatılır; kanal başına süre, deneme ve sınır ayarları; giriş ekranının TR/EN önizlemesi; son kodla
+  giriş etkinliği. Tüm akış denetim kaydında (kod istendi / gönderildi / doğrulama başarısız / süre doldu / kilit /
+  giriş).
+
 ## [20.97.0] — 2026-10-02
 
 ### Added

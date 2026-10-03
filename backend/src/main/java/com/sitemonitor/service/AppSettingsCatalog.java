@@ -335,6 +335,21 @@ public final class AppSettingsCatalog {
         //    UNTRUSTED görünür; açık gelseydi yayın anında alarm seli olurdu.
         new Setting("site.monitor.trust.alert-hostname-mismatch", "security", Type.BOOL),
         new Setting("site.monitor.trust.alert-untrusted",         "security", Type.BOOL),
+        // ── Giriş Yöntemleri (2026-10-02, kullanıcı isteği) — Ayarlar → Güvenlik → "Giriş Yöntemleri" sayfası yönetir
+        //    (LoginMethodsController; Genel Ayarlar'da GÖSTERİLMEZ — grup GeneralSettings SKIP_GROUPS'ta). Hepsi GLOBAL_ONLY.
+        //    ldap-enabled: LDAP hesaplarının PAROLA (AD bind) girişi — mevcut LDAP entegrasyonundan (dizin/eşitleme) BAĞIMSIZ;
+        //    yerel hesaplar ve kurulumdaki bootstrap admin bundan etkilenmez. otp.*: push / e-posta ile tek kullanımlık kodla giriş.
+        new Setting("site.monitor.login.ldap-enabled",                    "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.otp.push.enabled",                "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.otp.email.enabled",               "login-methods", Type.BOOL),
+        new Setting("site.monitor.login.otp.push.ttl-seconds",            "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.email.ttl-seconds",           "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.max-attempts",                "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.resend-cooldown-seconds",     "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.max-requests-per-user",       "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.max-requests-per-ip",         "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.max-failed-verifications",    "login-methods", Type.INT),
+        new Setting("site.monitor.login.otp.allow-global-admins",         "login-methods", Type.BOOL),
         // ── Branding (beyaz etiket) — BrandingController üzerinden yönetilir; /api/branding public okur.
         //    Boş değer = varsayılan SiteMonitor kimliği. banner-version otomatik yönetilir (UI'da gizli).
         new Setting("site.monitor.branding.app-name",            "branding",   Type.STRING),
@@ -397,6 +412,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.alert.retention-days",              "retention", Type.INT),
         new Setting("site.monitor.login-issue.retention-days",        "retention", Type.INT),
         new Setting("site.monitor.storm.retention-days",              "retention", Type.INT),
+        new Setting("site.monitor.login.otp.retention-days",          "retention", Type.INT),   // kodla giriş istekleri (2026-10-02)
         // Ham izleme serileri — tür bazında (hepsi 180g varsayılan; eski tek tsCutoff davranışı)
         new Setting("site.monitor.series.uptime.retention-days",      "retention", Type.INT),
         new Setting("site.monitor.series.certificate.retention-days", "retention", Type.INT),
@@ -486,7 +502,21 @@ public final class AppSettingsCatalog {
         "site.monitor.ldap.manager-attributes",
         "site.monitor.ldap.prune-unsupported-teams",
         "site.monitor.ldap.manager-refresh-hours",
-        "site.monitor.environment"
+        "site.monitor.environment",
+        // Giriş yöntemleri (2026-10-02): KİMİN NASIL kimlik doğrulayacağını belirleyen kurum geneli güvenlik politikası —
+        // kapsamlı bir müdür LDAP girişini kapatıp herkesi koda yönlendiremez, kod deneme/sınır eşiklerini gevşetemez ya da
+        // global yöneticilere kodla girişi açamaz. Liste LoginMethodsService.KEYS ile aynı (SettingsScopedAdminGateTest).
+        "site.monitor.login.ldap-enabled",
+        "site.monitor.login.otp.push.enabled",
+        "site.monitor.login.otp.email.enabled",
+        "site.monitor.login.otp.push.ttl-seconds",
+        "site.monitor.login.otp.email.ttl-seconds",
+        "site.monitor.login.otp.max-attempts",
+        "site.monitor.login.otp.resend-cooldown-seconds",
+        "site.monitor.login.otp.max-requests-per-user",
+        "site.monitor.login.otp.max-requests-per-ip",
+        "site.monitor.login.otp.max-failed-verifications",
+        "site.monitor.login.otp.allow-global-admins"
     ));
 
     /**

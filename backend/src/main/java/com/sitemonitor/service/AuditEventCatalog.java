@@ -150,6 +150,13 @@ public final class AuditEventCatalog {
             "LOGIN_ISSUE_COMMENT",
             "LOGIN_ISSUE_PURGE",
             "LOGIN_ISSUE_STATUS_CHANGE",
+            "LOGIN_METHODS_SETTINGS_SAVE",  // Ayarlar → Giriş Yöntemleri (2026-10-02)
+            // Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02) — ayrıntıda KOD YOK
+            "LOGIN_OTP_DELIVERY_FAILED",
+            "LOGIN_OTP_EXPIRED",
+            "LOGIN_OTP_LOCKED",
+            "LOGIN_OTP_REQUESTED",
+            "LOGIN_OTP_VERIFY_FAILED",
             "LOGOUT",
             "MAINTENANCE_CREATE",
             "MAINTENANCE_DELETE",

@@ -112,7 +112,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
      * ve {@code value} genel adlardır, maske listesine eklemek her ayar/istatistik logunu körleştirirdi. Bu uçlarda
      * TRACE açıkken bile ne aday anahtar ne de çözülen parola log'a düşer (ekrandaki "loglanmaz" sözü buna dayanır).
      */
-    private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/");
+    // Kodla giriş (2026-10-02): doğrulama isteği tek kullanımlık kodu `code` alanında taşır — genel bir ad (maske listesine
+    // eklemek her `code`/`error_code` logunu körleştirirdi). Kod HİÇBİR log'a düşmez sözü bu uçlarda da tutulsun.
+    private static final List<String> BODY_NEVER_LOGGED = List.of("/api/admin/secret-tools/", "/api/login/otp/");
     static final String BODY_OMITTED = "[omitted: sensitive endpoint]";
 
     private static final int MAX_BODY_LOG = 2000;

@@ -857,3 +857,98 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
     expect(box.y + box.height, `çevrimiçi paneli @${vp.name}: altta taşıyor`).toBeLessThanOrEqual(vp.height + 1)
   })
 }
+
+// Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02): giriş ekranında "veya" + yöntem düğmeleri, istek adımı ve
+// kod adımı (6 kutu + geri sayım + yeniden gönder) telefonda / tablette taşmaz; dokunma hedefleri ≥ 40 px. Ayarlar →
+// Giriş Yöntemleri sayfası (yöntem kartları, kurallar, TR/EN önizleme, son etkinlik) de taşmaz.
+const OTP_METHODS = { success: true, ldap: true, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 45, resend_cooldown: 30 }
+const LM_ADMIN = { success: true, data: {
+  settings: { ldap_enabled: false, push_enabled: true, email_enabled: true, push_ttl_seconds: 45, email_ttl_seconds: 120,
+    max_attempts: 3, resend_cooldown_seconds: 30, max_requests_per_user: 5, max_requests_per_ip: 20, max_failed_verifications: 5,
+    allow_global_admins: false },
+  limits: { ttl: [30, 300], max_attempts: [1, 10], resend_cooldown: [10, 300], max_requests_per_user: [1, 20],
+    max_requests_per_ip: [1, 500], max_failed_verifications: [1, 20], window_minutes: 15 },
+  status: { push_gateway_configured: true, smtp: { host: 'smtp-relay.very-long-corporate-domain.internal.example.com', configured: true,
+    alarm_mail_enabled: false }, ldap_integration_enabled: true, secret_key_ephemeral: true },
+  public: { ldap: false, otp_push: true, otp_email: true, push_ttl: 45, email_ttl: 120, resend_cooldown: 30 },
+  activity: Array.from({ length: 8 }, (_, i) => ({ id: i + 1, event_type: ['LOGIN_OTP_REQUESTED', 'LOGIN_OTP_VERIFY_FAILED', 'LOGIN', 'LOGIN_OTP_LOCKED'][i % 4],
+    event_time: '2026-10-02T10:0' + i + ':00', actor: 'GLOBAL.YONETICI.UZUN.KULLANICI.ADI.' + i, outcome: ['SUCCESS', 'FAILURE', 'SUCCESS', 'BLOCKED'][i % 4],
+    ip_address: '2001:db8:85a3::8a2e:370:733' + i, failure_reason: i % 4 === 1 ? 'OTP_INVALID: yanlış kod' : null,
+    detail: '{"channel":"EMAIL","result":"SUPPRESSED","reason":"USER_RATE_LIMITED","challenge":"1a2b3c4d"}' })),
+  activity_types: ['LOGIN_OTP_REQUESTED', 'LOGIN_OTP_DELIVERY_FAILED', 'LOGIN_OTP_VERIFY_FAILED', 'LOGIN_OTP_EXPIRED', 'LOGIN_OTP_LOCKED'],
+} }
+for (const vp of VIEWPORTS) {
+  test(`giriş ekranı kodla giriş akışı @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/me', json({ success: false, error: 'Unauthorized' }, 401))
+    await page.route((u) => new URL(u).pathname === '/api/public/login-methods', json(OTP_METHODS))
+    await page.route((u) => new URL(u).pathname === '/api/login/otp/request', json({ success: true,
+      challenge_id: '11111111-2222-3333-4444-555555555555', channel: 'push', expires_in: 45, resend_in: 30 }))
+    await page.route((u) => new URL(u).pathname === '/api/login/otp/verify',
+      json({ success: false, code: 'OTP_INVALID', error_code: 'OTP_INVALID', error: 'x', attempts_left: 2 }, 401))
+    await page.goto('/')
+    const methods = page.locator('[data-slot="login-otp-methods"]')
+    await methods.waitFor({ timeout: 20_000 })
+    await page.waitForTimeout(300)
+    let m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `giriş (yöntem düğmeleri) @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `giriş @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    for (const b of await methods.locator('button').all()) {
+      const box = await b.boundingBox()
+      expect(box.height, `yöntem düğmesi @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+      expect(box.x + box.width, `yöntem düğmesi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    await methods.locator('[data-channel="push"]').click()
+    const flow = page.locator('[data-slot="otp-flow"]')
+    await flow.waitFor()
+    await flow.locator('input[autocomplete="username"]').fill('kullanici.adi.uzun')
+    m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `kod isteği adımı @${vp.name}: taşan öğe`).toEqual([])
+    await flow.locator('[data-slot="otp-send"]').click()
+    await expect(flow).toHaveAttribute('data-step', 'code')
+    await page.locator('[data-slot="otp-countdown"]').waitFor()
+    await page.waitForTimeout(300)
+    m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `kod adımı @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `kod adımı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    const otp = await page.locator('[data-slot="otp-input"]').boundingBox()
+    expect(otp.height, `kod kutuları @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+    expect(otp.x + otp.width, `kod kutuları @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    for (const sel of ['[data-slot="otp-verify"]', '[data-slot="otp-resend"]', '[data-slot="otp-back"]', '[data-slot="otp-change-user"]']) {
+      const b = await page.locator(sel).first().boundingBox()
+      expect(b.height, `${sel} @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+      expect(b.x + b.width, `${sel} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    // Yanlış kod: hata satırı da taşmaz
+    await page.locator('[data-slot="otp-input-field"]').fill('123456')
+    await page.locator('[data-slot="otp-error"][data-kind="invalid"]').waitFor({ timeout: 5_000 })
+    m = await page.evaluate(measure, 'body')
+    expect(m.offenders, `kod hatası @${vp.name}: taşan öğe`).toEqual([])
+  })
+
+  test(`giriş yöntemleri ayarları @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => new URL(u).pathname === '/api/admin/login-methods', json(LM_ADMIN))
+    await page.goto('/?tab=settings&sec=loginmethods')
+    await page.locator('[data-testid="loginmethods-settings"] [data-slot="lm-method"]').first().waitFor({ timeout: 20_000 })
+    await page.locator('[data-slot="lm-activity-row"]').first().waitFor()
+    await page.waitForTimeout(500)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `giriş yöntemleri @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `giriş yöntemleri @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    for (const sw of await page.locator('[data-slot="lm-method"] [role="switch"]').all()) {
+      const row = await sw.locator('xpath=..').boundingBox()
+      if (vp.width < 768) expect(row.height, `anahtar satırı @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    }
+    const link = await page.locator('[data-slot="lm-activity-audit-link"]').boundingBox()
+    expect(link.height, `denetim bağlantısı @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    // Önizleme EN'e geçince de taşmaz
+    await page.locator('[data-slot="lm-preview"]').getByRole('button', { name: 'EN' }).click()
+    await expect(page.locator('[data-slot="lm-preview"]')).toHaveAttribute('data-lang', 'en')
+    await page.waitForTimeout(300)
+    const m2 = await page.evaluate(measure)
+    expect(m2.offenders, `önizleme (EN) @${vp.name}: taşan öğe`).toEqual([])
+  })
+}

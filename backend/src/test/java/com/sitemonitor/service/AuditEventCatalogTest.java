@@ -25,9 +25,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class AuditEventCatalogTest {
 
-    /** {@code recordAction("X", …)} / {@code recordSecurityEvent("X", …)} / … ilk argümanı. */
+    /** {@code recordAction("X", …)} / {@code recordSecurityEvent("X", …)} / … ilk argümanı.
+     *  {@code recordOtp} (kodla giriş, 2026-10-02) de taranır — yeni bir OTP olayı katalogsuz kalamasın. */
     private static final Pattern RECORD_LITERAL = Pattern.compile(
-            "record(?:Action|SecurityEvent|SystemEvent|TokenAction)\\(\\s*\"([A-Z][A-Z0-9_]{2,})\"");
+            "record(?:Action|SecurityEvent|SystemEvent|TokenAction|Otp)\\(\\s*\"([A-Z][A-Z0-9_]{2,})\"");
+
+    @Test
+    @DisplayName("kodla giriş olayları (2026-10-02) katalogda ve AUTH kategorisinde; kod tarayıcısı recordOtp'yi de görür")
+    void otpEventsAreAuth() {
+        for (String t : List.of("LOGIN_OTP_REQUESTED", "LOGIN_OTP_DELIVERY_FAILED", "LOGIN_OTP_VERIFY_FAILED",
+                "LOGIN_OTP_EXPIRED", "LOGIN_OTP_LOCKED", "LOGIN_METHODS_SETTINGS_SAVE")) {
+            assertThat(AuditEventCatalog.contains(t)).as(t).isTrue();
+            assertThat(AuditEventCatalog.categoryOf(t)).as(t).isEqualTo(AuditEventCatalog.AUTH);
+        }
+        assertThat(RECORD_LITERAL.matcher("auditService.recordOtp(\"LOGIN_OTP_LOCKED\", c)").find()).isTrue();
+    }
 
     private static final Path MAIN = Path.of("src", "main", "java", "com", "sitemonitor");
 

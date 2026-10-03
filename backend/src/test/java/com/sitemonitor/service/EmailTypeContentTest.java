@@ -142,6 +142,49 @@ class EmailTypeContentTest {
         assertThat(m.text()).contains("Planlı bakım tamamlandı").contains("Gerçekleşen");
     }
 
+    // ── Kodla giriş e-postası (2026-10-02) ───────────────────────────────────
+
+    @Test
+    @DisplayName("giriş kodu: büyük kod + geçerlilik + istek zamanı/IP/cihaz + 'siz değilseniz'; KOD konuda ve ön başlıkta YOK; ad kaçışlı")
+    void loginCodeMail() {
+        var info = new com.sitemonitor.service.mail.LoginCodeMail.Info("<b>Kişi</b> A", "004219", 45,
+                "02.10.2026 14:05:09", "192.0.2.10", "Chrome · Windows");
+        var m = com.sitemonitor.service.mail.LoginCodeMail.build(info);
+        String subject = com.sitemonitor.service.mail.LoginCodeMail.subject();
+        assertThat(subject).isEqualTo("[Site Monitor] Giriş kodunuz").doesNotContain("004219");
+        assertThat(m.html()).contains(">004219<").contains("45 saniye geçerli").contains("02.10.2026 14:05:09 (İstanbul saati)")
+                .contains("192.0.2.10").contains("Chrome · Windows").contains("Bu isteği siz yapmadıysanız")
+                .contains("Your one-time Site Monitor sign-in code is 004219")
+                .contains("&lt;b&gt;Kişi&lt;/b&gt; A").doesNotContain("<b>Kişi</b>");
+        // Ön başlık (posta listesi / kilit ekranı önizlemesi) kodu taşımaz
+        java.util.regex.Matcher pre = java.util.regex.Pattern.compile("(?s)<div class=\"preheader\"[^>]*>(.*?)</div>").matcher(m.html());
+        assertThat(pre.find()).as("ön başlık çizilmeli").isTrue();
+        assertThat(pre.group(1)).contains("45 saniye geçerli").doesNotContain("004219");
+        assertThat(m.text()).contains("004219").contains("45 saniye geçerli").doesNotContain("<table");
+        assertThat(EmailResponsiveContractTest.violations(m.html(), m.text())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("giriş kodu gönderimi TEK huniden: mail susturulmuş olsa da (force) multipart/alternative gider; konu kodsuz")
+    void loginCodeSend_usesFunnel_force() throws Exception {
+        settingsService.getOrDefaults().setEnabled(false);   // alarm e-postası susturulmuş
+        String st = svc.sendLoginCode("a@example.com", new com.sitemonitor.service.mail.LoginCodeMail.Info(
+                "Kişi A", "731905", 60, "02.10.2026 14:05:09", "192.0.2.10", "Firefox · Linux"));
+        assertThat(st).isEqualTo("SENT");
+        ArgumentCaptor<MimeMessage> cap = ArgumentCaptor.forClass(MimeMessage.class);
+        verify(sender).send(cap.capture());
+        MimeMessage msg = cap.getValue();
+        msg.saveChanges();
+        assertThat(msg.getSubject()).isEqualTo("[Site Monitor] Giriş kodunuz");
+        List<String> types = new ArrayList<>();
+        StringBuilder plain = new StringBuilder();
+        collect(msg, types, plain);
+        assertThat(types).anyMatch(t -> t.startsWith("multipart/alternative")).anyMatch(t -> t.startsWith("text/html"))
+                .anyMatch(t -> t.startsWith("image/png"));   // marka logosu CID
+        assertThat(plain.toString()).contains("731905");
+        assertThat(svc.sendLoginCode(" ", null)).startsWith("SKIPPED");
+    }
+
     // ── SMTP test ────────────────────────────────────────────────────────────
 
     @Test

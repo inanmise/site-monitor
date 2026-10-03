@@ -1197,6 +1197,55 @@ public class UserPushService {
         return out;
     }
 
+    // ── İşlemsel tekil push (kodla giriş, 2026-10-02) ─────────────────────────────────────────
+
+    /**
+     * Kurumsal push ağ geçidi yapılandırılmış mı (adres dolu). Kodla giriş push yöntemi buna bağlıdır: adres yoksa yöntem
+     * giriş ekranında görünmez. Alarm kanalının genel anahtarı ({@link #enabled()}) bundan BAĞIMSIZDIR — o, alarm
+     * bildirimlerinin açık olup olmadığını söyler; kullanıcının kendi istediği giriş kodu onun kapsamında değildir.
+     */
+    public boolean gatewayConfigured() {
+        String u = url();
+        return u != null && !u.isBlank();
+    }
+
+    /** Tekil gönderimin sonucu — {@code error} yalnız HTTP durumu ya da istisna SINIFI (mesaj/gövde ASLA). */
+    public record DirectResult(boolean ok, Integer httpStatus, String error) { }
+
+    /**
+     * İŞLEMSEL tekil push (2026-10-02, kodla giriş) — alarm hattından AYRI: outbox'a YAZILMAZ, teslimat satırı DOĞMAZ,
+     * saatlik tavana / sessiz saate / kişisel opt-out'a / devre kesiciye TAKILMAZ (kullanıcı kodu kendisi istedi; alarm
+     * kanalının arızası giriş kodunu bekletmemeli, giriş trafiği de alarm kanalının devre kesicisini açmamalı). İstek
+     * biçimi ve istemci alarm push'uyla AYNI: {@code {title, message, pipeline, userIds:[kimlik]}}, aynı adres, aynı
+     * (şifresi çözülmüş) başlıklar, aynı kurumsal TLS güveni. Kimlik = kullanıcı adı (sicil) — alarm alıcı çözümüyle aynı alan.
+     *
+     * <p><b>Gizlilik:</b> mesaj (giriş kodu içerir) burada hiçbir log'a yazılmaz; hata metni yalnız HTTP durumu ya da
+     * istisna sınıf adıdır (yanıt gövdesi isteği yankılayabileceği için OKUNMAZ, akış hemen kapatılır).
+     */
+    public DirectResult sendDirect(String userId, String title, String message) {
+        String targetUrl = url();
+        if (targetUrl == null || targetUrl.isBlank()) return new DirectResult(false, null, "NOT_CONFIGURED");
+        if (userId == null || userId.isBlank()) return new DirectResult(false, null, "NO_TARGET");
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();   // alan SIRASI API sözleşmesine sadık (sendBatch ile aynı)
+            payload.put("title", title == null || title.isBlank() ? titleSetting() : title);
+            payload.put("message", message);
+            payload.put("pipeline", appSettings.getString("site.monitor.userpush.pipeline", ""));
+            payload.put("userIds", List.of(userId.trim()));
+            HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(targetUrl))
+                    .timeout(Duration.ofSeconds(totalTimeout()))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload)));
+            for (String[] h : headerPairs()) req.header(h[0], h[1]);
+            HttpResponse<java.io.InputStream> resp = client().send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
+            try (java.io.InputStream ignored = resp.body()) { /* gövde okunmaz (bkz. Gizlilik) */ } catch (Exception ignore) { /* kapatma best-effort */ }
+            int sc = resp.statusCode();
+            return sc >= 200 && sc < 300 ? new DirectResult(true, sc, null) : new DirectResult(false, sc, "HTTP " + sc);
+        } catch (Exception e) {
+            return new DirectResult(false, null, e.getClass().getSimpleName());
+        }
+    }
+
     private String dedupeKeyFor(String trigger, AlertEvent event) {
         return switch (trigger) {
             case "RE_ALERT" -> "RE_ALERT:" + Instant.now().atZone(ZONE).toLocalDate();

@@ -1,7 +1,7 @@
 import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText,
-  CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog,
+  CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -31,6 +31,7 @@ import RetentionSettings from './RetentionSettings'
 import UserPushSettings from './UserPushSettings'
 import NocSettings from './NocSettings.jsx'   // 7/24 İzleme Ekibi (2026-09-27)
 import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sistem Bakım Modu (2026-10-02)
+import LoginMethodsSettings from './LoginMethodsSettings.jsx'   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -66,6 +67,8 @@ const GROUPS = [
     { id: 'noc', labelKey: 'settings.navNoc', icon: Headset },
   ] },
   { id: 'security', labelKey: 'settings.grpSecurity', sections: [
+    // Giriş Yöntemleri (2026-10-02, kullanıcı isteği): push / e-posta ile kodla giriş + LDAP girişi — YALNIZ global yönetici
+    { id: 'loginmethods', labelKey: 'settings.navLoginMethods', icon: LogIn },
     { id: 'loginanomaly', labelKey: 'settings.navLoginAnomaly', icon: ShieldAlert },
     { id: 'ldap', labelKey: 'settings.navLdap', icon: KeyRound },
     { id: 'secrets', labelKey: 'settings.navSecrets', icon: LockKeyhole },
@@ -94,7 +97,8 @@ function initialSection() {
  */
 // Modül görünürlüğü kurumsal bir karardır: kapsamlı müdür kendi takımına açamaz (2026-09-16).
 // Sistem Bakım Modu (2026-10-02): yalnız global yönetici sistemi bakıma alır — sunucu her uçta 403.
-const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint'])
+// Giriş Yöntemleri (2026-10-02): kimin nasıl kimlik doğrulayacağı kurum geneli güvenlik politikası — sunucu her uçta 403.
+const GLOBAL_ONLY_SECTIONS = new Set(['smtp', 'ldap', 'database', 'secrets', 'weeklyreports', 'sysmaint', 'loginmethods'])
 
 /** Durum ağırlığı — bir bölüme birden çok kontrol düşerse en kötüsü gösterilir. */
 const STATUS_RANK = { bad: 2, warn: 1 }
@@ -273,6 +277,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'userpush' && <UserPushSettings />}
           {active === 'noc' && <NocSettings readOnly={!globalAdmin} />}
           {/* Kapsamlı müdür sayfayı kaydeder ama saklama süresi GLOBAL_ONLY → alan salt okunur (2026-09-28) */}
+          {active === 'loginmethods' && <LoginMethodsSettings onOpenSection={openSection} />}
           {active === 'loginanomaly' && <LoginAnomalySettings retentionReadOnly={!globalAdmin} />}
           {active === 'ldap' && <LdapSettings />}
           {active === 'domaindiag' && <DomainDiagnostics />}

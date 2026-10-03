@@ -247,7 +247,21 @@ public class AuditService {
                                 String ipAddress, String userAgent, String sessionId,
                                 boolean success, String failureReason, String countSince,
                                 int failuresNeeded) {
+        return recordLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent, sessionId, success,
+                failureReason, countSince, failuresNeeded, null);
+    }
+
+    /**
+     * {@link #recordLogin(String, Long, Long, String, String, String, String, boolean, String, String, int)} + giriş
+     * YÖNTEMİ (2026-10-02, kodla giriş): {@code method} doluysa ayrıntıya {@code {"method":"OTP_PUSH"}} yazılır (denetçi
+     * kodla yapılan girişleri parola girişinden ayırabilsin). null = bugünkü kayıt birebir (parola / beni hatırla).
+     */
+    public AuditLog recordLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                String ipAddress, String userAgent, String sessionId,
+                                boolean success, String failureReason, String countSince,
+                                int failuresNeeded, String method) {
         AuditLog entry = new AuditLog();
+        if (method != null && !method.isBlank()) entry.setDetail(AuditDetail.of("method", method));
         entry.setEventType(success ? "LOGIN" : "LOGIN_FAILED");
         entry.setEventTime(now());
         entry.setActor(actor);
@@ -414,6 +428,88 @@ public class AuditService {
         AuditLog saved = persist(entry);
         if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
         log.info("Sistem bakımında giriş reddedildi: actor={} yol={} IP={}", actor, method, ipAddress);
+    }
+
+    /** LDAP girişi kapalıyken reddedilen parola girişinin denetim nedeni (2026-10-02). */
+    public static final String REASON_LDAP_LOGIN_DISABLED = "LDAP_LOGIN_DISABLED";
+    /** Kimlik doğrulandı (kodla giriş) ama hesap kilitli — denetim nedeni (2026-10-02). */
+    public static final String REASON_ACCOUNT_LOCKED = "ACCOUNT_LOCKED";
+
+    /**
+     * LDAP İLE GİRİŞ KAPALI (Ayarlar → Giriş Yöntemleri, 2026-10-02): yerel olmayan ad AD'ye gitmeden reddedildi —
+     * {@code LOGIN_FAILED}, sonuç {@code BLOCKED} (parola hiç denenmedi → kaba kuvvet / ilerleyici kilit sayacına GİRMEZ;
+     * kimse LDAP kapalıyken başkasının hesabını kilitleyemez). Aktör kanonik ad ya da büyük harfe çevrilmiş yazılan ad.
+     */
+    public void recordLdapDisabledLogin(String actor, String ipAddress, String userAgent) {
+        recordBlockedLogin(actor, null, null, null, ipAddress, userAgent,
+                REASON_LDAP_LOGIN_DISABLED + ": LDAP ile giriş kapalı — AD'ye gidilmedi");
+    }
+
+    /**
+     * Kodla giriş DOĞRU kodla tamamlandı ama hesap kilitli (geçici / kalıcı) — {@code LOGIN_FAILED}, {@code BLOCKED}
+     * (2026-10-02). Kilit sayacına girmez (kilit yanlış parolaya karşıdır).
+     *
+     * @param method {@code OTP_PUSH} / {@code OTP_EMAIL}
+     */
+    public void recordLockedLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                  String ipAddress, String userAgent, String method) {
+        recordBlockedLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent,
+                REASON_ACCOUNT_LOCKED + ": hesap kilitli — kimlik doğrulandı, giriş reddedildi (" + (method == null ? "?" : method) + ")");
+    }
+
+    private void recordBlockedLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                    String ipAddress, String userAgent, String reason) {
+        AuditLog entry = new AuditLog();
+        entry.setEventType("LOGIN_FAILED");
+        entry.setEventTime(now());
+        entry.setActor(actor);
+        entry.setActorId(actorId);
+        entry.setActorTeamId(actorTeamId);
+        entry.setActorRole(actorRole);
+        entry.setIpAddress(ipAddress);
+        entry.setUserAgent(userAgent);
+        entry.setOutcome("BLOCKED");
+        if (actor != null && !actor.isBlank()) {
+            entry.setResourceType("USER");
+            entry.setResourceId(actor);
+        }
+        entry.setFailureReason(reason);
+        if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
+        AuditLog saved = persist(entry);
+        if (saved != null && ipAddress != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
+    }
+
+    /**
+     * Kodla giriş olayları (2026-10-02, kullanıcı isteği) — {@code LOGIN_OTP_REQUESTED}, {@code LOGIN_OTP_DELIVERY_FAILED},
+     * {@code LOGIN_OTP_VERIFY_FAILED}, {@code LOGIN_OTP_EXPIRED}, {@code LOGIN_OTP_LOCKED}. Oturumsuz (kimlik henüz
+     * kanıtlanmadı): aktör kanonik kullanıcı adı (bilinmeyen adda büyük harfe çevrilmiş yazılan ad — LOGIN_FAILED ile aynı
+     * kural), kaynak {@code USER:<ad>}. {@code outcome}: SUCCESS / FAILURE / BLOCKED. Ayrıntıda ve nedende KOD ASLA yer
+     * almaz (çağıran yalnız kanal / sonuç / iç neden / kalan deneme yazar).
+     *
+     * <p>Bu türler {@code LOGIN_FAILED} DEĞİLDİR: parola kaba kuvvet sayacına ({@code countRecentFailedLogins}) ve
+     * ilerleyici hesap kilidine GİRMEZ — başkası kod deneyerek kimsenin parola girişini kilitleyemez.
+     */
+    public void recordOtp(String eventType, String actor, Long actorId, Long actorTeamId, String actorRole,
+                          String outcome, String failureReason, String detail, String ipAddress, String userAgent) {
+        AuditLog e = new AuditLog();
+        e.setEventType(eventType);
+        e.setEventTime(now());
+        e.setActor(actor);
+        e.setActorId(actorId);
+        e.setActorTeamId(actorTeamId);
+        e.setActorRole(actorRole);
+        e.setIpAddress(ipAddress);
+        e.setUserAgent(userAgent);
+        if (actor != null && !actor.isBlank()) {
+            e.setResourceType("USER");
+            e.setResourceId(actor);
+        }
+        e.setOutcome(outcome == null ? "SUCCESS" : outcome);
+        e.setFailureReason(failureReason);
+        e.setDetail(detail);
+        if (isOffHours()) e.setAnomalyFlags("OFF_HOURS");
+        AuditLog saved = persist(e);
+        if (saved != null && ipAddress != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
     }
 
     public void recordLogout(String actor, Long actorId, String ipAddress, String sessionId) {

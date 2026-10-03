@@ -104,8 +104,22 @@ final class EmailSamples {
         reports();
         noc();
         systemMaintenance();
+        loginCode();
         addHtml("smtp-test", "smtp", "[Site Monitor] SMTP test e-postası", smtp.buildTestHtml(smtpSettings), "ok");
         return List.copyOf(out);
+    }
+
+    // ── Kodla giriş e-postası (2026-10-02) ──────────────────────────────────
+
+    /** Örnek kod sabit ("004219" — baştaki sıfırlar korunur); uzun ad + uzun tarayıcı imzası + IPv6. */
+    static final String LOGIN_SAMPLE_CODE = "004219";
+
+    private void loginCode() {
+        var info = new com.sitemonitor.service.mail.LoginCodeMail.Info("Kişi A (" + TR + ")", LOGIN_SAMPLE_CODE, 45,
+                "02.10.2026 14:05:09", "2001:db8:85a3::8a2e:370:7334",
+                UserAgentSummary.labelOf(LONG_UA));
+        var m = com.sitemonitor.service.mail.LoginCodeMail.build(info);
+        add("login-code", "admin", com.sitemonitor.service.mail.LoginCodeMail.subject(), m.html(), m.text(), "ok");
     }
 
     // ── Sistem Bakım Modu duyuruları (2026-10-02) ───────────────────────────
