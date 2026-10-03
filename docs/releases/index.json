@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-02T20:50:10Z",
+  "generatedAt": "2026-10-03T00:30:28Z",
   "repo": "inanmise/site-monitor",
-  "count": 697,
+  "count": 698,
   "releases": [
+    {
+      "version": "20.98.0",
+      "tag": "v20.98.0",
+      "releasedAt": "2026-10-03T00:30:21Z",
+      "commit": "0cf7907e2115d1913d8de53d9d5c9eb2da1a37a4",
+      "prevVersion": "20.97.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0cf7907e",
+          "subject": "kodla giriş (push / e-posta 6 haneli tek kullanımlık kod) ve Giriş Yöntemleri ayar sayfası"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.97.0",
       "tag": "v20.97.0",

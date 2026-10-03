@@ -124,6 +124,27 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-02: Giriş Yöntemleri (LDAP girişi, kodla giriş, deneme/sınır eşikleri, global yönetici izni) GLOBAL_ONLY; uç global yöneticiye kapılı")
+    void loginMethods_globalOnly() throws IOException {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.login.ldap-enabled",
+                "site.monitor.login.otp.push.enabled",
+                "site.monitor.login.otp.email.enabled",
+                "site.monitor.login.otp.push.ttl-seconds",
+                "site.monitor.login.otp.email.ttl-seconds",
+                "site.monitor.login.otp.max-attempts",
+                "site.monitor.login.otp.resend-cooldown-seconds",
+                "site.monitor.login.otp.max-requests-per-user",
+                "site.monitor.login.otp.max-requests-per-ip",
+                "site.monitor.login.otp.max-failed-verifications",
+                "site.monitor.login.otp.allow-global-admins",
+                "site.monitor.login.otp.retention-days");
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.otp.LoginMethodsService.KEYS);
+        assertThat(src("LoginMethodsController")).contains("SessionScope.requireNotScopedAdmin(")
+                .contains("SessionScope.isGlobalAdmin(session)");
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

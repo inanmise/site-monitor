@@ -175,6 +175,30 @@ async function request(path, options = {}) {
   return json
 }
 
+/**
+ * Kodla giriş uçları için ham POST (2026-10-02) — 401 / 403 / 409 / 423 / 429 gövdeleri çağırana AYNEN döner (+ `status`).
+ * Kod gövdede taşınır; bu yardımcı hiçbir şeyi saklamaz ve loglamaz (başarısız çağrı halkasına yalnız yol + durum düşer).
+ */
+async function otpPost(path, payload) {
+  let r
+  try {
+    r = await fetchWithTimeout(`${BASE}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
+      body: JSON.stringify(payload),
+    })
+  } catch (e) {
+    recordFailure(path, 0)
+    return { success: false, status: 0, networkError: true, timeout: e?.name === 'AbortError' }
+  }
+  if (!r.ok) recordFailure(path, r.status)
+  let body
+  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status) }
+  if (body == null || typeof body !== 'object' || Array.isArray(body)) body = nonJsonErrorPayload(r.status)
+  return { ...body, status: r.status }
+}
+
 export const api = {
   /** Komut paleti (2026-09-12, #1): alan / izleme / takım — takım kapsamlı. */
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
@@ -314,6 +338,35 @@ export const api = {
   // Sistem Bakım Modu (2026-10-02) — giriş sayfasının bakım kartı. PUBLIC: yalnız durum, pencere saatleri, TR/EN mesaj ve
   // iletişim (kimlik/sayaç yok). Yanıt `no-store` — paylaşımlı önbellek bayat tutmaz.
   getSystemMaintenanceStatus: () => request('/public/system-maintenance', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+
+  // Giriş Yöntemleri (2026-10-02) — giriş sayfası hangi yöntemlerin açık olduğunu oturumsuz okur: { ldap, otp_push,
+  // otp_email, push_ttl, email_ttl, resend_cooldown }. Yalnız yapılandırma (kişi bilgisi yok); yanıt `no-store`.
+  getLoginMethods: () => request('/public/login-methods', { timeoutMs: DEFAULT_TIMEOUT_MS }),
+
+  /**
+   * Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02). `request()` KULLANILMAZ: doğrulama hatası 401 döner
+   * (OTP_INVALID / OTP_EXPIRED / OTP_LOCKED) ve request() 401 gövdesini yutar. Dönen nesne sunucu gövdesi + `status`
+   * (HTTP durumu); ağ hatası `{ success:false, status:0, networkError:true }`. Başarılı doğrulama /api/login ile AYNI
+   * gövdeyi döner ve oturum bayrağını kurar (sonraki 401'ler "oturum düştü" sayılsın).
+   */
+  loginOtp: {
+    request: (username, channel) => otpPost('/login/otp/request', { username, channel }),
+    verify: async (challengeId, code, rememberMe = false, forceLogin = false) => {
+      const body = await otpPost('/login/otp/verify', {
+        challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,
+      })
+      if (body?.success && typeof window !== 'undefined') {
+        try { sessionStorage.setItem('sm.session.active', '1') } catch { /* sessionStorage yok */ }
+      }
+      return body
+    },
+  },
+
+  /** Ayarlar → Güvenlik → Giriş Yöntemleri — YALNIZ global yönetici (sunucu 403). Kayıt hatası 400 + `field`. */
+  loginMethodsAdmin: {
+    get: () => request('/admin/login-methods'),
+    save: (settings) => request('/admin/login-methods', { method: 'PUT', body: JSON.stringify({ settings }), withStatus: true }),
+  },
 
   /**
    * Sistem Bakım Modu yönetimi (Ayarlar → Platform → Sistem Bakımı) — YALNIZ global yönetici (sunucu 403). Yazma uçları

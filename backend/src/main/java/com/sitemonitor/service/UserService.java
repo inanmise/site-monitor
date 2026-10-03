@@ -275,8 +275,21 @@ public class UserService {
 
     // ── Giriş damgaları ────────────────────────────────────────────────────────
 
-    /** Girişin yapılış biçimi — kullanıcı "beni hatırla ile sessizce dönmüşüm" ile "parola girmişim"i ayırabilsin. */
-    public enum LoginMethod { PASSWORD, REMEMBER_ME }
+    /** Girişin yapılış biçimi — kullanıcı "beni hatırla ile sessizce dönmüşüm" ile "parola girmişim"i ayırabilsin.
+     *  OTP_PUSH / OTP_EMAIL (2026-10-02, kullanıcı isteği): push ya da e-posta ile gelen tek kullanımlık kodla giriş. */
+    public enum LoginMethod { PASSWORD, REMEMBER_ME, OTP_PUSH, OTP_EMAIL }
+
+    /** Zamanlama dengesi için sabit sahte özet (2026-10-02) — hiçbir parolaya eşleşmesi beklenmez. */
+    private static final String TIMING_DUMMY_HASH = PASSWORD_ENCODER.encode("site-monitor-timing-dummy");
+
+    /**
+     * Parola DOĞRULAMASI YAPILMAYAN bir giriş dalında BCrypt maliyetini yine öder (2026-10-02, LDAP girişi kapalıyken):
+     * yerel hesabın yanlış parolası BCrypt süresi kadar sürerken yerel olmayan ad anında dönerse yanıt süresi "bu ad yerel
+     * hesap mı" sorusunu sızdırırdı. Sonuç her zaman yok sayılır.
+     */
+    public void burnPasswordCheck(String rawPassword) {
+        try { PASSWORD_ENCODER.matches(rawPassword == null ? "" : rawPassword, TIMING_DUMMY_HASH); } catch (Exception ignored) { /* yalnız süre */ }
+    }
 
     /**
      * Kaydırma ÖNCESİ değerler: çağıran, ikinci bir DB okuması yapmadan giriş yanıtını kurabilsin.

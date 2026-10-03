@@ -147,4 +147,23 @@ public class SecretCipher {
             return null;
         }
     }
+
+    /**
+     * Amaca özel ALT ANAHTAR (2026-10-02, kodla giriş): HMAC-SHA256(SHA-256(anahtar materyali), "site-monitor:" + amaç).
+     * Aynı {@code SITE_MONITOR_SECRET_KEY} tüm pod'larda aynı alt anahtarı verir (doğrulama başka pod'a düşebilir); alan
+     * ayrımı sayesinde alt anahtar AES anahtarıyla aynı değildir. Gerçek anahtar AYARLI DEĞİLSE {@code null} döner —
+     * gömülü DEV anahtarı kaynak kodda açık olduğundan ondan türetilen bir HMAC anahtarı veritabanını okuyana kodu
+     * milisaniyede geri ürettirirdi; çağıran güvenli bir yedeğe düşer (bkz. {@code OtpCodes}). Loglama YOK.
+     */
+    public byte[] hmacSubKey(String purpose) {
+        if (!keyConfigured || configuredKey == null || configuredKey.isBlank()) return null;
+        try {
+            byte[] root = MessageDigest.getInstance("SHA-256").digest(configuredKey.getBytes(StandardCharsets.UTF_8));
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(root, "HmacSHA256"));
+            return mac.doFinal(("site-monitor:" + purpose).getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }

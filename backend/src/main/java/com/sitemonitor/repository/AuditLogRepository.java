@@ -189,6 +189,17 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** Aynı istekten doğan ilişkili olaylar. */
     List<AuditLog> findByCorrelationIdOrderBySeqAsc(String correlationId);
 
+    /**
+     * Ayarlar → Giriş Yöntemleri "son kodla giriş etkinliği" (2026-10-02): kodla giriş olay türleri + kodla yapılmış
+     * başarılı giriş ({@code LOGIN}, ayrıntıda {@code "method":"OTP_…"}) + doğru koddan sonra reddedilen giriş
+     * ({@code LOGIN_FAILED}, nedende {@code (OTP_…)}). En yeniden; çağıran sayfa boyunu (≤ 20) verir.
+     */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types"
+            + " OR (a.eventType = 'LOGIN' AND a.detail LIKE '%\"method\":\"OTP_%')"
+            + " OR (a.eventType = 'LOGIN_FAILED' AND a.failureReason LIKE '%(OTP_%')"
+            + " ORDER BY a.eventTime DESC")
+    List<AuditLog> findRecentOtpActivity(@Param("types") Collection<String> types, Pageable pageable);
+
     /** Özet: pencere içi olay-türü dağılımı. */
     @Query("SELECT a.eventType, COUNT(a) FROM AuditLog a WHERE a.eventTime > :since GROUP BY a.eventType ORDER BY COUNT(a) DESC")
     List<Object[]> countByEventTypeSince(@Param("since") String since);

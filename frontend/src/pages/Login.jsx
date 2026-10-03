@@ -4,7 +4,7 @@ import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
 import BrandLogo from '../components/BrandLogo.jsx'
 import LoginHelpDialog from '../components/issues/report/LoginHelpDialog.jsx'
-import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, Lock, Globe, Activity, Radio, Network, Server, Search, Gauge, Bell, BellRing, AlertTriangle, FileText, BarChart3, TrendingUp, Wrench, ScanSearch, FlaskConical, Zap, X, Info, Eye, EyeOff, AlertCircle, UserX, KeyRound } from 'lucide-react'
 import { isAccountInactivePayload } from '../utils/accountInactive.js'
 import { isMaintenancePayload, lastWindow } from '../utils/systemMaintenance.js'
 import MaintenanceLoginCard from '../components/maintenance/MaintenanceLoginCard.jsx'
@@ -16,6 +16,10 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Spinner } from '../components/ui/Progress.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Alert, AlertDescription } from '@/components/shadcn/alert'
+// Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02): ana form DEĞİŞMEZ — altına "veya" + açık yöntemlerin
+// düğmeleri; tıklanınca aynı kart kod akışına geçer.
+import OtpLoginFlow, { availableChannels } from '../components/login/OtpLoginFlow.jsx'
+import OtpMethodButtons from '../components/login/OtpMethodButtons.jsx'
 
 // App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
 export const REMEMBER_KEY = 'site-monitor-remembered-user'
@@ -64,6 +68,10 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
   // Açılışta giriş formundaki kullanıcı adı taşınır.
   const [helpOpen, setHelpOpen] = useState(false)
   const [helpUser, setHelpUser] = useState('')
+  // Giriş yöntemleri (public uç) + açık kod akışı ({ channel } | null) — 2026-10-02
+  const [methods, setMethods] = useState(null)
+  const [otp, setOtp] = useState(null)
+  const otpChannels = availableChannels(methods)
   function openHelp() {
     setHelpUser(username.trim())
     setHelpOpen(true)
@@ -92,6 +100,18 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
     load()
     const id = setInterval(load, MAINT_POLL_MS)
     return () => { alive = false; clearInterval(id) }
+  }, [])
+
+  // Giriş yöntemleri: yalnız yapılandırma (hangi kod yöntemi açık, süreler). Okunamazsa yalnız şifre formu çizilir.
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await api.getLoginMethods?.()
+        if (alive && r?.success) setMethods(r)
+      } catch { /* yöntemler olmadan da şifreyle giriş çalışır */ }
+    })()
+    return () => { alive = false }
   }, [])
 
   useEffect(() => {
@@ -180,6 +200,10 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
         setError('')
       } else if (data.error_code === 'TEMP_PASSWORD_EXPIRED') {
         setError(t('auth.tempPasswordExpired'))
+      } else if (data.error_code === 'LDAP_LOGIN_DISABLED') {
+        // LDAP ile giriş kapalı (2026-10-02) — yerel olmayan her ad AYNI yanıtı alır; altta kod yöntemleri durur.
+        setErrorCode('LDAP_LOGIN_DISABLED')
+        setError(t('login.ldapDisabled'))
       } else {
         setError(data.error || t('login.failed'))
       }
@@ -188,6 +212,12 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
     } finally {
       setLoading(false)
     }
+  }
+
+  /** Kod akışında başarılı giriş — şifre girişinin başarı dalıyla aynı (beni hatırla adı + onLogin). */
+  function onOtpSuccess(data, { username: name, remember }) {
+    writeRemembered(remember ? name : null)
+    onLogin(data)
   }
 
   // Onay sonrası: force_login=true ile tekrar dene → backend diğer oturumu düşürüp girişi tamamlar.
@@ -412,8 +442,14 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
               </div>
               <p className="lp-blocked-hint">{t('login.blockedHint')}</p>
             </div>
+          ) : otp ? (
+            /* Kodla giriş akışı (2026-10-02) — aynı kartta, ana formun yerine */
+            <OtpLoginFlow methods={methods} initialUsername={username.trim()} initialChannel={otp.channel}
+              initialRemember={rememberMe} onSuccess={onOtpSuccess} onCancel={() => setOtp(null)}
+              onMaintenance={(m) => setMaint(m)} />
           ) : (
-            /* Normal giriş formu */
+            <>
+            {/* Normal giriş formu */}
             <form onSubmit={handleSubmit} className="lp-form">
               <div className="lp-field">
                 <Label htmlFor="lp-user">{brand('username_label', t('login.username'))}</Label>
@@ -465,7 +501,8 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
 
               {error && (
                 <Alert variant="destructive" data-code={errorCode || undefined}>
-                  {errorCode === 'ACCOUNT_INACTIVE' ? <UserX /> : errorCode === 'MAINTENANCE' ? <Wrench /> : <AlertCircle />}
+                  {errorCode === 'ACCOUNT_INACTIVE' ? <UserX /> : errorCode === 'MAINTENANCE' ? <Wrench />
+                    : errorCode === 'LDAP_LOGIN_DISABLED' ? <KeyRound /> : <AlertCircle />}
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
@@ -477,8 +514,13 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
                 }
               </Button>
 
-              <p className="lp-ldap-hint">{t('login.ldapHint')}</p>
+              {/* "AD hesabınızla da girebilirsiniz" ipucu LDAP girişi KAPALIYKEN yanıltıcı olurdu (2026-10-02) */}
+              {methods?.ldap !== false && <p className="lp-ldap-hint">{t('login.ldapHint')}</p>}
             </form>
+
+            {/* Alternatif: kodla giriş — yalnız AÇIK yöntemler (ince "veya" ayıracı + küçük düğmeler) */}
+            <OtpMethodButtons channels={otpChannels} onPick={(ch) => setOtp({ channel: ch })} />
+            </>
           )}
 
           {/* Yardım: sorun bildirimi — tıklanınca pop-up açılır, sistem yöneticisine mail gider.

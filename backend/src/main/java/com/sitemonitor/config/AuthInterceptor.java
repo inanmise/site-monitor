@@ -40,7 +40,13 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/client-error-report",
             // Sistem Bakım Modu (2026-10-02): giriş sayfası bakım kartını oturumsuz okur — yalnız durum, pencere saatleri,
             // TR/EN mesaj ve iletişim; kimlik/IP/sayaç YOK (SystemMaintenanceService.publicStatus).
-            "/api/public/system-maintenance");
+            "/api/public/system-maintenance",
+            // Giriş Yöntemleri / kodla giriş (2026-10-02): giriş sayfası hangi yöntemlerin açık olduğunu oturumsuz okur
+            // (yalnız yapılandırma — kişi bilgisi yok); kod isteği ve doğrulaması oturum KURMADAN önce çağrılır. Oran
+            // sınırları ve tek kullanımlık kod kuralları LoginOtpService'te; gövdeler RequestLoggingFilter'da loglanmaz.
+            "/api/public/login-methods",
+            "/api/login/otp/request",
+            "/api/login/otp/verify");
 
     /** Endpoints a user with mustChangePassword=true is still allowed to call. */
     private static final Set<String> FORCED_CHANGE_WHITELIST = Set.of(

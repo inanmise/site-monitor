@@ -20,6 +20,8 @@ const NOTICE_KEY = 'sm.login.noticeShown'
 function methodLabel(t, method) {
   if (method === 'PASSWORD') return t('lastLogin.methodPassword')
   if (method === 'REMEMBER_ME') return t('lastLogin.methodRemember')
+  if (method === 'OTP_PUSH') return t('lastLogin.methodOtpPush')     // kodla giriş (2026-10-02)
+  if (method === 'OTP_EMAIL') return t('lastLogin.methodOtpEmail')
   return null
 }
 function reasonLabel(t, reason) {

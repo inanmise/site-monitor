@@ -522,6 +522,26 @@ public class EmailNotificationService {
      * <p>Ton bilinçli olarak SAKİN: bu bir alarm değil bilgilendirmedir; girişi yapan çoğu zaman
      * kullanıcının kendisidir. "Bu sen değilsen" yolu net ama panik yaratmadan verilir.
      */
+    /**
+     * Kodla giriş e-postası (2026-10-02, kullanıcı isteği) — TEK huniden ({@code sendHtmlInternal}: marka CID'i,
+     * multipart/alternative, pasif alıcı ağı, 421 yeniden denemesi). {@code force=true}: alarm e-postası susturulmuş olsa
+     * da gider — kullanıcının kendi istediği işlemsel ileti (giriş sorunu bildirimiyle aynı karar); SMTP hiç kurulmamışsa
+     * gönderim yine FAILED döner. {@code notification_logs}'a YAZILMAZ (kod o tabloya düşmez); gövde hiçbir log'a yazılmaz —
+     * huni yalnız maskeli alıcı + konu loglar, konu kodu taşımaz.
+     */
+    public String sendLoginCode(String to, com.sitemonitor.service.mail.LoginCodeMail.Info info) {
+        if (to == null || to.isBlank()) return "SKIPPED: alıcı yok";
+        MailDoc.Mail m;
+        try {
+            m = com.sitemonitor.service.mail.LoginCodeMail.build(info);
+        } catch (Exception e) {
+            log.error("✗ Giriş kodu e-postası hazırlanamadı: TO={} | HATA={}", SecretMask.maskEmails(to), e.getClass().getSimpleName());
+            return "FAILED: " + e.getClass().getSimpleName();
+        }
+        return sendHtmlInternal(new String[]{to}, null, com.sitemonitor.service.mail.LoginCodeMail.subject(),
+                m.html(), m.text(), null, true, null);
+    }
+
     public String sendNewDeviceEmail(String toAddress, String displayName, String deviceSummary,
                                      String ip, String location, String whenIso) {
         if (!isEnabled()) {

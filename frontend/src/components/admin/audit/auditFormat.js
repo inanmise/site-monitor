@@ -20,6 +20,8 @@ export function eventClass(et) {
   if (t === 'ACCESS_DENIED' || t === 'AUTH_REQUIRED' || t.endsWith('_DENIED')) return 'ev-denied'
   if (t === 'LOGIN') return 'ev-login'
   if (t === 'LOGIN_FAILED' || t === 'ACCOUNT_LOCKED') return 'ev-failed'
+  // Kodla giriş hataları (2026-10-02): teslim edilemedi / yanlış kod / süre doldu / kilit — başarısız giriş tonu
+  if (t.startsWith('LOGIN_OTP_') && t !== 'LOGIN_OTP_REQUESTED') return 'ev-failed'
   if (t === 'LOGOUT') return 'ev-logout'
   if (t === 'MONITOR_TEST' || t.endsWith('_TEST') || t.endsWith('_TEST_EMAIL')) return 'ev-test'
   if (t.endsWith('_EXPORT')) return 'ev-export'
@@ -177,6 +179,13 @@ const SPECIAL = {
   SYSTEM_MAINTENANCE_CANCELLED: 'audit.ev.SYSTEM_MAINTENANCE_CANCELLED',
   SYSTEM_MAINTENANCE_MAIL: 'audit.ev.SYSTEM_MAINTENANCE_MAIL',
   SESSION_ENDED_MAINTENANCE: 'audit.ev.SESSION_ENDED_MAINTENANCE',
+  // Kodla giriş (push / e-posta tek kullanımlık kod) + Giriş Yöntemleri ayarı (2026-10-02) — kural adı/eylem eşlemesine uymaz
+  LOGIN_OTP_REQUESTED: 'audit.ev.LOGIN_OTP_REQUESTED',
+  LOGIN_OTP_DELIVERY_FAILED: 'audit.ev.LOGIN_OTP_DELIVERY_FAILED',
+  LOGIN_OTP_VERIFY_FAILED: 'audit.ev.LOGIN_OTP_VERIFY_FAILED',
+  LOGIN_OTP_EXPIRED: 'audit.ev.LOGIN_OTP_EXPIRED',
+  LOGIN_OTP_LOCKED: 'audit.ev.LOGIN_OTP_LOCKED',
+  LOGIN_METHODS_SETTINGS_SAVE: 'audit.ev.LOGIN_METHODS_SETTINGS_SAVE',
 }
 
 /**

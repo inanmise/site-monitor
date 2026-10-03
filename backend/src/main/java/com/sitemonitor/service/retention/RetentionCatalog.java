@@ -263,6 +263,12 @@ public final class RetentionCatalog {
         orphan("issue-report-comments-orphan", "issue_report_comments",
                 "report_id NOT IN (SELECT id FROM login_issue_reports)", DataClass.PERSONAL,
                 "Sorun bildirimi konuşma dizisi (yazar adı + serbest metin + durum geçişleri). Raporuyla birlikte silinir; öksüz kalan temizlenir."),
+        // ── Kodla giriş istekleri (2026-10-02) ─────────────────────────────────────────────────
+        age("login-otp-challenges", "login_otp_challenges", "created_at", "site.monitor.login.otp.retention-days",
+                30, 1, false, DataClass.PERSONAL,
+                "Push / e-posta ile kodla giriş istekleri: istek başına TEK satır — kullanıcı adı, kanal, kodun HMAC özeti (kodun "
+                + "kendisi YOK), süre, deneme sayısı, durum, IP ve tarayıcı. Satır en çok birkaç dakika işe yarar (kod ≤ 300 sn); "
+                + "IP / kullanıcı sınırları 15 dakikalık pencereye bakar. Olayların kalıcı izi denetim kaydındadır."),
 
         // ── İçerik ve olay kayıtları ──────────────────────────────────────────────────────────
         age("weekly-report-images", "weekly_report_images", "created_at", "site.monitor.weekly-report.image-retention-days",

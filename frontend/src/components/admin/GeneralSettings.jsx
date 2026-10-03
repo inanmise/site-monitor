@@ -145,7 +145,8 @@ export default function GeneralSettings({ focusKey = null }) {
   // burada göstermek çevrilmemiş ham anahtar adları üretiyordu (retention: 7 satır, 2026-08).
   // KENDI sayfasi olan gruplar burada GOSTERILMEZ: ayni ayar icin ikinci bir yuzey,
   // sifreli blob'lari duz metin kutusunda bozulmaya acar ve etiketsiz ham anahtar dizer.
-  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly'])
+  // login-methods (2026-10-02): Ayarlar → Güvenlik → Giriş Yöntemleri kendi sayfasında (onay penceresi + önizleme).
+  const SKIP_GROUPS = new Set(['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods'])
   const order = []
   const byGroup = {}
   for (const it of items) {

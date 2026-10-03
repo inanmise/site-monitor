@@ -1572,6 +1572,32 @@ public class SchedulerService {
             )
             """);
         patch("CREATE INDEX IF NOT EXISTS idx_sms_first_at ON system_maintenance_suppressions(first_at)");
+        // Kodla giriş istekleri (2026-10-02, kullanıcı isteği) — istek başına TEK satır; kodun kendisi YOK (yalnız HMAC özeti).
+        // LoginOtpChallenge entity'si; RetentionCatalog 'login-otp-challenges' (created_at). Sorgular dizinli ve tek satırlık:
+        // IP sınırı (ip, created_at), kullanıcı sınırı / bekleme (username, created_at), başarısız doğrulama (username, last_failed_at).
+        patch("""
+            CREATE TABLE IF NOT EXISTS login_otp_challenges(
+                id VARCHAR(36) PRIMARY KEY,
+                username VARCHAR(120) NOT NULL,
+                user_id BIGINT,
+                channel VARCHAR(10) NOT NULL,
+                code_hmac VARCHAR(64) NOT NULL,
+                created_at VARCHAR(30) NOT NULL,
+                expires_at VARCHAR(30) NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                max_attempts INTEGER,
+                last_failed_at VARCHAR(30),
+                consumed_at VARCHAR(30),
+                status VARCHAR(20),
+                delivery_status VARCHAR(60),
+                ip VARCHAR(64),
+                user_agent VARCHAR(255)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_otp_created ON login_otp_challenges(created_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_otp_ip_created ON login_otp_challenges(ip, created_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_otp_user_created ON login_otp_challenges(username, created_at)");
+        patch("CREATE INDEX IF NOT EXISTS idx_otp_user_failed ON login_otp_challenges(username, last_failed_at)");
 
         cleanupFalseDnsChangeFlags();
         cleanupInterceptedCertPins();
