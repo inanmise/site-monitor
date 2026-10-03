@@ -1064,7 +1064,9 @@ public class EscalationService {
                 // görmemiş oluyordu.
                 //
                 // enqueueResolve kendi simetri kuralını taşıyor: açılışı push'lanmamış bir olayın
-                // çözümü zaten push'lanmaz. Yani fırtına en baştan bastırdıysa burada da sessiz.
+                // çözümü zaten push'lanmaz. 2026-10-03'ten beri varsayılan kipte (storm.push-individual) üyenin
+                // açılış push'u bireysel gittiği için çözümü de burada bireysel gider; ayar KAPALIYSA ve fırtına
+                // en baştan bastırdıysa burada da sessiz (SKIPPED_NO_PRIOR).
                 userPushService.enqueueResolve(saved, deserializeContext(saved.getContextJson()), resolveTeamFallback(saved));
                 log.info("✅ Alarm çözüldü (storm üyesi — bireysel çözüm maili yok, push simetrik): {} [{}]",
                         domain, event.getAlertType());
@@ -1417,12 +1419,16 @@ public class EscalationService {
             if (stormAction == StormService.StormAction.SUPPRESSED) {
                 event.setLastReAlertAt(now());
                 alertEventRepo.save(event);
-                // İZ (2026-09-30, prod olayı): bu dal hiçbir kanal çalıştırmıyor ve eskiden hiçbir kayıt da bırakmıyordu —
+                // İZ (2026-09-30, prod olayı): bu dal eskiden hiçbir kanal çalıştırmıyor ve hiçbir kayıt da bırakmıyordu —
                 // alarm penceresi "0 bildirim", push "önce bildirim gitmemişti" diyor, takım neden haber almadığını
-                // göremiyordu. Bildirim günlüğü + push karar satırı: "bireysel bildirim fırtına #N'e devredildi".
-                recordStormSuppression(event, domainTeamId, ugTeamId);
-                log.info("🌩 İzleme alarmı storm'a eklendi (bireysel bildirim yok): {} [{}] → storm #{}",
-                        domain, alertType, event.getStormId());
+                // göremiyordu. Bildirim günlüğü satırı: "bireysel e-posta (ayar kapalıysa push da) fırtına #N'e devredildi".
+                // PUSH FIRTINAYA DEVREDİLMEZ (2026-10-03, kullanıcı kararı, varsayılan): e-posta fırtınada kalır, bu alarmın
+                // push'u ŞİMDİ bireysel gider — alarmlar sweep'te açıldıkça kuyruğa girer, yani teslim sırası açılış sırasıdır.
+                boolean pushIndividual = stormPushIndividual();
+                recordStormSuppression(event, domainTeamId, ugTeamId, pushIndividual);
+                if (pushIndividual) pushStormMember(event, "INITIAL", domainTeamId, outageContext);
+                log.info("🌩 İzleme alarmı storm'a eklendi (bireysel e-posta yok, push {}): {} [{}] → storm #{}",
+                        pushIndividual ? "bireysel" : "fırtınada", domain, alertType, event.getStormId());
             } else {
                 // Gecikmeli eskalasyon kişisi ilk bildirime girmez (yeni olay → sorgu yok; adım EscalationStepService'ten).
                 List<EscalationContact> contacts = teamOnly ? List.of()
@@ -1528,6 +1534,12 @@ public class EscalationService {
                     alertEventRepo.save(event);
                     log.warn("⬆ İzleme alarmı {} seviyesine yükseltildi: {} [{}] — bildirim gönderildi{}",
                             alertLevel, domain, alertType, acked ? " (ack düşürüldü)" : "");
+                } else if (stormPushIndividual()) {
+                    // Fırtına üyesinin seviye artışı (2026-10-03): e-posta fırtınada kalır (bugünkü gibi), push bireysel
+                    // ESCALATION olarak gider — seviye başına bir kez (UserPushService tekilleştirmesi).
+                    pushStormMember(event, "ESCALATION", domainTeamId, outageContext);
+                    log.info("⬆ Fırtına üyesi {} seviyesine yükseldi: {} [{}] — e-posta fırtınada, push bireysel",
+                            alertLevel, domain, alertType);
                 }
                 return;
             }
@@ -3057,8 +3069,8 @@ public class EscalationService {
         };
     }
 
-    /** Push tetiğine giden bağlamın KOPYASI + sessiz saat işareti (çağıranın haritası değişmez). */
-    private static Map<String, Object> quietCtx(Map<String, Object> ctx) {
+    /** Push tetiğine giden bağlamın KOPYASI + sessiz saat işareti (çağıranın haritası değişmez). Fırtınanın bireysel push'u da kullanır. */
+    static Map<String, Object> quietCtx(Map<String, Object> ctx) {
         Map<String, Object> m = ctx == null ? new LinkedHashMap<>() : new LinkedHashMap<>(ctx);
         m.put(CTX_QUIET_DEFERRED, true);
         return m;
@@ -3144,9 +3156,10 @@ public class EscalationService {
     /**
      * Kişi-webhook (push) tetiği — K8: mail neyi gönderiyorsa webhook da.
      *
-     * <p>Tetik mail hunisinde durduğu için fırtına/bakım/toplu-kesinti bastırmaları kendiliğinden
-     * miras kalır (bastırılan olay buraya hiç gelmez). Mail SONUCUNDAN bağımsız: mail FAILED olsa
-     * da, hiç alıcı olmasa da, kanal kapalı olsa da koşar. İstisna yayılamaz — mail yolu bu
+     * <p>Tetik mail hunisinde durduğu için bakım/toplu-kesinti bastırmaları kendiliğinden miras kalır
+     * (bastırılan olay buraya hiç gelmez). Fırtına İSTİSNADIR (2026-10-03): fırtınaya bağlanan alarmın e-postası
+     * fırtınada kalır ama push'u varsayılan olarak {@code pushStormMember} ile yine buradan, bireysel gider.
+     * Mail SONUCUNDAN bağımsız: mail FAILED olsa da, hiç alıcı olmasa da, kanal kapalı olsa da koşar. İstisna yayılamaz — mail yolu bu
      * kanalın hiçbir arızasından etkilenmez.
      */
     /** 7/24 (NOC) açılış tetiği — hiçbir hatası takım alarmına yayılmaz. */
@@ -3205,6 +3218,14 @@ public class EscalationService {
     public static final String TRIGGER_STORM_SUPPRESSED = "STORM";
     /** Bildirim günlüğü e-posta durumu ön eki — fırtına devri. Ön yüz {@code SKIPPED:} ile başlayanı "atlandı" tonuyla çizer. */
     public static final String STATUS_STORM_PREFIX = "SKIPPED: fırtına #";
+    /** Fırtına devri satırının son eki — push da fırtınaya devredildi ({@code site.monitor.storm.push-individual} KAPALI; 2026-10-02'ye kadarki metin). */
+    public static final String STATUS_STORM_SUFFIX = " — bireysel bildirim yerine toplu fırtına bildirimi";
+    /**
+     * Fırtına devri satırının son eki — YALNIZ e-posta devredildi, push bireysel gitti (2026-10-03, varsayılan). Ön ek
+     * ({@link #STATUS_STORM_PREFIX}) aynı kalır: fırtına durum ekranının "devredilen alarm" sayımı ve ön yüzün fırtına no
+     * çözümlemesi ona bakar; ön yüz "(push tek tek)" işaretinden zaman çizelgesi metnini seçer.
+     */
+    public static final String STATUS_STORM_MAIL_ONLY_SUFFIX = " — bireysel e-posta yerine toplu fırtına e-postası (push tek tek)";
     public static final String STATUS_NO_TEAM = "SKIPPED: takım yok";
     /** Push karar satırı nedenleri (2026-09-30). */
     public static final String PUSH_SKIPPED_STORM = "SKIPPED_STORM";
@@ -3226,26 +3247,65 @@ public class EscalationService {
 
     /**
      * Fırtına devrinin izi (2026-09-30): olayın bildirim günlüğüne {@code STORM} tetikli, {@code SKIPPED: fırtına #N}
-     * durumlu bir satır ve push kararına {@code SKIPPED_STORM}. Bu satır "gönderilmedi"nin nedenidir; alarm
-     * penceresinin zaman çizelgesi ve Bildirimler bölümü buradan okur. Hata bildirim hattını etkilemez.
+     * durumlu bir satır. Bu satır "e-posta gönderilmedi"nin nedenidir; alarm penceresinin zaman çizelgesi ve Bildirimler
+     * bölümü buradan okur. Hata bildirim hattını etkilemez.
+     *
+     * <p>{@code pushIndividual} (2026-10-03, {@code site.monitor.storm.push-individual}, varsayılan AÇIK): yalnız e-posta
+     * devredildi — satır metni bunu söyler ({@link #STATUS_STORM_MAIL_ONLY_SUFFIX}) ve push karar satırı YAZILMAZ (push
+     * çağıranda bireysel gider; teslimat satırı kendisi izdir). KAPALI: 2026-10-02'ye kadarki iz bayt bayt — eski metin ve
+     * push kararı {@code SKIPPED_STORM}.
      */
-    void recordStormSuppression(AlertEvent event, Long syTeamId, Long ugTeamId) {
+    void recordStormSuppression(AlertEvent event, Long syTeamId, Long ugTeamId, boolean pushIndividual) {
         if (event == null || event.getId() == null) return;
         try {
             List<String> emails = collectTeamEmails(syTeamId, ugTeamId, event.getNotificationGroupId());
             String status = STATUS_STORM_PREFIX + (event.getStormId() != null ? event.getStormId() : "?")
-                    + " — bireysel bildirim yerine toplu fırtına bildirimi";
+                    + (pushIndividual ? STATUS_STORM_MAIL_ONLY_SUFFIX : STATUS_STORM_SUFFIX);
             saveLog(event.getId(), ownerTeamNames(syTeamId, ugTeamId),
                     String.join(", ", emails), "", event.getMessage() != null ? event.getMessage() : "",
                     status, "SKIPPED", TRIGGER_STORM_SUPPRESSED);
         } catch (Exception e) {
             log.warn("Fırtına devri günlüğe yazılamadı (olay {}): {}", event.getId(), e.getMessage());
         }
+        if (pushIndividual) return;
         try {
             userPushService.recordSuppressed(event, PUSH_SKIPPED_STORM);
         } catch (Exception e) {
             log.warn("Fırtına devri push kararı yazılamadı (olay {}): {}", event.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * Push fırtınaya devredilmesin mi ({@link StormService#KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK — 2026-10-03 kullanıcı
+     * kararı). Ayar servisi yokken (elle kurulan eski testler) varsayılan geçerlidir.
+     */
+    boolean stormPushIndividual() {
+        try {
+            return appSettings == null || appSettings.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, true);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Fırtına üyesinin BİREYSEL push'u (2026-10-03, kullanıcı kararı: "alarm fırtınası durumunda push üzerinden teker teker
+     * bildirimleri sırasıyla bildirelim"). E-posta fırtınada kalır; push, bireysel hattın {@code sendCombinedAlert}'te
+     * aldığı kararın AYNISIYLA kuyruğa girer: alıcı / seviye / kanal kapıları / hatırlatma ayarı / sistem bakımı / kişi başına
+     * saatlik tavan ({@code RATE_LIMITED}) / tekilleştirme {@link UserPushService#enqueueAlert}'te; takımın sessiz saati
+     * push'un takımı (olay damgası, yoksa SY) pencerede ve seviye ertelenebilirse işaretli bağlam kopyasıyla
+     * ({@code SKIPPED_TEAM_QUIET}). Sessiz saat ÖZET kaydı yazılmaz — fırtına e-postası postayı zaten taşıyor. Hata alarm
+     * hattına yayılmaz.
+     */
+    private void pushStormMember(AlertEvent event, String mailTrigger, Long teamFallback, Map<String, Object> ctx) {
+        if (event == null || event.getId() == null) return;
+        Long pushTeam = event.getTeamId() != null ? event.getTeamId() : teamFallback;
+        boolean quiet = false;
+        try {
+            quiet = quietHours != null && quietHours.defersPush(pushTeam, event.getAlertLevel(), mailTrigger);
+        } catch (Exception e) {
+            log.warn("Sessiz saat push kararı verilemedi — push gönderiliyor (olay {}): {}", event.getId(), e.toString());
+        }
+        triggerUserPush(event.getId(), mailTrigger, teamFallback, quiet ? quietCtx(ctx) : ctx, Set.of());
     }
 
     /** Sahip takım adları — adresten BAĞIMSIZ (atlanan/devredilen bildirim satırının "alıcı" etiketi); yoksa "-". */

@@ -68,6 +68,23 @@ class TeamQuietHoursServiceTest {
     }
 
     @Test
+    @DisplayName("defersPush (2026-10-03, fırtınanın bireysel push'u): yalnız ertelenebilir tetik + pencere içi + ertelenebilir seviye; özet kaydı YAZMAZ")
+    void defersPush_mirrorsDeferralRule_withoutDigest() {
+        when(teamRepo.findQuietConfigured()).thenReturn(List.of(team(1, "22:00", "07:00")));
+
+        assertThat(svc.defersPush(1L, "WARNING", "INITIAL")).isTrue();
+        assertThat(svc.defersPush(1L, "WARNING", "ESCALATION")).isTrue();
+        assertThat(svc.defersPush(1L, "WARNING", "DAILY_REALERT")).isTrue();
+        assertThat(svc.defersPush(1L, "CRITICAL", "INITIAL")).as("KRİTİK asla ertelenmez").isFalse();
+        assertThat(svc.defersPush(1L, "WARNING", "MANUAL")).as("elle gönderim ertelenmez").isFalse();
+        assertThat(svc.defersPush(2L, "WARNING", "INITIAL")).as("pencere tanımsız takım").isFalse();
+        assertThat(svc.defersPush(null, "WARNING", "INITIAL")).isFalse();
+        svc.clock = Clock.fixed(QuietHoursTest.ist("2026-10-01T12:00:00"), ZoneOffset.UTC);
+        assertThat(svc.defersPush(1L, "WARNING", "INITIAL")).as("pencere dışı").isFalse();
+        verifyNoInteractions(itemRepo);
+    }
+
+    @Test
     @DisplayName("Okuma hatası ve bozuk ayar = pencere yok (erteleme yok)")
     void failuresMeanNoWindow() {
         when(teamRepo.findQuietConfigured()).thenThrow(new RuntimeException("column quiet_start does not exist"));

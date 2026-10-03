@@ -49,6 +49,8 @@ public class StormSettingsController {
         data.put("window_minutes",  settingsService.getInt(StormService.KEY_WINDOW, 5));
         data.put("per_group",       settingsService.getBoolean(StormService.KEY_PER_GROUP, false));
         data.put("quiet_minutes",   stormService.quietMinutes());   // 2026-09-30: fırtına ömür sınırı (kırpılmış efektif değer)
+        // 2026-10-03: push fırtınaya devredilmesin (varsayılan true) — fırtına yalnız e-postayı gruplar.
+        data.put("push_individual", settingsService.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, true));
         // UI önizlemesi: yüzde → yaklaşık monitör sayısı gösterebilsin.
         data.put("total_active_monitors", stormService.totalActiveMonitors());
         data.put("effective_threshold",   stormService.computeThreshold());
@@ -67,6 +69,8 @@ public class StormSettingsController {
         boolean perGroup = asBool(body.get("per_group"), false);
         // 2026-09-30: gövdede yoksa DOKUNULMAZ (eski istemci / kısmi kayıt) — mevcut ayar korunur.
         Integer quiet    = body.get("quiet_minutes") == null ? null : asInt(body.get("quiet_minutes"), StormService.QUIET_DEFAULT);
+        // 2026-10-03: aynı kural — gövdede yoksa push ayarına DOKUNULMAZ; varsa yalnız true/false kabul edilir.
+        Boolean pushIndividual = body.get("push_individual") == null ? null : strictBool(body.get("push_individual"));
 
         // ── Sunucu-tarafı aralık doğrulaması ──
         if (!"COUNT".equals(unit) && !"PERCENT".equals(unit)) {
@@ -91,11 +95,13 @@ public class StormSettingsController {
         values.put(StormService.KEY_WINDOW,    String.valueOf(window));
         values.put(StormService.KEY_PER_GROUP, String.valueOf(perGroup));
         if (quiet != null) values.put(StormService.KEY_QUIET, String.valueOf(quiet));
+        if (pushIndividual != null) values.put(StormService.KEY_PUSH_INDIVIDUAL, String.valueOf(pushIndividual));
         settingsService.save(Map.of("values", values), actor(session));
 
         auditService.recordAction("STORM_SETTINGS_SAVE", session, request, "SETTINGS", "storm",
                 "{\"enabled\":" + enabled + ",\"unit\":\"" + unit + "\",\"value\":" + value
-                        + ",\"window\":" + window + ",\"per_group\":" + perGroup + ",\"quiet\":" + quiet + "}");
+                        + ",\"window\":" + window + ",\"per_group\":" + perGroup + ",\"quiet\":" + quiet
+                        + ",\"push_individual\":" + pushIndividual + "}");
 
         return getSettings(session);   // güncel efektif değerleri (effective_threshold dahil) geri döndür
     }
@@ -117,6 +123,15 @@ public class StormSettingsController {
         if (v instanceof Boolean b) return b;
         if (v == null) return def;
         return Boolean.parseBoolean(v.toString().trim());
+    }
+
+    /** Yalnız gerçek boolean ya da "true"/"false" — "evet"/"1" gibi bir değer sessizce false'a dönmesin (400). */
+    private static boolean strictBool(Object v) {
+        if (v instanceof Boolean b) return b;
+        String s = v.toString().trim();
+        if ("true".equalsIgnoreCase(s)) return true;
+        if ("false".equalsIgnoreCase(s)) return false;
+        throw new IllegalArgumentException(Msg.t("push_individual true ya da false olmalı", "push_individual must be true or false"));
     }
 
     private static int asInt(Object v, int def) {

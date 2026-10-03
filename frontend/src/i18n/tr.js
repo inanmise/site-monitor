@@ -1671,7 +1671,7 @@ export const TR = {
 
   // ── Alarm Fırtınası (alert storm) ayarları — "Alert Settings" (yalnız admin) ──
   'storm.title':          'Alarm Fırtınası Koruması',
-  'storm.desc':           'Bir takımın izlemelerinden çoğu kısa bir pencerede birden düştüğünde (paylaşılan sunucu / ağ / veri merkezi kesintisi), bireysel alarm seli yerine o takıma TEK toplu bildirim gönderilir. Toparlanınca tek bir toplu "çözüldü" bildirimi gider. Her takım ayrı değerlendirilir; elle kontrol ("Şimdi kontrol et") fırtına oluşturmaz.',
+  'storm.desc':           'Bir takımın izlemelerinden çoğu kısa bir pencerede birden düştüğünde (paylaşılan sunucu / ağ / veri merkezi kesintisi), bireysel e-posta seli yerine o takıma TEK toplu fırtına e-postası gönderilir; toparlanınca tek bir toplu "çözüldü" e-postası gider. Push bildirimi aşağıdaki ayara göre alarm başına tek tek (varsayılan) ya da toplu gider. Her takım ayrı değerlendirilir; elle kontrol ("Şimdi kontrol et") fırtına oluşturmaz.',
   'storm.enabled':        'Alarm fırtınası korumasını etkinleştir',
   'storm.enabledHint':    'Açıkken yalnız GERÇEK sel (eşik aşımı) toplanır; normal tek-monitör alarmı gecikmeden bireysel gider. Kapatırsanız her arıza bugünkü gibi ayrı ayrı alarmlanır.',
   'storm.disabledWarn':   'Alarm fırtınası koruması KAPALI — çok sayıda monitör birden düşse bile her biri için ayrı e-posta gönderilir.',
@@ -1690,6 +1690,10 @@ export const TR = {
   'storm.quietHint':      '{0}–{1} dakika. Kalıcı olarak başarısız izlemeler fırtınayı süresiz açık tutup takımın sonraki alarmlarını bildirimsiz bırakamaz.',
   'storm.errQuiet':       'Sessiz pencere {0}–{1} dakika aralığında olmalı',
   'storm.perGroup':       'Monitör gruplarına göre fırtına',
+  // 2026-10-03 (kullanıcı kararı): push fırtınaya devredilmez — fırtına yalnız e-postayı gruplar
+  'storm.pushIndividual':     'Push bildirimleri fırtınaya devredilmesin — her alarm tek tek, sırasıyla gönderilsin',
+  'storm.pushIndividualHint': 'Açıkken (varsayılan) fırtına yalnız e-postayı gruplar: takım tek toplu fırtına e-postası alır, push ise her alarm için ayrı ayrı ve alarmların açılış sırasıyla gider (seviye artışı, günlük hatırlatma ve çözüm de alarm başına). Kişi başına saatlik push tavanı (Ayarlar → Webhook Bildirimleri → Kişi başı saat tavanı) ve sessiz saatler yine geçerlidir: tavanı aşan push gönderilmez, teslimat günlüğünde "RATE_LIMITED" olarak görünür.',
+  'storm.pushGroupedNote':    "Push da fırtınaya devrediliyor: fırtına sürerken üye alarmlar için tek tek push gitmez, takım tek bir toplu fırtına push'u alır.",
   'storm.save':           'Kaydet',
   'storm.saved':          'Alarm fırtınası ayarları kaydedildi',
 
@@ -3406,8 +3410,8 @@ export const TR = {
   'storm.unitPercentTeam': 'Takımın izlemelerinin %’si',
   'storm.pctPreviewTeam': 'Her takım için ayrı hesaplanır: takımın aktif izlemelerinde yüzde {0} oranı (en az 3 farklı hedef). Örnek: {1} aktif izlemede ≈ {2} hedef.',
   'storm.perGroupHintTeam': 'Açıkken her takımın her monitör grubu ayrı değerlendirilir (bir gruptaki sel, başka gruptaki ilgisiz arızayla birleşmez). Kapalıyken takımın tüm izlemeleri tek havuzdur. Her iki durumda da takımlar birbirinden bağımsızdır.',
-  'alh.whyStorm': 'Fırtına bildirimine devredildi',
-  'alh.whyStormTip': 'Bu alarm bir alarm fırtınasının üyesi: bireysel e-posta/push yerine takımın tek toplu fırtına bildirimi gönderilir; o bildirim bu alarmın sayaçlarına yazılmaz.',
+  'alh.whyStorm': 'Fırtına üyesi — e-posta toplu',
+  'alh.whyStormTip': "Bu alarm bir alarm fırtınasının üyesi: bireysel e-posta yerine takımın tek toplu fırtına e-postası gönderilir; o posta bu alarmın e-posta sayacına yazılmaz. Push varsayılan olarak bu alarm için tek tek gider (yandaki push sayacı); Alarm Fırtınası ayarlarında \"Push bildirimleri fırtınaya devredilmesin\" kapatılmışsa push da toplu fırtına push'una devredilir.",
 
   'modal.detailsTab':  'Sertifika Detayları',
   'modal.alertsTab':   'Alarm Geçmişi',
@@ -4390,7 +4394,7 @@ export const TR = {
   // 2026-10-01: gecikmeli eskalasyon kişisine giden (ya da nedeniyle atlanan) adım — backend ESCALATION_STEP
   'alh.trigger.escalationStep': 'Eskalasyon Adımı',
   'alh.storm.badge': 'Fırtına #{0}',
-  'alh.storm.tip':   'Bu alarm bir alarm fırtınasının üyesi: bireysel e-posta ve push yerine takım toplu fırtına bildirimiyle haberdar edilir.',
+  'alh.storm.tip':   'Bu alarm bir alarm fırtınasının üyesi: bireysel e-posta yerine takım toplu fırtına e-postasıyla haberdar edilir; push varsayılan olarak alarm başına tek tek gider.',
   'alh.notifModal.title':   'Bildirim Geçmişi',
   'alh.notifModal.closed':  'Kapalı',
   'alh.notifModal.open':    'Açık',
@@ -4492,6 +4496,9 @@ export const TR = {
   'alh.ev.storm': 'Bildirim fırtınaya devredildi',
   'alh.ev.stormDetail': 'Alarm, takımın #{0} numaralı alarm fırtınasına bağlandı: bireysel e-posta ve push gönderilmedi; takım toplu fırtına bildirimiyle haberdar edilir.',
   'alh.ev.stormBackfilled': 'Bu kayıt geriye dönük eklendi: o sırada devir izi tutulmuyordu.',
+  // 2026-10-03: push fırtınaya devredilmeyince (varsayılan) devir satırı yalnız e-postayı anlatır
+  'alh.ev.stormMail': 'E-posta fırtınaya devredildi',
+  'alh.ev.stormMailDetail': 'Alarm, takımın #{0} numaralı alarm fırtınasına bağlandı: bireysel e-posta gönderilmedi, takım toplu fırtına e-postasıyla haberdar edilir. Push bu alarm için tek tek gönderildi — durumu push satırında.',
   // 2026-10-01: sessiz saat (onaylı öneri 15) — zaman çizelgesi, tetik/push etiketleri, takım ve kişi formları
   'alh.ev.quiet': 'Bildirim sessiz saat özetine devredildi',
   'alh.ev.quietDetail': '{0} takımı sessiz saatteydi: bu bildirim şimdi gönderilmedi; pencere bitince takımın sessiz saat özetinde yer alır.',
@@ -11134,6 +11141,12 @@ export const TR = {
   'sf.rules.scopeTeam': 'Takım bazında',
   'sf.rules.scopeGroup': 'Takım + bildirim grubu bazında',
   'sf.rules.scopeHint': 'Bir takımın alarmı başka takımın fırtınasına girmez; bildirim yalnız o takıma gider.',
+  // 2026-10-03: push fırtınaya devredilir mi (Ayarlar → Alarm Fırtınası)
+  'sf.rules.push': 'Push bildirimi',
+  'sf.rules.pushIndividual': 'Alarm başına tek tek',
+  'sf.rules.pushGrouped': "Toplu fırtına push'u",
+  'sf.rules.pushIndividualHint': "Fırtına yalnız e-postayı toplar; her alarmın push'u açılış sırasıyla ayrı gider (kişi başına saatlik push tavanı geçerli).",
+  'sf.rules.pushGroupedHint': "Push da fırtınaya devredilir: takım üye alarmlar yerine tek toplu fırtına push'u alır.",
   'sf.refresh': 'Yenile',
   'sf.loading': 'Fırtına durumu yükleniyor…',
   'sf.loadError': 'Fırtına durumu yüklenemedi',
@@ -11230,12 +11243,13 @@ export const TR = {
   'sf.detail.quiet': 'Sessiz pencere',
   'sf.detail.timeline': 'Zaman çizelgesi',
   'sf.detail.notifications': 'Bildirimler',
-  'sf.detail.notifHint': 'Fırtına postaları üye alarmların bildirim günlüğüne üye başına bir satır bırakır; "devredilen" satırı bireysel bildirimi fırtınaya bırakılan alarmdır.',
+  'sf.detail.notifHint': 'Fırtına postaları üye alarmların bildirim günlüğüne üye başına bir satır bırakır; "devredilen" satırı bireysel e-postası fırtına postasına bırakılan alarmdır. Push varsayılan olarak üye alarm başına tek tek gider ("bireysel push"); "toplu push" yalnız push da fırtınaya devredildiğinde oluşur.',
   'sf.detail.n.initial': '{0} açılış postası',
   'sf.detail.n.realert': '{0} tekrar postası',
   'sf.detail.n.resolve': '{0} çözüm postası',
   'sf.detail.n.suppressed': '{0} devredilen alarm',
-  'sf.detail.n.push': '{0} push',
+  'sf.detail.n.push': '{0} toplu push',
+  'sf.detail.n.pushMembers': '{0} bireysel push',
   'sf.detail.n.lastMail': 'Son posta',
   'sf.detail.members': 'Üyeler',
   'sf.detail.membersCount': '{0} üye · {1} kurtuldu · {2} düşük',
@@ -13935,7 +13949,9 @@ export const TR = {
   'help.set.site.monitor.sql-history.retention-days':
     'Ne işe yarar: SQL çalışma alanında koşulan sorguların geçmişinin saklama süresi.\nFaydası: Kimin hangi sorguyu koşturduğu denetlenebilir; kullanıcı da kendi sorgusunu yeniden bulur.\nÖnerilen değer: 365 gün (varsayılan). Sorgu metinleri hassas veri içerebilir, gereğinden uzun tutmayın.',
   'help.set.site.monitor.storm.enabled':
-    'Ne işe yarar: Alarm fırtınası bastırmasını açar: kısa sürede çok monitör düşerse bireysel alarmlar TEK toplu bildirime indirgenir.\nFaydası: Omurga arızasında yüzlerce mail yerine tek, okunabilir özet gider.\nÖnerilen değer: true (varsayılan). Kapatmak, geniş kesintide posta kutularının dolması demektir.',
+    'Ne işe yarar: Alarm fırtınası bastırmasını açar: kısa sürede çok monitör düşerse bireysel alarm e-postaları TEK toplu fırtına e-postasına indirgenir (push için ayrı ayar: "Push bildirimleri fırtınaya devredilmesin").\nFaydası: Omurga arızasında yüzlerce mail yerine tek, okunabilir özet gider.\nÖnerilen değer: true (varsayılan). Kapatmak, geniş kesintide posta kutularının dolması demektir.',
+  'help.set.site.monitor.storm.push-individual':
+    "Ne işe yarar: Fırtına sürerken push bildiriminin fırtınaya devredilip devredilmeyeceği. Açıkken fırtına yalnız e-postayı toplar; her üye alarmın push'u (açılış, seviye artışı, günlük hatırlatma, çözüm) tek tek ve alarmların açılış sırasıyla gider. Kapalıyken push da fırtınaya devredilir ve takım tek toplu fırtına push'u alır.\nFaydası: Nöbetçi telefonda hangi izlemenin düştüğünü tek tek ve sırasıyla görür; toplu özet yüzünden tek bir alarmın ayrıntısı kaybolmaz. E-posta kutusu yine tek toplu postayla korunur.\nÖnerilen değer: true (varsayılan). Büyük kesintide telefonların yüzlerce push alması sorun olacaksa false; push hacmini kişi başına saatlik tavan (Webhook Bildirimleri → Kişi başı saat tavanı) da sınırlar.",
   'help.set.site.monitor.storm.per-group':
     'Ne işe yarar: Fırtına sayımını takımın tüm izlemeleri yerine takımın her izleme grubunda ayrı yapar (fırtına her durumda takım bazındadır; başka takımın arızaları sayılmaz).\nFaydası: Bir uygulamanın çökmesi, aynı takımın ilgisiz gruplarındaki alarmları bastırmaz.\nÖnerilen değer: Takımın izlemeleri anlamlı gruplara ayrılmışsa true; takım başına tek havuz yeterliyse false (varsayılan).',
   'help.set.site.monitor.storm.retention-days':

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from './test-utils.jsx'
-import { buildAlertTimeline, stormIdFromStatus, statusLabel, PUSH_STATUS_KEYS } from '../components/admin/alerts/alertHistoryModel.js'
+import { buildAlertTimeline, stormIdFromStatus, statusLabel, isStormMailOnly, PUSH_STATUS_KEYS } from '../components/admin/alerts/alertHistoryModel.js'
+import { TR } from '../i18n/tr.js'
+import { EN } from '../i18n/en.js'
 import { StormBadge } from '../components/admin/alerts/AlertBadges.jsx'
 import { EmailStatusBadge, mailTriggerText } from '../components/admin/alerts/AlertNotifications.jsx'
 
@@ -36,6 +38,40 @@ describe('Alarm Geçmişi — fırtına devri izi', () => {
     expect(tl.filter((e) => e.kind === 'mail')).toHaveLength(1)
     // Sıra: açılış → fırtına devri → çözüm → çözüm e-postası
     expect(tl.map((e) => e.kind)).toEqual(['opened', 'storm', 'resolved', 'mail'])
+  })
+
+  /**
+   * 2026-10-03 (push fırtınaya devredilmez — varsayılan): backend devir satırına "(push tek tek)" yazar; zaman çizelgesi
+   * o satırı "E-posta fırtınaya devredildi" olarak çizer (push kendi satırında). Eski / ayar kapalı satır: e-posta + push devri.
+   */
+  it('isStormMailOnly + buildAlertTimeline: "(push tek tek)" satırı yalnız e-posta devridir; eski metin ve geriye dönük kayıt değildir', () => {
+    const mailOnly = 'SKIPPED: fırtına #9 — bireysel e-posta yerine toplu fırtına e-postası (push tek tek)'
+    const legacy = 'SKIPPED: fırtına #9 — bireysel bildirim yerine toplu fırtına bildirimi'
+    expect(isStormMailOnly(mailOnly)).toBe(true)
+    expect(isStormMailOnly(legacy)).toBe(false)
+    expect(isStormMailOnly(legacy + ' (geriye dönük kayıt)')).toBe(false)
+    expect(isStormMailOnly(null)).toBe(false)
+    expect(stormIdFromStatus(mailOnly)).toBe(9)
+
+    const tl = buildAlertTimeline({ alert: { ...ALERT, storm_id: 9 }, notifications: [
+      { id: 5, trigger: 'STORM', sent_at: ALERT.created_at, recipient_name: 'Takım A', email_status: mailOnly },
+    ] })
+    const storm = tl.find((e) => e.kind === 'storm')
+    expect(storm).toMatchObject({ stormId: 9, mailOnly: true, backfilled: false })
+    const tlLegacy = buildAlertTimeline({ alert: ALERT, notifications: [{ id: 6, trigger: 'STORM', sent_at: ALERT.created_at, email_status: legacy }] })
+    expect(tlLegacy.find((e) => e.kind === 'storm').mailOnly).toBe(false)
+  })
+
+  it('çeviriler: yalnız-e-posta devri ve iki kipi anlatan fırtına üyesi çipi iki dilde var, eski devir metni korunur', () => {
+    for (const dict of [TR, EN]) {
+      expect(dict['alh.ev.stormMail']).toBeTruthy()
+      expect(dict['alh.ev.stormMailDetail']).toContain('{0}')
+      expect(dict['alh.ev.storm']).toBeTruthy()             // eski / ayar kapalı satırlar için
+      expect(dict['alh.push.status.SKIPPED_STORM']).toBeTruthy()   // geçmiş push karar satırları
+    }
+    expect(TR['alh.ev.stormMail']).toMatch(/e-posta/i)
+    expect(EN['alh.ev.stormMail']).toMatch(/email/i)
+    expect(TR['alh.ev.stormMailDetail']).toMatch(/push/i)
   })
 
   it('buildAlertTimeline: fırtına no durumdan okunamazsa alarmın storm_id\'si kullanılır', () => {

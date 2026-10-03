@@ -57,6 +57,7 @@ class StormStatusServiceTest {
         when(stormService.quietMinutes()).thenReturn(5);
         when(stormService.isEnabled()).thenReturn(true);
         when(stormService.perGroup()).thenReturn(true);
+        when(stormService.pushIndividual()).thenReturn(true);
         when(stormService.thresholdUnit()).thenReturn("COUNT");
         when(stormService.thresholdValue()).thenReturn(5);
         when(stormService.thresholdForTotal(anyLong())).thenReturn(5);
@@ -124,7 +125,8 @@ class StormStatusServiceTest {
         assertThat(totals).containsEntry("teams", 2).containsEntry("storming", 1).containsEntry("near", 1).containsEntry("open_storms", 1);
         @SuppressWarnings("unchecked") Map<String, Object> settings = (Map<String, Object>) out.get("settings");
         assertThat(settings).containsEntry("quiet_minutes", 5).containsEntry("window_minutes", 5).containsEntry("threshold_unit", "COUNT")
-                .containsEntry("per_group", true).containsEntry("re_alert_hours", 24).containsEntry("min_threshold", 2).containsEntry("percent_min_targets", 3);
+                .containsEntry("per_group", true).containsEntry("re_alert_hours", 24).containsEntry("min_threshold", 2).containsEntry("percent_min_targets", 3)
+                .containsEntry("push_individual", true);   // 2026-10-03: kurallar kartı push kipini de gösterir
     }
 
     @Test
@@ -181,6 +183,8 @@ class StormStatusServiceTest {
         when(jdbcTemplate.queryForObject(startsWith("SELECT COUNT(*) FROM notification_logs"), eq(Long.class), any(Object[].class))).thenReturn(1L);
         when(stormRepo.liveMembers(anyCollection())).thenReturn(List.of());
         when(jdbcTemplate.queryForObject(startsWith("SELECT COUNT(*) FROM user_push_deliveries"), eq(Long.class), any(), any())).thenReturn(4L);
+        // 2026-10-03: üye alarmlara GİDEN bireysel push'lar (sistem satırı hariç, yalnız SENT) — sabit alt sorguyla
+        when(jdbcTemplate.queryForObject(contains("username <> '-' AND status = 'SENT'"), eq(Long.class), any(), any())).thenReturn(6L);
 
         assertThat(svc.detail(7L, id -> false, false)).isNull();
         Map<String, Object> d = svc.detail(7L, id -> id == 14L, false);
@@ -192,7 +196,9 @@ class StormStatusServiceTest {
         assertThat(members.get(2)).containsEntry("join_kind", null).containsEntry("joined_at", e3.getCreatedAt());
         assertThat(d).containsEntry("members_total", 3).containsEntry("members_recovered", 1).containsEntry("members_down", 2);
         @SuppressWarnings("unchecked") Map<String, Object> n = (Map<String, Object>) d.get("notifications");
-        assertThat(n).containsEntry("initial", 3L).containsEntry("suppressed", 1L).containsEntry("push", 4L);
+        assertThat(n).containsEntry("initial", 3L).containsEntry("suppressed", 1L).containsEntry("push", 4L)
+                .containsEntry("push_members", 6L);
+        verify(jdbcTemplate).queryForObject(contains(StormStatusService.MEMBER_EVENTS_SUBQUERY + " AND username <> '-'"), eq(Long.class), eq(7L), eq(7L));
         // bildirim özeti sabit alt sorguyla (üye sayısı kadar ? yok)
         verify(jdbcTemplate).queryForList(contains(StormStatusService.MEMBER_EVENTS_SUBQUERY), eq(7L), eq(7L));
     }

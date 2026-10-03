@@ -38,6 +38,8 @@ export default function StormSettings() {
   const [windowMin, setWindowMin] = useState(5)
   const [perGroup, setPerGroup] = useState(false)
   const [quietMin, setQuietMin] = useState(30)
+  // 2026-10-03 (kullanıcı kararı): push fırtınaya devredilmesin — varsayılan AÇIK (sunucu StormService.KEY_PUSH_INDIVIDUAL)
+  const [pushIndividual, setPushIndividual] = useState(true)
   const [total, setTotal] = useState(0)
 
   useEffect(() => { load() }, [])
@@ -60,6 +62,7 @@ export default function StormSettings() {
     setWindowMin(Number(d.window_minutes ?? 5))
     setPerGroup(!!d.per_group)
     setQuietMin(Number(d.quiet_minutes ?? 30))
+    setPushIndividual(d.push_individual !== false)   // alan yoksa (eski sunucu) varsayılan: açık
     setTotal(Number(d.total_active_monitors ?? 0))
   }
 
@@ -88,6 +91,7 @@ export default function StormSettings() {
         window_minutes: Number(windowMin),
         per_group: perGroup,
         quiet_minutes: Number(quietMin),
+        push_individual: pushIndividual,
       })
       if (res?.success) { applyData(res.data); toast.success(t('storm.saved')) }
       else toast.error(res?.error || res?.message || t('settings.saveError'))
@@ -185,6 +189,17 @@ export default function StormSettings() {
           <ToggleRow checked={perGroup} onChange={setPerGroup} label={t('storm.perGroup')}
             helpKey="help.set.site.monitor.storm.per-group" />
           <p className="text-xs text-muted-foreground">{t('storm.perGroupHintTeam')}</p>
+        </CardContent>
+      </Card>
+
+      {/* Push fırtınaya devredilmesin (2026-10-03, kullanıcı kararı; varsayılan açık): fırtına yalnız e-postayı toplar, push
+          alarm başına sırasıyla gider. Uzun etiket telefonda sarar; anahtar satırı dokunmatikte ≥ 40 px. */}
+      <Card className="gap-2 py-4" data-slot="storm-push-individual" data-state={pushIndividual ? 'on' : 'off'}>
+        <CardContent className="flex flex-col gap-2 px-4 sm:px-6">
+          <ToggleRow checked={pushIndividual} onChange={setPushIndividual} label={t('storm.pushIndividual')}
+            helpKey="help.set.site.monitor.storm.push-individual" touch />
+          <p className="text-xs text-muted-foreground">{t('storm.pushIndividualHint')}</p>
+          {!pushIndividual && <AlertBanner tone="info" className="mb-0">{t('storm.pushGroupedNote')}</AlertBanner>}
         </CardContent>
       </Card>
 

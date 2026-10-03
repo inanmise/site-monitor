@@ -2,7 +2,7 @@
 // config değerlerinin özeti bu sayfada gösterilsin"). Değerler `GET /api/monitoring/storm/status` → `settings`'ten (sunucunun
 // GERÇEKTE uyguladığı, kırpılmış değerler) okunur; metin kuralları StormService ile aynı: eşik COUNT → en az 2, PERCENT →
 // takımın aktif izlemelerinin yüzdesi (en az 3 hedef); kapanış tabanı = eşiğin yarısı (en az 2) ya da sessiz pencere.
-import { CloudLightning, Gauge, Hourglass, Layers, Lock, Repeat, TimerReset } from 'lucide-react'
+import { CloudLightning, Gauge, Hourglass, Layers, Lock, Repeat, Smartphone, TimerReset } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -67,6 +67,10 @@ export default function StormRulesCard({ settings }) {
             hint={t('sf.rules.realertHint')} />
           <Rule id="scope" Icon={settings.per_group ? Layers : CloudLightning} label={t('sf.rules.scope')}
             value={settings.per_group ? t('sf.rules.scopeGroup') : t('sf.rules.scopeTeam')} hint={t('sf.rules.scopeHint')} />
+          {/* 2026-10-03: push fırtınaya devredilir mi — alan yoksa (eski sunucu) varsayılan "alarm başına" */}
+          <Rule id="push" Icon={Smartphone} label={t('sf.rules.push')}
+            value={settings.push_individual === false ? t('sf.rules.pushGrouped') : t('sf.rules.pushIndividual')}
+            hint={settings.push_individual === false ? t('sf.rules.pushGroupedHint') : t('sf.rules.pushIndividualHint')} />
         </dl>
       </CardContent>
     </Card>

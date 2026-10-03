@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from './test-utils.jsx'
+import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import StormSettings from '../components/admin/StormSettings.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -65,6 +65,7 @@ describe('StormSettings', () => {
     await waitFor(() => expect(api.monitoring.storm.saveSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, per_group: false,
+        push_individual: true,   // 2026-10-03: alan yüklenmese de varsayılan açık gönderilir
       }),
     ))
   })
@@ -94,6 +95,47 @@ describe('StormSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
     await new Promise((r) => setTimeout(r, 20))
     expect(api.monitoring.storm.saveSettings).not.toHaveBeenCalled()
+  })
+
+  /**
+   * 2026-10-03 (kullanıcı kararı "push bildirimlerini alarm fırtınasına devretmeyelim"): anahtar yüklenen değeri gösterir
+   * (alan yoksa varsayılan AÇIK), yardım ipucu ve saatlik tavan notu durur, kapatınca bilgi bandı çıkar ve kayıt
+   * `push_individual:false` gönderir. Mevcut anahtar sırası korunur: [etkin, grup, push].
+   */
+  it('push fırtınaya devredilmesin anahtarı: varsayılan açık, yardım + tavan notu, kapatınca bant ve payload push_individual:false', async () => {
+    api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: cfg })   // push_individual alanı YOK → açık
+    api.monitoring.storm.saveSettings.mockResolvedValue({ success: true, data: { ...cfg, push_individual: false } })
+    const { container } = render(<StormSettings />)
+    const sw = await screen.findByRole('switch', { name: /hand push notifications over|push bildirimleri fırtınaya/i })
+    expect(sw).toBeChecked()
+    expect(screen.getAllByRole('switch')[2]).toBe(sw)
+    const card = container.querySelector('[data-slot="storm-push-individual"]')
+    expect(card).toHaveAttribute('data-state', 'on')
+    expect(card.textContent).toMatch(/hourly cap per user|kişi başı saat tavanı/i)
+    expect(card.querySelector('[data-slot="alert"]')).toBeNull()
+
+    // Yardım ipucu (help.set.site.monitor.storm.push-individual) — üç satır, ekranda açılır
+    fireEvent.click(within(card).getByRole('button', { name: /hand push notifications over|push bildirimleri fırtınaya/i }))
+    expect((await screen.findByRole('tooltip')).textContent).toMatch(/recommended|önerilen değer/i)
+
+    fireEvent.click(sw)
+    expect(sw).not.toBeChecked()
+    expect(card).toHaveAttribute('data-state', 'off')
+    expect(card.querySelector('[data-slot="alert"][data-tone="info"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.storm.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ push_individual: false, per_group: false, quiet_minutes: 30 })))
+  })
+
+  it('push anahtarı sunucudaki KAPALI değeri gösterir ve dokunulmadan kaydedilince false gider', async () => {
+    api.monitoring.storm.getSettings.mockResolvedValue({ success: true, data: { ...cfg, push_individual: false } })
+    api.monitoring.storm.saveSettings.mockResolvedValue({ success: true, data: { ...cfg, push_individual: false } })
+    render(<StormSettings />)
+    const sw = await screen.findByRole('switch', { name: /hand push notifications over|push bildirimleri fırtınaya/i })
+    expect(sw).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.storm.saveSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ push_individual: false })))
   })
 
   it('boş durumda API hatası toast atar, çökmez', async () => {

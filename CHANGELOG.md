@@ -15,6 +15,16 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **⚠ Davranış — Push bildirimleri alarm fırtınasına devredilmez:** fırtına artık yalnız e-postayı (webhook ve 7/24
+  postasıyla birlikte) toplar; her üye alarmın push'u (açılış, seviye artışı, günlük hatırlatma, çözüm) tek tek ve
+  alarmların açılış sırasıyla gider. Toplu fırtına push'u gönderilmez. Kişi başına saatlik push tavanı, takım/kişisel
+  sessiz saat, sistem bakımı ve hatırlatma ayarı aynen geçerli. Alarm zaman çizelgesi "E-posta fırtınaya devredildi"
+  der; fırtına ayrıntısı toplu ve bireysel push sayılarını ayrı gösterir; Fırtına kuralları kartına "Push bildirimi"
+  eklendi. Kullanım kılavuzu (TR/EN, PDF) güncellendi.
+- **Yeni ayar:** `site.monitor.storm.push-individual` (`STORM_PUSH_INDIVIDUAL`, varsayılan `true`) — Ayarlar → Alarm
+  Fırtınası → "Push bildirimleri fırtınaya devredilmesin". Kapatılırsa önceki davranış (toplu fırtına push'u).
+
 ## [20.100.0] — 2026-10-03
 
 ### Added

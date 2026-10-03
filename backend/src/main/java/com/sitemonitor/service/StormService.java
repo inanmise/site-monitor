@@ -63,6 +63,12 @@ import java.util.Set;
  * dağıtılır. Her takım dağıtımı yalnız KENDİ üyelerinin sayısını, adını ve kök-nedenini görür; fırtına push'u
  * bireysel alarmdan geniş kitleye (seviye yükseltmesiyle) gitmez ({@link #stormPushLevel}). 7/24 (NOC) izlemede açık
  * onayla (izleme başına {@code noc_notify}) kapsanan üyeler için ayrı kanaldır — kuralı değişmedi.
+ *
+ * <p><b>PUSH FIRTINAYA DEVREDİLMEZ (kullanıcı kararı 2026-10-03, {@link #KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK).</b> Fırtına
+ * yalnız e-postayı (ve webhook / 7-24 postasını) gruplar; kişi push'u her üye alarm için tek tek, alarmların açılış
+ * sırasıyla gider ({@code EscalationService} fırtına dalı: açılış + seviye artışı; buradaki günlük tekrar: üye başına
+ * hatırlatma). Toplu fırtına push'u yalnız ayar KAPALIYKEN üretilir (ya da ayar fırtına sürerken açıldıysa, önceden toplu
+ * push almış olanlara çözüm simetrisi için).
  */
 @Slf4j
 @Service
@@ -170,6 +176,17 @@ public class StormService {
 
     void setInactiveGuard(InactiveRecipientGuard guard) { this.inactiveGuard = guard; }
 
+    /**
+     * Takım sessiz saati (2026-10-03) — yalnız bireysel push kipinde ({@link #KEY_PUSH_INDIVIDUAL}) üyelerin günlük
+     * hatırlatma push'u için: bireysel hattın kuralıyla aynı karar ({@link TeamQuietHoursService#defersPush}), özet kaydı
+     * yazılmaz (e-postayı fırtına postası taşır). Alan enjeksiyonu + isteğe bağlı: yokken pencere yok sayılır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private TeamQuietHoursService quietHours;
+
+    /** Test kancası. */
+    void setQuietHours(TeamQuietHoursService q) { this.quietHours = q; }
+
 
     /** Fırtına e-posta tetik adları — üye alarmın bildirim günlüğünde görünür; ön yüz {@code MAIL_TRIGGER} eşler. */
     public static final String TRIGGER_STORM_INITIAL = "STORM_INITIAL";
@@ -192,6 +209,13 @@ public class StormService {
     public static final String KEY_VALUE     = "site.monitor.storm.threshold-value";
     public static final String KEY_WINDOW    = "site.monitor.storm.window-minutes";
     public static final String KEY_PER_GROUP = "site.monitor.storm.per-group";
+    /**
+     * Push fırtınaya DEVREDİLMESİN (2026-10-03, kullanıcı kararı; varsayılan AÇIK): fırtına yalnız E-POSTAYI gruplar —
+     * üye alarmların push'u alarm başına, açılış sırasıyla bireysel gider (açılış / seviye artışı / günlük hatırlatma /
+     * çözüm); toplu fırtına push'u (açılış / tekrar) gönderilmez. KAPALI = 2026-10-02'ye kadarki davranış bayt bayt
+     * ({@code SKIPPED_STORM} karar satırı + toplu fırtına push'u).
+     */
+    public static final String KEY_PUSH_INDIVIDUAL = "site.monitor.storm.push-individual";
 
     /** 2026-09-29 öncesinin kuruluş geneli kapsamı — artık üretilmez; aktif kalan eskisi yaşam döngüsünde dağıtılır. */
     static final String SCOPE_ACCOUNT = "ACCOUNT";
@@ -905,6 +929,9 @@ public class StormService {
     /** Grup bazlı kapsam (takım + bildirim grubu) açık mı — durum ekranı kuralları anlatır. */
     public boolean perGroup() { return appSettings.getBoolean(KEY_PER_GROUP, false); }
 
+    /** Push alarm başına mı gider ({@link #KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK) — durum ekranı da aynı değeri gösterir. */
+    public boolean pushIndividual() { return appSettings.getBoolean(KEY_PUSH_INDIVIDUAL, true); }
+
     /** Sayım penceresi (dk, 1–15) — durum ekranı aynı değeri gösterir. */
     public int windowMinutes() { return clamp(appSettings.getInt(KEY_WINDOW, 5), 1, 15); }
     /** Eşik birimi (COUNT | PERCENT) — durum ekranı. */
@@ -1108,6 +1135,7 @@ public class StormService {
 
                 // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz. Kanal kapıları
                 // (takım/tür/izleme bayrağı/sessiz saat/tekrar ayarı) ve günlük tekrar anahtarı UserPushService'te.
+                // Bireysel push kipinde (2026-10-03, varsayılan) toplu push yok: tekrar üye başına gider (enqueueStormPush).
                 enqueueStormPush(storm, d, trigger,
                         count + " monitör birden erişilemez — " + label + " · kök-neden: " + rootCauseLabel);
 
@@ -1172,6 +1200,27 @@ public class StormService {
      */
     private void enqueueStormPush(AlertStorm storm, TeamDispatch d, String stormTrigger, String message) {
         if (userPushService == null || d.teamId() == null || d.pushMembers().isEmpty()) return;
+        // BİREYSEL PUSH KİPİ (2026-10-03, kullanıcı kararı: "push bildirimlerini alarm fırtınasına devretmeyelim"): fırtına
+        // yalnız e-postayı gruplar. Açılış: üyelerin push'u alarm başına zaten gitti (EscalationService fırtına dalı;
+        // eşikten önce düşenler bireysel hattan) → toplu açılış push'u YOK. Günlük tekrar: toplu push yerine hâlâ açık ve
+        // onaysız her üyeye bireysel hatırlatma push'u, açılış sırasıyla. Çözüm: her üyenin çözüm push'u kendi kapanışında
+        // gider (enqueueResolve, simetri açılış push'unu bulur) → toplu çözüm push'u yalnız bu fırtına (ya da taşındığı eski
+        // fırtına) için ÖNCEDEN toplu push gitmişse gider — ayar fırtına sürerken açıldıysa "düştü"yü toplu alan "düzeldi"yi
+        // de alsın. Karar satırı yazılmaz: toplu push bilinçli olarak üretilmedi, bireysel satırlar teslimatın kendisidir.
+        if (pushIndividual()) {
+            if ("DAILY_REALERT".equals(stormTrigger)) {
+                pushMembersIndividually(d.teamId(), d.pushMembers());
+                return;
+            }
+            if (!"RESOLVE".equals(stormTrigger)) return;
+            boolean noticeSent;
+            try {
+                noticeSent = userPushService.stormNoticeSent(storm.getId(), storm.getLegacyStormId(), d.teamId());
+            } catch (Exception e) {
+                noticeSent = false;
+            }
+            if (!noticeSent) return;
+        }
         try {
             if (storm.getLegacyStormId() == null)
                 userPushService.enqueueStormNotice(storm.getId(), d.teamId(), stormTrigger, stormPushLevel(d.pushMembers()),
@@ -1181,6 +1230,52 @@ public class StormService {
                         stormPushLevel(d.pushMembers()), d.pushMembers(), message);
         } catch (Exception e) {
             log.warn("Storm push'u gönderilemedi (takım {}): {}", d.teamId(), e.toString());
+        }
+    }
+
+    /**
+     * Bireysel push kipinde fırtınanın günlük tekrarı (2026-10-03): hâlâ AÇIK ve ONAYSIZ her üyeye kendi hatırlatma push'u
+     * (e-posta tetiği {@code DAILY_REALERT} → push {@code RE_ALERT}), açılış sırasıyla ({@code createdAt}, sonra kimlik) —
+     * outbox kimlik sırasıyla boşaldığından kuyruk sırası teslim sırasıdır. Bireysel hattın kuralları aynen
+     * {@link UserPushService#enqueueAlert}'te: hatırlatma ayarı ({@code SKIPPED_REALERT_OFF}), sistem bakımı, tür / takım /
+     * izleme bayrağı, kişisel ve genel sessiz saat, kişi başına saatlik tavan ({@code RATE_LIMITED}) ve olay + gün başına
+     * tekilleştirme. Takım sessiz saati bireysel hattaki gibi uygulanır ({@code SKIPPED_TEAM_QUIET}). Onaylı üye bireysel
+     * hatta da hatırlatma almaz. Bir üyenin hatası diğerlerini düşürmez.
+     */
+    private void pushMembersIndividually(Long teamId, List<AlertEvent> members) {
+        List<AlertEvent> due = new ArrayList<>();
+        for (AlertEvent m : members) {
+            if (m == null || m.getId() == null || Boolean.TRUE.equals(m.getResolved())
+                    || Boolean.TRUE.equals(m.getAcknowledged())) continue;
+            due.add(m);
+        }
+        due.sort(java.util.Comparator.comparing(AlertEvent::getCreatedAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.<String>naturalOrder()))
+                .thenComparing(AlertEvent::getId));
+        for (AlertEvent m : due) {
+            try {
+                Map<String, Object> ctx = memberContext(m);
+                Long pushTeam = m.getTeamId() != null ? m.getTeamId() : teamId;
+                if (quietHours != null && quietHours.defersPush(pushTeam, m.getAlertLevel(), "DAILY_REALERT"))
+                    ctx = EscalationService.quietCtx(ctx);
+                userPushService.enqueueAlert(m.getId(), "DAILY_REALERT", teamId, ctx);
+            } catch (Exception e) {
+                log.warn("Fırtına üyesinin hatırlatma push'u atlandı (olay {}): {}", m.getId(), e.toString());
+            }
+        }
+        if (!due.isEmpty())
+            log.info("🌩 Fırtına günlük tekrarı — push alarm başına: {} üye (takım {})", due.size(), teamId);
+    }
+
+    /** Üye alarmın alarm-anı bağlam anlık görüntüsü (push şablonu + izleme bayrağı); okunamazsa null. */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> memberContext(AlertEvent m) {
+        String json = m.getContextJson();
+        if (json == null || json.isBlank() || objectMapper == null) return null;
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return null;
         }
     }
 

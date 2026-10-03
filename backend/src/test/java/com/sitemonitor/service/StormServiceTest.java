@@ -571,10 +571,17 @@ class StormServiceTest {
 
     // ── Denetim 8. tur (2026-09-23): kanal paritesi + takım izolasyonu ──────────
 
-    /** Fırtına yolunda push kanalı HİÇ yoktu; alan enjeksiyonu olduğu için testte elle bağlanır. */
+    /**
+     * Fırtına yolunda push kanalı HİÇ yoktu; alan enjeksiyonu olduğu için testte elle bağlanır.
+     *
+     * <p>2026-10-03: bu bölümdeki testler TOPLU fırtına push'unun sözleşmesini pinler — o yalnız
+     * {@code site.monitor.storm.push-individual} KAPALIYKEN üretilir (varsayılan AÇIK: push alarm başına; o kip
+     * {@code StormPushIndividualTest}'te). Kip burada BİLEREK kapatılır, ayar okuması örtük mock varsayılanına bırakılmaz.
+     */
     private UserPushService wirePush() {
         UserPushService push = org.mockito.Mockito.mock(UserPushService.class);
         org.springframework.test.util.ReflectionTestUtils.setField(storm, "userPushService", push);
+        when(appSettings.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean())).thenReturn(false);
         return push;
     }
 

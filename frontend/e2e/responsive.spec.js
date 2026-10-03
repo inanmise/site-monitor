@@ -125,8 +125,10 @@ const NOC_COVERAGE = { success: true, data: { items: [], summary: { total: 3, co
 const ADMIN_SUBTABS = [
   // "Kim bilgilendirilir?" (2026-09-27): senaryo formu + özet kutucukları + kanal kartları
   { key: 'admin/whoNotified', url: '/?tab=admin&g_tab=whoNotified&g_team=1', ready: '[data-slot="wn-result"]' },
-  // Ayarlar → Alarm Fırtınası (2026-09-30): eşik/pencere/sessiz pencere alanları + canlı takım durum paneli
-  { key: 'settings/storm', url: '/?tab=settings&sec=storm', ready: '[data-testid="storm-settings"]' },
+  // Ayarlar → Alarm Fırtınası (2026-09-30): eşik/pencere/sessiz pencere alanları + canlı takım durum paneli.
+  // 2026-10-03: "Push bildirimleri fırtınaya devredilmesin" anahtarı (uzun etiket telefonda sarar, satır dokunmatik hedefi).
+  { key: 'settings/storm', url: '/?tab=settings&sec=storm', ready: '[data-testid="storm-settings"]',
+    visible: '[data-slot="storm-push-individual"]', touchRow: '[data-slot="storm-push-individual"] [role="switch"]' },
 ]
 for (const vp of VIEWPORTS) {
   test.describe(`mobil web — yönetim alt sekmeleri ${vp.name} ${vp.width}×${vp.height}`, () => {
@@ -148,6 +150,19 @@ for (const vp of VIEWPORTS) {
         const key = `${sub.key}@${vp.name}`
         expect(m.offenders, `${key}: görünür öğe ekran dışına çıkıyor`).toEqual([])
         expect(m.pageOverflow, `${key}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+        if (sub.visible) {
+          const el = page.locator(sub.visible)
+          await el.scrollIntoViewIfNeeded()
+          await expect(el, `${key}: ${sub.visible} görünür`).toBeVisible()
+          const box = await el.boundingBox()
+          expect(box.x, `${key}: sol kenar ekranda`).toBeGreaterThanOrEqual(0)
+          expect(box.x + box.width, `${key}: sağ kenar ekranda`).toBeLessThanOrEqual(vp.width + 1)
+        }
+        if (sub.touchRow && vp.width < 640) {
+          // Anahtar satırı (Switch + etiket) telefonda ≥ 40 px dokunma hedefi (ToggleRow `touch`)
+          const row = await page.locator(sub.touchRow).locator('..').boundingBox()
+          expect(row.height, `${key}: anahtar satırı yüksekliği`).toBeGreaterThanOrEqual(40)
+        }
       })
     }
   })

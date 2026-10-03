@@ -1474,10 +1474,17 @@ class EscalationServiceTest {
      * çalıştırmıyor ve eskiden hiçbir iz bırakmıyordu — ekran "0 bildirim", push "önce bildirim gitmemişti". Artık
      * bildirim günlüğünde STORM tetikli "SKIPPED: fırtına #N" satırı ve push kararında SKIPPED_STORM olmalı; e-posta,
      * webhook ve bireysel push YİNE çalışmaz (fırtına toplu bildirir).
+     *
+     * <p>2026-10-03 (kullanıcı kararı "push bildirimlerini alarm fırtınasına devretmeyelim"): kapı ayar üzerinden
+     * parametrelidir. {@code push-individual=false} → yukarıdaki iz BAYT BAYT aynı (eski metin + SKIPPED_STORM, push yok).
+     * {@code true} (varsayılan) → STORM satırı kalır ama "yalnız e-posta devredildi" der, SKIPPED_STORM YAZILMAZ ve alarmın
+     * push'u bireysel INITIAL olarak kuyruğa girer; e-posta / webhook yine çalışmaz.
      */
-    @Test
-    @DisplayName("processConfirmedOutage: fırtınaya devredilen alarm günlüğe STORM satırı + SKIPPED_STORM push kararı bırakır; hiçbir kanal çalışmaz")
-    void processConfirmedOutage_stormSuppressed_leavesTrace() {
+    @ParameterizedTest(name = "push-individual={0}")
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    @DisplayName("processConfirmedOutage: fırtınaya devredilen alarm günlüğe STORM satırı bırakır; e-posta/webhook çalışmaz; push ayara göre (devir izi ya da bireysel)")
+    void processConfirmedOutage_stormSuppressed_leavesTrace(boolean pushIndividual) {
+        when(appSettings.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean())).thenReturn(pushIndividual);
         String name = "OCPA - Response Time Anomalisi";
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("team_id", 14L);
@@ -1503,14 +1510,27 @@ class EscalationServiceTest {
         assertThat(l.getEmailStatus()).startsWith(EscalationService.STATUS_STORM_PREFIX + "7");
         assertThat(l.getRecipientName()).isEqualTo("SY-Kurumsal Mimari");
         assertThat(l.getRecipientEmail()).isEqualTo("sy@example.com");
-        ArgumentCaptor<AlertEvent> evCap = ArgumentCaptor.forClass(AlertEvent.class);
-        verify(userPushService).recordSuppressed(evCap.capture(), eq(EscalationService.PUSH_SKIPPED_STORM));
-        assertThat(evCap.getValue().getId()).isEqualTo(414L);
-        // Hiçbir kanal çalışmadı; lastReAlertAt damgalandı (fırtına toplu bildirir).
+        // E-posta ve webhook iki kipte de çalışmaz (e-postayı fırtına toplu gönderir); lastReAlertAt damgalanır.
         verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
-        verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
         verify(webhookService, never()).send(any(), any(), any(), any(), any());
-        assertThat(evCap.getValue().getLastReAlertAt()).isNotNull();
+        ArgumentCaptor<AlertEvent> saved = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeastOnce()).save(saved.capture());
+        assertThat(saved.getValue().getLastReAlertAt()).isNotNull();
+        if (!pushIndividual) {
+            // KAPALI ≡ 2026-10-02: eski metin bayt bayt + SKIPPED_STORM push kararı, bireysel push YOK.
+            assertThat(l.getEmailStatus()).isEqualTo("SKIPPED: fırtına #7 — bireysel bildirim yerine toplu fırtına bildirimi");
+            ArgumentCaptor<AlertEvent> evCap = ArgumentCaptor.forClass(AlertEvent.class);
+            verify(userPushService).recordSuppressed(evCap.capture(), eq(EscalationService.PUSH_SKIPPED_STORM));
+            assertThat(evCap.getValue().getId()).isEqualTo(414L);
+            verify(userPushService, never()).enqueueAlert(any(), any(), any(), any(), any());
+        } else {
+            // AÇIK: yalnız e-posta devredildi; push karar satırı yok, push bireysel INITIAL (takım damgası yedek takım).
+            assertThat(l.getEmailStatus()).isEqualTo(
+                    "SKIPPED: fırtına #7 — bireysel e-posta yerine toplu fırtına e-postası (push tek tek)");
+            verify(userPushService, never()).recordSuppressed(any(), any());
+            verify(userPushService).enqueueAlert(eq(414L), eq("INITIAL"), eq(14L), argThat(m -> m != null
+                    && Long.valueOf(14L).equals(m.get("team_id")) && !m.containsKey(EscalationService.CTX_QUIET_DEFERRED)), eq(Set.of()));
+        }
     }
 
     /**

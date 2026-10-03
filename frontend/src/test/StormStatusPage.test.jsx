@@ -42,7 +42,7 @@ const DETAIL = { success: true, data: { id: 7, team_id: 1, team_name: 'Takım A'
   members: [
     { event_id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', team_id: 1, created_at: iso(-20), resolved: false, join_kind: 'TRIGGER', joined_at: iso(-20), announced_at: iso(-20), trigger: true },
     { event_id: 301, domain: 'https://b.example.com', alert_type: 'HTTP_DOWN', alert_level: 'HIGH', team_id: 1, created_at: iso(-19), resolved: true, resolved_at: iso(-5), join_kind: 'PEER', joined_at: iso(-20), announced_at: iso(-20), left_at: iso(-5), leave_kind: 'RECOVERED', trigger: false },
-  ], members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, last_mail_at: iso(-20) } } }
+  ], members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, push_members: 12, last_mail_at: iso(-20) } } }
 
 /** Radix Tabs tetikleyicisi onMouseDown ile etkinleşir; click tek başına yetmez. */
 function pickTab(re) { const el = screen.getByRole('tab', { name: re }); fireEvent.mouseDown(el, { button: 0 }); fireEvent.click(el) }
@@ -96,7 +96,24 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
     expect(rule('floor')).toMatch(/below 2/)
     expect(rule('realert')).toMatch(/24 hours/)
     expect(rule('scope')).toMatch(/notification group/)
+    // 2026-10-03: alan yoksa (eski sunucu) push kuralı varsayılanı gösterir — alarm başına
+    expect(rule('push')).toMatch(/one per alert/i)
     expect(container.querySelector('[data-slot="sf-rules"]').getAttribute('data-enabled')).toBe('true')
+  })
+
+  it('Kural kartı push kipini GERÇEK ayardan gösterir (2026-10-03): push_individual=false → toplu fırtına push\'u; true → alarm başına', async () => {
+    api.monitoring.storm.status.mockResolvedValue({ ...STATUS, data: { ...STATUS.data,
+      settings: { ...STATUS.data.settings, push_individual: false } } })
+    const { container, unmount } = render(<StormStatusPage />)
+    await waitFor(() => expect(container.querySelector('[data-rule="push"]')).not.toBeNull())
+    expect(container.querySelector('[data-rule="push"]').textContent).toMatch(/one summary storm push/i)
+    unmount()
+    api.monitoring.storm.status.mockResolvedValue({ ...STATUS, data: { ...STATUS.data,
+      settings: { ...STATUS.data.settings, push_individual: true } } })
+    const { container: c2 } = render(<StormStatusPage />)
+    await waitFor(() => expect(c2.querySelector('[data-rule="push"]')).not.toBeNull())
+    expect(c2.querySelector('[data-rule="push"]').textContent).toMatch(/one per alert/i)
+    expect(c2.querySelector('[data-rule="push"]').textContent).toMatch(/hourly push cap/i)
   })
 
   it('Yüzde birimi ve kapalı koruma: eşik cümlesi yüzdeyle (en az 3), kart "Koruma kapalı" ve başlıkta uyarı rozeti', async () => {
@@ -131,6 +148,9 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
     expect(dlg.querySelector('[data-slot="sf-trigger"]')).not.toBeNull()
     expect(dlg.querySelectorAll('[data-slot="sf-member-state"][data-resolved="true"]').length).toBe(1)
     expect(dlg.querySelector('[data-slot="sf-notifications"]').textContent).toMatch(/7/)
+    // 2026-10-03: toplu push sayacı ile üye alarmlara giden bireysel push sayacı ayrı
+    expect(dlg.querySelector('[data-slot="sf-notifications"]').textContent).toMatch(/3 summary pushes/)
+    expect(dlg.querySelector('[data-slot="sf-push-members"]').textContent).toMatch(/12 individual pushes/)
     expect(dlg.querySelectorAll('[data-slot="sf-timeline"] li').length).toBeGreaterThanOrEqual(3)
     await waitFor(() => expect(window.location.search).toContain('sf_storm=7'))
     fireEvent.click(within(dlg).getByRole('button', { name: /https:\/\/b\.example\.com/ }))
