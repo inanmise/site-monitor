@@ -1670,7 +1670,7 @@ export const EN = {
 
   // ── Alert Storm settings — "Alert Settings" (admin only) ──
   'storm.title':          'Alert Storm Protection',
-  'storm.desc':           'When many of a team\'s monitors go down at once within a short window (a shared server, network or data centre outage), that team gets a SINGLE summary notification instead of a flood of alerts, and one summary "resolved" notification once things recover. Each team is assessed on its own, and a manual check ("Check now") never starts a storm.',
+  'storm.desc':           'When many of a team\'s monitors go down at once within a short window (a shared server, network or data centre outage), that team gets a SINGLE summary storm email instead of a flood of emails, and one summary "resolved" email once things recover. Push notifications go out one alert at a time (the default) or as one summary, depending on the setting below. Each team is assessed on its own, and a manual check ("Check now") never starts a storm.',
   'storm.enabled':        'Enable alert storm protection',
   'storm.enabledHint':    'When on, only a REAL flood (threshold crossed) is grouped; a normal single-monitor alert still goes out individually with no delay. Turn off to alert every failure separately, as today.',
   'storm.disabledWarn':   'Alert storm protection is OFF — even if many monitors go down at once, a separate email is sent for each.',
@@ -1689,6 +1689,10 @@ export const EN = {
   'storm.quietHint':      '{0}–{1} minutes. Permanently failing monitors can no longer keep a storm open forever and leave the team’s later alerts unnotified.',
   'storm.errQuiet':       'The quiet window must be between {0} and {1} minutes',
   'storm.perGroup':       'Alert storm based on monitor groups',
+  // 2026-10-03 (user decision): push is not handed over to the storm — the storm groups email only
+  'storm.pushIndividual':     'Don\'t hand push notifications over to the storm — send each alert individually, in order',
+  'storm.pushIndividualHint': 'When on (the default), the storm groups email only: the team gets one summary storm email, while push goes out separately for every alert, in the order the alerts opened (level rises, daily reminders and resolutions are per alert too). The hourly push cap per user (Settings → Webhook Notifications → Hourly cap per user) and quiet hours still apply: a push over the cap isn\'t sent and shows as "RATE_LIMITED" in the delivery log.',
+  'storm.pushGroupedNote':    'Push is handed over to the storm as well: while a storm lasts, member alerts aren\'t pushed one by one and the team gets a single summary storm push.',
   'storm.save':           'Save',
   'storm.saved':          'Alert storm settings saved',
 
@@ -3404,8 +3408,8 @@ export const EN = {
   'storm.unitPercentTeam': '% of the team\'s monitors',
   'storm.pctPreviewTeam': 'Worked out separately for each team: {0}% of the team\'s active monitors (at least 3 different targets). For example, with {1} active monitors ≈ {2} targets.',
   'storm.perGroupHintTeam': 'When on, each monitor group within a team is assessed separately (a flood in one group isn\'t merged with unrelated failures in another). When off, all of a team\'s monitors form one pool. Either way, teams are always kept separate.',
-  'alh.whyStorm': 'Handed over to the storm notification',
-  'alh.whyStormTip': 'This alert is part of an alert storm: rather than an individual email or push, the team gets a single storm summary, which isn\'t counted against this alert.',
+  'alh.whyStorm': 'Storm member — email grouped',
+  'alh.whyStormTip': 'This alert is part of an alert storm: rather than an individual email, the team gets a single storm summary email, which isn\'t counted against this alert\'s email total. Push goes out for this alert individually by default (see the push count alongside); if "Don\'t hand push notifications over to the storm" is switched off in the Alert Storm settings, the team gets one summary storm push instead.',
 
   'modal.detailsTab':  'Certificate Details',
   'modal.alertsTab':   'Alert History',
@@ -4385,7 +4389,7 @@ export const EN = {
   'alh.trigger.stormResolve': 'Storm Resolution Notice',
   'alh.trigger.escalationStep': 'Escalation Step',
   'alh.storm.badge': 'Storm #{0}',
-  'alh.storm.tip':   'This alert is a member of an alert storm: the team is informed by the aggregated storm notice instead of an individual email or push.',
+  'alh.storm.tip':   'This alert is a member of an alert storm: the team is informed by the aggregated storm email instead of an individual email; push goes out one alert at a time by default.',
   'alh.notifModal.title':   'Notification History',
   'alh.notifModal.closed':  'Closed',
   'alh.notifModal.open':    'Open',
@@ -4487,6 +4491,9 @@ export const EN = {
   'alh.ev.storm': 'Notification handed over to the storm',
   'alh.ev.stormDetail': 'The alert joined the team’s alert storm #{0}: no individual email or push was sent; the team is informed by the aggregated storm notice.',
   'alh.ev.stormBackfilled': 'This entry was added retroactively: the handover was not recorded at the time.',
+  // 2026-10-03: when push isn't handed over to the storm (the default) the handover row covers email only
+  'alh.ev.stormMail': 'Email handed over to the storm',
+  'alh.ev.stormMailDetail': 'The alert joined the team’s alert storm #{0}: no individual email was sent; the team is informed by the aggregated storm email. Push for this alert went out individually — see the push row for its status.',
   // 2026-10-01: quiet hours (approved proposal 15)
   'alh.ev.quiet': 'Notification handed over to the quiet-hours digest',
   'alh.ev.quietDetail': 'Team {0} was in its quiet hours: this notification wasn’t sent now. It will appear in the team’s quiet-hours digest when the window ends.',
@@ -11113,6 +11120,12 @@ export const EN = {
   'sf.rules.scopeTeam': 'Per team',
   'sf.rules.scopeGroup': 'Per team and notification group',
   'sf.rules.scopeHint': 'One team\'s alerts never join another team\'s storm; notifications go only to that team.',
+  // 2026-10-03: whether push is handed over to the storm (Settings → Alert Storm)
+  'sf.rules.push': 'Push notifications',
+  'sf.rules.pushIndividual': 'One per alert',
+  'sf.rules.pushGrouped': 'One summary storm push',
+  'sf.rules.pushIndividualHint': 'The storm groups email only; each alert\'s push goes out separately, in the order the alerts opened (the hourly push cap per user still applies).',
+  'sf.rules.pushGroupedHint': 'Push is handed over to the storm too: the team gets one summary storm push instead of one per member alert.',
   'sf.refresh': 'Refresh',
   'sf.loading': 'Loading storm status…',
   'sf.loadError': 'Storm status could not be loaded',
@@ -11209,12 +11222,13 @@ export const EN = {
   'sf.detail.quiet': 'Quiet window',
   'sf.detail.timeline': 'Timeline',
   'sf.detail.notifications': 'Notifications',
-  'sf.detail.notifHint': 'Storm mails leave one row per member alert in the notification log; a "handed over" row is an alert whose individual notification was left to the storm.',
+  'sf.detail.notifHint': 'Storm mails leave one row per member alert in the notification log; a "handed over" row is an alert whose individual email was left to the storm mail. By default push goes out for each member alert individually ("individual pushes"); "summary pushes" only appear when push is handed over to the storm as well.',
   'sf.detail.n.initial': '{0} opening mails',
   'sf.detail.n.realert': '{0} re-alert mails',
   'sf.detail.n.resolve': '{0} resolution mails',
   'sf.detail.n.suppressed': '{0} handed-over alerts',
-  'sf.detail.n.push': '{0} pushes',
+  'sf.detail.n.push': '{0} summary pushes',
+  'sf.detail.n.pushMembers': '{0} individual pushes',
   'sf.detail.n.lastMail': 'Last mail',
   'sf.detail.members': 'Members',
   'sf.detail.membersCount': '{0} members · {1} recovered · {2} down',
@@ -13907,7 +13921,9 @@ export const EN = {
   'help.set.site.monitor.sql-history.retention-days':
     'What it does: How long the history of queries run in the SQL workspace is kept.\nBenefit: Who ran which query is auditable, and people can find their own queries again.\nRecommended: 365 days (the default). Query text can contain sensitive data, so do not keep it longer than you need.',
   'help.set.site.monitor.storm.enabled':
-    'What it does: Enables alert storm suppression: when many monitors fail in a short window, the individual alerts collapse into one bundled notification.\nBenefit: A backbone failure sends one readable summary instead of hundreds of emails.\nRecommended: true (the default). Turning it off means flooded mailboxes during a wide outage.',
+    'What it does: Enables alert storm suppression: when many monitors fail in a short window, the individual alert emails collapse into one bundled storm email (push has its own setting: "Don\'t hand push notifications over to the storm").\nBenefit: A backbone failure sends one readable summary instead of hundreds of emails.\nRecommended: true (the default). Turning it off means flooded mailboxes during a wide outage.',
+  'help.set.site.monitor.storm.push-individual':
+    'What it does: Decides whether push notifications are handed over to a storm. When on, the storm groups email only, and each member alert\'s push (opening, level rise, daily reminder, resolution) goes out on its own, in the order the alerts opened. When off, push is handed over as well and the team gets one summary storm push.\nBenefit: The on-call person sees on their phone exactly which monitors went down, one by one and in order; no single alert gets lost in a summary. Inboxes are still protected by the one summary email.\nRecommended: true (the default). Use false if hundreds of pushes during a large outage would be a problem; the hourly push cap per user (Webhook Notifications → Hourly cap per user) also limits push volume.',
   'help.set.site.monitor.storm.per-group':
     'What it does: Counts storms separately for each of a team\'s monitor groups rather than across all of that team\'s monitors (storms are always per team; another team\'s failures are never counted).\nBenefit: One application collapsing doesn\'t suppress alerts from unrelated groups in the same team.\nRecommended: true where a team\'s monitors are organised into meaningful groups; false (the default) where one pool per team is enough.',
   'help.set.site.monitor.storm.retention-days':

@@ -1,6 +1,6 @@
 // Fırtına ayrıntı penceresi (2026-09-30): anlık görüntü, zaman çizelgesi, üyeler (kalıcı üyelik tablosu), bildirim özeti.
 import { useEffect, useState } from 'react'
-import { CloudLightning, ExternalLink, Mail, Send, Zap } from 'lucide-react'
+import { CloudLightning, ExternalLink, Mail, Send, Smartphone, Zap } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { useIsMobile } from '../../hooks/use-mobile.js'
@@ -156,6 +156,10 @@ export default function StormDetailModal({ stormId, onClose }) {
               <Badge variant="outline" className="gap-1"><Mail aria-hidden="true" className="size-3" />{t('sf.detail.n.resolve', n.resolve ?? 0)}</Badge>
               <Badge variant="outline" className="gap-1"><CloudLightning aria-hidden="true" className="size-3" />{t('sf.detail.n.suppressed', n.suppressed ?? 0)}</Badge>
               <Badge variant="outline" className="gap-1"><Send aria-hidden="true" className="size-3" />{t('sf.detail.n.push', n.push ?? 0)}</Badge>
+              {/* 2026-10-03: push fırtınaya devredilmeyince üyelerin push'u bireysel gider — o sayı ayrı (eski sunucuda alan yok) */}
+              {n.push_members != null && (
+                <Badge variant="outline" className="gap-1" data-slot="sf-push-members"><Smartphone aria-hidden="true" className="size-3" />{t('sf.detail.n.pushMembers', n.push_members)}</Badge>
+              )}
               {n.last_mail_at && <span className="self-center text-xs text-muted-foreground">{t('sf.detail.n.lastMail')}: {formatIncidentTime(n.last_mail_at, locale)}</span>}
             </div>
             <p className="m-0 text-xs text-muted-foreground">{t('sf.detail.notifHint')}</p>

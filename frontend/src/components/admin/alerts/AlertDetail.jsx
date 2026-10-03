@@ -263,7 +263,7 @@ export function AlertDetailBody({
                     {ev.kind === 'opened' && t('alh.ev.opened')}
                     {ev.kind === 'mail' && t('alh.ev.mail', ev.recipient || '—')}
                     {ev.kind === 'push' && (ev.people > 0 ? t('alh.ev.push', ev.people) : t('alh.ev.pushSystem'))}
-                    {ev.kind === 'storm' && t('alh.ev.storm')}
+                    {ev.kind === 'storm' && t(ev.mailOnly ? 'alh.ev.stormMail' : 'alh.ev.storm')}
                     {ev.kind === 'quiet' && (ev.resolution ? t('alh.ev.quietResolution') : t('alh.ev.quiet'))}
                     {ev.kind === 'acknowledged' && t('alh.ev.ack')}
                     {ev.kind === 'resolved' && t('alh.ev.resolved')}
@@ -278,8 +278,8 @@ export function AlertDetailBody({
                 </div>
                 {ev.kind === 'opened' && a.message && <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{a.message}</p>}
                 {ev.kind === 'storm' && (
-                  <p data-tl-storm="" className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                    {t('alh.ev.stormDetail', ev.stormId ?? '?')}{ev.backfilled ? ' ' + t('alh.ev.stormBackfilled') : ''}
+                  <p data-tl-storm="" data-mail-only={ev.mailOnly ? 'true' : 'false'} className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    {t(ev.mailOnly ? 'alh.ev.stormMailDetail' : 'alh.ev.stormDetail', ev.stormId ?? '?')}{ev.backfilled ? ' ' + t('alh.ev.stormBackfilled') : ''}
                   </p>
                 )}
                 {ev.kind === 'quiet' && (

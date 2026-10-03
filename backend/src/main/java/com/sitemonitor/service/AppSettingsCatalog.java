@@ -304,6 +304,9 @@ public final class AppSettingsCatalog {
         // 2026-09-30: fırtına ömür sınırı — son üye katılımından bu kadar dakika sonra yeni üye gelmediyse fırtına
         // mühürlenir ve kapanır (kalıcı başarısız üyeler fırtınayı süresiz açık tutup yeni alarmları yutmasın).
         new Setting("site.monitor.storm.quiet-minutes",          "storm",      Type.INT),
+        // 2026-10-03 (kullanıcı kararı): push fırtınaya devredilmez — fırtına yalnız e-postayı gruplar, kişi push'u alarm başına
+        // açılış sırasıyla gider. Varsayılan true; false = 2026-10-02'ye kadarki toplu fırtına push'u. GLOBAL_ONLY değil (sır yok).
+        new Setting("site.monitor.storm.push-individual",        "storm",      Type.BOOL),
         // ── Tür bazlı yeniden uyarı sıklığı (2026-10-01, opt-in) — ReAlertIntervals. Dakika; 0 = genel aralık (eşik
         //    tablosundaki reAlertIntervalHours, varsayılan 24 saat — bugünkü davranış); aksi 15–10080. EscalationService
         //    yeniden uyarı kararında CANLI okur. GLOBAL_ONLY değil: sır taşımaz, fırtına / alert-enabled ayarlarıyla aynı sınıf.

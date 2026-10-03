@@ -167,6 +167,7 @@ public class StormStatusService {
         settings.put("quiet_minutes", stormService.quietMinutes());
         // Kural özeti (2026-10-01): sayfa açıklaması ve "Fırtına kuralları" kartı GERÇEK ayarlardan okunur
         settings.put("per_group", stormService.perGroup());
+        settings.put("push_individual", stormService.pushIndividual());   // 2026-10-03: push alarm başına mı, toplu mu
         settings.put("re_alert_hours", StormService.RE_ALERT_HOURS);
         settings.put("min_threshold", StormService.MIN_THRESHOLD);
         settings.put("percent_min_targets", StormService.PERCENT_MIN_TARGETS);
@@ -337,6 +338,15 @@ public class StormStatusService {
                     Long.class, "storm:" + stormId + ":%", "storm-resolved:" + stormId);
             out.put("push", push != null ? push : 0L);
         } catch (Exception e) { log.debug("Storm #{} push özeti okunamadı: {}", stormId, e.getMessage()); }
+        // 2026-10-03: push fırtınaya devredilmeyince (varsayılan) üye alarmların push'u BİREYSEL gider — toplu push sayacı 0
+        // kalır, ayrıntı penceresi "push gitmedi" gibi okunmasın diye üye alarmlara GİDEN (SENT) kişi push'ları ayrıca sayılır.
+        out.put("push_members", 0L);
+        try {
+            Long members = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM user_push_deliveries WHERE alert_event_id IN " + MEMBER_EVENTS_SUBQUERY
+                  + " AND username <> '-' AND status = 'SENT'", Long.class, stormId, stormId);
+            out.put("push_members", members != null ? members : 0L);
+        } catch (Exception e) { log.debug("Storm #{} üye push özeti okunamadı: {}", stormId, e.getMessage()); }
         return out;
     }
 

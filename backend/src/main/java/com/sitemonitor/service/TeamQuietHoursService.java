@@ -113,6 +113,22 @@ public class TeamQuietHoursService {
     }
 
     /**
+     * Fırtına üyesinin BİREYSEL push'u (2026-10-03) ŞİMDİ takımın sessiz saatine mi düşüyor? {@code EscalationService}
+     * e-posta hunisinin push kuralının tek takımlık eşi: ertelenebilir tetik ({@link #DEFERRABLE_TRIGGERS}) + takımda
+     * pencere tanımlı + seviye ertelenir + şu an pencerede. Özet kaydı YAZMAZ — fırtınada e-postayı fırtına postası taşır;
+     * push yalnız karar satırı ({@code SKIPPED_TEAM_QUIET}) bırakır. Takım / tetik yoksa ya da hata olursa false (push gider).
+     */
+    public boolean defersPush(Long teamId, String level, String mailTrigger) {
+        if (teamId == null || mailTrigger == null || !DEFERRABLE_TRIGGERS.contains(mailTrigger)) return false;
+        try {
+            return isConfigured(teamId) && deferral(teamId, level, now()) != null;
+        } catch (Exception e) {
+            log.debug("Sessiz saat push kararı verilemedi (takım {}) — push gönderiliyor: {}", teamId, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Ertelemeyi kaydeder (yoksa). Aynı (alarm, takım, pencere) için ikinci çağrı yeni satır açmaz.
      *
      * @return kayıt BU çağrıda oluştuysa true

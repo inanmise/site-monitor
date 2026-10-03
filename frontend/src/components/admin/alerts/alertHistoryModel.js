@@ -345,6 +345,14 @@ export function stormIdFromStatus(status) {
   const m = /f[ıi]rt[ıi]na\s*#(\d+)/i.exec(String(status || ''))
   return m ? Number(m[1]) : null
 }
+/**
+ * Fırtına devri satırı YALNIZ e-postayı mı devretti (2026-10-03, `site.monitor.storm.push-individual` — varsayılan)?
+ * Backend o kipte durumun sonuna "(push tek tek)" yazar (EscalationService.STATUS_STORM_MAIL_ONLY_SUFFIX); push bu alarm için
+ * bireysel gitti ve kendi satırında görünür. İşaretsiz (eski / ayar kapalı) satır: e-posta + push fırtınaya devredildi.
+ */
+export function isStormMailOnly(status) {
+  return /push tek tek|push individually/i.test(String(status || ''))
+}
 export function statusLabel(t, status) {
   return PUSH_STATUS_KEYS.has(status) ? t('alh.push.status.' + status) : (status || '—')
 }
@@ -431,7 +439,8 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
       // 2026-09-30: e-posta değil KARAR — "bireysel bildirim fırtınaya devredildi" (neden ekranda okunsun).
       items.push({ id: `n-${n.id}`, kind: 'storm', at: ts(n.sent_at) ?? openedAt + 1, when: n.sent_at,
         stormId: stormIdFromStatus(n.email_status) ?? a.storm_id ?? null, status: n.email_status || null,
-        backfilled: /geriye d[öo]n[üu]k|backfill/i.test(String(n.email_status || '')) })
+        backfilled: /geriye d[öo]n[üu]k|backfill/i.test(String(n.email_status || '')),
+        mailOnly: isStormMailOnly(n.email_status) })
       continue
     }
     if (n.trigger === QUIET_HOURS_TRIGGER) {

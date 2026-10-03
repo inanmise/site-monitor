@@ -82,6 +82,14 @@ class StormTeamIsolationTest {
     private final List<Object[]> pushCalls = new ArrayList<>();
     /** pushCalls ile aynı sırada: çağrının taşıdığı ESKİ fırtına kimliği (yoksa null). */
     private final List<Long> pushLegacyIds = new ArrayList<>();
+    /** Bireysel push çağrıları (2026-10-03): [olay, e-posta tetiği, yedek takım]. */
+    private final List<Object[]> memberPushes = new ArrayList<>();
+    /**
+     * {@code site.monitor.storm.push-individual} (2026-10-03, ürün varsayılanı AÇIK). Bu sınıfın çoğu testi TOPLU fırtına
+     * push'unun takım yalıtımını pinler — o yalnız ayar KAPALIYKEN üretilir; bu yüzden fikstür varsayılanı BİLEREK kapalı.
+     * Açık kipin yalıtımı aşağıdaki "bireysel push" testlerinde.
+     */
+    private boolean pushIndividual = false;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -109,6 +117,10 @@ class StormTeamIsolationTest {
                 else pushLegacyIds.add(null);
                 pushCalls.add(a);
             }
+            if (inv.getMethod().getName().equals("enqueueAlert")) {
+                Object[] a = inv.getArguments();
+                memberPushes.add(new Object[]{a[0], a[1], a[2]});
+            }
             return Answers.RETURNS_DEFAULTS.answer(inv);
         });
 
@@ -132,6 +144,7 @@ class StormTeamIsolationTest {
             String k = i.getArgument(0);
             if (StormService.KEY_ENABLED.equals(k)) return true;
             if (StormService.KEY_PER_GROUP.equals(k)) return perGroup;
+            if (StormService.KEY_PUSH_INDIVIDUAL.equals(k)) return pushIndividual;
             return i.getArgument(1);
         });
         lenient().when(appSettings.getString(anyString(), any())).thenAnswer(i ->
@@ -620,5 +633,58 @@ class StormTeamIsolationTest {
         assertThat(storm.computeThreshold(A)).isEqualTo(StormService.PERCENT_MIN_TARGETS);
         http(1, A); AlertEvent a2 = http(2, A);
         assertThat(storm.evaluate(a2, null)).isEqualTo(StormService.StormAction.SEND_INDIVIDUAL);
+    }
+
+    // ── 2026-10-03: push fırtınaya DEVREDİLMEZ (ürün varsayılanı) — yalıtım bireysel push'ta da geçerli ──────────────
+
+    @Test
+    @DisplayName("Bireysel push kipi: A'nın fırtınası açılınca TOPLU push hiçbir takıma gitmez; e-posta yine yalnız A'ya")
+    void pushIndividual_stormOpens_noAggregatedPushToAnyTeam() {
+        pushIndividual = true;
+        http(1, A); http(2, A); AlertEvent a3 = http(3, A);
+        AlertEvent b1 = http(4, B);
+
+        assertThat(storm.evaluate(a3, null)).isEqualTo(StormService.StormAction.SUPPRESSED);
+
+        assertThat(allRecipients()).contains("a@example.com").doesNotContain("b@example.com");
+        assertThat(pushCalls).as("toplu fırtına push'u yok — üyelerin push'u alarm başına kendi hattından gider").isEmpty();
+        assertThat(memberPushes).as("açılış push'unu fırtına motoru değil EscalationService gönderir").isEmpty();
+        assertThat(b1.getStormId()).isNull();
+    }
+
+    @Test
+    @DisplayName("Bireysel push kipi: fırtınanın günlük tekrarı push'u YALNIZ fırtına takımının açık + onaysız üyelerine, açılış sırasıyla; B'ye hiçbir şey")
+    void pushIndividual_dailyRealert_onlyOwnTeamMembers_inCreationOrder() {
+        pushIndividual = true;
+        String twoDaysAgo = ISO.format(Instant.now().minus(2, ChronoUnit.DAYS));
+        AlertStorm s = new AlertStorm();
+        s.setId(950L);
+        s.setScopeKey("TEAM:" + A);
+        s.setScopeType("TEAM");
+        s.setTeamId(A);
+        s.setResolved(false);
+        s.setCreatedAt(twoDaysAgo);
+        s.setLastReAlertAt(twoDaysAgo);
+        s.setLastMemberAt(ISO.format(Instant.now()));   // taze — mühürlü değil
+        active.put(s.getScopeKey(), s);
+        byId.put(950L, s);
+        AlertEvent a1 = http(1, A), a2 = http(2, A), a3 = http(3, A), acked = http(4, A);
+        a1.setCreatedAt(ISO.format(Instant.now().minus(30, ChronoUnit.MINUTES)));
+        a2.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.MINUTES)));   // en eski → ilk
+        a3.setCreatedAt(ISO.format(Instant.now().minus(20, ChronoUnit.MINUTES)));
+        acked.setAcknowledged(true);
+        for (AlertEvent e : List.of(a1, a2, a3, acked)) e.setStormId(950L);
+        http(5, B);   // başka takımın açık alarmı — fırtına üyesi değil
+
+        storm.lifecycleSweep();
+
+        assertThat(mailSubjects).anySatisfy(sub -> assertThat(sub).contains("RE-ALERT"));
+        assertThat(allRecipients()).doesNotContain("b@example.com");
+        assertThat(pushCalls).as("toplu tekrar push'u yok").isEmpty();
+        assertThat(memberPushes).extracting(a -> a[0]).containsExactly(2L, 1L, 3L);
+        assertThat(memberPushes).allSatisfy(a -> {
+            assertThat(a[1]).isEqualTo("DAILY_REALERT");
+            assertThat(a[2]).isEqualTo(A);
+        });
     }
 }

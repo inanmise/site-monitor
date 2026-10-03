@@ -760,10 +760,14 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/status-page') {
       // Kurum içi Durum Sayfası (2026-10-01): sorunlu + bakımdaki + sağlıklı takımlar, uzun adlar, açık/çözülen olay, bakım
       body = { success: true, data: statusPageMock() }
+    } else if (p === '/api/monitoring/storm/settings') {
+      // Ayarlar → Alarm Fırtınası (2026-10-03: push fırtınaya devredilmesin anahtarı dâhil, dolu değerlerle)
+      body = { success: true, data: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, per_group: false,
+        quiet_minutes: 30, push_individual: true, total_active_monitors: 42, effective_threshold: 5 } }
     } else if (p === '/api/monitoring/storm/status') {
       // Alarm Fırtınası (2026-09-30): fırtınalı + eşiğe yakın + sakin takım — kart/pencere/mühür ölçümü dolu veriyle
       body = { success: true, data: {
-        generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5, per_group: false, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 },
+        generated_at: iso(0), settings: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, quiet_minutes: 5, per_group: false, push_individual: true, re_alert_hours: 24, min_threshold: 2, percent_min_targets: 3 },
         totals: { teams: 3, storming: 1, near: 1, open_storms: 1 },
         teams: [
           { team_id: 1, team_name: 'Takım A', status: 'STORM', threshold: 5, active_monitors: 40, window_minutes: 5, window_targets: 6, window_alerts: 7, window_items: [],
@@ -791,7 +795,7 @@ export async function mockApi(page, opts = {}) {
         trigger: { id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', created_at: iso(-20) },
         members: [{ event_id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', team_id: 1, created_at: iso(-20), resolved: false, join_kind: 'TRIGGER', joined_at: iso(-20), announced_at: iso(-20), trigger: true },
                   { event_id: 301, domain: 'https://b.example.com', alert_type: 'HTTP_DOWN', alert_level: 'HIGH', team_id: 1, created_at: iso(-19), resolved: true, resolved_at: iso(-5), join_kind: 'PEER', joined_at: iso(-20), announced_at: iso(-20), left_at: iso(-5), leave_kind: 'RECOVERED', trigger: false }],
-        members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, last_mail_at: iso(-20) } } }
+        members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, push_members: 12, last_mail_at: iso(-20) } } }
     } else if (p === '/api/me/open-alerts') {
       // İzleme menüsü rozetleri (2026-09-30): HTTP 2 (1 kritik), Sentetik 3 uyarı
       body = { success: true, data: { visible: true, total: 5, sampled: false, tabs: {

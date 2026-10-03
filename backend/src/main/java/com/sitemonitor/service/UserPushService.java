@@ -727,6 +727,22 @@ public class UserPushService {
         return "storm:" + stormId + ":" + stormTrigger;
     }
 
+    /**
+     * Bu fırtına (ya da üyelerinin taşındığı eski fırtına) için bu takıma TOPLU açılış/tekrar push'u gerçekten GİTTİ Mİ
+     * (2026-10-03). Bireysel push kipinde toplu çözüm push'u yalnız bu durumda gönderilir: ayar fırtına sürerken açıldıysa
+     * "N monitör düştü"yü toplu alan "düzeldi"yi de toplu alır; baştan bireysel kipte açılan fırtınada toplu push hiç
+     * yoktur (üyelerin çözüm push'u kendi kapanışında gider). Salt okuma; hata = false.
+     */
+    public boolean stormNoticeSent(Long stormId, Long legacyStormId, Long teamId) {
+        if (stormId == null || teamId == null) return false;
+        try {
+            if (!priorStormRecipients(stormId, teamId).isEmpty()) return true;
+            return legacyStormId != null && !priorStormRecipients(legacyStormId, teamId).isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Bu fırtınanın bu takıma giden açılış/tekrar push'unu gerçekten ALMIŞ tekil kullanıcılar (ilk gönderim sırası). */
     private List<String> priorStormRecipients(Long stormId, Long teamId) {
         List<String> out = new ArrayList<>();
@@ -1266,8 +1282,9 @@ public class UserPushService {
     }
 
     /**
-     * Açılışta hiçbir kanal ÇALIŞMADAN verilen kararın izi (2026-09-30): fırtına devri ({@code SKIPPED_STORM}) ve
-     * sahipsiz kayıt ({@code SKIPPED_NO_TEAM}). Bireysel gönderim hattı bu olayı hiç görmediğinden karar satırı
+     * Açılışta hiçbir kanal ÇALIŞMADAN verilen kararın izi (2026-09-30): fırtına devri ({@code SKIPPED_STORM}; yalnız
+     * {@code site.monitor.storm.push-individual} KAPALIYKEN — 2026-10-03'ten beri varsayılan kipte fırtına üyesinin push'u
+     * bireysel gider) ve sahipsiz kayıt ({@code SKIPPED_NO_TEAM}). Bireysel gönderim hattı bu olayı hiç görmediğinden karar satırı
      * çağıran tarafından yazdırılır; çözüm simetrisi ({@code SKIPPED_NO_PRIOR}) değişmez. Kanal global KAPALIYSA
      * satır yazılmaz (hattın kalanıyla aynı kural). Hiçbir istisna yayılmaz.
      */

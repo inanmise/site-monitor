@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-03T12:23:56Z",
+  "generatedAt": "2026-10-03T18:55:06Z",
   "repo": "inanmise/site-monitor",
-  "count": 700,
+  "count": 701,
   "releases": [
+    {
+      "version": "20.101.0",
+      "tag": "v20.101.0",
+      "releasedAt": "2026-10-03T18:55:00Z",
+      "commit": "3d174645563f471921e0047ce9d324635cedf16f",
+      "prevVersion": "20.100.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3d174645",
+          "subject": "alarm fırtınasında push bildirimleri fırtınaya devredilmez, her alarm tek tek ve sırasıyla gider"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.100.0",
       "tag": "v20.100.0",
