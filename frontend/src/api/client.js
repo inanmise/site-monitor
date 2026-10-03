@@ -340,7 +340,8 @@ export const api = {
   getSystemMaintenanceStatus: () => request('/public/system-maintenance', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   // Giriş Yöntemleri (2026-10-02) — giriş sayfası hangi yöntemlerin açık olduğunu oturumsuz okur: { ldap, otp_push,
-  // otp_email, push_ttl, email_ttl, resend_cooldown }. Yalnız yapılandırma (kişi bilgisi yok); yanıt `no-store`.
+  // otp_email, push_ttl, email_ttl, resend_cooldown, push_requires_phone, email_requires_email (2026-10-03) }. Yalnız
+  // yapılandırma (kişi bilgisi yok); yanıt `no-store`.
   getLoginMethods: () => request('/public/login-methods', { timeoutMs: DEFAULT_TIMEOUT_MS }),
 
   /**
@@ -350,7 +351,9 @@ export const api = {
    * gövdeyi döner ve oturum bayrağını kurar (sonraki 401'ler "oturum düştü" sayılsın).
    */
   loginOtp: {
-    request: (username, channel) => otpPost('/login/otp/request', { username, channel }),
+    // 2026-10-03: `contact` = { phone } (push) / { email } (e-posta) — yalnız ayar o kanalda kişi bilgisi istiyorsa.
+    // Eşleşmeme de AYNI 200'dür; boşsa 400 PHONE_REQUIRED / EMAIL_REQUIRED (+ field). Gövde hiçbir yerde loglanmaz.
+    request: (username, channel, contact) => otpPost('/login/otp/request', { username, channel, ...(contact || {}) }),
     verify: async (challengeId, code, rememberMe = false, forceLogin = false) => {
       const body = await otpPost('/login/otp/verify', {
         challenge_id: challengeId, code, remember_me: !!rememberMe, forceLogin: !!forceLogin,

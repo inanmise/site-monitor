@@ -11,9 +11,12 @@ import { Checkbox } from '@/components/shadcn/checkbox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/shadcn/alert'
 import { Spinner } from '../ui/Progress.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
-import { FieldError } from '../ui/Field.jsx'
+import Field from '../ui/Field.jsx'
+import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { contactKindOf, isPlausibleEmail, isPlausiblePhone } from '../../utils/otpContact.js'
 import OtpCodeInput, { OTP_LENGTH } from './OtpCodeInput.jsx'
 import OtpCountdown, { secondsLeft } from './OtpCountdown.jsx'
+import OtpContactField from './OtpContactField.jsx'
 
 /** Kanal → simge (push: telefon, e-posta: zarf). */
 export const CHANNEL_ICON = { push: Smartphone, email: Mail }
@@ -36,6 +39,8 @@ export function otpErrorOf(res) {
   if (code === 'OTP_RATE_LIMITED' || res.status === 429) return { kind: 'rateLimited' }
   if (code === 'OTP_METHOD_DISABLED') return { kind: 'methodDisabled' }
   if (code === 'USERNAME_REQUIRED') return { kind: 'usernameRequired' }
+  if (code === 'PHONE_REQUIRED') return { kind: 'phoneRequired' }
+  if (code === 'EMAIL_REQUIRED') return { kind: 'emailRequired' }
   if (isAccountInactivePayload(res)) return { kind: 'inactive' }
   if (isMaintenancePayload(res)) return { kind: 'maintenance' }
   if (res.status === 423) return { kind: 'accountLocked' }
@@ -65,12 +70,33 @@ const NEEDS_NEW_CODE = new Set(['expired', 'locked'])
 /** Kanal adı (bilgi metni / başlık) — literal anahtarlar. */
 function channelTitle(t, ch) { return ch === 'email' ? t('otp.title.email') : t('otp.title.push') }
 function sentInfo(t, ch) { return ch === 'email' ? t('otp.sentInfo.email') : t('otp.sentInfo.push') }
+/** İstek adımının açıklaması — kişi bilgisi isteniyorsa onu da söyler (literal anahtarlar). */
+function requestDesc(t, kind) {
+  if (kind === 'phone') return t('otp.desc.phone')
+  if (kind === 'email') return t('otp.desc.email')
+  return t('otp.desc')
+}
+
+/** İstek adımının alan doğrulaması → hata haritası (useFormErrors.check); sunucu eşleşmeyi ayrıca ve sessizce karar verir. */
+export function validateOtpRequest({ username, kind, phone, email }, t) {
+  const p = String(phone ?? '').trim()
+  const m = String(email ?? '').trim()
+  return {
+    username: !String(username ?? '').trim() && t('otp.err.usernameRequired'),
+    phone: kind === 'phone' && (!p ? t('otp.err.phoneRequired') : !isPlausiblePhone(p) && t('otp.err.phoneInvalid')),
+    email: kind === 'email' && (!m ? t('otp.err.emailRequired') : !isPlausibleEmail(m) && t('otp.err.emailInvalid')),
+  }
+}
 
 /**
  * Kodla giriş akışı (2026-10-02, kullanıcı isteği) — giriş kartının İÇİNDE, ana formun yerine geçer (ana form değişmez):
  *
- *  1. **İstek:** kullanıcı adı (ana formdaki değer önceden dolar) + kanal (iki yöntem de açıksa seçici) + beni hatırla →
- *     "Kod gönder". Sunucu yanıtı HER kullanıcı için aynıdır — ekran da "hesabınız uygunsa … gönderildi" der.
+ *  1. **İstek:** kullanıcı adı (ana formdaki değer önceden dolar) + kanal (iki yöntem de açıksa seçici) + KİŞİ BİLGİSİ
+ *     (2026-10-03: ayar açıksa push için "Kayıtlı cep telefonu", e-posta için "Kayıtlı e-posta adresi" — `OtpContactField`;
+ *     kanal değişince kullanıcı adı ve iki değer korunur, doğru alan görünür) + beni hatırla → "Kod gönder". Alan
+ *     doğrulaması alanın yanında (useFormErrors: zorunlu, makul telefon uzunluğu / e-posta biçimi), ilk hatalıya odak;
+ *     Enter gönderir. Sunucu yanıtı HER kullanıcı için aynıdır (eşleşmeme dahil) — ekran da "hesabınız uygunsa …
+ *     gönderildi" der, eşleşip eşleşmediğini asla ima etmez.
  *  2. **Kod:** 6 kutulu giriş (yapıştırma, ok tuşları, tamamlanınca otomatik doğrulama), dairesel geri sayım (son 10 sn
  *     uyarı tonu; ekran okuyucuya seyrek duyuru), "Kod gelmedi mi? Yeniden gönder (N sn)", "Şifreyle giriş yap".
  *     Hatalar: yanlış kod + kalan deneme, süre doldu → yeni kod, kilit → yeni kod, pasif / bakım / hesap kilidi.
@@ -79,7 +105,8 @@ function sentInfo(t, ch) { return ch === 'email' ? t('otp.sentInfo.email') : t('
  *
  * Mobil: tek sütun, düğmeler tam genişlik (≥ 40 px), kutular kart genişliğine sığar (`min-w-0`, 6 eşit sütun).
  * Test kancaları: `data-slot="otp-flow"` + `data-step`, `otp-send`, `otp-verify`, `otp-resend`, `otp-back`, `otp-error`
- * (`data-kind`), `otp-sent-info`, `otp-confirm`.
+ * (`data-kind`), `otp-sent-info`, `otp-confirm`, `otp-contact` (`data-kind` phone / email), `otp-desc`; alanlar
+ * `data-field` = `username` / `phone` / `email`.
  */
 export default function OtpLoginFlow({ methods, initialUsername = '', initialChannel = 'push', initialRemember = false,
   onSuccess, onCancel, onMaintenance }) {
@@ -93,13 +120,18 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(null)             // 'send' | 'verify' | null
   const [error, setError] = useState(null)           // { kind, attemptsLeft? }
-  const [usernameError, setUsernameError] = useState(false)
+  // Kişi bilgisi (2026-10-03): kanal başına ayrı değer — kanal değişince kullanıcının yazdığı kaybolmaz.
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
+  // Sunucu "zorunlu" dedi ama sayfa eski yapılandırmayla açılmıştı (ayar arada açıldı) → alan yine de çizilsin.
+  const [forced, setForced] = useState({})
+  const fe = useFormErrors()
   const [now, setNow] = useState(() => Date.now())
   const codeRef = useRef(null)
   const ids = useId()
-  const userId = `${ids}-user`
   const codeHintId = `${ids}-hint`
   const errorId = `${ids}-err`
+  const contactKind = contactKindOf(methods, channel) || (forced[channel] ? (channel === 'email' ? 'email' : 'phone') : null)
 
   // Tek zamanlayıcı: kod adımında saniyede iki kez (geri sayım + yeniden gönder sayacı aynı saatten).
   useEffect(() => {
@@ -122,16 +154,20 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
     e?.preventDefault?.()
     if (busy) return
     const name = username.trim()
-    if (!name) {
-      setUsernameError(true)
-      document.getElementById(userId)?.focus()
+    const kind = contactKind
+    const contact = kind === 'phone' ? phone.trim() : kind === 'email' ? email.trim() : ''
+    // Alan doğrulaması ALANIN YANINDA (tost yok); ilk hatalı alana odak. Yeniden gönderimde de aynı değerler gider.
+    if (fe.check(validateOtpRequest({ username: name, kind, phone, email }, t))) {
+      setStep('request')
       return
     }
-    setUsernameError(false)
     setBusy('send')
     setError(null)
     try {
-      const res = await api.loginOtp.request(name, channel)
+      // Kişi bilgisi yalnız istendiğinde gönderilir; ekran eşleşip eşleşmediğini ASLA bilmez (yanıt her durumda aynı).
+      const res = kind
+        ? await api.loginOtp.request(name, channel, { [kind]: contact })
+        : await api.loginOtp.request(name, channel)
       if (res?.success && res.challenge_id) {
         const at = Date.now()
         const total = Number(res.expires_in) || 45
@@ -142,15 +178,29 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
         setStep('code')
       } else {
         const err = otpErrorOf(res)
-        if (err.kind === 'usernameRequired') setUsernameError(true)
-        else setError(err)
+        if (err.kind === 'usernameRequired') {
+          setStep('request')
+          fe.check({ username: t('otp.err.usernameRequired') })
+        } else if (err.kind === 'phoneRequired' || err.kind === 'emailRequired') {
+          const ch = err.kind === 'phoneRequired' ? 'push' : 'email'
+          setForced((f) => ({ ...f, [ch]: true }))
+          setStep('request')
+          fe.check(err.kind === 'phoneRequired' ? { phone: t('otp.err.phoneRequired') } : { email: t('otp.err.emailRequired') })
+        } else setError(err)
       }
     } catch {
       setError({ kind: 'network' })
     } finally {
       setBusy(null)
     }
-  }, [busy, username, channel, userId])
+  }, [busy, username, channel, contactKind, phone, email, fe, t])
+
+  function changeChannel(next) {
+    setChannel(next)
+    setError(null)
+    fe.clear('phone')
+    fe.clear('email')
+  }
 
   async function verify(value, force = false) {
     const v = String(value ?? code)
@@ -202,27 +252,41 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
         </span>
         <div className="flex min-w-0 flex-col gap-0.5">
           <h3 className="text-base leading-tight font-semibold">{channelTitle(t, channel)}</h3>
-          <p className="text-sm text-muted-foreground">{t('otp.desc')}</p>
+          <p className="text-sm text-muted-foreground" data-slot="otp-desc">{step === 'request' ? requestDesc(t, contactKind) : t('otp.desc')}</p>
         </div>
       </div>
 
       {step === 'request' && (
         <form onSubmit={sendCode} className="flex min-w-0 flex-col gap-4" noValidate>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={userId}>{t('login.username')}</Label>
-            <Input id={userId} className="h-10" type="text" value={username} autoComplete="username"
-              onChange={(e) => { setUsername(e.target.value); if (usernameError) setUsernameError(false) }}
-              placeholder={t('login.userPlaceholder')} aria-invalid={usernameError || undefined}
-              aria-describedby={usernameError ? `${userId}-e` : undefined} autoFocus={!initialUsername} />
-            {usernameError && <FieldError id={`${userId}-e`}>{t('otp.err.usernameRequired')}</FieldError>}
-          </div>
+          <Field label={t('login.username')} className="mb-0" {...fe.fieldProps('username')}>
+            {({ id, describedBy, invalid }) => (
+              <Input id={id} className="h-10" type="text" value={username} autoComplete="username"
+                autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                onChange={(e) => { setUsername(e.target.value); fe.clear('username') }}
+                placeholder={t('login.userPlaceholder')} aria-invalid={invalid}
+                aria-describedby={describedBy} autoFocus={!initialUsername} />
+            )}
+          </Field>
 
           {channels.length > 1 && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">{t('otp.channel')}</span>
-              <SegmentedControl value={channel} onChange={setChannel} ariaLabel={t('otp.channel')}
-                options={[{ value: 'push', label: t('otp.channel.push') }, { value: 'email', label: t('otp.channel.email') }]} />
+              <span className="text-sm font-semibold">{t('otp.channel')}</span>
+              {/* Tam genişlik; telefonda / dokunmatikte 40 px hedef (2026-10-03) */}
+              <SegmentedControl value={channel} onChange={changeChannel} ariaLabel={t('otp.channel')}
+                className="w-full" itemClassName="h-9 flex-1 max-sm:h-10 pointer-coarse:h-10"
+                options={[{ value: 'push', label: t('otp.channel.push'), icon: Smartphone },
+                  { value: 'email', label: t('otp.channel.email'), icon: Mail }]} />
             </div>
+          )}
+
+          {/* Kişi bilgisi (2026-10-03): kanal başına kayıtlı cep telefonu / e-posta — kod yalnız eşleşirse gider. */}
+          {contactKind === 'phone' && (
+            <OtpContactField key="phone" kind="phone" value={phone} error={fe.errors.phone || undefined}
+              autoFocus={!!initialUsername} onChange={(v) => { setPhone(v); fe.clear('phone') }} />
+          )}
+          {contactKind === 'email' && (
+            <OtpContactField key="email" kind="email" value={email} error={fe.errors.email || undefined}
+              autoFocus={!!initialUsername} onChange={(v) => { setEmail(v); fe.clear('email') }} />
           )}
 
           <div className="inline-flex min-h-10 items-center gap-2 text-sm">
@@ -299,7 +363,7 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
 
           <div className="flex flex-col gap-1 sm:flex-row sm:justify-between">
             <Button type="button" variant="link" className="min-h-10 px-0" onClick={backToRequest} data-slot="otp-change-user">
-              {t('otp.changeUser')}
+              {contactKind ? t('otp.changeDetails') : t('otp.changeUser')}
             </Button>
             <Button type="button" variant="link" className="min-h-10 px-0" onClick={onCancel} data-slot="otp-back">
               <ArrowLeft /> {t('otp.backToPassword')}

@@ -138,7 +138,11 @@ class SettingsScopedAdminGateTest {
                 "site.monitor.login.otp.max-requests-per-ip",
                 "site.monitor.login.otp.max-failed-verifications",
                 "site.monitor.login.otp.allow-global-admins",
-                "site.monitor.login.otp.retention-days");
+                "site.monitor.login.otp.retention-days",
+                // 2026-10-03: kişi bilgisi doğrulaması (telefon / e-posta da sorulsun) + eşleşmeme sınırı
+                "site.monitor.login.otp.push.require-phone",
+                "site.monitor.login.otp.email.require-email",
+                "site.monitor.login.otp.max-contact-mismatches");
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).containsAll(com.sitemonitor.service.otp.LoginMethodsService.KEYS);
         assertThat(src("LoginMethodsController")).contains("SessionScope.requireNotScopedAdmin(")
                 .contains("SessionScope.isGlobalAdmin(session)");

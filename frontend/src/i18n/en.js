@@ -14749,6 +14749,7 @@ export const EN = {
   'otp.newCode': 'Request a new code',
   'otp.newCodeIn': 'Request a new code ({0} s)',
   'otp.changeUser': 'Change username',
+  'otp.changeDetails': 'Change details',
   'otp.backToPassword': 'Sign in with password',
   'otp.err.invalid': 'Incorrect code. Attempts left: {0}',
   'otp.err.expired': 'The code has expired or is no longer valid. Request a new code.',
@@ -14757,6 +14758,19 @@ export const EN = {
   'otp.err.methodDisabled': 'This sign-in method is currently disabled.',
   'otp.err.usernameRequired': 'Enter your username.',
   'otp.err.accountLocked': 'Your account is temporarily locked. Try again later or contact your administrator.',
+  // Code sign-in — contact details check (2026-10-03)
+  'otp.desc.phone': 'Enter your username and your registered mobile number; if they match, we will send a one-time 6-digit code.',
+  'otp.desc.email': 'Enter your username and your registered email address; if they match, we will send a one-time 6-digit code.',
+  'otp.phone.label': 'Registered mobile number',
+  'otp.phone.placeholder': '05xx xxx xx xx',
+  'otp.phone.hint': 'Enter the number registered in the system; if it matches, a code will be sent.',
+  'otp.email.label': 'Registered email address',
+  'otp.email.placeholder': 'name.surname@example.com',
+  'otp.email.hint': 'Enter the email address registered in the system; if it matches, a code will be sent.',
+  'otp.err.phoneRequired': 'Enter your registered mobile number.',
+  'otp.err.phoneInvalid': 'Enter a valid mobile number (e.g. 0532 123 45 67).',
+  'otp.err.emailRequired': 'Enter your registered email address.',
+  'otp.err.emailInvalid': 'Enter a valid email address (e.g. name.surname@example.com).',
   'lastLogin.methodOtpPush': 'Push code',
   'lastLogin.methodOtpEmail': 'Email code',
   'audit.ev.LOGIN_OTP_REQUESTED': 'Sign-in code requested',
@@ -14823,6 +14837,17 @@ export const EN = {
   'lm.err.load': 'Sign-in methods could not be loaded',
   'lm.err.save': 'Sign-in methods could not be saved',
   'lm.retry': 'Try again',
+  // Sign-in methods — contact details check (2026-10-03)
+  'lm.push.requirePhone': 'Also ask for the mobile number',
+  'lm.push.requirePhoneHint': 'The code is sent only if the username and the registered mobile number match.',
+  'lm.email.requireEmail': 'Also ask for the email address',
+  'lm.email.requireEmailHint': 'The code is sent only if the username and the registered email address match.',
+  'lm.maxContactMismatches': 'Mismatched phone / email per user',
+  'lm.coverage.label': 'Contact details coverage',
+  'lm.coverage.phone': 'Active users with a registered mobile number: {0} / {1} ({2}%)',
+  'lm.coverage.email': 'Active users with a registered email address: {0} / {1} ({2}%)',
+  'lm.coverage.phoneLow': 'Users without a registered mobile number cannot receive a code by push; numbers are synchronised from the mobile attribute in AD.',
+  'lm.coverage.emailLow': 'Users without a registered email address cannot receive a code by email.',
   'help.set.site.monitor.login.ldap-enabled':
     'What it does: Switches password sign-in for LDAP (Active Directory) accounts on or off; while off, those accounts can only sign in with a code.\nBenefit: Password sign-in can be stopped with one click during an LDAP problem or by policy; directory sync is not affected.\nRecommended: true (the default). Enable at least one code method before switching it off; local accounts and the installation administrator can always sign in.',
   'help.set.site.monitor.login.otp.push.enabled':
@@ -14845,6 +14870,12 @@ export const EN = {
     'What it does: The total number of incorrect codes allowed for one user in 15 minutes; once exceeded, code sign-in is suspended for that user.\nBenefit: Makes guessing a code practically impossible; password sign-in and the account lock are not affected.\nRecommended: 5 (the default). Range 1–20.',
   'help.set.site.monitor.login.otp.allow-global-admins':
     'What it does: Allows global administrators to sign in with a code as well.\nBenefit: Administrators can sign in during an LDAP problem; while off, the most privileged accounts stay protected by password only.\nRecommended: false (the default). The installation administrator can always sign in with a password.',
+  'help.set.site.monitor.login.otp.push.require-phone':
+    "What it does: A push code request also asks for the registered mobile number next to the username; the code is sent only if both belong to the same account.\nBenefit: Someone who only knows a username cannot send codes to another person's phone; a mismatching number is never revealed on screen.\nRecommended: true (the default). When off, a code is requested with the username only.",
+  'help.set.site.monitor.login.otp.email.require-email':
+    "What it does: An email code request also asks for the registered email address next to the username; the code is sent only if both belong to the same account.\nBenefit: Someone who only knows a username cannot send codes to another person's mailbox; a mismatching address is never revealed on screen.\nRecommended: true (the default). When off, a code is requested with the username only.",
+  'help.set.site.monitor.login.otp.max-contact-mismatches':
+    'What it does: The number of mismatching phone / email attempts accepted for one username in 15 minutes; once exceeded, code requests for that user are silently suppressed.\nBenefit: Prevents finding the registered number or address by trial and error; password sign-in and the account lock are not affected.\nRecommended: 5 (the default). Range 1–20.',
   'help.set.site.monitor.login.otp.retention-days':
     'What it does: How many days code sign-in requests (code hash, status, IP) are kept; older rows are removed by the nightly clean-up.\nBenefit: Request rows are only useful for a few minutes; the permanent trail is in the audit log anyway.\nRecommended: 30 days (the default).',
 }

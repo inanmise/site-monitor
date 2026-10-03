@@ -22,6 +22,13 @@ public interface LoginOtpChallengeRepository extends JpaRepository<LoginOtpChall
     /** Kullanıcı başına istek sınırı — yalnız kodu GERÇEKTEN gönderilen satırlar (saldırganın sürekli isteği bloğu uzatmasın). */
     long countByUsernameAndUserIdIsNotNullAndCreatedAtGreaterThanEqual(String username, String since);
 
+    /**
+     * Eşleşmeyen kişi bilgisi sayacı (2026-10-03): kullanıcı adı + gönderim durumu ({@code SUPPRESSED_CONTACT_MISMATCH})
+     * + pencere — {@code idx_otp_user_created} üstünden. Kilit süresince yapılan istekler ({@code SUPPRESSED_CONTACT_LOCK})
+     * sayılmaz (şifre kilidindeki "kilitliyken deneme sayılmaz" kuralıyla aynı).
+     */
+    long countByUsernameAndDeliveryStatusAndCreatedAtGreaterThanEqual(String username, String deliveryStatus, String since);
+
     /** Yeniden gönderme bekleme süresi — kullanıcı + kanal için son GERÇEK gönderim. */
     Optional<LoginOtpChallenge> findTopByUsernameAndChannelAndUserIdIsNotNullOrderByCreatedAtDesc(String username, String channel);
 

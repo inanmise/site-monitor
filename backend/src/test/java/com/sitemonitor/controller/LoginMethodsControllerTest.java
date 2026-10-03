@@ -66,7 +66,14 @@ class LoginMethodsControllerTest {
         pub.put("push_ttl", 45);
         pub.put("email_ttl", 60);
         pub.put("resend_cooldown", 30);
+        pub.put("push_requires_phone", true);
+        pub.put("email_requires_email", false);
         when(methods.publicView()).thenReturn(pub);
+        Map<String, Object> coverage = new LinkedHashMap<>();
+        coverage.put("active_users", 120L);
+        coverage.put("with_phone", 90L);
+        coverage.put("with_email", 118L);
+        when(methods.contactCoverage()).thenReturn(coverage);
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("ldap_enabled", true);
         settings.put("email_enabled", true);
@@ -102,7 +109,11 @@ class LoginMethodsControllerTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> m = new tools.jackson.databind.ObjectMapper().readValue(json, Map.class);
         assertThat(m.keySet()).containsExactlyInAnyOrder("success", "ldap", "otp_push", "otp_email", "push_ttl", "email_ttl",
-                "resend_cooldown");
+                "resend_cooldown", "push_requires_phone", "email_requires_email");
+        // 2026-10-03: yalnız YAPILANDIRMA bayrakları — kimin hangi bilgiye sahip olduğu (kapsam) PUBLIC uçta YOK
+        assertThat(m).containsEntry("push_requires_phone", true).containsEntry("email_requires_email", false)
+                .doesNotContainKey("coverage");
+        verify(methods, never()).contactCoverage();
     }
 
     @Test
@@ -119,7 +130,11 @@ class LoginMethodsControllerTest {
                 .andExpect(jsonPath("$.data.status.smtp.configured").value(true))
                 .andExpect(jsonPath("$.data.public.otp_email").value(true))
                 .andExpect(jsonPath("$.data.activity[0].event_type").value("LOGIN_OTP_REQUESTED"))
-                .andExpect(jsonPath("$.data.activity_types[0]").value("LOGIN_OTP_REQUESTED"));
+                .andExpect(jsonPath("$.data.activity_types[0]").value("LOGIN_OTP_REQUESTED"))
+                // 2026-10-03: kişi bilgisi kapsamı (tek toplu sorgu, yalnız sayılar)
+                .andExpect(jsonPath("$.data.coverage.active_users").value(120))
+                .andExpect(jsonPath("$.data.coverage.with_phone").value(90))
+                .andExpect(jsonPath("$.data.coverage.with_email").value(118));
     }
 
     @Test
@@ -163,6 +178,27 @@ class LoginMethodsControllerTest {
                 .hasSize(5);
         verify(auditService).recordAction(eq("LOGIN_METHODS_SETTINGS_SAVE"), any(jakarta.servlet.http.HttpSession.class),
                 any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("login-methods"), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-10-03: kişi bilgisi anahtarları + eşleşmeme sınırı kaydedilir; sınır 1–20 dışı 400 + field")
+    @SuppressWarnings("unchecked")
+    void save_contactSettings() throws Exception {
+        mvc.perform(put("/api/admin/login-methods").session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settings\":{\"max_contact_mismatches\":21}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("max_contact_mismatches"));
+        mvc.perform(put("/api/admin/login-methods").session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settings\":{\"push_require_phone\":false,\"email_require_email\":true,"
+                                + "\"max_contact_mismatches\":7}}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<Map<String, Object>> cap = ArgumentCaptor.forClass(Map.class);
+        verify(settingsService).save(cap.capture(), eq("boss"));
+        Map<String, Object> values = (Map<String, Object>) cap.getValue().get("values");
+        assertThat(values).containsEntry("site.monitor.login.otp.push.require-phone", "false")
+                .containsEntry("site.monitor.login.otp.email.require-email", "true")
+                .containsEntry("site.monitor.login.otp.max-contact-mismatches", "7")
+                .hasSize(3);
     }
 
     @Test

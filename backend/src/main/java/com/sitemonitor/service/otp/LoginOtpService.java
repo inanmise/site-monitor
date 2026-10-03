@@ -38,6 +38,10 @@ import java.util.regex.Pattern;
  *       yanlış kodla birebir aynı yanıtları verir.</li>
  *   <li>Süre de ayırt ettirmez: her istekte AYNI sorgular koşar (kısa devre yok) ve gönderim isteği izleyen eşzamansız
  *       işte yapılır ({@link LoginOtpDeliveryService}) — SMTP / ağ geçidi süresi yanıta binmez.</li>
+ *   <li>Kişi bilgisi (2026-10-03, kullanıcı isteği): kanalın anahtarı açıksa istekte kayıtlı cep telefonu (push) /
+ *       e-posta (e-posta) da gelir; boşsa 400 {@code PHONE_REQUIRED} / {@code EMAIL_REQUIRED} (yalnız yapılandırma).
+ *       Eşleşmeme ({@code CONTACT_MISMATCH}), kayıtlı telefon yok ({@code NO_PHONE}) ve 15 dk'da kullanıcı başına
+ *       eşleşmeme sınırı ({@code CONTACT_LOCK}) da AYNI 200 + tuzak satırıdır. Girilen değer hiçbir yere yazılmaz.</li>
  * </ul>
  *
  * <h3>Doğrulama ({@link #verify})</h3>
@@ -70,6 +74,14 @@ public class LoginOtpService {
     public static final String OTP_RATE_LIMITED = "OTP_RATE_LIMITED";
     public static final String OTP_CHANNEL_INVALID = "OTP_CHANNEL_INVALID";
     public static final String USERNAME_REQUIRED = "USERNAME_REQUIRED";
+    /** 2026-10-03: kişi bilgisi isteniyor ama boş — yalnız YAPILANDIRMAYI açığa vurur (kimin hangi bilgiye sahip olduğunu değil). */
+    public static final String PHONE_REQUIRED = "PHONE_REQUIRED";
+    public static final String EMAIL_REQUIRED = "EMAIL_REQUIRED";
+
+    /** Tuzak nedenleri (iç; yalnız denetim / ayar ekranı görür) — kişi bilgisi doğrulaması, 2026-10-03. */
+    static final String REASON_CONTACT_MISMATCH = "CONTACT_MISMATCH";
+    static final String REASON_CONTACT_LOCK = "CONTACT_LOCK";
+    static final String REASON_NO_PHONE = "NO_PHONE";
 
     /** Teslim kanalı. Telde küçük harf ({@code push} / {@code email}); satırda büyük harf. */
     public enum Channel {
@@ -129,10 +141,21 @@ public class LoginOtpService {
 
     // ── İstek ──────────────────────────────────────────────────────────────────
 
+    /** Kişi bilgisi olmadan istek (kişi bilgisi doğrulaması KAPALIYKEN önceki davranış; testler ve eski çağıranlar). */
+    public Result request(String rawUsername, String rawChannel, String ip, String userAgent, boolean english) {
+        return request(rawUsername, rawChannel, null, null, ip, userAgent, english);
+    }
+
     /**
      * Kod isteği. {@code english}: giriş sayfasının dili (push metni bu dilde; e-posta iki dillidir).
+     *
+     * <p>{@code rawPhone} / {@code rawEmail} (2026-10-03, kullanıcı isteği): kanalın kişi bilgisi doğrulaması açıksa
+     * (push → kayıtlı cep telefonu, e-posta → kayıtlı adres) kod YALNIZ kullanıcı adının hesabıyla eşleşirse gider
+     * ({@link OtpContactMatcher}). Eşleşmeme / kayıtlı bilgi yok / bilinmeyen kullanıcı → AYNI 200 gövdesi + tuzak satırı.
+     * Girilen değer HİÇBİR yere yazılmaz (satır, denetim, log, hata metni) — yalnız sonuç (eşleşti / eşleşmedi).
      */
-    public Result request(String rawUsername, String rawChannel, String ip, String userAgent, boolean english) {
+    public Result request(String rawUsername, String rawChannel, String rawPhone, String rawEmail, String ip,
+                          String userAgent, boolean english) {
         Channel ch = Channel.parse(rawChannel);
         if (ch == null) {
             return error(400, OTP_CHANNEL_INVALID, Msg.t("Geçersiz kanal.", "Invalid channel."), null);
@@ -143,6 +166,20 @@ public class LoginOtpService {
         String typed = rawUsername == null ? "" : rawUsername.strip();
         if (typed.isEmpty() || typed.length() > 120) {
             return error(400, USERNAME_REQUIRED, Msg.t("Kullanıcı adınızı girin.", "Enter your username."), null);
+        }
+        // Kişi bilgisi isteniyorsa boş olamaz — alan-bazlı 400 (yalnız yapılandırma; satır yazılmaz, kota tüketmez).
+        boolean contactRequired = methods.requiresContact(ch);
+        String entered = ch == Channel.PUSH ? rawPhone : rawEmail;
+        if (contactRequired && (entered == null || entered.isBlank())) {
+            Map<String, Object> extra = new LinkedHashMap<>();
+            if (ch == Channel.PUSH) {
+                extra.put("field", "phone");
+                return error(400, PHONE_REQUIRED, Msg.t("Kayıtlı cep telefonu numaranızı girin.",
+                        "Enter your registered mobile number."), extra);
+            }
+            extra.put("field", "email");
+            return error(400, EMAIL_REQUIRED, Msg.t("Kayıtlı e-posta adresinizi girin.",
+                    "Enter your registered email address."), extra);
         }
         String ua = clip(userAgent, 255);
         Instant now = clock.instant();
@@ -164,6 +201,7 @@ public class LoginOtpService {
         }
 
         // 2) Uygunluk + kişi başı sınırlar — HER istekte AYNI sorgular (kısa devre yok: yanıt süresi ayırt ettirmesin).
+        //    Girilen telefon / e-posta bu yöntemin HİÇBİR log satırına, satır alanına ya da denetim metnine girmez.
         AppUser user = userService.findByUsername(typed).orElse(null);
         String key = user != null && user.getUsername() != null ? user.getUsername() : UserService.normalizeUsername(typed);
         boolean locked = isLocked(key);
@@ -172,7 +210,43 @@ public class LoginOtpService {
         int cooldownSec = methods.resendCooldownSeconds();
         boolean cooling = repo.findTopByUsernameAndChannelAndUserIdIsNotNullOrderByCreatedAtDesc(key, ch.name())
                 .map(last -> parse(last.getCreatedAt()).plusSeconds(cooldownSec).isAfter(now)).orElse(false);
+
+        // 3) Kişi bilgisi (2026-10-03) — anahtar AÇIKKEN her istekte AYNI iş: eşleşmeme sayacı sorgusu + bellek içi
+        //    karşılaştırma (kullanıcı yok / kayıtlı bilgi yok da aynı yoldan geçer; kısa devre yok). KAPALIYKEN hiçbiri
+        //    koşmaz — davranış birebir önceki gibi.
+        boolean contactLocked = false;
+        boolean contactMissing = false;
+        boolean contactMatch = false;
+        if (contactRequired) {
+            contactLocked = repo.countByUsernameAndDeliveryStatusAndCreatedAtGreaterThanEqual(key,
+                    LoginOtpChallenge.DELIVERY_SUPPRESSED_PREFIX + REASON_CONTACT_MISMATCH, since) >= methods.maxContactMismatches();
+            String registered = user == null ? null : ch == Channel.PUSH ? user.getPhone() : user.getEmail();
+            contactMissing = ch == Channel.PUSH ? !OtpContactMatcher.usablePhone(registered) : !validEmail(registered);
+            contactMatch = ch == Channel.PUSH ? OtpContactMatcher.phoneMatches(entered, registered)
+                    : OtpContactMatcher.emailMatches(entered, registered);
+        }
+
         String reason = ineligibility(user, ch, locked);
+        // Kişi bilgisi sonucu yalnız denetime gider (MATCHED / MISMATCH / MISSING / LOCKED / NOT_CHECKED) — DEĞER asla.
+        String contactOutcome = null;
+        if (contactRequired) {
+            if (reason != null) {
+                contactOutcome = "NOT_CHECKED";
+            } else if (contactMissing) {
+                // Kayıtlı cep telefonu yok (e-postasızlar zaten NO_TARGET) — eşleşme mümkün değil; sayaca sayılmaz.
+                reason = ch == Channel.PUSH ? REASON_NO_PHONE : "NO_TARGET";
+                contactOutcome = "MISSING";
+            } else if (contactLocked) {
+                // Eşleşmeyen deneme sınırı aşıldı: doğru bilgi girilse bile pencere boyunca kod gitmez (sessiz).
+                reason = REASON_CONTACT_LOCK;
+                contactOutcome = "LOCKED";
+            } else if (!contactMatch) {
+                reason = REASON_CONTACT_MISMATCH;
+                contactOutcome = "MISMATCH";
+            } else {
+                contactOutcome = "MATCHED";
+            }
+        }
         if (reason == null && suspended) reason = "SUSPENDED";
         if (reason == null && overUser) reason = "USER_RATE_LIMITED";
         if (reason == null && cooling) reason = "COOLDOWN";
@@ -196,12 +270,15 @@ public class LoginOtpService {
         c.setUserAgent(ua);
         repo.save(c);
 
+        String detail = contactRequired
+                ? AuditDetail.of("channel", ch.name(), "result", reason == null ? "SENT" : "SUPPRESSED", "reason", reason,
+                        "challenge", shortId(id), "contact", contactOutcome)
+                : AuditDetail.of("channel", ch.name(), "result", reason == null ? "SENT" : "SUPPRESSED", "reason", reason,
+                        "challenge", shortId(id));
         auditService.recordOtp("LOGIN_OTP_REQUESTED", key,
                 user == null ? null : user.getId(), user == null ? null : user.getTeamId(), user == null ? null : user.getSystemRole(),
                 reason == null ? "SUCCESS" : "BLOCKED", reason == null ? null : "SUPPRESSED: " + reason,
-                AuditDetail.of("channel", ch.name(), "result", reason == null ? "SENT" : "SUPPRESSED", "reason", reason,
-                        "challenge", shortId(id)),
-                ip, ua);
+                detail, ip, ua);
 
         if (reason == null) {
             delivery.dispatch(new LoginOtpDeliveryService.Job(id, ch, user.getUsername(), user.getId(), user.getTeamId(),

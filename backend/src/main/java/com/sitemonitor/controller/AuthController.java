@@ -449,14 +449,18 @@ public class AuthController {
     // (establishSession): 409 + forceLogin, beni hatırla, bakım 403, pasif 403 (yalnız DOĞRU koddan sonra),
     // mustChangePassword, LOGIN denetimi (yöntem OTP_PUSH / OTP_EMAIL). Gövdeler RequestLoggingFilter'da HİÇ loglanmaz.
 
-    /** {@code {username, channel: "push"|"email"}} → 200 genel yanıt; yöntem kapalı 400; IP sınırı 429. */
+    /**
+     * {@code {username, channel: "push"|"email", phone?, email?}} → 200 genel yanıt; yöntem kapalı 400; IP sınırı 429.
+     * 2026-10-03: kanalın kişi bilgisi doğrulaması açıksa {@code phone} (push) / {@code email} (e-posta) zorunlu — boşsa
+     * 400 {@code PHONE_REQUIRED} / {@code EMAIL_REQUIRED}; eşleşmeme genel 200'dür. Değerler burada loglanmaz.
+     */
     @PostMapping("/login/otp/request")
     public ResponseEntity<Map<String, Object>> otpRequest(@RequestBody(required = false) Map<String, Object> body,
                                                           HttpServletRequest request) {
         if (loginOtp == null) return otpUnavailable();
         Map<String, Object> b = body == null ? Map.of() : body;
-        var r = loginOtp.request(str(b.get("username")), str(b.get("channel")), resolveClientIp(request),
-                request.getHeader("User-Agent"), com.sitemonitor.util.Msg.isEn());
+        var r = loginOtp.request(str(b.get("username")), str(b.get("channel")), str(b.get("phone")), str(b.get("email")),
+                resolveClientIp(request), request.getHeader("User-Agent"), com.sitemonitor.util.Msg.isEn());
         return ResponseEntity.status(r.status()).body(r.body());
     }
 

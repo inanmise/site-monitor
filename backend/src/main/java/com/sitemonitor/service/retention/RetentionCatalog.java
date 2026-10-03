@@ -267,7 +267,8 @@ public final class RetentionCatalog {
         age("login-otp-challenges", "login_otp_challenges", "created_at", "site.monitor.login.otp.retention-days",
                 30, 1, false, DataClass.PERSONAL,
                 "Push / e-posta ile kodla giriş istekleri: istek başına TEK satır — kullanıcı adı, kanal, kodun HMAC özeti (kodun "
-                + "kendisi YOK), süre, deneme sayısı, durum, IP ve tarayıcı. Satır en çok birkaç dakika işe yarar (kod ≤ 300 sn); "
+                + "kendisi YOK; istekte girilen telefon / e-posta da YOK — 2026-10-03, yalnız eşleşme sonucu `delivery_status`'ta), "
+                + "süre, deneme sayısı, durum, IP ve tarayıcı. Satır en çok birkaç dakika işe yarar (kod ≤ 300 sn); "
                 + "IP / kullanıcı sınırları 15 dakikalık pencereye bakar. Olayların kalıcı izi denetim kaydındadır."),
 
         // ── İçerik ve olay kayıtları ──────────────────────────────────────────────────────────
