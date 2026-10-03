@@ -150,6 +150,7 @@ public final class AuditEventCatalog {
             "LOGIN_ISSUE_COMMENT",
             "LOGIN_ISSUE_PURGE",
             "LOGIN_ISSUE_STATUS_CHANGE",
+            "LOGIN_METHODS_PUSH_TEST",      // Giriş Yöntemleri → push metni "kendime test gönder" (2026-10-03)
             "LOGIN_METHODS_SETTINGS_SAVE",  // Ayarlar → Giriş Yöntemleri (2026-10-02)
             // Kodla giriş (push / e-posta tek kullanımlık kod, 2026-10-02) — ayrıntıda KOD YOK
             "LOGIN_OTP_DELIVERY_FAILED",

@@ -186,6 +186,8 @@ const SPECIAL = {
   LOGIN_OTP_EXPIRED: 'audit.ev.LOGIN_OTP_EXPIRED',
   LOGIN_OTP_LOCKED: 'audit.ev.LOGIN_OTP_LOCKED',
   LOGIN_METHODS_SETTINGS_SAVE: 'audit.ev.LOGIN_METHODS_SETTINGS_SAVE',
+  // Giriş Yöntemleri → push metni "kendime test gönder" (2026-10-03)
+  LOGIN_METHODS_PUSH_TEST: 'audit.ev.LOGIN_METHODS_PUSH_TEST',
 }
 
 /**

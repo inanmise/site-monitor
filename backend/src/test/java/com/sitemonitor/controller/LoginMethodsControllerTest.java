@@ -48,6 +48,7 @@ class LoginMethodsControllerTest {
     @Autowired MockMvc mvc;
 
     @MockitoBean LoginMethodsService methods;
+    @MockitoBean com.sitemonitor.service.loginstats.LoginStatsService loginStats;
     @MockitoBean AppSettingsService settingsService;
     @MockitoBean AuditService auditService;
     @MockitoBean AuditLogRepository auditLogRepo;
@@ -57,8 +58,12 @@ class LoginMethodsControllerTest {
     @MockitoBean HttpMetricsService httpMetricsService;
     @MockitoBean AuthController authController;
 
+    @Autowired LoginMethodsController controller;
+
     @BeforeEach
     void setUp() {
+        // test push tavanı denetleyici örneğinde (bağlam önbellekli, testler arası paylaşılır) — her test temiz başlar
+        ((Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(controller, "pushTestTimes")).clear();
         Map<String, Object> pub = new LinkedHashMap<>();
         pub.put("ldap", true);
         pub.put("otp_push", false);
@@ -199,6 +204,199 @@ class LoginMethodsControllerTest {
                 .containsEntry("site.monitor.login.otp.email.require-email", "true")
                 .containsEntry("site.monitor.login.otp.max-contact-mismatches", "7")
                 .hasSize(3);
+    }
+
+    // ── Push metni (2026-10-03) ────────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("push metni kaydı: geçerli özel metin aynen, varsayılanla aynı metin BOŞ yazılır (yerleşik varsayılan geçerli kalsın)")
+    @SuppressWarnings("unchecked")
+    void save_pushText_ok() throws Exception {
+        when(methods.pushMessageLimit()).thenReturn(200);
+        mvc.perform(put("/api/admin/login-methods").session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settings\":{\"push_title_tr\":\"  Kurum girişi  \",\"push_message_tr\":\"Kodunuz {kod} ({sure} sn, {saat})\","
+                                + "\"push_title_en\":\"" + com.sitemonitor.service.otp.OtpPushTemplate.DEFAULT_TITLE_EN + "\","
+                                + "\"push_message_en\":\"\"}}"))
+                .andExpect(status().isOk());
+        ArgumentCaptor<Map<String, Object>> cap = ArgumentCaptor.forClass(Map.class);
+        verify(settingsService).save(cap.capture(), eq("boss"));
+        Map<String, Object> values = (Map<String, Object>) cap.getValue().get("values");
+        assertThat(values).containsEntry("site.monitor.login.otp.push.title-tr", "Kurum girişi")
+                .containsEntry("site.monitor.login.otp.push.message-tr", "Kodunuz {kod} ({sure} sn, {saat})")
+                .containsEntry("site.monitor.login.otp.push.title-en", "")
+                .containsEntry("site.monitor.login.otp.push.message-en", "")
+                .hasSize(4);
+    }
+
+    @Test
+    @DisplayName("push metni kaydı: {kod} yok / iki kez / bilinmeyen yer tutucu / başlıkta {kod} / tavan aşımı → 400 + İLGİLİ alan, yazılmaz")
+    void save_pushText_rejected() throws Exception {
+        when(methods.pushMessageLimit()).thenReturn(80);
+        String[][] cases = {
+                {"push_message_tr", "Kodunuz hazır"},
+                {"push_message_en", "Code {kod} {kod}"},
+                {"push_message_tr", "Kod {kod} {isim}"},
+                {"push_title_en", "Code {kod}"},
+                {"push_message_en", "x".repeat(80) + " {kod}"},
+        };
+        for (String[] c : cases) {
+            mvc.perform(put("/api/admin/login-methods").session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON)
+                            .content(new tools.jackson.databind.ObjectMapper().writeValueAsString(Map.of("settings", Map.of(c[0], c[1])))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value(c[0]))
+                    .andExpect(jsonPath("$.error").isNotEmpty());
+        }
+        // İngilizce arayüz → İngilizce ileti (Msg.t)
+        mvc.perform(put("/api/admin/login-methods").session(session("ADMIN", false)).header("X-Lang", "en")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"settings\":{\"push_message_en\":\"no code here\"}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("must contain the {kod} placeholder")));
+        verify(settingsService, never()).save(any(), anyString());
+    }
+
+    @Test
+    @DisplayName("GET: push_template bloğu (varsayılanlar, yer tutucular, sınırlar) görünümde")
+    void adminGet_pushTemplateBlock() throws Exception {
+        when(methods.pushTemplateView()).thenReturn(Map.of("title_max", 60, "message_max", 200, "charset", "ISO-8859-9"));
+        mvc.perform(get("/api/admin/login-methods").session(session("ADMIN", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.push_template.title_max").value(60))
+                .andExpect(jsonPath("$.data.push_template.charset").value("ISO-8859-9"));
+    }
+
+    @Test
+    @DisplayName("push-test: global yönetici dışı 403; taslak geçersizse 400 + alan; YALNIZ kendi adına, [TEST] önekli, örnek kod; denetlenir")
+    void pushTest_gatesValidationTargetAudit() throws Exception {
+        String body = "{\"lang\":\"tr\",\"title\":\"Kurum girişi\",\"message\":\"Kodunuz {kod} - {sure} sn\",\"target\":\"someone-else\"}";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("ADMIN", true)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("USER", false)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+
+        when(methods.pushMessageLimit()).thenReturn(200);
+        when(methods.pushTtlSeconds()).thenReturn(45);
+        when(methods.pushGatewayConfigured()).thenReturn(true);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lang\":\"en\",\"title\":\"x\",\"message\":\"no code\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("push_message_en"));
+        verify(methods, never()).sendTestPush(any(), any(), any());
+
+        when(methods.sendTestPush(any(), any(), any())).thenReturn(new com.sitemonitor.service.UserPushService.DirectResult(true, 200, null));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.code").value("OK"))
+                .andExpect(jsonPath("$.target").value("boss"))
+                .andExpect(jsonPath("$.message").isNotEmpty());
+        // gövdedeki "target" YOK SAYILIR: hedef oturumdaki yöneticinin kendi adı
+        verify(methods).sendTestPush(eq("boss"), eq("[TEST] Kurum girişi"), eq("Kodunuz 123456 - 45 sn"));
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("LOGIN_METHODS_PUSH_TEST"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("SETTINGS"), eq("login-methods"), detail.capture());
+        assertThat(detail.getValue()).contains("\"result\":\"OK\"").doesNotContain("123456").doesNotContain("Kodunuz");
+    }
+
+    @Test
+    @DisplayName("push-test: boş taslak = yerleşik varsayılan; ağ geçidi yok → NOT_CONFIGURED (gönderim yok); hata kodları iletilir")
+    void pushTest_defaultsAndErrors() throws Exception {
+        var post = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test");
+        when(methods.pushMessageLimit()).thenReturn(200);
+        when(methods.pushTtlSeconds()).thenReturn(45);
+        when(methods.pushGatewayConfigured()).thenReturn(false);
+        mvc.perform(post.session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON).content("{\"lang\":\"tr\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("NOT_CONFIGURED"))
+                .andExpect(jsonPath("$.error").isNotEmpty());
+        verify(methods, never()).sendTestPush(any(), any(), any());
+
+        when(methods.pushGatewayConfigured()).thenReturn(true);
+        when(methods.sendTestPush(any(), any(), any())).thenReturn(new com.sitemonitor.service.UserPushService.DirectResult(false, 503, "HTTP 503"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("ADMIN", false)).header("X-Lang", "en").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lang\":\"en\",\"title\":\"\",\"message\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("HTTP 503"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("HTTP 503")));
+        verify(methods).sendTestPush(eq("boss"), eq("[TEST] " + com.sitemonitor.service.otp.OtpPushTemplate.DEFAULT_TITLE_EN),
+                eq("Your SiteMonitor sign-in code: 123456 - valid for 45 s. If you did not request it, ignore this message."));
+    }
+
+    @Test
+    @DisplayName("push-test: yönetici başına dakikada 3 — dördüncüsü 429, gönderim yapılmaz")
+    void pushTest_rateLimited() throws Exception {
+        when(methods.pushMessageLimit()).thenReturn(200);
+        when(methods.pushGatewayConfigured()).thenReturn(true);
+        when(methods.sendTestPush(any(), any(), any())).thenReturn(new com.sitemonitor.service.UserPushService.DirectResult(true, 200, null));
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                            .session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON).content("{\"lang\":\"tr\"}"))
+                    .andExpect(status().isOk());
+        }
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/admin/login-methods/push-test")
+                        .session(session("ADMIN", false)).contentType(MediaType.APPLICATION_JSON).content("{\"lang\":\"tr\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(jsonPath("$.error").isNotEmpty());
+        verify(methods, org.mockito.Mockito.times(3)).sendTestPush(any(), any(), any());
+    }
+
+    // ── Giriş istatistikleri (2026-10-03) ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("istatistik uçları: oturumsuz 401, USER 403, kapsamlı müdür 403, global yönetici 200; servis hiç çağrılmaz reddedilende")
+    void stats_globalOnly() throws Exception {
+        when(loginStats.summary(org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(Map.of("days", 7, "totals", Map.of("attempts", 3)));
+        for (String path : List.of("/api/admin/login-methods/stats", "/api/admin/login-methods/stats/users",
+                "/api/admin/login-methods/stats/users/ALICE")) {
+            mvc.perform(get(path)).andExpect(status().isUnauthorized());
+            mvc.perform(get(path).session(session("USER", false))).andExpect(status().isForbidden());
+            mvc.perform(get(path).session(session("AUDIT", false))).andExpect(status().isForbidden());
+            mvc.perform(get(path).session(session("ADMIN", true))).andExpect(status().isForbidden());
+        }
+        org.mockito.Mockito.verifyNoInteractions(loginStats);
+        mvc.perform(get("/api/admin/login-methods/stats").session(session("ADMIN", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.totals.attempts").value(3));
+    }
+
+    @Test
+    @DisplayName("istatistik parametreleri: desteklenmeyen dönem → 7; fresh=1; kullanıcı tablosu süzgeçleri ve sayfa aynen; ayrıntı IdentityMask görünürlüğüyle")
+    void stats_params() throws Exception {
+        when(loginStats.summary(org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(Map.of());
+        when(loginStats.users(org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(Map.of("items", List.of(), "total", 0));
+        when(loginStats.user(any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), any()))
+                .thenReturn(Map.of("found", true));
+        MockHttpSession admin = session("ADMIN", false);
+        mvc.perform(get("/api/admin/login-methods/stats?days=5").session(admin)).andExpect(status().isOk());
+        verify(loginStats).summary(7, false);
+        mvc.perform(get("/api/admin/login-methods/stats?days=90&fresh=1").session(admin)).andExpect(status().isOk());
+        verify(loginStats).summary(90, true);
+        mvc.perform(get("/api/admin/login-methods/stats/users?days=30&q=ali&channel=LDAP&sort=failures&page=2&size=50").session(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+        verify(loginStats).users(30, "ali", "LDAP", "failures", 2, 50, false);
+        mvc.perform(get("/api/admin/login-methods/stats/users").session(admin)).andExpect(status().isOk());
+        verify(loginStats).users(7, null, null, null, 1, 25, false);
+        // CSV: süzülmüş TÜM satırlar tek yanıtta (export=1)
+        when(loginStats.users(org.mockito.ArgumentMatchers.anyInt(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(Map.of("items", List.of(), "total", 0));
+        mvc.perform(get("/api/admin/login-methods/stats/users?export=1&q=a&page=9").session(admin)).andExpect(status().isOk());
+        verify(loginStats).users(7, "a", null, null, 1, 25, false, true);
+        mvc.perform(get("/api/admin/login-methods/stats/users/user.a?days=1").session(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.found").value(true));
+        verify(loginStats).user("user.a", 1, true, "boss");
     }
 
     @Test

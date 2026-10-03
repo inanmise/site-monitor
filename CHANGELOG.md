@@ -15,6 +15,24 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Giriş Yöntemleri → İstatistikler sekmesi:** kanal başına (LDAP, yerel şifre, push kodu, e-posta kodu, beni hatırla)
+  giriş denemesi, başarılı / başarısız sayısı, başarı oranı ve başarısızlık nedenleri; önceki döneme göre değişimli
+  KPI'lar, kodla giriş hunisi (istendi → gönderildi → doğrulandı), trend grafiği, 24 sa / 7 / 30 / 90 gün seçimi,
+  kullanıcı tablosu (arama, kanal süzgeci, sıralama, CSV) ve kullanıcı başına ayrıntı paneli (son giriş olayları).
+  Sistem Sağlığı → Kullanıcı/Oturum'daki giriş geçmişinde kanal etiketleri ve global yöneticiye istatistik bağlantısı.
+- **Giriş Yöntemleri → Push mesajı düzenleyicisi:** TR / EN başlık ve metin, `{kod}` / `{sure}` / `{saat}` yer
+  tutucuları, telefonda görünecek metnin canlı kilit ekranı önizlemesi, telefonda gösterilemeyecek karakter uyarısı ve
+  "Kendime test gönder".
+
+### Changed
+- Başarılı ve başarısız giriş denetim kayıtları artık giriş kanalını (`method`) taşır. Bu sürümden önceki şifre
+  girişleri istatistikte hesap kaynağına göre tahmini sınıflanır.
+
+### Fixed
+- Push ile gelen giriş kodunda koddan sonra "?" görünmesi giderildi: kod push'u da alarm push'ları gibi kanalın
+  taşıyabildiği karakterlere çevriliyor ("—" → "-").
+
 ## [20.99.0] — 2026-10-03
 
 ### Added

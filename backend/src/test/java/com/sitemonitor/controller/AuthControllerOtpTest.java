@@ -91,7 +91,7 @@ class AuthControllerOtpTest {
         when(clientIpResolver.resolve(any())).thenReturn("10.0.0.5");
         when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
         when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
-        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt()))
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt(), any()))
                 .thenReturn(new AuditLog());
         when(loginMethods.ldapLoginEnabled()).thenReturn(true);
         when(loginOtp.consume(any())).thenReturn(true);

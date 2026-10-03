@@ -82,6 +82,20 @@ Frontend ships **inside** the backend jar (`spring.web.resources.static-location
     - **Privacy:** the ENTERED value is never stored, logged or audited; audit gets only `contact`=MATCHED/MISMATCH/MISSING/LOCKED/NOT_CHECKED.
     - **Admin view:** adds `coverage` {active_users, with_phone, with_email} from one aggregate query. The UI warns below 80 %.
     - **Gates:** `LoginOtpContactVerificationTest`, `OtpContactMatcherTest`, `LoginOtpCodeNeverLoggedTest.enteredContactNeverLeaks`.
+  - **Login statistics + editable OTP push text (2026-10-03, user request):**
+    - **Audit `method`:** every LOGIN, and every password-path LOGIN_FAILED, carries detail `method` (LOCAL / LDAP / REMEMBER_ME / OTP_PUSH / OTP_EMAIL; the legacy value `PASSWORD` means LOCAL). Event types, outcomes, failure_reason and lockout counting are unchanged.
+    - **Classification:** single source is `service/loginstats/LoginEventClassifier`. An unknown actor gets no channel. Method-less legacy rows are classified by the account source and marked `estimated`.
+    - **Service:** `LoginStatsService` runs one row query (cap 250k → `truncated`) plus one grouped count for the previous period. Results are cached 30 s per period; `fresh` recomputes at most every 5 s.
+    - **Endpoints:** `/api/admin/login-methods/stats[/users[/{username}]]` are global-admin only. The user detail goes through IdentityMask.
+    - **UI:** tab `lm_tab=stats`, URL prefix `lm_`. The user directory shows channel badges.
+    - **Push text keys:** `site.monitor.login.otp.push.title|message-tr|en`, GLOBAL_ONLY, rules in `OtpPushTemplate`:
+      - message: `{kod}` exactly once, plus optional `{sure}` / `{saat}`;
+      - title: ≤ 60 characters, no placeholders;
+      - worst-case length after `PushText.pushSafe` must fit the push limit;
+      - an invalid stored template falls back to the default at delivery.
+    - **Push test:** `push-test` sends only to the session admin, 3/min, audit `LOGIN_METHODS_PUSH_TEST`.
+    - **Client mirror:** `utils/pushSafeText.js` mirrors `PushText` (gate `pushSafeText.test.js`).
+    - **Push charset:** `UserPushService.sendDirect` runs `PushText.pushSafe` like the alarm path. The channel is ISO-8859-9, so an unfiltered "—" showed as "?" after the code (`LoginOtpPushSafeTextTest`).
   - **Session:** a successful verification goes through `AuthController.establishSession`, the SAME path as password login (409/forceLogin, remember-me, maintenance, passive, lock, LOGIN method=OTP_*).
   - **The code is never written anywhere:** not to logs, DB columns, `notification_logs`, push delivery rows or audit (`LoginOtpCodeNeverLoggedTest`). `RequestLoggingFilter` skips `/api/login/otp/` bodies. Push goes straight to the gateway (identifier = username, no outbox row). E-mail goes through the funnel with `force=true`.
   - **Lockout:** OTP failures are not `LOGIN_FAILED` and never feed the password lockout.

@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Users, ShieldAlert, Clock, Eye, LogOut, Check, UserX, Compass, ExternalLink, UserCog } from 'lucide-react'
+import { Users, ShieldAlert, Clock, Eye, LogOut, Check, UserX, Compass, ExternalLink, UserCog, BarChart3 } from 'lucide-react'
+import { Badge } from '@/components/shadcn/badge'
+import ChannelBadge from '../loginmethods/stats/ChannelBadge.jsx'
+import { channelChips, channelLabel, channelOfLoginMethod, loginStatsParams } from '../loginmethods/stats/loginStatsModel.js'
 import { useT } from '../../../i18n/index.jsx'
 import { api, formatDateSec } from '../../../api/client'
 import ModalShell from '../../ui/ModalShell.jsx'
@@ -199,6 +202,13 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
         {isAdmin && <Button type="button" variant="secondary" onClick={() => { onClose?.(); navigateTo('admin', { g_tab: 'users', g_q: u.username }) }}><ExternalLink size={14} /> {t('uact.actOpenAdmin')}</Button>}
         {isAdmin && u.user_id != null && (u.tour_status || 'none') !== 'none' && <Button type="button" variant="secondary" disabled={tourBusy} onClick={resetTour}><Compass size={14} /> {tourBusy ? t('usr.saving') : t('usr.tourReset')}</Button>}
         {isAdmin && isLive && !self && <Button type="button" variant="destructive" onClick={() => onTerminate?.(u.username)}><LogOut size={14} /> {t('uact.terminate')}</Button>}
+        {/* 2026-10-03: Giriş Yöntemleri → İstatistikler (yalnız global yönetici) — bu kişinin ayrıntısıyla açılır */}
+        {globalAdmin && (
+          <Button type="button" variant="secondary" data-slot="uact-login-stats"
+            onClick={() => { onClose?.(); navigateTo('settings', loginStatsParams(u.username)) }}>
+            <BarChart3 size={14} /> {t('lm.stats.user.openStats')}
+          </Button>
+        )}
       </>}>
       {fullCard && <UserDetailPanel user={{ ...u, id: u.user_id, team_ids: u.team_ids || [] }} teams={teamList} isAdmin={globalAdmin} onClose={() => setFullCard(false)} />}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -266,7 +276,8 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
       <KvSection>{t('uact.detailLoginHistory')}</KvSection>
       <div className={KV_GRID}>
         {field(t('uact.colLastLogin'), u.last_login_at ? formatDateSec(u.last_login_at) : '—', true)}
-        {field(t('uact.detailLoginMethod'), u.last_login_method)}
+        {field(t('uact.detailLoginMethod'), channelOfLoginMethod(u.last_login_method, u.auth_source)
+          ? <ChannelBadge channel={channelOfLoginMethod(u.last_login_method, u.auth_source)} /> : u.last_login_method)}
         {field(t('uact.colPrevLogin'), u.prev_login_at ? formatDateSec(u.prev_login_at) : '—', true)}
         {ipField(t('uact.detailPrevIp'), 'prev_login_ip')}
         {field(t('uact.colLastFailed'), u.last_failed_at ? formatDateSec(u.last_failed_at) : '—', true)}
@@ -279,6 +290,21 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
       {!timeline && !tlError && <div className={MUTED_SM}>…</div>}
       {timeline && (<>
         <p className={MUTED_SM}>{t('uact.timelineStats', timeline.logins ?? 0, timeline.failed ?? 0, timeline.distinct_ips ?? 0)}</p>
+        {/* 2026-10-03: kanal özeti (30 gün) — Giriş Yöntemleri istatistikleriyle aynı sınıflandırma */}
+        {channelChips(timeline.channels).length > 0 && (
+          <div className="mt-1.5 flex flex-col gap-1" data-slot="uact-channel-chips">
+            <span className="text-[10px] font-bold tracking-wide text-muted-foreground">{t('lm.stats.user.channelSummary')}</span>
+            <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+              {channelChips(timeline.channels).map((c) => (
+                <li key={c.channel} data-channel={c.channel}>
+                  <Badge variant="outline" className="gap-1 font-normal">
+                    {t('lm.stats.user.chip', channelLabel(c.channel, t), c.success, c.failed)}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {(timeline.events || []).length === 0 ? <div className={MUTED_SM}>{t('uact.noEvents')}</div> : (
           <ul className="mt-1.5 flex list-none flex-col border-l-2 border-border pl-3.5">
             {timeline.events.map((e) => {
@@ -290,6 +316,7 @@ export function SessionDetailModal({ row, full, isAdmin, globalAdmin, identityMa
                   <span className={MONO_SM}>{e.time ? formatDateSec(e.time) : '—'}</span>
                   <span className="min-w-0 flex-1">
                     <Outcome value={e.outcome} />
+                    {e.channel && <> <ChannelBadge channel={e.channel} estimated={!!e.channel_estimated} className="align-middle" /></>}
                     {e.reason && <span className="text-muted-foreground"> · {e.reason}</span>}
                     {timeline.identity_masked === true && !('ip' in e)
                       ? <span className={MUTED_SM}> · <MaskedValue /></span>

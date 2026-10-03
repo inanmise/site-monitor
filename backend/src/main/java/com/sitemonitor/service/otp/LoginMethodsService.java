@@ -29,6 +29,9 @@ import java.util.Map;
  *       {@code otp.email.require-email} (vars. AÇIK) — istekte kayıtlı cep telefonu / e-posta da sorulur, kod yalnız
  *       kullanıcı adıyla EŞLEŞİRSE gider ({@link OtpContactMatcher}); 15 dk'da kullanıcı başına eşleşmeyen deneme sınırı
  *       {@code otp.max-contact-mismatches} (1–20, vars. 5). Anahtar KAPALIYKEN davranış birebir önceki gibidir.</li>
+ *   <li>Push metni (2026-10-03, kullanıcı isteği): {@code otp.push.title-tr|title-en|message-tr|message-en} — boş =
+ *       yerleşik varsayılan; kurallar ve dolum {@link OtpPushTemplate}'te (kayıtta doğrulanır, teslimde geçersizse
+ *       varsayılana düşülür).</li>
  * </ul>
  */
 @Service
@@ -53,11 +56,23 @@ public class LoginMethodsService {
     public static final String KEY_EMAIL_REQUIRE_EMAIL = "site.monitor.login.otp.email.require-email";
     /** 2026-10-03: 15 dk'da kullanıcı başına eşleşmeyen kişi bilgisi sınırı — aşılınca kod isteği sessizce bastırılır. */
     public static final String KEY_MAX_CONTACT_MISMATCHES = "site.monitor.login.otp.max-contact-mismatches";
+    /** 2026-10-03: kodla giriş push BAŞLIĞI (TR / EN) — boş = yerleşik varsayılan ({@link OtpPushTemplate}). */
+    public static final String KEY_PUSH_TITLE_TR = "site.monitor.login.otp.push.title-tr";
+    public static final String KEY_PUSH_TITLE_EN = "site.monitor.login.otp.push.title-en";
+    /** 2026-10-03: kodla giriş push MESAJI (TR / EN) — {@code {kod}} zorunlu; boş = yerleşik varsayılan. */
+    public static final String KEY_PUSH_MESSAGE_TR = "site.monitor.login.otp.push.message-tr";
+    public static final String KEY_PUSH_MESSAGE_EN = "site.monitor.login.otp.push.message-en";
 
     /** Sayfanın yönettiği anahtarların TAMAMI (hepsi GLOBAL_ONLY — SettingsScopedAdminGateTest). */
     public static final List<String> KEYS = List.of(KEY_LDAP, KEY_PUSH_ENABLED, KEY_EMAIL_ENABLED, KEY_PUSH_TTL,
             KEY_EMAIL_TTL, KEY_MAX_ATTEMPTS, KEY_COOLDOWN, KEY_MAX_PER_USER, KEY_MAX_PER_IP, KEY_MAX_FAILED,
-            KEY_ALLOW_GLOBAL_ADMINS, KEY_PUSH_REQUIRE_PHONE, KEY_EMAIL_REQUIRE_EMAIL, KEY_MAX_CONTACT_MISMATCHES);
+            KEY_ALLOW_GLOBAL_ADMINS, KEY_PUSH_REQUIRE_PHONE, KEY_EMAIL_REQUIRE_EMAIL, KEY_MAX_CONTACT_MISMATCHES,
+            KEY_PUSH_TITLE_TR, KEY_PUSH_TITLE_EN, KEY_PUSH_MESSAGE_TR, KEY_PUSH_MESSAGE_EN);
+
+    /** Push metni anahtarları: telde kısa ad → ayar anahtarı (kayıt gövdesi ve görünüm aynı adları kullanır). */
+    public static final Map<String, String> PUSH_TEXT_FIELDS = Map.of(
+            "push_title_tr", KEY_PUSH_TITLE_TR, "push_title_en", KEY_PUSH_TITLE_EN,
+            "push_message_tr", KEY_PUSH_MESSAGE_TR, "push_message_en", KEY_PUSH_MESSAGE_EN);
 
     /** Sayaç pencereleri (IP / kullanıcı isteği, başarısız doğrulama) — sabit 15 dakika. */
     public static final int WINDOW_SECONDS = 15 * 60;
@@ -180,6 +195,64 @@ public class LoginMethodsService {
         return CONTACT_MISMATCHES.clamp(appSettings.getInt("site.monitor.login.otp.max-contact-mismatches", CONTACT_MISMATCHES.def()));
     }
 
+    // ── Push metni şablonu (2026-10-03) ────────────────────────────────────────
+
+    /** Kayıtlı push başlığı (ham; boş = varsayılan). */
+    public String pushTitleTemplate(boolean english) {
+        return appSettings.getString(english ? KEY_PUSH_TITLE_EN : KEY_PUSH_TITLE_TR, "");
+    }
+
+    /** Kayıtlı push mesajı şablonu (ham; boş = varsayılan). */
+    public String pushMessageTemplate(boolean english) {
+        return appSettings.getString(english ? KEY_PUSH_MESSAGE_EN : KEY_PUSH_MESSAGE_TR, "");
+    }
+
+    /** Push mesaj tavanı (Webhook Push ayarı, sunucuda 80–320'ye kırpılır); okunamazsa kanal varsayılanı 200. */
+    public int pushMessageLimit() {
+        try {
+            return userPushService.messageCharLimit();
+        } catch (Exception e) {
+            return 200;
+        }
+    }
+
+    /**
+     * "Kendime test gönder" (2026-10-03): işlemsel tekil push — {@link UserPushService#sendDirect} (outbox / teslimat
+     * satırı / devre kesici YOK, kanal süzgeci ve tavan sendDirect'te). Doğrulama, tavan ve denetim çağıranda
+     * (LoginMethodsController). Hedef YALNIZ çağıran yöneticinin kendi kullanıcı adı.
+     */
+    public UserPushService.DirectResult sendTestPush(String username, String title, String message) {
+        return userPushService.sendDirect(username, title, message);
+    }
+
+    /** Arayüzde gösterilecek (etkin) metin: kayıtlı doluysa o, boşsa yerleşik varsayılan. */
+    private String shown(String stored, String def) {
+        return stored == null || stored.isBlank() ? def : stored;
+    }
+
+    /**
+     * Yönetici sayfasının push metni bloğu: varsayılanlar, yer tutucular (örnek + en kötü uzunluk), sınırlar, kanal
+     * karakter kümesi ve kayıtlı şablonun teslimde kullanılıp kullanılamayacağı ({@code stored_invalid} — tavan sonradan
+     * düşürüldüyse ya da şablon başka yoldan yazıldıysa varsayılana düşülür; arayüz uyarır).
+     */
+    public Map<String, Object> pushTemplateView() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        int limit = pushMessageLimit();
+        Map<String, Object> defaults = new LinkedHashMap<>();
+        defaults.put("tr", Map.of("title", OtpPushTemplate.DEFAULT_TITLE_TR, "message", OtpPushTemplate.DEFAULT_MESSAGE_TR));
+        defaults.put("en", Map.of("title", OtpPushTemplate.DEFAULT_TITLE_EN, "message", OtpPushTemplate.DEFAULT_MESSAGE_EN));
+        m.put("defaults", defaults);
+        m.put("placeholders", OtpPushTemplate.placeholderView(pushTtlSeconds()));
+        m.put("title_max", OtpPushTemplate.TITLE_MAX);
+        m.put("message_max", limit);
+        m.put("charset", "ISO-8859-9");
+        Map<String, Object> invalid = new LinkedHashMap<>();
+        invalid.put("tr", OtpPushTemplate.storedInvalid(pushTitleTemplate(false), pushMessageTemplate(false), limit));
+        invalid.put("en", OtpPushTemplate.storedInvalid(pushTitleTemplate(true), pushMessageTemplate(true), limit));
+        m.put("stored_invalid", invalid);
+        return m;
+    }
+
     // ── Görünümler ─────────────────────────────────────────────────────────────
 
     /**
@@ -218,6 +291,11 @@ public class LoginMethodsService {
         m.put("push_require_phone", pushRequiresPhone());
         m.put("email_require_email", emailRequiresEmail());
         m.put("max_contact_mismatches", maxContactMismatches());
+        // 2026-10-03: push metni (etkin hâli — boş kayıt varsayılan metinle görünür)
+        m.put("push_title_tr", shown(pushTitleTemplate(false), OtpPushTemplate.DEFAULT_TITLE_TR));
+        m.put("push_title_en", shown(pushTitleTemplate(true), OtpPushTemplate.DEFAULT_TITLE_EN));
+        m.put("push_message_tr", shown(pushMessageTemplate(false), OtpPushTemplate.DEFAULT_MESSAGE_TR));
+        m.put("push_message_en", shown(pushMessageTemplate(true), OtpPushTemplate.DEFAULT_MESSAGE_EN));
         return m;
     }
 

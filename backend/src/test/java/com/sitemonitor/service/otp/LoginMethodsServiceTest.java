@@ -146,10 +146,37 @@ class LoginMethodsServiceTest {
     }
 
     @Test
+    @DisplayName("2026-10-03 push metni: boş kayıt → görünümde yerleşik varsayılan; özel metin aynen; tavan push ayarından; test gönderimi sendDirect")
+    @SuppressWarnings("unchecked")
+    void pushTemplate() {
+        when(settings.getString(eq(LoginMethodsService.KEY_PUSH_TITLE_TR), org.mockito.ArgumentMatchers.any())).thenReturn("");
+        when(settings.getString(eq(LoginMethodsService.KEY_PUSH_MESSAGE_TR), org.mockito.ArgumentMatchers.any())).thenReturn("Kod {kod}");
+        when(settings.getString(eq(LoginMethodsService.KEY_PUSH_MESSAGE_EN), org.mockito.ArgumentMatchers.any())).thenReturn("no code");
+        when(push.messageCharLimit()).thenReturn(160);
+        assertThat(svc.settingsView())
+                .containsEntry("push_title_tr", OtpPushTemplate.DEFAULT_TITLE_TR)
+                .containsEntry("push_title_en", OtpPushTemplate.DEFAULT_TITLE_EN)
+                .containsEntry("push_message_tr", "Kod {kod}")
+                .containsEntry("push_message_en", "no code");
+        assertThat(svc.pushMessageLimit()).isEqualTo(160);
+        java.util.Map<String, Object> v = svc.pushTemplateView();
+        assertThat(v).containsEntry("title_max", 60).containsEntry("message_max", 160).containsEntry("charset", "ISO-8859-9");
+        // EN kayıtlı şablon {kod} içermiyor → teslimde varsayılana düşülür; arayüz uyarsın
+        assertThat((java.util.Map<String, Object>) v.get("stored_invalid")).containsEntry("tr", false).containsEntry("en", true);
+        assertThat((List<?>) v.get("placeholders")).hasSize(3);
+        when(push.messageCharLimit()).thenThrow(new RuntimeException("x"));
+        assertThat(svc.pushMessageLimit()).isEqualTo(200);
+
+        when(push.sendDirect("BOSS", "[TEST] t", "m")).thenReturn(new UserPushService.DirectResult(true, 200, null));
+        assertThat(svc.sendTestPush("BOSS", "[TEST] t", "m").ok()).isTrue();
+        org.mockito.Mockito.verify(push).sendDirect("BOSS", "[TEST] t", "m");
+    }
+
+    @Test
     @DisplayName("KAPI: sayfanın her anahtarı katalogda ve GLOBAL_ONLY; saklama anahtarı da katalogda")
     void keysAreCataloguedAndGlobalOnly() {
         Set<String> catalog = AppSettingsCatalog.ALL.stream().map(AppSettingsCatalog.Setting::key).collect(Collectors.toSet());
-        assertThat(LoginMethodsService.KEYS).hasSize(14);
+        assertThat(LoginMethodsService.KEYS).hasSize(18);   // 2026-10-03: + push başlığı / mesajı (TR, EN)
         for (String k : LoginMethodsService.KEYS) {
             assertThat(catalog).as("katalogda: " + k).contains(k);
             assertThat(AppSettingsCatalog.isGlobalOnly(k)).as("GLOBAL_ONLY: " + k).isTrue();

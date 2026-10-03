@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.*;
@@ -147,6 +148,38 @@ class AuditServiceTest {
 
         String flags = result.getAnomalyFlags();
         assertThat(flags == null || !flags.contains("UNUSUAL_IP")).isTrue();
+    }
+
+    // ── Giriş kanalı ayrıntısı (2026-10-03, Giriş Yöntemleri → İstatistikler) ──────────────────
+
+    @Test
+    @DisplayName("2026-10-03: LOGIN / LOGIN_FAILED ayrıntısı giriş kanalını taşır (PASSWORD → LOCAL); yöntemsiz kayıt BİREBİR eski (ayrıntı yok)")
+    void loginChannel_detail() {
+        ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+        service.recordLogin("ALICE", 1L, 2L, "USER", "1.2.3.4", "UA", "s1", true, null, null, 5, "LOCAL");
+        service.recordLogin("ALICE", 1L, 2L, "USER", "1.2.3.4", "UA", "s2", true, null, null, 5, "REMEMBER_ME");
+        service.recordLogin("BOB", null, null, null, "1.2.3.4", "UA", null, false, "BAD_PASSWORD", null, 5, "LDAP");
+        service.recordLogin("CAROL", 3L, 2L, "USER", "1.2.3.4", "UA", "s3", true, null, null, 5);
+        service.recordInactiveLogin("DAVE", 4L, 2L, "USER", "1.2.3.4", "UA", "PASSWORD");
+        service.recordMaintenanceLogin("ERIN", 5L, 2L, "USER", "1.2.3.4", "UA", "REMEMBER_ME");
+        service.recordLdapDisabledLogin("FRANK", "1.2.3.4", "UA");
+        service.recordLockedLogin("GRACE", 6L, 2L, "USER", "1.2.3.4", "UA", "OTP_EMAIL");
+        service.recordRateLimited("HEIDI", "1.2.3.4", "UA", "LDAP");
+        service.recordRateLimited("NOBODY", "1.2.3.4", "UA");
+        verify(auditLogRepo, org.mockito.Mockito.times(10)).save(captor.capture());
+        List<AuditLog> rows = captor.getAllValues();
+        assertThat(rows).extracting(AuditLog::getDetail).containsExactly(
+                "{\"method\":\"LOCAL\"}", "{\"method\":\"REMEMBER_ME\"}", "{\"method\":\"LDAP\"}", null,
+                "{\"method\":\"LOCAL\"}", "{\"method\":\"REMEMBER_ME\"}", "{\"method\":\"LDAP\"}",
+                "{\"method\":\"OTP_EMAIL\"}", "{\"method\":\"LDAP\"}", null);
+        // Tür / sonuç / neden metni DEĞİŞMEDİ (kaba kuvvet sayacı ve neden ayrıştırıcıları aynen çalışır)
+        assertThat(rows.get(2).getEventType()).isEqualTo("LOGIN_FAILED");
+        assertThat(rows.get(2).getFailureReason()).startsWith("BAD_PASSWORD: attempt #1/5");
+        assertThat(rows.get(4).getFailureReason()).endsWith("(PASSWORD)");
+        assertThat(rows.get(4).getOutcome()).isEqualTo("BLOCKED");
+        assertThat(rows.get(8).getAnomalyFlags()).isEqualTo("RATE_LIMITED");
+        assertThat(AuditService.loginChannel("password")).isEqualTo("LOCAL");
+        assertThat(AuditService.loginChannel(" ")).isNull();
     }
 
     // ── recordRateLimited ─────────────────────────────────────────────────────

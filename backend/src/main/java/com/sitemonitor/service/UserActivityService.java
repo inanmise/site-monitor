@@ -855,6 +855,18 @@ public class UserActivityService {
         List<AuditLog> mine = all.stream().filter(a -> a.getActor() != null && lc(a.getActor()).equals(want)).toList();
         List<Map<String, Object>> events = eventRows(mine).stream().limit(Math.max(1, limit)).toList();
         Map<Long, Map<String, Object>> acks = ackMap(mine.stream().map(AuditLog::getId).filter(Objects::nonNull).toList());
+        // Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler ile TEK kural — LoginEventClassifier): satır başına kanal
+        // rozeti + kanal özeti. Yöntemsiz eski satır bu kişinin BUGÜNKÜ hesap kaynağıyla tahmin edilir (channel_estimated).
+        String ownerSource = ownerSource(username);
+        java.util.function.Function<String, String> src = actor -> ownerSource;
+        Map<String, long[]> byChannel = new LinkedHashMap<>();
+        for (AuditLog a : mine) {
+            var r = com.sitemonitor.service.loginstats.LoginEventClassifier.classify(a.getEventType(), a.getActor(),
+                    a.getFailureReason(), a.getDetail(), src);
+            if (r.channel() == null) continue;
+            long[] c = byChannel.computeIfAbsent(r.channel().name(), k -> new long[2]);
+            if (r.kind() == com.sitemonitor.service.loginstats.LoginEventClassifier.Kind.SUCCESS) c[0]++; else c[1]++;
+        }
         List<Map<String, Object>> withId = new ArrayList<>();
         for (AuditLog a : mine.stream().sorted((x, y) -> nullSafe(y.getEventTime()).compareTo(nullSafe(x.getEventTime()))).limit(Math.max(1, limit)).toList()) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -862,6 +874,10 @@ public class UserActivityService {
             m.put("country", a.getIpCountry()); m.put("city", a.getIpCity()); m.put("outcome", a.getOutcome());
             m.put("flags", a.getAnomalyFlags()); m.put("reason", a.getFailureReason()); m.put("user_agent", a.getUserAgent());
             m.put("ack", acks.get(a.getId()));
+            var r = com.sitemonitor.service.loginstats.LoginEventClassifier.classify(a.getEventType(), a.getActor(),
+                    a.getFailureReason(), a.getDetail(), src);
+            m.put("channel", r.channel() == null ? null : r.channel().name());
+            m.put("channel_estimated", r.estimated());
             withId.add(m);
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -872,7 +888,22 @@ public class UserActivityService {
         out.put("failed", mine.stream().filter(a -> !"SUCCESS".equals(a.getOutcome())).count());
         out.put("distinct_ips", mine.stream().map(AuditLog::getIpAddress).filter(Objects::nonNull).distinct().count());
         out.put("since", since);
+        // 2026-10-03: kanal özeti (30 gün) — {LDAP: {success, failed}, …}; bilinmeyen / kanalsız satırlar sayılmaz
+        Map<String, Object> channels = new LinkedHashMap<>();
+        byChannel.forEach((ch, c) -> channels.put(ch, Map.of("success", c[0], "failed", c[1])));
+        out.put("channels", channels);
         return out;
+    }
+
+    /** Kullanıcının hesap kaynağı ("LOCAL" / "LDAP") — kanal tahmini için; hesap yoksa null. */
+    private String ownerSource(String username) {
+        try {
+            return userRepo.findByUsername(username)
+                    .map(u -> com.sitemonitor.service.loginstats.LoginChannel.ofAccountSource(u.getAuthSource()).name())
+                    .orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ── Sayfa kullanımı (#1): 7 gün, kullanıcı×sekme×gün ping sayısı → sayfa/kullanıcı/takım özetleri ──

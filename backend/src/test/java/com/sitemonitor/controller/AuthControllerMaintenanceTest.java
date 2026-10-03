@@ -83,7 +83,7 @@ class AuthControllerMaintenanceTest {
         when(clientIpResolver.resolve(any())).thenReturn("127.0.0.1");
         when(userService.checkLockout(anyString())).thenReturn(new UserService.LockoutStatus(false, 0));
         when(userService.failuresNeededForLevel(anyInt())).thenReturn(5);
-        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt()))
+        when(auditService.recordLogin(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), anyInt(), any()))
                 .thenReturn(new AuditLog());
         when(maintenance.isActive()).thenReturn(true);
         when(maintenance.isGlobalAdminAccount(user)).thenReturn(false);

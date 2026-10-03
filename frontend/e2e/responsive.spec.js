@@ -1002,3 +1002,170 @@ for (const vp of VIEWPORTS) {
     expect(m2.offenders, `önizleme (EN) @${vp.name}: taşan öğe`).toEqual([])
   })
 }
+
+// ── Giriş Yöntemleri: push metni düzenleyicisi + İstatistikler sekmesi + kullanıcı Sheet'i (2026-10-03) ──────────────
+// Telefon, tablet VE masaüstü (1280): sayfa taşmaz, görünür öğe sağdan taşmaz; telefonda dokunma hedefleri ≥ 40 px.
+const VIEWPORTS_3 = [...VIEWPORTS, { name: 'desktop', width: 1280, height: 800 }]
+const LONG_USER = 'GLOBAL.YONETICI.UZUN.KULLANICI.ADI'
+const LM_ADMIN_PUSH = { success: true, data: {
+  ...LM_ADMIN.data,
+  settings: { ...LM_ADMIN.data.settings,
+    push_title_tr: 'SiteMonitor giriş kodu — kurum içi çok uzun bir başlık denemesi',
+    push_title_en: 'SiteMonitor sign-in code',
+    push_message_tr: 'SiteMonitor giriş kodunuz: {kod} — {sure} sn geçerli ({saat}). Bu isteği siz yapmadıysanız dikkate almayın ✓ 😀',
+    push_message_en: 'Your SiteMonitor sign-in code: {kod} - valid for {sure} s. If you did not request it, ignore this message.' },
+  push_template: {
+    defaults: {
+      tr: { title: 'SiteMonitor giriş kodu', message: 'SiteMonitor giriş kodunuz: {kod} - {sure} sn geçerli. Bu isteği siz yapmadıysanız dikkate almayın.' },
+      en: { title: 'SiteMonitor sign-in code', message: 'Your SiteMonitor sign-in code: {kod} - valid for {sure} s. If you did not request it, ignore this message.' },
+    },
+    placeholders: [{ key: 'kod', token: '{kod}', required: true, sample: '123456', worst_len: 6 },
+      { key: 'sure', token: '{sure}', required: false, sample: '45', worst_len: 3 },
+      { key: 'saat', token: '{saat}', required: false, sample: '12:30', worst_len: 5 }],
+    title_max: 60, message_max: 200, charset: 'ISO-8859-9', stored_invalid: { tr: false, en: true },
+  },
+} }
+const LM_CH = (channel, success, failed, otp) => ({ channel, success, failed, attempts: success + failed,
+  success_rate: success + failed ? success / (success + failed) : null, unique_users: Math.min(success, 812), share: success / 25_000,
+  estimated: channel === 'LDAP' ? 1204 : 0, ...(otp ? { otp } : {}) })
+const LM_FUNNEL = { requested: 12_480, sent: 9_150, verified: 8_870, suppressed: 3_200, rate_limited: 130, delivery_failed: 45,
+  wrong_code: 610, expired: 210, locked: 33, conversion: 0.9694,
+  suppressed_reasons: [{ reason: 'CONTACT_MISMATCH', count: 1400 }, { reason: 'GLOBAL_ADMIN_NOT_ALLOWED', count: 900 }, { reason: 'USER_RATE_LIMITED', count: 400 }] }
+const LM_STATS = { success: true, data: {
+  days: 90, granularity: 'day', from: '2026-07-05T21:00:00', to: '2026-10-03T09:30:00', generated_at: SM_ISO(-90_000),
+  truncated: true, row_count: 250_000, row_cap: 250_000, estimated: 1204,
+  totals: { attempts: 1_284_310, success: 1_120_400, failed: 163_910, success_rate: 0.8724, unique_users: 12_480,
+    unknown_user_failures: 41_230, unattributed_success: 0, delivery_failures: 45 },
+  previous: { attempts: 1_100_000, success: 980_000, failed: 120_000, success_rate: 0.8909, unique_users: 12_100 },
+  channels: [LM_CH('LDAP', 820_400, 100_210), LM_CH('LOCAL', 1_200, 300), LM_CH('OTP_PUSH', 8_870, 853, LM_FUNNEL),
+    LM_CH('OTP_EMAIL', 2_100, 70, { ...LM_FUNNEL, delivery_failed: 0 }), LM_CH('REMEMBER_ME', 287_830, 1_247)],
+  series: Array.from({ length: 90 }, (_, i) => ({ ts: SM_ISO((i - 90) * 86_400_000).slice(0, 19), LDAP: 9000 + i, LOCAL: 13, OTP_PUSH: 98,
+    OTP_EMAIL: 23, REMEMBER_ME: 3198, OTHER: 0, failed: 1800 })),
+  failure_reasons: [
+    { reason: 'BAD_PASSWORD', count: 90_000, channels: { LDAP: 89_000, LOCAL: 1_000 } },
+    { reason: 'UNKNOWN_USER', count: 41_230, channels: { UNKNOWN: 41_230 } },
+    { reason: 'LDAP_LOGIN_DISABLED_WITH_A_VERY_LONG_UNKNOWN_REASON_CODE', count: 300, channels: { LDAP: 300 } },
+    { reason: 'OTP_INVALID', count: 610, channels: { OTP_PUSH: 600, OTP_EMAIL: 10 } },
+  ],
+} }
+const LM_USER_ROW = (i) => ({ username: `${LONG_USER}.${i}`, display_name: `Çok Uzun Görünen Ad Soyad Kullanıcı ${i}`, team_id: 1,
+  team_name: 'Takım A — Çok Uzun Platform ve Uygulama Geliştirme Takımı Adı', source: i % 2 ? 'LDAP' : 'LOCAL', active: i % 5 !== 0,
+  success: { LDAP: 1200 + i, LOCAL: 0, OTP_PUSH: 30, OTP_EMAIL: 4, REMEMBER_ME: 880 }, failed_by: { LDAP: 12 }, success_total: 2114 + i,
+  failed: 12, attempts: 2126 + i, success_rate: 0.9943, estimated: 3,
+  last_success: { at: SM_ISO(-3_600_000).slice(0, 19), channel: 'REMEMBER_ME' }, last_failure: { at: SM_ISO(-86_400_000).slice(0, 19), reason: 'BAD_PASSWORD' } })
+const LM_USERS = { success: true, data: { items: Array.from({ length: 12 }, (_, i) => LM_USER_ROW(i + 1)), total: 12_480, page: 1, size: 25, total_pages: 500 } }
+const LM_USER_DETAIL = { success: true, data: {
+  user: { username: `${LONG_USER}.1`, display_name: 'Çok Uzun Görünen Ad Soyad Kullanıcı 1', team_id: 1,
+    team_name: 'Takım A — Çok Uzun Platform ve Uygulama Geliştirme Takımı Adı', source: 'LDAP', active: false },
+  found: true, days: 90, granularity: 'day', truncated: false, estimated: 3, identity_masked: false,
+  totals: { attempts: 2126, success: 2114, failed: 12, success_rate: 0.9943, unique_users: 1 },
+  channels: [LM_CH('LDAP', 1201, 12), LM_CH('OTP_PUSH', 30, 0), LM_CH('REMEMBER_ME', 880, 0)],
+  failure_reasons: [{ reason: 'BAD_PASSWORD', count: 12, channels: { LDAP: 12 } }],
+  series: Array.from({ length: 90 }, (_, i) => ({ ts: SM_ISO((i - 90) * 86_400_000).slice(0, 19), success: 23, failed: i % 7 ? 0 : 1 })),
+  recent: Array.from({ length: 30 }, (_, i) => ({ id: 1000 - i, time: SM_ISO(-i * 3_600_000).slice(0, 19),
+    event: ['LOGIN', 'LOGIN_FAILED', 'LOGIN_OTP_REQUESTED', 'LOGIN_OTP_VERIFY_FAILED'][i % 4], actor: `${LONG_USER}.1`,
+    channel: ['REMEMBER_ME', 'LDAP', 'OTP_PUSH', 'OTP_PUSH'][i % 4], channel_estimated: i % 9 === 0,
+    outcome: ['SUCCESS', 'FAILURE', 'BLOCKED', 'FAILURE'][i % 4], reason: ['', 'BAD_PASSWORD', 'CONTACT_MISMATCH', 'OTP_INVALID'][i % 4] || null,
+    ip: '2001:db8:85a3::8a2e:370:7334', city: 'Belgeleme Şehri', country: 'Belgeland', ua_summary: 'Chrome 130 · Windows 10 · Masaüstü',
+    flags: i % 6 === 0 ? 'OFF_HOURS,UNUSUAL_IP' : null })),
+} }
+
+async function lmStatsRoutes(page) {
+  await page.route((u) => new URL(u).pathname === '/api/admin/login-methods', json(LM_ADMIN_PUSH))
+  await page.route((u) => new URL(u).pathname === '/api/admin/login-methods/stats', json(LM_STATS))
+  await page.route((u) => new URL(u).pathname === '/api/admin/login-methods/stats/users', json(LM_USERS))
+  await page.route((u) => new URL(u).pathname.startsWith('/api/admin/login-methods/stats/users/'), json(LM_USER_DETAIL))
+}
+
+for (const vp of VIEWPORTS_3) {
+  test(`giriş istatistikleri sekmesi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await lmStatsRoutes(page)
+    await page.goto('/?tab=settings&sec=loginmethods&lm_tab=stats&lm_p=90')
+    await page.locator('[data-slot="lm-kpi"]').first().waitFor({ timeout: 20_000 })
+    await page.locator('[data-slot="lm-user-row"]').first().waitFor()
+    await page.waitForTimeout(600)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `istatistikler @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `istatistikler @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    await expect(page.locator('[data-slot="lm-kpi"]')).toHaveCount(5)
+    await expect(page.locator('[data-slot="lm-channel"]')).toHaveCount(5)
+    await expect(page.locator('[data-slot="lm-stats-truncated"]')).toBeVisible()
+    const touch = ['[data-slot="lm-stats-refresh"]', '[data-slot="lm-users-csv"]', '[data-slot="lm-channel-filter"]',
+      '[data-slot="lm-tabs"] [role="tab"]', '[data-slot="lm-user-open"]']
+    for (const sel of touch) {
+      const b = await page.locator(sel).first().boundingBox()
+      expect(b.x + b.width, `${sel} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      if (vp.width < 640) expect(b.height, `${sel} @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    }
+    // Liste KABININ genişliğine göre (görünüm alanı değil — ayar menüsü + kenar çubuğu içeriği daraltır): ≥ 760 px tablo,
+    // altı kart; ikisinde de taşma yok
+    const tableRows = await page.locator('[data-slot="lm-users"] table [data-slot="lm-user-row"]').count()
+    const listWidth = await page.evaluate(() => document.querySelector('[data-slot="lm-users"]').clientWidth)
+    if (listWidth >= 760) expect(tableRows, `geniş kapta (${listWidth}px) tablo görünümü`).toBeGreaterThan(0)
+    else expect(tableRows, `dar kapta (${listWidth}px) kart görünümü`).toBe(0)
+    // KPI ızgarası kaba göre: dar kapta 2, orta kapta 3 sütun — kartlar okunur genişlikte kalır
+    const kpiW = await page.locator('[data-slot="lm-kpi"]').first().boundingBox()
+    expect(kpiW.width, `KPI kartı @${vp.name}: okunur genişlik (px)`).toBeGreaterThanOrEqual(140)
+    // Kanal kartı süzgeci: dokununca kart vurgulanır, tablo süzgeci o kanalı gösterir; yine taşma yok
+    await page.locator('[data-slot="lm-channel"][data-channel="OTP_PUSH"] [data-slot="lm-channel-filter"]').click()
+    await expect(page.locator('[data-slot="lm-users-channel"]')).toHaveValue('OTP_PUSH')
+    await page.waitForTimeout(300)
+    const m2 = await page.evaluate(measure)
+    expect(m2.offenders, `kanal süzgeci @${vp.name}: taşan öğe`).toEqual([])
+  })
+
+  test(`giriş istatistikleri kullanıcı ayrıntısı @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await lmStatsRoutes(page)
+    await page.goto(`/?tab=settings&sec=loginmethods&lm_tab=stats&lm_user=${encodeURIComponent(`${LONG_USER}.1`)}`)
+    const sheet = page.locator('[data-slot="lm-user-sheet"]')
+    await sheet.waitFor({ timeout: 20_000 })
+    await page.locator('[data-slot="lm-user-event"]').first().waitFor()
+    await page.waitForTimeout(600)
+    const m = await page.evaluate(measure, '[data-slot="lm-user-sheet"]')
+    expect(m.offenders, `kullanıcı ayrıntısı @${vp.name}: taşan öğe`).toEqual([])
+    const box = await sheet.boundingBox()
+    expect(box.x + box.width, `Sheet @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    expect(box.width, `Sheet @${vp.name}: ekrana sığar`).toBeLessThanOrEqual(vp.width)
+    const close = await sheet.locator('[data-slot="sheet-close"]').boundingBox()
+    expect(close.x + close.width, `kapat @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    await expect(sheet.locator('[data-slot="login-channel"]').first()).toBeVisible()
+    // Gövde kayar (30 olay): son olay kaydırılarak görünür olur
+    await sheet.locator('[data-slot="lm-user-event"]').last().scrollIntoViewIfNeeded()
+    await expect(sheet.locator('[data-slot="lm-user-event"]').last()).toBeInViewport()
+  })
+
+  test(`push metni düzenleyicisi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await lmStatsRoutes(page)
+    await page.goto('/?tab=settings&sec=loginmethods')
+    const editor = page.locator('[data-slot="lm-push-template"]')
+    await editor.waitFor({ timeout: 20_000 })
+    await editor.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(500)
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `push düzenleyicisi @${vp.name}: taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `push düzenleyicisi @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
+    await expect(editor.locator('[data-slot="lm-push-chars"]').first()).toBeVisible()           // — ✓ 😀 dönüşür / düşer
+    await expect(page.locator('[data-slot="lm-push-stored-invalid"]')).toBeVisible()
+    const preview = editor.locator('[data-slot="lm-push-preview"][data-lang="tr"]')
+    const pb = await preview.boundingBox()
+    expect(pb.x + pb.width, `önizleme @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    await expect(preview.locator('[data-slot="lm-push-preview-message"]')).toContainText('123456 - ')
+    for (const sel of ['[data-slot="lm-push-chip"]', '[data-slot="lm-push-test"]', '[data-slot="lm-push-reset"]']) {
+      const b = await editor.locator(sel).first().boundingBox()
+      expect(b.x + b.width, `${sel} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      if (vp.width < 640) expect(b.height, `${sel} @${vp.name}: dokunma hedefi (px)`).toBeGreaterThanOrEqual(39)
+    }
+    // EN sekmesi de taşmaz
+    await editor.getByRole('tab', { name: /English|İngilizce/ }).click()
+    await expect(editor).toHaveAttribute('data-lang', 'en')
+    await page.waitForTimeout(300)
+    const m2 = await page.evaluate(measure)
+    expect(m2.offenders, `push düzenleyicisi (EN) @${vp.name}: taşan öğe`).toEqual([])
+  })
+}

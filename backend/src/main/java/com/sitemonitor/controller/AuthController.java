@@ -170,7 +170,7 @@ public class AuthController {
         if (waitSecs > 0) {
             log.warn("Login rate limit exceeded: IP={} wait={}s", clientIp, waitSecs);
             auditService.recordRateLimited(
-                username.isBlank() ? null : username, clientIp, request.getHeader("User-Agent"));
+                username.isBlank() ? null : username, clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
             return ResponseEntity.status(429).body(Map.of(
                 "success", false,
                 "error", "Too many login attempts. Please wait.",
@@ -181,7 +181,7 @@ public class AuthController {
         if (!username.isBlank()) {
             UserService.LockoutStatus ls = userService.checkLockout(username);
             if (ls.isBlocked()) {
-                auditService.recordRateLimited(username, clientIp, request.getHeader("User-Agent"));
+                auditService.recordRateLimited(username, clientIp, request.getHeader("User-Agent"), passwordChannelOf(username));
                 if (ls.permanent()) {
                     return ResponseEntity.status(423).body(Map.of(
                         "success", false, "locked", true,
@@ -240,6 +240,9 @@ public class AuthController {
             if (userOpt.isEmpty()) inactive = userService.findInactiveWithValidPassword(username, password).orElse(null);
         }
 
+        // Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler): AD bind yolu LDAP, yerel BCrypt yolu (bootstrap admin ve
+        // LDAP kapalıyken yerel doğrulama dahil) LOCAL — LOGIN / LOGIN_FAILED ayrıntısına yazılır; tür / neden / sayaç aynen.
+        String channel = "LDAP".equals(inactiveMethod) ? "LDAP" : "LOCAL";
         if (inactive != null) {
             return rejectInactiveLogin(inactive, inactiveMethod, clientIp, request);
         }
@@ -267,7 +270,7 @@ public class AuthController {
                 auditService.recordLogin(username, user.getId(), user.getTeamId(),
                         user.getSystemRole(), clientIp,
                         request.getHeader("User-Agent"), null, false,
-                        "TEMP_PASSWORD_EXPIRED", null, 5);
+                        "TEMP_PASSWORD_EXPIRED", null, 5, channel);
                 return ResponseEntity.status(401).body(Map.of(
                         "success", false,
                         "error", "Temporary password expired. Ask your admin to reset again.",
@@ -280,11 +283,27 @@ public class AuthController {
             // eski oturumu düşürüp girişi tamamlar. (TERMINATED sentinel'i = zaten kapatılmış, sayılmaz.)
             boolean forceLogin = Boolean.parseBoolean(body.getOrDefault("force_login", "false"));
             return establishSession(user, username, rememberMe, forceLogin, clientIp, request, response,
-                    UserService.LoginMethod.PASSWORD);
+                    UserService.LoginMethod.PASSWORD, channel);
         }
 
         // 3. Failed — record attempt, check for BRUTE_FORCE, apply progressive lockout
-        return failedLogin(username, clientIp, request, ldapLoginOff);
+        return failedLogin(username, clientIp, request, ldapLoginOff, channel);
+    }
+
+    /**
+     * Hedeflenen hesabın parola giriş kanalı (2026-10-03, oran sınırı / kilit reddinin denetim ayrıntısı için): yerel
+     * (ya da kaynağı boş) hesap LOCAL, diğerleri LDAP; ad bilinmiyorsa {@code null} (ayrıntı yazılmaz). Yönlendirme kuralı
+     * {@link #login}'deki {@code isLocalAccount} ile aynı.
+     */
+    private String passwordChannelOf(String username) {
+        if (username == null || username.isBlank()) return null;
+        try {
+            return userService.findByUsername(username)
+                    .map(u -> u.getAuthSource() == null || "LOCAL".equalsIgnoreCase(u.getAuthSource()) ? "LOCAL" : "LDAP")
+                    .orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Başka yerde canlı oturum — onay iste (şifre ve kodla girişte AYNI gövde). */
@@ -307,7 +326,7 @@ public class AuthController {
     private ResponseEntity<Map<String, Object>> establishSession(AppUser user, String lockoutKey, boolean rememberMe,
                                                                  boolean forceLogin, String clientIp,
                                                                  HttpServletRequest request, HttpServletResponse response,
-                                                                 UserService.LoginMethod method) {
+                                                                 UserService.LoginMethod method, String channel) {
         String username = lockoutKey;
         loginAttempts.remove(clientIp);
         windowStart.remove(clientIp);
@@ -349,16 +368,12 @@ public class AuthController {
         // Audit actor'ı da CANONICAL: yazılan case ile kaydedilirse aktif-oturum kartı enrichment'i
         // (findTopByActor(canonical, sid)) eşleşmez → login zamanı/IP boş kalır; ayrıca aynı kullanıcı
         // audit'te iki farklı case ("N12345"/"n12345") ile görünür.
-        if (method == UserService.LoginMethod.PASSWORD) {
-            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
-                    user.getSystemRole(), clientIp,
-                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5);
-        } else {
-            // Kodla giriş (2026-10-02): aynı LOGIN olayı + ayrıntıda yöntem (OTP_PUSH / OTP_EMAIL) — kod YOK.
-            auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
-                    user.getSystemRole(), clientIp,
-                    request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5, method.name());
-        }
+        // LOGIN + ayrıntıda giriş KANALI: kodla giriş OTP_PUSH / OTP_EMAIL (2026-10-02, kod YOK); parola girişi 2026-10-03'ten
+        // beri LOCAL (yerel BCrypt) / LDAP (AD bind) — Giriş Yöntemleri → İstatistikler kanalı buradan okur.
+        String auditMethod = channel != null && !channel.isBlank() ? channel : method.name();
+        auditService.recordLogin(user.getUsername(), user.getId(), user.getTeamId(),
+                user.getSystemRole(), clientIp,
+                request.getHeader("User-Agent"), newSession.getId(), true, null, null, 5, auditMethod);
 
         if (rememberMe) {
             String token = rememberMeService.generateToken(
@@ -387,7 +402,7 @@ public class AuthController {
      * aynı). {@code ldapLoginOff}: LDAP girişi kapalıyken düz 401 gövdesi yerel olmayan adlarla AYNI olur (numaralandırma yok).
      */
     private ResponseEntity<Map<String, Object>> failedLogin(String username, String clientIp, HttpServletRequest request,
-                                                            boolean ldapLoginOff) {
+                                                            boolean ldapLoginOff, String channel) {
         recordFailedAttempt(clientIp);
         log.warn("Failed login attempt: IP={}, username={}", clientIp, username);
         // Look up user's lockout context: window start (countSince) and required failures for this level.
@@ -415,10 +430,11 @@ public class AuthController {
             }
         }
         String reasonCode = userExists ? "BAD_PASSWORD" : "UNKNOWN_USER";
+        // 2026-10-03: ayrıntıda denenen giriş kanalı (LOCAL / LDAP) — neden kodu, sayaç ve kilit kararı AYNEN
         com.sitemonitor.model.AuditLog logged = auditService.recordLogin(
                 username.isBlank() ? username : auditActor, null, null, null, clientIp,
                 request.getHeader("User-Agent"), null, false, reasonCode,
-                lastLockoutAt, failuresNeeded);
+                lastLockoutAt, failuresNeeded, channel);
 
         if (!username.isBlank() && logged.getAnomalyFlags() != null
                 && logged.getAnomalyFlags().contains("BRUTE_FORCE")) {
@@ -520,7 +536,7 @@ public class AuthController {
         if (!loginOtp.consume(v.challenge())) {
             return ResponseEntity.status(401).body(com.sitemonitor.service.otp.LoginOtpService.expiredBody());
         }
-        return establishSession(user, user.getUsername(), rememberMe, true, clientIp, request, response, method);
+        return establishSession(user, user.getUsername(), rememberMe, true, clientIp, request, response, method, method.name());
     }
 
     private static ResponseEntity<Map<String, Object>> otpUnavailable() {

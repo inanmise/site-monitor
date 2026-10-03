@@ -57,6 +57,14 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
          + "FROM AppUser u WHERE u.active = true")
     List<Object[]> contactCoverage();
 
+    /**
+     * Giriş istatistikleri dizini (2026-10-03, Giriş Yöntemleri → İstatistikler): {@code [username, displayName, teamId,
+     * authSource, active]} — TEK toplu izdüşüm (varlık / ilişki / parola özeti YÜKLENMEZ); kanal sınıflandırması (hesap
+     * kaynağı) ve kullanıcı tablosu bu satırlardan kurulur.
+     */
+    @Query("SELECT u.username, u.displayName, u.teamId, u.authSource, u.active FROM AppUser u")
+    List<Object[]> findLoginStatDirectory();
+
     /** Verilen (küçük harf, kırpılmış) adreslerden AKTİF bir kullanıcıya ait olanlar — "yalnız pasife ait adres"
      *  kararı için (aynı adresi aktif biri de kullanıyorsa adres düşürülmez). */
     @Query("SELECT DISTINCT LOWER(TRIM(u.email)) FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL "

@@ -254,14 +254,16 @@ public class AuditService {
     /**
      * {@link #recordLogin(String, Long, Long, String, String, String, String, boolean, String, String, int)} + giriş
      * YÖNTEMİ (2026-10-02, kodla giriş): {@code method} doluysa ayrıntıya {@code {"method":"OTP_PUSH"}} yazılır (denetçi
-     * kodla yapılan girişleri parola girişinden ayırabilsin). null = bugünkü kayıt birebir (parola / beni hatırla).
+     * kodla yapılan girişleri parola girişinden ayırabilsin). 2026-10-03'ten beri parola girişi de kanalını yazar:
+     * {@code LOCAL} (yerel BCrypt) / {@code LDAP} (AD bind), çerezle dönüş {@code REMEMBER_ME} — başarısız parola girişinde
+     * de (Giriş Yöntemleri → İstatistikler). null = ayrıntı yok (eski kayıt biçimi).
      */
     public AuditLog recordLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
                                 String ipAddress, String userAgent, String sessionId,
                                 boolean success, String failureReason, String countSince,
                                 int failuresNeeded, String method) {
         AuditLog entry = new AuditLog();
-        if (method != null && !method.isBlank()) entry.setDetail(AuditDetail.of("method", method));
+        entry.setDetail(methodDetail(method));   // null yöntem → ayrıntı yok (bugünkü kayıt birebir)
         entry.setEventType(success ? "LOGIN" : "LOGIN_FAILED");
         entry.setEventTime(now());
         entry.setActor(actor);
@@ -339,9 +341,36 @@ public class AuditService {
         return saved;
     }
 
+    /**
+     * Giriş KANALI (2026-10-03, Giriş Yöntemleri → İstatistikler): {@code LOGIN} / {@code LOGIN_FAILED} ayrıntısına
+     * yazılan {@code method} değeri. Giriş yollarının eski adı {@code PASSWORD} (yerel BCrypt yolu) {@code LOCAL}'a
+     * normalleşir; {@code LDAP}, {@code REMEMBER_ME}, {@code OTP_PUSH}, {@code OTP_EMAIL} aynen. {@code null} = yöntem bilinmiyor
+     * (ayrıntı yazılmaz — bugünkü kayıt birebir). Olay türü, sonuç, neden ve sayaçlar DEĞİŞMEZ; yalnız ayrıntı eklenir.
+     */
+    public static String loginChannel(String method) {
+        if (method == null || method.isBlank()) return null;
+        String m = method.trim().toUpperCase(java.util.Locale.ROOT);
+        return "PASSWORD".equals(m) ? "LOCAL" : m;
+    }
+
+    private static String methodDetail(String method) {
+        String ch = loginChannel(method);
+        return ch == null ? null : AuditDetail.of("method", ch);
+    }
+
     /** Kimlik doğrulamadan önce IP rate-limit'e takılan giriş — BLOCKED. */
     public void recordRateLimited(String actor, String ipAddress, String userAgent) {
+        recordRateLimited(actor, ipAddress, userAgent, null);
+    }
+
+    /**
+     * {@link #recordRateLimited(String, String, String)} + giriş kanalı (2026-10-03): hedeflenen hesap biliniyorsa
+     * ({@code LOCAL} / {@code LDAP}) ayrıntıya yazılır; bilinmeyen adda {@code null} (ayrıntı yok). Neden metni, sonuç
+     * (BLOCKED) ve RATE_LIMITED bayrağı aynen.
+     */
+    public void recordRateLimited(String actor, String ipAddress, String userAgent, String method) {
         AuditLog entry = new AuditLog();
+        entry.setDetail(methodDetail(method));
         entry.setEventType("LOGIN_FAILED");
         entry.setEventTime(now());
         entry.setActor(actor);
@@ -389,6 +418,7 @@ public class AuditService {
         }
         entry.setFailureReason(REASON_ACCOUNT_INACTIVE + ": pasif hesap — kimlik doğrulandı, giriş reddedildi ("
                 + (method == null ? "?" : method) + ")");
+        entry.setDetail(methodDetail(method));   // 2026-10-03: giriş kanalı (PASSWORD → LOCAL)
         if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
         AuditLog saved = persist(entry);
         if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
@@ -424,6 +454,7 @@ public class AuditService {
         }
         entry.setFailureReason(REASON_MAINTENANCE + ": sistem bakımı — yalnız global yöneticiler giriş yapabilir ("
                 + (method == null ? "?" : method) + ")");
+        entry.setDetail(methodDetail(method));   // 2026-10-03: giriş kanalı (PASSWORD → LOCAL)
         if (isOffHours()) entry.setAnomalyFlags("OFF_HOURS");
         AuditLog saved = persist(entry);
         if (saved != null) geoEnricher.enrichGeoAsync(saved.getId(), ipAddress);
@@ -441,8 +472,9 @@ public class AuditService {
      * kimse LDAP kapalıyken başkasının hesabını kilitleyemez). Aktör kanonik ad ya da büyük harfe çevrilmiş yazılan ad.
      */
     public void recordLdapDisabledLogin(String actor, String ipAddress, String userAgent) {
+        // Kanal LDAP (2026-10-03): ad LDAP girişi olarak yönlendirildi; bilinmeyen ad istatistikte yine "bilinmeyen kullanıcı".
         recordBlockedLogin(actor, null, null, null, ipAddress, userAgent,
-                REASON_LDAP_LOGIN_DISABLED + ": LDAP ile giriş kapalı — AD'ye gidilmedi");
+                REASON_LDAP_LOGIN_DISABLED + ": LDAP ile giriş kapalı — AD'ye gidilmedi", "LDAP");
     }
 
     /**
@@ -454,12 +486,14 @@ public class AuditService {
     public void recordLockedLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
                                   String ipAddress, String userAgent, String method) {
         recordBlockedLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent,
-                REASON_ACCOUNT_LOCKED + ": hesap kilitli — kimlik doğrulandı, giriş reddedildi (" + (method == null ? "?" : method) + ")");
+                REASON_ACCOUNT_LOCKED + ": hesap kilitli — kimlik doğrulandı, giriş reddedildi (" + (method == null ? "?" : method) + ")",
+                method);
     }
 
     private void recordBlockedLogin(String actor, Long actorId, Long actorTeamId, String actorRole,
-                                    String ipAddress, String userAgent, String reason) {
+                                    String ipAddress, String userAgent, String reason, String method) {
         AuditLog entry = new AuditLog();
+        entry.setDetail(methodDetail(method));   // 2026-10-03: giriş kanalı
         entry.setEventType("LOGIN_FAILED");
         entry.setEventTime(now());
         entry.setActor(actor);
