@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.99.0] — 2026-10-03
+
 ### Added
 - **Kodla girişte kişi bilgisi doğrulaması:** push ile kod isterken kayıtlı cep telefonu, e-posta ile kod isterken
   kayıtlı e-posta adresi de sorulur; kod yalnız kullanıcı adının hesabıyla eşleşirse gönderilir. Eşleşmeme ekrandan
@@ -2108,7 +2110,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.98.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.99.0...HEAD
+[20.99.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.99.0
 [20.98.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.98.0
 [20.97.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.97.0
 [20.96.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.96.1
