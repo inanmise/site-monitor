@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T08:53:48Z",
+  "generatedAt": "2026-10-04T11:12:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 703,
+  "count": 704,
   "releases": [
+    {
+      "version": "20.104.0",
+      "tag": "v20.104.0",
+      "releasedAt": "2026-10-04T11:12:02Z",
+      "commit": "affb33c2f15f96ec3aaf820840b86c68637d555c",
+      "prevVersion": "20.103.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "affb33c2",
+          "subject": "7/24 izleme ekibi takımları, 7/24 konsolu ve alarm geçmişinde 7/24 süzgeci"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.103.0",
       "tag": "v20.103.0",

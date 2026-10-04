@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.104.0] — 2026-10-04
+
 ### Added
 - **7/24 izleme ekibi takımları:** Ayarlar → 7/24'te bir ya da birden çok takım "7/24 izleme ekibi" olarak işaretlenir
   (yalnız global yönetici, denetlenir, kimlerin operatör olacağı önizlenir; takım listesinde "7/24" rozeti). Bu
@@ -2196,7 +2198,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.103.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.104.0...HEAD
+[20.104.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.104.0
 [20.103.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.103.0
 [20.102.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.102.0
 [20.101.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.101.0
