@@ -122,6 +122,18 @@ public class EscalationStepService {
         this.systemMaintenance = s;
     }
 
+    /**
+     * Adım push'u (2026-10-04, onaylı öneri 6) — gönderilen adım, kişi TEK aktif kullanıcıya çözülürse push olarak da gider
+     * ({@link UserPushService#enqueueEscalationStep}; ayar {@code site.monitor.escalation.step-push-enabled}, vars. açık).
+     * İsteğe bağlı: yokken (testler) adım bugünkü gibi yalnız e-posta + webhook'tur. Gecikmeli kişi yoksa bu yol hiç koşmaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private UserPushService userPush;
+
+    void setUserPush(UserPushService userPush) {
+        this.userPush = userPush;
+    }
+
     /** Tur özeti (log + test). */
     public record SweepResult(int candidates, int sent, int skipped, int prior) {
         static final SweepResult EMPTY = new SweepResult(0, 0, 0, 0);
@@ -355,6 +367,14 @@ public class EscalationStepService {
         }
         escalationService.sendEscalationStep(fresh, c, delay, o.syTeamId(), o.ugTeamId());
         finish(claimed, AlertEscalationStep.SENT, null);
+        // Push AYNI sahiplenmenin parçası (alarm, kişi, seviye): adım bir kez gider → push da bir kez (satır dedupe'u aynı eksen).
+        if (userPush != null) {
+            try {
+                userPush.enqueueEscalationStep(fresh, c, delay);
+            } catch (Exception ex) {
+                log.warn("Eskalasyon adımı push'u kuyruğa alınamadı (olay #{} kişi #{}): {}", e.getId(), c.getId(), ex.toString());
+            }
+        }
         return Decision.SENT;
     }
 

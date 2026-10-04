@@ -199,6 +199,10 @@ public final class AuditEventCatalog {
             "PLATFORM_CREATE",
             "PLATFORM_DELETE",
             "PLATFORM_UPDATE",
+            "PUSH_PREFS_UPDATE",          // kişi push tercihlerini (seviye / aileler / dil) değiştirdi (2026-10-04)
+            "PUSH_SELF_TEST",             // kişi kendine test push'u gönderdi (2026-10-04)
+            "PUSH_SNOOZE",                // kişi push'u susturdu / susturmayı kaldırdı (2026-10-04)
+            "PUSH_SNOOZE_CLEAR",          // yönetici kişinin push susturmasını kaldırdı (2026-10-04)
             "REMEMBER_TOKEN_REVOKE",
             "RETENTION_APPROVAL_SAVE",
             "RETENTION_DRY_RUN",
@@ -334,6 +338,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("PERMISSION_")) return PERMISSION;
         if (t.startsWith("TOUR_")) return USER;                     // ürün turu: kişinin kendi tercihi
         if (t.startsWith("USER_PUSH_")) return INTEGRATION;          // USER_* ten ÖNCE
+        if (t.startsWith("PUSH_")) return INTEGRATION;               // kişisel push tercihleri / susturma / test (2026-10-04)
         if (t.startsWith("USER_")) return USER;
         if (t.startsWith("TEAM_")) return TEAM;
         // 7/24 İzleme Ekibi (2026-09-27): izleme başına aç/kapa bir İZLEME düzenlemesidir, arama listesi TAKIM

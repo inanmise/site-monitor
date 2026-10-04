@@ -3290,6 +3290,27 @@ public class AdminController {
         return ok(Map.of("data", fresh, "had_lock", had));
     }
 
+    /**
+     * Kişinin push susturmasını kaldır (2026-10-04, onaylı öneri 4) — kullanıcı detayı → Bildirimler. Kişi ertelemeyi
+     * kendisi kurar; yönetici yalnız etkin susturmayı KALDIRABİLİR (ör. nöbet devrinde susturmayı unutan kişi). Kapı kullanıcı
+     * yönetimi kapısı: global yönetici ya da kişinin takımını yöneten kapsamlı yönetici + {@code users.crud/edit}. Diğer
+     * tercihler (seviye, aile, dil) kişinindir — burada değiştirilmez. Yanıt: taze kullanıcı satırı + {@code had_snooze}.
+     */
+    @PostMapping("/users/{id}/push-snooze/clear")
+    public ResponseEntity<Map<String, Object>> clearUserPushSnooze(
+            @PathVariable Long id, HttpSession session, HttpServletRequest request) {
+        AppUser target = userRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
+        requireTeamScopedAdmin(session, target.getTeamId());
+        requirePerm(session, "users.crud", "edit");
+        boolean had = com.sitemonitor.service.UserPushRecipientResolver.snoozeActive(target, java.time.Instant.now());
+        String until = target.getPushSnoozeUntil();
+        AppUser fresh = userService.savePushSnooze(target, null, null);
+        auditService.recordAction("PUSH_SNOOZE_CLEAR", session, request, "USER", id.toString(),
+                AuditDetail.of("username", target.getUsername(), "had_snooze", had, "until_before", until == null ? "-" : until));
+        return ok(Map.of("data", fresh, "had_snooze", had));
+    }
+
     /** Org-rol kilidini kaldır → kullanıcının org_role'ü tekrar AD (LDAP) yönetimine döner. */
     @PostMapping("/users/{id}/org-role-unlock")
     public ResponseEntity<Map<String, Object>> unlockUserOrgRole(

@@ -176,12 +176,12 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
      * Webhook Push Gönderim Logu penceresi (2026-09-19; PushLogQueryService) — {@code message} ve {@code rawResponse}
      * HARİÇ sütunlar (gövde yalnız satır detayında). Sıra: id, alertEventId, trigger, monitorType, monitorId, monitorName,
      * teamId, alertLevel, username, displayName, title, status, httpStatus, error, attempts, createdAt, sentAt, batchId,
-     * notificationId.
+     * notificationId, overflowSummaryId, pushLang (son ikisi 2026-10-04 — SONA eklendi; konumlar sabit kalır).
      */
     @Query("""
            SELECT d.id, d.alertEventId, d.trigger, d.monitorType, d.monitorId, d.monitorName, d.teamId, d.alertLevel,
                   d.username, d.displayName, d.title, d.status, d.httpStatus, d.error, d.attempts, d.createdAt, d.sentAt,
-                  d.batchId, d.notificationId
+                  d.batchId, d.notificationId, d.overflowSummaryId, d.pushLang
            FROM UserPushDelivery d
            WHERE d.createdAt >= :from AND d.createdAt <= :to
            ORDER BY d.createdAt DESC, d.id DESC
@@ -190,6 +190,99 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
 
     /** Aynı toplu isteğin (batch) tüm alıcı satırları — satır detayındaki "kime gitti / kim düştü". */
     List<UserPushDelivery> findByBatchIdOrderByIdAsc(String batchId);
+
+    // ── Saat tavanı özeti (2026-10-04, onaylı öneri 2) ────────────────────────────────────────────
+
+    /**
+     * Özet adayları: henüz özetlenmemiş {@code RATE_LIMITED} satırı olan kullanıcılar — kullanıcı başına İLK satırın damgası
+     * ve adet. Sistem satırları ('-') hariç. Tek gruplu sorgu (kullanıcı başına sorgu yok).
+     */
+    @Query("""
+           SELECT d.username, MIN(d.createdAt), COUNT(d) FROM UserPushDelivery d
+           WHERE d.status = 'RATE_LIMITED' AND d.overflowSummaryId IS NULL AND d.createdAt >= :since
+             AND d.username <> '-'
+           GROUP BY d.username
+           """)
+    List<Object[]> overflowCandidates(@Param("since") String since);
+
+    /** Kullanıcının henüz özetlenmemiş RATE_LIMITED satırları (id sırasıyla, sayfa tavanlı). */
+    @Query("""
+           SELECT d FROM UserPushDelivery d
+           WHERE d.username = :username AND d.status = 'RATE_LIMITED' AND d.overflowSummaryId IS NULL
+             AND d.createdAt >= :since
+           ORDER BY d.id ASC
+           """)
+    List<UserPushDelivery> findUnsummarizedOverflow(@Param("username") String username, @Param("since") String since,
+                                                    Pageable pageable);
+
+    /**
+     * Özet SAHİPLENMESİ: satırlar yalnız hâlâ RATE_LIMITED ve özetsizse bu özete bağlanır — aynı satır iki özete giremez
+     * (iki pod / yeniden başlatma). Dönen sayı bu çağrının gerçekten bağladığı satırlardır.
+     */
+    @Modifying
+    @Transactional
+    @Query("""
+           UPDATE UserPushDelivery d SET d.overflowSummaryId = :summaryId
+           WHERE d.id IN :ids AND d.overflowSummaryId IS NULL AND d.status = 'RATE_LIMITED'
+           """)
+    int claimOverflow(@Param("ids") java.util.Collection<Long> ids, @Param("summaryId") Long summaryId);
+
+    /** Bir özetin kapsadığı satırlar (özet ↔ satır bağı; günlük detayı ve özet metni). */
+    List<UserPushDelivery> findByOverflowSummaryIdOrderByIdAsc(Long overflowSummaryId);
+
+    /** Bir özetin kapsadığı satır sayısı (push geçmişim satırı). */
+    long countByOverflowSummaryId(Long overflowSummaryId);
+
+    /** Kullanıcıya en son yazılan özet satırının damgası (özet aralığı: kullanıcı başına pencerede en çok bir özet). */
+    @Query("SELECT MAX(d.createdAt) FROM UserPushDelivery d WHERE d.username = :username AND d.trigger = 'OVERFLOW_SUMMARY'")
+    String lastOverflowSummaryAt(@Param("username") String username);
+
+    // ── Push geçmişim (2026-10-04, onaylı öneri 3) ────────────────────────────────────────────────
+
+    /**
+     * Kişinin KENDİ satırları (kullanıcı adı büyük/küçük harf duyarsız) + üyesi olduğu takımların alarmlarına ait OLAY
+     * düzeyi karar satırları (kullanıcı adı '-'; eskalasyon adımı kişi kararları hariç — onlar takımın değil tek bir kişinin
+     * kaydıdır). {@code teamIds} BOŞ geçilmez (çağıran -1 nöbetçisi verir). Süzgeç:
+     * {@code all} / {@code sent} (SENT) / {@code not_sent} (SENT ve PENDING dışı her şey).
+     */
+    @Query("""
+           SELECT d FROM UserPushDelivery d
+           WHERE d.createdAt >= :since
+             AND (LOWER(d.username) = LOWER(CAST(:username AS string))
+                  OR (d.username = '-' AND d.teamId IN :teamIds AND d.trigger <> 'ESCALATION_STEP'))
+             AND (:filter = 'all' OR (:filter = 'sent' AND d.status = 'SENT')
+                  OR (:filter = 'not_sent' AND d.status <> 'SENT' AND d.status <> 'PENDING'))
+           ORDER BY d.id DESC
+           """)
+    Page<UserPushDelivery> myHistory(@Param("username") String username,
+                                     @Param("teamIds") java.util.Collection<Long> teamIds,
+                                     @Param("since") String since,
+                                     @Param("filter") String filter,
+                                     Pageable pageable);
+
+    /** Push geçmişim KPI — kişinin kendi satırları: durum × adet (pencere içi). */
+    @Query("""
+           SELECT d.status, COUNT(d) FROM UserPushDelivery d
+           WHERE d.createdAt >= :since AND LOWER(d.username) = LOWER(CAST(:username AS string))
+           GROUP BY d.status
+           """)
+    List<Object[]> myStatusCounts(@Param("username") String username, @Param("since") String since);
+
+    /** Push geçmişim KPI — kişinin özete katılmış RATE_LIMITED satırları (pencere içi). */
+    @Query("""
+           SELECT COUNT(d) FROM UserPushDelivery d
+           WHERE d.createdAt >= :since AND LOWER(d.username) = LOWER(CAST(:username AS string))
+             AND d.status = 'RATE_LIMITED' AND d.overflowSummaryId IS NOT NULL
+           """)
+    long mySummarizedCount(@Param("username") String username, @Param("since") String since);
+
+    /** Push geçmişim KPI — üyesi olunan takımların olay düzeyi karar satırları: durum × adet (pencere içi). */
+    @Query("""
+           SELECT d.status, COUNT(d) FROM UserPushDelivery d
+           WHERE d.createdAt >= :since AND d.username = '-' AND d.teamId IN :teamIds AND d.trigger <> 'ESCALATION_STEP'
+           GROUP BY d.status
+           """)
+    List<Object[]> teamDecisionCounts(@Param("teamIds") java.util.Collection<Long> teamIds, @Param("since") String since);
 
     /** Test tavanı: son bir dakikadaki TEST satırları. */
     long countByTriggerAndCreatedAtGreaterThanEqual(String trigger, String since);

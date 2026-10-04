@@ -67,10 +67,10 @@ export default function StormRulesCard({ settings }) {
             hint={t('sf.rules.realertHint')} />
           <Rule id="scope" Icon={settings.per_group ? Layers : CloudLightning} label={t('sf.rules.scope')}
             value={settings.per_group ? t('sf.rules.scopeGroup') : t('sf.rules.scopeTeam')} hint={t('sf.rules.scopeHint')} />
-          {/* 2026-10-03: push fırtınaya devredilir mi — alan yoksa (eski sunucu) varsayılan "alarm başına" */}
+          {/* 2026-10-03: push fırtınaya devredilir mi — alan yoksa (eski sunucu) varsayılan "toplu" (2026-10-04 kullanıcı kararı) */}
           <Rule id="push" Icon={Smartphone} label={t('sf.rules.push')}
-            value={settings.push_individual === false ? t('sf.rules.pushGrouped') : t('sf.rules.pushIndividual')}
-            hint={settings.push_individual === false ? t('sf.rules.pushGroupedHint') : t('sf.rules.pushIndividualHint')} />
+            value={settings.push_individual === true ? t('sf.rules.pushIndividual') : t('sf.rules.pushGrouped')}
+            hint={settings.push_individual === true ? t('sf.rules.pushIndividualHint') : t('sf.rules.pushGroupedHint')} />
         </dl>
       </CardContent>
     </Card>

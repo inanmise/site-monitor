@@ -117,6 +117,24 @@ public final class AppSettingsCatalog {
         // (eski 120) sessizce kelime ortasindan kesiyordu; max-message urun sozlesmesi (K6, <=200).
         new Setting("site.monitor.userpush.max-message-chars",   "userpush",   Type.INT),
         new Setting("site.monitor.userpush.reason-max-chars",    "userpush",   Type.INT),
+        // Saat tavanı özeti (2026-10-04, onaylı öneri 2): tavana takılan push'lar kişi başına TEK özet push'unda toplanır
+        // (vars. AÇIK, 15 dk, 5–120); KRİTİK alarm push'larını tavandan muaf tutma (vars. KAPALI = bugünkü davranış).
+        new Setting("site.monitor.userpush.overflow-summary-enabled", "userpush", Type.BOOL),
+        new Setting("site.monitor.userpush.overflow-summary-minutes", "userpush", Type.INT),
+        new Setting("site.monitor.userpush.critical-bypass-cap", "userpush",   Type.BOOL),
+        // Zamana bağlı eskalasyon adımı kişiye push da gönderir (2026-10-04, onaylı öneri 6; vars. AÇIK, adım yoksa etkisiz).
+        new Setting("site.monitor.escalation.step-push-enabled", "userpush",   Type.BOOL),
+        // İngilizce push şablonları + başlık (2026-10-04, onaylı öneri 5): push dili İngilizce olan kişiye bunlar gider;
+        // boşsa gömülü İngilizce varsayılan (PushI18n.DEFAULT_TEMPLATES_EN) / Türkçe başlık. Yer tutucular Türkçeyle aynı.
+        new Setting("site.monitor.userpush.title.en",            "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.down.en",    "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.slow.en",    "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.expiry.en",  "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.changed.en", "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.cert.en",    "userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.degraded.en","userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.resolved.en","userpush",   Type.STRING),
+        new Setting("site.monitor.userpush.template.test.en",    "userpush",   Type.STRING),
         new Setting("site.monitor.ui.inactivity-minutes",         "general",    Type.INT),
         new Setting("site.monitor.ui.inactivity-warn-seconds",    "general",    Type.INT),
         new Setting("site.monitor.network.error-rate-threshold", "outage",     Type.DOUBLE),

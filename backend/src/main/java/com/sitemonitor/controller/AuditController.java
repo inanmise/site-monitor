@@ -331,8 +331,12 @@ public class AuditController {
             out.put("email", "SKIPPED_NO_TEAM_EMAIL");
         }
         String day = now().substring(0, 10);
-        out.put("push", userPushService.enqueueTeamNotice(team.getId(), "WEAK_ALGO", "CRITICAL", domain,
-                "[Zayıf algoritma] " + domain + " — " + what, "WEAK_ALGO:" + domain + ":" + day));
+        // Push kişinin dilinde (2026-10-04, öneri 5) — Türkçe metin bugünküyle aynı; tür sertifika (eski 6 argümanlı yolla aynı).
+        out.put("push", userPushService.enqueueTeamNoticeLocalized(team.getId(), "WEAK_ALGO", "CRITICAL", "CERTIFICATE", domain,
+                new com.sitemonitor.service.UserPushService.LocalizedText(
+                        "[Zayıf algoritma] " + domain + " — " + what,
+                        "[Weak algorithm] " + domain + " — " + (weaknesses.isEmpty() ? "TLS/chain finding" : what)),
+                "WEAK_ALGO:" + domain + ":" + day, java.util.Set.of()));
         auditService.recordAction("WEAK_ALGO_NOTIFY", session, request, "WEAK_ALGO", domain,
                 "{\"team_id\":" + team.getId() + ",\"email\":\"" + out.get("email") + "\"}");
         return ok(Map.of("data", out));

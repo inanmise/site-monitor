@@ -120,8 +120,12 @@ public class DomainExpiryReminderService {
             if (pushOn) {
                 String msg = name + " alan adının kaydı " + (days < 0 ? Math.abs(days) + " gün önce doldu" : days + " gün sonra doluyor")
                         + " (" + threshold + " gün eşiği hatırlatması)";
-                Map<String, Object> pr = push.enqueueTeamNotice(m.getTeamId(), PUSH_TRIGGER, level, "DOMAIN", name, msg,
-                        "domain-reminder:" + m.getId() + ":" + expiry + ":" + threshold);
+                // İngilizce eşi (2026-10-04, öneri 5) — push kişinin dilinde; Türkçe metin bugünküyle aynı.
+                String msgEn = "Domain registration of " + name + (days < 0 ? " expired " + Math.abs(days) + " days ago"
+                        : " expires in " + days + " days") + " (" + threshold + "-day threshold reminder)";
+                Map<String, Object> pr = push.enqueueTeamNoticeLocalized(m.getTeamId(), PUSH_TRIGGER, level, "DOMAIN", name,
+                        new UserPushService.LocalizedText(msg, msgEn),
+                        "domain-reminder:" + m.getId() + ":" + expiry + ":" + threshold, java.util.Set.of());
                 r.setPushQueued(pr.get("queued") instanceof Number n ? n.intValue() : 0);
             }
             r.setStatus("SENT");

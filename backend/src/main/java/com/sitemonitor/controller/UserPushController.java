@@ -78,7 +78,20 @@ public class UserPushController {
             "site.monitor.userpush.realert-enabled",
             "site.monitor.userpush.weekly.team-enabled", "site.monitor.userpush.weekly.manager-enabled",
             "site.monitor.userpush.quiet-start", "site.monitor.userpush.quiet-end",
-            "site.monitor.userpush.quiet-min-level", "site.monitor.userpush.retention-days");
+            "site.monitor.userpush.quiet-min-level", "site.monitor.userpush.retention-days",
+            // 2026-10-04: sayfa bunları gösteriyor ve gönderiyordu ama liste dışındaydılar — kayıt SESSİZCE düşüyordu
+            // (mesaj/sebep tavanı, sertifika şablonu düzenlenemiyordu). Katalogda zaten vardılar.
+            "site.monitor.userpush.template.cert", "site.monitor.userpush.template.degraded",
+            "site.monitor.userpush.max-message-chars", "site.monitor.userpush.reason-max-chars",
+            // Saat tavanı özeti + kritik muafiyeti (öneri 2), eskalasyon adımı push'u (öneri 6)
+            "site.monitor.userpush.overflow-summary-enabled", "site.monitor.userpush.overflow-summary-minutes",
+            "site.monitor.userpush.critical-bypass-cap", "site.monitor.escalation.step-push-enabled",
+            // İngilizce başlık + şablonlar (öneri 5)
+            "site.monitor.userpush.title.en",
+            "site.monitor.userpush.template.down.en", "site.monitor.userpush.template.slow.en",
+            "site.monitor.userpush.template.expiry.en", "site.monitor.userpush.template.changed.en",
+            "site.monitor.userpush.template.cert.en", "site.monitor.userpush.template.degraded.en",
+            "site.monitor.userpush.template.resolved.en", "site.monitor.userpush.template.test.en");
 
     private final AppSettingsService appSettings;
     private final UserPushService userPushService;
@@ -103,6 +116,7 @@ public class UserPushController {
         out.put("scopes", scopeRepo.findAll());
         out.put("defaults", Map.of(
                 "templates", UserPushService.DEFAULT_TEMPLATES,
+                "templates_en", com.sitemonitor.service.PushI18n.DEFAULT_TEMPLATES_EN,
                 "placeholders", UserPushService.KNOWN_PLACEHOLDERS));
         out.put("health", userPushService.healthSnapshot());
         return ok(out);
@@ -230,10 +244,14 @@ public class UserPushController {
         if (usernames.size() > 10) return badRequest(Msg.t("Tek denemede en çok 10 sicil", "At most 10 users per attempt"));
         requireTestRecipientsManageable(session, usernames);
         String template = body.get("template") == null ? "test" : String.valueOf(body.get("template"));
-        Map<String, Object> result = userPushService.sendTest(usernames, template, "TEST — " + actor(session));
+        // Şablon düzenleyicisinin TR / EN sekmesi (2026-10-04): test seçilen dilin şablonu ve başlığıyla gider.
+        String lang = com.sitemonitor.service.PushI18n.norm(body.get("lang") == null ? null : String.valueOf(body.get("lang")));
+        Map<String, Object> result = com.sitemonitor.service.PushI18n.isEn(lang)
+                ? userPushService.sendTest(usernames, template, "TEST — " + actor(session), lang)
+                : userPushService.sendTest(usernames, template, "TEST — " + actor(session));   // Türkçe: bugünkü yol
         // Kural 0 + gizlilik: audit'e sicil listesi DEĞİL yalnız adet yazılır.
         auditService.recordAction("USER_PUSH_TEST", session, "USER_PUSH", "test",
-                usernames.size() + " alıcıya test gönderimi (" + template + ")", null);
+                usernames.size() + " alıcıya test gönderimi (" + template + ", " + lang + ")", null);
         return ok(Map.of("data", result));
     }
 

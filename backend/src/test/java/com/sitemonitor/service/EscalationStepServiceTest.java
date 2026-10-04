@@ -615,4 +615,37 @@ class EscalationStepServiceTest {
 
         assertThat(job.sweep(NOW).sent()).isEqualTo(1);
     }
+
+    // ── Adım push'u (2026-10-04, onaylı öneri 6) ────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Öneri 6: adım GİDİNCE kişiye push da kuyruğa alınır — sahiplenmeyle aynı eksen (ikinci tur ikinci push üretmez); atlanan adımda (onaylı) push YOK")
+    void stepPush_hookedOncePerSentStep() {
+        job.setUserPush(userPushService);
+        contacts.add(contact(1, TEAM, "WARNING", 30, "mgr@x.com"));
+        open.add(alarm(10, "HTTP_DOWN", "CRITICAL", TEAM, 31));
+        AlertEvent acked = alarm(11, "HTTP_DOWN", "CRITICAL", TEAM, 31);
+        acked.setAcknowledged(true);
+        open.add(acked);
+
+        job.sweep(NOW);
+        job.sweep(NOW);
+
+        verify(userPushService, times(1)).enqueueEscalationStep(argThat(e -> e != null && e.getId() == 10L),
+                argThat(c -> c != null && c.getId() == 1L), eq(30));
+        verify(userPushService, never()).enqueueEscalationStep(argThat(e -> e != null && e.getId() == 11L), any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("Öneri 6: push kuyruğa alınamasa da (istisna) adımın e-postası ve kararı etkilenmez")
+    void stepPush_failureDoesNotAffectStep() {
+        job.setUserPush(userPushService);
+        when(userPushService.enqueueEscalationStep(any(), any(), anyInt())).thenThrow(new RuntimeException("push down"));
+        contacts.add(contact(1, TEAM, "WARNING", 30, "mgr@x.com"));
+        open.add(alarm(10, "HTTP_DOWN", "CRITICAL", TEAM, 31));
+
+        assertThat(job.sweep(NOW).sent()).isEqualTo(1);
+        assertThat(sentRecipients()).hasSize(1);
+        assertThat(stepRows).extracting(AlertEscalationStep::getOutcome).containsExactly(AlertEscalationStep.SENT);
+    }
 }

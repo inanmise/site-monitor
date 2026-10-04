@@ -202,10 +202,13 @@ public class ScriptedAnomalyGuard {
         // hiçbir kanaldan öğrenemiyordu — ters yönde bilgi. Kanal paritesi kuralı: e-postaya
         // bağlanan her bildirim push'a da bağlanır.
         try {
-            userPushService.enqueueTeamNotice(m.getTeamId(), "SCRIPTED_DISABLED", "CRITICAL", "SCRIPTED",
+            // İki dilli metin (2026-10-04, öneri 5): push kişinin dilinde; Türkçe metin bugünküyle aynı.
+            userPushService.enqueueTeamNoticeLocalized(m.getTeamId(), "SCRIPTED_DISABLED", "CRITICAL", "SCRIPTED",
                     m.getName(),
-                    "Sentetik izleme otomatik olarak DEVRE DIŞI bırakıldı: " + m.getName() + " — " + reason,
-                    "scripted-disabled:" + m.getId() + ":" + m.getDisabledAt());
+                    new UserPushService.LocalizedText(
+                            "Sentetik izleme otomatik olarak DEVRE DIŞI bırakıldı: " + m.getName() + " — " + reason,
+                            "Synthetic monitor was automatically DISABLED: " + m.getName() + " — " + reason),
+                    "scripted-disabled:" + m.getId() + ":" + m.getDisabledAt(), java.util.Set.of());
         } catch (Exception e) {
             log.warn("Anomali push'u gönderilemedi ({}): {}", m.getName(), e.toString());
         }

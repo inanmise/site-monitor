@@ -3250,7 +3250,7 @@ public class EscalationService {
      * durumlu bir satır. Bu satır "e-posta gönderilmedi"nin nedenidir; alarm penceresinin zaman çizelgesi ve Bildirimler
      * bölümü buradan okur. Hata bildirim hattını etkilemez.
      *
-     * <p>{@code pushIndividual} (2026-10-03, {@code site.monitor.storm.push-individual}, varsayılan AÇIK): yalnız e-posta
+     * <p>{@code pushIndividual} (2026-10-03, {@code site.monitor.storm.push-individual}; 2026-10-04 kullanıcı kararıyla varsayılan KAPALI): yalnız e-posta
      * devredildi — satır metni bunu söyler ({@link #STATUS_STORM_MAIL_ONLY_SUFFIX}) ve push karar satırı YAZILMAZ (push
      * çağıranda bireysel gider; teslimat satırı kendisi izdir). KAPALI: 2026-10-02'ye kadarki iz bayt bayt — eski metin ve
      * push kararı {@code SKIPPED_STORM}.
@@ -3276,14 +3276,14 @@ public class EscalationService {
     }
 
     /**
-     * Push fırtınaya devredilmesin mi ({@link StormService#KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK — 2026-10-03 kullanıcı
-     * kararı). Ayar servisi yokken (elle kurulan eski testler) varsayılan geçerlidir.
+     * Push fırtınaya devredilmesin mi ({@link StormService#KEY_PUSH_INDIVIDUAL}, varsayılan KAPALI — 2026-10-04 kullanıcı
+     * kararı: "push'un fırtınaya devredilmesi default olsun"). Ayar servisi yokken (elle kurulan eski testler) varsayılan geçerlidir.
      */
     boolean stormPushIndividual() {
         try {
-            return appSettings == null || appSettings.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, true);
+            return appSettings != null && appSettings.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, false);
         } catch (Exception e) {
-            return true;
+            return false;
         }
     }
 

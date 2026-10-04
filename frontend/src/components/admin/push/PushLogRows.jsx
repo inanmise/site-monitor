@@ -5,6 +5,8 @@ import UserBadge from '../../ui/UserBadge.jsx'
 import SimpleTooltip from '../../ui/SimpleTooltip.jsx'
 import { SortHead, KindBadge, TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, MUTED_SM } from '../LogViewParts.jsx'
 import { STATUS_META, triggerLabel, statusLabel, retryable } from './pushLogModel.js'
+import { pushReasonLabel } from '../../../utils/pushPrefs.js'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow, Table } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
@@ -16,9 +18,33 @@ export function PushStatusBadge({ row, t, compact = false }) {
   return (
     <div className="flex min-w-0 flex-col items-start gap-0.5">
       <KindBadge tone={m.tone} icon={m.Icon} title={row.status || ''}>{statusLabel(row.kind, t)}</KindBadge>
+      {/* İnsan diliyle neden (2026-10-04): atlanan / engellenen satırın kodu (SKIPPED_USER_SNOOZE, RATE_LIMITED …) */}
+      {!compact && (row.kind === 'SKIPPED' || row.kind === 'BLOCKED') && row.status && (
+        <div data-slot="pl-reason" className="w-full max-w-[260px] text-xs leading-snug text-muted-foreground" title={row.status}>{pushReasonLabel(row.status, t)}</div>
+      )}
       {!compact && row.error && <div className="w-full max-w-[260px] truncate text-xs text-destructive" title={row.error}>{row.error}</div>}
       {!compact && detail && <div className={MUTED_SM}>{detail}</div>}
+      {!compact && <PushRowLinks row={row} t={t} />}
     </div>
+  )
+}
+
+/** Dil (EN) ve saat tavanı özeti bağı rozetleri (2026-10-04) — satırda ve kartta. */
+export function PushRowLinks({ row, t }) {
+  if (row.push_lang !== 'en' && !row.overflow_summary_id) return null
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {row.push_lang === 'en' && (
+        <Badge variant="secondary" data-slot="pl-lang" className="rounded-sm px-1.5 text-[0.68em] font-bold" title={t('pl.lang.enAria')} aria-label={t('pl.lang.enAria')}>
+          {t('pl.lang.en')}
+        </Badge>
+      )}
+      {row.overflow_summary_id && (
+        <Badge variant="outline" data-slot="pl-summary-link" className="rounded-sm px-1.5 text-[0.68em] font-normal" title={t('pl.summarizedInto')}>
+          {t('pl.summaryLink', row.overflow_summary_id)}
+        </Badge>
+      )}
+    </span>
   )
 }
 
@@ -113,6 +139,10 @@ export function PushLogCards({ rows, t, canRequeue, busy, onOpen, onRequeue }) {
               {(row.error || row.http_status) && row.kind !== 'SENT' && (
                 <span className="min-w-0 truncate text-xs text-destructive">{[row.http_status ? `HTTP ${row.http_status}` : null, row.error].filter(Boolean).join(' · ')}</span>
               )}
+              {(row.kind === 'SKIPPED' || row.kind === 'BLOCKED') && row.status && (
+                <span data-slot="pl-reason" className="min-w-0 text-xs leading-snug text-muted-foreground">{pushReasonLabel(row.status, t)}</span>
+              )}
+              <PushRowLinks row={row} t={t} />
               <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span className="font-mono">{formatDate(row.at)}</span>
                 {row.alert_level && <LevelBadge level={row.alert_level} />}

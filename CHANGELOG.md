@@ -15,6 +15,31 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Push saat tavanı özeti:** tavana takılan push'lar artık sessizce kaybolmaz — kişiye tek özet push'u gider ("14 bildirim
+  gönderilmedi (3 kritik, 11 uyarı). Son: …"). Kişisel sessiz saat / susturma özeti erteler; kapatılmış push, pasif hesap
+  ve sistem bakımı iz bırakır. Teslimat günlüğünde özet ↔ özetlenen satır bağı. İsteğe bağlı: kritik alarmlar tavandan muaf.
+- **Push geçmişim (Etkinliklerim):** gelen / gelmeyen push'lar, gelmeme nedeni sade dille, KPI çipleri, 7 / 30 gün; takımın
+  alarmlarına ait push kararları (ör. fırtınaya devredildi). Başka takımın alarmı görünmez.
+- **Bildirim tercihlerim (Etkinliklerim):** susturma (1 sa / 4 sa / yarın 08:00; "kritikler yine gelsin"), en düşük seviye,
+  izleme türleri, push dili (Türkçe / English) ve "kendime test push'u". Yönetici kullanıcı ayrıntısından etkin susturmayı
+  kaldırabilir.
+- **İngilizce push:** tüm push metinlerinin İngilizcesi; Ayarlar → Webhook Bildirimleri şablon düzenleyicisinde TR / EN sekmeleri.
+- **Eskalasyon adımı push'u:** gecikmeli eskalasyon kişisi tek bir aktif kullanıcıyla eşleşirse adım push olarak da gider.
+- **Yeni ayarlar:** `site.monitor.userpush.overflow-summary-enabled` (true), `…overflow-summary-minutes` (15),
+  `…critical-bypass-cap` (false), `site.monitor.escalation.step-push-enabled` (true), `site.monitor.userpush.title.en`,
+  `site.monitor.userpush.template.<anahtar>.en`.
+
+### Changed
+- **Alarm fırtınasında push yeniden varsayılan olarak fırtınaya devredilir** (kullanıcı kararı): takım tek toplu fırtına
+  push'u alır. Her alarmın push'unun tek tek gitmesi için Ayarlar → Alarm Fırtınası → "Push bildirimleri fırtınaya
+  devredilmesin" açılmalı (`site.monitor.storm.push-individual`, varsayılan artık `false`).
+
+### Fixed
+- Alan adı hatırlatma push'u PostgreSQL'de iz bırakmadan düşüyordu (`push_trigger` 20 → 40 karakter).
+- Webhook ayarlarında mesaj / sebep tavanı ile sertifika ve "degraded" şablonları kaydedilmiyordu; "degraded" şablonu artık düzenlenebilir.
+- Webhook ayarları sayfası 768 px tablette yatay kayıyordu.
+
 ## [20.101.0] — 2026-10-03
 
 ### Changed

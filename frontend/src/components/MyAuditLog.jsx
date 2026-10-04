@@ -20,6 +20,8 @@ import ActivityFilters from './myactivity/ActivityFilters.jsx'
 import { SignInSummary, SecurityCallout, DevicesCard, TypeBreakdownCard, NotificationCard, PushQuietHoursCard } from './myactivity/ActivityOverview.jsx'
 import { useActivitySummary } from './myactivity/useActivitySummary.js'
 import LandingTabCard from './myactivity/LandingTabCard.jsx'
+import PushPreferencesCard from './myactivity/PushPreferencesCard.jsx'
+import PushHistorySection from './myactivity/PushHistorySection.jsx'
 import {
   presetRange, DEFAULT_RANGE, EV, matchesQuery, deviceStats, heatmapOf, relTime, typeBreakdown,
 } from './myactivity/activityModel.js'
@@ -289,12 +291,17 @@ export default function MyAuditLog({ loginInfo = null, onChangePassword = null, 
           <TypeBreakdownCard summary={s} loading={summary.loading} activeType={outcome ? null : eventType}
             onPick={(type) => { setEventType(type); setOutcome('') }} />
           {onPushOptOutChange && <NotificationCard pushOptOut={pushOptOut} onChange={onPushOptOutChange} />}
+          {/* Bildirim tercihlerim (2026-10-04): susturma, seviye, türler, push dili, kendine test — opt-out'un hemen altında */}
+          {onPushOptOutChange && <PushPreferencesCard optOut={pushOptOut} />}
           {/* Kişisel push sessiz saati (2026-10-01) — yalnız kayıt işlevi verildiyse (App) */}
           {onPushQuietSave && <PushQuietHoursCard value={pushQuiet} onSave={onPushQuietSave} />}
           {/* Açılış sekmesi (2026-10-02, öneri 23) — seçenekler App'ten (görünürlük kuralları); kişisel tercih belgesine yazılır */}
           {landingOptions && <LandingTabCard options={landingOptions} />}
         </aside>
       </div>
+
+      {/* ── Push bildirimlerim (2026-10-04): kişinin kendi push geçmişi — tam genişlik (tablo ↔ kart kaba göre) ── */}
+      {onPushOptOutChange && <PushHistorySection />}
 
       {/* ── Cihazlarım: mevcut Cihaz Geçmişi paneli (bu cihaz, hatırlananlar, giriş geçmişi) yan panelde ── */}
       <Sheet open={devicesOpen} onOpenChange={setDevicesOpen}>

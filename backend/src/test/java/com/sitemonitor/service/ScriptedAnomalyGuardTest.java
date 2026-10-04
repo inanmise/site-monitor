@@ -255,8 +255,12 @@ class ScriptedAnomalyGuardTest {
         // döndü" yolluyor. Push halkası bağlı değilken yalnız push kullanan kişi, OTOMATİK
         // KAPATILMIŞ bir izleme için "düzeldi" görüyor ve izlemenin durduğunu hiç öğrenmiyordu.
         guard.evaluate(monitor, result("PASS", 5000L));
-        verify(userPushService).enqueueTeamNotice(eq(5L), eq("SCRIPTED_DISABLED"), eq("CRITICAL"),
-                eq("SCRIPTED"), eq("Ödeme akışı"), anyString(), anyString());
+        // 2026-10-04 (öneri 5): iki dilli metin — Türkçe metin bugünküyle aynı.
+        verify(userPushService).enqueueTeamNoticeLocalized(eq(5L), eq("SCRIPTED_DISABLED"), eq("CRITICAL"),
+                eq("SCRIPTED"), eq("Ödeme akışı"),
+                org.mockito.ArgumentMatchers.argThat(m -> m.tr().startsWith("Sentetik izleme otomatik olarak DEVRE DIŞI bırakıldı: Ödeme akışı")
+                        && m.en().startsWith("Synthetic monitor was automatically DISABLED: Ödeme akışı")),
+                anyString(), any());
     }
 
     @Test
@@ -266,8 +270,8 @@ class ScriptedAnomalyGuardTest {
         guard.evaluate(monitor, result("PASS", 5000L));
         verify(emailService, never()).sendAlert(any(String[].class), anyString(), anyString(),
                 anyString(), anyString(), anyString(), any(), any());
-        verify(userPushService).enqueueTeamNotice(anyLong(), anyString(), anyString(),
-                anyString(), anyString(), anyString(), anyString());
+        verify(userPushService).enqueueTeamNoticeLocalized(anyLong(), anyString(), anyString(),
+                anyString(), anyString(), any(), anyString(), any());
     }
 
     @Test

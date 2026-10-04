@@ -170,6 +170,30 @@ public class AppUser {
     @Column(name = "push_quiet_min_level", length = 16)
     private String pushQuietMinLevel;
 
+    // Kişisel bildirim tercihleri (2026-10-04, onaylı öneri 4) — hepsi OPT-IN; null = bugünkü davranış (tercih yok).
+    // Teslimat günlüğünde süzülen push SKIPPED_USER_LEVEL / SKIPPED_USER_TYPE / SKIPPED_USER_SNOOZE olarak görünür (sessiz
+    // kayıp yok). Çözüm push'u ve kodla giriş push'u bu tercihlerden ETKİLENMEZ. Şema: SchedulerService.applySchemaPatches.
+
+    /** En düşük push seviyesi (HIGH / CRITICAL); null = hepsi. */
+    @Column(name = "push_min_level", length = 16)
+    private String pushMinLevel;
+
+    /** İzin verilen izleme aileleri ({@code MonitorTypeCatalog.ORDER}, CSV); null = hepsi. */
+    @Column(name = "push_families", length = 200)
+    private String pushFamilies;
+
+    /** Erteleme (sustur) bitişi — UTC {@code yyyy-MM-dd'T'HH:mm:ss}; null ya da geçmiş = susturulmamış. */
+    @Column(name = "push_snooze_until", length = 20)
+    private String pushSnoozeUntil;
+
+    /** Susturulmuşken KRİTİK alarmlar yine gelsin mi (null = evet, varsayılan). */
+    @Column(name = "push_snooze_critical")
+    private Boolean pushSnoozeCritical;
+
+    /** Push dili ({@code tr} / {@code en}); null = tr (bugünkü davranış). */
+    @Column(name = "push_lang", length = 5)
+    private String pushLang;
+
     /** Ürün turu durumu (JSON; bkz. TourStateService) — "bir daha gösterme" cihazdan bağımsız kalıcı. */
     @Column(name = "tour_state", columnDefinition = "TEXT")
     private String tourState;

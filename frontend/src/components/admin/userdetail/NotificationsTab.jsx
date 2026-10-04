@@ -1,5 +1,11 @@
-import { BellOff, BellRing, Siren } from 'lucide-react'
-import { useT } from '../../../i18n/index.jsx'
+import { useState } from 'react'
+import { BellOff, BellRing, Siren, SlidersHorizontal, X } from 'lucide-react'
+import { api } from '../../../api/client'
+import { useT, useDateLocale } from '../../../i18n/index.jsx'
+import { useToast } from '../../ui/Toast.jsx'
+import { toUtc } from '../../../utils/localDay.js'
+import { familyLabel, snoozeParts } from '../../../utils/pushPrefs.js'
+import { Button } from '@/components/shadcn/button'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import ToneBadge, { DecisionBadge, OrgRoleBadge } from '../ToneBadge.jsx'
 import { SectionCard, SectionEmpty, SectionError, SectionSkeleton } from './parts.jsx'
@@ -28,7 +34,7 @@ function roleLabel(t, role) {
  * kararı + NEDEN (grup ve asgari seviye / karar açıklaması); yalnız global yönetici (sunucu uç kuralı, eski panelle
  * aynı kapı). (2) Kişinin eskalasyon kayıtları: takım · rol · asgari seviye · webhook · pasif.
  */
-export default function NotificationsTab({ user, isAdmin, push, contacts, teamMap }) {
+export default function NotificationsTab({ user, isAdmin, push, contacts, teamMap, onChanged }) {
   const t = useT()
   const teamName = (id) => teamMap[Number(id)] || `#${id}`
   const p = push.data
@@ -61,6 +67,8 @@ export default function NotificationsTab({ user, isAdmin, push, contacts, teamMa
         </SectionCard>
       )}
 
+      {isAdmin && <PushPrefsCard user={user} onChanged={onChanged} />}
+
       <SectionCard icon={Siren} title={t('usr.detailContacts')} count={contacts.data ? contacts.data.length : null}>
         {contacts.status === 'error' ? <SectionError title={t('ud.errContacts')} error={contacts.error} onRetry={contacts.reload} />
           : contacts.loading && !contacts.data ? <SectionSkeleton rows={2} />
@@ -88,5 +96,68 @@ export default function NotificationsTab({ user, isAdmin, push, contacts, teamMa
           )}
       </SectionCard>
     </div>
+  )
+}
+
+/**
+ * Kişisel push tercihleri (2026-10-04, onaylı öneri 4) — SALT OKUNUR: en düşük seviye, izleme türleri, push dili, etkin
+ * susturma. Yönetici (global ya da kişinin takımını yöneten kapsamlı) yalnız etkin susturmayı KALDIRABİLİR (sunucu kapısı
+ * kullanıcı yönetimi kapısıdır, denetim PUSH_SNOOZE_CLEAR); öteki tercihler kişinindir.
+ */
+function PushPrefsCard({ user, onChanged }) {
+  const t = useT()
+  const locale = useDateLocale()
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const until = user.push_snooze_until
+  const active = !!until && new Date(toUtc(until)).getTime() > Date.now()
+  const parts = active ? snoozeParts(until, locale) : null
+  const level = user.push_min_level ? levelLabel(t, user.push_min_level) : null
+  const fams = user.push_families ? String(user.push_families).split(',').filter(Boolean) : null
+  const none = !level && !fams && user.push_lang !== 'en' && !active
+
+  async function clear() {
+    setBusy(true)
+    try {
+      const res = await api.admin.clearUserPushSnooze(user.id)
+      if (res?.success) { toast.success(t('ud.pushPrefs.cleared')); onChanged?.() }
+      else toast.error(res?.error || t('ud.pushPrefs.clearError'))
+    } catch (e) {
+      toast.error(e?.message || t('ud.pushPrefs.clearError'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SectionCard icon={SlidersHorizontal} title={t('ud.pushPrefs.title')}>
+      <div data-slot="ud-push-prefs" className="flex min-w-0 flex-col gap-2">
+        {none ? <p className="m-0 text-sm text-muted-foreground">{t('ud.pushPrefs.none')}</p> : (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className="font-normal">{t('ud.pushPrefs.level', level || t('mypush.level.ALL'))}</Badge>
+            <Badge variant="outline" className="h-auto max-w-full whitespace-normal font-normal">
+              {t('ud.pushPrefs.families', fams ? fams.map((f) => familyLabel(f, t)).join(', ') : t('ud.pushPrefs.allFamilies'))}
+            </Badge>
+            <Badge variant="outline" className="font-normal">{t('ud.pushPrefs.lang', user.push_lang === 'en' ? t('mypush.lang.en') : t('mypush.lang.tr'))}</Badge>
+          </div>
+        )}
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <span data-slot="ud-push-snooze" data-active={active ? 'true' : 'false'}
+            className={cn('flex min-w-0 items-start gap-1.5 text-sm', active ? 'font-semibold' : 'text-muted-foreground')}>
+            {active ? <BellOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              : <BellRing aria-hidden="true" className="mt-0.5 size-4 shrink-0" />}
+            {active
+              ? `${t('ud.pushPrefs.snoozed', parts?.date ? `${parts.date} ${parts.time}` : parts?.time || '')}${user.push_snooze_critical !== false ? ` · ${t('ud.pushPrefs.criticalStill')}` : ''}`
+              : t('ud.pushPrefs.notSnoozed')}
+          </span>
+          {active && (
+            <Button type="button" variant="outline" size="sm" className="self-start pointer-coarse:h-10 max-sm:h-10 sm:self-auto"
+              disabled={busy} aria-busy={busy || undefined} onClick={clear}>
+              <X aria-hidden="true" /> {t('ud.pushPrefs.clear')}
+            </Button>
+          )}
+        </div>
+      </div>
+    </SectionCard>
   )
 }

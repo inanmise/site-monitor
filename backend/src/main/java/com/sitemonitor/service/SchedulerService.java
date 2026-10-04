@@ -903,6 +903,20 @@ public class SchedulerService {
         patch("ALTER TABLE app_users ADD COLUMN push_quiet_end VARCHAR(5)");
         patch("ALTER TABLE app_users ADD COLUMN push_quiet_days VARCHAR(30)");
         patch("ALTER TABLE app_users ADD COLUMN push_quiet_min_level VARCHAR(16)");
+        // Kişisel bildirim tercihleri + push dili (2026-10-04, onaylı öneri 4/5) — hepsi NULL doğar = tercih YOK = bugünkü
+        // davranış (seviye/aile süzgeci yok, susturma yok, push Türkçe). Varsayılan değer bilinçli olarak verilmez.
+        patch("ALTER TABLE app_users ADD COLUMN push_min_level VARCHAR(16)");
+        patch("ALTER TABLE app_users ADD COLUMN push_families VARCHAR(200)");
+        patch("ALTER TABLE app_users ADD COLUMN push_snooze_until VARCHAR(20)");
+        patch("ALTER TABLE app_users ADD COLUMN push_snooze_critical BOOLEAN");
+        patch("ALTER TABLE app_users ADD COLUMN push_lang VARCHAR(5)");
+        // Saat tavanı özeti (2026-10-04, onaylı öneri 2): özetlenen RATE_LIMITED satırının özet bağı + satırın dili.
+        patch("ALTER TABLE user_push_deliveries ADD COLUMN overflow_summary_id BIGINT");
+        patch("ALTER TABLE user_push_deliveries ADD COLUMN push_lang VARCHAR(5)");
+        patch("CREATE INDEX IF NOT EXISTS idx_push_overflow ON user_push_deliveries(overflow_summary_id)");
+        // Tetik kolonu 20 → 40 (2026-10-04): "DOMAIN_EXPIRY_REMINDER" (22) PostgreSQL'de "value too long" ile satırı düşürüyor,
+        // writeTeamRows istisnayı yuttuğu için alan adı hatırlatma push'u İZSİZ kayboluyordu. Genişletme veri kaybı yapmaz.
+        patch("ALTER TABLE user_push_deliveries ALTER COLUMN push_trigger TYPE VARCHAR(40)");
         // Ertelenen alarmlar + özet tekilleştirme kilidi — UNIQUE(alarm, takım, pencere): özet her (takım, pencere, alarm)
         // için en fazla BİR kez gider (pod/yeniden başlatma fark etmez). ddl-auto aynı tabloyu entity'den de kurar.
         patch("""
