@@ -92,3 +92,52 @@ test('sertifika penceresi Detaylar: zayıf protokol + şifre rozeti geçmiş sat
   await expect(box.locator('[data-slot="cert-weak-protocol"]')).toHaveCount(0)
   await expect(box.locator('[data-slot="cert-weak-cipher"]')).toHaveCount(0)
 })
+
+// 2026-10-05 (kullanıcı: "sertifika izlemeyi kim ekledi, ne değiştirdi — dashboard kartında geçmiş yok"): sertifika
+// penceresinde "Değişiklikler" sekmesi — Ekleyen / Son güncelleyen özeti + envanter değişiklik günlüğü (uzun değerler).
+// Telefon (bölüm seçicisi), tablet ve masaüstünde içerik pencereye sığar, gövde yatay kaymaz.
+const CHG_ROWS = [
+  { seq: 3, kind: 'INVENTORY', resource_id: 1, resource_name: 'www.example.com', event_type: 'UPDATE', team_id: 1,
+    team_name: 'Takım A', actor: 'U00002', actor_name: 'Kullanıcı B', ip_address: '10.0.0.9', user_agent: 'Mozilla/5.0',
+    changes: [{ field: 'description', before: 'Eski açıklama '.repeat(8), after: 'Yeni ve çok daha uzun bir açıklama metni '.repeat(6) },
+      { field: 'teamId', before: 2, after: 1 }], note: 'Sahiplik devri — sertifika yenileme sürecinin bir parçası olarak takım değişti', at: '2026-10-04T12:30:00' },
+  { seq: 2, kind: 'INVENTORY', resource_id: 1, resource_name: 'www.example.com', event_type: 'UPDATE', team_id: 1,
+    team_name: 'Takım A', actor: 'U00003', actor_name: 'Kullanıcı C', ip_address: '10.0.0.10', user_agent: 'Mozilla/5.0',
+    changes: [{ field: 'useProxy', before: false, after: true }], note: null, at: '2026-09-20T09:00:00' },
+  { seq: 1, kind: 'INVENTORY', resource_id: 1, resource_name: 'www.example.com', event_type: 'CREATE', team_id: 2,
+    team_name: 'Takım B', actor: 'U00001', actor_name: 'Kullanıcı A', ip_address: '10.0.0.8', user_agent: 'Mozilla/5.0',
+    changes: null, note: null, at: '2026-09-01T08:00:00' },
+]
+for (const vp of VIEWPORTS) {
+  test(`sertifika penceresi Değişiklikler sekmesi (${vp.name} ${vp.width}×${vp.height}): özet + günlük sığar`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page, { perms: PERMS })
+    await mockCertApi(page)
+    const record = { id: 1, domain: CERT_DOMAINS.healthy, team_id: 1, created_at: '2026-09-01T08:00:00', created_by: 'U00001',
+      created_by_name: 'Kullanıcı A', updated_at: '2026-10-04T12:30:00', updated_by: 'U00002', updated_by_name: 'Kullanıcı B' }
+    const ok = (data) => ({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) })
+    await page.route((u) => new URL(u).pathname === '/api/admin/inventory/by-domain', (r) => r.fulfill(ok(record)))
+    await page.route((u) => /^\/api\/monitoring\/changes\/inventory\/\d+$/.test(new URL(u).pathname),
+      (r) => r.fulfill(ok({ changes: CHG_ROWS, total: CHG_ROWS.length, page: 0, size: 25 })))
+    await page.route((u) => new URL(u).pathname === '/api/teams/directory',
+      (r) => r.fulfill(ok([{ id: 1, name: 'Takım A' }, { id: 2, name: 'Takım B' }])))
+    await page.goto('/?tab=dashboard')
+    await page.locator(`[data-slot="card"][data-domain="${CERT_DOMAINS.healthy}"] [data-cert-open]`).first().click({ timeout: 20_000 })
+    const box = page.locator('[data-slot="dialog-content"]').first()
+    await expect(box.locator('[data-slot="ssl-verdict"]')).toBeVisible({ timeout: 10_000 })
+    if (vp.width < 640) await box.locator('select').first().selectOption('changes')
+    else await box.locator('[role="tablist"]').first().locator('[role="tab"]').filter({ has: page.locator('[data-slot="cert-tab-label"]', { hasText: /^(Changes|Değişiklikler)$/ }) }).click()
+    const meta = box.locator('[data-slot="cert-changes-meta"]')
+    await expect(meta).toBeVisible({ timeout: 10_000 })
+    await expect(meta.locator('[data-slot="cert-changes-created"]')).toContainText('Kullanıcı A')
+    await expect(meta.locator('[data-slot="cert-changes-updated"]')).toContainText('Kullanıcı B')
+    await expect(box.locator('[data-chg-row]').first()).toBeVisible({ timeout: 10_000 })
+    expect(await box.locator('[data-chg-row]').count(), 'günlük satırları').toBeGreaterThanOrEqual(3)
+    await page.waitForTimeout(300)
+    const hScroll = await box.locator('[data-slot="modal-shell-body"]').first().evaluate((el) => el.scrollWidth - el.clientWidth)
+    expect(hScroll, 'Değişiklikler gövdesi yatay kayıyor (px)').toBeLessThanOrEqual(1)
+    const b = await box.boundingBox()
+    expect(b.x, 'pencere solda taşıyor').toBeGreaterThanOrEqual(-1)
+    expect(b.x + b.width, 'pencere sağda taşıyor').toBeLessThanOrEqual(vp.width + 1)
+  })
+}

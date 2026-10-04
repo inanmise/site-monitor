@@ -80,7 +80,13 @@ class PublicStatsControllerTest {
     void defaults() {
         when(appSettings.getBoolean(eq(PublicStatsController.USAGE_KEY), anyBoolean())).thenReturn(true);
         when(overviewService.orgSummary()).thenReturn(summary());
-        when(jdbcTemplate.queryForMap(anyString(), anyString())).thenReturn(Map.of("ups", 9987L, "total", 10000L));
+        when(jdbcTemplate.queryForMap(org.mockito.ArgumentMatchers.contains("uptime_checks"), anyString()))
+                .thenReturn(Map.of("ups", 9987L, "total", 10000L));
+        // 2026-10-05: sertifika taramaları (24 sa) ve sertifika izlemesi (aktif envanter × son durum)
+        when(jdbcTemplate.queryForMap(org.mockito.ArgumentMatchers.contains("certificate_checks"), anyString()))
+                .thenReturn(Map.of("total", 3456L, "failed", 12L));
+        when(jdbcTemplate.queryForMap(org.mockito.ArgumentMatchers.contains("certificate_inventory")))
+                .thenReturn(Map.of("total", 312L, "ok", 298L, "expiring", 9L, "expired", 2L));
         when(alertEventRepo.countCreatedSince(anyString())).thenReturn(41L);
         when(teamRepo.countByActiveTrue()).thenReturn(12L);
         when(userRepo.countByActiveTrue()).thenReturn(243L);
@@ -100,8 +106,16 @@ class PublicStatsControllerTest {
                 .andExpect(jsonPath("$.data.active_monitors").value(702))
                 .andExpect(jsonPath("$.data.total_monitors").value(720))
                 .andExpect(jsonPath("$.data.monitored_targets").value(702))
-                .andExpect(jsonPath("$.data.checks_24h").value(123456))
-                .andExpect(jsonPath("$.data.failed_checks_24h").value(321))
+                // koşum = izleme koşumu (123456) + sertifika taraması (3456); başarısız = 321 + 12
+                .andExpect(jsonPath("$.data.checks_24h").value(126912))
+                .andExpect(jsonPath("$.data.monitor_checks_24h").value(123456))
+                .andExpect(jsonPath("$.data.cert_checks_24h").value(3456))
+                .andExpect(jsonPath("$.data.cert_failed_checks_24h").value(12))
+                .andExpect(jsonPath("$.data.certificates").value(312))
+                .andExpect(jsonPath("$.data.certificates_ok").value(298))
+                .andExpect(jsonPath("$.data.certificates_expiring_30d").value(9))
+                .andExpect(jsonPath("$.data.certificates_expired").value(2))
+                .andExpect(jsonPath("$.data.failed_checks_24h").value(333))
                 .andExpect(jsonPath("$.data.alerts_24h").value(41))
                 .andExpect(jsonPath("$.data.teams").value(12))
                 .andExpect(jsonPath("$.data.active_users").value(243))
@@ -119,7 +133,8 @@ class PublicStatsControllerTest {
         Map<String, Object> data = dataOf(body);
         assertThat(data.keySet()).containsExactlyInAnyOrder("monitored_targets", "availability_pct", "healthy_monitors",
                 "active_monitors", "total_monitors", "checks_24h", "failed_checks_24h", "alerts_24h", "teams",
-                "active_users", "online_users", "logins_24h");
+                "active_users", "online_users", "logins_24h", "monitor_checks_24h", "cert_checks_24h", "cert_failed_checks_24h",
+                "certificates", "certificates_ok", "certificates_expiring_30d", "certificates_expired");
         java.util.Set<String> expected = new java.util.LinkedHashSet<>(PublicStatsController.LEGACY_FIELDS);
         expected.addAll(PublicStatsController.USAGE_FIELDS);
         assertThat(data.keySet()).as("yanıt = eski alanlar + USAGE_FIELDS (arayüz USAGE_KEYS ile aynı liste)")

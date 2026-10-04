@@ -270,6 +270,11 @@ When you add a new boolean toggle: append to the `INVENTORY_FLAGS` array in `fro
   - **Usage switch:** GLOBAL_ONLY `site.monitor.public-stats.usage-enabled` (Branding page). When false the endpoint returns only `monitored_targets` + `availability_pct`.
   - **UI:** `components/login/UsageStats.jsx` (+ `usageStatsModel.js`). Desktop (≥ 1024 px): in the dark left panel UNDER the "Raporlama" pillar (user decision), with the form sticky in the viewport. Below 1024 px (pillars hidden): at the bottom of the page, under the form.
   - **Adding a field:** add it to `PublicStatsController.USAGE_FIELDS` and `USAGE_KEYS` together (`LoginUsageStats.test.jsx` compares them).
+  - **Certificates (2026-10-05, user request):**
+    - `checks_24h` = the overview's 24 h monitor checks (`monitor_checks_24h`) + 24 h certificate scans (`cert_checks_24h`, `certificate_checks`, failed = `status='error'`).
+    - `failed_checks_24h` includes failed scans.
+    - The second full-row tile is "İzlenen sertifika": `certificates` (active inventory), `certificates_ok` (latest status `valid`), `certificates_expiring_30d` (0..30 days), `certificates_expired` — ONE aggregate query on `certificate_inventory ⟕ latest_checks`.
+    - Login "Koşum" therefore no longer equals the overview "Koşum (24 sa)" tile; the caption says how many certificate scans are included.
 - Tests use `test-utils.jsx#render()` which wires up i18n + theme providers; mock the API client via `vi.mock('../api/client', ...)`. Never let a real `fetch` escape.
 
 ### Configuration
@@ -316,6 +321,12 @@ Services worth knowing about beyond the ones already mentioned:
 - **Admin runtime settings** — `AppSettingsService` (curated key/value, catalog in `AppSettingsCatalog`, live-reloads CORS), `SmtpSettingsService`/`SmtpMailService`, `GeneralSettingsController`, `DatabaseInfoService`, and `SecretCipher`/`SecretToolsService` (AES-GCM decrypt of stored SMTP/LDAP passwords, gated by `SITE_MONITOR_SECRET_KEY`). These settings + secret-tools endpoints are bootstrap-admin only.
 - **Diagnostics** — `OpensslDiagnosticsService` / `NetworkDiagnosticsService` / `HstsDiagnosticsService` / `ConnectionDiagnosticsService`, persisted by `DiagnosticHistoryService` (`diagnostic_runs`); surfaced via the DiagnosticsModal under `/api/admin/diagnostics/*`.
 - **HTTP end-to-end diagnosis (2026-10-02)** — `POST /api/monitoring/http/{id}/diagnose` (+ `/diagnose/history[/{runId}]`), `HttpDiagnosticsController` + `service/http/diagnose/*` (`RawHttpProbe` raw-socket HTTP/1.1 trace: DNS, TCP/proxy, CONNECT, TLS chain/trust, exact request/response headers, redirect hops, 32 KB text body preview, curl -v transcript; `HttpDiagFindings` code catalogue; `HttpDiagMasker`). Runs the monitor's own route and, when a proxy is configured, the other route in parallel (`PATH_DIFFERS` = the 2026-10-02 node/egress incident in one click), plus `client_check` = the real `HttpCheckerService.checkForDiagnostics` (no CA auto-pin, no trust-failure recording, existing `check()` untouched). Side-effect free: no `http_checks` rows, no alarm evaluation. Gate = `diagnostics.run/execute` + `SessionScope.canOperateTeam` (list rows carry `can_diagnose`); 6/min per user and per monitor, max 4 in flight. History in `diagnostic_runs` (`run_type=HTTP_DIAG`, domain `http-monitor:<id>`, so the admin cert history never lists them), body previews never stored. Secrets (auth/cookie/encrypted custom headers, Set-Cookie values, proxy/basic-auth passwords) are masked everywhere incl. the transcript. UI: `components/http/diagnose/*` (lazy dialog from the HTTP detail header "Uçtan uca tanıla" and the failure-diagnosis footer; never auto-runs; `hdx=<runId>` opens a stored run). A new finding code needs `httpdx.finding.<CODE>.title|body` in tr.js + en.js (`HttpDiagFindingsI18nGateTest`); `params.reason` variants use `…<part>.<reason>` keys.
+- **Certificate window → "Değişiklikler" tab (2026-10-05, user request: "who added / changed a certificate monitor, when").**
+  - **Source:** no new data source. Inventory add / edit / delete / restore are already written to the monitor change log (`MonitorHistoryService.INVENTORY`) and the audit log.
+  - **UI:** `certmodal/CertChangesTab.jsx` resolves the inventory record by domain (`/admin/inventory/by-domain`) and shows an "Ekleyen / Son güncelleyen" card (`created_*` / `updated_*` columns), plus the shared `ChangeHistoryTab` (kind `inventory`, field-level before → after). Team names come from `/api/teams/directory`.
+  - **Visibility:** same rule as the Inventory drawer — the tab is hidden for another team's (read-only) record and in preview mode.
+  - **Legacy:** records older than the change log show only the added / last-updated card.
+  - **Gates:** `CertChangesTab.test.jsx`, `e2e/cert-detail-stability.spec.js` (9 tabs, the changes tab fits at 390 / 768 / 1440).
 - **Keyword failure diagnosis + end-to-end diagnosis (2026-10-04, user request).**
   - **Every check stores response meta:** `final_url` (masked), `redirect_count`, `content_type`, `body_bytes`, `body_truncated`, `charset`, `via`.
   - **Failed checks also store:**
@@ -334,7 +345,7 @@ Services worth knowing about beyond the ones already mentioned:
   - **History:** `diagnostic_runs` `KEYWORD_DIAG` / `keyword-monitor:<id>`; no body previews or contexts stored.
   - **UI:** `keyword/KeywordCheckFailure.jsx` (history rows), `keyword/diagnose/*` (variant of `HttpDiagnoseDialog`; without a variant the HTTP output is identical), deep link `kdx`.
   - **Adding a code:** TR+EN `kwfail.<C>.short|why|effect|fix`, `kwhint.<C>.title|cause|effect|fix` or `kwdx.finding.<C>.title|body` (`KeywordDiagFindingsI18nGateTest`).
-  - **Open:** the form's "Test" button (`/keyword/test`) does not show the new reasons yet.
+  - **Form "Test" (`POST /keyword/test`):** calls the expectation-aware check and returns the same diagnosis keys (only when the condition is NOT met); the form renders the history `KeywordFailurePanel` (no diagnose button — unsaved monitor).
 
 ### Deployment specifics
 - **K8s manifests** (`k8s/`): **LEGACY, unmaintained, reference only** — `helm/site-monitor/` is the single source of truth for every environment (CI lints only the chart). The manifests have drifted (no `SITE_MONITOR_SECRET_KEY`, dead env keys, `certmonitor`↔`sitemonitor` DB names, registry-less image, no `/var/log` volume); `kubectl apply` as-is will not start a working app. Known incompatibilities: `k8s/README.md`. Prod deploy command: `docs/PROD_DEPLOY_CHECKLIST.md`.

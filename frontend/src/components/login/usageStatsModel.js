@@ -11,6 +11,9 @@
 export const USAGE_KEYS = Object.freeze([
   'healthy_monitors', 'active_monitors', 'total_monitors', 'checks_24h', 'failed_checks_24h',
   'alerts_24h', 'teams', 'active_users', 'online_users', 'logins_24h',
+  // 2026-10-05: koşuma sertifika taramaları dahil (ayrıntı alanları) + sertifika izlemesi kutucuğu
+  'monitor_checks_24h', 'cert_checks_24h', 'cert_failed_checks_24h',
+  'certificates', 'certificates_ok', 'certificates_expiring_30d', 'certificates_expired',
 ])
 
 /** Yanıt kullanım şeridi alanlarını taşıyor mu (ayar açık + yeni sunucu)? */
@@ -49,6 +52,14 @@ export function healthyRatio(stats) {
   return Math.max(0, Math.min(100, (healthy * 100) / active))
 }
 
+/** Geçerli sertifika oranı (0–100) — son durumu geçerli / aktif sertifika; eksikse null (2026-10-05). */
+export function certRatio(stats) {
+  const ok = finite(stats?.certificates_ok)
+  const total = finite(stats?.certificates)
+  if (ok == null || total == null || total <= 0) return null
+  return Math.max(0, Math.min(100, (ok * 100) / total))
+}
+
 /**
  * Kutucuk tanımları. `t` = useT, `locale` = useDateLocale. Kullanım kipinde yedi kutucuk: ÖNDE sağlıklı izleme (`hero`
  * — tam satır, sağlıklı oranı çubuğuyla), ardından izleme üçlüsü (24 sa koşum, 24 sa alarm, 7 gün erişilebilirlik) ve
@@ -72,15 +83,28 @@ export function buildTiles(stats, { t, locale, usage }) {
   }
   const active = count('active_monitors')
   const failed = count('failed_checks_24h')
+  const certScans = count('cert_checks_24h')
   const logins = count('logins_24h')
   const ratio = healthyRatio(s)
+  const certOk = count('certificates_ok')
+  const certExpiring = count('certificates_expiring_30d')
+  const certExpired = count('certificates_expired')
+  const cRatio = certRatio(s)
+  // Koşum alt satırı: sertifika taraması sayısı biliniyorsa "N sertifika taraması dahil · M başarısız"
+  const checksCaption = certScans != null && failed != null ? t('login.usage.checksSubCert', certScans, failed)
+    : failed != null ? t('login.usage.checksSub', failed) : t('login.usage.last24h')
   return [
     { key: 'healthy', hero: true, label: t('login.usage.healthy'), value: count('healthy_monitors'),
       unit: active != null ? t('login.usage.healthySub', active) : null,
       caption: ratio != null ? t('login.usage.healthyRate', formatPct(ratio, locale)) : null, ratio,
       tip: t('login.usage.healthyTip') },
+    // Sertifika izlemesi (2026-10-05) — ikinci tam satır: aktif sertifika, geçerli olanlar, 30 gün içinde dolan / dolmuş
+    { key: 'certs', hero: true, label: t('login.usage.certs'), value: count('certificates'),
+      unit: certOk != null ? t('login.usage.certsSub', certOk) : null,
+      caption: certExpiring != null && certExpired != null ? t('login.usage.certsCaption', certExpiring, certExpired) : null,
+      ratio: cRatio, tip: t('login.usage.certsTip') },
     { key: 'checks', label: t('login.usage.checks'), value: count('checks_24h'), unit: null,
-      caption: failed != null ? t('login.usage.checksSub', failed) : t('login.usage.last24h'), tip: t('login.usage.checksTip') },
+      caption: checksCaption, tip: t('login.usage.checksTip') },
     { key: 'alerts', label: t('login.usage.alerts'), value: count('alerts_24h'), unit: null,
       caption: t('login.usage.last24h'), tip: t('login.usage.alertsTip') },
     availability,

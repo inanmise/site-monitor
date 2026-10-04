@@ -1462,7 +1462,8 @@ for (const vp of VIEWPORTS_3) {
 const LOGIN_USAGE = { success: true, data: {
   monitored_targets: 12702, availability_pct: 99.9, healthy_monitors: 12688, active_monitors: 12702, total_monitors: 12720,
   checks_24h: 1234567, failed_checks_24h: 4321, alerts_24h: 1041, teams: 112, active_users: 12345, online_users: 314,
-  logins_24h: 1057 } }
+  logins_24h: 1057, monitor_checks_24h: 1200000, cert_checks_24h: 34567, cert_failed_checks_24h: 21,
+  certificates: 12312, certificates_ok: 12045, certificates_expiring_30d: 219, certificates_expired: 48 } }
 for (const vp of VIEWPORTS_3) {
   test.describe(`giriş sayfası kullanım istatistikleri @${vp.name}`, () => {
     // Telefon/tablet dokunmatik (pointer: coarse) — tutamaç ve açıklama dokunuşla sınanır.
@@ -1486,7 +1487,7 @@ for (const vp of VIEWPORTS_3) {
       await expect(strip).toBeVisible()
       await page.evaluate(() => window.scrollTo(0, 0))
       const tiles = strip.locator('[data-slot="usage-tile"]')
-      await expect(tiles).toHaveCount(7)
+      await expect(tiles).toHaveCount(8)
       await expect(strip.locator('[data-stat="users"] [data-slot="usage-value"]')).toHaveText('12,345')
       await page.waitForTimeout(400)
 
@@ -1504,8 +1505,9 @@ for (const vp of VIEWPORTS_3) {
       }))
       const cols = vp.width < 640 ? 2 : 3
       const hero = boxes.filter((b) => b.hero)
-      expect(hero, `${key}: öndeki kutucuk`).toHaveLength(1)
-      expect(Math.abs(hero[0].w - grid.width), `${key}: öndeki kutucuk tam satır değil`).toBeLessThanOrEqual(1)
+      // 2026-10-05: iki tam satır — sağlıklı izleme + izlenen sertifika
+      expect(hero, `${key}: öndeki kutucuklar`).toHaveLength(2)
+      for (const h of hero) expect(Math.abs(h.w - grid.width), `${key}: öndeki kutucuk tam satır değil`).toBeLessThanOrEqual(1)
       const rest = boxes.filter((b) => !b.hero)
       const perCol = new Map()
       for (const b of rest) perCol.set(b.x, (perCol.get(b.x) ?? 0) + 1)
@@ -1627,6 +1629,39 @@ for (const vp of VIEWPORTS_3) {
         const box = await dlg.boundingBox()
         expect(Math.round(box.width), 'telefonda tam ekran').toBe(vp.width)
       }
+    })
+
+    // 2026-10-04: formdaki "Test" başarısızsa geçmişteki teşhis paneli formun içinde — taşmaz, tanılama düğmesi yok
+    test(`form "Test" teşhis paneli @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await mockApi(page)
+      const stress = kwStressHistory().data.items[0]
+      await page.route((u) => new URL(u).pathname === '/api/monitoring/keyword/test', json({ success: true, data: {
+        occurrences: 0, condition_met: false, phrase: 'en az 1 kez', http_status: 403, response_ms: 120, via: 'direct',
+        failure_reason: 'HTTP_STATUS', failure_detail: stress.failure_detail, hints: stress.hints, excerpt: stress.excerpt,
+        final_url: stress.final_url, redirect_count: 3, content_type: stress.content_type, body_bytes: 18234,
+        body_truncated: false, charset: 'windows-1254' } }))
+      await page.goto('/?tab=keyword')
+      await page.getByRole('button', { name: /^(New monitor|Yeni monitor|Yeni izleme)/i }).first().click({ timeout: 20_000 })
+      const form = page.locator('[role="dialog"]').last()
+      await form.getByPlaceholder('https://example.com').fill('https://x.example.com')
+      await form.getByPlaceholder('SUCCESS').fill('Kampanya')
+      const testBtn = form.getByRole('button', { name: /^Test/ }).first()
+      await testBtn.scrollIntoViewIfNeeded()
+      if (vp.width < 1024) await testBtn.tap()
+      else await testBtn.click()
+      const diag = form.locator('[data-slot="kw-test-diagnosis"]')
+      await diag.waitFor({ timeout: 10_000 })
+      await expect(diag.locator('[data-slot="kwfail-panel"]')).toBeVisible()
+      await expect(diag.locator('[data-slot="kwfail-hint"]')).toHaveCount(4)
+      await expect(diag.locator('[data-slot="kwfail-diagnose"]')).toHaveCount(0)
+      await diag.scrollIntoViewIfNeeded()
+      await page.waitForTimeout(400)
+      const box = await diag.boundingBox()
+      expect(box.x, `form teşhis @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+      expect(box.x + box.width, `form teşhis @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      const hScroll = await form.locator('[data-slot="modal-shell-body"]').first().evaluate((el) => el.scrollWidth - el.clientWidth)
+      expect(hScroll, `form teşhis @${vp.name}: form gövdesi yatay kayıyor (px)`).toBeLessThanOrEqual(1)
     })
   })
 }

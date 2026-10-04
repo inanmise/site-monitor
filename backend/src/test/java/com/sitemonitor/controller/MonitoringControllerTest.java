@@ -768,7 +768,7 @@ class MonitoringControllerTest {
     void testKeyword_returnsResult() throws Exception {
         java.util.Map<String, Object> cr = new java.util.HashMap<>();
         cr.put("count", 5); cr.put("http_status", 200); cr.put("response_ms", 12L);
-        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean(), anyBoolean())).thenReturn(cr);   // viaProxy (2026-09-21)
+        when(keywordChecker.check(eq("https://x.example.com"), eq("example"), anyInt(), any(), anyBoolean(), anyBoolean(), any())).thenReturn(cr);   // viaProxy (2026-09-21) + Expectation (2026-10-04)
 
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                 .contentType("application/json")
@@ -777,6 +777,52 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.occurrences").value(5))
                 .andExpect(jsonPath("$.data.condition_met").value(true))   // 5 >= 3
                 .andExpect(jsonPath("$.data.phrase").value("en az 3 kez"));
+    }
+
+    @Test
+    @DisplayName("POST /keyword/test (2026-10-04): koşul sağlanmazsa teşhis alanları (neden, ipucu, alıntı, yanıt bilgisi) döner; "
+            + "beklenti (operatör + eşik) denetleyiciye geçer; koşul sağlanınca neden/ipucu/alıntı yok, yanıt bilgisi var")
+    void testKeyword_returnsDiagnosisFields() throws Exception {
+        java.util.Map<String, Object> fail = new java.util.HashMap<>();
+        fail.put("count", 0); fail.put("http_status", 200); fail.put("response_ms", 30L);
+        fail.put("failure_reason", "KEYWORD_NOT_FOUND"); fail.put("failure_detail", "Sayfa yüklendi ama kelime yok.");
+        fail.put("hints", java.util.List.of("LOGIN_PAGE")); fail.put("excerpt", "Oturum açın Kullanıcı adı Parola");
+        fail.put("final_url", "https://sso.example.com/login"); fail.put("redirect_count", 2);
+        fail.put("content_type", "text/html"); fail.put("body_bytes", 4096); fail.put("body_truncated", false); fail.put("charset", "UTF-8");
+        org.mockito.ArgumentCaptor<com.sitemonitor.service.KeywordCheckerService.Expectation> exp =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.service.KeywordCheckerService.Expectation.class);
+        when(keywordChecker.check(eq("https://kw.example.com"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(), exp.capture()))
+                .thenReturn(fail);
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                .contentType("application/json")
+                .content("{\"url\":\"https://kw.example.com\",\"keyword\":\"Kampanya\",\"operator\":\"GTE\",\"matchCount\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.condition_met").value(false))
+                .andExpect(jsonPath("$.data.failure_reason").value("KEYWORD_NOT_FOUND"))
+                .andExpect(jsonPath("$.data.failure_detail").value("Sayfa yüklendi ama kelime yok."))
+                .andExpect(jsonPath("$.data.hints[0]").value("LOGIN_PAGE"))
+                .andExpect(jsonPath("$.data.excerpt").value("Oturum açın Kullanıcı adı Parola"))
+                .andExpect(jsonPath("$.data.final_url").value("https://sso.example.com/login"))
+                .andExpect(jsonPath("$.data.redirect_count").value(2))
+                .andExpect(jsonPath("$.data.content_type").value("text/html"))
+                .andExpect(jsonPath("$.data.body_bytes").value(4096))
+                .andExpect(jsonPath("$.data.charset").value("UTF-8"));
+        assertThat(exp.getValue().operator()).isEqualTo("GTE");
+        assertThat(exp.getValue().threshold()).isEqualTo(2);
+
+        java.util.Map<String, Object> okRes = new java.util.HashMap<>(fail);
+        okRes.put("count", 3);
+        when(keywordChecker.check(eq("https://kw.example.com"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
+                .thenReturn(okRes);
+        mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
+                .contentType("application/json")
+                .content("{\"url\":\"https://kw.example.com\",\"keyword\":\"Kampanya\",\"operator\":\"GTE\",\"matchCount\":2}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.condition_met").value(true))
+                .andExpect(jsonPath("$.data.failure_reason").doesNotExist())
+                .andExpect(jsonPath("$.data.hints").doesNotExist())
+                .andExpect(jsonPath("$.data.excerpt").doesNotExist())
+                .andExpect(jsonPath("$.data.final_url").value("https://sso.example.com/login"));
     }
 
     @Test
@@ -4487,13 +4533,13 @@ class MonitoringControllerTest {
                 .andExpect(status().isOk());
         verify(portChecker).check(anyString(), anyInt(), eq(120_000), anyString(), any(), any(), anyString(), anyBoolean());
 
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
                 .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
         mvc.perform(post("/api/monitoring/keyword/test").session(session("USER"))
                         .contentType("application/json")
                         .content("{\"url\":\"https://x.example.com\",\"keyword\":\"a\"," + huge + "}"))
                 .andExpect(status().isOk());
-        verify(keywordChecker).check(anyString(), anyString(), eq(120_000), any(), anyBoolean(), anyBoolean());
+        verify(keywordChecker).check(anyString(), anyString(), eq(120_000), any(), anyBoolean(), anyBoolean(), any());
 
         when(pingChecker.check(anyString(), anyString(), anyInt(), anyInt())).thenReturn(java.util.Map.of("up", true));
         mvc.perform(post("/api/monitoring/ping/test").session(session("ADMIN"))
@@ -4526,7 +4572,7 @@ class MonitoringControllerTest {
         MockHttpSession s = session("ADMIN");
         when(httpChecker.check(anyString(), anyString(), anyString(), anyInt(), anyBoolean(), anyBoolean(), anyBoolean()))
                 .thenReturn(java.util.Map.of("ok", true, "http_status", 200));
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
                 .thenReturn(new java.util.HashMap<>(java.util.Map.of("count", 1)));
 
         MonitoringController.TEST_IN_FLIGHT.add(MonitoringController.testSlot(s, "http"));

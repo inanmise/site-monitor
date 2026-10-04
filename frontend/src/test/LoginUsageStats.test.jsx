@@ -28,8 +28,10 @@ const FULL = {
   monitored_targets: 702, availability_pct: 99.9,
   healthy_monitors: 688, active_monitors: 702, total_monitors: 720,
   checks_24h: 123456, failed_checks_24h: 321, alerts_24h: 41, teams: 12, active_users: 1243, online_users: 14, logins_24h: 57,
+  monitor_checks_24h: 120000, cert_checks_24h: 3456, cert_failed_checks_24h: 12,
+  certificates: 312, certificates_ok: 298, certificates_expiring_30d: 9, certificates_expired: 2,
 }
-const ORDER = ['healthy', 'checks', 'alerts', 'availability', 'teams', 'users', 'online']
+const ORDER = ['healthy', 'certs', 'checks', 'alerts', 'availability', 'teams', 'users', 'online']
 
 const panel = () => document.querySelector('[data-slot="login-usage"][data-placement="panel"]')
 const bottom = () => document.querySelector('[data-slot="login-usage"][data-placement="bottom"]')
@@ -46,7 +48,7 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
   })
   afterEach(() => localStorage.clear())
 
-  it('yedi kutucuk: sağlıklı izleme (/ N aktif + oran çubuğu), koşum, alarm, erişilebilirlik, takım, aktif kullanıcı, çevrimiçi — EN yerel biçim', async () => {
+  it('sekiz kutucuk: sağlıklı izleme (/ N aktif + oran çubuğu), izlenen sertifika, koşum, alarm, erişilebilirlik, takım, aktif kullanıcı, çevrimiçi — EN yerel biçim', async () => {
     render(<Login onLogin={() => {}} />)
     await waitFor(() => expect(panel()).toHaveAttribute('data-state', 'ready'))
     const p = panel()
@@ -62,7 +64,14 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
     expect(bar.closest('[aria-hidden="true"]') ?? bar).toHaveAttribute('aria-hidden', 'true')
     expect(tile(p, 'checks')).not.toHaveAttribute('data-hero')
     expect(value(p, 'checks')).toBe('123,456')
-    expect(caption(p, 'checks')).toBe('last 24 h · 321 failed')
+    // 2026-10-05: koşum sertifika taramalarını İÇERİR — alt satır kaçının sertifika taraması olduğunu söyler
+    expect(caption(p, 'checks')).toBe('incl. 3,456 certificate scans · 321 failed')
+    // Sertifika izlemesi: ikinci tam satır — aktif sertifika, geçerli olanlar, 30 gün / dolmuş, geçerlilik çubuğu
+    expect(tile(p, 'certs')).toHaveAttribute('data-hero', 'true')
+    expect(value(p, 'certs')).toBe('312')
+    expect(unit(p, 'certs')).toBe('· 298 valid')
+    expect(caption(p, 'certs')).toBe('expiring within 30 days: 9 · expired: 2')
+    expect(tile(p, 'certs').querySelector('[data-slot="usage-ratio"] [role="progressbar"]')).not.toBeNull()
     expect(value(p, 'alerts')).toBe('41')
     expect(caption(p, 'alerts')).toBe('last 24 hours')
     expect(value(p, 'availability')).toBe('99.9%')
@@ -75,11 +84,11 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
     expect(caption(p, 'online')).toBe('57 signed in (24 h)')
     // Etiketler dokun-gör tetiği (shadcn Button) — tanım listesi: dt etiket, dd değer
     expect(within(p).getByRole('button', { name: 'Healthy monitors' })).toHaveAttribute('data-slot', 'hint-trigger')
-    expect(p.querySelectorAll('dl > [data-slot="usage-tile"] > dt')).toHaveLength(7)
-    expect(p.querySelectorAll('dl > [data-slot="usage-tile"] > dd')).toHaveLength(7)
+    expect(p.querySelectorAll('dl > [data-slot="usage-tile"] > dt')).toHaveLength(8)
+    expect(p.querySelectorAll('dl > [data-slot="usage-tile"] > dd')).toHaveLength(8)
     // İki kopya: geniş ekran (panel, Raporlama altında) + telefon/tablet (sayfanın en altında) — CSS biri gizler
     expect(document.querySelectorAll('[data-slot="login-usage"]')).toHaveLength(2)
-    expect(bottom().querySelectorAll('[data-slot="usage-tile"]')).toHaveLength(7)
+    expect(bottom().querySelectorAll('[data-slot="usage-tile"]')).toHaveLength(8)
     expect(value(bottom(), 'users')).toBe('1,243')
   })
 
@@ -90,7 +99,7 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
     const p = panel()
     expect(within(p).getByRole('heading', { name: 'Kullanım istatistikleri' })).toBeInTheDocument()
     expect(value(p, 'checks')).toBe('123.456')
-    expect(caption(p, 'checks')).toBe('son 24 sa · 321 başarısız')
+    expect(caption(p, 'checks')).toBe('3.456 sertifika taraması dahil · 321 başarısız')
     expect(unit(p, 'healthy')).toBe('/ 702 aktif')
     expect(caption(p, 'healthy')).toBe('Sağlık oranı %98')
     expect(value(p, 'users')).toBe('1.243')
@@ -130,15 +139,15 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
     expect(p).toHaveAttribute('data-state', 'loading')
     expect(p).toHaveAttribute('aria-busy', 'true')
     const skeletons = p.querySelectorAll('[data-slot="usage-tile-skeleton"]')
-    expect(skeletons).toHaveLength(7)
-    // etiket + değer + alt satır = gerçek kutucuğun üç satırı (+ öndeki kutucukta oran çubuğu) — yerleşim zıplamasın
-    expect(p.querySelectorAll('[data-slot="usage-tile-skeleton"] [data-slot="skeleton"]')).toHaveLength(7 * 3 + 1)
+    expect(skeletons).toHaveLength(8)
+    // etiket + değer + alt satır = gerçek kutucuğun üç satırı (+ iki öndeki kutucukta oran çubuğu) — yerleşim zıplamasın
+    expect(p.querySelectorAll('[data-slot="usage-tile-skeleton"] [data-slot="skeleton"]')).toHaveLength(8 * 3 + 2)
     expect(within(p).getByRole('status')).toHaveTextContent('Loading usage statistics…')
     resolve({ success: true, data: FULL })
     await waitFor(() => expect(panel()).toHaveAttribute('data-state', 'ready'))
     expect(panel().querySelectorAll('[data-slot="usage-tile-skeleton"]')).toHaveLength(0)
     expect(document.querySelectorAll('[data-slot="login-usage"]')).toHaveLength(2)
-    expect(panel().querySelectorAll('[data-slot="usage-tile"]')).toHaveLength(7)
+    expect(panel().querySelectorAll('[data-slot="usage-tile"]')).toHaveLength(8)
   })
 
   it('ayar KAPALI (yalnız eski iki alan): şerit YOK — panelde ve sayfanın altında eski iki rakam', async () => {
@@ -157,12 +166,12 @@ describe('Giriş sayfası — kullanım istatistikleri', () => {
     expect([...document.querySelectorAll('[data-slot="login-hero-stats"]')].map((el) => el.getAttribute('data-placement'))).toEqual(['panel', 'bottom'])
   })
 
-  it('istek başarısızsa şerit bozulmaz: yedi kutucuk "—"', async () => {
+  it('istek başarısızsa şerit bozulmaz: sekiz kutucuk "—"', async () => {
     api.getPublicStats.mockRejectedValue(new Error('offline'))
     render(<Login onLogin={() => {}} />)
     await waitFor(() => expect(panel()).toHaveAttribute('data-state', 'ready'))
     const values = [...panel().querySelectorAll('[data-slot="usage-value"]')].map((el) => el.textContent)
-    expect(values).toEqual(Array(7).fill('—no data'))
+    expect(values).toEqual(Array(8).fill('—no data'))
   })
 
   it('kutucuk açıklaması dokunuşla (tıklama) açılır — rol tooltip, tetiğe bağlı; Escape kapatır', async () => {
@@ -222,7 +231,7 @@ describe('usageStatsModel', () => {
     const tiles = buildTiles({ ...FULL, failed_checks_24h: null, logins_24h: null }, { t, locale: 'en-GB', usage: true })
     const by = (k) => tiles.find((x) => x.key === k)
     expect(tiles.map((x) => x.key)).toEqual(ORDER)
-    expect(tiles.filter((x) => x.hero).map((x) => x.key)).toEqual(['healthy'])
+    expect(tiles.filter((x) => x.hero).map((x) => x.key)).toEqual(['healthy', 'certs'])
     expect(by('checks').caption).toBe('login.usage.last24h')
     expect(by('healthy').unit).toBe('login.usage.healthySub(702)')
     expect(by('healthy').caption).toBe('login.usage.healthyRate(98%)')

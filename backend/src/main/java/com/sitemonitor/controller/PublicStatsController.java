@@ -68,7 +68,10 @@ public class PublicStatsController {
     static final List<String> LEGACY_FIELDS = List.of("monitored_targets", "availability_pct");
     /** Kullanım şeridi alanları (sıra yanıt sırasıdır). */
     static final List<String> USAGE_FIELDS = List.of("healthy_monitors", "active_monitors", "total_monitors",
-            "checks_24h", "failed_checks_24h", "alerts_24h", "teams", "active_users", "online_users", "logins_24h");
+            "checks_24h", "failed_checks_24h", "alerts_24h", "teams", "active_users", "online_users", "logins_24h",
+            // 2026-10-05 (kullanıcı isteği): koşum sayısına sertifika taramaları da girer; sertifika izlemesi kendi kutucuğunda
+            "monitor_checks_24h", "cert_checks_24h", "cert_failed_checks_24h",
+            "certificates", "certificates_ok", "certificates_expiring_30d", "certificates_expired");
 
     /** Sunucu tarafı bellek penceresi (login açılışları DB'ye binmesin); testte 0'lanır. */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.public-stats.cache-ms:60000}")
@@ -160,14 +163,70 @@ public class PublicStatsController {
         data.put("healthy_monitors", summary != null ? summary.get("healthy") : null);
         data.put("active_monitors", summary != null ? summary.get("active") : null);
         data.put("total_monitors", summary != null ? summary.get("total") : null);
-        data.put("checks_24h", summary != null ? summary.get("checks_window") : null);
-        data.put("failed_checks_24h", summary != null ? summary.get("failed_window") : null);
+        // Koşum = dokuz izleme türünün 24 sa koşumu (panonun "Koşum (24 sa)" kutusu) + 24 sa SERTİFİKA taraması (2026-10-05,
+        // kullanıcı isteği). Sertifika sayımı düşerse toplam yalnız izleme koşumu olur ve "sertifika dahil" alt satırı çizilmez.
+        Long monitorChecks = longOf(summary, "checks_window");
+        Long monitorFailed = longOf(summary, "failed_window");
+        long[] certScans = figure("24 sa sertifika taraması", () -> certScansSince(since24h));
+        Long certChecks = certScans != null ? Long.valueOf(certScans[0]) : null;
+        Long certFailed = certScans != null ? Long.valueOf(certScans[1]) : null;
+        data.put("checks_24h", plus(monitorChecks, certChecks));
+        data.put("failed_checks_24h", plus(monitorFailed, certFailed));
         data.put("alerts_24h", figure("24 sa alarm", () -> alertEventRepo.countCreatedSince(since24h)));
         data.put("teams", figure("takım", teamRepo::countByActiveTrue));
         data.put("active_users", figure("aktif kullanıcı", userRepo::countByActiveTrue));
         data.put("online_users", figure("çevrimiçi", this::onlineUsers));
         data.put("logins_24h", figure("24 sa giriş", () -> auditLogRepo.countDistinctLoginActorsSince(since24h)));
+        data.put("monitor_checks_24h", monitorChecks);
+        data.put("cert_checks_24h", certChecks);
+        data.put("cert_failed_checks_24h", certFailed);
+        long[] certs = figure("sertifika", this::certificateCounts);
+        data.put("certificates", certs != null ? Long.valueOf(certs[0]) : null);
+        data.put("certificates_ok", certs != null ? Long.valueOf(certs[1]) : null);
+        data.put("certificates_expiring_30d", certs != null ? Long.valueOf(certs[2]) : null);
+        data.put("certificates_expired", certs != null ? Long.valueOf(certs[3]) : null);
         return data;
+    }
+
+    /** Özet haritasından sayı ({@code null} güvenli). */
+    private static Long longOf(Map<String, Object> m, String key) {
+        return m != null && m.get(key) instanceof Number n ? Long.valueOf(n.longValue()) : null;
+    }
+
+    /** İzleme koşumu + sertifika taraması: izleme yoksa {@code null}; sertifika sayımı düştüyse yalnız izleme. */
+    private static Long plus(Long monitor, Long cert) {
+        if (monitor == null) return null;
+        return cert == null ? monitor : Long.valueOf(monitor + cert);
+    }
+
+    /**
+     * Son 24 saatteki sertifika taramaları: {@code [toplam, hatalı]} — {@code certificate_checks} (zaman indeksi
+     * {@code idx_cc_checked_at}); hatalı = taramanın kendisi başarısız ({@code status = 'error'}), süre durumu DEĞİL.
+     */
+    long[] certScansSince(String since) {
+        Map<String, Object> row = jdbcTemplate.queryForMap(
+                "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS failed "
+                        + "FROM certificate_checks WHERE checked_at >= ?", since);
+        return new long[] { num(row.get("total")), num(row.get("failed")) };
+    }
+
+    /**
+     * Sertifika izlemesi (aktif envanter) — TEK toplu sorgu, yalnız sayılar: {@code [aktif, geçerli, 30 gün içinde
+     * dolacak, süresi dolmuş]}. Durum sertifikanın SON kontrolünden ({@code latest_checks}); hiç kontrol edilmemiş satır
+     * yalnız toplamda sayılır. "Geçerli" = son durum {@code valid} (uyarı / dolmuş / hata değil).
+     */
+    long[] certificateCounts() {
+        Map<String, Object> row = jdbcTemplate.queryForMap(
+                "SELECT COUNT(*) AS total, "
+                        + "COALESCE(SUM(CASE WHEN l.status = 'valid' THEN 1 ELSE 0 END), 0) AS ok, "
+                        + "COALESCE(SUM(CASE WHEN l.days_remaining BETWEEN 0 AND 30 THEN 1 ELSE 0 END), 0) AS expiring, "
+                        + "COALESCE(SUM(CASE WHEN l.days_remaining < 0 OR l.status = 'expired' THEN 1 ELSE 0 END), 0) AS expired "
+                        + "FROM certificate_inventory i LEFT JOIN latest_checks l ON l.domain = i.domain WHERE i.active = TRUE");
+        return new long[] { num(row.get("total")), num(row.get("ok")), num(row.get("expiring")), num(row.get("expired")) };
+    }
+
+    private static long num(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
     }
 
     /** Tek rakam — hata verirse yalnız o rakam {@code null} (diğerleri etkilenmez). */

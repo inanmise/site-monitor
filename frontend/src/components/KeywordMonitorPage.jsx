@@ -777,6 +777,16 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               </>}
         </AlertBanner>
       )}
+      {/* Test başarısızsa (2026-10-04, kullanıcı isteği): kontrol geçmişindeki teşhis panelinin AYNISI — Neden / Etkisi /
+          Ne yapmalı, yanıt bilgisi (son adres, yönlendirme, içerik türü, boyut, karakter kümesi), ipuçları ve maskeli alıntı.
+          Kaydedilmemiş formda uçtan uca tanılama yok (izleme kimliği gerekir) — düğme çizilmez. */}
+      {testResult && !testResult.condition_met && (testResult.failure_reason || testResult.error) && (
+        <div className="mt-2 min-w-0" data-slot="kw-test-diagnosis">
+          <KeywordFailurePanel check={{ ...testResult, ok: false }}
+            monitor={{ keyword: form.keyword, operator: form.operator, match_count: Number(form.matchCount),
+              case_sensitive: !!form.caseSensitive, url: normalizeUrl(form.url), timeout_ms: Number(form.timeoutMs) }} />
+        </div>
+      )}
       {/* Yalnız DÜZENLEMEDE: "neden" sorusu ancak var olan bir şey değişince anlamlı. */}
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="keyword-change-note" value={changeNote} onChange={setChangeNote} />

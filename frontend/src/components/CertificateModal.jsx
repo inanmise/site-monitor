@@ -4,7 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { Trash2, Globe, X, Pencil, History, Stethoscope, Play, RefreshCw, StickyNote,
-  ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package } from 'lucide-react'
+  ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package, FileClock } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import CertNotesTab from './certmodal/CertNotesTab.jsx'
@@ -56,6 +56,8 @@ function useMediaQuery(query) {
 // Grafik recharts çekiyor; diğer izleme sayfalarındaki gibi (PingMonitorPage) tembel yüklenir.
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
+// Değişiklik geçmişi (2026-10-05): envanter kaydının kim / ne zaman / ne değişti günlüğü — ilk açılışta yüklenir.
+const CertChangesTab = lazy(() => import('./certmodal/CertChangesTab.jsx'))
 
 /** Başlık durum rozeti tonu (eski .modal-status-*). */
 const STATUS_TONE = {
@@ -297,6 +299,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     !previewMode && !readOnly && { value: 'alerts', label: t('modal.alertsTab'), Icon: Bell, count: tabCounts.alerts },
     !previewMode && { value: 'chart', label: t('modal.chartTab'), Icon: LineChart },
     !previewMode && canViewInventory && { value: 'inventory', label: t('modal.inventoryTab'), Icon: Package },
+    // Değişiklik geçmişi (2026-10-05): Envanter çekmecesindeki "Değişiklikler" ile aynı kural — başka takımın kaydında yok.
+    !previewMode && canViewInventory && !readOnly && { value: 'changes', label: t('chg.tab'), Icon: FileClock },
     !previewMode && { value: 'notes', label: t('modal.notesTab'), Icon: StickyNote, count: tabCounts.notes },
   ].filter(Boolean)
 
@@ -505,6 +509,15 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* Envanter Bilgileri (2026-09-28 yeniden tasarım): "Kaydı düzenle" başlıktaki Düzenle ile AYNI işleyici (salt
                 okunurda yok); "Envanterde aç" pencereyi kapatıp Envanter ekranında kaydın panelini açar. */}
             <InventoryTab key={reloadKey} domain={domain} onEdit={!readOnly ? onEdit : undefined} onLeave={onLeave ?? (() => onClose())} />
+          </TabsContent>
+        )}
+
+        {!previewMode && canViewInventory && !readOnly && (
+          <TabsContent value="changes">
+            {/* Kim ekledi / kim ne zaman neyi değiştirdi — certmodal/CertChangesTab (envanter değişiklik günlüğü) */}
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} />}>
+              <CertChangesTab key={reloadKey} t={t} domain={domain} />
+            </Suspense>
           </TabsContent>
         )}
 
