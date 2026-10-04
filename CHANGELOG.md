@@ -15,6 +15,18 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Anahtar kelime formundaki "Test" de hata teşhisi gösteriyor:** koşul sağlanmazsa kontrol geçmişindeki panelin aynısı
+  formun içinde açılır — neden, "Neden / Etkisi / Ne yapmalı", son adres + yönlendirme, içerik türü, boyut, karakter
+  kümesi, olası nedenler ve sayfanın görünür metninden maskeli alıntı. Kaydetmeden önce yapılandırmadaki sorun görülür.
+- **Sertifika penceresinde "Değişiklikler" sekmesi:** dashboard'daki sertifika kartından açılan pencerede kaydı kimin
+  eklediği / en son kimin güncellediği (tarih + saat) ve her değişikliğin kim tarafından, alan alan önce → sonra olarak
+  yapıldığı listelenir (envanter değişiklik günlüğü; Envanter çekmecesindekiyle aynı görünüm). Telefonda bölüm
+  seçicisinden açılır.
+- **Giriş sayfası istatistiklerine sertifika izlemesi:** "Koşum (24 sa)" artık sertifika taramalarını da sayar (alt satır
+  kaçının sertifika taraması olduğunu söyler); yeni "İzlenen sertifika" kutucuğu aktif sertifika sayısını, geçerli
+  olanları, 30 gün içinde dolacak ve süresi dolmuş sertifikaları geçerlilik çubuğuyla gösterir.
+
 ## [20.106.0] — 2026-10-04
 
 ### Added

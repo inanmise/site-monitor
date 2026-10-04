@@ -100,6 +100,33 @@ describe('KeywordMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /test/i }))
     await waitFor(() => expect(api.monitoring.testKeyword).toHaveBeenCalled())
     expect(await screen.findByText(/condition met|koşul sağlanıyor/i)).toBeInTheDocument()
+    // Koşul sağlandıysa teşhis paneli YOK
+    expect(document.querySelector('[data-slot="kw-test-diagnosis"]')).toBeNull()
+  })
+
+  it('Yeni modal (2026-10-04): Test başarısızsa kontrol geçmişindeki teşhis paneli çizilir — neden, ipucu, yanıt bilgisi; tanılama düğmesi yok', async () => {
+    api.monitoring.testKeyword.mockResolvedValue({
+      success: true,
+      data: { occurrences: 0, condition_met: false, phrase: 'en az 1 kez', http_status: 200, response_ms: 30,
+        failure_reason: 'KEYWORD_NOT_FOUND', failure_detail: 'Sayfa yüklendi ama aranan metin yok.',
+        hints: ['LOGIN_PAGE'], excerpt: 'Oturum açın Kullanıcı adı Parola', final_url: 'https://sso.example.com/login',
+        redirect_count: 2, content_type: 'text/html', body_bytes: 4096, body_truncated: false, charset: 'UTF-8' },
+    })
+    render(<KeywordMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getKeywordMonitors).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitor/i }))
+    fireEvent.change(screen.getByPlaceholderText('https://example.com'), { target: { value: 'https://x.example.com' } })
+    fireEvent.change(screen.getByPlaceholderText('SUCCESS'), { target: { value: 'Kampanya' } })
+    fireEvent.click(screen.getByRole('button', { name: /test/i }))
+
+    await waitFor(() => expect(document.querySelector('[data-slot="kw-test-diagnosis"]')).not.toBeNull())
+    const panel = document.querySelector('[data-slot="kw-test-diagnosis"]')
+    expect(within(panel).getAllByText(/Keyword not found|Kelime bulunamadı/).length).toBeGreaterThan(0)
+    expect(within(panel).getByText(/Sign-in page returned|Giriş sayfası geldi/)).toBeInTheDocument()
+    expect(panel.textContent).toContain('sso.example.com')
+    // Kaydedilmemiş formda uçtan uca tanılama düğmesi yok
+    expect(within(panel).queryByRole('button', { name: /diagnose|tanıla/i })).toBeNull()
   })
 
   it('karta tıkla → detay modalında 3 sekme görünür', async () => {

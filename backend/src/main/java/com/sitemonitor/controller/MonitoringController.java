@@ -2861,7 +2861,10 @@ public class MonitoringController {
                     AuditDetail.of("url", AuditDetail.safeTarget(url), "operator", op,
                             "match_count", threshold, "custom_headers", customHeaders != null), null);
             kpd = proxyDecision(url, body.get("useProxy"));
-            r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive, kpd.viaProxy());
+            // Beklenti (operatör + eşik) verilir: koşul sağlanmazsa neden + "neden bulunamadı" ipuçları + maskeli alıntı da
+            // gelir (2026-10-04, formdaki "Test" de kontrol geçmişindeki teşhisi göstersin). Ek istek atılmaz.
+            r = keywordChecker.check(url, keyword, timeoutMs, customHeaders, caseSensitive, kpd.viaProxy(),
+                    new KeywordCheckerService.Expectation(op, threshold));
         } finally {
             TEST_IN_FLIGHT.remove(slot);
         }
@@ -2877,6 +2880,13 @@ public class MonitoringController {
         out.put("via",           r.getOrDefault("via", kpd.via()));
         out.put("proxy_source",  kpd.source());
         out.put("phrase",        KeywordCheckerService.opPhrase(op, threshold));
+        // Hata teşhisi (2026-10-04, ek alanlar — eski alanlar aynen): kontrol geçmişindeki satırla AYNI anahtarlar, form
+        // "Test" sonucunu geçmişteki teşhis paneliyle çizer. Koşul sağlandıysa neden / ipucu / alıntı yoktur.
+        for (String k : new String[] { "failure_reason", "failure_detail", "hints", "excerpt", "final_url", "redirect_count",
+                "content_type", "body_bytes", "body_truncated", "charset" }) {
+            if (r.get(k) != null) out.put(k, r.get(k));
+        }
+        if (met) { out.remove("failure_reason"); out.remove("failure_detail"); out.remove("hints"); out.remove("excerpt"); }
         return ok(out);
     }
 
