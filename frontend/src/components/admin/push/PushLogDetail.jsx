@@ -1,4 +1,4 @@
-import { Webhook, ExternalLink, RotateCcw, Copy, ChevronLeft, ChevronRight, CircleDot, CheckCircle2, XCircle, Clock, Layers } from 'lucide-react'
+import { Webhook, ExternalLink, RotateCcw, Copy, ChevronLeft, ChevronRight, CircleDot, CheckCircle2, XCircle, Clock, Layers, CloudLightning } from 'lucide-react'
 import { formatDate } from '../../../api/client'
 import { formatDuration } from '../../../utils/incidentMeta.js'
 import TeamBadge from '../../ui/TeamBadge.jsx'
@@ -10,6 +10,7 @@ import { TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, ChainList, MUTED_
 import { PushStatusBadge, PushRowLinks } from './PushLogRows.jsx'
 import { triggerLabel, retryable, gapMs } from './pushLogModel.js'
 import { pushReasonLabel } from '../../../utils/pushPrefs.js'
+import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
@@ -68,6 +69,72 @@ function DeliveryFlow({ d, t }) {
         </span>
       </li>
     </ol>
+  )
+}
+
+const SECTION_H = 'm-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase'
+
+/** Fırtına bildirimi satırı → kapsadığı alarmlar (kapsamdaki alarm bağlantılı; kapsam dışı yalnız sayı). */
+function StormCoverageSection({ cov, t, onOpenAlert }) {
+  if (!cov) return null
+  const alarms = Array.isArray(cov.alarms) ? cov.alarms : []
+  return (
+    <section data-slot="pl-storm-coverage" aria-label={t('pl.sc.title', cov.total ?? alarms.length)} className="flex min-w-0 flex-col gap-1.5">
+      <h4 className={cn(SECTION_H, 'flex flex-wrap items-center gap-1.5')}>
+        <CloudLightning aria-hidden="true" className="size-3.5" />{t('pl.sc.title', cov.total ?? alarms.length)}
+        {cov.inferred && <Badge variant="outline" className="border-dashed font-normal normal-case">{t('alh.sp.inferred')}</Badge>}
+      </h4>
+      {alarms.length === 0 && Number(cov.hidden || 0) === 0 && <p className={cn(MUTED_SM, 'm-0')}>{t('pl.sc.none')}</p>}
+      {alarms.length > 0 && (
+        <ul className="m-0 flex list-none flex-col gap-1 p-0">
+          {alarms.map((a) => (
+            <li key={a.id}>
+              <Button type="button" variant="outline" size="sm" data-slot="pl-storm-alarm" data-alert-id={a.id}
+                onClick={() => onOpenAlert(a.id)} className="h-auto min-h-9 w-full flex-wrap justify-start gap-2 px-2 py-1.5 font-normal pointer-coarse:min-h-10">
+                <ExternalLink aria-hidden="true" />
+                <span className="min-w-0 truncate font-medium">{a.domain || `#${a.id}`}</span>
+                {a.alert_type && <TypeBadge>{a.alert_type}</TypeBadge>}
+                {a.alert_level && <LevelBadge level={a.alert_level} />}
+                {a.resolved && <Badge variant="outline" className="font-normal">{t('pl.sc.resolved')}</Badge>}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {Number(cov.hidden || 0) > 0 && <p data-slot="pl-storm-hidden" className={cn(MUTED_SM, 'm-0')}>{t('pl.sc.hidden', cov.hidden)}</p>}
+    </section>
+  )
+}
+
+/** {@code SKIPPED_STORM} karar satırı → alarmı kapsayan fırtına push'ları (satırları tıklanınca o satırın ayrıntısı). */
+function StormPushesSection({ pushes, awaiting, currentId, t, onPick }) {
+  if (!Array.isArray(pushes)) return null
+  const waiting = Array.isArray(awaiting) ? awaiting : []
+  return (
+    <section data-slot="pl-storm-pushes" aria-label={t('pl.sp.title')} className="flex min-w-0 flex-col gap-2">
+      <h4 className={cn(SECTION_H, 'flex items-center gap-1.5')}><CloudLightning aria-hidden="true" className="size-3.5" />{t('pl.sp.title')}</h4>
+      {pushes.length === 0 && (
+        <p className={cn(MUTED_SM, 'm-0')}>{waiting.length > 0 ? t('pl.sp.awaiting', waiting[0]) : t('pl.sp.none')}</p>
+      )}
+      {pushes.map((p) => (
+        <div key={`${p.push_key}|${p.team_id ?? ''}`} data-slot="pl-storm-push" className="flex min-w-0 flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+            {t('pl.sp.push', p.storm_id, t(`alh.sp.trigger.${['INITIAL', 'DAILY_REALERT', 'RESOLVE'].includes(p.trigger) ? p.trigger : 'INITIAL'}`))}
+            <span className={MUTED_SM}>{formatDate(p.covered_at)}</span>
+            {p.inferred && <Badge variant="outline" className="border-dashed font-normal">{t('alh.sp.inferred')}</Badge>}
+          </span>
+          {(p.rows || []).length === 0
+            ? <p className={cn(MUTED_SM, 'm-0')}>{t('pl.sp.noRows')}</p>
+            : <ChainList items={p.rows} currentId={currentId} onPick={onPick} render={(c) => (
+                <>
+                  <UserBadge username={c.username} displayName={c.display_name} inline size="sm" />
+                  <PushStatusBadge row={c} t={t} compact />
+                  <span className={MUTED_SM}>{formatDate(c.sent_at || c.created_at || c.at)}</span>
+                </>
+              )} />}
+        </div>
+      ))}
+    </section>
   )
 }
 
@@ -176,6 +243,10 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                   )} />
                 </section>
               )}
+
+              {/* Fırtına bağı (2026-10-04): fırtına push'unun KAPSADIĞI alarmlar / devredilen alarmı KAPSAYAN fırtına push'ları */}
+              <StormCoverageSection cov={d.storm_coverage} t={t} onOpenAlert={onOpenAlert} />
+              <StormPushesSection pushes={d.storm_pushes} awaiting={d.storm_awaiting} currentId={d.id} t={t} onPick={onPick} />
 
               <CopyBlock title={t('pl.message')} text={d.message || t('health.emailDetailNoBody')} t={t} toast={toast} />
               {d.raw_response && <CopyBlock title={t('pl.rawResponse')} text={d.raw_response} t={t} toast={toast} />}

@@ -1094,6 +1094,8 @@ export const api = {
     getAlertNoiseSlot: (days, dow, hour, teamId) => request(`/admin/alerts/noise/slot?days=${encodeURIComponent(days)}&dow=${encodeURIComponent(dow)}&hour=${encodeURIComponent(hour)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),   // gürültü analizi (2026-09-12, #18); takım süzgeci (2026-10-01)
     getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
+    /** Alarmı KAPSAYAN toplu fırtına push'ları + alıcı durumları + "henüz gitmedi" (2026-10-04, fırtına push'u ↔ alarm bağı). */
+    getAlertStormPush: (id) => request(`/admin/alerts/${encodeURIComponent(id)}/storm-push`),
     /** Tekil uyarı (listeyle aynı zenginleştirme + 7/24 arama özeti + noc_can_write) — derin bağlantı yedeği (2026-09-27). */
     getAlert: (id) => request(`/admin/alerts/${encodeURIComponent(id)}`),
 

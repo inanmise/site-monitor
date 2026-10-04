@@ -717,6 +717,10 @@ public class UserPushService {
      * {@code SKIPPED_NO_PRIOR}. Eskiden çözüm "INFO" seviyesiyle yeniden çözümleniyordu: asgari seviyesi INFO'nun
      * üstünde olan gruplar (ör. yöneticiler) "N monitör düştü"yü alıp "düzeldi"yi hiç almıyordu.
      *
+     * <p><b>Alarm bağı</b> (2026-10-04): karar verildikten sonra (gönderim satırları ya da karar satırı yazıldı) bildirimin
+     * KAPSADIĞI üye alarmlar {@code storm_push_coverage}'a tek batch ile yazılır ({@link StormPushCoverageService#record});
+     * alarm detayı / push geçmişim / teslimat günlüğü "bu fırtına push'u hangi alarmı kapsadı" sorusunu buradan cevaplar.
+     *
      * @param stormTrigger {@code INITIAL} / {@code DAILY_REALERT} / {@code RESOLVE} (fırtına e-postasının tetiği)
      * @param members      bu takımın SY takımı olduğu fırtına üyeleri — tür ve izleme bayrağı kararı bunlardan
      */
@@ -760,13 +764,17 @@ public class UserPushService {
                 List<UserPushRecipientResolver.Recipient> recipients =
                         resolve ? resolver.resolvePrior(prior)
                                 : UserPushRecipientResolver.withFamilies(resolver.resolve(teamId, alertLevel), memberFamilies(members));
-                if (!recipients.isEmpty())
-                    return writeTeamRows(out, teamId, trigger, alertLevel, STORM_MONITOR_TYPE, STORM_MONITOR_NAME,
+                if (!recipients.isEmpty()) {
+                    Map<String, Object> res = writeTeamRows(out, teamId, trigger, alertLevel, STORM_MONITOR_TYPE, STORM_MONITOR_NAME,
                             message, dedupeKey, recipients, java.util.Set.of(),
                             resolve || capBypass(alertLevel));   // çözüm tavandan muaf; KRİTİK, ayar açıksa muaf
+                    recordCoverage(stormId, teamId, dedupeKey, stormTrigger, members);
+                    return res;
+                }
                 block = "SKIPPED_NO_RECIPIENTS";
             }
             stormSkipRow(teamId, trigger, alertLevel, dedupeKey, block);
+            recordCoverage(stormId, teamId, dedupeKey, stormTrigger, members);
             out.put("reason", block);
         } catch (Exception e) {
             log.warn("user-push fırtına bildirimi atlandı (fırtına e-postası etkilenmedi): {}", e.toString());
@@ -853,6 +861,30 @@ public class UserPushService {
             out.add(d.getUsername());
         }
         return out;
+    }
+
+    /**
+     * Fırtına push'u ↔ üye alarm bağı (2026-10-04) — isteğe bağlı: yokken (elle kurulan testler) davranış birebir aynı.
+     * Alan enjeksiyonu: yapıcı imzası değişmez.
+     */
+    @Autowired(required = false)
+    private StormPushCoverageService stormPushCoverage;
+
+    /** Test kancası. */
+    void setStormPushCoverage(StormPushCoverageService s) { this.stormPushCoverage = s; }
+
+    /**
+     * Bildirim kararı verildikten SONRA (satırlar yazıldı, outbox tetiklendi) kapsanan üye alarmların bağı — tek batch,
+     * hiçbir hata yayılmaz: gözlem kaydı push kararını değiştirmez ve geciktirmez.
+     */
+    private void recordCoverage(Long stormId, Long teamId, String dedupeKey, String stormTrigger, List<AlertEvent> members) {
+        StormPushCoverageService c = stormPushCoverage;
+        if (c == null) return;
+        try {
+            c.record(stormId, teamId, dedupeKey, stormTrigger, members);
+        } catch (Exception e) {
+            log.warn("Fırtına push kapsamı yazılamadı (fırtına #{}) — bildirim kararı etkilenmedi: {}", stormId, e.toString());
+        }
     }
 
     /** Fırtına karar satırı (sistem sicili) — bireysel {@link #skipRow}'un olaysız eşleniği, takım başına bir kez. */

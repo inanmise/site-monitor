@@ -113,6 +113,39 @@ class PostgresOnlySqlPostgresTest {
         assertThat(count("SELECT count(*) FROM alert_storms WHERE scope_key = ?", scope)).isEqualTo(2);
     }
 
+    // ── Fırtına push'u ↔ alarm bağı (2026-10-04) ──────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Fırtına push kapsamı: tek batch ON CONFLICT DO NOTHING + okuma sorguları (IN, LIKE OR =, GROUP BY, DISTINCT, JPQL CAST) PostgreSQL'de")
+    void stormPushCoverage_insertAndReadQueries() {
+        StormPushCoverageService svc = AopTestUtils.getTargetObject(PostgresIt.app().bean(StormPushCoverageService.class));
+        UserPushDeliveryRepository repo = PostgresIt.app().bean(UserPushDeliveryRepository.class);
+        long storm = uniqueId(), team = uniqueId(), e1 = uniqueId(), e2 = uniqueId();
+        String key = "storm:" + storm + ":INITIAL";
+        AlertEvent a = new AlertEvent(); a.setId(e1); a.setTeamId(team); a.setResolved(false);
+        AlertEvent b = new AlertEvent(); b.setId(e2); b.setTeamId(team); b.setResolved(false);
+
+        assertThat(svc.record(storm, team, key, "INITIAL", List.of(a, b))).isEqualTo(2);
+        assertThat(svc.record(storm, team, key, "INITIAL", List.of(a, b))).as("çakışma yutulur, hata yok").isEqualTo(2);
+        assertThat(count("SELECT count(*) FROM storm_push_coverage WHERE push_key = ?", key)).isEqualTo(2);
+
+        jdbc().update(StormService.SQL_MEMBER_INSERT, storm, e1, now(), AlertStormMember.JOIN_TRIGGER);
+        UserPushDelivery d = new UserPushDelivery();
+        d.setTrigger("STORM"); d.setDedupeKey(key); d.setTeamId(team); d.setUsername("IT_STORM_USER"); d.setStatus("SENT");
+        d.setAttempts(1); d.setCreatedAt(now()); d.setSentAt(now());
+        repo.save(d);
+
+        StormPushCoverageService.Result r = svc.coverageForAlerts(List.of(a), null);
+        assertThat(r.of(e1).pushes()).singleElement().satisfies(p -> {
+            assertThat(p.pushKey()).isEqualTo(key);
+            assertThat(p.inferred()).isFalse();
+        });
+        assertThat(svc.alarmsForNotices(List.of(new StormPushCoverageService.NoticeRef(key, team, now())))
+                .get(StormPushCoverageService.noticeKey(key, team))).hasSize(2);
+        assertThat(repo.findStormNoticeRowsForViewer(java.util.Set.of(key), "it_storm_user")).hasSize(1);
+        assertThat(repo.findByDedupeKeyInOrderByIdAsc(java.util.Set.of(key))).hasSize(1);
+    }
+
     // ── Kişi push outbox sahiplenmesi ─────────────────────────────────────────────────────────────────────────────
 
     @Test

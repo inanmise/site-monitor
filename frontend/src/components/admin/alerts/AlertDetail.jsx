@@ -28,6 +28,8 @@ import {
   SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge,
 } from './AlertBadges.jsx'
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
+import { StormPushSection, StormPushTimelineEntry } from './AlertStormPush.jsx'
+import { normalizeStormPush, showStormPushSection } from './stormPushModel.js'
 
 /** Tier rozeti tonları (sertifika kademesi). */
 const TIER_BG = { 1: 'bg-indigo-600', 2: 'bg-sky-600', 3: 'bg-cyan-600', 4: 'bg-zinc-500' }
@@ -39,15 +41,20 @@ const EVENT_STYLE = {
   push:         { Icon: BellRing,     ink: 'border-border bg-muted text-muted-foreground' },
   // Bildirim fırtınaya devredildi (2026-09-30): bireysel e-posta/push gitmedi — neden burada okunur.
   storm:        { Icon: CloudLightning, ink: 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
+  // Alarmı KAPSAYAN toplu fırtına push'u (2026-10-04): ne zaman, kaç kişiye iletildi — alıcılara açılır.
+  stormPush:    { Icon: BellRing,     ink: 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
   // Bildirim takımın sessiz saat özetine devredildi (2026-10-01): ŞİMDİ gitmedi, pencere sonunda özetle gider.
   quiet:        { Icon: Moon,         ink: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300' },
   acknowledged: { Icon: UserCheck,    ink: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' },
   resolved:     { Icon: CheckCircle2, ink: 'border-success/40 bg-success/10 text-success' },
 }
 
-/** Bir alarmın teslimat kayıtları — e-posta günlüğü + push partileri (tek istek çifti; push patlarsa bölüm boş kalır). */
+/**
+ * Bir alarmın teslimat kayıtları — e-posta günlüğü + push partileri + (2026-10-04) alarmı kapsayan fırtına push'ları; üç
+ * istek paralel, biri patlarsa yalnız o bölüm boş kalır.
+ */
 export function useAlertDeliveries(id) {
-  const [state, setState] = useState({ loading: true, failed: false, history: [], push: [] })
+  const [state, setState] = useState({ loading: true, failed: false, history: [], push: [], stormPush: normalizeStormPush(null) })
   useEffect(() => {
     if (id == null) return undefined
     let alive = true
@@ -55,13 +62,15 @@ export function useAlertDeliveries(id) {
     Promise.all([
       Promise.resolve().then(() => api.admin.getAlertNotifications(id)).catch(() => null),
       Promise.resolve().then(() => api.admin.getAlertPushDeliveries(id)).catch(() => null),
-    ]).then(([n, p]) => {
+      Promise.resolve().then(() => api.admin.getAlertStormPush(id)).catch(() => null),
+    ]).then(([n, p, sp]) => {
       if (!alive) return
       setState({
         loading: false,
         failed: !n?.success,
         history: n?.success && Array.isArray(n.data) ? n.data : [],
         push: p?.success && Array.isArray(p.data) ? p.data : [],
+        stormPush: normalizeStormPush(sp),
       })
     })
     return () => { alive = false }
@@ -96,8 +105,8 @@ export function AlertDetailBody({
   const [localNocFocus, setLocalNocFocus] = useState(0)   // eylem satırındaki "Arama kaydet" → forma kaydır + odakla
   const pushGroups = useMemo(() => groupPushRows(deliveries.push), [deliveries.push])
   const timeline = useMemo(
-    () => buildAlertTimeline({ alert: a, notifications: deliveries.history, pushGroups }),
-    [a, deliveries.history, pushGroups],
+    () => buildAlertTimeline({ alert: a, notifications: deliveries.history, pushGroups, stormPush: deliveries.stormPush }),
+    [a, deliveries.history, pushGroups, deliveries.stormPush],
   )
   if (!a) return null
   const open = !a.resolved
@@ -257,6 +266,9 @@ export function AlertDetailBody({
               <span aria-hidden="true" className={cn('absolute top-0 -left-9 grid size-8 place-items-center rounded-full border', s.ink)}>
                 <s.Icon className="size-4" />
               </span>
+              {ev.kind === 'stormPush' ? (
+                <div className="min-w-0 rounded-lg border bg-card px-3 py-2"><StormPushTimelineEntry item={ev.item} /></div>
+              ) : (
               <div className="min-w-0 rounded-lg border bg-card px-3 py-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="text-sm font-semibold">
@@ -293,6 +305,7 @@ export function AlertDetailBody({
                   <p data-tl-note="" className="mt-1.5 rounded-md bg-muted/50 px-2 py-1 text-[0.85em] whitespace-pre-wrap text-muted-foreground italic">{ev.note}</p>
                 )}
               </div>
+              )}
             </li>
           )
         })}
@@ -305,6 +318,10 @@ export function AlertDetailBody({
 
       {/* Bildirim teslimatları — e-posta (önizleme sandbox iframe'de) + webhook partileri */}
       <h3 className={SECTION}>{t('alh.notifications')}</h3>
+      {/* Fırtına push'u (2026-10-04): alarm fırtınaya bağlıysa ya da bir fırtına push'u onu kapsadıysa görünür */}
+      {showStormPushSection(a, deliveries.loading ? null : deliveries.stormPush) && (
+        <StormPushSection data={deliveries.stormPush} loading={deliveries.loading} />
+      )}
       <AlertNotificationsPanel history={deliveries.history} loadingHistory={deliveries.loading} loadFailed={deliveries.failed}
         pushGroups={pushGroups} alertLevel={a.alert_level} />
     </div>

@@ -148,6 +148,9 @@ class SchemaPatchPostgresTest {
         assertThat(defs.get("idx_ae_created_at")).contains("alert_events").contains("(created_at)");
 
         assertUnique(defs, "ux_asm_storm_event", "alert_storm_members");          // fırtına üyeliği ON CONFLICT DO NOTHING
+        assertUnique(defs, "ux_spc_key_event", "storm_push_coverage");           // fırtına push'u ↔ alarm bağı (2026-10-04)
+        assertThat(defs).as("storm_push_coverage(alert_event_id) — alarm detayı").containsKey("idx_spc_event");
+        assertThat(defs).as("storm_push_coverage(storm_id) — fırtına ayrıntısı + yetim temizliği").containsKey("idx_spc_storm");
         assertUnique(defs, "ux_aes_event_contact_level", "alert_escalation_steps"); // eskalasyon adımı tekilleştirme
         assertUnique(defs, "ux_qdi_event_team_window", "quiet_digest_items");     // sessiz saat özeti tekilleştirme
         assertUnique(defs, "ux_push_event_phase_user", "user_push_deliveries");   // push dedupe son sözü

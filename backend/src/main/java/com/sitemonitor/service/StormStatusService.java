@@ -293,8 +293,88 @@ public class StormStatusService {
         d.put("members_total", members.size());
         d.put("members_recovered", recovered);
         d.put("members_down", down);
-        d.put("notifications", notificationSummary(id, !ids.isEmpty()));
+        Map<String, Object> notifications = notificationSummary(id, !ids.isEmpty());
+        notifications.put("storm_pushes", stormPushes(s, ids, byEvent, events));   // 2026-10-04, ek alan
+        d.put("notifications", notifications);
         return d;
+    }
+
+    /**
+     * Fırtına push'ları (2026-10-04, ek alan): bildirim (anahtar × takım) başına tetik, ilk satır / ilk-son gönderim anı,
+     * alıcı ve gönderilen sayısı, kanal kararı ve KAPSANAN alarm sayısı — {@code storm_push_coverage}'dan; kaydı olmayan
+     * (özellikten önceki) bildirimde üyelik penceresinden tahmin ({@code inferred}, bkz. {@link StormPushCoverageService#infers}).
+     * İki sorgu; hata yutulur (boş liste — ayrıntı penceresinin geri kalanı etkilenmez).
+     */
+    List<Map<String, Object>> stormPushes(AlertStorm s, Collection<Long> memberIds, Map<Long, AlertStormMember> byEvent,
+                                          Map<Long, AlertEvent> events) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (s == null || s.getId() == null) return out;
+        Long id = s.getId();
+        try {
+            Map<String, Map<String, Object>> groups = new LinkedHashMap<>();
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT dedupe_key, team_id, username, status, created_at, sent_at FROM user_push_deliveries "
+                  + "WHERE dedupe_key LIKE ? OR dedupe_key = ? ORDER BY id", "storm:" + id + ":%", "storm-resolved:" + id);
+            if (rows == null || rows.isEmpty()) return out;
+            for (Map<String, Object> r : rows) {
+                String key = r.get("dedupe_key") == null ? null : String.valueOf(r.get("dedupe_key"));
+                StormPushCoverageService.NoticeKey k = StormPushCoverageService.parseKey(key);
+                if (k == null) continue;
+                Long team = r.get("team_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+                Map<String, Object> g = groups.computeIfAbsent(StormPushCoverageService.noticeKey(key, team), x -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("push_key", key); m.put("trigger", k.trigger()); m.put("day", k.day()); m.put("team_id", team);
+                    m.put("first_created_at", null); m.put("first_sent_at", null); m.put("last_sent_at", null);
+                    m.put("recipients", 0); m.put("sent", 0); m.put("decision", null);
+                    m.put("covered_alarms", 0L); m.put("inferred", false);
+                    return m;
+                });
+                String created = r.get("created_at") == null ? null : String.valueOf(r.get("created_at"));
+                if (created != null && (g.get("first_created_at") == null || created.compareTo((String) g.get("first_created_at")) < 0))
+                    g.put("first_created_at", created);
+                if (UserPushService.SYSTEM_USER.equals(r.get("username"))) {
+                    if (g.get("decision") == null) g.put("decision", r.get("status"));
+                    continue;
+                }
+                g.put("recipients", (Integer) g.get("recipients") + 1);
+                if ("SENT".equals(r.get("status"))) {
+                    g.put("sent", (Integer) g.get("sent") + 1);
+                    String sent = r.get("sent_at") == null ? null : String.valueOf(r.get("sent_at"));
+                    if (sent != null && (g.get("first_sent_at") == null || sent.compareTo((String) g.get("first_sent_at")) < 0)) g.put("first_sent_at", sent);
+                    if (sent != null && (g.get("last_sent_at") == null || sent.compareTo((String) g.get("last_sent_at")) > 0)) g.put("last_sent_at", sent);
+                }
+            }
+            Map<String, Long> recorded = new HashMap<>();
+            for (Map<String, Object> r : jdbcTemplate.queryForList(
+                    "SELECT push_key, team_id, COUNT(*) AS c FROM storm_push_coverage WHERE storm_id = ? GROUP BY push_key, team_id", id)) {
+                Long team = r.get("team_id") instanceof Number n ? Long.valueOf(n.longValue()) : null;
+                long c = r.get("c") instanceof Number n ? n.longValue() : 0L;
+                recorded.put(StormPushCoverageService.noticeKey(String.valueOf(r.get("push_key")), team), c);
+            }
+            for (Map.Entry<String, Map<String, Object>> en : groups.entrySet()) {
+                Map<String, Object> g = en.getValue();
+                Long rec = recorded.get(en.getKey());
+                if (rec != null) { g.put("covered_alarms", rec); continue; }
+                // Kayıt öncesi bildirim: üyelik penceresinden tahmin (alarmın push takımı = bildirimin takımı).
+                long n = 0;
+                for (Long eid : memberIds) {
+                    AlertEvent e = events.get(eid);
+                    AlertStormMember am = byEvent.get(eid);
+                    StormPushCoverageService.Membership m = am == null ? null : new StormPushCoverageService.Membership(
+                            id, eid, am.getJoinedAt(), am.getJoinKind(), am.getLeftAt(), am.getLeaveKind());
+                    Long team = StormPushCoverageService.alarmTeam(e, s, null);
+                    if (team == null || !team.equals(g.get("team_id"))) continue;
+                    if (StormPushCoverageService.infers((String) g.get("trigger"), (String) g.get("first_created_at"), m, e)) n++;
+                }
+                g.put("covered_alarms", n);
+                g.put("inferred", true);
+            }
+            out.addAll(groups.values());
+            out.sort(Comparator.comparing((Map<String, Object> m) -> String.valueOf(m.get("first_created_at"))));
+        } catch (Exception e) {
+            log.debug("Storm #{} push listesi okunamadı: {}", id, e.getMessage());
+        }
+        return out;
     }
 
     /** Fırtına postaları (üye alarm günlüklerinde STORM_* tetikleri), fırtınaya devir satırları ve fırtına push'ları. */
