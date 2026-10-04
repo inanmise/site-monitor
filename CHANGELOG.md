@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.105.0] — 2026-10-04
+
 ### Added
 - **Giriş sayfasında "Kullanım istatistikleri":** sağlıklı izleme (İzleme Panosu ile aynı sayı, "/ N aktif" ve sağlık
   oranı çubuğu), son 24 saatte koşum (başarısız sayısıyla) ve alarm, 7 günlük erişilebilirlik, takım, aktif kullanıcı ve
@@ -2217,7 +2219,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.104.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.105.0...HEAD
+[20.105.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.105.0
 [20.104.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.104.0
 [20.103.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.103.0
 [20.102.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.102.0

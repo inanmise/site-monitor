@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T11:12:08Z",
+  "generatedAt": "2026-10-04T14:00:08Z",
   "repo": "inanmise/site-monitor",
-  "count": 704,
+  "count": 705,
   "releases": [
+    {
+      "version": "20.105.0",
+      "tag": "v20.105.0",
+      "releasedAt": "2026-10-04T14:00:03Z",
+      "commit": "afa164492ea56a3c078af2477474237bc810a905",
+      "prevVersion": "20.104.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "afa16449",
+          "subject": "giriş sayfasında kullanım istatistikleri; giriş sayfası ile İzleme Panosu izleme sayısı farkı giderildi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.104.0",
       "tag": "v20.104.0",
