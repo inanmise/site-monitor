@@ -1,6 +1,7 @@
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { parseUtc } from '../../../utils/incidentMeta.js'
 import { MONITOR_ALERT_TYPES, alertTypesFor } from '../../../utils/monitorAlertTypes.js'
+import { stormPushTimelineItems } from './stormPushModel.js'
 
 /**
  * Alarm Geçmişi'nin SAF modeli — bileşenlerden bağımsız yardımcılar (React'siz, test edilebilir).
@@ -433,7 +434,7 @@ const ts = (s) => { const d = parseUtc(s); return d ? d.getTime() : null }
  * Zaman çizelgesi: açılış → e-posta bildirimleri → push gönderimleri (parti başına tek olay) → onay → çözüm.
  * Zamanı olmayan olay (eski onaylar) açılışın hemen ardına düşer ve "zaman kaydı yok" der.
  */
-export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = [] }) {
+export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = [], stormPush = null }) {
   if (!a) return []
   const openedAt = ts(a.created_at) ?? 0
   const items = [{ id: 'opened', kind: 'opened', at: openedAt, when: a.created_at, level: a.alert_level, message: a.message }]
@@ -462,6 +463,8 @@ export function buildAlertTimeline({ alert: a, notifications = [], pushGroups = 
     items.push({ id: `p-${head.id}`, kind: 'push', at: ts(head.sent_at || head.created_at) ?? openedAt + 1, when: head.sent_at || head.created_at,
       trigger: head.trigger || '', status: head.status || null, people })
   }
+  // 2026-10-04: bu alarmı KAPSAYAN toplu fırtına push'ları ("Fırtına #12 push'u iletildi · 12 kişi") — ilk iletim anında.
+  for (const sp of stormPushTimelineItems(stormPush)) items.push({ ...sp, at: sp.at ?? openedAt + 1 })
   if (a.acknowledged || a.acknowledged_at) {
     items.push({ id: 'ack', kind: 'acknowledged', at: ts(a.acknowledged_at) ?? openedAt + 2, when: a.acknowledged_at || null, by: a.acknowledged_by || null, note: a.acknowledged_note || null })
   }

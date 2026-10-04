@@ -190,6 +190,79 @@ test.describe('mobil web — detay pencereleri (telefon 390×844)', () => {
   }
 })
 
+// Alarm detayı — "Fırtına push'u" bloğu (2026-10-04, fırtına push'u ↔ alarm bağı): kapsayan bildirim kartları (uzun ad /
+// alan adı, tahmini rozet), "henüz gitmedi" notu ve zaman çizelgesi olayı alıcılara AÇIK hâlde ölçülür — telefonda kart
+// görünümü ve ≥ 40 px dokunma hedefleri (fırtına bağlantısı, alıcı aç/kapa), tablette tablo; hiçbiri ekran dışına taşmaz,
+// detay panelinin kaydırma gövdesi yatay kaymaz.
+const SP_AT = (min) => new Date(Date.now() - min * 60_000).toISOString().slice(0, 19)
+const SP_ALERT = {
+  id: 414, domain: 'checkout-payments-gateway-very-long-subdomain.internal.example.com', alert_type: 'HTTP_DOWN', alert_level: 'WARNING',
+  resolved: false, acknowledged: false, created_at: SP_AT(240), team_id: 1, team_name: 'Takım A', storm_id: 12,
+  message: 'UYARI: checkout-payments-gateway-very-long-subdomain.internal.example.com erişilemiyor (HTTP 503)',
+}
+const SP_RECIPIENTS = ['SENT', 'SENT', 'FAILED', 'RATE_LIMITED', 'SKIPPED_USER_OPT_OUT', 'PENDING'].map((status, i) => ({
+  id: 100 + i, username: `N0000${i + 1}`, display_name: `Uzun Adlı Nöbetçi Kişi Numara ${i + 1} (Takım A Platform)`, status,
+  sent_at: status === 'SENT' ? SP_AT(230) : null, created_at: SP_AT(231), attempts: status === 'FAILED' ? 3 : 1,
+}))
+const SP_BODY = { success: true, data: {
+  alert_id: 414, handed_over: true, push_individual: false,
+  items: [
+    { storm_id: 12, team_id: 1, push_key: 'storm:12:INITIAL', trigger: 'INITIAL', inferred: false, covered_at: SP_AT(231),
+      first_created_at: SP_AT(231), first_sent_at: SP_AT(230), last_sent_at: SP_AT(229), recipient_total: 6, sent: 2, failed: 1,
+      pending: 1, not_sent: 2, counts: { SENT: 2, FAILED: 1, RATE_LIMITED: 1, SKIPPED_USER_OPT_OUT: 1, PENDING: 1 }, decision: null,
+      message: '12 monitör birden erişilemez — Takım A · Platform Ödeme Altyapısı · kök-neden: HTTP erişilemiyor', covered_alarms: 12,
+      outcome: 'sent', recipients: SP_RECIPIENTS },
+    { storm_id: 12, team_id: 1, push_key: 'storm:12:DAILY_REALERT:2026-10-05', trigger: 'DAILY_REALERT', day: '2026-10-05', inferred: true,
+      covered_at: SP_AT(10), first_created_at: SP_AT(10), first_sent_at: null, last_sent_at: null, recipient_total: 0, sent: 0, failed: 0,
+      pending: 0, not_sent: 0, counts: {}, decision: 'SKIPPED_TEAM_OFF', message: null, covered_alarms: null, outcome: 'skipped', recipients: [] },
+  ],
+  pending: [{ storm_id: 13, team_id: 1, joined_at: SP_AT(5), storm_created_at: SP_AT(60), next_realert_at: SP_AT(-1380) }],
+  storms: [{ storm_id: 12, team_id: 1, active: true }, { storm_id: 13, team_id: 1, active: true }],
+} }
+for (const vp of VIEWPORTS) {
+  test(`alarm detayı — fırtına push'u bloğu @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.route((u) => /^\/api\/admin\/alerts\/414(\/|$)/.test(new URL(u).pathname), (r) => {
+      const p = new URL(r.request().url()).pathname
+      const body = p.endsWith('/storm-push') ? SP_BODY
+        : (p.endsWith('/notifications') || p.endsWith('/push-deliveries')) ? { success: true, data: [] }
+          : { success: true, data: SP_ALERT, noc_can_write: false, can_act: true }
+      return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    })
+    await page.goto('/?tab=alerthistory&alert=414')
+    const block = page.locator('[data-slot="alert-storm-push"]')
+    await block.waitFor({ timeout: 20_000 })
+    await expect(block.locator('[data-slot="sp-card"]')).toHaveCount(2)
+    await expect(block.locator('[data-slot="sp-pending"]')).toHaveCount(1)
+    // Alıcı listeleri AÇIK ölçülür: kart + zaman çizelgesi olayı
+    await block.locator('[data-slot="sp-card"]').first().locator('[data-slot="sp-toggle"]').click()
+    await page.locator('[data-slot="sp-timeline"]').first().locator('[data-slot="sp-toggle"]').click()
+    await page.waitForTimeout(500)
+    const key = `alarm detayı fırtına push'u @${vp.name}`
+    const m = await page.evaluate(measure, '[data-slot="alert-detail"]')
+    expect(m.offenders, `${key}: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `${key}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    const inner = await block.evaluate((el) => {
+      const sc = el.closest('.overflow-y-auto') || el.parentElement
+      return { overflow: sc.scrollWidth - sc.clientWidth, right: Math.round(el.getBoundingClientRect().right) }
+    })
+    expect(inner.overflow, `${key}: detay gövdesi yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+    expect(inner.right, `${key}: blok sağ kenarı`).toBeLessThanOrEqual(vp.width + 1)
+    if (vp.width < 640) {
+      await expect(block.locator('[data-slot="sp-recipients-cards"]').first()).toBeVisible()
+      for (const sel of ['[data-slot="sp-storm-link"]', '[data-slot="sp-toggle"]']) {
+        const heights = await page.locator(`[data-slot="alert-detail"] ${sel}`).evaluateAll((els) => els
+          .filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().height)))
+        expect(heights.length, `${key}: ${sel} bulunamadı`).toBeGreaterThan(0)
+        for (const h of heights) expect(h, `${key}: ${sel} dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+      }
+    } else {
+      await expect(block.locator('[data-slot="sp-recipients-table"]').first()).toBeVisible()
+    }
+  })
+}
+
 // İzleme Panosu KPI özet pencereleri (2026-10-01, kullanıcı isteği): Sorunlu / Kontrolü gecikmiş / Açık alarm /
 // Duraklatılmış kutuları ModalShell açar — telefonda tam ekran, tablette ortalı; içerideki hiçbir öğe (özet kutucukları,
 // dağılım listeleri, izleme satırları, envanter-dışı alt grubu ve ikiz bağlantısı, altlık düğmeleri) ekran dışına taşmaz.

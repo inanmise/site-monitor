@@ -15,6 +15,17 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Fırtına push'u ↔ alarm bağı:** push fırtınaya devredilse bile alarmın geçmişinde onu kapsayan toplu fırtına push'u
+  görünür. Alarm ayrıntısında "Fırtına push'u" bloğu ve zaman çizelgesi olayı ("Fırtına #12 push'u iletildi · 12 kişi ·
+  14:05"); açılınca alıcılar durum rozetleriyle listelenir, fırtına numarası fırtına ayrıntısını açar. Henüz gitmediyse
+  "henüz fırtına push'u gitmedi" ve sıradaki hatırlatma zamanı yazar. Bu sürümden önceki fırtınalar "tahmini" rozetiyle.
+- **Push bildirimlerim:** fırtınaya devredilen alarm satırı size giden fırtına push'unu (zaman + durum) ya da neden
+  gelmediğini gösterir; fırtına push'unuz kapsadığı alarmları listeler (başka takımın alarmı yalnız sayı olarak).
+- **Webhook Push Gönderim Logu:** fırtına push satırı kapsadığı alarmlara, devir satırı kapsayan fırtına push'larına bağlanır.
+- **Fırtına ayrıntısı:** her toplu push'un kaç kişiye iletildiği ve kaç alarmı kapsadığı listelenir.
+- Yeni tablo `storm_push_coverage` (açılışta otomatik yamalanır; fırtına ya da alarm silinince temizlenir).
+
 ## [20.102.0] — 2026-10-04
 
 ### Added

@@ -34,6 +34,11 @@ import java.util.function.Predicate;
  * değilse (takım değişikliği) hedef, alarm kimliği ve metin gizlenir; satır "başka takımın alarmı" etiketiyle kalır.
  *
  * <p>Kodla giriş push'ları teslimat satırı üretmez (tasarım gereği, kod hiçbir yere yazılmaz) — bu listede görünmezler.
+ *
+ * <p><b>Fırtına bağı</b> (2026-10-04, {@link StormPushCoverageService#decorateViewerHistory}): {@code SKIPPED_STORM} karar
+ * satırı {@code storm_push} taşır (o alarmı kapsayan fırtına push'unu KİŞİNİN aldığı an + durum ya da neden); kişinin
+ * fırtına satırı {@code storm_alarms} taşır (kapsadığı alarmlardan görebildikleri; kalanı yalnız sayı). Sayfa başına
+ * sabit sayıda sorgu; başka kişinin teslimat satırı dönmez.
  */
 @Service
 @RequiredArgsConstructor
@@ -47,6 +52,13 @@ public class MyPushHistoryService {
 
     private final UserPushDeliveryRepository repo;
     private final TeamRepository teamRepo;
+
+    /** Fırtına push'u ↔ alarm bağı (2026-10-04) — isteğe bağlı (alan enjeksiyonu; yapıcı imzası değişmez). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private StormPushCoverageService stormPushCoverage;
+
+    /** Test kancası. */
+    void setStormPushCoverage(StormPushCoverageService s) { this.stormPushCoverage = s; }
 
     /**
      * @param username    oturumdaki kanonik kullanıcı adı
@@ -73,6 +85,13 @@ public class MyPushHistoryService {
 
         List<Map<String, Object>> out = new ArrayList<>(rows.size());
         for (UserPushDelivery r : rows) out.add(toRow(r, username, memberSet, canView, teamNames));
+        // Fırtına push'u ↔ alarm bağı (2026-10-04): devir satırına kişinin aldığı fırtına push'u, kişinin fırtına satırına
+        // kapsadığı alarmlar — sayfa başına sabit sorgu; alarm görünürlüğü geçmişin kuralıyla (üyelik ya da görüş kapsamı).
+        StormPushCoverageService coverage = stormPushCoverage;
+        if (coverage != null) {
+            coverage.decorateViewerHistory(rows, out, username,
+                    t -> t != null && (memberSet.contains(t) || (canView != null && canView.test(t))));
+        }
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);

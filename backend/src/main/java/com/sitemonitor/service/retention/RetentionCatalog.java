@@ -330,6 +330,13 @@ public final class RetentionCatalog {
         orphan("alert-storm-members-orphan", "alert_storm_members",
                 "NOT EXISTS (SELECT 1 FROM alert_storms s WHERE s.id = alert_storm_members.storm_id)", DataClass.OPERATIONAL,
                 "Fırtına üyelik kaydı (kim hangi fırtınadaydı — gözlem/analiz ekranı). Fırtına satırı silinince yetim kalır."),
+        orphan("storm-push-coverage-orphan", "storm_push_coverage",
+                "NOT EXISTS (SELECT 1 FROM alert_storms s WHERE s.id = storm_push_coverage.storm_id) "
+                + "OR NOT EXISTS (SELECT 1 FROM alert_events e WHERE e.id = storm_push_coverage.alert_event_id)",
+                DataClass.OPERATIONAL,
+                "Fırtına push'u ↔ üye alarm bağı (2026-10-04): hangi toplu fırtına push'unun hangi alarmı kapsadığı — alarm "
+                + "detayı, push geçmişim ve teslimat günlüğü buradan okur. Kişi verisi yok (anahtar + kimlikler). Fırtına ya da "
+                + "alarm kendi politikasıyla silinince yetim kalır ve burada temizlenir."),
         age("scripted-drafts", "scripted_drafts", "updated_at", "site.monitor.scripted.draft-retention-days",
                 30, 1, false, DataClass.CONTENT,
                 "k6 script düzenleme formunun otomatik kaydedilen taslakları. Kaydedilince silinirler; "

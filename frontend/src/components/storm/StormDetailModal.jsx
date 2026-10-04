@@ -19,6 +19,7 @@ import { Card, CardContent } from '@/components/shadcn/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
 import { JOIN_KEYS, LEAVE_KEYS, stormTimeline } from './stormModel.js'
+import { pushReasonLabel } from '../../utils/pushPrefs.js'
 import { ReasonBadge } from './StormTeamCards.jsx'
 
 function Fact({ label, children }) {
@@ -163,6 +164,23 @@ export default function StormDetailModal({ stormId, onClose }) {
               {n.last_mail_at && <span className="self-center text-xs text-muted-foreground">{t('sf.detail.n.lastMail')}: {formatIncidentTime(n.last_mail_at, locale)}</span>}
             </div>
             <p className="m-0 text-xs text-muted-foreground">{t('sf.detail.notifHint')}</p>
+            {/* 2026-10-04: toplu fırtına push'ları — her biri kaç kişiye iletildi ve KAÇ ALARMI kapsadı (ek alan; eski sunucuda yok) */}
+            {Array.isArray(n.storm_pushes) && n.storm_pushes.length > 0 && (
+              <ul data-slot="sf-storm-pushes" aria-label={t('sf.detail.pushes')} className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+                {n.storm_pushes.map((p) => (
+                  <li key={`${p.push_key}|${p.team_id ?? ''}`} data-slot="sf-storm-push" data-trigger={p.trigger}
+                    className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border px-2 py-1 text-xs">
+                    <Send aria-hidden="true" className="size-3 text-muted-foreground" />
+                    <span className="font-semibold">{t(`alh.sp.trigger.${['INITIAL', 'DAILY_REALERT', 'RESOLVE'].includes(p.trigger) ? p.trigger : 'INITIAL'}`)}{p.day ? ` · ${p.day}` : ''}</span>
+                    <span className="text-muted-foreground tabular-nums">{formatIncidentTime(p.first_sent_at || p.first_created_at, locale)}</span>
+                    <span>{t('sf.detail.push.people', p.recipients ?? 0, p.sent ?? 0)}</span>
+                    <Badge variant="outline" data-slot="sf-push-covered" className="font-semibold">{t('sf.detail.push.covered', p.covered_alarms ?? 0)}</Badge>
+                    {p.inferred && <Badge variant="outline" className="border-dashed font-normal">{t('alh.sp.inferred')}</Badge>}
+                    {p.decision && <span className="text-muted-foreground">{t('sf.detail.push.decision', pushReasonLabel(p.decision, t))}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           {/* Üyeler */}

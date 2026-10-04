@@ -1235,6 +1235,22 @@ public class SchedulerService {
         // düz btree LIKE önekine hizmet etmez; text_pattern_ops hem = hem LIKE 'önek%' için kullanılır (PostgreSQL'e özel).
         patch("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_push_dedupe ON user_push_deliveries(dedupe_key text_pattern_ops)");
         patch("CREATE INDEX IF NOT EXISTS idx_asm_event ON alert_storm_members(alert_event_id)");
+        // 2026-10-04: fırtına push'u ↔ üye alarm bağı (StormPushCoverage). Alarm detayı alarm kimliğiyle, push geçmişi /
+        // teslimat günlüğü bildirim anahtarıyla (UNIQUE'in önü push_key), fırtına ayrıntısı fırtına kimliğiyle okur.
+        patch("""
+            CREATE TABLE IF NOT EXISTS storm_push_coverage (
+                id BIGSERIAL PRIMARY KEY,
+                storm_id BIGINT NOT NULL,
+                team_id BIGINT,
+                push_key VARCHAR(60) NOT NULL,
+                notice_trigger VARCHAR(16) NOT NULL,
+                alert_event_id BIGINT NOT NULL,
+                created_at VARCHAR(30) NOT NULL,
+                CONSTRAINT ux_spc_key_event UNIQUE (push_key, alert_event_id)
+            )
+            """);
+        patch("CREATE INDEX IF NOT EXISTS idx_spc_event ON storm_push_coverage(alert_event_id)");
+        patch("CREATE INDEX IF NOT EXISTS idx_spc_storm ON storm_push_coverage(storm_id)");
         // Pencere-içi açık DOWN eş sayımı (StormService.evaluate) — resolved + alert_type + created_at aralığı.
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_scan ON alert_events(resolved, alert_type, created_at)");
         patch("CREATE INDEX IF NOT EXISTS idx_ae_storm_id ON alert_events(storm_id)");

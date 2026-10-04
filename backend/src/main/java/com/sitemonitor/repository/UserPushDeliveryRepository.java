@@ -91,6 +91,25 @@ public interface UserPushDeliveryRepository extends JpaRepository<UserPushDelive
     List<UserPushDelivery> findByAlertEventIdOrderByIdAsc(Long alertEventId);
 
     /**
+     * Fırtına push'u ↔ alarm bağı (2026-10-04): verilen fırtına bildirim anahtarlarının TÜM satırları (alıcılar + kanal karar
+     * satırı) — alarm detayının "Fırtına push'u" bölümü ve teslimat günlüğü. Tek sorgu (anahtar sayısı alarm başına birkaç).
+     */
+    List<UserPushDelivery> findByDedupeKeyInOrderByIdAsc(java.util.Collection<String> dedupeKeys);
+
+    /**
+     * Push geçmişim (2026-10-04): verilen fırtına bildirimlerinde kişinin KENDİ satırları (kullanıcı adı büyük/küçük harf
+     * duyarsız) + bildirimin kanal karar satırları ('-'). Başka kişinin satırı dönmez.
+     */
+    @Query("""
+           SELECT d FROM UserPushDelivery d
+           WHERE d.dedupeKey IN :keys
+             AND (LOWER(d.username) = LOWER(CAST(:username AS string)) OR d.username = '-')
+           ORDER BY d.id ASC
+           """)
+    List<UserPushDelivery> findStormNoticeRowsForViewer(@Param("keys") java.util.Collection<String> keys,
+                                                        @Param("username") String username);
+
+    /**
      * Teslimat günlüğü — K11 süzgeçleri. CAST kuralı {@code MonitorChangeLogRepository.search}
      * ile aynı: Postgres null metin parametresini tip bilgisi olmadan bytea bağlar ve LOWER(bytea)
      * yoktur → sorgu 500 verir. Yalnız null geçebilen metin parametreleri sarılır.

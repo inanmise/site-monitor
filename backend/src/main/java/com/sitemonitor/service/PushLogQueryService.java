@@ -359,8 +359,67 @@ public class PushLogQueryService {
                 if (scope.allows(b.getTeamId(), b.getUsername())) summarized.add(enrich(java.util.Collections.singletonList(rawOf(b))).get(0).toMap());
             out.put("summarized", summarized);
         }
+        addStormLinks(d, scope, out);
         return out;
     }
+
+    /** Fırtına push'u ↔ alarm bağı (2026-10-04) — isteğe bağlı (alan enjeksiyonu; yapıcı imzası değişmez). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private StormPushCoverageService stormPushCoverage;
+
+    /** Test kancası. */
+    void setStormPushCoverage(StormPushCoverageService s) { this.stormPushCoverage = s; }
+
+    /**
+     * Fırtına bağları (2026-10-04, iki yön): fırtına bildirimi satırında KAPSADIĞI alarmlar ({@code storm_coverage}; kapsam
+     * dışı alarm yalnız sayı), alarm düzeyi {@code SKIPPED_STORM} karar satırında alarmı KAPSAYAN fırtına push'larının
+     * satırları ({@code storm_pushes}; kapsam süzgeciyle) ve henüz duyurulmadığı açık fırtınalar ({@code storm_awaiting}).
+     */
+    private void addStormLinks(UserPushDelivery d, Scope scope, Map<String, Object> out) {
+        StormPushCoverageService c = stormPushCoverage;
+        if (c == null || d == null) return;
+        try {
+            if (StormPushCoverageService.isStormNoticeKey(d.getDedupeKey())) {
+                Map<String, Object> cov = c.noticeCoverage(d, team -> scope.allows(team, null));
+                if (cov != null) out.put("storm_coverage", cov);
+            } else if (EscalationService.PUSH_SKIPPED_STORM.equals(d.getStatus()) && d.getAlertEventId() != null) {
+                // Alarmın kendisi (storm_id / takım) kapsam hesabına gerekir; okunamazsa satırın kimliği + takımıyla devam.
+                com.sitemonitor.model.AlertEvent e = alertEvents == null ? null : alertEvents.findById(d.getAlertEventId()).orElse(null);
+                if (e == null) {
+                    e = new com.sitemonitor.model.AlertEvent();
+                    e.setId(d.getAlertEventId());
+                    e.setTeamId(d.getTeamId());
+                }
+                List<Map<String, Object>> pushes = new ArrayList<>();
+                StormPushCoverageService.AlarmPushes covering = c.coveringPushes(e);
+                for (StormPushCoverageService.CoveringPush p : covering.pushes()) {
+                    List<Map<String, Object>> rows = new ArrayList<>();
+                    for (UserPushDelivery r : p.rows())
+                        if (scope.allows(r.getTeamId(), r.getUsername())) rows.add(enrich(java.util.Collections.singletonList(rawOf(r))).get(0).toMap());
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("storm_id", p.ref().stormId());
+                    m.put("trigger", p.ref().trigger());
+                    m.put("push_key", p.ref().pushKey());
+                    m.put("team_id", p.ref().teamId());
+                    m.put("inferred", p.ref().inferred());
+                    m.put("covered_at", p.ref().coveredAt());
+                    m.put("rows", rows);
+                    pushes.add(m);
+                }
+                out.put("storm_pushes", pushes);
+                out.put("storm_awaiting", covering.awaitingStorms());
+            }
+        } catch (Exception ex) {
+            log.debug("Teslimat günlüğü fırtına bağı kurulamadı (#{}): {}", d.getId(), ex.getMessage());
+        }
+    }
+
+    /** Alarm deposu — yalnız fırtına bağı için (isteğe bağlı). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.AlertEventRepository alertEvents;
+
+    /** Test kancası. */
+    void setAlertEvents(com.sitemonitor.repository.AlertEventRepository r) { this.alertEvents = r; }
 
     public record RequeueResult(boolean ok, String reason) { }
 

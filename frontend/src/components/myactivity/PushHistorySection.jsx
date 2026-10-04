@@ -13,6 +13,7 @@ import { toUtc } from '../../utils/localDay.js'
 import {
   groupByDay, rowStatus, rowTime, pushReasonLabel, pushTriggerLabel, familyLabel,
 } from '../../utils/pushPrefs.js'
+import { StormAlarmsNote, StormPushNote } from './PushHistoryStormLinks.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
@@ -245,6 +246,9 @@ function RowWhat({ r, t }) {
           {t('mypush.hist.teamDecision', pushReasonLabel(r.reason, t))}
         </span>
       )}
+      {/* 2026-10-04: fırtınaya devredilen alarm → kapsayan fırtına push'unu SİZ ne zaman aldınız; fırtına push'unuz → kapsadığı alarmlar */}
+      {r.storm_push && <StormPushNote sp={r.storm_push} />}
+      {r.storm_alarms && <StormAlarmsNote sa={r.storm_alarms} />}
       {r.message && <span data-slot="ph-message" className="text-xs leading-snug break-words text-muted-foreground line-clamp-3">{r.message}</span>}
       {r.message_hidden && <span className="text-xs italic text-muted-foreground">{t('mypush.hist.hiddenText')}</span>}
     </div>

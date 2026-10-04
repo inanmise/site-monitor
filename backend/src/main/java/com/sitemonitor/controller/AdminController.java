@@ -2537,6 +2537,37 @@ public class AdminController {
         return ok(Map.of("data", userPushDeliveryRepo.findByAlertEventIdOrderByIdAsc(id)));
     }
 
+    /**
+     * Fırtına push'u ↔ alarm bağı (2026-10-04) — isteğe bağlı: dilimli test bağlamında yokken uç boş bölüm döner.
+     * Alan enjeksiyonu: {@code @RequiredArgsConstructor} imzası değişmez.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.StormPushCoverageService stormPushCoverage;
+
+    /**
+     * Alarm detayının "Fırtına push'u" bölümü (2026-10-04, kullanıcı isteği): bu alarmı KAPSAYAN toplu fırtına push'ları
+     * (açılış / günlük tekrar / çözüm), ne zaman kime iletildiği (alıcı satırları push bölümüyle aynı alanlar), kayıt
+     * öncesi bildirimler için tahmin ({@code inferred}) ve fırtınaya devredilmiş ama henüz duyurulmamış açık fırtına
+     * ({@code pending}). Kapı push bölümüyle AYNI: {@code alerts.read} + takım kapsamı (7/24 operatörü okur).
+     */
+    @GetMapping("/alerts/{id}/storm-push")
+    public ResponseEntity<Map<String, Object>> getAlertStormPush(@PathVariable Long id, HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
+        requireAlertReadScope(session, id);   // takım kapsamı (IDOR engeli); 7/24 operatörü tümü (okuma)
+        AlertEvent ev = alertEventRepo.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Alert not found: " + id));
+        if (stormPushCoverage == null) {
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("alert_id", id); empty.put("push_individual", false); empty.put("handed_over", false);
+            empty.put("items", List.of()); empty.put("pending", List.of()); empty.put("storms", List.of());
+            return ok(Map.of("data", empty));
+        }
+        // Olayda takım damgası yoksa (sertifika alarmı) push takımı envanterin SY takımıdır — yalnız tahmin için.
+        Long fallbackTeam = ev.getTeamId() != null || ev.getDomain() == null ? null
+                : inventoryRepo.findByDomain(ev.getDomain()).map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
+        return ok(Map.of("data", stormPushCoverage.alarmDetail(ev, fallbackTeam)));
+    }
+
     // ── Alarm takım kapsamı (IDOR engeli) ─────────────────────────────────────
     /** Bir alarmın ait olabileceği takım id'leri: kendi teamId'si (keyword/ping) + cert alarmında
      *  domain→envanter (SY teamId + UG ugTeamId). cert alarmlarında teamId NULL olduğundan envanter şart. */

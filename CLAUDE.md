@@ -176,6 +176,21 @@ When you add a new boolean toggle: append to the `INVENTORY_FLAGS` array in `fro
   - **Other rules:** cap / maintenance / realert-off / dedupe come from `enqueueAlert`.
   - **Flag false (default):** byte-identical to the pre-2026-10-03 behaviour (`SKIPPED_STORM` + aggregated `storm:*` push).
   - **Gates:** `StormPushIndividualTest`, `EscalationServiceTest.processConfirmedOutage_stormSuppressed_leavesTrace` (parametrised), `StormTeamIsolationTest` (fixture pins OFF), `StormSettings.test.jsx`.
+- **Storm push ↔ alarm link (2026-10-04, user request).** In the default mode an alarm's push is handed over to the storm (`SKIPPED_STORM`), but the alarm history still shows which aggregated storm push covered it, when, and to whom.
+  - **Recording:** `UserPushService.enqueueStormNoticeLocalized` writes the member alarms each storm push covers into `storm_push_coverage`:
+    - columns: `push_key` = delivery `dedupe_key`, `team_id`; UNIQUE(push_key, alert_event_id);
+    - opening / daily push: the members at that moment; resolve push: only the recovered members, the same set as the `STORM_RESOLVE` mail log.
+  - **Write rules:** one `batchUpdate(StormPushCoverageService.SQL_INSERT)` with `ON CONFLICT DO NOTHING`, try/catch + WARN, after the decision (sent rows or skip row), so it never changes the push.
+  - **Isolation:** a TEAM:A push never covers a TEAM:B alarm. Individual push mode records nothing, except the resolve push after a mid-storm switch.
+  - **Reads:** `StormPushCoverageService`, a fixed number of queries per page.
+    - `GET /api/admin/alerts/{id}/storm-push` (same gate as `/push-deliveries`);
+    - Push bildirimlerim (`storm_push` / `storm_alarms`);
+    - push log detail (`storm_coverage` / `storm_pushes` / `storm_awaiting`);
+    - storm detail `notifications.storm_pushes`.
+  - **Legacy:** pushes with no recorded row are estimated from the `alert_storm_members` window (`inferred: true`); a push with any recorded row is never estimated.
+  - **Pending:** `pending` means the push was handed over, the storm is active, the alarm hasn't left, and no opening/daily push covers it yet.
+  - **Retention:** `storm-push-coverage-orphan`.
+  - **Gates:** `StormPushCoverageRecordTest`, `StormPushCoverageQueriesTest`, `AlertStormPushEndpointTest`, `PushLogStormLinkTest`, `AlertStormPush.test.jsx`, `PushHistoryStormLinks.test.jsx`.
 - **Auto-close is reconciliation, not a transition** (2026-09-29, "ghost alarm" fix): `MonitoringOutageService.handleSweepDomain` decides per sweep from "open alarm in DB + current result healthy"; every healthy result increments a consecutive counter and N consecutive healthy sweeps close the alarm (atomic, idempotent; the active recovery chain is only a fast path, stuck chains are replaced). Fleet-wide outage suppression (`noteSuppression`) and `site.monitor.<type>.alert-enabled=false` may ONLY stop new alarms / confirmation / re-alerts — never recovery (`reconcileRecoveries`). A sibling monitor sharing the event key (`domain|alertType`) that is still DOWN keeps the alarm open. `DNS_CHANGED` / `DOMAINMON_CHANGED` close manually by design. Cert alarms reconcile even under outage suspicion / disabled expiry alerts (`resolveVerifiedStaleCertAlerts`).
 - Email **content** (detail table) for `DOMAINMON_*` is rebuilt fresh from the latest `DomainCheck` via `reconstructDomainContext(domain)` — `latestCheckRepo` is cert-only and returns nothing for a domain monitor, which is why resend/resolution mails looked empty before.
 - Domain expiry alarm **severity** must mirror the card status tiers (`DomainCheckerService`: `days≤crit→CRITICAL`, `crit<days≤warn→WARNING`) — set in `SchedulerService.addDomainSweepItems`. Don't reintroduce a flat `HIGH`.
