@@ -37,9 +37,13 @@ test.describe('giriş sayfası yerleşimi', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/')
     await page.waitForSelector('#lp-pass')
-
-    const input = await box(page, '#lp-pass')
-    const eye = await box(page, '.lp-eye')
+    // Geç gelen parçalar (giriş yöntemleri, kullanım istatistikleri) formu kaydırabilir: ağ durulsun, iki kutu AYNI anda
+    // ölçülsün — ayrı ölçümler yük altında farklı karelerden geliyordu (2026-10-04, tam koşuda 46 px yalancı fark).
+    await page.waitForLoadState('networkidle')
+    const { input, eye } = await page.evaluate(() => {
+      const r = (sel) => { const b = document.querySelector(sel).getBoundingClientRect(); return { x: b.x, y: b.y, width: b.width, height: b.height } }
+      return { input: r('#lp-pass'), eye: r('.lp-eye') }
+    })
 
     expect(eye.x).toBeGreaterThanOrEqual(input.x)
     expect(eye.x + eye.width).toBeLessThanOrEqual(input.x + input.width + 0.5)

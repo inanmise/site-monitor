@@ -14,6 +14,39 @@ import {
   LONG_KEYWORD, LONG_SNIPPET, alertTrigger, highlightParts, httpClass, httpTone, msParts, msText, proxyMode,
   responseAssessment, ruleLabel,
 } from './keywordCardModel.js'
+import { cardReason } from './keywordFailureModel.js'
+
+/**
+ * Hüküm metni (2026-10-04): istek tamamlanmadıysa (`error`) sunucunun kısa nedeni ("Zaman aşımı", "DNS çözümlenemedi" …)
+ * — eski satırda (kod yok) "Sayfa okunamadı". Diğer hükümler değişmedi.
+ */
+function resultText(kind, m, t) {
+  if (kind === 'error') {
+    const r = cardReason(m, t)
+    if (r && !r.hint) return r.label
+  }
+  return t(RESULT_KEY[kind])
+}
+
+/**
+ * Son başarısızlığın neden çipi (2026-10-04) — sayfa geldi ama hüküm satırının söylemediği bir neden var ("Boş yanıt",
+ * "Okuma sınırı aşıldı", "Giriş sayfası geldi" …). İstek hatasında ve eski satırda çizilmez (hüküm metni / neden kutusu
+ * zaten söylüyor). Ayrıntı: detay → Kontrol geçmişi.
+ */
+function ReasonChip({ monitor: m, verdict }) {
+  const t = useT()
+  if (verdict.kind === 'error' || verdict.kind === 'pending' || verdict.tone !== 'bad') return null
+  const r = cardReason(m, t)
+  if (!r) return null
+  return (
+    <Badge variant="outline" data-slot="keyword-reason-chip" data-code={r.code} title={r.label}
+      className={cn(CHIP, 'max-w-full truncate', r.tone === 'warning'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+        : 'border-destructive/40 bg-destructive/10 text-destructive')}>
+      <TriangleAlert aria-hidden="true" />{r.label}
+    </Badge>
+  )
+}
 
 /** Hüküm tonu → kural panelinin zemini (Sayfa Bütünlüğü / Sentetik kartlarıyla aynı palet). */
 const PANEL = {
@@ -94,13 +127,14 @@ export function KeywordRulePanel({ monitor: m, verdict, reason, rowLabel }) {
         <span className={cn('inline-flex min-w-0 items-center gap-1.5 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
           {kind === 'pending'
             ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
-            : <><Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}</>}
+            : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t)}</>}
         </span>
         {showCount && (
           <span data-slot="keyword-count" className="text-xs font-medium text-muted-foreground tabular-nums">
             {count === 0 ? t('keyword.card.noMatches') : count === 1 ? t('keyword.card.match1') : t('keyword.card.matches', count)}
           </span>
         )}
+        <ReasonChip monitor={m} verdict={verdict} />
       </p>
 
       {showSnippet && (
@@ -338,7 +372,7 @@ export function KeywordCompactResult({ monitor: m, verdict, reason }) {
       <span data-slot="keyword-result" className={cn('inline-flex shrink-0 items-center gap-1 text-sm leading-tight font-bold', RESULT_TEXT[tone])}>
         {kind === 'pending'
           ? <MonitorPendingText idle={t(RESULT_KEY.pending)} icon={Icon} iconClassName="size-4 shrink-0" spinnerSize={16} />
-          : <><Icon aria-hidden="true" className="size-4 shrink-0" />{t(RESULT_KEY[kind])}</>}
+          : <><Icon aria-hidden="true" className="size-4 shrink-0" />{resultText(kind, m, t)}</>}
       </span>
       {kw && (
         <span data-slot="keyword-compact-kw" title={kw} className="min-w-0 overflow-hidden font-mono text-xs text-ellipsis whitespace-pre text-muted-foreground">

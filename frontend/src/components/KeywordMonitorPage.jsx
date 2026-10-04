@@ -15,7 +15,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy } from 'lucide-react'
+import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -60,7 +60,9 @@ import { TabsContent } from '@/components/shadcn/tabs'
 import { Textarea } from '@/components/shadcn/textarea'
 import { cn } from '@/lib/utils'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 import KeywordMonitorCard from './keyword/KeywordMonitorCard.jsx'
+import { KeywordFailureCell, KeywordFailurePanel } from './keyword/KeywordCheckFailure.jsx'
 import { metaRow as keywordMetaRow } from './keyword/keywordCardModel.js'
 import { MonitorDetailModal, DetailDivider, DetailSummary, DetailInfoCard, DetailTabs, OnOff, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
 import {
@@ -69,6 +71,10 @@ import {
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Keyword uçtan uca tanılama penceresi (2026-10-04) — tembel: yalnız açılınca iner, sayfa paketi büyümez
+const KeywordDiagnoseDialog = lazy(() => import('./keyword/diagnose/KeywordDiagnoseDialog.jsx'))
+/** Kontrol geçmişi tablo ↔ kart eşiği (kap genişliği, px) — açılan teşhis paneli dar kapta kart altına iner. */
+const HISTORY_CARDS_BELOW = 640
 
 const INTERVALS = [
   { value: 30,    labelKey: 'keyword.iv30s' },
@@ -114,6 +120,10 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
+  // Uçtan uca tanılama (2026-10-04, HTTP ile aynı kural): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check +
+  // diagnostics.run). Liste satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla DEĞİŞTİRİR ve o
+  // yanıtta bayrak yok — pencere koşu ortasında sökülmesin.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -153,6 +163,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
+  // Kontrol geçmişinde AÇIK teşhis panelleri (2026-10-04) — kontrol kimliği kümesi; detay değişince/kapanınca sıfırlanır.
+  const [openChecks, setOpenChecks] = useState(() => new Set())
+  const toggleCheck = (id) => setOpenChecks((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  // Uçtan uca tanılama penceresi (2026-10-04): { monitorId, runId, initialRunId } | null. Derin bağlantı ?monitor=<id>&kdx=<no>
+  // YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz); `runId` gösterilen çalıştırmadır (URL'e yazılır).
+  const [kwDx, setKwDx] = useState(() => {
+    const runId = readUrlInt('kdx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
   const [search, setSearch] = useState(() => readUrlParam('q', ''))
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
@@ -229,8 +248,13 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     onEdit: openEdit, canEdit: canManageRow, nocType: 'KEYWORD',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
   })
 
-  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
-  function closeDetail() { setSelected(null) }
+  function openDetail(m) {
+    setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()); setOpenChecks(new Set())
+    setKwDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
+  }
+  function closeDetail() { setSelected(null); setOpenChecks(new Set()); setKwDx(null) }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setKwDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   function openNew() {
     setTestResult(null); setDupSource(null)
@@ -513,6 +537,8 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, proxyFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-04) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    kdx: selected && kwDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (kwDx.runId ?? null) : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -859,6 +885,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               deleting={deleting === selected.id}
               deleteTitle={t('keyword.delete')}
               onClose={closeDetail}>
+              {/* Uçtan uca tanılama (2026-10-04) — yalnız `can_diagnose` satırında; paylaşılan eylem grubuna çocuk olarak
+                  (MonitorModalActions değişmedi — HTTP sayfasıyla aynı desen) */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="kwdx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('kwdx.open')} aria-label={t('kwdx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -887,22 +922,33 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
               ['changes', t('chg.tab')]]}>
             <TabsContent value="control">
+              {/* Hata teşhisi (2026-10-04): başarısız satırda neden rozeti + tek satır açıklama + aç/kapa; açılınca satırın
+                  ALTINDA tam genişlik Neden / Etkisi / Ne yapmalı + ayrıntılar + ipuçları + alıntı + "Bu kontrolü tanıla".
+                  Tablo ↔ kart seçimi KAP genişliğine göre (detay penceresi dar olabilir); başarılı satır eskisi gibi. */}
               <CheckHistoryTab kind="keyword" monitorId={selected.id} listKey="keyword-history" reloadSignal={histReload}
+                cardsBelow={HISTORY_CARDS_BELOW}
                 columns={[t('keyword.colTime'), t('keyword.colStatus'), 'HTTP', t('keyword.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
                 renderRow={(c) => {
                   const occ = c.occurrences != null ? c.occurrences : (c.found ? '≥1' : 0)
                   const cmp = `${OP_SYM[selected.operator] || '≥'}${selected.match_count ?? 1}`
+                  const bad = c.ok === false
+                  const open = bad && openChecks.has(c.id)
+                  const when = formatDateSec(c.checked_at)
                   return (<>
-                    <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                    <span className="upt-rt-time">{when}</span>
                     <span className={c.ok ? 'upt-rt-up' : 'upt-rt-down'}>{c.ok ? t('keyword.statusOk') : (c.error ? t('keyword.statusError') : t('keyword.statusViolation'))}</span>
                     <span className="upt-rt-ms">{c.http_status ?? '—'}</span>
-                    {c.error
-                      ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                    {bad
+                      ? <KeywordFailureCell check={c} monitor={selected} open={open} when={when} onToggle={() => toggleCheck(c.id)} />
                       : <span className="whitespace-nowrap"
                           title={`« ${selected.keyword} » → ${occ} ${t('keyword.testFound')} · ${t('keyword.testRequired')}: ${cmp} (${expectPhrase(selected.operator, selected.match_count ?? 1)})${c.snippet ? '\n— ' + c.snippet : ''}`}>
                           <strong>{occ}</strong> {t('keyword.testFound')} <span className="text-muted-foreground">· {cmp}</span>
                         </span>}
+                    {open && (
+                      <KeywordFailurePanel check={c} monitor={selected} canDiagnose={canDiagnoseRow(selected)}
+                        onDiagnose={() => openDiagnose(selected)} />
+                    )}
                   </>)
                 }} />
             </TabsContent>
@@ -928,6 +974,15 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
               </Suspense>
             </TabsContent>
           </DetailTabs>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-04) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {kwDx && kwDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <KeywordDiagnoseDialog monitor={selected} initialRunId={kwDx.initialRunId}
+                onRunChange={(runId) => setKwDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setKwDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>

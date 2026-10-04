@@ -172,6 +172,7 @@ const SPECIAL = {
   // Pasif hesabın açık oturumunun kesilmesi; HTTP uçtan uca tanılama (2026-10-02) — kural adı/eylem eşlemesine uymaz
   SESSION_ENDED_INACTIVE: 'audit.ev.SESSION_ENDED_INACTIVE',
   HTTP_DIAGNOSTICS_RUN: 'audit.ev.HTTP_DIAGNOSTICS_RUN',
+  KEYWORD_DIAGNOSTICS_RUN: 'audit.ev.KEYWORD_DIAGNOSTICS_RUN',   // keyword uçtan uca tanılama (2026-10-04)
   // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / başladı / uzat / hemen bitir / bitti / iptal /
   // duyuru e-postası + bakım başlayınca kesilen oturum — kural adı/eylem eşlemesine uymaz
   SYSTEM_MAINTENANCE_SCHEDULED: 'audit.ev.SYSTEM_MAINTENANCE_SCHEDULED',

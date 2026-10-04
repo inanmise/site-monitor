@@ -26,10 +26,10 @@ import java.util.Set;
  *       parolası, vekil parolası ve özel başlık değerleri hiçbir alanda düz görünmez; başlık maskesi kaçsa bile.</li>
  * </ul>
  */
-final class HttpDiagMasker {
+public final class HttpDiagMasker {   // public: keyword uçtan uca tanılaması da (2026-10-04) aynı maskeyi kullanır
 
     /** Gizlenen başlık değerinin yerine yazılan işaret (sözleşme). */
-    static final String MASK = "••••";
+    public static final String MASK = "••••";
 
     /** Değeri HER ZAMAN gizlenen istek başlıkları (küçük harf). */
     static final Set<String> SENSITIVE_REQUEST = Set.of(
@@ -42,7 +42,7 @@ final class HttpDiagMasker {
      * @param customHeaderNames izlemenin şifreli özel başlık ADLARI (hepsi maskelenir)
      * @param secretValues      düz sır değerleri (parola, jeton, özel başlık değerleri) — metinden süzülür
      */
-    HttpDiagMasker(Collection<String> customHeaderNames, Collection<String> secretValues) {
+    public HttpDiagMasker(Collection<String> customHeaderNames, Collection<String> secretValues) {
         Set<String> c = new LinkedHashSet<>();
         if (customHeaderNames != null) {
             for (String n : customHeaderNames) if (n != null && !n.isBlank()) c.add(n.trim().toLowerCase(Locale.ROOT));
@@ -104,20 +104,25 @@ final class HttpDiagMasker {
     }
 
     /** Serbest metinden bilinen sır değerlerini süzer (kodlanmış varyantlar dâhil). */
-    String scrub(String text) {
+    public String scrub(String text) {
         if (text == null || text.isEmpty() || secrets.isEmpty()) return text;
         return SecretMask.maskValues(text, secrets);
     }
 
     /** Gövde önizlemesi: JSON/form gizli alanları + bilinen sırlar. */
-    String maskBody(String text) {
+    public String maskBody(String text) {
         if (text == null || text.isEmpty()) return text;
         return scrub(RequestLoggingFilter.redactSensitiveFields(text));
     }
 
+    /** Süzgecin bildiği sır değerleri (keyword tanılamasında gövde çözümlemesinin alıntılarına da uygulanır). */
+    public List<String> secretValues() {
+        return secrets;
+    }
+
     /** Sonuç ağacındaki her metni (harita değerleri + liste öğeleri) süzer; yapı yerinde güncellenir. */
     @SuppressWarnings("unchecked")
-    Object scrubDeep(Object node) {
+    public Object scrubDeep(Object node) {
         if (secrets.isEmpty() || node == null) return node;
         if (node instanceof String s) return scrub(s);
         if (node instanceof Map<?, ?> map) {

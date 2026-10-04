@@ -167,7 +167,9 @@ class SlowAndIntegrityNoDataTest {
         KeywordMonitor m = keyword(true);
         when(keywordRepo.findByActiveTrue()).thenReturn(List.of(m));
         when(keywordRepo.findAll()).thenReturn(List.of(m));
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+        // Zamanlanmış tur beklentili (7 argümanlı) kontrolü çağırır (2026-10-04, keyword hata teşhisi); yavaşlık
+        // yeniden ölçümü (evalKeywordSlow) eski 6 argümanlı kontrolde kaldı — aşağıdaki üçüncü saplama onu besler.
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
                 .thenReturn(raw("found", false, "error", "connect timed out"));
         ReflectionTestUtils.invokeMethod(scheduler, "runKeywordChecksLocked");
         assertThat(sweepItemsFor(EscalationService.TYPE_KEYWORD_SLOW)).isEmpty();
@@ -175,7 +177,7 @@ class SlowAndIntegrityNoDataTest {
         // Ölçülü ve yavaş tur → DOWN kalemi; yeniden ölçüm HTTP hatasında "skipped"
         clearInvocations(outage);
         ((Map<?, ?>) ReflectionTestUtils.getField(scheduler, "lastMonitorCheckAt")).clear();   // checkDue ızgarası sıfırlansın
-        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean()))
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(), any()))
                 .thenReturn(raw("found", true, "count", 1, "response_ms", 5000L));
         ReflectionTestUtils.invokeMethod(scheduler, "runKeywordChecksLocked");
         MonitoringOutageService.SweepItem slow = sweepItemsFor(EscalationService.TYPE_KEYWORD_SLOW).get(0);

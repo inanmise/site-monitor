@@ -15,6 +15,20 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Anahtar kelime izlemede hata teşhisi:** kontrol geçmişindeki başarısız satır artık nedenini söylüyor (kelime
+  bulunamadı, HTTP hata kodu, zaman aşımı, DNS, TLS, vekil, okuma sınırı …) ve açılınca "Neden / Etkisi / Ne yapmalı",
+  son adres + yönlendirme, içerik türü, boyut, karakter kümesi, olası nedenler (giriş sayfası, WAF engeli, JavaScript
+  ile çizilen sayfa, harf / boşluk / karakter kümesi farkı, bakım sayfası …) ve sayfanın görünür metninden maskeli bir
+  alıntı gösteriyor. Kart "Sayfa okunamadı" yerine kısa nedeni yazıyor.
+- **Anahtar kelime uçtan uca tanılama:** detaydan ya da başarısız kontrolden tek tıkla — DNS, bağlantı, vekil, TLS,
+  istek/yanıt, yönlendirmeler, curl dökümü; vekil ve doğrudan yol karşılaştırması; anahtar kelime çözümlemesi (eşleşme
+  bağlamları, farklı okumalar, ipuçları). Kontrol kaydı yazmaz, alarm üretmez; geçmiş ve denetim kaydı tutulur.
+  Kullanım kılavuzu (TR/EN, PDF) güncellendi.
+
+### Fixed
+- 255 karakterden uzun bir anahtar kelime kontrol hatası kontrol kaydının yazılmasını engelliyordu; hata metni artık kırpılır.
+
 ## [20.105.0] — 2026-10-04
 
 ### Added

@@ -127,9 +127,10 @@ public class HttpDiagnosticsHistory {
         return null;
     }
 
-    /** Derin kopya + her hop'ta {@code response.body.preview = null}, {@code preview_stored = false}. */
+    /** Derin kopya + her hop'ta {@code response.body.preview = null}, {@code preview_stored = false}.
+     *  (public: keyword tanılama geçmişi de aynı kuralla saklar, 2026-10-04) */
     @SuppressWarnings("unchecked")
-    static Map<String, Object> withoutPreviews(Map<String, Object> data) {
+    public static Map<String, Object> withoutPreviews(Map<String, Object> data) {
         Map<String, Object> copy = (Map<String, Object>) deepCopy(data);
         if (copy.get("paths") instanceof List<?> paths) {
             for (Object p : paths) {

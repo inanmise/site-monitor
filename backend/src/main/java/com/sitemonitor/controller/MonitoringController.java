@@ -2629,7 +2629,12 @@ public class MonitoringController {
                 EscalationService.TYPE_KEYWORD);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichKeyword(m, latest.get(m.getId()), teams, alarms.get(m.getUrl()), admin)).toList();
-        return ok(withCheckFlag(session, result));
+        List<Map<String, Object>> rows = withCheckFlag(session, result);
+        // can_diagnose (2026-10-04, keyword uçtan uca tanılama): can_check + diagnostics.run/execute — tanılama ucunun
+        // (KeywordDiagnosticsController) kapısıyla AYNI kural, HTTP listesiyle aynı desen. EK alan.
+        boolean diagPerm = permissionService.allows(session, "diagnostics.run", "execute");
+        for (Map<String, Object> row : rows) row.put("can_diagnose", diagPerm && Boolean.TRUE.equals(row.get("can_check")));
+        return ok(rows);
     }
 
     @PostMapping("/keyword")
@@ -2789,7 +2794,16 @@ public class MonitoringController {
                 new CsvColumn<>("occurrences", KeywordResult::getOccurrences),
                 new CsvColumn<>("http_status", KeywordResult::getHttpStatus),
                 new CsvColumn<>("response_ms", KeywordResult::getResponseMs),
-                new CsvColumn<>("error", KeywordResult::getError)), response);
+                new CsvColumn<>("error", KeywordResult::getError),
+                // Hata teşhisi (2026-10-04) — EK sütunlar sonda (mevcut sütun sırası değişmedi)
+                new CsvColumn<>("failure_reason", KeywordResult::getFailureReason),
+                new CsvColumn<>("failure_detail", KeywordResult::getFailureDetail),
+                new CsvColumn<>("final_url", KeywordResult::getFinalUrl),
+                new CsvColumn<>("redirect_count", KeywordResult::getRedirectCount),
+                new CsvColumn<>("content_type", KeywordResult::getContentType),
+                new CsvColumn<>("body_bytes", KeywordResult::getBodyBytes),
+                new CsvColumn<>("body_truncated", KeywordResult::getBodyTruncated),
+                new CsvColumn<KeywordResult>("hints", kr -> String.join(" ", kr.getHints()))), response);
     }
 
     @PostMapping("/keyword/{id}/check")
@@ -2797,23 +2811,15 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return keywordMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            // Beklentili kontrol (2026-10-04): zamanlanmış turla AYNI zenginleştirilmiş sonuç (neden + ipuçları + alıntı).
             Map<String, Object> r = keywordChecker.check(m.getUrl(), m.getKeyword(),
                     m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000, keywordHeaderSecrets.effectiveHeaders(m), Boolean.TRUE.equals(m.getCaseSensitive()),
-                    viaProxy(m.getUrl(), m.getUseProxy()));
+                    viaProxy(m.getUrl(), m.getUseProxy()), KeywordCheckerService.Expectation.of(m));
             boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
             int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
             int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
             boolean ok = r.get("error") == null && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
-            KeywordResult res = new KeywordResult();
-            res.setMonitorId(m.getId());
-            res.setFound(found);
-            res.setOccurrences(count);
-            res.setOk(ok);
-            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
-            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
-            res.setSnippet((String) r.get("snippet"));
-            res.setError((String) r.get("error"));
-            res.setCheckedAt(ISO.format(Instant.now()));
+            KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
             keywordResultRepo.save(res);
             auditService.recordAction("MONITOR_TRIGGER", session, "KEYWORD_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
@@ -3157,10 +3163,16 @@ public class MonitoringController {
             item.put("snippet",     latest.getSnippet());
             item.put("error",       latest.getError());
             item.put("checked_at",  latest.getCheckedAt());
+            // Hata teşhisi (2026-10-04) — EK alanlar: kart "Sayfa okunamadı" yerine kısa nedeni gösterir. Eski satırda null.
+            item.put("failure_reason", latest.getFailureReason());
+            item.put("failure_detail", latest.getFailureDetail());
+            item.put("hints",          latest.getHints());
+            item.put("body_truncated", latest.getBodyTruncated());
         } else {
             item.put("status", "unknown");
             item.put("found", null); item.put("occurrences", null); item.put("ok", null); item.put("http_status", null);
             item.put("response_ms", null); item.put("snippet", null); item.put("error", null); item.put("checked_at", null);
+            item.put("failure_reason", null); item.put("failure_detail", null); item.put("hints", List.of()); item.put("body_truncated", null);
         }
         return item;
     }

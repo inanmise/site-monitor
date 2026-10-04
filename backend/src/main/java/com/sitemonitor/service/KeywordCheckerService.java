@@ -106,9 +106,39 @@ public class KeywordCheckerService {
 
     /** @param viaProxy kurumsal vekil üzerinden (karar {@link ProxyPolicyService}); sonuçta {@code via} proxy|direct. */
     public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive, boolean viaProxy) {
+        return check(url, keyword, timeoutMs, customHeaders, caseSensitive, viaProxy, null);
+    }
+
+    /**
+     * İzlemenin adet koşulu (operatör + eşik) — verilirse kontrol, koşul SAĞLANMADIĞINDA nedenini ve "neden bulunamadı"
+     * ipuçlarını da üretir (2026-10-04). Koşulun KENDİSİ burada uygulanmaz; sağlıklı-mı kararı çağıranda kalır
+     * ({@link #evaluate}, değişmedi).
+     */
+    public record Expectation(String operator, int threshold) {
+        public static Expectation of(com.sitemonitor.model.KeywordMonitor m) {
+            return new Expectation(m.getMatchOperator(), m.getMatchCount() != null ? m.getMatchCount() : 1);
+        }
+    }
+
+    /**
+     * Zenginleştirilmiş kontrol (2026-10-04, keyword hata teşhisi). Eski anahtarlar ve anlamları AYNEN (found, count,
+     * http_status, response_ms, snippet, error, config_error, via); EK anahtarlar:
+     * <ul>
+     *   <li>her yanıtta: {@code final_url} (maskeli), {@code redirect_count}, {@code content_type}, {@code body_bytes},
+     *       {@code body_truncated} (okuma tavanı doldu), {@code charset} (bildirilen küme);</li>
+     *   <li>istek tamamlanmadıysa: {@code failure_reason} + {@code failure_detail} ({@link
+     *       com.sitemonitor.service.keyword.KeywordFailureClassifier});</li>
+     *   <li>{@code expectation} verilmiş ve koşul sağlanmamışsa: {@code failure_reason}, {@code failure_detail},
+     *       {@code hints} (kod listesi) ve {@code excerpt} (görünür metinden ≤ 600 karakter, maskeli) —
+     *       {@link com.sitemonitor.service.keyword.KeywordBodyAnalyzer}. Ek istek ATILMAZ; gövde zaten bellekte.</li>
+     * </ul>
+     */
+    public Map<String, Object> check(String url, String keyword, int timeoutMs, String customHeaders, boolean caseSensitive,
+                                     boolean viaProxy, Expectation expectation) {
         long start = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("via", viaProxy && proxiedClient != null ? "proxy" : "direct");
+        boolean proxied = viaProxy && proxiedClient != null;
+        result.put("via", proxied ? "proxy" : "direct");
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL — istek atılmaz, alarm da açılmaz
         // (SchedulerService config_error bayrağını okur). Eskiden bu durum sahte DOWN alarmı üretiyordu.
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
@@ -116,20 +146,30 @@ public class KeywordCheckerService {
             result.put("count", 0);
             result.put("config_error", true);
             result.put("error", com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG);
+            result.put("failure_reason", com.sitemonitor.service.keyword.KeywordFailureClassifier.CONFIG_ERROR);
+            result.put("failure_detail", "İzlemenin URL'si geçersiz (şema ya da host yok); istek gönderilmedi.");
             return result;
         }
+        Trail trail = new Trail();
         try {
             // SSRF: hedef host HER hop'ta doğrulanır (metadata/loopback/link-local blok; iç ağ ayara bağlı).
-            HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders, viaProxy);
+            HttpResponse<InputStream> resp = sendFollowingSafely(applyTimestamp(url), timeoutMs, customHeaders, viaProxy, trail);
             byte[] bytes;
+            boolean truncated = false;
+            long ms;
             // Bellek koruması (gövde tavanı) + SÜRE koruması (prod kapısı 2026-09-25, N1): readNBytes EOF ya da
             // tavan gelene dek bloklar; kalp atışı gönderen bir SSE ucunda bu günler sürer ve keyword sweep'i
             // donardı. Gövde, başlık süresi kadar daha beklenir; dolarsa kontrol "zaman aşımı" hatasıyla biter.
             try (InputStream is = com.sitemonitor.util.HttpBodies.withDeadline(
                     resp.body(), Math.max(1000, timeoutMs), "Keyword")) {
                 bytes = is.readNBytes(MAX_BODY_BYTES);
+                ms = System.currentTimeMillis() - start;   // süre ölçümü yoklamadan ÖNCE (yavaşlık kararı değişmesin)
+                if (bytes.length >= MAX_BODY_BYTES) {
+                    // Tavan doldu: devamı var mı? Tek bayt yoklaması — sonuç (found/count) yine YALNIZ ilk MAX_BODY_BYTES'tan.
+                    // Yoklama süre sınırına takılırsa ya da hata verirse "devamı vardı" sayılır; kontrolün kendisi DÜŞMEZ.
+                    try { truncated = is.read() != -1; } catch (Exception probe) { truncated = true; }
+                }
             }
-            long ms = System.currentTimeMillis() - start;
             String body = new String(bytes, StandardCharsets.UTF_8);
             String hay = caseSensitive ? body : body.toLowerCase(Locale.ROOT);
             String needle = keyword == null ? "" : (caseSensitive ? keyword : keyword.toLowerCase(Locale.ROOT));
@@ -152,19 +192,81 @@ public class KeywordCheckerService {
                 if (snip.length() > 200) snip = snip.substring(0, 200);
                 result.put("snippet", snip);
             }
+            // ── Yanıt meta verisi (2026-10-04) — her yanıtta, ucuz (başlık + en çok 4 KB meta koklaması) ──
+            String contentType = resp.headers().firstValue("content-type").orElse(null);
+            result.put("final_url", com.sitemonitor.service.keyword.KeywordBodyAnalyzer.displayUrl(resp.uri()));
+            result.put("redirect_count", trail.redirects);
+            result.put("content_type", contentType == null ? null
+                    : (contentType.length() > 200 ? contentType.substring(0, 200) : contentType));
+            result.put("body_bytes", (long) bytes.length);
+            result.put("body_truncated", truncated);
+            result.put("charset", com.sitemonitor.service.keyword.KeywordBodyAnalyzer.declaredCharset(contentType, bytes));
+            // ── Koşul sağlanmadıysa: neden + ipuçları + alıntı (yalnız başarısızlıkta; gövde zaten bellekte) ──
+            if (expectation != null && !evaluate(count, expectation.operator(), expectation.threshold())) {
+                var reason = com.sitemonitor.service.keyword.KeywordFailureClassifier.forCondition(
+                        resp.statusCode(), count, expectation.operator(), expectation.threshold(), bytes.length, truncated, keyword);
+                result.put("failure_reason", reason.code());
+                result.put("failure_detail", reason.detail());
+                var analysis = com.sitemonitor.service.keyword.KeywordBodyAnalyzer.analyze(
+                        new com.sitemonitor.service.keyword.KeywordBodyAnalyzer.Input(bytes, contentType, keyword, caseSensitive,
+                                count, expectation.operator(), expectation.threshold(), resp.statusCode(), url, resp.uri(),
+                                trail.redirects, secretValues(customHeaders)));
+                if (!analysis.hints().isEmpty()) result.put("hints", analysis.hints());
+                if (analysis.excerpt() != null) result.put("excerpt", analysis.excerpt());
+            }
         } catch (SsrfGuard.BlockedException be) {
             // Politika reddi — dış istek HİÇ atılmadı. response_ms yazılmaz: ölçülen bir yanıt yok.
             result.put("found", false);
             result.put("count", 0);
             result.put("error", be.getMessage());
+            putFailure(result, be, trail, timeoutMs, proxied);
         } catch (Exception e) {
             result.put("found", false);
             result.put("count", 0);
             result.put("response_ms", System.currentTimeMillis() - start);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            putFailure(result, e, trail, timeoutMs, proxied);
             log.debug("Keyword check failed for {}: {}", url, e.getMessage());
         }
         return result;
+    }
+
+    /** İstek tamamlanmadı → neden + ayrıntı + takıldığı URL (yönlendirme ortasında düştüyse o hop'un adresi). */
+    private static void putFailure(Map<String, Object> result, Throwable e, Trail trail, int timeoutMs, boolean proxied) {
+        try {
+            var reason = com.sitemonitor.service.keyword.KeywordFailureClassifier.forException(
+                    e, trail.current == null ? null : trail.current.getHost(), Math.max(1000, timeoutMs), proxied);
+            result.put("failure_reason", reason.code());
+            result.put("failure_detail", reason.detail());
+            if (trail.current != null) result.put("final_url", com.sitemonitor.service.keyword.KeywordBodyAnalyzer.displayUrl(trail.current));
+            result.put("redirect_count", trail.redirects);
+        } catch (RuntimeException ignore) {
+            // Teşhis kontrolün kendisini ASLA bozmaz: neden yazılamazsa eski hata metni yine kayıtta.
+        }
+    }
+
+    /** Yönlendirme izi: şu anki (son denenen) URI + izlenen yönlendirme sayısı. */
+    static final class Trail {
+        URI current;
+        int redirects;
+    }
+
+    /** Alıntıdan süzülecek sır değerleri: izlemenin özel başlıklarından sır OLABİLECEK değerler (MIME türü vb. hariç). */
+    static java.util.List<String> secretValues(String customHeaders) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (customHeaders == null || customHeaders.isBlank()) return out;
+        for (String line : customHeaders.split("\\r?\\n")) {
+            int c = line.indexOf(':');
+            if (c <= 0) continue;
+            String name = line.substring(0, c).trim();
+            String value = line.substring(c + 1).trim();
+            if (com.sitemonitor.service.http.diagnose.HttpDiagnosticsService.secretLike(name, value)) {
+                out.add(value);
+                int sp = value.indexOf(' ');   // "Bearer <jeton>" → jetonun kendisi de
+                if (sp > 0 && sp < value.length() - 1) out.add(value.substring(sp + 1).trim());
+            }
+        }
+        return out;
     }
 
     /**
@@ -178,9 +280,11 @@ public class KeywordCheckerService {
      * <p>Takip edilemeyen bir {@code Location} (http/https dışı şema, host'suz hedef) hata değildir:
      * 3xx yanıt OLDUĞU GİBİ döner ve gövdesi TÜKETİLMEZ — çağıran okuyacaktır.
      */
-    private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders, boolean viaProxy)
+    private HttpResponse<InputStream> sendFollowingSafely(String url, int timeoutMs, String customHeaders, boolean viaProxy,
+                                                         Trail trail)
             throws java.io.IOException, InterruptedException {
         URI current = URI.create(url);
+        trail.current = current;
         // Özel başlıklar YALNIZ ilk host'a gider. customHeaders kullanıcı girdisi ve pratikte sır
         // taşıyor (Authorization / X-Api-Key); yönlendirme hedefi başka bir host'a çıktığında onu
         // da göndermek anahtarı yabancıya teslim etmek demek. Tarayıcıların cross-origin
@@ -209,6 +313,8 @@ public class KeywordCheckerService {
                 is.readNBytes(4096);
             } catch (Exception ignore) { /* bağlantı iadesi */ }
             current = next;
+            trail.current = next;
+            trail.redirects++;
         }
         throw new java.io.IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)");
     }

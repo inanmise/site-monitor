@@ -1453,6 +1453,20 @@ export const api = {
     deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
     triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
     testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data) }),
+    // Keyword uçtan uca tanılama (2026-10-04) — HTTP tanılamasının aynası: 60 sn sunucu tavanı → istemci 75 sn bekler;
+    // withStatus: 429 / 403 / 404 pencerede ayırt edilsin.
+    diagnoseKeyword: async (id, { compare = true } = {}, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/keyword/${id}/diagnose`, {
+          method: 'POST', body: JSON.stringify({ compare: compare !== false }), withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    keywordDiagnoseHistory: (id) => request(`/monitoring/keyword/${id}/diagnose/history`, { withStatus: true }),
+    keywordDiagnoseRun: (id, runId) => request(`/monitoring/keyword/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
     getKeywordResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),

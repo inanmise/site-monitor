@@ -77,12 +77,12 @@ import java.util.regex.Pattern;
  * <p><b>Yan etkisiz.</b> Hiçbir şey yazmaz, CA pinlemez ({@link CaAutoPinService} yalnız OKUNUR: mevcut pinli CA güven
  * hesabına katılır), alarm değerlendirmesine girmez. Sınıf durum taşır — her yol için YENİ örnek.
  */
-final class RawHttpProbe {
+public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca tanılaması da aynı ham ölçümü kullanır
 
     /** Metin önizlemesi tavanı (sözleşme: ilk 32 KB). */
     static final int PREVIEW_BYTES = 32 * 1024;
     /** Okunacak gövde tavanı — izlemenin JSON doğrulama tavanıyla aynı (2 MB). */
-    static final int BODY_CAP_BYTES = HttpRequestRules.MAX_RESPONSE_BYTES;
+    public static final int BODY_CAP_BYTES = HttpRequestRules.MAX_RESPONSE_BYTES;
     static final int MAX_LINE = 16 * 1024;
     static final int MAX_HEADERS = 200;
     /** İzlemenin gerçek istemcisinin gönderdiği User-Agent ({@code HttpCheckerService.buildRequest}). */
@@ -96,15 +96,25 @@ final class RawHttpProbe {
      * @param key          {@code monitor} | {@code alternate}
      * @param route        {@code proxy} | {@code direct}
      * @param hardDeadline yolun mutlak son anı (epoch ms) — genel 60 sn tavanından türetilir
+     * @param userAgent    gönderilecek User-Agent (izlemenin GERÇEK istemcisiyle aynı olmalı; HTTP: {@value #USER_AGENT})
+     * @param captureBody  son yanıtın gövdesi TAM (tavana kadar) tutulsun — keyword tanılaması gövdede arar
      */
-    record Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
+    public record Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                 boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
-                String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline) {
-        boolean viaProxy() { return "proxy".equals(route); }
+                String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
+                String userAgent, boolean captureBody) {
+        /** HTTP izlemesinin kurucusu (2026-10-02 sözleşmesi) — User-Agent HTTP izlemesininki, gövde yalnız JSON doğrulamasında. */
+        public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
+                    boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
+                    String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline) {
+            this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, USER_AGENT, false);
+        }
+        public boolean viaProxy() { return "proxy".equals(route); }
     }
 
     /** Yolun terminal hatası: bulgu kodu + adlı parametreler + düştüğü adım + istisna. */
-    record Failure(String code, Map<String, Object> params, String step, Throwable error) {}
+    public record Failure(String code, Map<String, Object> params, String step, Throwable error) {}
 
     private final Spec spec;
     private final SsrfGuard ssrfGuard;
@@ -128,7 +138,7 @@ final class RawHttpProbe {
     Long dnsMs, connectMs, proxyMs, tlsMs, ttfbMs, downloadMs;
     boolean tunnelApplicable, tlsApplicable;
 
-    RawHttpProbe(Spec spec, SsrfGuard ssrfGuard, TrustEvaluator trustEvaluator, CaAutoPinService caAutoPin,
+    public RawHttpProbe(Spec spec, SsrfGuard ssrfGuard, TrustEvaluator trustEvaluator, CaAutoPinService caAutoPin,
                  HttpDiagMasker masker, ScheduledExecutorService watchdog) {
         this.spec = spec;
         this.ssrfGuard = ssrfGuard;
@@ -138,12 +148,47 @@ final class RawHttpProbe {
         this.watchdog = watchdog;
     }
 
+    // ── Paket dışı okuma (keyword tanılaması, 2026-10-04) — alanların kendisi paket içi kalır ──────
+    public List<Map<String, Object>> hops() { return hops; }
+    public List<String> transcript() { return transcript; }
+    public Failure failure() { return failure; }
+    public Integer finalStatus() { return finalStatus; }
+    /** Son yanıtın gövdesi — yalnız {@code captureBody} ya da JSON doğrulamasında dolu (tavanla sınırlı). */
+    public byte[] finalBody() { return finalBody; }
+    public boolean finalBodyCapped() { return finalBodyCapped; }
+    public boolean bodyTimedOut() { return bodyTimedOut; }
+    public long totalMs() { return totalMs; }
+
+    /** Zaman çizelgesi — HTTP tanılamasının sözleşmesiyle AYNI biçim (uygulanmayan faz 0, ulaşılmayan null). */
+    public Map<String, Object> timeline() {
+        Map<String, Object> tl = new LinkedHashMap<>();
+        tl.put("dns_ms", dnsMs);
+        tl.put("connect_ms", connectMs);
+        tl.put("proxy_ms", tunnelApplicable ? proxyMs : Long.valueOf(0L));
+        tl.put("tls_ms", tlsApplicable ? tlsMs : Long.valueOf(0L));
+        tl.put("ttfb_ms", ttfbMs);
+        tl.put("download_ms", downloadMs);
+        tl.put("total_ms", totalMs);
+        return tl;
+    }
+
+    /** Süre tavanında bitmeyen yol — boş bir sonuçla "yanıt takıldı" olarak raporlanır (HTTP tanılamasıyla aynı kural). */
+    public static RawHttpProbe abandoned(Spec spec, HttpDiagMasker masker, long elapsedMs, long capMs) {
+        RawHttpProbe p = new RawHttpProbe(spec, null, null, null, masker, null);
+        p.totalMs = elapsedMs;
+        p.transcript.add("* Diagnostic time limit reached (" + capMs + " ms) — path abandoned");
+        p.failure = new Failure(HttpDiagFindings.RESPONSE_TIMEOUT,
+                params("ms", elapsedMs, "route", spec.route()), "response",
+                new java.util.concurrent.TimeoutException("tanılama süre sınırı (" + capMs + " ms)"));
+        return p;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════════════════════
     //  Yol
     // ═══════════════════════════════════════════════════════════════════════════════════════════
 
     /** Yolu koşturur; sonuç alanları doldurulur. Asla fırlatmaz. */
-    RawHttpProbe run() {
+    public RawHttpProbe run() {
         long start = System.currentTimeMillis();
         try {
             URI base = URI.create(spec.url().trim());
@@ -533,7 +578,7 @@ final class RawHttpProbe {
             byte[] body = sendBody ? opts.body().getBytes(StandardCharsets.UTF_8) : null;
             List<String[]> headers = new ArrayList<>();
             putHeader(headers, "Host", hostHeader(uri, https));
-            putHeader(headers, "User-Agent", USER_AGENT);
+            putHeader(headers, "User-Agent", spec.userAgent() == null || spec.userAgent().isBlank() ? USER_AGENT : spec.userAgent());
             if (extras) {
                 String auth = HttpRequestRules.basicAuthHeader(opts.basicAuthUser(), opts.basicAuthPass());
                 if (auth != null) putHeader(headers, "Authorization", auth);
@@ -655,7 +700,7 @@ final class RawHttpProbe {
             }
             long bodyDeadline = Math.min(headersAt + spec.timeoutMs(), spec.hardDeadline());
             w.deadline = bodyDeadline;
-            boolean wantFull = opts.hasJsonAssertion();
+            boolean wantFull = opts.hasJsonAssertion() || spec.captureBody();
             BodySink sink = new BodySink(wantFull);
             String te = firstValues.get("transfer-encoding");
             String cl = firstValues.get("content-length");
@@ -1098,7 +1143,7 @@ final class RawHttpProbe {
         return false;
     }
 
-    static String msg(Throwable e) {
+    public static String msg(Throwable e) {
         if (e == null) return null;
         String m = e.getMessage();
         return m != null && !m.isBlank() ? m : e.getClass().getSimpleName();
@@ -1129,7 +1174,7 @@ final class RawHttpProbe {
     }
 
     /** Adlı parametre haritası (null değer korunur — ön yüz yer tutucuyu boş gösterir). */
-    static Map<String, Object> params(Object... kv) {
+    public static Map<String, Object> params(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) m.put(String.valueOf(kv[i]), kv[i + 1]);
         return m;

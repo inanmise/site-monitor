@@ -19,10 +19,31 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
-import { buildReport, clampTimeout, downloadJson, failureKind, reportFileName } from './httpDiagnoseModel.js'
+import { HTTP_DIAG_PATH, buildReport, clampTimeout, downloadJson, failureKind, reportFileName } from './httpDiagnoseModel.js'
 import HttpDiagnoseResult from './HttpDiagnoseResult.jsx'
 import HttpDiagnoseHistory from './HttpDiagnoseHistory.jsx'
 import { Kv, KvList } from './HttpDiagnoseParts.jsx'
+
+/**
+ * Pencerenin TÜRE ÖZGÜ parçaları (2026-10-04: keyword uçtan uca tanılaması aynı pencereyi kullanır). Verilmezse HTTP —
+ * HTTP penceresinin çıktısı ve sözleşmesi DEĞİŞMEDİ. API çağrıları çağrı anında yapılır (testlerdeki `api` mock'u işler).
+ */
+export const HTTP_DIAG_VARIANT = {
+  kind: 'http',
+  titleKey: 'httpdx.title',
+  run: (id, body, opts) => api.monitoring.diagnoseHttp(id, body, opts),
+  getRun: (id, runId) => api.monitoring.httpDiagnoseRun(id, runId),
+  loadHistory: (id) => api.monitoring.httpDiagnoseHistory(id),
+  pathRe: HTTP_DIAG_PATH,
+  fileStem: 'http-diagnose',
+  reportTitleKey: 'httpdx.report.title',
+  reportExtra: null,
+  startStepsKey: 'httpdx.start.stepsValue',
+  renderTarget: null,       // (monitor) => node — hedef şeridine ek satır
+  renderStartExtra: null,   // (monitor) => node — başlangıç listesine ek Kv satırları
+  renderResultExtra: null,  // (data, stored) => node — hükümden sonra ek bölüm
+  renderPathExtra: null,    // (path) => node — yol kartına ek ölçü
+}
 
 /**
  * HTTP UÇTAN UCA TANILAMA penceresi (2026-10-02) — HTTP/Website izlemesinin detayından ("Uçtan uca tanıla") ya da
@@ -47,9 +68,10 @@ const PHONE_FULLSCREEN = 'max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-d
 /** Başlık düğmesi: masaüstünde ikon + metin, telefonda yalnız ikon (40 px dokunma hedefi). */
 const HEAD_BTN = 'h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground pointer-coarse:h-10 pointer-coarse:min-w-10'
 
-export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClose, onRunChange }) {
+export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClose, onRunChange, variant = HTTP_DIAG_VARIANT }) {
   const t = useT()
   const toast = useToast()
+  const cfg = { ...HTTP_DIAG_VARIANT, ...(variant || {}) }
   const [compare, setCompare] = useState(true)
   const [view, setView] = useState('main')   // main | history
   const [st, setSt] = useState(() => (initialRunId ? { phase: 'loading', runId: initialRunId } : { phase: 'start' }))
@@ -81,7 +103,7 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
     announce(null)
     let res
     try {
-      res = await api.monitoring.diagnoseHttp(monitor.id, { compare }, { signal: ctrl.signal })
+      res = await cfg.run(monitor.id, { compare }, { signal: ctrl.signal })
     } catch (e) {
       res = { success: false, status: 0, error: e?.message || null }
     }
@@ -93,7 +115,7 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
       announce(res.data.run_id)
       return
     }
-    const kind = failureKind(res, getRecentFailures())
+    const kind = failureKind(res, getRecentFailures(), cfg.pathRe)
     setSt(kind === 'rateLimited' ? { phase: 'rateLimited' } : { phase: 'error', kind, message: res?.error || null })
   }
 
@@ -111,7 +133,7 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
     setSt({ phase: 'loading', runId: row.id })
     let res
     try {
-      res = await api.monitoring.httpDiagnoseRun(monitor.id, row.id)
+      res = await cfg.getRun(monitor.id, row.id)
     } catch (e) {
       res = { success: false, status: 0, error: e?.message || null }
     }
@@ -121,20 +143,20 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
       announce(res.data.run_id ?? row.id)
       return
     }
-    setSt({ phase: 'error', kind: failureKind(res, []), message: res?.error || null, storedRow: row })
+    setSt({ phase: 'error', kind: failureKind(res, [], cfg.pathRe), message: res?.error || null, storedRow: row })
     announce(null)
   }
 
   async function copyReport(format) {
     if (!data) return
-    const text = buildReport({ data, t, formatDate: formatDateSec, format })
+    const text = buildReport({ data, t, formatDate: formatDateSec, format, titleKey: cfg.reportTitleKey, extra: cfg.reportExtra })
     if (await copyText(text)) toast.success(t('httpdx.reportCopied'))
     else toast.error(t('httpdx.copyFailed'))
   }
 
   function saveJson() {
     if (!data) return
-    downloadJson(reportFileName(data), data)
+    downloadJson(reportFileName(data, new Date(), cfg.fileStem), data)
   }
 
   const retry = () => (st.storedRow ? openStored(st.storedRow) : run())
@@ -142,7 +164,7 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
   return (
     <ModalShell open onClose={onClose} icon={Stethoscope} size="xl" scrollBody closeLabel={t('httpdx.close')}
       className={PHONE_FULLSCREEN}
-      title={<span data-slot="httpdx-title" className="min-w-0 truncate">{t('httpdx.title')}</span>}
+      title={<span data-slot="httpdx-title" className="min-w-0 truncate">{t(cfg.titleKey)}</span>}
       headerExtra={(
         <div data-slot="httpdx-actions" className="ml-auto flex shrink-0 items-center gap-0.5">
           <Button type="button" variant={view === 'history' ? 'secondary' : 'ghost'} size="sm" className={HEAD_BTN}
@@ -181,8 +203,8 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
           </Button>
         )}
       </>}>
-      <div data-slot="httpdx-body" data-phase={st.phase} data-view={view} className="flex min-w-0 flex-col gap-4">
-        <TargetStrip monitor={data?.monitor || monitor} />
+      <div data-slot="httpdx-body" data-phase={st.phase} data-view={view} data-kind={cfg.kind} className="flex min-w-0 flex-col gap-4">
+        <TargetStrip monitor={data?.monitor || monitor} extra={cfg.renderTarget ? cfg.renderTarget(data?.monitor || monitor) : null} />
 
         {view === 'history' ? (
           <>
@@ -191,12 +213,14 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
                 <ArrowLeft aria-hidden="true" /> {t('httpdx.historyBack')}
               </Button>
             </div>
-            <HttpDiagnoseHistory monitorId={monitor.id} reloadKey={historyKey} activeRunId={data?.run_id ?? null} onOpen={openStored} />
+            <HttpDiagnoseHistory monitorId={monitor.id} reloadKey={historyKey} activeRunId={data?.run_id ?? null} onOpen={openStored}
+              load={cfg.loadHistory} />
           </>
         ) : (
           <>
             {st.phase === 'start' && (
-              <StartPanel monitor={monitor} compare={compare} onCompare={setCompare} timeoutMs={timeoutMs} />
+              <StartPanel monitor={monitor} compare={compare} onCompare={setCompare} timeoutMs={timeoutMs}
+                stepsKey={cfg.startStepsKey} extra={cfg.renderStartExtra ? cfg.renderStartExtra(monitor) : null} />
             )}
             {st.phase === 'running' && <RunningPanel since={st.since} timeoutMs={timeoutMs} />}
             {st.phase === 'loading' && (
@@ -219,7 +243,9 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
             )}
             {st.phase === 'done' && (
               <HttpDiagnoseResult key={`${st.stored ? 's' : 'l'}-${st.data?.run_id ?? 'x'}-${historyKey}`}
-                data={st.data} stored={st.stored} row={st.row} />
+                data={st.data} stored={st.stored} row={st.row}
+                extra={cfg.renderResultExtra ? cfg.renderResultExtra(st.data, st.stored) : null}
+                pathExtra={cfg.renderPathExtra} />
             )}
           </>
         )}
@@ -238,7 +264,7 @@ function errorText(st, t) {
 }
 
 /** Hedef şeridi: ad + yöntem + URL + beklenen durum — her evrede görünür (kullanıcı neyi tanıladığını görsün). */
-function TargetStrip({ monitor }) {
+function TargetStrip({ monitor, extra = null }) {
   const t = useT()
   const m = monitor || {}
   const showName = m.name && m.name !== m.url
@@ -250,12 +276,13 @@ function TargetStrip({ monitor }) {
         <code data-slot="httpdx-url" className="min-w-0 font-mono text-[13px] break-all">{m.url}</code>
         {m.expected_status && <ToneBadge tone="muted">{t('httpdx.expected', m.expected_status)}</ToneBadge>}
       </div>
+      {extra}
     </div>
   )
 }
 
 /** Başlangıç: neyin deneneceği + "öteki yolu da dene" anahtarı. Koşu düğmesi altlıkta (telefonda sabit). */
-function StartPanel({ monitor, compare, onCompare, timeoutMs }) {
+function StartPanel({ monitor, compare, onCompare, timeoutMs, stepsKey = 'httpdx.start.stepsValue', extra = null }) {
   const t = useT()
   const via = monitor?.proxy_effective
   const src = monitor?.proxy_source
@@ -274,8 +301,9 @@ function StartPanel({ monitor, compare, onCompare, timeoutMs }) {
           {t('httpdx.start.timeoutValue', timeoutMs)}
         </Kv>
         <Kv label={<span className="inline-flex items-center gap-1"><Gauge aria-hidden="true" className="size-3.5" />{t('httpdx.start.steps')}</span>}>
-          {t('httpdx.start.stepsValue')}
+          {t(stepsKey)}
         </Kv>
+        {extra}
       </KvList>
       <div className="flex min-w-0 items-start gap-3 rounded-lg border bg-muted/30 px-3 py-2.5">
         <Switch id="httpdx-compare" checked={compare} onCheckedChange={(v) => onCompare(!!v)} className="mt-0.5 pointer-coarse:mt-1" />
