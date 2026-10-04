@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T17:54:24Z",
+  "generatedAt": "2026-10-04T22:43:21Z",
   "repo": "inanmise/site-monitor",
-  "count": 706,
+  "count": 707,
   "releases": [
+    {
+      "version": "20.107.0",
+      "tag": "v20.107.0",
+      "releasedAt": "2026-10-04T22:43:13Z",
+      "commit": "374b61e3e336d9d7ac3245aec9f17b595df6a119",
+      "prevVersion": "20.106.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "374b61e3",
+          "subject": "sertifika penceresinde değişiklik geçmişi, giriş istatistiklerinde sertifika izlemesi, anahtar kelime formunda teşhis"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.106.0",
       "tag": "v20.106.0",
