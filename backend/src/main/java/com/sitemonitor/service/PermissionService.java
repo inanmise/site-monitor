@@ -83,13 +83,40 @@ public class PermissionService {
     }
 
     public boolean allows(HttpSession session, String resourceKey, String action) {
-        return allows((String) session.getAttribute("systemRole"), resourceKey, action);
+        if (session == null) return false;
+        if (allows((String) session.getAttribute("systemRole"), resourceKey, action)) return true;
+        return nocOperatorGrant(session, resourceKey, action);
+    }
+
+    /**
+     * 7/24 izleme ekibi takımı üyeliğinden gelen dinamik izin (2026-10-04): oturum operatörse
+     * {@link PermissionCatalog#NOC_OPERATOR_GRANTS} rol satırına EK olarak açılır. Yalnız okuma izinleri + arama kaydı.
+     */
+    public static boolean nocOperatorGrant(HttpSession session, String resourceKey, String action) {
+        return com.sitemonitor.controller.SessionScope.isNocOperator(session)
+                && PermissionCatalog.NOC_OPERATOR_GRANTS.contains(resourceKey + ":" + action);
     }
 
     /** Yetki kapısı: rolün bu (resource, action) iznine sahip olmaması 403 (SecurityException) üretir.
-     *  Takım-scope kontrolleri AYRI yapılır; bu yalnız "rol bu işlemi yapabilir mi" sorusudur. */
+     *  Takım-scope kontrolleri AYRI yapılır; bu yalnız "rol bu işlemi yapabilir mi" sorusudur.
+     *  7/24 operatörünün dinamik okuma izinleri ({@link #nocOperatorGrant}) burada da geçerlidir. */
     public void require(HttpSession session, String resourceKey, String action) {
-        require((String) session.getAttribute("systemRole"), resourceKey, action);
+        if (!allows(session, resourceKey, action)) {
+            throw new SecurityException("Bu işlem için yetkiniz yok: " + resourceKey + "/" + action);
+        }
+    }
+
+    /** Oturum bazlı snapshot — rol satırı + (7/24 operatöründe) dinamik izinler. {@code /api/me/permissions} kullanır. */
+    public Map<String, Map<String, Boolean>> snapshotForSession(HttpSession session) {
+        String role = session == null ? null : (String) session.getAttribute("systemRole");
+        Map<String, Map<String, Boolean>> snap = snapshotForRole(role);
+        if (com.sitemonitor.controller.SessionScope.isNocOperator(session)) {
+            for (String grant : PermissionCatalog.NOC_OPERATOR_GRANTS) {
+                int i = grant.indexOf(':');
+                snap.computeIfAbsent(grant.substring(0, i), k -> new LinkedHashMap<>()).put(grant.substring(i + 1), Boolean.TRUE);
+            }
+        }
+        return snap;
     }
 
     public void require(String role, String resourceKey, String action) {

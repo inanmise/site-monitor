@@ -90,7 +90,8 @@ public class MonitorTargetTeams {
 
     /** Hedefin rehberini OKUYABİLİR mi — global görüntüleyici (admin/AUDIT) her zaman; aksi hâlde bir izlemeyi görebilmeli. */
     public boolean canView(HttpSession session, String type, String target) {
-        if (SessionScope.isGlobalViewer(session)) return true;
+        // İzleme OKUMA kapsamı: 7/24 operatörü (2026-10-04) her hedefin rehberini/notlarını okur (YAZMA canOperate'te).
+        if (SessionScope.seesAllMonitoring(session)) return true;
         for (Owner o : owners(type, target)) {
             if (SessionScope.canView(session, o.teamId())) return true;
             if (o.ugTeamId() != null && SessionScope.canView(session, o.ugTeamId())) return true;

@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.model.NocNotificationGroup;
 import com.sitemonitor.model.PingMonitor;
@@ -51,6 +52,10 @@ class NocControllerTest {
     @MockitoBean MonitorHistoryService monitorHistory;
     @MockitoBean ActivityLogService activityLog;
     @MockitoBean CertificateService certService;
+    // 7/24 izleme ekibi takımları + konsol (2026-10-04) — yeni yapıcı bağımlılıkları
+    @MockitoBean NocOperatorService nocOperators;
+    @MockitoBean NocConsoleService console;
+    @MockitoBean NocCallLogService nocCallLog;
 
     @MockitoBean AppSettingsService appSettings;
     @MockitoBean RememberMeService rememberMeService;
@@ -459,5 +464,132 @@ class NocControllerTest {
                 .andExpect(status().isOk());
         mvc.perform(get("/api/noc/teams/1/call-list").session(userB)).andExpect(status().isForbidden());
         mvc.perform(get("/api/noc/teams/1/members").session(userB)).andExpect(status().isForbidden());
+    }
+    // ── 7/24 izleme ekibi takımları (2026-10-04) ─────────────────────────────
+
+    private MockHttpSession nocOperator() {
+        MockHttpSession s = session("noc1", 300, "USER", List.of(TEAM_B), List.of(), List.of(TEAM_B));
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        s.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, new ArrayList<>(List.of(TEAM_B)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("GET operator-teams + önizleme: global/kapsamlı müdür/denetçi okur; takım yöneticisi, kullanıcı ve operatör 403")
+    void operatorTeamsRead() throws Exception {
+        when(nocOperators.settingsDto()).thenReturn(Map.of("team_ids", List.of(TEAM_B), "operator_count", 3));
+        when(nocOperators.preview(any())).thenReturn(Map.of("user_count", 2, "teams", List.of(), "users", List.of()));
+        for (MockHttpSession s : List.of(global, scoped, audit)) {
+            mvc.perform(get("/api/admin/noc/operator-teams").session(s)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.team_ids[0]").value((int) TEAM_B))
+                    .andExpect(jsonPath("$.data.operator_count").value(3));
+            mvc.perform(get("/api/admin/noc/operator-teams/preview").param("teamIds", "1,2").session(s))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.user_count").value(2));
+        }
+        verify(nocOperators, times(3)).preview(eq(List.of(TEAM_A, TEAM_B)));
+        for (MockHttpSession s : List.of(teamAdmin, userA, nocOperator())) {
+            mvc.perform(get("/api/admin/noc/operator-teams").session(s)).andExpect(status().isForbidden());
+            mvc.perform(get("/api/admin/noc/operator-teams/preview").param("teamIds", "1").session(s)).andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    @DisplayName("PUT operator-teams: YALNIZ global yönetici (kapsamlı müdür 403) + NOC_TEAMS_UPDATE denetimi önce/sonra diff'iyle")
+    void operatorTeamsWrite() throws Exception {
+        when(nocOperators.save(any(), any(), any())).thenReturn(new NocOperatorService.SaveResult(
+                List.of(TEAM_A), List.of(TEAM_B), Map.of(TEAM_A, "Takım A", TEAM_B, "Takım B")));
+        when(nocOperators.settingsDto()).thenReturn(Map.of("team_ids", List.of(TEAM_B)));
+        String body = "{\"teamIds\":[2]}";
+        mvc.perform(put("/api/admin/noc/operator-teams").session(global).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.team_ids[0]").value((int) TEAM_B));
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> diff = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("NOC_TEAMS_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                eq("NOC"), eq("operator-teams"), detail.capture(), diff.capture());
+        assertThat(diff.getValue()).contains("team_ids").contains("Takım A").contains("Takım B");
+        assertThat(detail.getValue()).contains("added").contains("removed");
+        for (MockHttpSession s : List.of(scoped, teamAdmin, userA, audit, nocOperator()))
+            mvc.perform(put("/api/admin/noc/operator-teams").session(s).contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/noc/operator-teams").session(global).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        verify(nocOperators, times(1)).save(any(), eq("admin"), any());
+    }
+
+    @Test
+    @DisplayName("7/24 konsolu: tüm alarmları görebilen (global görücü / operatör) okur; diğerleri 403; süzgeçler servise iletilir")
+    void consoleGate() throws Exception {
+        MockHttpSession op = nocOperator();
+        when(nocCallLog.seesAllAlerts(any())).thenAnswer(i -> i.getArgument(0) == op || i.getArgument(0) == global);
+        when(nocCallLog.canWrite(any())).thenAnswer(i -> i.getArgument(0) == op);
+        when(console.console(any(), anyBoolean())).thenAnswer(i -> Map.<String, Object>of("can_write", i.<Boolean>getArgument(1), "items", List.of()));
+        mvc.perform(get("/api/noc/console").param("window", "1h").param("noc", "sent").param("team_id", "1")
+                        .param("called", "no").param("q", "x").session(op))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.can_write").value(true));
+        org.mockito.ArgumentCaptor<NocConsoleService.Query> q = org.mockito.ArgumentCaptor.forClass(NocConsoleService.Query.class);
+        verify(console).console(q.capture(), eq(true));
+        assertThat(q.getValue().window()).isEqualTo("1h");
+        assertThat(q.getValue().noc()).isEqualTo("sent");
+        assertThat(q.getValue().teamId()).isEqualTo(TEAM_A);
+        assertThat(q.getValue().called()).isEqualTo("no");
+        mvc.perform(get("/api/noc/console").session(global)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_write").value(false));
+        for (MockHttpSession s : List.of(userA, teamAdmin, scoped))
+            mvc.perform(get("/api/noc/console").session(s)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("arama kartı: yalnız arama kaydı girebilen; sahibi takımın sıralı listesi TELEFONLA + müdür + talimat")
+    void callSheet() throws Exception {
+        MockHttpSession op = nocOperator();
+        when(nocCallLog.canWrite(any())).thenAnswer(i -> i.getArgument(0) == op);
+        com.sitemonitor.model.AlertEvent ev = new com.sitemonitor.model.AlertEvent();
+        ev.setId(50L); ev.setTeamId(TEAM_A);
+        when(nocCallLog.loadAlert(50L)).thenReturn(ev);
+        when(nocCallLog.owningTeam(ev)).thenReturn(TEAM_A);
+        when(callLists.forMail(TEAM_A)).thenReturn(new NocMailComposer.TeamBlock("Takım A",
+                List.of(new NocMailComposer.Person("Kişi A", "Uzman", "0500 000 00 00"), new NocMailComposer.Person("Kişi B", null, " ")),
+                true, new NocMailComposer.Person("Müdür A", "Müdür", "0500 000 00 01"),
+                List.of(new NocMailComposer.Contact("Kişi C", "Teknik Sorumlu", "c@example.com"))));
+        when(configService.get()).thenReturn(new NocConfigService.Config(Set.of(), "CRITICAL", true, "Önce listeyi arayın", null, null));
+        mvc.perform(get("/api/noc/console/alerts/50/call-sheet").session(op)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.team_name").value("Takım A"))
+                .andExpect(jsonPath("$.data.call_list[0].phone").value("0500 000 00 00"))
+                .andExpect(jsonPath("$.data.call_list[0].position").value(1))
+                .andExpect(jsonPath("$.data.call_list[1].phone").doesNotExist())
+                .andExpect(jsonPath("$.data.manager.phone").value("0500 000 00 01"))
+                .andExpect(jsonPath("$.data.escalation[0].role").value("Teknik Sorumlu"))
+                .andExpect(jsonPath("$.data.call_instructions").value("Önce listeyi arayın"));
+        for (MockHttpSession s : List.of(userA, teamAdmin, audit))
+            mvc.perform(get("/api/noc/console/alerts/50/call-sheet").session(s)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: kapsam ekranı TÜM takımların satırlarını görür ama başka takımın izlemesinde 7/24'ü DEĞİŞTİREMEZ; arama listesini okur, yazamaz")
+    void nocOperatorReadsCoverageButCannotEdit() throws Exception {
+        MockHttpSession op = nocOperator();
+        mvc.perform(get("/api/noc/coverage").param("team_id", "1").session(op)).andExpect(status().isOk());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.function.Predicate<NocMonitorDirectory.Row>> vis =
+                org.mockito.ArgumentCaptor.forClass(java.util.function.Predicate.class);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.function.Predicate<NocMonitorDirectory.Row>> edit =
+                org.mockito.ArgumentCaptor.forClass(java.util.function.Predicate.class);
+        verify(coverage).compute(eq(TEAM_A), isNull(), vis.capture(), edit.capture(), any());
+        NocMonitorDirectory.Row foreign = new NocMonitorDirectory.Row(NocType.PING, 9, "A", "a.example.com", TEAM_A, null, true, false, null, false);
+        assertThat(vis.getValue().test(foreign)).isTrue();
+        assertThat(edit.getValue().test(foreign)).isFalse();
+        mvc.perform(get("/api/noc/coverage").param("team_id", "1").session(userB)).andExpect(status().isForbidden());
+
+        PingMonitor pm = new PingMonitor(); pm.setId(9L); pm.setTeamId(TEAM_A); pm.setName("A");
+        when(monitors.load(NocType.PING, 9L)).thenReturn(pm);
+        when(monitors.row(NocType.PING, 9L)).thenReturn(foreign);
+        mvc.perform(put("/api/noc/monitors/PING/9").session(op).contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isForbidden());
+
+        when(callLists.callListDto(TEAM_A)).thenReturn(List.of(Map.of("user_id", 7, "display_name", "Kişi A", "has_phone", true)));
+        mvc.perform(get("/api/noc/teams/1/call-list").session(op)).andExpect(status().isOk());
+        mvc.perform(put("/api/noc/teams/1/call-list").session(op).contentType(MediaType.APPLICATION_JSON).content("{\"userIds\":[7]}"))
+                .andExpect(status().isForbidden());
     }
 }

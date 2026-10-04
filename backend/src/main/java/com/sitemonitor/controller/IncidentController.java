@@ -309,7 +309,9 @@ public class IncidentController {
     //    requireView/requireManage/requireDelete kontrol eder — bu yüzden YAZMA da AYNI üyelik sınırını
     //    kullanır (USER'ın manageTeamIds'i boştur ama kendi takımının olayını düzenleyebilmeli). ──
     private List<Long> incidentViewScope(HttpSession session) {
-        return SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        // OKUMA kapsamı: 7/24 izleme ekibi operatörü (2026-10-04) tüm takımların olay kayıtlarını okur (liste, eğilim,
+        // alarm bağlantıları). Yazma kapıları (requireIncidentWrite / requireTransferTarget) bunu KULLANMAZ.
+        return SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIds(session);
     }
     private void requireIncidentRead(HttpSession session, IncidentRecord e) {
         if (SessionScope.isGlobalViewer(session)) return;   // kayda dokunmadan (eski sıra korunur)
@@ -322,13 +324,24 @@ public class IncidentController {
      * aynı). {@code incidents.view} izni ayrıca çağıranda aranır.
      */
     public static boolean canReadIncident(HttpSession session, Long teamId, Long createdByTeamId) {
+        // 7/24 izleme ekibi operatörü (2026-10-04) her takımın kaydını OKUR; yazma sınırı inOwnIncidentScope'ta kalır.
+        if (SessionScope.isNocOperator(session)) return true;
+        return inOwnIncidentScope(session, teamId, createdByTeamId);
+    }
+    /** KENDİ takım sınırı (eski okuma = yazma sınırı) — global görüntüleyici hepsi; diğerleri kaydın / girenin takımı. */
+    static boolean inOwnIncidentScope(HttpSession session, Long teamId, Long createdByTeamId) {
         if (SessionScope.isGlobalViewer(session)) return true;
         List<Long> v = SessionScope.viewTeamIds(session);
         return v != null && ((teamId != null && v.contains(teamId)) || (createdByTeamId != null && v.contains(createdByTeamId)));
     }
-    /** Yazma sınırı = okuma sınırı (takım üyeliği). Eylem yetkisini requireManage/requireDelete kontrol eder. */
+    /**
+     * Yazma sınırı = KENDİ takım üyeliği (eski okuma sınırı). Eylem yetkisini requireManage/requireDelete kontrol eder.
+     * 7/24 operatörünün okuma genişlemesi (2026-10-04) BURAYA girmez: başka takımın kaydını okur, düzenleyemez/silemez.
+     */
     private void requireIncidentWrite(HttpSession session, IncidentRecord e) {
-        requireIncidentRead(session, e);
+        if (SessionScope.isGlobalViewer(session)) return;   // kayda dokunmadan (eski sıra korunur)
+        if (inOwnIncidentScope(session, e.getTeamId(), e.getCreatedByTeamId())) return;
+        throw new SecurityException("Bu olay kaydı sizin takım(lar)ınıza ait değil");
     }
 
     /**

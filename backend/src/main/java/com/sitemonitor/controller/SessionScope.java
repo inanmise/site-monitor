@@ -162,6 +162,54 @@ public final class SessionScope {
         return v != null && teamId != null && v.contains(teamId);
     }
 
+    // ── 7/24 izleme ekibi operatörü (2026-10-04, kullanıcı isteği) ───────────────────────────────────────
+    //
+    // Ayarlar → 7/24 İzleme Ekibi'nde işaretlenen takımların AKTİF üyeleri, rolleri DEĞİŞMEDEN 7/24 operatörüdür.
+    // Bayrak her istekte AuthInterceptor tarafından ≤ 30 sn'lik önbellekten (NocOperatorService) oturuma yazılır;
+    // takım listeden çıkınca ya da kullanıcı takımdan ayrılınca bir sonraki tazelemede KALKAR (yeniden giriş gerekmez).
+    //
+    // Operatörün kazandığı YALNIZ OKUMA kapsamıdır ve YALNIZ izleme yüzeylerinde geçerlidir: aşağıdaki üç yardımcıyı
+    // ÇAĞIRAN uçlar (dokuz izleme türü, envanter/sertifikalar, genel bakış, alarmlar, olaylar, uyarılar, bakım
+    // pencereleri, durum sayfası, fırtına sayfaları, 7/24 kapsamı) genişler. canView / isGlobalViewer / viewTeamIds
+    // BİLEREK değişmez — yönetim alanları (kullanıcı/takım yönetimi, denetim kaydı, sistem sağlığı, ayarlar, SQL,
+    // teslimat günlükleri, bildirim grupları) onları kullanır ve kapalı kalır. Yazma kapıları (canManage,
+    // canOperateTeam, canWriteInventory, manageTeamIds) operatör bayrağını HİÇ okumaz.
+
+    /** Oturum özniteliği: bu oturum 7/24 izleme ekibi operatörü mü (yalnız {@code Boolean.TRUE} sayılır). */
+    public static final String ATTR_NOC_OPERATOR = "nocOperator";
+    /** Oturum özniteliği: operatörün üyesi olduğu 7/24 takımları (List&lt;Long&gt;). */
+    public static final String ATTR_NOC_TEAM_IDS = "nocTeamIds";
+
+    /** 7/24 izleme ekibi takımı üyeliğinden gelen operatör bayrağı (rol değişmez). */
+    public static boolean isNocOperator(HttpSession session) {
+        return session != null && Boolean.TRUE.equals(session.getAttribute(ATTR_NOC_OPERATOR));
+    }
+
+    /** Operatörün üyesi olduğu 7/24 takımları — operatör değilse boş. */
+    @SuppressWarnings("unchecked")
+    public static List<Long> nocTeamIds(HttpSession session) {
+        Object o = session != null ? session.getAttribute(ATTR_NOC_TEAM_IDS) : null;
+        return isNocOperator(session) && o instanceof List ? (List<Long>) o : List.of();
+    }
+
+    /**
+     * İZLEME OKUMA kapsamı TÜM takımlar mı: global görüntüleyici (admin/AUDIT) ya da 7/24 operatörü. Yalnız izleme
+     * OKUMA uçlarında kullanılır (yukarıdaki not); yazma kapılarında ve yönetim alanlarında KULLANILMAZ.
+     */
+    public static boolean seesAllMonitoring(HttpSession session) {
+        return isGlobalViewer(session) || isNocOperator(session);
+    }
+
+    /** {@link #canView}'in İZLEME OKUMA hâli — 7/24 operatörü her takımın izleme verisini okur. */
+    public static boolean canViewMonitoring(HttpSession session, Long teamId) {
+        return isNocOperator(session) || canView(session, teamId);
+    }
+
+    /** {@link #viewTeamIds}'in İZLEME OKUMA hâli — 7/24 operatöründe {@code null} (= tüm takımlar). */
+    public static List<Long> monitoringViewTeamIds(HttpSession session) {
+        return isNocOperator(session) ? null : viewTeamIds(session);
+    }
+
     /**
      * İzleme üzerinde YAZMA/ÇALIŞTIRMA kapsamı — dokuz izleme türünün güncelleme/tetikleme kapısı. TEK kaynak:
      * {@code MonitoringController#canOperateTeam} buraya delege eder; 7/24 (NOC) aç/kapa ucu da AYNI kapıyı

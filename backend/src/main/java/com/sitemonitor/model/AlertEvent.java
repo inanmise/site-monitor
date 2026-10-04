@@ -158,6 +158,14 @@ public class AlertEvent {
     @Transient private java.util.Map<String, Object> nocLastCall;
 
     /**
+     * 7/24'e iletildi mi (2026-10-04) — alarmın 7/24 AÇILIŞ teslimi ({@code noc_deliveries}, anahtar {@code alert:<id>:OPEN})
+     * gitmiş sayılan durumdaysa (SENT / SENT_VIA_STORM / QUEUED_RETRY…) iletim anı; aksi halde null. Sayfa başına TEK
+     * sorguyla doldurulur ({@code NocAlertFacts.decorate}), kalıcı DEĞİL. JSON: {@code noc_sent_at}, {@code noc_via_storm}.
+     */
+    @Transient private String  nocSentAt;
+    @Transient private Boolean nocViaStorm;
+
+    /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
      *
      * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse

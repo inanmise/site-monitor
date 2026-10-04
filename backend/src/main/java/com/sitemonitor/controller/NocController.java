@@ -72,6 +72,10 @@ public class NocController {
      * kart 300 sn'ye dek eski durumu gösterirdi.
      */
     private final com.sitemonitor.service.CertificateService certService;
+    /** 7/24 konsolu (2026-10-04) — kurum geneli canlı alarm/bildirim görünümü + arama kartı. */
+    private final com.sitemonitor.service.noc.NocConsoleService console;
+    /** Konsol kapısı: TÜM alarmları görebilen (global görücü ya da 7/24 operatörü) + arama kaydı yetkisi. */
+    private final com.sitemonitor.service.noc.NocCallLogService nocCallLog;
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
@@ -121,8 +125,10 @@ public class NocController {
 
     /** Satır görüş kapsamında mı (envanter kökenlide UG takımı da). */
     static boolean visible(HttpSession session, NocMonitorDirectory.Row r) {
-        if (SessionScope.canView(session, r.teamId())) return true;
-        return r.ugTeamId() != null && SessionScope.canView(session, r.ugTeamId());
+        // İzleme OKUMA kapsamı — 7/24 operatörü (2026-10-04) tüm takımların kapsam satırlarını görür; düzenleme kapısı
+        // (canEdit) ayrı ve değişmedi.
+        if (SessionScope.canViewMonitoring(session, r.teamId())) return true;
+        return r.ugTeamId() != null && SessionScope.canViewMonitoring(session, r.ugTeamId());
     }
 
     /** Satırda 7/24'ü değiştirebilir mi — izlemenin kendi güncelleme kapısı. */
@@ -143,7 +149,7 @@ public class NocController {
             if (t == null) return error(400, "Bilinmeyen izleme türü: " + type);
         }
         // Kapsam DIŞI takım süzgeci: 403 (sessiz boş liste "o takımda hiç izleme yok" yanılgısı üretirdi).
-        if (teamId != null && !SessionScope.canView(session, teamId))
+        if (teamId != null && !SessionScope.canViewMonitoring(session, teamId))
             return error(403, "Bu takımın kapsamını görme yetkiniz yok");
         Predicate<NocMonitorDirectory.Row> vis = r -> visible(session, r);
         Predicate<NocMonitorDirectory.Row> edit = r -> canEdit(session, r.type(), r.teamId());
@@ -278,6 +284,87 @@ public class NocController {
         try { return Long.parseLong(o.toString().trim()); } catch (NumberFormatException e) { return null; }
     }
 
+    // ── 7/24 konsolu (2026-10-04) ────────────────────────────────────────────
+
+    /**
+     * Kurum geneli canlı alarm + bildirim görünümü. Kapı: {@code alerts.read} + TÜM alarmları görebilmek
+     * ({@code NocCallLogService.seesAllAlerts}: global görücü ya da 7/24 operatörü). Diğerleri 403 — konsol takım
+     * kapsamına göre süzülmez, o yüzden kapsamlı bir kullanıcıya açılmaz. Parametreler: {@code window} 1h|24h|7d,
+     * {@code team_id}, {@code level}, {@code type} (izleme ailesi), {@code noc} sent|not_sent, {@code called} yes|no,
+     * {@code state} open|resolved, {@code q}, {@code page}, {@code size}, {@code fresh}.
+     */
+    @GetMapping("/console")
+    public ResponseEntity<Map<String, Object>> console(@RequestParam(required = false) String window,
+                                                       @RequestParam(name = "team_id", required = false) Long teamId,
+                                                       @RequestParam(required = false) String level,
+                                                       @RequestParam(required = false) String type,
+                                                       @RequestParam(required = false) String noc,
+                                                       @RequestParam(required = false) String called,
+                                                       @RequestParam(required = false) String state,
+                                                       @RequestParam(required = false) String q,
+                                                       @RequestParam(defaultValue = "0") int page,
+                                                       @RequestParam(defaultValue = "25") int size,
+                                                       @RequestParam(defaultValue = "false") boolean fresh,
+                                                       HttpSession session) {
+        permissionService.require(session, "alerts.read", "view");
+        if (!nocCallLog.seesAllAlerts(session))
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "7/24 konsolu yalnız 7/24 izleme ekibine ve yöneticilere açık",
+                    "The 24/7 console is only open to the 24/7 monitoring team and administrators"));
+        return ok(console.console(new com.sitemonitor.service.noc.NocConsoleService.Query(
+                window, teamId, level, type, noc, called, state, q, page, size, fresh), nocCallLog.canWrite(session)));
+    }
+
+    /**
+     * "Ara" kartı: alarmın SAHİBİ takımının 7/24 arama listesi (sırasıyla, TELEFONLA), Takım Müdürü ve eskalasyon
+     * kişileri + yöneticinin arama talimatı. İçerik 7/24 e-postasının takım bölümünün AYNISIdır
+     * ({@code NocCallListService.forMail}) — telefonu yalnız arama kaydı girebilen (7/24 operatörü / global yönetici)
+     * görür; diğer hiçbir uçta telefon yoktur.
+     */
+    @GetMapping("/console/alerts/{alertId}/call-sheet")
+    public ResponseEntity<Map<String, Object>> callSheet(@PathVariable Long alertId, HttpSession session) {
+        if (!nocCallLog.canWrite(session))
+            throw new SecurityException(com.sitemonitor.util.Msg.t(
+                    "Arama kartı yalnız 7/24 izleme ekibine açık (noc_calls.write)",
+                    "The call sheet is only open to the 24/7 monitoring team (noc_calls.write)"));
+        com.sitemonitor.model.AlertEvent ev = nocCallLog.loadAlert(alertId);
+        Long teamId = nocCallLog.owningTeam(ev);
+        com.sitemonitor.service.noc.NocMailComposer.TeamBlock block = callLists.forMail(teamId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("alert_id", alertId);
+        out.put("team_id", teamId);
+        out.put("team_name", block.teamName());
+        out.put("call_list_defined", block.callListDefined());
+        List<Map<String, Object>> calls = new ArrayList<>();
+        int pos = 1;
+        for (com.sitemonitor.service.noc.NocMailComposer.Person p : block.callList()) {
+            Map<String, Object> m = person(p);
+            m.put("position", pos++);
+            calls.add(m);
+        }
+        out.put("call_list", calls);
+        out.put("manager", block.manager() == null ? null : person(block.manager()));
+        List<Map<String, Object>> esc = new ArrayList<>();
+        for (com.sitemonitor.service.noc.NocMailComposer.Contact c : block.escalation()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", c.name());
+            m.put("role", c.role());
+            m.put("email", c.email());
+            esc.add(m);
+        }
+        out.put("escalation", esc);
+        out.put("call_instructions", configService.get().callInstructions());
+        return ok(out);
+    }
+
+    private static Map<String, Object> person(com.sitemonitor.service.noc.NocMailComposer.Person p) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", p.name());
+        m.put("title", p.title());
+        m.put("phone", p.phone() == null || p.phone().isBlank() ? null : p.phone().trim());
+        return m;
+    }
+
     // ── Takım arama listesi ──────────────────────────────────────────────────
 
     @GetMapping("/teams/{teamId}/call-list")
@@ -300,7 +387,8 @@ public class NocController {
      * boş açtırır ve kaydetmek mevcut sırayı SİLERDİ. Yanıtta telefon yok ({@code has_phone}).
      */
     boolean canReadCallList(HttpSession session, Long teamId) {
-        return SessionScope.canView(session, teamId) || canEditCallList(session, teamId);
+        // 7/24 operatörü (2026-10-04) her takımın arama listesini okur — aramayı o yapar (yazma kapısı aynı).
+        return SessionScope.canViewMonitoring(session, teamId) || canEditCallList(session, teamId);
     }
 
     /** Arama listesini düzenleyebilir mi — takım yöneticisi/müdürü/lideri ya da global admin. */

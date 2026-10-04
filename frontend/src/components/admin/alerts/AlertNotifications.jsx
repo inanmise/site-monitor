@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon, Wrench } from 'lucide-react'
+import { ShieldAlert, TrendingUp, RefreshCcw, Bell, CheckCircle, Mail, ChevronUp, ChevronDown, CloudLightning, Timer, Moon, Wrench, Headset } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { mailPreviewSrcDoc, mailLogoVariant, MAIL_PREVIEW_SANDBOX } from '../../../utils/mailPreview.js'
 import UserBadge from '../../ui/UserBadge.jsx'
@@ -11,6 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/shadcn/accordion'
 import { cn } from '@/lib/utils'
 import { fmtStamp, statusLabel } from './alertHistoryModel.js'
+import { clockTime } from './nocCallModel.js'
 
 /**
  * Bildirim teslimatları — e-posta günlüğü (mail önizlemesi sandbox iframe'de) ve webhook (push) partileri.
@@ -28,6 +29,8 @@ const NOTIF_TONE = {
   resolution: { card: 'border-green-300 dark:border-green-900',   open: 'bg-green-500/5',  badge: 'border-green-300 bg-green-500/10 text-green-700 dark:border-green-900 dark:text-green-300' },
   storm:      { card: 'border-violet-300 dark:border-violet-900', open: 'bg-violet-500/5', badge: 'border-violet-300 bg-violet-500/10 text-violet-700 dark:border-violet-900 dark:text-violet-300' },
   quiet:      { card: 'border-indigo-300 dark:border-indigo-900', open: 'bg-indigo-500/5', badge: 'border-indigo-300 bg-indigo-500/10 text-indigo-700 dark:border-indigo-900 dark:text-indigo-300' },
+  // 7/24 izleme ekibi e-postaları (2026-10-04) — takım bildiriminden AYRI ton: "7/24'e de gitti" bir bakışta görünsün
+  noc:        { card: 'border-sky-300 dark:border-sky-900',       open: 'bg-sky-500/5',    badge: 'border-sky-300 bg-sky-500/10 text-sky-700 dark:border-sky-900 dark:text-sky-300' },
   other:      { card: 'border-border',                           open: 'bg-muted/40',     badge: 'border-border bg-muted text-muted-foreground' },
 }
 
@@ -54,7 +57,18 @@ const MAIL_TRIGGER = {
   QUIET_DIGEST:  { Icon: Moon, textKey: 'alh.trigger.quietDigest', cls: 'quiet' },
   // 2026-10-02: sistem bakımı — "Bildirimler bakım boyunca sussun" açıkken bildirim GÖNDERİLMEDİ (karar satırı)
   SYSTEM_MAINTENANCE: { Icon: Wrench, textKey: 'alh.trigger.systemMaintenance', cls: 'quiet' },
+  // 2026-10-04: 7/24 izleme ekibine giden e-postalar (recipient_role = NOC) — açılış / çözüldü / fırtına
+  NOC_OPEN:          { Icon: Headset, textKey: 'alh.trigger.nocOpen',         cls: 'noc' },
+  NOC_RESOLVE:       { Icon: Headset, textKey: 'alh.trigger.nocResolve',      cls: 'resolution' },
+  NOC_STORM:         { Icon: Headset, textKey: 'alh.trigger.nocStorm',        cls: 'noc' },
+  NOC_STORM_UPDATE:  { Icon: Headset, textKey: 'alh.trigger.nocStormUpdate',  cls: 'noc' },
+  NOC_STORM_RESOLVE: { Icon: Headset, textKey: 'alh.trigger.nocStormResolve', cls: 'resolution' },
 }
+
+/** 7/24 posta günlüğü satırı mı (NocNotificationService.LOG_ROLE). */
+export const isNocLog = (l) => l?.recipient_role === 'NOC'
+/** 7/24 e-postası gitmiş sayılan durum (SENT / QUEUED_RETRY…) — sunucunun NocAlertFacts.sent kuralı. */
+export const nocDelivered = (status) => typeof status === 'string' && (status.startsWith('SENT') || status.startsWith('QUEUED_RETRY'))
 
 /** E-posta tetiğinin okunur adı (bilinmeyen tetik ham adıyla). */
 export function mailTriggerText(t, trigger) {
@@ -156,7 +170,13 @@ export function NotifLogCard({ log: l, alertLevel }) {
       <Badge variant="outline" className={cn('font-bold', tone.badge)}><trig.Icon aria-hidden="true" className="size-3" /> {trig.text}</Badge>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         <strong className="truncate">{l.recipient_name}</strong>
-        {l.recipient_role && l.recipient_role !== 'COMBINED' && <SystemRoleBadge role={l.recipient_role} className="text-[0.75em]" />}
+        {isNocLog(l)
+          ? (nocDelivered(l.email_status) && (
+              <Badge variant="outline" data-slot="notif-noc-delivered" className={cn('gap-1 font-semibold', NOTIF_TONE.noc.badge)}>
+                <Headset aria-hidden="true" className="size-3" />{t('alh.noc.delivered', clockTime(l.sent_at, locale))}
+              </Badge>
+            ))
+          : l.recipient_role && l.recipient_role !== 'COMBINED' && <SystemRoleBadge role={l.recipient_role} className="text-[0.75em]" />}
         <span className="truncate text-xs text-muted-foreground">{l.recipient_email}</span>
       </div>
       <EmailStatusBadge status={l.email_status} />
@@ -199,6 +219,8 @@ export default function AlertNotificationsPanel({ history, loadingHistory, loadF
   const [openSection, setOpenSection] = useState('')
   const sentGroups = pushGroups.filter((g) => g[0]?.status === 'SENT').length
   const skippedGroups = pushGroups.length - sentGroups
+  // 7/24 ekibine giden e-postalar (2026-10-04): bölüm başlığı kapalıyken de "7/24'e iletildi" görünsün
+  const nocSent = history.some((l) => isNocLog(l) && nocDelivered(l.email_status))
 
   return (
     <Accordion type="single" collapsible value={openSection} onValueChange={setOpenSection} data-slot="alert-notifications">
@@ -206,6 +228,11 @@ export default function AlertNotificationsPanel({ history, loadingHistory, loadF
         <AccordionTrigger className={SECTION_TRIGGER}>
           {t('alh.notifModal.allHistory')}
           {!loadingHistory && <Count>{t('alh.notifModal.records', history.length)}</Count>}
+          {!loadingHistory && nocSent && (
+            <Badge variant="outline" data-slot="notif-noc-summary" className={cn('gap-1 rounded-full font-semibold', NOTIF_TONE.noc.badge)}>
+              <Headset aria-hidden="true" className="size-3" />{t('alh.noc.inHistory')}
+            </Badge>
+          )}
         </AccordionTrigger>
         <AccordionContent className="flex flex-col gap-2">
           {loadingHistory && <div className={EMPTY}>{t('alh.loading')}</div>}

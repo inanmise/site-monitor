@@ -140,7 +140,9 @@ public class MaintenanceController {
      * ayrıca çağıranda aranır.
      */
     public static boolean canSeeWindow(HttpSession session, Long teamId, Boolean allMonitors) {
-        return SessionScope.canView(session, teamId) || Boolean.TRUE.equals(allMonitors) || teamId == null;
+        // İzleme OKUMA kapsamı: 7/24 operatörü (2026-10-04) her takımın penceresini görür; yazma kapıları
+        // (requireManageable / requireWindowScope) operatörü tanımaz.
+        return SessionScope.canViewMonitoring(session, teamId) || Boolean.TRUE.equals(allMonitors) || teamId == null;
     }
 
     /**
@@ -153,13 +155,13 @@ public class MaintenanceController {
     public ResponseEntity<Map<String, Object>> active(HttpSession session) {
         permissionService.require(session, "maintenance.view", "view");
         Map<String, Object> info = maintenanceService.activeInfo();
-        if (SessionScope.isGlobalViewer(session)) return ok(Map.of("data", info));
+        if (SessionScope.seesAllMonitoring(session)) return ok(Map.of("data", info));   // + 7/24 operatörü (2026-10-04)
         List<String> targets = new ArrayList<>();
         if (info.get("targets") instanceof Collection<?> c) for (Object o : c) if (o != null) targets.add(o.toString());
         Map<String, Set<Long>> viewers = targets.isEmpty() ? Map.of() : targetOwnership.viewerTeams(targets);
         Map<String, Object> scoped = new LinkedHashMap<>(info);
         scoped.put("targets", targets.stream()
-                .filter(k -> viewers.getOrDefault(k, Set.of()).stream().anyMatch(t -> SessionScope.canView(session, t)))
+                .filter(k -> viewers.getOrDefault(k, Set.of()).stream().anyMatch(t -> SessionScope.canViewMonitoring(session, t)))
                 .toList());
         return ok(Map.of("data", scoped));
     }

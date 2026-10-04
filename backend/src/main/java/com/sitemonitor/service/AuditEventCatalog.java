@@ -189,6 +189,7 @@ public final class AuditEventCatalog {
             "NOC_GROUP_UPDATE",
             "NOC_MONITOR_BULK",
             "NOC_MONITOR_UPDATE",
+            "NOC_TEAMS_UPDATE",
             "NOTIFICATION_GROUP_CREATE",
             "NOTIFICATION_GROUP_DEFAULT",
             "NOTIFICATION_GROUP_DELETE",
@@ -346,6 +347,8 @@ public final class AuditEventCatalog {
         if (t.startsWith("NOC_MONITOR_")) return MONITOR;
         if (t.startsWith("NOC_CALL_LIST")) return TEAM;
         if (t.startsWith("NOC_CALL_LOG")) return INCIDENT;          // uyarı üzerinden arama kaydı (ALERT_* ile aynı yer)
+        // 7/24 izleme ekibi takımları (2026-10-04): kimin TÜM izlemeleri göreceğini belirler — erişim/yetki değişikliği
+        if (t.equals("NOC_TEAMS_UPDATE")) return PERMISSION;
         if (t.startsWith("NOC_")) return INTEGRATION;
 
         if (t.startsWith("CERT_INVENTORY_REPORT")) return REPORT;    // CERT_* ten ÖNCE

@@ -75,6 +75,13 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
 
+    /**
+     * "7/24'e iletildi" bilgisi (2026-10-04) — isteğe bağlı: dilimli test bağlamında yokken satırlar {@code noc_sent_at}
+     * taşımaz; varken liste/tekil uyarı tek toplu sorguyla süslenir ve {@code noc=sent} süzgeci çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocAlertFacts nocAlertFacts;
+
     private final AuditService auditService;
     private final MonitorHistoryService monitorHistory;
 
@@ -358,7 +365,7 @@ public class AdminController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", items);
         body.put("scope", orgWide || isAdminOrAudit(session) && "all".equalsIgnoreCase(scope.trim()) ? "all" : "mine");
-        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabledFor(session));
         return ok(body);
     }
 
@@ -1955,9 +1962,13 @@ public class AdminController {
             @RequestParam(required = false) String range,
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) String dir,
+            @RequestParam(required = false) String noc,
             HttpSession session) {
         requirePerm(session, "alerts.read", "view");
         int sz = Math.max(1, Math.min(size, 200));
+        // "7/24'e gidenler" (2026-10-04): yalnız 7/24 AÇILIŞ teslimi gitmiş alarmlar — dört sorgunun …Noc ikizi (gövde aynı
+        // sabitten, yalnız EXISTS eklenir). Alarmı görebilen HERKES süzebilir (yalnız operatör değil).
+        boolean nocOnly = "sent".equalsIgnoreCase(noc) || "1".equals(noc) || "true".equalsIgnoreCase(noc);
         AlertRange win = AlertRange.of(range, since);   // varsayılan "aralıkta açılan"; range=active → aralıkta aktif
         // KAPALI DÜŞER: kapsam, parametrenin VERİLİP VERİLMEDİĞİNE bakar — doğrulamadan kaç tanesinin
         // sağ çıktığına DEĞİL. Aksi halde geçersiz bir tip adı (yeniden adlandırma, yazım hatası)
@@ -1992,19 +2003,31 @@ public class AdminController {
                     "type_counts", Map.of()));
         }
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
-        Page<AlertEvent> result = alertEventRepo.findFiltered(
-                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
-                typeScoped, typesParam,
-                qEffective, levelEffective, acknowledged, teamId,
-                scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sortSpec));
+        Page<AlertEvent> result = nocOnly
+                ? alertEventRepo.findFilteredNoc(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
+                        typeScoped, typesParam,
+                        qEffective, levelEffective, acknowledged, teamId,
+                        scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sortSpec))
+                : alertEventRepo.findFiltered(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
+                        typeScoped, typesParam,
+                        qEffective, levelEffective, acknowledged, teamId,
+                        scoped, scopeList, PageRequest.of(Math.max(0, page), sz, sortSpec));
         enrichAlerts(result.getContent());
         if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
+        if (nocAlertFacts != null) nocAlertFacts.decorate(result.getContent());   // noc_sent_at / noc_via_storm — tek sorgu
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
-        for (Object[] row : alertEventRepo.countFilteredByType(
-                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain,
-                typeScoped, typesParam,
-                qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
+        for (Object[] row : nocOnly
+                ? alertEventRepo.countFilteredByTypeNoc(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain,
+                        typeScoped, typesParam,
+                        qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)
+                : alertEventRepo.countFilteredByType(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain,
+                        typeScoped, typesParam,
+                        qEffective, levelEffective, acknowledged, teamId, scoped, scopeList)) {
             typeCounts.put(String.valueOf(row[0]), (Long) row[1]);
         }
         // İstatistik şeridi sayaçları: seviye kırılımı + sahiplenilmemiş toplamı. Kendi
@@ -2012,10 +2035,15 @@ public class AdminController {
         // basınca diğer kartlar sıfırlanır ve kullanıcı seçimden geri dönemez.
         Map<String, Long> levelCounts = new LinkedHashMap<>();
         long unackedTotal = 0L;
-        for (Object[] row : alertEventRepo.countFacets(
-                resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
-                typeScoped, typesParam,
-                qEffective, teamId, scoped, scopeList)) {
+        for (Object[] row : nocOnly
+                ? alertEventRepo.countFacetsNoc(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
+                        typeScoped, typesParam,
+                        qEffective, teamId, scoped, scopeList)
+                : alertEventRepo.countFacets(
+                        resolvedEffective, win.openedSince(), until, resolvedSince, resolvedUntil, win.activeFrom(), domain, alertTypeEffective,
+                        typeScoped, typesParam,
+                        qEffective, teamId, scoped, scopeList)) {
             String lvl = String.valueOf(row[0]);
             long n = (Long) row[2];
             levelCounts.merge(lvl, n, Long::sum);
@@ -2025,8 +2053,11 @@ public class AdminController {
         // sözlükseldir; created_at sabit genişlikte (19 karakter) ISO-UTC olduğu için güvenli —
         // mevcut since/until yüklemleri de aynı deseni kullanıyor.
         String staleBefore = ISO.format(Instant.now().minus(java.time.Duration.ofHours(ALERT_STALE_HOURS)));
-        long staleTotal = alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
-                alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList);
+        long staleTotal = nocOnly
+                ? alertEventRepo.countStaleNoc(resolvedEffective, staleBefore, domain,
+                        alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList)
+                : alertEventRepo.countStale(resolvedEffective, staleBefore, domain,
+                        alertTypeEffective, typeScoped, typesParam, qEffective, teamId, scoped, scopeList);
 
         // Push kanal özeti (2026-09-12, #16): sayfadaki alarmlar için {sent, failed, skipped, other} — "neden hâlâ açık"
         // satırına e-posta alıcılarının yanında push'un da ulaşıp ulaşmadığını koyar. Tek grup sorgusu; düşerse boş.
@@ -2060,6 +2091,7 @@ public class AdminController {
         // "24 saattir açık" değil. Arayüz kartı yalnız açık sekmede gösterir.
         body.put("stale_total", staleTotal);
         body.put("stale_hours", ALERT_STALE_HOURS);
+        body.put("noc_filter", nocOnly);
         // Arayüzün "Arama kaydı ekle" kapısı SUNUCUDAN (2026-09-27): matris anlık görüntüsü kapsamlı müdürde ADMIN
         // satırını gösterir; asıl kural (global yönetici evet, kapsamlı müdür hayır) NocCallLogService.canWrite'ta.
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));
@@ -2098,9 +2130,11 @@ public class AdminController {
             @RequestParam(required = false) Boolean acknowledged,
             @RequestParam(required = false) Long teamId,
             @RequestParam(required = false) String range,
+            @RequestParam(required = false) String noc,
             HttpSession session,
             jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         requirePerm(session, "alerts.read", "view");
+        boolean nocOnly = "sent".equalsIgnoreCase(noc) || "1".equals(noc) || "true".equalsIgnoreCase(noc);
         AlertRange win = AlertRange.of(range, since);   // ekranla AYNI tarih kipi (aralıkta açılan / aktif)
 
         String alertTypeEffective = (alertType != null && !alertType.isBlank()) ? alertType.trim() : null;
@@ -2119,7 +2153,8 @@ public class AdminController {
         String levelEffective = (level != null && !level.isBlank())
                 ? level.trim().toUpperCase(java.util.Locale.ROOT) : null;
 
-        List<Long> scope = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        // Kapsam LİSTEYLE aynı (2026-10-04): 7/24 operatörü ekranda tüm takımları görüyorsa dosyada da görür.
+        List<Long> scope = seesAllAlerts(session) ? null : SessionScope.viewTeamIds(session);
         boolean scoped = scope != null;
         List<Long> scopeList = scoped ? scope : List.of(-1L);
 
@@ -2140,11 +2175,14 @@ public class AdminController {
         int rows = 0;
         if (!(scoped && scope.isEmpty())) {          // kapsamsız kullanıcı → yalnız başlık satırı
             for (int page = 0; rows < ALERT_CSV_MAX_ROWS; page++) {
-                var chunk = alertEventRepo.findFiltered(resolved, win.openedSince(), until, resolvedSince, resolvedUntil,
-                        win.activeFrom(), domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
-                        qEffective, levelEffective, acknowledged, teamId,
-                        scoped, scopeList,
-                        PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt")))
+                var pageReq = PageRequest.of(page, ALERT_CSV_PAGE, Sort.by(Sort.Direction.DESC, "createdAt"));
+                var chunk = (nocOnly
+                        ? alertEventRepo.findFilteredNoc(resolved, win.openedSince(), until, resolvedSince, resolvedUntil,
+                                win.activeFrom(), domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
+                                qEffective, levelEffective, acknowledged, teamId, scoped, scopeList, pageReq)
+                        : alertEventRepo.findFiltered(resolved, win.openedSince(), until, resolvedSince, resolvedUntil,
+                                win.activeFrom(), domain, alertTypeEffective, csvTypeScoped, csvTypesParam,
+                                qEffective, levelEffective, acknowledged, teamId, scoped, scopeList, pageReq))
                         .getContent();
                 if (chunk.isEmpty()) break;
                 enrichAlerts(chunk);                 // takım adları / tier / tekrar sayısı ekranla aynı
@@ -2507,6 +2545,7 @@ public class AdminController {
         List<AlertEvent> one = new ArrayList<>(List.of(ev));
         enrichAlerts(one);
         if (nocCallLog != null) nocCallLog.decorate(one);
+        if (nocAlertFacts != null) nocAlertFacts.decorate(one);   // "7/24 ekibine iletildi · 14:05" (2026-10-04)
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("data", ev);
         body.put("noc_can_write", nocCallLog != null && nocCallLog.canWrite(session));

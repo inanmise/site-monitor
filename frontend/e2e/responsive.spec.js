@@ -1331,3 +1331,123 @@ for (const vp of PUSH_VIEWPORTS) {
     expect(m.offenders, `webhook ayarı @${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
   })
 }
+
+// 7/24 izleme ekibi (2026-10-04): Ayarlar → 7/24 İzleme Ekibi → "7/24 izleme ekibi takımları" bölümü (uzun takım adlı çipler,
+// önizleme kişi ızgarası) ve 7/24 Konsolu (KPI kartları, süzgeçler, liste: telefonda kart / geniş kapta tablo, "Ara"
+// penceresi) — telefon, tablet ve dizüstünde: sayfa yatay taşmaz, görünür öğe ekran dışına çıkmaz, telefonda dokunma
+// hedefleri ≥ 40 px.
+const NOC_LONG = 'Platform Ödeme Altyapısı ve Kurumsal Entegrasyon Nöbet Takımı'
+const NOC_OT_SETTINGS = { success: true, data: { team_ids: [3, 5], teams: [{ id: 3, name: NOC_LONG, active: true }, { id: 5, name: 'Takım NOC', active: true }],
+  operator_count: 14, updated_at: '2026-10-04T08:00:00', updated_by_name: 'Kişi Y', max_teams: 50 } }
+const NOC_OT_PREVIEW = { success: true, data: {
+  teams: [{ id: 3, name: NOC_LONG, active: true, member_count: 9 }, { id: 5, name: 'Takım NOC', active: true, member_count: 5 }],
+  user_count: 14, truncated: false,
+  users: Array.from({ length: 14 }, (_, i) => ({ user_id: 100 + i, display_name: `Uzun Adlı Nöbetçi Kişi Numara ${i + 1}`,
+    username: `n${i}`, team_ids: [i % 2 ? 3 : 5], team_names: [i % 2 ? NOC_LONG : 'Takım NOC'] })),
+} }
+const NOC_DIRECTORY = { success: true, data: [{ id: 1, name: 'Takım A' }, { id: 3, name: NOC_LONG }, { id: 5, name: 'Takım NOC' }] }
+const NOC_CON_ROW = (i) => ({
+  id: 500 + i, alert_type: i % 2 ? 'HTTP_DOWN' : 'PING_DOWN', family: i % 2 ? 'http' : 'ping', level: i % 3 ? 'CRITICAL' : 'WARNING',
+  domain: `checkout-payments-gateway-very-long-subdomain-${i}.internal.example.com`, created_at: SP_AT(30 + i), resolved: i === 3,
+  team_id: 3, team_name: NOC_LONG, ug_team_id: 1, ug_team_name: 'Takım A',
+  monitor: { type: i % 2 ? 'HTTP' : 'PING', tab: i % 2 ? 'http' : 'ping', id: 70 + i, name: `Ödeme ağ geçidi uç noktası izleme ${i}` },
+  channels: { email_sent: 3, email_failed: i === 1 ? 2 : 0, webhook_sent: 1, push_sent: 6, push_failed: 1, noc: i !== 2 },
+  noc: i !== 2 ? { sent_at: SP_AT(25 + i), via_storm: i === 4, groups: 'NOC Ana' } : null,
+  call_count: i > 2 ? 2 : 0, can_call: true,
+  last_call: i > 2 ? { contacted_name: 'Uzun Adlı Nöbetçi Kişi Numara 1', outcome: 'NO_ANSWER', contacted_at: SP_AT(5), channel: 'PHONE', created_by_name: 'Operatör A' } : null,
+})
+const NOC_CONSOLE = { success: true, data: {
+  window: '24h', generated_at: SP_AT(0), truncated: false, max_rows: 1000, can_write: true, total: 6, page: 0, size: 25,
+  kpis: { open: 128, open_critical: 41, noc_sent: 77, not_called: 12, called_last_hour: 9 },
+  facets: { teams: [{ id: 3, name: NOC_LONG, count: 6 }], types: { http: 3, ping: 3 }, levels: { CRITICAL: 4, HIGH: 0, WARNING: 2 } },
+  items: Array.from({ length: 6 }, (_, i) => NOC_CON_ROW(i)),
+} }
+const NOC_CALL_SHEET = { success: true, data: { alert_id: 500, team_id: 3, team_name: NOC_LONG, call_list_defined: true,
+  call_list: [{ name: 'Uzun Adlı Nöbetçi Kişi Numara 1', title: 'Kıdemli Platform Mühendisi', phone: '+90 (500) 000 00 00', position: 1 },
+    { name: 'Kişi B', title: null, phone: null, position: 2 }],
+  manager: { name: 'Müdür A', title: 'Müdür', phone: '0500 000 00 01' },
+  escalation: [{ name: 'Kişi E', role: 'Teknik Sorumlu', email: 'cok-uzun-eskalasyon-adresi-platform@example.com' }],
+  call_instructions: 'Önce listeyi sırayla arayın; ulaşamazsanız müdürü arayın.' } }
+
+async function mockNoc(page) {
+  const json = (r, body) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+  await page.route((u) => new URL(u).pathname === '/api/admin/noc/operator-teams', (r) => json(r, NOC_OT_SETTINGS))
+  await page.route((u) => new URL(u).pathname === '/api/admin/noc/operator-teams/preview', (r) => json(r, NOC_OT_PREVIEW))
+  await page.route((u) => new URL(u).pathname === '/api/teams/directory', (r) => json(r, NOC_DIRECTORY))
+  await page.route((u) => new URL(u).pathname === '/api/noc/console', (r) => json(r, NOC_CONSOLE))
+  await page.route((u) => /^\/api\/noc\/console\/alerts\/\d+\/call-sheet$/.test(new URL(u).pathname), (r) => json(r, NOC_CALL_SHEET))
+}
+
+async function expectTouch(page, sel, vp, key) {
+  if (vp.width >= 640) return
+  const heights = await page.locator(sel).evaluateAll((els) => els
+    .filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().height)))
+  expect(heights.length, `${key}: ${sel} bulunamadı`).toBeGreaterThan(0)
+  for (const h of heights) expect(h, `${key}: ${sel} dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+}
+
+for (const vp of VIEWPORTS_3) {
+  test(`7/24 izleme ekibi takımları (ayarlar) @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await mockNoc(page)
+    await page.goto('/?tab=settings&sec=noc')
+    const sec = page.locator('[data-slot="noc-operator-teams"]')
+    await sec.locator('[data-slot="noc-ot-user"]').first().waitFor({ timeout: 20_000 })
+    await sec.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(400)
+    const key = `7/24 takımları @${vp.name}`
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `${key}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+    expect(m.pageOverflow, `${key}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    for (const loc of await sec.locator('[data-slot="noc-ot-chip"]').all()) {
+      const b = await loc.boundingBox()
+      expect(b.x + b.width, `${key}: çip sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    await expectTouch(page, '[data-slot="noc-operator-teams"] [data-slot="noc-ot-chip"] button', vp, key)
+    await expectTouch(page, '[data-slot="noc-operator-teams"] [role="combobox"]', vp, key)
+  })
+
+  test(`7/24 konsolu @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await mockNoc(page)
+    await page.goto('/?tab=noc&n_view=console')
+    const con = page.locator('[data-slot="noc-console"]')
+    await con.locator('[data-slot="noc-con-row"]').first().waitFor({ timeout: 20_000 })
+    await page.waitForTimeout(400)
+    const key = `7/24 konsolu @${vp.name}`
+    let m = await page.evaluate(measure)
+    expect(m.offenders, `${key}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+    expect(m.pageOverflow, `${key}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    // Dar kapta (telefon, kenar çubuklu tablet) kart, dizüstünde tablo; tablo kendi kabında yatay KAYMAZ
+    if (vp.width < 1000) await expect(con.locator('[data-slot="noc-con-cards"]')).toBeVisible()
+    else {
+      await expect(con.locator('[data-slot="noc-con-table"]')).toBeVisible()
+      const tableOverflow = await con.locator('[data-slot="noc-con-table"]').evaluate((el) => {
+        const sc = el.closest('[data-slot="table-container"]') || el.parentElement
+        return sc.scrollWidth - sc.clientWidth
+      })
+      expect(tableOverflow, `${key}: tablo kabı yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+    }
+    for (const loc of await con.locator('[data-slot="noc-con-row"]').all()) {
+      const b = await loc.boundingBox()
+      expect(b.x + b.width, `${key}: satır sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    await expectTouch(page, '[data-slot="noc-console"] [data-action="noc-con-call"]', vp, key)
+    await expectTouch(page, '[data-slot="noc-console"] [data-slot="noc-con-sent-toggle"]', vp, key)
+    await expectTouch(page, '[data-slot="noc-views"] [role="tab"]', vp, key)
+
+    // "Ara" penceresi: arama kartı (uzun ad/unvan/e-posta) + form ekrana sığar, telefon bağlantıları ≥ 40 px
+    await con.locator('[data-action="noc-con-call"]').first().click()
+    const dlg = page.getByRole('dialog').first()
+    await dlg.locator('[data-slot="noc-sheet-call-list"]').waitFor({ timeout: 20_000 })
+    await page.waitForTimeout(500)
+    m = await page.evaluate(measure, '[role="dialog"]')
+    expect(m.offenders, `${key}: "Ara" penceresinde ekran dışına taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
+    await expectTouch(page, '[role="dialog"] [data-slot="noc-sheet-person"] a[href^="tel:"]', vp, key)
+  })
+}

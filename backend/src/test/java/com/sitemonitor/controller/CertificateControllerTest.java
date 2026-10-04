@@ -1105,4 +1105,36 @@ class CertificateControllerTest {
                 .andExpect(jsonPath("$.data.certs.total").value(5))
                 .andExpect(jsonPath("$.data.certs.health_pct").value(80.0));
     }
+    // ── 7/24 izleme ekibi operatörü (2026-10-04) ──────────────────────────────
+
+    private MockHttpSession nocOperatorSession() {
+        MockHttpSession s = scopedSession();
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        return s;
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: sertifika listesi/uyarılar/istatistik TÜM takımlar (kapsam null); başka takımın alarm geçmişini okur")
+    void nocOperator_readsAllCertificates() throws Exception {
+        when(certService.getAllLatestForTeams(null)).thenReturn(List.of());
+        when(certService.getWarningsForTeams(null)).thenReturn(List.of());
+        mvc.perform(get("/api/certificates").session(nocOperatorSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/warnings").session(nocOperatorSession())).andExpect(status().isOk());
+        verify(certService).getAllLatestForTeams(null);
+        verify(certService).getWarningsForTeams(null);
+
+        when(inventoryRepo.findByDomain("baska.example.com")).thenReturn(java.util.Optional.of(invOf("baska.example.com", 9L)));
+        when(alertEventRepo.findByDomainOrderByCreatedAtDesc("baska.example.com")).thenReturn(List.of());
+        mvc.perform(get("/api/history/baska.example.com/alerts").session(nocOperatorSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/history/baska.example.com/alerts").session(scopedSession())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka takımın alan adında anlık kontrol (/check — dış bağlantı + kayıt) 403 kalır")
+    void nocOperator_cannotRunForeignCheck() throws Exception {
+        when(inventoryRepo.findByDomain("baska.example.com")).thenReturn(java.util.Optional.of(invOf("baska.example.com", 9L)));
+        mvc.perform(get("/api/check/baska.example.com").session(nocOperatorSession()))
+                .andExpect(status().isForbidden());
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any());
+    }
 }

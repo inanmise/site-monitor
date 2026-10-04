@@ -324,6 +324,31 @@ public final class PermissionCatalog {
      */
     public static final Set<String> AUDIT_WRITE_GRANTS = Set.of("noc_calls.write");
 
+    /**
+     * 7/24 İZLEME EKİBİ TAKIMI üyeliğinden (rol DEĞİŞMEDEN) gelen dinamik izinler — {@code "kaynak:eylem"} (2026-10-04,
+     * kullanıcı isteği). {@code PermissionService.allows(HttpSession, …)} oturum 7/24 operatörüyken
+     * ({@code SessionScope.isNocOperator}) rol satırına EK olarak bunları açar; matris satırları değişmez, matris ekranı
+     * bunları göstermez (rol değil, takım üyeliği).
+     *
+     * <p>Yalnız İZLEME OKUMA izinleri + arama kaydı: alarmlar, izlemeler, envanter/sertifikalar (+ notları), olaylar,
+     * bakım pencereleri, alan adı kaydı sekmesi, izleme grupları. Hiçbir yazma/çalıştırma izni ({@code alerts.actions},
+     * {@code monitoring.crud/trigger}, {@code inventory.crud} …) ve hiçbir yönetim okuması ({@code audit_log.read},
+     * {@code system_health.read}, {@code users.list}, {@code settings.*}) YOKTUR. Alarm yorumu/notu izni ayrı bir matris
+     * anahtarı değildir: {@code IncidentsController.addComment} 7/24 operatörüne kendi kapısıyla açar.
+     *
+     * <p>Buraya satır eklemek operatörün tanımını genişletir: {@code PermissionCatalogTest} listeyi birebir pinler.
+     */
+    public static final Set<String> NOC_OPERATOR_GRANTS = Set.of(
+            "alerts.read:view",
+            "monitoring.read:view",
+            "inventory.list:view",
+            "notes.read:view",
+            "incidents.view:view",
+            "maintenance.view:view",
+            "domain.registration.view:view",
+            "monitoring.group:view",
+            "noc_calls.write:edit");
+
     private static Map<String, Map<String, Boolean>> auditDefaults() {
         var map = new java.util.LinkedHashMap<String, Map<String, Boolean>>();
         // System-wide read-only auditor. Sistem ayarları (SMTP/LDAP/secret/DB) AUDIT'e

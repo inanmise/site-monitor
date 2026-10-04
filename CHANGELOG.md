@@ -15,6 +15,22 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.104.0] — 2026-10-04
+
+### Added
+- **7/24 izleme ekibi takımları:** Ayarlar → 7/24'te bir ya da birden çok takım "7/24 izleme ekibi" olarak işaretlenir
+  (yalnız global yönetici, denetlenir, kimlerin operatör olacağı önizlenir; takım listesinde "7/24" rozeti). Bu
+  takımların etkin üyeleri rol değişmeden 7/24 operatörü olur: tüm takımların alarm, olay, bakım, durum, fırtına, dokuz
+  izleme türü, envanter/sertifika ve genel bakış ekranlarını SALT OKUR; her alarma arama kaydı ve not ekler. Sahiplenme,
+  çözme, yeniden bildirim, düzenleme, denetim kaydı ve yönetim ekranları kapalı kalır. Takım çıkarılınca yetki en geç
+  30 sn'de, yeniden giriş gerekmeden kalkar.
+- **7/24 konsolu (7/24 sekmesi):** açık alarm, 7/24'e giden, aranmayan ve son bir saatte aranan sayıları; takım,
+  seviye, tür, "7/24'e gidenler", arandı / aranmadı ve 1 sa / 24 sa / 7 gün süzgeçleri. Satırda kanallar, 7/24'e gidiş
+  saati ve son arama; "Ara" alarmın takımının arama listesini (sıra, ad, telefon), müdürünü, eskalasyon kişilerini ve
+  talimatları arama kaydı formuyla birlikte açar. Geniş ekranda tablo, telefonda kart.
+- **Alarm Geçmişi:** "7/24'e gidenler" süzgeci, kart / satır / ayrıntıda "7/24 · ss:dd" rozeti ve bildirim günlüğünde
+  7/24 e-postasının "7/24 ekibine iletildi" işareti — alarmı gören herkese. Kullanım kılavuzu (TR/EN, PDF) güncellendi.
+
 ## [20.103.0] — 2026-10-04
 
 ### Added
@@ -2182,7 +2198,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.103.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.104.0...HEAD
+[20.104.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.104.0
 [20.103.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.103.0
 [20.102.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.102.0
 [20.101.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.101.0

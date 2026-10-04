@@ -39,7 +39,7 @@ public class CertificateCardExtrasController {
     @GetMapping("/shared")
     public ResponseEntity<Map<String, Object>> shared(@RequestParam String domain, HttpSession session) {
         Set<String> scope = null;
-        if (!SessionScope.isGlobalViewer(session)) {
+        if (!SessionScope.seesAllMonitoring(session)) {   // + 7/24 operatörü (2026-10-04)
             List<Long> teams = SessionScope.viewTeamIds(session);
             scope = teams == null || teams.isEmpty() ? Set.of() : new HashSet<>(inventoryRepo.findDomainsForTeams(teams));
         }
@@ -58,7 +58,7 @@ public class CertificateCardExtrasController {
     @GetMapping("/card-extras")
     public ResponseEntity<Map<String, Object>> cardExtras(HttpSession session) {
         Set<String> scope = null;   // null = global
-        if (!SessionScope.isGlobalViewer(session)) {
+        if (!SessionScope.seesAllMonitoring(session)) {   // + 7/24 operatörü (2026-10-04)
             List<Long> teams = SessionScope.viewTeamIds(session);
             scope = teams == null || teams.isEmpty() ? Set.of() : new HashSet<>(inventoryRepo.findDomainsForTeams(teams));
         }

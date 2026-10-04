@@ -40,14 +40,14 @@ public class MonitorSparklineController {
         }
         // Maliyet sınırı (prod kapısı 2026-09-25, O-7): global görücü tüm filoyu ortak önbellekten alır; kapsamlı
         // kullanıcı yalnız GÖRÜNÜR monitörleri sorgular ve penceresi arayüzün kullandığı 24 saatle sınırlıdır.
-        boolean global = SessionScope.isGlobalViewer(session);
+        boolean global = SessionScope.seesAllMonitoring(session);   // + 7/24 operatörü (2026-10-04)
         int h = Math.max(1, Math.min(global ? MonitorSparklineService.MAX_HOURS : MonitorSparklineService.SCOPED_MAX_HOURS, hours));
         Map<Long, Map<String, Object>> result;
         if (global) {
             result = sparklineService.sparklinesAll(type, h);
         } else {
             Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                    .filter(e -> SessionScope.canView(session, e.getValue()))
+                    .filter(e -> SessionScope.canViewMonitoring(session, e.getValue()))
                     .map(Map.Entry::getKey).collect(Collectors.toSet());
             result = sparklineService.sparklines(type, h, visible);
         }
@@ -72,14 +72,14 @@ public class MonitorSparklineController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "Bilinmeyen izleme türü: " + type));
         }
         // O-7: global görücü ortak önbellekten; kapsamlı kullanıcı yalnız görünür monitörler, en çok 30 gün.
-        boolean global = SessionScope.isGlobalViewer(session);
+        boolean global = SessionScope.seesAllMonitoring(session);   // + 7/24 operatörü (2026-10-04)
         int d = Math.max(1, Math.min(global ? MonitorSparklineService.MAX_DAYS : MonitorSparklineService.SCOPED_MAX_DAYS, days));
         Map<Long, Map<String, Object>> result;
         if (global) {
             result = sparklineService.availabilityAll(type, d);
         } else {
             Set<Long> visible = sparklineService.monitorTeams(type).entrySet().stream()
-                    .filter(e -> SessionScope.canView(session, e.getValue()))
+                    .filter(e -> SessionScope.canViewMonitoring(session, e.getValue()))
                     .map(Map.Entry::getKey).collect(Collectors.toSet());
             result = sparklineService.availability(type, d, visible);
         }

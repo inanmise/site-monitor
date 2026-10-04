@@ -77,7 +77,7 @@ function PageSkeleton({ label }) {
 }
 
 export default function NocCoveragePage({
-  systemRole = 'USER', globalAdmin = false, myTeamIds = [], myTeams = [], userId = null, refreshKey = null,
+  systemRole = 'USER', globalAdmin = false, myTeamIds = [], myTeams = [], userId = null, refreshKey = null, nocOperator = false,
 }) {
   const t = useT()
   const toast = useToast()
@@ -267,7 +267,8 @@ export default function NocCoveragePage({
   //  - global yönetici: tüm rehber · lider/müdür olduğu takımlar (üye olmasa da — listesini o yönetir) · kendi takımları
   //  - satır takımları YALNIZ üyesiyse (ya da global görüntüleyiciyse): envanter kökenli satır UG takımına da görünür ama
   //    `team_id` SY takımıdır → UG kullanıcısı onu seçip (ya da ilk açılışta düşüp) 403 bandı görürdü.
-  const globalViewer = globalAdmin || systemRole === 'AUDIT'
+  // 7/24 operatörü (2026-10-04) her takımın arama listesini okur (sunucu: canReadCallList) → tüm satır takımları seçenek.
+  const globalViewer = globalAdmin || systemRole === 'AUDIT' || nocOperator
   const callTeamOptions = useMemo(() => {
     const m = new Map()
     const put = (id, name) => { if (id == null) return; const k = String(id); m.set(k, name || m.get(k) || k) }

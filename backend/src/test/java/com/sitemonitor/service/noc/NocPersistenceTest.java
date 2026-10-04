@@ -348,4 +348,15 @@ class NocPersistenceTest {
         jdbc.update("DELETE FROM alert_storms WHERE id IN (9101, 9102)");
         jdbc.update("DELETE FROM alert_events WHERE id IN (9001, 9002)");
     }
+    @Test
+    @DisplayName("şema yaması (2026-10-04): noc_settings'in 7/24 ekibi takım kolonları eksikse eklenir, ikinci koşu hiçbir şey yapmaz")
+    void operatorTeamColumnsPatched() {
+        jdbc.execute("ALTER TABLE noc_settings DROP COLUMN operator_team_ids");
+        jdbc.execute("ALTER TABLE noc_settings DROP COLUMN operator_teams_updated_by_name");
+        assertThat(patches.columnExists("noc_settings", "operator_team_ids")).isFalse();
+        assertThat(patches.apply()).isEqualTo(2);
+        for (String[] c : NocSchemaPatches.OPERATOR_COLUMNS)
+            assertThat(patches.columnExists("noc_settings", c[0])).as(c[0]).isTrue();
+        assertThat(patches.apply()).isZero();
+    }
 }

@@ -106,6 +106,10 @@ public class NocCallLogService {
     public boolean canWrite(HttpSession s) {
         if (s == null) return false;
         if (SessionScope.isGlobalAdmin(s)) return true;
+        // 7/24 izleme ekibi takımının üyesi (2026-10-04): rolü ne olursa olsun operatördür — kapsamlı müdür de olsa.
+        // Takımı Ayarlar'da GLOBAL yönetici işaretler; "müdür global sanıldı" tuzağı burada yok, çünkü yalnız OKUMA
+        // kapsamı + arama kaydı + not genişler (yazma kapsamı aynen kalır).
+        if (SessionScope.isNocOperator(s)) return true;
         if (SessionScope.isScopedAdmin(s)) return false;
         return permissionService.allows(s, PERMISSION, PERMISSION_ACTION);
     }

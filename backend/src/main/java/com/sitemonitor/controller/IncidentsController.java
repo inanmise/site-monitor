@@ -138,7 +138,9 @@ public class IncidentsController {
         TeamInfo teams = resolveTeams(events, inv);
         Set<Long> owned = ownedIds(events, own, inv);
         Access access = accessFor(session);
-        Delivery delivery = deliveryFor(events, e -> owned.contains(e.getId()));
+        // 7/24 operatörü (2026-10-04) başka ekibin olayını da TAM okur (teslim özeti, izleme bağlantısı, çözen kişi) —
+        // eylem bayrakları (can_manage/can_act/can_delete) yine KENDİ kapsamından.
+        Delivery delivery = deliveryFor(events, e -> access.noc() || owned.contains(e.getId()));
         List<Map<String, Object>> data = events.stream()
                 .map(e -> toDto(e, monitors, commentCounts, teams, access.forRow(owned.contains(e.getId())), delivery)).toList();
 
@@ -154,7 +156,7 @@ public class IncidentsController {
         body.put("size",        result.getSize());
         body.put("type_counts", typeCounts);
         body.put("scope",       eff);
-        body.put("visible_to_all", visibleToAll());
+        body.put("visible_to_all", visibleToAll() || nocCommenter(session));   // 7/24 operatörü: ayardan bağımsız
         if (orgWide) body.put("scope_counts",
                 scopeCounts(eff, result.getTotalElements(), own, resolved, since, until, type, qEff));
         return ok(body);
@@ -224,23 +226,38 @@ public class IncidentsController {
      * ayrıca istenir. YAZMA kapılarında KULLANILMAZ.
      */
     private boolean orgWideReader(HttpSession session) {
-        return session != null && !SessionScope.isGlobalViewer(session) && visibleToAll();
+        if (session == null || SessionScope.isGlobalViewer(session)) return false;
+        // 7/24 operatörü (2026-10-04) ayardan BAĞIMSIZ tüm takımların olaylarını okur (yazma kapıları bunu okumaz).
+        return visibleToAll() || nocCommenter(session);
     }
 
     /** İstek başına bir kez kurulan eylem hakları (satır başına oturum/izin okunmaz). */
-    private record Access(boolean actions, boolean globalAdmin) {
+    private record Access(boolean actions, boolean globalAdmin, boolean noc) {
         RowAccess forRow(boolean owned) {
-            return new RowAccess(owned, owned && actions, owned && actions && globalAdmin);
+            return new RowAccess(owned, owned && actions, owned && actions && globalAdmin,
+                    owned || noc, (owned && actions) || noc);
         }
     }
 
     /** {@code can_manage} = olay kendi kapsamında (yazma kapılarının sorduğu kapsam); {@code can_act} = + alerts.actions;
      *  {@code can_delete} = + global yönetici (silme ucunun kuralı). Arayüz yalnız bunlara göre eylem çizer; sunucu her
      *  yazma ucunda yine kendi kapısını uygular. */
-    private record RowAccess(boolean owned, boolean canAct, boolean canDelete) {}
+    private record RowAccess(boolean owned, boolean canAct, boolean canDelete, boolean full, boolean canComment) {}
 
     private Access accessFor(HttpSession session) {
-        return new Access(permissionService.allows(session, "alerts.actions", "execute"), SessionScope.isGlobalAdmin(session));
+        return new Access(permissionService.allows(session, "alerts.actions", "execute"), SessionScope.isGlobalAdmin(session),
+                nocCommenter(session));
+    }
+
+    /**
+     * 7/24 operatörü (2026-10-04, kullanıcı isteği "alarma bildirime uyarıya notlar düşebilsinler"): 7/24 izleme ekibi
+     * takımının üyesi ya da {@code noc_calls.write} sahibi (eski AUDIT düzeni). OKUYABİLDİĞİ her olaya YORUM yazar ve
+     * kendi yorumunu siler; başka hiçbir alarm eylemi (sahiplen/çöz/yeniden bildir/olay silme) açılmaz. Olayı tam okur
+     * (teslim özeti, izleme bağlantısı). {@code nocCallLog} isteğe bağlı (dilimli test) — yoksa yalnız takım bayrağı.
+     */
+    private boolean nocCommenter(HttpSession session) {
+        if (SessionScope.isNocOperator(session)) return true;
+        return nocCallLog != null && nocCallLog.canWrite(session) && !SessionScope.isGlobalAdmin(session);
     }
 
     /** Sıralama: varsayılan ongoing-first + en yeni; kolon seçilirse o alan + createdAt tie-breaker. */
@@ -346,7 +363,7 @@ public class IncidentsController {
         // bilmiyordu. Değer bir SİCİL ya da SİSTEM JETONU olabilir — ayrımı arayüz yapar.
         // Başka ekibin olayında çözen KİŞİ verilmez (sahiplenen gibi o ekibin iç bilgisi — regresyon taraması
         // 2026-09-28); sistem jetonu / "Sistem (…)" kalır ki "neden kapandı?" yine cevaplanabilsin.
-        dto.put("resolved_by",   resolvedByFor(e.getResolvedBy(), access.owned()));
+        dto.put("resolved_by",   resolvedByFor(e.getResolvedBy(), access.full()));
         dto.put("acknowledged",  e.getAcknowledged());
         dto.put("domain",        e.getDomain());
         dto.put("message",       e.getMessage());
@@ -356,12 +373,14 @@ public class IncidentsController {
         dto.put("can_manage",    access.owned());
         dto.put("can_act",       access.canAct());
         dto.put("can_delete",    access.canDelete());
-        if (!access.owned() && monitor.containsKey("monitor_id")) {
+        // Yorum yazabilir mi (2026-10-04): kendi kapsamında alerts.actions ya da 7/24 operatörü (her okunabilir olay).
+        dto.put("can_comment",   access.canComment());
+        if (!access.full() && monitor.containsKey("monitor_id")) {
             Map<String, Object> slim = new LinkedHashMap<>(monitor);
             slim.put("monitor_id", null);
             dto.put("monitor", slim);
         }
-        if (access.owned()) ownerFacts(dto, e, delivery);
+        if (access.full()) ownerFacts(dto, e, delivery);
         return dto;
     }
 
@@ -576,7 +595,7 @@ public class IncidentsController {
         List<AlertEvent> one = List.of(ev);
         TeamInfo teams = resolveTeams(one, inventoryFor(one, null));
         return ok(Map.of("data", toDto(ev, resolveMonitors(one), commentCounts(one), teams,
-                accessFor(session).forRow(owned), deliveryFor(one, e -> owned))));
+                accessFor(session).forRow(owned), deliveryFor(one, e -> owned || nocCommenter(session)))));
     }
 
     // ── Yorumlar ─────────────────────────────────────────────────────────────────
@@ -592,8 +611,15 @@ public class IncidentsController {
     public ResponseEntity<Map<String, Object>> addComment(
             @PathVariable Long id, @RequestBody Map<String, Object> body,
             HttpSession session, HttpServletRequest request) {
-        permissionService.require(session, "alerts.actions", "execute");
-        requireIncidentScope(session, requireAlert(id));
+        // 7/24 operatörü (2026-10-04): okuyabildiği HER olaya yorum yazar (alerts.actions gerekmez, takım kapsamı
+        // okuma kapısıdır). Diğerleri bugünkü gibi: alerts.actions + KENDİ kapsamı.
+        if (nocCommenter(session)) {
+            permissionService.require(session, "alerts.read", "view");
+            requireIncidentReadable(session, requireAlert(id));
+        } else {
+            permissionService.require(session, "alerts.actions", "execute");
+            requireIncidentScope(session, requireAlert(id));
+        }
         String text = body.get("body") != null ? body.get("body").toString().trim() : "";
         if (text.isEmpty()) throw new IllegalArgumentException("Yorum boş olamaz");
         if (text.length() > MAX_COMMENT) throw new IllegalArgumentException("Yorum " + MAX_COMMENT + " karakteri aşamaz");
@@ -619,7 +645,9 @@ public class IncidentsController {
     @DeleteMapping("/comments/{commentId}")
     public ResponseEntity<Map<String, Object>> deleteComment(
             @PathVariable Long commentId, HttpSession session, HttpServletRequest request) {
-        permissionService.require(session, "alerts.actions", "execute");
+        // 7/24 operatörü (2026-10-04) okuyabildiği olayda KENDİ yorumunu siler; başkasınınkini yalnız yönetim kapsamıyla.
+        boolean noc = nocCommenter(session);
+        permissionService.require(session, noc ? "alerts.read" : "alerts.actions", noc ? "view" : "execute");
         AlertComment c = commentRepo.findById(commentId)
                 .orElseThrow(() -> new NoSuchElementException("Yorum bulunamadı: " + commentId));
         // TAKIM KAPSAMI: kardes uclar (get/listComments/addComment) requireIncidentScope tasiyor,
@@ -628,7 +656,7 @@ public class IncidentsController {
         // silebiliyordu (geri alma arayuzu de yok). Ayrica yorumun varligi istisna ile
         // numaralandirilabiliyordu; kapsam kontrolu once gelince o da kapanir.
         AlertEvent ev = requireAlert(c.getAlertEventId());
-        requireIncidentScope(session, ev);
+        if (noc) requireIncidentReadable(session, ev); else requireIncidentScope(session, ev);
         if (c.getDeletedAt() != null) return ok(Map.of("message", "Zaten silinmiş"));
         String user = (String) session.getAttribute("username");
         boolean own = user != null && user.equals(c.getAuthorUsername());

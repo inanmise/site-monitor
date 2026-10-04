@@ -388,4 +388,23 @@ class NocCallLogServiceTest {
         assertThat(NocCallLogService.activityType("EXPIRY")).isEqualTo("CERT");
         assertThat(NocCallLogService.activityType("HTTP_DOWN")).isEqualTo("HTTP");
     }
+    @Test
+    @DisplayName("7/24 izleme ekibi TAKIMI üyesi (2026-10-04): rolü ne olursa olsun yazar ve TÜM uyarıları okur — kapsamlı müdür de; bayrak yoksa eski kural")
+    void teamBasedNocOperator() {
+        nocGrant.put("USER", false);
+        nocGrant.put("ADMIN", true);
+        MockHttpSession userOp = memberB();
+        userOp.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        MockHttpSession scopedOp = scoped();
+        scopedOp.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+
+        assertThat(svc.canWrite(userOp)).isTrue();
+        assertThat(svc.canWrite(scopedOp)).isTrue();             // takım üyeliği kapsamlı müdürü de operatör yapar
+        assertThat(svc.seesAllAlerts(userOp)).isTrue();
+        assertThat(svc.canRead(userOp, alertA)).isTrue();        // başka takımın uyarısı
+        // bayrak yoksa: kapsamlı müdür yine yazamaz, takım B üyesi takım A'yı okuyamaz (değişmedi)
+        assertThat(svc.canWrite(scoped())).isFalse();
+        assertThat(svc.canWrite(memberB())).isFalse();
+        assertThat(svc.canRead(memberB(), alertA)).isFalse();
+    }
 }

@@ -25,7 +25,7 @@ import { NocCallSection } from './NocCallLog.jsx'
 import AlertNotificationsPanel, { EmailStatusBadge, mailTriggerText } from './AlertNotifications.jsx'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, RepeatBadge,
-  SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge,
+  SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge,
 } from './AlertBadges.jsx'
 import { alertExpiryIso, alertLink, buildAlertTimeline, groupPushRows, parseContacts, statusLabel } from './alertHistoryModel.js'
 import { StormPushSection, StormPushTimelineEntry } from './AlertStormPush.jsx'
@@ -129,6 +129,7 @@ export function AlertDetailBody({
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />
         <StormBadge stormId={a.storm_id} />
+        <NocSentBadge sentAt={a.noc_sent_at} viaStorm={a.noc_via_storm} long />
         <span className="ml-auto inline-flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
           <Clock aria-hidden="true" className="size-3.5" />{open ? t('alh.openFor', dur) : t('alh.lastedFor', dur)}
         </span>

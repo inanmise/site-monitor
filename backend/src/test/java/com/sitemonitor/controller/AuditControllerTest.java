@@ -619,4 +619,18 @@ class AuditControllerTest {
                 .andExpect(status().isOk());
         org.mockito.Mockito.verify(weakAlgoService).build(org.mockito.ArgumentMatchers.isNull());
     }
+    @Test
+    @DisplayName("7/24 operatörü (2026-10-04) AUDIT DEĞİLDİR: sistem geneli denetim kaydı açılmaz — kapsam TEAM kalır")
+    void nocOperator_auditLogStaysTeamScoped() throws Exception {
+        MockHttpSession op = teamUser(5L);
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+        mvc.perform(get("/api/admin/audit").session(op))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("TEAM"));
+        verify(auditLogRepo, org.mockito.Mockito.never()).findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), eq(true), any(), any(), any(), any());
+    }
 }

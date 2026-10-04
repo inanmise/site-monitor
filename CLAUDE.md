@@ -128,6 +128,17 @@ A user holds at most one live session. `UserService` keeps `AppUser.activeSessio
 ### Permissions
 Per-resource permission model layered on top of `systemRole` (`USER` / `AUDIT` / `ADMIN`) and org role (`PO`/`TECH`/`MANAGER`/`CLEVEL`). Single source of truth: `PermissionCatalog.ALL` — every resource key + allowed actions (`view`/`edit`/`execute`). The Permission Matrix UI renders from this; bootstrap seed is driven from it. **If you add a new resource_key in code, add it to `PermissionCatalog` in the same change** — otherwise the matrix UI won't show it and grants won't bootstrap.
 
+**7/24 monitoring team (2026-10-04, user decision).**
+- **Setting:** Settings → 7/24 → "7/24 izleme ekibi takımları" (`noc_settings.operator_team_ids`). `PUT /api/admin/noc/operator-teams` is GLOBAL admin only (audit `NOC_TEAMS_UPDATE`); scoped admin / AUDIT see it read-only.
+- **Who:** active members of those teams are 7/24 operators WITHOUT a role change. `NocOperatorService` keeps a 30 s snapshot; `AuthInterceptor.syncNocOperator` writes the session attributes `nocOperator` / `nocTeamIds` on every request, so revocation needs no re-login.
+- **Reads:** operators read all monitoring (alarms, incidents, maintenance, status, storms, the nine monitor types, inventory/certs, overview, notes, search) through `SessionScope.canViewMonitoring` / `seesAllMonitoring` / `monitoringViewTeamIds`, plus the dynamic grants in `PermissionCatalog.NOC_OPERATOR_GRANTS`.
+- **Writes:** operators gain only `noc_calls.write` and comments on any alarm they can read.
+- **Never widen writes or admin:** `viewTeamIds` is untouched. `canManage`, `canOperateTeam`, `canWriteInventory`, ack / resolve, incident write, the audit log and admin areas NEVER read the flag. A new READ path uses the monitoring helpers; a WRITE path never does. Memo keys use `seesAllMonitoring`.
+- **Console:** `GET /api/noc/console` (memoised 15 s per window, batch-loaded, max 1000 rows). `GET /api/noc/console/alerts/{id}/call-sheet` is the ONLY endpoint that exposes call-list phone numbers (operators / writers).
+- **Alert history:** `noc=sent` = an OPEN `noc_deliveries` row with SENT* / QUEUED_RETRY*.
+- **Legacy:** AUDIT + `noc_calls.write` operators keep working.
+- **Gates:** `NocOperatorServiceTest`, `SessionScopeTest`, `InventoryOrgVisibilityAdminTest` (operator variants), `AuditControllerTest` / `SystemControllerTest` noc cases, `AuthInterceptorNocOperatorTest`, `NocConsole.test.jsx`.
+
 ### The check pipeline
 `SchedulerService.@Scheduled(cron=…)` (default `0 0 * * * *`) acquires the distributed lock and fans out to `CertificateCheckerService`, plus parallel sweeps for `PortCheckerService`, `DnsCheckerService`, `UptimeHttpCheckerService`. Concurrency uses a dedicated `certCheckExecutor` `ThreadPoolTaskExecutor` (bean in `WebConfig`, sized by `EXECUTOR_CORE_SIZE` / `EXECUTOR_MAX_SIZE` / `EXECUTOR_QUEUE_CAPACITY`).
 

@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import {
-  Search, SlidersHorizontal, X, FilterX, ChevronDown, Shapes, Gauge, UserCheck, CalendarRange, Users, ArrowUpDown,
+  Search, SlidersHorizontal, X, FilterX, ChevronDown, Shapes, Gauge, UserCheck, CalendarRange, Users, ArrowUpDown, Headset,
 } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { ALERT_TYPES, alertTypeMeta, alertTypeLabel } from '../../../utils/alertTypeMeta.js'
@@ -20,10 +20,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/shadcn/pop
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, SheetClose } from '@/components/shadcn/sheet'
 import { RadioGroup, RadioGroupItem } from '@/components/shadcn/radio-group'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
+import { Toggle } from '@/components/shadcn/toggle'
 import { FieldLabel, Field as ShField, FieldContent, FieldTitle, FieldDescription } from '@/components/shadcn/field'
 import { cn } from '@/lib/utils'
 import {
-  LEVELS, RANGE_ACTIVE, RANGE_RESOLVED, PRESETS, SORT_KEYS, activeAlertFilters, dateKind, dateKindOptions, rangeForKind,
+  LEVELS, RANGE_ACTIVE, RANGE_RESOLVED, PRESETS, SORT_KEYS, NOC_SENT, activeAlertFilters, dateKind, dateKindOptions, rangeForKind,
   isPreset, sortParts, sortValue, fmtFilterDate,
 } from './alertHistoryModel.js'
 
@@ -263,6 +264,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
       case 'ack': return f.value === 'ack' ? t('alh.ackOnly') : t('alh.unackedOnly')
       case 'team': return t('alh.chip.team', teamName(f.value))
       case 'q': return t('alh.chip.search', f.value)
+      case 'noc': return t('alh.noc.filter')
       case 'range': return f.value === RANGE_ACTIVE ? t('alh.chip.active') : f.value === RANGE_RESOLVED ? t('alh.chip.resolvedRange') : t('alh.chip.openedRange')
       case 'preset': return t('alh.chip.preset', presetLabel(t, f.value))
       case 'from': return t('alh.chip.from', fmtFilterDate(f.value, locale))
@@ -283,6 +285,14 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
   const ackFacet = (block) => (
     <FacetMenu name="ack" title={t('alh.facet.ack')} icon={UserCheck} value={filters.ack} options={ackOptions} block={block}
       onChange={(v) => patch({ ack: v })} />
+  )
+  // "7/24'e gidenler" (2026-10-04): yalnız 7/24 ekibine iletilen alarmlar — alarmı gören HERKES süzer (sunucu …Noc ikizi).
+  const nocToggle = (block) => (
+    <Toggle variant="outline" size="sm" data-slot="alert-noc-filter" pressed={filters.noc === NOC_SENT}
+      onPressedChange={(on) => patch({ noc: on ? NOC_SENT : '' })} title={t('alh.noc.filterHint')}
+      className={cn('h-9 gap-1.5 pointer-coarse:h-10', block && 'w-full justify-start')}>
+      <Headset aria-hidden="true" />{t('alh.noc.filter')}
+    </Toggle>
   )
   const teamFacet = teams.length > 0 && (
     <span className="inline-flex w-full items-center gap-1.5 sm:w-auto sm:max-w-[15rem] sm:min-w-[11rem]">
@@ -346,6 +356,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
                   {typeFacet(true)}
                   {levelFacet(true)}
                   {ackFacet(true)}
+                  {nocToggle(true)}
                   {teamFacet}
                   <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold text-muted-foreground">{rangeTitle}</span>
@@ -373,7 +384,7 @@ export default function AlertToolbar({ tab, filters, patch, reset, typeCounts = 
             <SortSelect filters={filters} patch={patch} tab={tab} className="sm:ml-auto" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {search}{typeFacet(false)}{levelFacet(false)}{ackFacet(false)}{teamFacet}{datesFacet}
+            {search}{typeFacet(false)}{levelFacet(false)}{ackFacet(false)}{nocToggle(false)}{teamFacet}{datesFacet}
           </div>
         </>
       )}

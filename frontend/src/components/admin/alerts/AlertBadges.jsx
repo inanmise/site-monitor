@@ -1,5 +1,5 @@
-import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning } from 'lucide-react'
-import { useT } from '../../../i18n/index.jsx'
+import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning, Headset } from 'lucide-react'
+import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { alertTypeMeta, alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { formatDuration } from '../../../utils/incidentMeta.js'
 import { systemResolverKey } from '../../../utils/resolvedBy.js'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { levelClass, alertHref, alertSourceTab, closesAutomatically } from './alertHistoryModel.js'
+import { clockTime, fullTime } from './nocCallModel.js'
 
 /**
  * Alarm Geçmişi'nin küçük, tekrar eden rozetleri — Olaylar konsolu (incidents/IncidentBadges) ile AYNI görsel dil:
@@ -144,6 +145,26 @@ export function StormBadge({ stormId, className }) {
       className={cn('gap-1 rounded-full border-violet-500/40 bg-violet-500/10 font-semibold whitespace-nowrap text-violet-700 dark:text-violet-300', className)}
       title={t('alh.storm.tip')}>
       <CloudLightning aria-hidden="true" className="size-3" />{t('alh.storm.badge', stormId)}
+    </Badge>
+  )
+}
+
+/**
+ * "7/24 ekibine iletildi · 14:05" (2026-10-04) — alarmın 7/24 AÇILIŞ e-postası gitmişse (`noc_sent_at`; fırtına e-postasıyla
+ * gittiyse ayrıca belirtilir). Alarmı görebilen HERKES görür. Saat yerel; tam an `title`'da. Gitmediyse çizilmez.
+ * Test kancası: `data-slot="alert-noc-sent"` + `data-via-storm`.
+ */
+export function NocSentBadge({ sentAt, viaStorm = false, className, long = false }) {
+  const t = useT()
+  const locale = useDateLocale()
+  if (!sentAt) return null
+  const time = clockTime(sentAt, locale)
+  const text = long ? t(viaStorm ? 'alh.noc.sentLongStorm' : 'alh.noc.sentLong', time) : t('alh.noc.sent', time)
+  return (
+    <Badge variant="outline" data-slot="alert-noc-sent" data-via-storm={viaStorm ? 'true' : undefined}
+      className={cn('gap-1 rounded-full border-sky-500/40 bg-sky-500/10 font-semibold whitespace-nowrap text-sky-700 dark:text-sky-300', className)}
+      title={`${t(viaStorm ? 'alh.noc.tipStorm' : 'alh.noc.tip')} · ${fullTime(sentAt, locale)}`}>
+      <Headset aria-hidden="true" className="size-3" />{text}
     </Badge>
   )
 }

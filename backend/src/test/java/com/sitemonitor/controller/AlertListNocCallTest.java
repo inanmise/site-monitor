@@ -41,6 +41,7 @@ class AlertListNocCallTest {
     @Autowired MockMvc mvc;
 
     @MockitoBean NocCallLogService nocCallLog;
+    @MockitoBean com.sitemonitor.service.noc.NocAlertFacts nocAlertFacts;   // 7/24 rozeti (2026-10-04)
 
     @MockitoBean com.sitemonitor.repository.UserPushDeliveryRepository userPushDeliveryRepo;
     @MockitoBean com.sitemonitor.repository.NotificationGroupRepository notificationGroupRepo;
@@ -252,5 +253,95 @@ class AlertListNocCallTest {
         mvc.perform(post("/api/admin/alerts/50/re-notify").session(audit).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(escalationService);
+    }
+    // ── 2026-10-04: "7/24'e gidenler" süzgeci + 7/24 rozeti + 7/24 izleme ekibi takımı operatörü ─────────────────────
+
+    @Test
+    @DisplayName("noc=sent: dört sorgunun …Noc ikizi kullanılır (asıllar çağrılmaz); yanıt noc_filter=true; satırlar 7/24 bilgisiyle süslenir")
+    void nocFilterUsesNocVariants() throws Exception {
+        when(alertEventRepo.findFilteredNoc(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(alertA)));
+        doAnswer(i -> {
+            List<AlertEvent> rows = i.getArgument(0);
+            for (AlertEvent a : rows) { a.setNocSentAt("2026-01-01T03:05:00"); a.setNocViaStorm(false); }
+            return null;
+        }).when(nocAlertFacts).decorate(anyList());
+
+        mvc.perform(get("/api/admin/alerts").param("noc", "sent").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_filter").value(true))
+                .andExpect(jsonPath("$.data[0].noc_sent_at").value("2026-01-01T03:05:00"));
+        verify(alertEventRepo).findFilteredNoc(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), eq(true), eq(List.of(TEAM_A)), any(Pageable.class));
+        verify(alertEventRepo).countFilteredByTypeNoc(any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), anyBoolean(), any());
+        verify(alertEventRepo).countFacetsNoc(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(),
+                any(), anyBoolean(), any());
+        verify(alertEventRepo).countStaleNoc(any(), any(), any(), any(), anyBoolean(), any(), any(), any(), anyBoolean(), any());
+        verify(alertEventRepo, never()).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), anyBoolean(), any(), any(Pageable.class));
+
+        // süzgeç yokken asıllar; tekil uyarı da 7/24 bilgisiyle süslenir
+        mvc.perform(get("/api/admin/alerts").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_filter").value(false));
+        mvc.perform(get("/api/admin/alerts/50").session(memberA)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.noc_sent_at").value("2026-01-01T03:05:00"));
+        verify(nocAlertFacts, times(3)).decorate(anyList());
+    }
+
+    @Test
+    @DisplayName("CSV dışa aktarımı listeyle AYNI kapsam: 7/24 operatörü kapsamsız; noc=sent ikizi kullanır")
+    void exportFollowsListScope() throws Exception {
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+        mvc.perform(get("/api/admin/alerts/export").session(nocB)).andExpect(status().isOk());
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), eq(false), any(), any(Pageable.class));
+        when(alertEventRepo.findFilteredNoc(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of()));
+        mvc.perform(get("/api/admin/alerts/export").param("noc", "sent").session(memberA)).andExpect(status().isOk());
+        verify(alertEventRepo).findFilteredNoc(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), eq(true), eq(List.of(TEAM_A)), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("7/24 izleme ekibi takımı operatörü (rolü USER, bayrak oturumda): tüm uyarıları görür ama başka takımın uyarısını sahiplenemez/çözemez/yeniden bildiremez")
+    void teamBasedNocOperator_readsAllButCannotAct() throws Exception {
+        MockHttpSession op = session("noc9", "USER", List.of(TEAM_B));
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        doAnswer(i -> SessionScope.isNocOperator(i.getArgument(0)) || isNoc(i.getArgument(0))).when(nocCallLog).seesAllAlerts(any());
+        doAnswer(i -> SessionScope.isNocOperator(i.getArgument(0)) || isNoc(i.getArgument(0))).when(nocCallLog).canWrite(any());
+
+        mvc.perform(get("/api/admin/alerts").session(op)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_can_write").value(true));
+        verify(alertEventRepo).findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(),
+                any(), any(), eq(false), any(), any(Pageable.class));
+        mvc.perform(get("/api/admin/alerts/50").session(op)).andExpect(status().isOk());
+        when(notificationLogRepo.findByAlertEventIdOrderBySentAtDesc(50L)).thenReturn(List.of());
+        mvc.perform(get("/api/admin/alerts/50/notifications").session(op)).andExpect(status().isOk());
+        mvc.perform(get("/api/admin/alerts/50/push-deliveries").session(op)).andExpect(status().isOk());
+
+        String note = "{\"note\":\"7/24 aradı, ekip bakıyor\"}";
+        mvc.perform(post("/api/admin/alerts/50/acknowledge").session(op).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/resolve").session(op).contentType(MediaType.APPLICATION_JSON).content(note))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/50/re-notify").session(op).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/alerts/bulk").session(op).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[50],\"note\":\"toplu müdahale denemesi\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.skipped").value(1));
+        verifyNoInteractions(escalationService);
+    }
+    @Test
+    @DisplayName("7/24 izleme ekibi operatörü yönetim alanlarını GENİŞLETMEZ: takım listesi kendi görüş kapsamıyla süzülür")
+    void teamBasedNocOperator_adminAreasStayScoped() throws Exception {
+        MockHttpSession op = session("noc9", "USER", List.of(TEAM_B));
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        com.sitemonitor.model.Team a = new com.sitemonitor.model.Team(); a.setId(TEAM_A); a.setName("Takım A");
+        com.sitemonitor.model.Team b = new com.sitemonitor.model.Team(); b.setId(TEAM_B); b.setName("Takım B");
+        when(userService.listTeams()).thenReturn(List.of(a, b));
+        mvc.perform(get("/api/admin/teams").session(op)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].id").value((int) TEAM_B));
     }
 }

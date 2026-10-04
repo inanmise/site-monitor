@@ -102,4 +102,50 @@ class SessionScopeTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> SessionScope.requireNotScopedAdmin(scoped, "settings.smtp"))
                 .isInstanceOf(SecurityException.class);
     }
+    @Test
+    @DisplayName("7/24 operatörü (2026-10-04): izleme OKUMA yardımcıları genişler; canView/isGlobalViewer/viewTeamIds ve yazma kapıları DEĞİŞMEZ")
+    void nocOperatorWidensOnlyMonitoringRead() {
+        MockHttpSession op = session("USER", List.of(1L), List.of());
+        op.setAttribute("memberTeamIds", new java.util.ArrayList<>(List.of(1L)));
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        op.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, new java.util.ArrayList<>(List.of(1L)));
+
+        assertThat(SessionScope.isNocOperator(op)).isTrue();
+        assertThat(SessionScope.nocTeamIds(op)).containsExactly(1L);
+        assertThat(SessionScope.seesAllMonitoring(op)).isTrue();
+        assertThat(SessionScope.canViewMonitoring(op, 99L)).isTrue();
+        assertThat(SessionScope.monitoringViewTeamIds(op)).isNull();
+        // Yönetim alanlarının kullandığı yardımcılar DEĞİŞMEZ
+        assertThat(SessionScope.canView(op, 99L)).isFalse();
+        assertThat(SessionScope.isGlobalViewer(op)).isFalse();
+        assertThat(SessionScope.viewTeamIds(op)).containsExactly(1L);
+        assertThat(SessionScope.isGlobalAdmin(op)).isFalse();
+        // Yazma kapıları operatörü TANIMAZ
+        assertThat(SessionScope.canManage(op, 99L)).isFalse();
+        assertThat(SessionScope.canOperateTeam(op, 99L)).isFalse();
+        assertThat(SessionScope.canWriteInventory(op, 99L)).isFalse();
+        assertThat(SessionScope.inventoryWriteTest(op).test(99L)).isFalse();
+        assertThat(SessionScope.canOperateTeam(op, 1L)).isTrue();   // kendi takımı aynen
+
+        // Kapsamlı müdür operatör olsa da global yönetici SAYILMAZ
+        MockHttpSession mudur = session("ADMIN", List.of(1L), List.of(1L));
+        mudur.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        assertThat(SessionScope.isGlobalAdmin(mudur)).isFalse();
+        assertThat(SessionScope.isScopedAdmin(mudur)).isTrue();
+        assertThat(SessionScope.canManage(mudur, 99L)).isFalse();
+        assertThat(SessionScope.canViewMonitoring(mudur, 99L)).isTrue();
+
+        // Bayrak yoksa / Boolean değilse: hiçbir genişleme yok
+        MockHttpSession plain = session("USER", List.of(1L), List.of());
+        assertThat(SessionScope.isNocOperator(plain)).isFalse();
+        assertThat(SessionScope.nocTeamIds(plain)).isEmpty();
+        assertThat(SessionScope.seesAllMonitoring(plain)).isFalse();
+        assertThat(SessionScope.canViewMonitoring(plain, 99L)).isFalse();
+        assertThat(SessionScope.canViewMonitoring(plain, 1L)).isTrue();
+        assertThat(SessionScope.monitoringViewTeamIds(plain)).containsExactly(1L);
+        plain.setAttribute(SessionScope.ATTR_NOC_OPERATOR, "true");
+        assertThat(SessionScope.isNocOperator(plain)).isFalse();
+        assertThat(SessionScope.isNocOperator(null)).isFalse();
+        assertThat(SessionScope.seesAllMonitoring(null)).isFalse();
+    }
 }

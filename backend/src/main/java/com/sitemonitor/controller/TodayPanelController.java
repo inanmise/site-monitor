@@ -63,7 +63,9 @@ public class TodayPanelController {
         // full=true: "Tümünü gör" pop-up'ı — kart başına tavan kalkar (2026-09-18).
         // Bakım satırları ("Susturulmuş ve bakımda" kartı, 2026-09-23) yalnız bakım sayfasını görebilene.
         boolean showMaintenance = permissionService.allows(session, "maintenance.view", "view");
-        Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canView(session, teamId), own,
+        // İzleme OKUMA kapsamı (2026-10-04): 7/24 operatörünün "Bugün" kartları kurum genelidir; haftalık KENDİ takım
+        // bloğu (own) üyelikten kalır. Bildirim kutusu (inbox) kişiseldir — bilerek genişlemez.
+        Map<String, Object> data = todayPanelService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), own,
                 full ? Integer.MAX_VALUE : com.sitemonitor.service.TodayPanelService.TOP, showMaintenance);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }

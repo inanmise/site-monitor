@@ -252,4 +252,41 @@ class PermissionServiceTest {
         assertThat(saved.getAllowed()).isTrue();
         assertThat(saved.getUpdatedBy()).isEqualTo("system");
     }
+    @Test
+    @DisplayName("7/24 operatörü (takım üyeliği, 2026-10-04): dinamik OKUMA izinleri + arama kaydı; yazma/yönetim izni YOK; snapshot üst üste biner")
+    void nocOperatorDynamicGrants() {
+        org.springframework.mock.web.MockHttpSession op = new org.springframework.mock.web.MockHttpSession();
+        op.setAttribute("systemRole", "USER");
+        op.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        org.springframework.mock.web.MockHttpSession plain = new org.springframework.mock.web.MockHttpSession();
+        plain.setAttribute("systemRole", "USER");
+
+        // Rol satırı (yukarıdaki tohum) yalnız inventory.list'i açıyor: operatöre dinamik izinler eklenir
+        assertThat(service.allows(op, "alerts.read", "view")).isTrue();
+        assertThat(service.allows(op, "noc_calls.write", "edit")).isTrue();
+        assertThat(service.allows(op, "incidents.view", "view")).isTrue();
+        assertThat(service.allows(plain, "alerts.read", "view")).isFalse();
+        assertThat(service.allows(plain, "noc_calls.write", "edit")).isFalse();
+        // Yazma/yönetim izinleri dinamik listede YOK
+        assertThat(service.allows(op, "inventory.crud", "edit")).isFalse();
+        assertThat(service.allows(op, "alerts.actions", "execute")).isFalse();
+        assertThat(service.allows(op, "audit_log.read", "view")).isFalse();
+        assertThat(service.allows(op, "system_health.read", "view")).isFalse();
+        // require() aynı kuralı izler
+        service.require(op, "monitoring.read", "view");
+        assertThatThrownBy(() -> service.require(op, "monitoring.crud", "edit")).isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> service.require(plain, "monitoring.read", "view")).isInstanceOf(SecurityException.class);
+        // Bayrak yalnız Boolean.TRUE iken sayılır
+        org.springframework.mock.web.MockHttpSession bogus = new org.springframework.mock.web.MockHttpSession();
+        bogus.setAttribute("systemRole", "USER");
+        bogus.setAttribute(com.sitemonitor.controller.SessionScope.ATTR_NOC_OPERATOR, "true");
+        assertThat(service.allows(bogus, "alerts.read", "view")).isFalse();
+
+        var snap = service.snapshotForSession(op);
+        assertThat(snap.get("noc_calls.write").get("edit")).isTrue();
+        assertThat(snap.get("alerts.read").get("view")).isTrue();
+        assertThat(snap.get("inventory.list").get("view")).isTrue();            // rol satırı korunur
+        assertThat(snap.get("inventory.crud").get("edit")).isFalse();
+        assertThat(service.snapshotForSession(plain)).doesNotContainKey("noc_calls.write");
+    }
 }

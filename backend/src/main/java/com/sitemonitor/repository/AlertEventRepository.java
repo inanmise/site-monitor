@@ -204,16 +204,11 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                                         @Param("resolvedUntil") String resolvedUntil,
                                         @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
-    /**
-     * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
-     * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
-     * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.
-     * Çağıran bu kipte {@code since}'ı (açılış alt sınırı) null geçer. Yüklem haftalık kesinti raporunun üç sorgulu
-     * birleşimiyle ({@code WeeklyOutageReportService.loadWeekAlarms}) aynı kümeyi verir (açık = {@code resolved=false}).
-     * İndeks: {@code idx_ae_resolved} + {@code idx_ae_resolved_at} (BitmapOr). Karşılaştırma yalnız — fonksiyon yok,
-     * null parametre CAST gerektirmez (RepositoryNullableParamCastTest).
-     */
-    @Query("""
+    // ── Alarm Geçmişi listesinin dört sorgusu — gövdeler SABİTTE (2026-10-04) ────────────────────────────────────
+    // Metinler önceki @Query dizeleriyle BİREBİR aynı; tek fark: "7/24'e gidenler" süzgecinin (…Noc ikizleri) aynı
+    // gövdeyi paylaşabilmesi. İkizler YALNIZ {@link #NOC_SENT_FILTER} ekler — ayrışamazlar
+    // (AlertEventNocFilterQueryTest).
+    String ALERT_LIST_FIND = """
             SELECT e FROM AlertEvent e
             WHERE (:resolved IS NULL OR e.resolved = :resolved)
               AND (:since IS NULL OR e.createdAt >= :since)
@@ -235,7 +230,171 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                       SELECT 1 FROM CertificateInventory i
                        WHERE i.domain = e.domain
                          AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            """)
+            """;
+
+    String ALERT_LIST_TYPE_COUNT = """
+            SELECT e.alertType, COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND (:since IS NULL OR e.createdAt >= :since)
+              AND (:until IS NULL OR e.createdAt <= :until)
+              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
+              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
+              AND (:domain IS NULL OR e.domain = :domain)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:level IS NULL OR e.alertLevel = :level)
+              AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """;
+
+    String ALERT_LIST_FACETS = """
+            SELECT e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND (:since IS NULL OR e.createdAt >= :since)
+              AND (:until IS NULL OR e.createdAt <= :until)
+              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
+              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
+              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
+              AND (:domain IS NULL OR e.domain = :domain)
+              AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """;
+
+    String ALERT_LIST_STALE = """
+            SELECT COUNT(e) FROM AlertEvent e
+            WHERE (:resolved IS NULL OR e.resolved = :resolved)
+              AND e.createdAt < :staleBefore
+              AND (:domain IS NULL OR e.domain = :domain)
+              AND (:alertType IS NULL OR e.alertType = :alertType)
+              AND (:typeScoped = FALSE OR e.alertType IN :types)
+              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
+              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
+                      SELECT 1 FROM CertificateInventory ti
+                       WHERE ti.domain = e.domain
+                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
+              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                      SELECT 1 FROM CertificateInventory i
+                       WHERE i.domain = e.domain
+                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+            """;
+
+    /**
+     * "7/24'e gidenler" (2026-10-04): alarmın 7/24 AÇILIŞ teslimi gitmiş sayılan durumda — {@code noc_deliveries} satırı
+     * ({@code phase = OPEN}, durum SENT / SENT_VIA_STORM / QUEUED_RETRY…; {@code NocAlertFacts.sent} ile aynı kural).
+     * İndeks: {@code idx_noc_delivery_alert}.
+     */
+    String NOC_SENT_FILTER = """
+              AND EXISTS (SELECT 1 FROM NocDelivery nd
+                           WHERE nd.alertEventId = e.id AND nd.phase = 'OPEN'
+                             AND (nd.status LIKE 'SENT%' OR nd.status LIKE 'QUEUED_RETRY%'))
+            """;
+
+    /** {@link #findFiltered} + yalnız 7/24'e gidenler. Parametreler aynı. */
+    @Query(ALERT_LIST_FIND + NOC_SENT_FILTER)
+    Page<AlertEvent> findFilteredNoc(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
+            @Param("domain") String domain,
+            @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
+            @Param("q") String q,
+            @Param("level") String level,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope,
+            Pageable pageable);
+
+    /** {@link #countFilteredByType} + yalnız 7/24'e gidenler. */
+    @Query(ALERT_LIST_TYPE_COUNT + NOC_SENT_FILTER + "GROUP BY e.alertType")
+    List<Object[]> countFilteredByTypeNoc(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
+            @Param("domain") String domain,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
+            @Param("q") String q,
+            @Param("level") String level,
+            @Param("acknowledged") Boolean acknowledged,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
+
+    /** {@link #countFacets} + yalnız 7/24'e gidenler. */
+    @Query(ALERT_LIST_FACETS + NOC_SENT_FILTER + "GROUP BY e.alertLevel, e.acknowledged")
+    List<Object[]> countFacetsNoc(
+            @Param("resolved") Boolean resolved,
+            @Param("since") String since,
+            @Param("until") String until,
+            @Param("resolvedSince") String resolvedSince,
+            @Param("resolvedUntil") String resolvedUntil,
+            @Param("activeFrom") String activeFrom,
+            @Param("domain") String domain,
+            @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
+            @Param("q") String q,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
+
+    /** {@link #countStale} + yalnız 7/24'e gidenler. */
+    @Query(ALERT_LIST_STALE + NOC_SENT_FILTER)
+    long countStaleNoc(
+            @Param("resolved") Boolean resolved,
+            @Param("staleBefore") String staleBefore,
+            @Param("domain") String domain,
+            @Param("alertType") String alertType,
+            @Param("typeScoped") boolean typeScoped,
+            @Param("types") java.util.Collection<String> types,
+            @Param("q") String q,
+            @Param("teamId") Long teamId,
+            @Param("scoped") boolean scoped,
+            @Param("scope") List<Long> scope);
+
+    /**
+     * 7/24 konsolu (2026-10-04): AÇIK alarmlar + pencerede ({@code since} sonrası) açılanlar, en yeni önce; tavan
+     * {@code pageable} ile (konsol bir "canlı" görünümdür — tüm geçmiş değil). İndeks: {@code idx_ae_resolved} + created_at.
+     */
+    @Query("SELECT e FROM AlertEvent e WHERE e.resolved = false OR e.createdAt >= :since ORDER BY e.createdAt DESC, e.id DESC")
+    List<AlertEvent> findOpenOrCreatedSince(@Param("since") String since, Pageable pageable);
+
+    /**
+     * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
+     * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
+     * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.
+     * Çağıran bu kipte {@code since}'ı (açılış alt sınırı) null geçer. Yüklem haftalık kesinti raporunun üç sorgulu
+     * birleşimiyle ({@code WeeklyOutageReportService.loadWeekAlarms}) aynı kümeyi verir (açık = {@code resolved=false}).
+     * İndeks: {@code idx_ae_resolved} + {@code idx_ae_resolved_at} (BitmapOr). Karşılaştırma yalnız — fonksiyon yok,
+     * null parametre CAST gerektirmez (RepositoryNullableParamCastTest).
+     */
+    @Query(ALERT_LIST_FIND)
     Page<AlertEvent> findFiltered(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
@@ -257,29 +416,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
 
     /** Tip filtre pill'lerinin canlı sayıları — findFiltered ile aynı filtreler (aralıkta-aktif kipi dahil),
      *  alertType HARİÇ (sayılar her zaman tüm tipleri gösterir). */
-    @Query("""
-            SELECT e.alertType, COUNT(e) FROM AlertEvent e
-            WHERE (:resolved IS NULL OR e.resolved = :resolved)
-              AND (:since IS NULL OR e.createdAt >= :since)
-              AND (:until IS NULL OR e.createdAt <= :until)
-              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
-              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
-              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
-              AND (:domain IS NULL OR e.domain = :domain)
-              AND (:typeScoped = FALSE OR e.alertType IN :types)
-              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
-              AND (:level IS NULL OR e.alertLevel = :level)
-              AND (:acknowledged IS NULL OR e.acknowledged = :acknowledged)
-              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
-                      SELECT 1 FROM CertificateInventory ti
-                       WHERE ti.domain = e.domain
-                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
-              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
-                      SELECT 1 FROM CertificateInventory i
-                       WHERE i.domain = e.domain
-                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            GROUP BY e.alertType
-            """)
+    @Query(ALERT_LIST_TYPE_COUNT + "GROUP BY e.alertType")
     List<Object[]> countFilteredByType(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
@@ -492,28 +629,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * <p>Kendi boyutları HARİÇ: seviye ve sahiplenilme filtreleri buraya UYGULANMAZ — aksi halde
      * "Kritik" kartına basınca diğer kartlar sıfırlanır ve kullanıcı geri dönemez.
      */
-    @Query("""
-            SELECT e.alertLevel, e.acknowledged, COUNT(e) FROM AlertEvent e
-            WHERE (:resolved IS NULL OR e.resolved = :resolved)
-              AND (:since IS NULL OR e.createdAt >= :since)
-              AND (:until IS NULL OR e.createdAt <= :until)
-              AND (:resolvedSince IS NULL OR e.resolvedAt >= :resolvedSince)
-              AND (:resolvedUntil IS NULL OR e.resolvedAt <= :resolvedUntil)
-              AND (:activeFrom IS NULL OR e.resolved = false OR e.resolvedAt >= :activeFrom)
-              AND (:domain IS NULL OR e.domain = :domain)
-              AND (:alertType IS NULL OR e.alertType = :alertType)
-              AND (:typeScoped = FALSE OR e.alertType IN :types)
-              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
-              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
-                      SELECT 1 FROM CertificateInventory ti
-                       WHERE ti.domain = e.domain
-                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
-              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
-                      SELECT 1 FROM CertificateInventory i
-                       WHERE i.domain = e.domain
-                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            GROUP BY e.alertLevel, e.acknowledged
-            """)
+    @Query(ALERT_LIST_FACETS + "GROUP BY e.alertLevel, e.acknowledged")
     List<Object[]> countFacets(
             @Param("resolved") Boolean resolved,
             @Param("since") String since,
@@ -542,23 +658,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      *
      * <p>Diğer filtreler listeyle AYNI uygulanır; yalnız yaş eşiği eklenir.
      */
-    @Query("""
-            SELECT COUNT(e) FROM AlertEvent e
-            WHERE (:resolved IS NULL OR e.resolved = :resolved)
-              AND e.createdAt < :staleBefore
-              AND (:domain IS NULL OR e.domain = :domain)
-              AND (:alertType IS NULL OR e.alertType = :alertType)
-              AND (:typeScoped = FALSE OR e.alertType IN :types)
-              AND (:q IS NULL OR LOWER(e.domain) LIKE :q ESCAPE '!')
-              AND (:teamId IS NULL OR e.teamId = :teamId OR EXISTS (
-                      SELECT 1 FROM CertificateInventory ti
-                       WHERE ti.domain = e.domain
-                         AND (ti.teamId = :teamId OR ti.ugTeamId = :teamId)))
-              AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
-                      SELECT 1 FROM CertificateInventory i
-                       WHERE i.domain = e.domain
-                         AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
-            """)
+    @Query(ALERT_LIST_STALE)
     long countStale(
             @Param("resolved") Boolean resolved,
             @Param("staleBefore") String staleBefore,

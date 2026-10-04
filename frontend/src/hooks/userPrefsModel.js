@@ -231,7 +231,7 @@ export const VIEW_SPECS = Object.freeze({
   /** İzleme Panosu (`mo_*`). */
   monitoring: Object.freeze({ prefix: 'mo_', exclude: ['mo_dlg'] }),
   /** Alarm Geçmişi (alertHistoryModel.URL_KEYS + görünüm sekmesi). */
-  alerthistory: Object.freeze({ keys: ['view', 'type', 'q', 'level', 'team', 'ack', 'from', 'to', 'range', 'src', 'sort'] }),
+  alerthistory: Object.freeze({ keys: ['view', 'type', 'q', 'level', 'team', 'ack', 'from', 'to', 'range', 'src', 'sort', 'noc'] }),
   /** Olay & Hata Geçmişi (`ih_*`). */
   'incident-history': Object.freeze({ prefix: 'ih_', exclude: ['ih_id', 'ih_page', 'ih_ps'] }),
 })

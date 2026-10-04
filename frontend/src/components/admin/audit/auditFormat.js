@@ -193,6 +193,8 @@ const SPECIAL = {
   LOGIN_METHODS_SETTINGS_SAVE: 'audit.ev.LOGIN_METHODS_SETTINGS_SAVE',
   // Giriş Yöntemleri → push metni "kendime test gönder" (2026-10-03)
   LOGIN_METHODS_PUSH_TEST: 'audit.ev.LOGIN_METHODS_PUSH_TEST',
+  // 7/24 izleme ekibi takımları değişti (2026-10-04) — kimin TÜM izlemeleri göreceği; kural adı/eylem eşlemesine uymaz
+  NOC_TEAMS_UPDATE: 'audit.ev.NOC_TEAMS_UPDATE',
 }
 
 /**
