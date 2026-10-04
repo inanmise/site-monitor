@@ -11,6 +11,8 @@
  * yerde parametre olarak alınır, sözlük burada import EDİLMEZ (bağlantı tanılamasının diagModel.js deseni).
  */
 
+import { KW_FINDING_SET, KW_HINT_SET } from '../../keyword/diagnose/keywordDiagCodes.js'
+
 /** Adım sırası — sözleşmedeki `steps[].key` sırası. Bilinmeyen anahtar sona eklenir (yeni adım düşmesin). */
 export const STEP_ORDER = ['dns', 'proxy_connect', 'tcp', 'proxy_tunnel', 'tls', 'request', 'response', 'body']
 
@@ -140,9 +142,14 @@ const has = (t, key) => t(key) !== key
  */
 export function findingText(finding, t) {
   const code = finding?.code || 'UNKNOWN'
-  const base = `httpdx.finding.${code}`
-  const known = has(t, `${base}.title`)
   const p = localizeParams(finding?.params, t)
+  // Keyword uçtan uca tanılaması (2026-10-04) aynı sonucu çizer: "neden bulunamadı" ipuçları `kwhint.*` (başlık + neden),
+  // kelime bulguları `kwdx.finding.*`. Kodlar HTTP kataloğuyla ÇAKIŞMAZ (backend kapısı) — HTTP penceresinin çıktısı aynı.
+  if (KW_HINT_SET.has(code)) {
+    return { known: true, title: t(`kwhint.${code}.title`), body: interpolate(t(`kwhint.${code}.cause`), p) }
+  }
+  const base = KW_FINDING_SET.has(code) ? `kwdx.finding.${code}` : `httpdx.finding.${code}`
+  const known = has(t, `${base}.title`)
   if (!known) {
     return {
       known: false,
@@ -313,12 +320,15 @@ export function clientAgrees(path) {
   return c.ok === (path.outcome === 'ok')
 }
 
-/** Sunucu yanıtı hız sınırı mı (429)? Gövdede durum yoksa son başarısız çağrı halkasına bakılır. */
-export function isRateLimited(res, recentFailures = []) {
+/** HTTP tanılama ucunun yolu (son başarısız çağrı halkasında aranır). */
+export const HTTP_DIAG_PATH = /\/monitoring\/http\/\d+\/diagnose/
+
+/** Sunucu yanıtı hız sınırı mı (429)? Gövdede durum yoksa son başarısız çağrı halkasına bakılır (`pathRe` = ucun yolu). */
+export function isRateLimited(res, recentFailures = [], pathRe = HTTP_DIAG_PATH) {
   if (res && res.status === 429) return true
   for (let i = recentFailures.length - 1; i >= 0; i--) {
     const f = recentFailures[i]
-    if (/\/monitoring\/http\/\d+\/diagnose/.test(String(f?.path || ''))) return f.status === 429
+    if (pathRe.test(String(f?.path || ''))) return f.status === 429
   }
   return false
 }
@@ -327,8 +337,8 @@ export function isRateLimited(res, recentFailures = []) {
  * Başarısız yanıtın sınıfı — pencere hangi şeridi çizeceğini buna göre seçer.
  * @returns {'rateLimited'|'forbidden'|'notFound'|'network'|'other'}
  */
-export function failureKind(res, recentFailures = []) {
-  if (isRateLimited(res, recentFailures)) return 'rateLimited'
+export function failureKind(res, recentFailures = [], pathRe = HTTP_DIAG_PATH) {
+  if (isRateLimited(res, recentFailures, pathRe)) return 'rateLimited'
   if (res?.status === 403) return 'forbidden'
   if (res?.status === 404) return 'notFound'
   if (res == null || res.status === 0) return 'network'
@@ -342,12 +352,12 @@ export function historyItems(data) {
   return []
 }
 
-/** JSON dosya adı: http-diagnose-<izleme>-run<no>.json (no yoksa zaman damgası). */
-export function reportFileName(data, now = new Date()) {
+/** JSON dosya adı: <stem>-<izleme>-run<no>.json (no yoksa zaman damgası); stem varsayılanı http-diagnose. */
+export function reportFileName(data, now = new Date(), stem = 'http-diagnose') {
   const id = data?.monitor?.id ?? 'x'
-  if (data?.run_id != null) return `http-diagnose-${id}-run${data.run_id}.json`
+  if (data?.run_id != null) return `${stem}-${id}-run${data.run_id}.json`
   const p = (n) => String(n).padStart(2, '0')
-  return `http-diagnose-${id}-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.json`
+  return `${stem}-${id}-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.json`
 }
 
 /** Tarayıcıda JSON indir (Blob) — jsdom'da sessizce çıkar (utils/csvExport.downloadCsv deseni). */
@@ -401,14 +411,16 @@ const ms = (v) => (isNum(v) ? `${v} ms` : '—')
  * zamanlama + izleme istemcisi + hata, her isteğin istek/yanıt satırı ve başlıkları (MASKELİ hâliyle), TLS özeti,
  * gövde önizlemesinin başı ve döküm. Gizli değerler sunucuda maskelendiği için rapor da maskelidir.
  *
- * @param {{data, t, formatDate?, format?: 'markdown'|'text'}} o
+ * @param {{data, t, formatDate?, format?: 'markdown'|'text', titleKey?: string, extra?: Function}} o
+ *   `titleKey` rapor başlığı (keyword tanılaması kendi başlığını verir), `extra({ w, data, t })` hüküm bölümünden
+ *   sonra, yollardan önce ek bölüm yazar (keyword: anahtar kelime çözümlemesi). İkisi de verilmezse çıktı AYNI.
  */
-export function buildReport({ data, t, formatDate, format = 'markdown' }) {
+export function buildReport({ data, t, formatDate, format = 'markdown', titleKey = 'httpdx.report.title', extra = null }) {
   const d = data || {}
   const w = writer(format)
   const fd = (iso) => (iso ? (formatDate ? formatDate(iso) : String(iso)) : '—')
   const mon = d.monitor || {}
-  w.h1(t('httpdx.report.title'))
+  w.h1(t(titleKey))
   w.kv(t('httpdx.report.monitor'), `${mon.name || mon.url || '—'}${mon.id != null ? ` (#${mon.id})` : ''}`)
   w.kv(t('httpdx.report.target'), `${mon.method || 'GET'} ${mon.url || '—'}`)
   if (mon.expected_status) w.kv(t('httpdx.report.expected'), mon.expected_status)
@@ -435,6 +447,7 @@ export function buildReport({ data, t, formatDate, format = 'markdown' }) {
     w.blank()
     w.p(t(d.comparison.differs ? 'httpdx.compare.differs' : 'httpdx.compare.same'))
   }
+  if (typeof extra === 'function') extra({ w, data: d, t })
 
   for (const path of arr(d.paths)) {
     w.h2(`${pathTitle(path.key, t)} — ${routeLabel(path, d, t)}`)

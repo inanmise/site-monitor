@@ -23,6 +23,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
   'src',         // Alarm Geçmişi kategori süzgeci (İzleme menüsü rozetleri, 2026-09-30)
   'noc',         // Alarm Geçmişi "7/24'e gidenler" süzgeci (noc=sent, 2026-10-04)
   'hdx',         // HTTP izleme detayında açık uçtan uca tanılama çalıştırması (2026-10-02; yalnız KAYITLI sonucu açar)
+  'kdx',         // Keyword izleme detayında açık uçtan uca tanılama çalıştırması (2026-10-04; yalnız KAYITLI sonucu açar)
   'open']        // UYGULAMA düzeyi tek seferlik "vardığında aç" (cert | noc — utils/monitorDeepLink.js DEEP_OPEN_PARAM, 2026-09-28); tüketilince silinir
 
 /**

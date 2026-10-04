@@ -18,15 +18,16 @@ import { findingTitle, historyItems, routeText, verdictTone } from './httpDiagno
  * @param {number} monitorId
  * @param {Function} onOpen  (row) => void — saklanan çalıştırmayı aç
  * @param {number} [reloadKey] her canlı koşu bitince artar (liste tazelensin)
+ * @param {Function} [load] (monitorId) => Promise — geçmiş yükleyici (varsayılan HTTP ucu; keyword tanılaması kendi ucunu verir)
  */
-export default function HttpDiagnoseHistory({ monitorId, onOpen, activeRunId = null, reloadKey = 0 }) {
+export default function HttpDiagnoseHistory({ monitorId, onOpen, activeRunId = null, reloadKey = 0, load = null }) {
   const t = useT()
   const [state, setState] = useState({ loading: true, items: null, error: null })
 
   useEffect(() => {
     let alive = true
     setState((s) => ({ ...s, loading: true, error: null }))
-    Promise.resolve(api.monitoring.httpDiagnoseHistory(monitorId)).then((res) => {
+    Promise.resolve(load ? load(monitorId) : api.monitoring.httpDiagnoseHistory(monitorId)).then((res) => {
       if (!alive) return
       if (res?.success) setState({ loading: false, items: historyItems(res.data), error: null })
       else setState({ loading: false, items: null, error: res?.error || t('httpdx.history.error') })

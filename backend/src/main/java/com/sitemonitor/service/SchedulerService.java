@@ -1133,6 +1133,20 @@ public class SchedulerService {
         patch("CREATE INDEX IF NOT EXISTS idx_hc_monitor_checked ON http_checks(monitor_id, checked_at)");
         // HTTP hata tanısı (2026-09-22): yalnız başarısız satırda dolu; ddl-auto da ekler, açık patch proje geleneği.
         patch("ALTER TABLE http_checks ADD COLUMN error_detail TEXT");
+        // Keyword hata teşhisi (2026-10-04): dolu tabloya SONRADAN eklenen, hepsi NULL'lanabilir kolonlar — eski satırlar
+        // NULL kalır ("ayrıntı kaydedilmemiş"), DEFAULT yok (geçmiş satırlara uydurma değer yazılmaz). ddl-auto da ekler;
+        // açık patch proje kuralı (ALTER düşerse her kontrolün INSERT'i kolonsuz tabloya yazmaya çalışıp düşerdi).
+        patch("ALTER TABLE keyword_results ADD COLUMN failure_reason VARCHAR(40)");
+        patch("ALTER TABLE keyword_results ADD COLUMN failure_detail VARCHAR(500)");
+        patch("ALTER TABLE keyword_results ADD COLUMN final_url TEXT");
+        patch("ALTER TABLE keyword_results ADD COLUMN redirect_count INTEGER");
+        patch("ALTER TABLE keyword_results ADD COLUMN content_type VARCHAR(200)");
+        patch("ALTER TABLE keyword_results ADD COLUMN body_bytes BIGINT");
+        patch("ALTER TABLE keyword_results ADD COLUMN body_truncated BOOLEAN");
+        patch("ALTER TABLE keyword_results ADD COLUMN charset VARCHAR(60)");
+        patch("ALTER TABLE keyword_results ADD COLUMN via VARCHAR(10)");
+        patch("ALTER TABLE keyword_results ADD COLUMN hints VARCHAR(500)");
+        patch("ALTER TABLE keyword_results ADD COLUMN excerpt TEXT");
         // İstek Gezgini durum kodu dağılımı (2026-09-28): dolu tabloya SONRADAN eklenen NULL'lanabilir kolon. ddl-auto
         // normalde ekler ama ona güvenilmez — ALTER düşerse her dakikanın saveAll'u kolonsuz tabloya yazmaya çalışır,
         // flushPending istisnayı yutar ve İstek Gezgini / top_endpoints KALICI boş kalırdı (2026-09-28c, B3).
@@ -3327,8 +3341,10 @@ public class SchedulerService {
      *  HTTP hatası → ok=false (down). {"status","error"} döner. */
     private Map<String, Object> recheckKeyword(KeywordMonitor m) {
         int timeout = m.getTimeoutMs() != null ? m.getTimeoutMs() : 10000;
+        // Beklentili kontrol (2026-10-04): koşul sağlanmazsa neden + ipuçları + alıntı da üretilir (ek istek YOK).
         Map<String, Object> r = keywordCheckerService.check(m.getUrl(), m.getKeyword(), timeout, keywordHeaderSecrets.effectiveHeaders(m),
-                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()));
+                Boolean.TRUE.equals(m.getCaseSensitive()), viaProxyFor(m.getUrl(), m.getUseProxy()),
+                KeywordCheckerService.Expectation.of(m));
         boolean found = Boolean.TRUE.equals(r.getOrDefault("found", false));
         int count = r.get("count") instanceof Number cn ? cn.intValue() : (found ? 1 : 0);
         int threshold = m.getMatchCount() != null ? m.getMatchCount() : 1;
@@ -3336,16 +3352,8 @@ public class SchedulerService {
         // Adet koşulu: SAĞLIKLI = count [operatör] threshold (HTTP hatası → down).
         boolean ok = !hadError && KeywordCheckerService.evaluate(count, m.getMatchOperator(), threshold);
         try {
-            KeywordResult res = new KeywordResult();
-            res.setMonitorId(m.getId());
-            res.setFound(found);
-            res.setOccurrences(count);
-            res.setOk(ok);
-            res.setHttpStatus(r.get("http_status") instanceof Number n ? n.intValue() : null);
-            res.setResponseMs(r.get("response_ms") instanceof Number n ? n.longValue() : null);
-            res.setSnippet((String) r.get("snippet"));
-            res.setError((String) r.get("error"));
-            res.setCheckedAt(ISO.format(Instant.now()));
+            // Satır eşlemesi elle "Şimdi kontrol et" ile ORTAK (teşhis alanları iki yolda da aynı yazılsın).
+            KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
             keywordResultRepo.save(res);
         } catch (Exception e) {
             log.warn("Keyword kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());

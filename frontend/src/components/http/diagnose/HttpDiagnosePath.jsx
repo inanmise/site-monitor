@@ -23,7 +23,7 @@ import { CodeBlock, HeaderList, Kv, KvList, SectionTitle, StepPipeline, TimingWa
  * Yol kartı (karşılaştırma ızgarası) — yol adı + rota + sonuç rozeti, HTTP durumu, toplam süre ve odak hop'unun adım
  * hattı (takılan adım vurgulu). Durum rozet + `data-outcome` ile; SOL ŞERİT YOK, düşen yol yalnız tüm çerçevesiyle.
  */
-export function PathCard({ path, data }) {
+export function PathCard({ path, data, extra = null }) {
   const t = useT()
   const steps = useMemo(() => pathSummarySteps(path), [path])
   const tone = outcomeTone(path?.outcome)
@@ -46,6 +46,7 @@ export function PathCard({ path, data }) {
             tone={path.http_status == null ? 'bad' : null} slot="status" />
           <Metric label={t('httpdx.path.total')} value={path.total_ms != null ? `${path.total_ms} ms` : '—'} slot="total" />
           {path.failed_step && <Metric label={t('httpdx.verdict.failedStep')} value={t(`httpdx.step.${path.failed_step}`)} tone="bad" slot="failed" />}
+          {extra}
         </div>
         <StepPipeline steps={steps} failedStep={path.failed_step} compact />
       </CardContent>
@@ -53,7 +54,7 @@ export function PathCard({ path, data }) {
   )
 }
 
-function Metric({ label, value, tone, slot }) {
+export function Metric({ label, value, tone, slot }) {
   return (
     <div data-slot="httpdx-metric" data-metric={slot} className="flex min-w-0 flex-col gap-0.5">
       <span className={cn('text-base leading-tight font-bold tabular-nums', tone === 'bad' && 'text-destructive')}>{value}</span>

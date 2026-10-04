@@ -55,8 +55,9 @@ public final class HttpDiagFindings {
     public static final String WARN = "warn";
     public static final String FAIL = "fail";
 
-    /** {@code {code, severity, path, params}} — params ADLI (ön yüz {@code {status}} gibi yer tutucularla doldurur). */
-    static Map<String, Object> finding(String code, String severity, String path, Map<String, Object> params) {
+    /** {@code {code, severity, path, params}} — params ADLI (ön yüz {@code {status}} gibi yer tutucularla doldurur).
+     *  Keyword uçtan uca tanılaması da (2026-10-04) aynı biçimi kullanır — bu yüzden public. */
+    public static Map<String, Object> finding(String code, String severity, String path, Map<String, Object> params) {
         Map<String, Object> f = new LinkedHashMap<>();
         f.put("code", code);
         f.put("severity", severity);

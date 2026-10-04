@@ -326,8 +326,8 @@ public class HttpDiagnosticsService {
         return p;
     }
 
-    /** {@code {class, message, chain[]}} — neden zinciri en çok 8 halka. */
-    static Map<String, Object> errorMap(Throwable e) {
+    /** {@code {class, message, chain[]}} — neden zinciri en çok 8 halka. (public: keyword tanılaması da kullanır) */
+    public static Map<String, Object> errorMap(Throwable e) {
         if (e == null) return null;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("class", e.getClass().getName());
@@ -485,7 +485,7 @@ public class HttpDiagnosticsService {
     }
 
     /** Sır olabilecek özel başlık değeri: hassas ad ya da jeton görünümlü değer (rakam içeren, boşluksuz, ≥ 8). MIME türü değil. */
-    static boolean secretLike(String name, String value) {
+    public static boolean secretLike(String name, String value) {
         if (value == null || value.isBlank()) return false;
         String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
         if (HttpDiagMasker.SENSITIVE_REQUEST.contains(n) || com.sitemonitor.service.SecretMask.isSensitive(n)

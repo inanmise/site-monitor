@@ -442,3 +442,37 @@ describe('KeywordMonitorCard — Kompakt / Zengin', () => {
     expect(container.querySelector('[data-slot="card-compact-sub"] [data-slot="meta-team"]')).not.toBeNull()
   })
 })
+
+// ── Son başarısızlığın kısa nedeni (2026-10-04, keyword hata teşhisi) ─────────────────────────────────
+describe('KeywordMonitorCard — son başarısızlığın nedeni', () => {
+  it('istek hatası + sunucu kodu: "Couldn’t read the page" yerine kısa neden (Zengin ve Kompakt)', () => {
+    const m = { status: 'error', error: 'request timed out', failure_reason: 'TIMEOUT_READ', http_status: null, response_ms: 8001,
+      found: false, occurrences: 0, ok: false, snippet: null }
+    const rich = renderCard(m)
+    expect(slot(slot(rich.container, 'keyword-panel'), 'keyword-result').textContent).toBe('Response timed out')
+    expect(slot(rich.container, 'keyword-reason-chip')).toBeNull()   // hüküm metni zaten söylüyor
+    rich.unmount()
+    const compact = renderCard(m, { density: 'compact' })
+    expect(slot(slot(compact.container, 'keyword-compact'), 'keyword-result').textContent).toBe('Response timed out')
+  })
+
+  it('sayfa geldi, kelime yok + ipucu: hüküm "Not found" kalır, yanında ipucu çipi (Giriş sayfası)', () => {
+    const { container } = renderCard({ status: 'down', http_status: 200, found: false, occurrences: 0, snippet: null,
+      failure_reason: 'KEYWORD_NOT_FOUND', hints: ['LOGIN_PAGE'] })
+    const chip = slot(container, 'keyword-reason-chip')
+    expect(chip).toHaveAttribute('data-code', 'LOGIN_PAGE')
+    expect(chip.textContent).toBe('Sign-in page returned')
+  })
+
+  it('kural dışı neden (boş yanıt) çipte; ipucusuz "bulunamadı" ve ESKİ satır (kod yok) çipsiz', () => {
+    const empty = renderCard({ status: 'down', http_status: 200, found: false, occurrences: 0, snippet: null, failure_reason: 'EMPTY_BODY' })
+    expect(slot(empty.container, 'keyword-reason-chip').textContent).toBe('Empty response')
+    empty.unmount()
+    const plain = renderCard({ status: 'down', http_status: 200, found: false, occurrences: 0, snippet: null, failure_reason: 'KEYWORD_NOT_FOUND', hints: [] })
+    expect(slot(plain.container, 'keyword-reason-chip')).toBeNull()
+    plain.unmount()
+    const legacy = renderCard({ status: 'error', error: 'HTTP connect timed out', http_status: null, found: false, occurrences: 0, ok: false, snippet: null })
+    expect(slot(slot(legacy.container, 'keyword-panel'), 'keyword-result').textContent).toBe('Couldn’t read the page')
+    expect(slot(legacy.container, 'keyword-reason-chip')).toBeNull()
+  })
+})

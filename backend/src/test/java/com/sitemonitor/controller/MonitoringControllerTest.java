@@ -5231,4 +5231,73 @@ class MonitoringControllerTest {
         verify(pingChecker, never()).check(any(), any(), anyInt(), anyInt());
         verify(pingMonitorRepo, never()).save(any());
     }
+
+    // ── Keyword hata teşhisi (2026-10-04) ───────────────────────────────────────────────────────
+
+    private static com.sitemonitor.model.KeywordMonitor kwMonitor(long id) {
+        com.sitemonitor.model.KeywordMonitor m = new com.sitemonitor.model.KeywordMonitor();
+        m.setId(id); m.setName("Kelime"); m.setUrl("https://kw.example.com/"); m.setKeyword("Kampanya");
+        m.setMatchOperator("GTE"); m.setMatchCount(1); m.setActive(true); m.setTeamId(3L);
+        return m;
+    }
+
+    @Test
+    @DisplayName("POST /keyword/{id}/check: beklentili kontrol; teşhis alanları kaydedilir ve yanıtta döner; YALNIZ elle değerlendirme (alarm yolu yok)")
+    void triggerKeyword_storesDiagnosis_manualEvaluationOnly() throws Exception {
+        com.sitemonitor.model.KeywordMonitor m = kwMonitor(61L);
+        when(keywordMonitorRepo.findById(61L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> raw = new java.util.HashMap<>();
+        raw.put("found", false); raw.put("count", 0); raw.put("http_status", 200); raw.put("response_ms", 12L);
+        raw.put("via", "direct"); raw.put("final_url", "https://kw.example.com/giris"); raw.put("redirect_count", 1);
+        raw.put("content_type", "text/html"); raw.put("body_bytes", 900L); raw.put("body_truncated", false);
+        raw.put("failure_reason", "KEYWORD_NOT_FOUND"); raw.put("failure_detail", "Sayfa yüklendi ama « Kampanya » yok");
+        raw.put("hints", List.of("LOGIN_PAGE")); raw.put("excerpt", "Oturum aç");
+        when(keywordChecker.check(anyString(), anyString(), anyInt(), any(), anyBoolean(), anyBoolean(),
+                any(com.sitemonitor.service.KeywordCheckerService.Expectation.class))).thenReturn(raw);
+        when(keywordResultRepo.save(any(com.sitemonitor.model.KeywordResult.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/keyword/61/check").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("down"))
+                .andExpect(jsonPath("$.data.failure_reason").value("KEYWORD_NOT_FOUND"))
+                .andExpect(jsonPath("$.data.hints[0]").value("LOGIN_PAGE"));
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.KeywordResult> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.KeywordResult.class);
+        verify(keywordResultRepo).save(cap.capture());
+        com.sitemonitor.model.KeywordResult saved = cap.getValue();
+        assertThat(saved.getOk()).isFalse();
+        assertThat(saved.getFailureReason()).isEqualTo("KEYWORD_NOT_FOUND");
+        assertThat(saved.getHints()).containsExactly("LOGIN_PAGE");
+        assertThat(saved.getExcerpt()).isEqualTo("Oturum aç");
+        assertThat(saved.getFinalUrl()).isEqualTo("https://kw.example.com/giris");
+        assertThat(saved.getRedirectCount()).isEqualTo(1);
+        // beklenti izlemenin kuralı
+        verify(keywordChecker).check(eq("https://kw.example.com/"), eq("Kampanya"), anyInt(), any(), anyBoolean(), anyBoolean(),
+                eq(new com.sitemonitor.service.KeywordCheckerService.Expectation("GTE", 1)));
+        // ELLE kontrol alarm açmaz: yalnız manuel değerlendirme (manual=true yolu SchedulerService'te), sweep/alarm yok
+        verify(schedulerService).evaluateKeywordNow(eq(m), any());
+        org.mockito.Mockito.verifyNoInteractions(monitoringOutageService);
+    }
+
+    @Test
+    @DisplayName("GET /keyword: can_diagnose = can_check + diagnostics.run; son başarısızlığın nedeni/ipuçları satırda")
+    void listKeyword_canDiagnose_andFailureFields() throws Exception {
+        com.sitemonitor.model.KeywordMonitor m = kwMonitor(62L);
+        when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        com.sitemonitor.model.KeywordResult last = new com.sitemonitor.model.KeywordResult();
+        last.setMonitorId(62L); last.setOk(false); last.setFound(false); last.setOccurrences(0);
+        last.setFailureReason("HTTP_STATUS"); last.setHttpStatus(503); last.setHints(List.of("MAINTENANCE_PAGE"));
+        when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of(last));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute"))).thenReturn(true);
+        mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(true))
+                .andExpect(jsonPath("$.data[0].failure_reason").value("HTTP_STATUS"))
+                .andExpect(jsonPath("$.data[0].hints[0]").value("MAINTENANCE_PAGE"));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute"))).thenReturn(false);
+        mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(false));
+    }
 }

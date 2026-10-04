@@ -12,6 +12,7 @@
 import { test, expect } from '@playwright/test'
 import { mockApi, MONITORS } from './support/monitorMocks.js'
 import { pathDiffers } from '../src/test/helpers/httpDiagnoseFixtures.js'
+import { failedChecks, kwPathDiffers } from '../src/test/helpers/keywordDiagnoseFixtures.js'
 
 /** App.jsx VALID_TABS ile aynı (sertifika, izleme, yönetim sekmelerinin HEPSİ). */
 const TABS = [
@@ -1547,6 +1548,85 @@ for (const vp of VIEWPORTS_3) {
       const tb = await tip.boundingBox()
       expect(tb.x, `${key}: açıklama solda taşıyor`).toBeGreaterThanOrEqual(0)
       expect(tb.x + tb.width, `${key}: açıklama sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    })
+  })
+}
+
+// Keyword hata teşhisi + uçtan uca tanılama (2026-10-04, kullanıcı isteği "shadcn ile, mweb responsive"): detay →
+// Kontrol geçmişi → başarısız satırın "Ayrıntıyı göster"i → Neden / Etkisi / Ne yapmalı + ayrıntılar + ipucu kartları +
+// alıntı + teknik ayrıntı paneli (uzun URL / alıntı / ayrıntı ile zorlanır) → "Bu kontrolü tanıla" → başlangıç → (mock)
+// PATH_DIFFERS sonucu + anahtar kelime çözümlemesi. Her aşamada: pencerede ekran dışına taşan öğe yok, pencere gövdesi
+// YATAY kaymaz, pencere görünüm alanına sığar; telefon/tablette (dokunmatik) aç/kapa ve tanıla düğmeleri ≥ 40 px.
+const KW_DETAIL = '[role="dialog"]:has([data-slot="check-history"])'
+const KWDX_DIALOG = '[role="dialog"]:has([data-slot="httpdx-body"][data-kind="keyword"])'
+function kwStressHistory() {
+  const h = failedChecks()
+  const longUrl = 'https://odeme-servisleri-yedek-bolge-2.cok-uzun-bir-alt-alan-adi.example.com/giris/kullanici/oturum-ac?lang=tr&utm=kampanya&ref=cok-uzun-bir-deger-ile-gelen-baglanti'
+  h.data.items[0] = {
+    ...h.data.items[0], final_url: longUrl, redirect_count: 3,
+    content_type: 'text/html; charset=windows-1254; boundary=cok-uzun-bir-sinir-degeri-ornegi',
+    failure_detail: 'Sunucu HTTP 403 döndürdü; gelen (büyük olasılıkla hata) sayfada « Kampanya » bulunamadı. '.repeat(4),
+    excerpt: 'Access Denied — The requested URL was rejected. Please consult with your administrator. Your support ID is: 1234567890123456789 '.repeat(4),
+    hints: ['WAF_OR_BLOCK_PAGE', 'LOGIN_PAGE', 'REDIRECTED_ELSEWHERE', 'JS_RENDERED'],
+  }
+  return h
+}
+for (const vp of VIEWPORTS_3) {
+  test.describe(`keyword hata teşhisi @${vp.name}`, () => {
+    test.use({ hasTouch: vp.width < 1024 })
+
+    test(`kontrol geçmişi paneli + tanılama penceresi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await mockApi(page, { monitors: { ...MONITORS, keyword: MONITORS.keyword.map((m) => ({ ...m, can_diagnose: true })) } })
+      await page.route((u) => /^\/api\/monitoring\/keyword\/\d+\/history$/.test(new URL(u).pathname), json(kwStressHistory()))
+      await page.route((u) => /^\/api\/monitoring\/keyword\/\d+\/diagnose$/.test(new URL(u).pathname), json({ success: true, data: kwPathDiffers() }))
+      await page.goto('/?tab=keyword')
+      await page.locator('.upt-grid [data-slot="card"] [data-monitor-open]').first().click({ timeout: 20_000 })
+      const detail = page.locator(KW_DETAIL)
+      await detail.locator('[data-slot="kwfail-cell"]').first().waitFor({ timeout: 20_000 })
+      const touch = vp.width < 1024
+
+      const check = async (stage, sel, loc) => {
+        await page.waitForTimeout(400)
+        const m = await page.evaluate(measure, sel)
+        expect(m.offenders, `keyword ${stage} @${vp.name}: pencerede ekran dışına taşan öğe`).toEqual([])
+        const box = await loc.boundingBox()
+        expect(box.x, `keyword ${stage} @${vp.name}: solda taşıyor`).toBeGreaterThanOrEqual(-1)
+        expect(box.x + box.width, `keyword ${stage} @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+        const hScroll = await loc.locator('[data-slot="modal-shell-body"]').first().evaluate((el) => el.scrollWidth - el.clientWidth)
+        expect(hScroll, `keyword ${stage} @${vp.name}: gövde yatay kayıyor (px)`).toBeLessThanOrEqual(1)
+      }
+
+      const toggle = detail.locator('[data-slot="kwfail-toggle"]').first()
+      await toggle.scrollIntoViewIfNeeded()
+      if (touch) await toggle.tap()
+      else await toggle.click()
+      const panel = detail.locator('[data-slot="kwfail-panel"]')
+      await panel.waitFor()
+      await expect(panel.locator('[data-slot="kwfail-hint"]')).toHaveCount(4)
+      await check('geçmiş paneli', KW_DETAIL, detail)
+      const diag = panel.locator('[data-slot="kwfail-diagnose"]')
+      await diag.scrollIntoViewIfNeeded()
+      if (touch) {
+        for (const loc of [toggle, diag]) {
+          const b = await loc.boundingBox()
+          expect(b.height, `keyword dokunma hedefi @${vp.name} (px)`).toBeGreaterThanOrEqual(39)
+        }
+      }
+
+      if (touch) await diag.tap()
+      else await diag.click()
+      const dlg = page.locator(KWDX_DIALOG)
+      await dlg.locator('[data-slot="httpdx-start"]').waitFor()
+      await check('tanılama başlangıç', KWDX_DIALOG, dlg)
+      await dlg.getByRole('button', { name: /^(Tanılamayı başlat|Start diagnosis)$/ }).click()
+      await dlg.locator('[data-slot="kwdx-analysis"]').waitFor()
+      await expect(dlg.locator('[data-slot="httpdx-path-card"]')).toHaveCount(2)
+      await check('tanılama sonucu', KWDX_DIALOG, dlg)
+      if (vp.name === 'phone') {
+        const box = await dlg.boundingBox()
+        expect(Math.round(box.width), 'telefonda tam ekran').toBe(vp.width)
+      }
     })
   })
 }

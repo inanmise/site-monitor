@@ -25,7 +25,7 @@ const VERDICT_ICON_TONE = { success: 'text-success', warning: 'text-amber-600 da
  * varsa uyarı) → AYRINTI (yol başına sekme: zamanlama, istek zinciri, istemci, döküm) → KAYNAK (pod/düğüm/IP + çıkış
  * notu). Ayrıntılar kademeli açılır; ilk ekranda karar verdirecek kadar bilgi var.
  */
-export default function HttpDiagnoseResult({ data, stored = false, row = null }) {
+export default function HttpDiagnoseResult({ data, stored = false, row = null, extra = null, pathExtra = null }) {
   const t = useT()
   const verdict = useMemo(() => buildVerdict(data, t), [data, t])
   const paths = Array.isArray(data?.paths) ? data.paths : []
@@ -43,11 +43,14 @@ export default function HttpDiagnoseResult({ data, stored = false, row = null })
 
       <Verdict verdict={verdict} />
 
+      {/* Türe özgü bölüm (2026-10-04, keyword: anahtar kelime çözümlemesi) — HTTP'de yok */}
+      {extra}
+
       <section data-slot={cmp ? 'httpdx-compare' : 'httpdx-paths'} className="flex min-w-0 flex-col gap-2.5">
         <SectionTitle icon={cmp ? GitCompare : Route}>{t(cmp ? 'httpdx.compare.title' : 'httpdx.paths.title')}</SectionTitle>
         {cmp && <CompareNote data={data} paths={paths} />}
         <div className={cn('grid min-w-0 grid-cols-1 gap-3', paths.length > 1 && 'md:grid-cols-2')}>
-          {paths.map((p) => <PathCard key={p.key} path={p} data={data} />)}
+          {paths.map((p) => <PathCard key={p.key} path={p} data={data} extra={pathExtra ? pathExtra(p) : null} />)}
         </div>
       </section>
 

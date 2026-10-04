@@ -135,6 +135,7 @@ public final class AuditEventCatalog {
             "ISSUE_REPORT",
             "ISSUE_REPORT_COMMENT",
             "ISSUE_REPORT_REOPEN",
+            "KEYWORD_DIAGNOSTICS_RUN",    // Keyword izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-04)
             "LDAP_QUERY_USER",
             "LDAP_SETTINGS_SAVE",
             "LDAP_TEST",
@@ -361,6 +362,7 @@ public final class AuditEventCatalog {
         if (t.startsWith("SYSTEM_MAINTENANCE")) return MAINTENANCE;
         // HTTP uçtan uca tanılaması (2026-10-02) bir İZLEME eylemidir — DIAGNOSTICS_* (sertifika/alan adı tanılaması) değil.
         if (t.startsWith("HTTP_DIAGNOSTICS")) return MONITOR;
+        if (t.startsWith("KEYWORD_DIAGNOSTICS")) return MONITOR;   // keyword uçtan uca tanılaması (2026-10-04) — aynı kural
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
                 || t.startsWith("SCRIPTED_DRAFT")) return MONITOR;
         if (t.startsWith("CERT_") || t.startsWith("DOMAIN_") || t.startsWith("DIAGNOSTICS_")) return CERTIFICATE;
