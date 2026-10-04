@@ -51,6 +51,15 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     @Query("SELECT a FROM AuditLog a WHERE a.actor = :actor AND a.eventType = 'LOGIN' AND a.outcome = 'SUCCESS' AND a.eventTime > :since ORDER BY a.eventTime DESC")
     List<AuditLog> findRecentSuccessfulLogins(@Param("actor") String actor, @Param("since") String since);
 
+    /**
+     * Giriş sayfası kullanım istatistikleri (2026-10-04): {@code since}'ten beri BAŞARILI giriş yapan FARKLI kullanıcı
+     * sayısı (aktör harf duyarsız — kanonik ad; parola, AD, kod ve beni-hatırla dönüşü hepsi {@code LOGIN}/SUCCESS).
+     * Tek COUNT ({@code idx_audit_type_time}); ad/satır taşınmaz.
+     */
+    @Query("SELECT COUNT(DISTINCT LOWER(a.actor)) FROM AuditLog a WHERE a.eventType = 'LOGIN' AND a.outcome = 'SUCCESS'"
+            + " AND a.actor IS NOT NULL AND a.eventTime >= :since")
+    long countDistinctLoginActorsSince(@Param("since") String since);
+
     /** Kaba kuvvet sayacı. Kilitliyken gelen denemeler (outcome BLOCKED — {@code recordRateLimited}) SAYILMAZ
      *  (prod kapısı 2026-09-25, O-2): sayılınca saldırgan kilit süresince deneyerek bir sonraki kademeyi ve
      *  sonunda kalıcı kilidi hızla tetikliyordu. */

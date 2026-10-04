@@ -8,6 +8,8 @@ import java.util.Optional;
 
 public interface TeamRepository extends JpaRepository<Team, Long> {
     List<Team> findByActiveTrueOrderByNameAsc();
+    /** Aktif takım sayısı — giriş sayfası kullanım istatistikleri (2026-10-04); tek COUNT, takım satırı taşınmaz. */
+    long countByActiveTrue();
     Optional<Team> findByName(String name);
     boolean existsByName(String name);
     boolean existsByNameIgnoreCase(String name);

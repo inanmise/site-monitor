@@ -201,8 +201,9 @@ describe('Login', () => {
     // Monitör çipleri mikro-açıklamayı title tooltip'i olarak taşır (ör. flagship Sertifika)
     expect(container.querySelector('.lp-chip--flag')?.getAttribute('title')).toBe('SSL/TLS · chain · expiry')
     // Alt bölge: hero istatistikler — public endpoint'ten gerçek veri (mock: 512 / 99.9%)
-    expect(await screen.findByText('512')).toBeDefined()
-    expect(await screen.findByText('99.9%')).toBeDefined()
+    // panel (geniş ekran) + sayfa altı (telefon/tablet) kopyası — CSS birini gizler; ikisi de aynı veriyi çizer
+    expect(await screen.findAllByText('512')).toHaveLength(2)
+    expect(await screen.findAllByText('99.9%')).toHaveLength(2)
     // Dekoratif konsantrik halkalar (SVG) + nabız noktası
     expect(container.querySelector('.lp-bg')).not.toBeNull()
     expect(container.querySelector('.lp-accent-dot')).not.toBeNull()

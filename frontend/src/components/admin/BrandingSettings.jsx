@@ -18,6 +18,8 @@ import { Card } from '@/components/shadcn/card'
 
 const K = (s) => 'site.monitor.branding.' + s
 const LOGO_MAX_BYTES = 200 * 1024
+/** Giriş sayfası kullanım istatistikleri (2026-10-04) — "branding" grubunda, GLOBAL_ONLY (kapsamlı müdürde salt okunur). */
+const USAGE_KEY = 'site.monitor.public-stats.usage-enabled'
 
 /**
  * Branding (Beyaz Etiket) — login sayfası + uygulama kimliğini kurum-özel yapar ve duyuru
@@ -91,7 +93,9 @@ export default function BrandingSettings() {
     if (!ok) return
     setSaving(true)
     try {
-      const values = Object.fromEntries((items || []).map((it) => [it.key, '']))
+      // Salt okunur (GLOBAL_ONLY, kapsamlı müdür) kalemler gönderilmez — sunucu onları değiştirmeyi 403 ile reddeder,
+      // tüm "varsayılana dön" isteği düşerdi.
+      const values = Object.fromEntries((items || []).filter((it) => !it.read_only).map((it) => [it.key, '']))
       const res = await api.admin.saveBrandingSettings({ values })
       if (res?.success) {
         toast.success(t('branding.resetDone'))
@@ -145,6 +149,10 @@ export default function BrandingSettings() {
   const logo = valueOf(K('logo-data'))
   const primary = valueOf(K('primary-color'))
   const bannerOn = String(valueOf(K('banner-enabled'))) === 'true'
+  // Varsayılan AÇIK: değer boşsa (ortam varsayılanı okunamadı) açık sayılır — sunucu da öyle yorumlar.
+  const usageItem = byKey(USAGE_KEY)
+  const usageOn = String(valueOf(USAGE_KEY) || 'true') !== 'false'
+  const usageLocked = !!usageItem?.read_only
   const dirty = Object.keys(edited).length > 0
 
   return (
@@ -198,6 +206,23 @@ export default function BrandingSettings() {
               )}
             </Field>
           </SettingsSection>
+
+          {/* ── Giriş sayfası kullanım istatistikleri (2026-10-04) — GLOBAL_ONLY; kapsamlı müdürde kilitli ── */}
+          {usageItem && (
+            <SettingsSection title={t('branding.usageSection')} description={t('branding.usageSectionDesc')}>
+              <Field label={helpLabel(t('branding.usageEnabled'), 'help.set.site.monitor.public-stats.usage-enabled')}
+                hint={usageLocked ? t('general.globalOnlyHint') : (usageOn ? undefined : t('branding.usageOffHint'))}
+                className="mb-0">
+                {({ id, describedBy }) => (
+                  <div className="flex items-center gap-2.5" data-slot="branding-usage-toggle">
+                    <Switch id={id} aria-describedby={describedBy} checked={usageOn} disabled={usageLocked}
+                      onCheckedChange={(on) => set(USAGE_KEY, on ? 'true' : 'false')} />
+                    <span className="text-sm font-semibold">{usageOn ? t('general.on') : t('general.off')}</span>
+                  </div>
+                )}
+              </Field>
+            </SettingsSection>
+          )}
 
           {/* ── Duyuru Şeridi ── */}
           <SettingsSection title={t('branding.banner')} description={t('branding.bannerDesc')}>

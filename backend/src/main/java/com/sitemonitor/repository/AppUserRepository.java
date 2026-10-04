@@ -147,6 +147,9 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);
     long countBySystemRoleAndActiveTrue(String systemRole);
 
+    /** Aktif (pasif olmayan) kullanıcı hesabı sayısı — giriş sayfası kullanım istatistikleri (2026-10-04); tek COUNT. */
+    long countByActiveTrue();
+
     /** Tek-oturum izleme: o an login (aktif oturumu olan) kullanıcılar. Admin "Sonlandır" sonrası
      *  konan sentinel ('TERMINATED:...') aktif sayılmaz, hariç tutulur. */
     @Query("SELECT u FROM AppUser u WHERE u.activeSessionId IS NOT NULL "

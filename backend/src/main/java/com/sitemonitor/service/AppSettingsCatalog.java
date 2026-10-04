@@ -399,6 +399,10 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.branding.banner-link-label",   "branding",   Type.STRING),
         new Setting("site.monitor.branding.banner-tone",         "branding",   Type.ENUM, List.of("INFO", "WARNING", "CRITICAL")),
         new Setting("site.monitor.branding.banner-version",      "branding",   Type.INT),
+        // Giriş sayfası "Kullanım istatistikleri" (2026-10-04): sağlıklı izleme, 24 sa koşum/alarm, takım, aktif ve
+        // çevrimiçi kullanıcı — yalnız toplam sayılar, PUBLIC /api/public-stats. Kapalıyken uç yalnız eski iki rakamı döner.
+        // Marka sayfasında (giriş sayfası ayarlarının yanında) düzenlenir; kurulumun DIŞA açık yüzü → GLOBAL_ONLY.
+        new Setting("site.monitor.public-stats.usage-enabled",   "branding",   Type.BOOL),
         new Setting("logging.level.com.sitemonitor",             "logging",    Type.ENUM,
                     List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail
@@ -506,6 +510,9 @@ public final class AppSettingsCatalog {
      *   <li>Ortam adı ({@link BuildInfo#ENV_KEY}, 2026-09-29): kurulumun TÜMÜNÜ adlandırır — sürüm penceresi, dağıtım
      *       geçmişinin ortam anahtarı (koşan kaydı yeni ada taşır) ve Prometheus/Grafana {@code environment} etiketi.
      *       Takım kapsamlı bir müdür bütün kurulumun kimliğini değiştiremez.</li>
+     *   <li>Giriş sayfası kullanım istatistikleri ({@code public-stats.usage-enabled}, 2026-10-04): OTURUMSUZ herkese
+     *       açık uçta kurum geneli sayıların (izleme, koşum, alarm, takım, aktif/çevrimiçi kullanıcı) yayınlanması — kurulumun
+     *       dışa açık yüzü; takım kapsamlı bir müdür kurum adına açıp kapatamaz.</li>
      * </ul>
      * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
      * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
@@ -559,7 +566,10 @@ public final class AppSettingsCatalog {
         "site.monitor.login.otp.push.title-tr",
         "site.monitor.login.otp.push.title-en",
         "site.monitor.login.otp.push.message-tr",
-        "site.monitor.login.otp.push.message-en"
+        "site.monitor.login.otp.push.message-en",
+        // 2026-10-04: giriş sayfası kullanım istatistikleri — OTURUMSUZ herkese açık uçta kurum geneli kullanım
+        // rakamlarını yayınlayıp yayınlamama kararı kurulumun tamamını bağlar; takım kapsamlı müdür açıp kapatamaz.
+        "site.monitor.public-stats.usage-enabled"
     ));
 
     /**

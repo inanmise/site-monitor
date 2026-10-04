@@ -203,7 +203,7 @@ public class WebConfig implements WebMvcConfigurer {
                 // "public" paylaşımlı önbelleklere (NetScaler integrated cache, proxy) saklama izni
                 // verir; test ortamında dağıtımdan sonra giriş sayfası dakikalarca ESKİ sürüm numarasını
                 // gösterdi (cihaz kendi TTL'siyle sakladı, tarayıcı sert yenileme çare olmadı). Yük
-                // hafifletmesi HTTP katmanına ait değil: public-stats sunucu içinde cacheMs (5 dk)
+                // hafifletmesi HTTP katmanına ait değil: public-stats sunucu içinde cacheMs (60 sn)
                 // memo'lu, branding AppSettings belleğinden. Bu yüzden iki uç da diğer /api yanıtları
                 // gibi no-store: pod ayağa kalkar kalkmaz yeni sürüm/marka görünür.
                 // Kapı: WebConfigTest.publicEndpoints_areNoStore.

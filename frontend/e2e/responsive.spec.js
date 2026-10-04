@@ -1451,3 +1451,102 @@ for (const vp of VIEWPORTS_3) {
     await expectTouch(page, '[role="dialog"] [data-slot="noc-sheet-person"] a[href^="tel:"]', vp, key)
   })
 }
+
+// Giriş sayfası "Kullanım istatistikleri" (2026-10-04, kullanıcı isteği): yedi shadcn Card kutucuğu — önde tam satır
+// "sağlıklı izleme" + izleme üçlüsü + kullanıcı üçlüsü (takım, aktif kullanıcı, çevrimiçi). Geniş ekranda koyu panelde
+// sloganın altında (3 sütun), telefon/tablette formun ALTINDA (telefonda 2, tablette 3 sütun) — giriş formu telefonda
+// ilk ekranda kalır. Ölçülen: yatay taşma yok, doğru yerleşim görünür / diğeri gizli, sütun sayısı, öndeki kutucuk tam
+// satır, ızgarada boş hücre yok, dokunma hedefi ≥ 40 px, açıklama dokunuşla açılır ve ekrana sığar. Büyük rakamlar
+// (binlik ayırıcı) taşma denemesi.
+const LOGIN_USAGE = { success: true, data: {
+  monitored_targets: 12702, availability_pct: 99.9, healthy_monitors: 12688, active_monitors: 12702, total_monitors: 12720,
+  checks_24h: 1234567, failed_checks_24h: 4321, alerts_24h: 1041, teams: 112, active_users: 12345, online_users: 314,
+  logins_24h: 1057 } }
+for (const vp of VIEWPORTS_3) {
+  test.describe(`giriş sayfası kullanım istatistikleri @${vp.name}`, () => {
+    // Telefon/tablet dokunmatik (pointer: coarse) — tutamaç ve açıklama dokunuşla sınanır.
+    test.use({ hasTouch: vp.width < 1024 })
+
+    test(`kutucuklar @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+      await page.setViewportSize({ width: vp.width, height: vp.height })
+      await mockApi(page)
+      await page.route((u) => new URL(u).pathname === '/api/me', json({ success: false, error: 'Unauthorized' }, 401))
+      await page.route((u) => new URL(u).pathname === '/api/public-stats', json(LOGIN_USAGE))
+      await page.goto('/')
+      await page.locator('#lp-user').waitFor({ timeout: 20_000 })
+      const key = `login-usage@${vp.name}`
+      const wide = vp.width >= 1024
+      // 2026-10-04 kullanıcı kararı: geniş ekranda sol panelde "Raporlama" sütununun ALTINDA; telefon/tablette (vitrin
+      // sütunları gizli) sayfanın EN ALTINDA, formun altında. Her boyutta yalnız BİR kopya görünür.
+      const strip = page.locator(`[data-slot="login-usage"][data-placement="${wide ? 'panel' : 'bottom'}"]`)
+      await expect(strip).toHaveAttribute('data-state', 'ready', { timeout: 10_000 })
+      await expect(page.locator(`[data-slot="login-usage"][data-placement="${wide ? 'bottom' : 'panel'}"]`)).toBeHidden()
+      await strip.scrollIntoViewIfNeeded()
+      await expect(strip).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, 0))
+      const tiles = strip.locator('[data-slot="usage-tile"]')
+      await expect(tiles).toHaveCount(7)
+      await expect(strip.locator('[data-stat="users"] [data-slot="usage-value"]')).toHaveText('12,345')
+      await page.waitForTimeout(400)
+
+      const m = await page.evaluate(measure, 'body')
+      expect(m.offenders, `${key}: ekran dışına taşan öğe`).toEqual([])
+      expect(m.pageOverflow, `${key}: sayfa yatay taşması (px)`).toBeLessThanOrEqual(1)
+
+      // Sütun sayısı: telefonda 2, tablet ve geniş ekranda 3; öndeki kutucuk tam satır; altı kutucuk ızgarayı BOŞLUKSUZ
+      // doldurur (her sütunda eşit sayıda); kutucuk kendi içinde taşmaz, dokunma hedefi ≥ 40 px
+      const grid = await strip.locator('dl').boundingBox()
+      const boxes = await tiles.evaluateAll((els) => els.map((e) => {
+        const r = e.getBoundingClientRect()
+        return { hero: e.getAttribute('data-hero') === 'true', x: Math.round(r.x), w: r.width, h: r.height,
+          sw: e.scrollWidth, cw: e.clientWidth }
+      }))
+      const cols = vp.width < 640 ? 2 : 3
+      const hero = boxes.filter((b) => b.hero)
+      expect(hero, `${key}: öndeki kutucuk`).toHaveLength(1)
+      expect(Math.abs(hero[0].w - grid.width), `${key}: öndeki kutucuk tam satır değil`).toBeLessThanOrEqual(1)
+      const rest = boxes.filter((b) => !b.hero)
+      const perCol = new Map()
+      for (const b of rest) perCol.set(b.x, (perCol.get(b.x) ?? 0) + 1)
+      expect(perCol.size, `${key}: sütun sayısı`).toBe(cols)
+      expect(new Set(perCol.values()).size, `${key}: ızgarada boş hücre (sütun başına kutucuk eşit değil)`).toBe(1)
+      for (const b of boxes) {
+        expect(b.h, `${key}: kutucuk dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+        expect(b.sw - b.cw, `${key}: kutucuk içi taşma (px)`).toBeLessThanOrEqual(1)
+      }
+
+      // Giriş formu ilk ekranda (her boyda): kullanıcı adı + giriş düğmesi görünüm alanının içinde.
+      const user = await page.locator('#lp-user').boundingBox()
+      const submit = await page.locator('.lp-form button[type="submit"]').boundingBox()
+      expect(user.y, `${key}: kullanıcı adı ilk ekranda değil`).toBeGreaterThanOrEqual(0)
+      expect(user.y + user.height, `${key}: kullanıcı adı ilk ekranda değil`).toBeLessThanOrEqual(vp.height)
+      expect(submit.y + submit.height, `${key}: giriş düğmesi ilk ekranda değil`).toBeLessThanOrEqual(vp.height)
+      const top = await strip.boundingBox()
+      if (wide) {
+        // Sol panelde, üç vitrin sütununun (sonuncusu "Raporlama") ALTINDA
+        const pillars = await page.locator('.lp-pillars').boundingBox()
+        expect(top.y, `${key}: şerit Raporlama sütununun altında`).toBeGreaterThanOrEqual(pillars.y + pillars.height - 1)
+        const left = await page.locator('.lp-left').boundingBox()
+        expect(top.x, `${key}: şerit sol panelde`).toBeGreaterThanOrEqual(left.x)
+        expect(top.x + top.width, `${key}: şerit sol panelde`).toBeLessThanOrEqual(left.x + left.width + 1)
+      } else {
+        // Telefon/tablet: formun altında, sayfanın en altında
+        expect(top.y, `${key}: şerit formun altında`).toBeGreaterThanOrEqual(submit.y + submit.height)
+        const docBottom = await page.evaluate(() => document.documentElement.scrollHeight)
+        const sec = await page.locator('[data-slot="login-usage-section"]').boundingBox()
+        expect(Math.abs(sec.y + sec.height - docBottom), `${key}: şerit sayfanın en altında`).toBeLessThanOrEqual(2)
+      }
+
+      // Açıklama: dokunmatikte dokunuşla, geniş ekranda tıklamayla açılır; ekrana sığar
+      const trigger = strip.locator('[data-stat="online"] [data-slot="hint-trigger"]')
+      await trigger.scrollIntoViewIfNeeded()
+      if (vp.width < 1024) await trigger.tap()
+      else await trigger.click()
+      const tip = page.locator('[data-slot="hint-popover"]')
+      await expect(tip).toBeVisible()
+      const tb = await tip.boundingBox()
+      expect(tb.x, `${key}: açıklama solda taşıyor`).toBeGreaterThanOrEqual(0)
+      expect(tb.x + tb.width, `${key}: açıklama sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    })
+  })
+}

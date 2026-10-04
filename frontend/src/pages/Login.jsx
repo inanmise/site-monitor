@@ -1,4 +1,4 @@
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect, useId, useRef, useCallback } from 'react'
 import { api } from '../api/client'
 import { useT, useLanguage } from '../i18n/index.jsx'
 import { useBranding, useAppVersion } from '../contexts/BrandingProvider.jsx'
@@ -20,6 +20,10 @@ import { Alert, AlertDescription } from '@/components/shadcn/alert'
 // düğmeleri; tıklanınca aynı kart kod akışına geçer.
 import OtpLoginFlow, { availableChannels } from '../components/login/OtpLoginFlow.jsx'
 import OtpMethodButtons from '../components/login/OtpMethodButtons.jsx'
+// Kullanım istatistikleri (2026-10-04): sağlıklı izleme (İzleme Panosu ile aynı sayı), 24 sa koşum/alarm, 7 gün
+// erişilebilirlik, takım, aktif kullanıcı, şu an çevrimiçi — shadcn Card kutucukları, dokun-gör açıklamalı.
+import UsageStats from '../components/login/UsageStats.jsx'
+import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 
 // App.jsx logout temizliği de bu anahtarı kullanır — tek kaynak buradan export edilir.
 export const REMEMBER_KEY = 'site-monitor-remembered-user'
@@ -38,6 +42,8 @@ function writeRemembered(username) { try { if (username) localStorage.setItem(ST
  */
 /** Giriş sayfasının bakım durumu yoklaması (ms) — oturumsuz public uç, `no-store`. */
 const MAINT_POLL_MS = 60_000
+/** Kullanım istatistikleri yoklaması (ms) — sunucu belleğiyle aynı pencere (60 sn); gizli sekmede durur. */
+const STATS_POLL_MS = 60_000
 
 export default function Login({ onLogin, sessionExpired = false, accountInactive = false, maintenanceEnded = false }) {
   const t = useT()
@@ -59,7 +65,8 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
   const [permanentLock, setPermanentLock] = useState(false) // admin must unlock
   const [confirmActiveSession, setConfirmActiveSession] = useState(false) // başka yerde aktif oturum onayı
   const sessionDlgId = useId()   // aktif oturum onayı (alertdialog) başlık/açıklama bağları
-  const [stats, setStats] = useState(null)   // hero istatistikleri — gerçek veriden (public endpoint)
+  const [stats, setStats] = useState(null)   // kullanım istatistikleri — gerçek veriden (public endpoint)
+  const [statsLoading, setStatsLoading] = useState(true)   // ilk yanıta kadar iskelet (yerleşim zıplamasın)
   // Sistem Bakım Modu (2026-10-02): public uçtan bakım durumu (yaklaşan / süren) — kart; ilk çizimde sekmenin son bildiği
   // pencere (oturum kesilince taşınır) kullanılır, uç gelince tazelenir.
   const [maint, setMaint] = useState(() => (maintenanceEnded ? lastWindow() : null))
@@ -77,16 +84,18 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
     setHelpOpen(true)
   }
 
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      try {
-        const r = await api.getPublicStats?.()
-        if (alive && r?.success) setStats(r.data)
-      } catch { /* istatistiksiz de login çalışır */ }
-    })()
-    return () => { alive = false }
+  // Açılışta + dakikada bir (gizli sekmede durur, dönünce bir kez tazeler). Tazelemede iskelet GÖSTERİLMEZ — eski
+  // rakamlar yerinde kalır; hata şeridi bozmaz (son bilinen değerler ya da "—").
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
+  const loadStats = useCallback(async () => {
+    try {
+      const r = await api.getPublicStats?.()
+      if (aliveRef.current && r?.success && r.data && typeof r.data === 'object') setStats(r.data)
+    } catch { /* istatistiksiz de login çalışır */ }
+    finally { if (aliveRef.current) setStatsLoading(false) }
   }, [])
+  useVisibleInterval(loadStats, STATS_POLL_MS)
 
   // Bakım durumu: açılışta + dakikada bir (bakım biterse kart kendiliğinden kalkar). Hata kartı bozmaz.
   useEffect(() => {
@@ -310,26 +319,15 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
                 </div>
               ))}
             </div>
+            {/* Kullanım istatistikleri (2026-10-04, kullanıcı kararı: "Raporlama" sütununun ALTINDAKİ alanda) — sabit
+                pazarlama değeri değil, /api/public-stats'tan gerçek veri. Yalnız geniş ekranda (≥1024 px): daha darda vitrin
+                sütunları gizli ve panel başlık bandına iner; orada şerit formun ALTINDA çizilir (aşağıda). Ayar kapalıyken
+                aynı yerde eski iki rakam (izlenen hedef + erişilebilirlik). */}
+            <UsageStats stats={stats} loading={statsLoading} tone="panel" placement="panel" className="mt-2 hidden lg:block" />
           </div>
 
-          {/* Alt: hero istatistikler + footer */}
+          {/* Alt: footer */}
           <div className="lp-bottom">
-            {/* Hero istatistikleri — sabit pazarlama değeri değil, /api/public-stats'tan gerçek veri. */}
-            <div className="lp-stats">
-              <div className="lp-stat">
-                <span className="lp-stat-num">
-                  {stats?.monitored_targets != null ? String(stats.monitored_targets) : '—'}
-                </span>
-                <span className="lp-stat-lbl">{t('login.domainsMonitored')}</span>
-              </div>
-              <span className="lp-stat-sep" />
-              <div className="lp-stat">
-                <span className="lp-stat-num">
-                  {stats?.availability_pct != null ? `${stats.availability_pct}%` : '—'}
-                </span>
-                <span className="lp-stat-lbl">{t('login.uptime')}</span>
-              </div>
-            </div>
             <div className="lp-footer">
               <span className="lp-footer-meta">
                 {brand('footer_text', `v${appVersion} · © ${new Date().getFullYear()} ${brand('app_name', 'SiteMonitor')}`)}
@@ -346,7 +344,9 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
 
       {/* ── Sağ panel: giriş formu (shadcn Input / Label / Button / Alert) ── */}
       <div className="lp-right">
-        <div className="lp-form-wrap">
+        {/* Geniş ekranda form görünüm alanında ORTALI ve yapışkan (2026-10-04): sol panel kullanım istatistikleriyle uzadı;
+            sütun sayfa boyu olduğundan eski dikey ortalama formu kısa dizüstü ekranlarda aşağı itiyordu. Telefonda akış aynı. */}
+        <div className="lp-form-wrap lg:sticky lg:top-10 lg:min-h-[calc(100svh-5rem)] lg:self-start lg:justify-center">
 
           {/* Oturum düştüğünde (401 → hard reload) gösterilen bilgi bildirimi (AUTH-1) */}
           {sessionExpired && (
@@ -538,6 +538,16 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
           <LoginHelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} initialUsername={helpUser} />
         </div>
       </div>
+
+      {/* Telefon / tablet (<1024 px): vitrin sütunları ("Raporlama" dahil) gizli olduğundan kullanım istatistikleri SAYFANIN
+          EN ALTINDA, formun altında (form ilk ekranda kalır; telefonda 2, tablette 3 sütun). Geniş ekranda gizli — orada şerit
+          sol panelde "Raporlama" sütununun altında. Kullanım kipi kapalıysa aynı yerde eski iki rakam; istek düşerse
+          kutucuklar "—" ile çizilir (şerit kaybolmaz). */}
+      <section className="w-full border-t px-6 pt-8 pb-10 lg:hidden" data-slot="login-usage-section"
+        aria-label={t('login.usage.title')}>
+        <UsageStats stats={stats} loading={statsLoading} tone="surface" placement="bottom"
+          className="mx-auto max-w-[380px] sm:max-w-2xl" />
+      </section>
     </div>
   )
 }
