@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T00:51:06Z",
+  "generatedAt": "2026-10-04T08:53:48Z",
   "repo": "inanmise/site-monitor",
-  "count": 702,
+  "count": 703,
   "releases": [
+    {
+      "version": "20.103.0",
+      "tag": "v20.103.0",
+      "releasedAt": "2026-10-04T08:53:43Z",
+      "commit": "8c0b07690648ccd8899bc28119377241eb356a38",
+      "prevVersion": "20.102.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8c0b0769",
+          "subject": "fırtına push'u ↔ alarm bağı — fırtınaya devredilen alarmın geçmişinde onu kapsayan fırtına push'u"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.102.0",
       "tag": "v20.102.0",

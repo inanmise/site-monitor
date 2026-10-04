@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.103.0] — 2026-10-04
+
 ### Added
 - **Fırtına push'u ↔ alarm bağı:** push fırtınaya devredilse bile alarmın geçmişinde onu kapsayan toplu fırtına push'u
   görünür. Alarm ayrıntısında "Fırtına push'u" bloğu ve zaman çizelgesi olayı ("Fırtına #12 push'u iletildi · 12 kişi ·
@@ -2180,7 +2182,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.102.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.103.0...HEAD
+[20.103.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.103.0
 [20.102.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.102.0
 [20.101.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.101.0
 [20.100.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.100.0
