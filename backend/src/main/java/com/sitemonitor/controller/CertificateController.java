@@ -57,7 +57,7 @@ public class CertificateController {
 
     @GetMapping("/certificates")
     public ResponseEntity<Map<String, Object>> getCertificates(HttpSession session) {
-        List<CertificateDto> data = certService.getAllLatestForTeams(SessionScope.viewTeamIds(session));
+        List<CertificateDto> data = certService.getAllLatestForTeams(SessionScope.monitoringViewTeamIds(session));   // 7/24 operatörü: tümü (2026-10-04)
         return ok(Map.of("success", true, "data", data, "timestamp", now()));
     }
 
@@ -71,7 +71,7 @@ public class CertificateController {
     /** Liste kapsamı: {@code all} + kapı açık → null (tüm aktif envanter); aksi hâlde oturumun görüş kapsamı. */
     private List<Long> listScope(HttpSession session, String scope) {
         if (inventoryVisibility != null && inventoryVisibility.wantsAll(session, scope)) return null;
-        return SessionScope.viewTeamIds(session);
+        return SessionScope.monitoringViewTeamIds(session);   // 7/24 operatörü: tüm envanter (2026-10-04)
     }
 
     /**
@@ -121,7 +121,7 @@ public class CertificateController {
         body.put("facets", result.get("facets"));
         body.put("shared", result.get("shared"));
         body.put("scope", all ? com.sitemonitor.service.InventoryVisibility.SCOPE_ALL : com.sitemonitor.service.InventoryVisibility.SCOPE_MINE);
-        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabledFor(session));
         body.put("timestamp", now());
         return ok(body);
     }
@@ -169,7 +169,7 @@ public class CertificateController {
 
     @GetMapping("/warnings")
     public ResponseEntity<Map<String, Object>> getWarnings(HttpSession session) {
-        List<CertificateDto> warnings = certService.getWarningsForTeams(SessionScope.viewTeamIds(session));
+        List<CertificateDto> warnings = certService.getWarningsForTeams(SessionScope.monitoringViewTeamIds(session));
         return ok(Map.of("success", true, "data", warnings, "count", warnings.size(), "timestamp", now()));
     }
 
@@ -188,6 +188,18 @@ public class CertificateController {
     }
 
     /**
+     * {@link #requireViewableDomain}'in İZLEME OKUMA hâli (2026-10-04): alan adının alarm listesi gibi SALT OKUMA uçları —
+     * 7/24 operatörü her takımınkini okur. Anlık kontrol ({@code /check}, dış bağlantı + kayıt) özgün kapıda kalır.
+     */
+    private CertificateInventory requireMonitoringViewableDomain(HttpSession session, String domain) {
+        var inv = inventoryRepo.findByDomain(domain)
+                .orElseThrow(() -> new java.util.NoSuchElementException("Domain envanterde bulunamadı: " + domain));
+        if (SessionScope.canViewMonitoring(session, inv.getTeamId())) return inv;
+        if (inv.getUgTeamId() != null && SessionScope.canViewMonitoring(session, inv.getUgTeamId())) return inv;
+        throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
+    }
+
+    /**
      * {@link #requireViewableDomain}'in SALT OKUMA kardeşi (2026-09-26, org geneli görünürlük): ayar açıksa
      * başka takımın silinmemiş kaydı da okunur. YALNIZ hiçbir şey yazmayan uçlarda kullanılır (kart geçmişi,
      * SSL sekmesinin canlı önizlemesi). Anlık kontrol ({@code /check}) ve alarm listesi özgün kapıda kalır.
@@ -195,8 +207,8 @@ public class CertificateController {
     private CertificateInventory requireReadableDomain(HttpSession session, String domain) {
         var inv = inventoryRepo.findByDomain(domain)
                 .orElseThrow(() -> new java.util.NoSuchElementException("Domain envanterde bulunamadı: " + domain));
-        if (SessionScope.canView(session, inv.getTeamId())) return inv;
-        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return inv;
+        if (SessionScope.canViewMonitoring(session, inv.getTeamId())) return inv;
+        if (inv.getUgTeamId() != null && SessionScope.canViewMonitoring(session, inv.getUgTeamId())) return inv;
         if (inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) return inv;
         throw new SecurityException("Bu domain'i görüntüleme yetkiniz yok");
     }
@@ -218,7 +230,7 @@ public class CertificateController {
 
     @GetMapping("/history/{domain}/alerts")
     public ResponseEntity<Map<String, Object>> getDomainAlerts(@PathVariable String domain, HttpSession session) {
-        requireViewableDomain(session, domain);
+        requireMonitoringViewableDomain(session, domain);
         List<AlertEvent> alerts = alertEventRepository.findByDomainOrderByCreatedAtDesc(domain);
         return ok(Map.of("success", true, "domain", domain, "data", alerts, "timestamp", now()));
     }
@@ -378,25 +390,25 @@ public class CertificateController {
 
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Object>> getStats(HttpSession session) {
-        return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.viewTeamIds(session)), "timestamp", now()));
+        return ok(Map.of("success", true, "data", certService.getStatsForTeams(SessionScope.monitoringViewTeamIds(session)), "timestamp", now()));
     }
 
     /** Yönetici özeti (2026-09-12, #20): KPI + takım karşılaştırması + 30 gün delta. Kapsam viewTeamIds. */
     @GetMapping("/stats/executive")
     public ResponseEntity<Map<String, Object>> getExecutiveStats(HttpSession session) {
-        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
+        return ok(Map.of("success", true, "data", executiveStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId)), "timestamp", now()));
     }
 
     /** "Son 7 günde ne değişti" (2026-09-12, #7). */
     @GetMapping("/stats/changes")
     public ResponseEntity<Map<String, Object>> getRecentChanges(@RequestParam(defaultValue = "7") int days, HttpSession session) {
-        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canView(session, teamId)), "timestamp", now()));
+        return ok(Map.of("success", true, "data", executiveStatsService.recentChanges(days, teamId -> SessionScope.canViewMonitoring(session, teamId)), "timestamp", now()));
     }
 
     @GetMapping("/stats/teams")
     public ResponseEntity<Map<String, Object>> getTeamStats(HttpSession session) {
-        List<Long> scope = SessionScope.viewTeamIds(session);
-        if (scope == null) {  // global admin / AUDIT → all teams
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        if (scope == null) {  // global admin / AUDIT / 7/24 operatörü → all teams
             return ok(Map.of("success", true, "data", certService.getAllTeamsBreakdownStats(), "timestamp", now()));
         }
         if (scope.isEmpty()) return ok(Map.of("success", true, "data", Map.of(), "timestamp", now()));
@@ -506,7 +518,7 @@ public class CertificateController {
      * liste uzerinden vermek olurdu. Global goruntuleyici (admin/AUDIT) icin suzme yapilmaz.
      */
     private List<String> retainViewableDomains(HttpSession session, List<String> domains) {
-        if (domains.isEmpty() || SessionScope.isGlobalViewer(session)) return domains;
+        if (domains.isEmpty() || SessionScope.seesAllMonitoring(session)) return domains;   // + 7/24 operatörü (2026-10-04)
         List<Long> teams = SessionScope.viewTeamIds(session);
         // null/bos kapsam = hicbir takimi goremez (SessionScope.canView ile ayni sonuc).
         // Ayrica bos liste ile sorgu `IN ()` uretecegi icin depoya HIC gidilmemeli.
@@ -517,7 +529,7 @@ public class CertificateController {
 
     @GetMapping("/renewal-advice")
     public ResponseEntity<Map<String, Object>> getRenewalAdvice(HttpSession session) {
-        List<Map<String, Object>> advice = certService.getRenewalAdviceForTeams(SessionScope.viewTeamIds(session));
+        List<Map<String, Object>> advice = certService.getRenewalAdviceForTeams(SessionScope.monitoringViewTeamIds(session));
         return ok(Map.of("success", true, "data", advice, "count", advice.size(), "timestamp", now()));
     }
 
@@ -734,6 +746,8 @@ public class CertificateController {
     private CertificateInventory requireReadableForHealth(HttpSession session, String domain,
                                                           HttpServletRequest request) {
         var inv = inventoryRepo.findByDomain(domain).orElse(null);
+        // 7/24 operatörü (2026-10-04) her takımın sağlık listesini OKUR; yazan uçların kapısı (viewableForHealth) aynen.
+        if (inv != null && SessionScope.isNocOperator(session)) return inv;
         if (inv != null && !SessionScope.canView(session, inv.getTeamId())
                 && inventoryVisibility != null && inventoryVisibility.readableOrgWide(session, inv)) {
             return inv;

@@ -405,4 +405,60 @@ class IncidentsOrgVisibilityTest {
                 .andExpect(status().isOk());
         verify(commentRepo, times(2)).save(any(AlertComment.class));
     }
+    // ══ 7/24 izleme ekibi operatörü (2026-10-04): her olayı TAM okur, her olaya YORUM yazar; başka eylem yok ══════════
+
+    /** Takım OWN'un USER'ı — 7/24 izleme ekibi takımında olduğu için operatör (bayrak oturumda, rol değişmez). */
+    private static MockHttpSession nocOperator() {
+        MockHttpSession s = user();
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        return s;
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka ekibin olayını ayar KAPALIYKEN de okur (tam: izleme bağlantısı); can_act/can_manage KAPALI, can_comment AÇIK")
+    void nocOperator_readsForeignFullyRegardlessOfSetting() throws Exception {
+        switchOn(false);
+        mvc.perform(get("/api/monitoring/incidents/2").session(nocOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.can_manage").value(false))
+                .andExpect(jsonPath("$.data.can_act").value(false))
+                .andExpect(jsonPath("$.data.can_delete").value(false))
+                .andExpect(jsonPath("$.data.can_comment").value(true))
+                .andExpect(jsonPath("$.data.monitor.monitor_id").value(90));
+        when(commentRepo.findByAlertEventIdAndDeletedAtIsNullOrderByCreatedAtAsc(2L)).thenReturn(List.of());
+        mvc.perform(get("/api/monitoring/incidents/2/comments").session(nocOperator())).andExpect(status().isOk());
+        mvc.perform(get("/api/monitoring/incidents").param("scope", "all").session(nocOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("all"))
+                .andExpect(jsonPath("$.visible_to_all").value(true));
+        // Sıradan kullanıcı: ayar kapalıyken başka ekibin olayı 403; yorum bayrağı kendi olayında alerts.actions'a bağlı
+        mvc.perform(get("/api/monitoring/incidents/2").session(user())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/monitoring/incidents/1").session(user()))
+                .andExpect(jsonPath("$.data.can_comment").value(true));
+        mvc.perform(get("/api/monitoring/incidents/1").session(audit()))
+                .andExpect(jsonPath("$.data.can_comment").value(false));
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka ekibin olayına YORUM yazar (denetim kaydı ile); kendi yorumunu siler, başkasınınkini silemez; olay silemez")
+    void nocOperator_commentsOnForeignIncident() throws Exception {
+        when(commentRepo.save(any(AlertComment.class))).thenAnswer(i -> { AlertComment c = i.getArgument(0); c.setId(88L); return c; });
+        mvc.perform(post("/api/monitoring/incidents/2/comments").session(nocOperator())
+                        .contentType("application/json").content("{\"body\":\"7/24 aradı: nöbetçi bakıyor\"}"))
+                .andExpect(status().isOk());
+        verify(commentRepo, times(1)).save(any(AlertComment.class));
+        verify(auditService).recordAction(eq("INCIDENT_COMMENT_ADD"), any(HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("ALERT_EVENT"), eq("2"), anyString());
+
+        AlertComment mine = new AlertComment();
+        mine.setId(41L); mine.setAlertEventId(2L); mine.setAuthorUsername("kisia"); mine.setBody("7/24 notum");
+        AlertComment theirs = new AlertComment();
+        theirs.setId(42L); theirs.setAlertEventId(2L); theirs.setAuthorUsername("kisib"); theirs.setBody("onların");
+        when(commentRepo.findById(41L)).thenReturn(Optional.of(mine));
+        when(commentRepo.findById(42L)).thenReturn(Optional.of(theirs));
+        mvc.perform(delete("/api/monitoring/incidents/comments/42").session(nocOperator())).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/monitoring/incidents/comments/41").session(nocOperator())).andExpect(status().isOk());
+        mvc.perform(delete("/api/monitoring/incidents/2").session(nocOperator())).andExpect(status().isForbidden());
+        verify(alertEventRepo, never()).deleteById(anyLong());
+    }
 }

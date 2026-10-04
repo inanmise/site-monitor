@@ -131,6 +131,17 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("SELECT DISTINCT u.id, LOWER(u.username), u.systemRole FROM AppUser u LEFT JOIN u.teamIds tid WHERE u.teamId IN :teamIds OR tid IN :teamIds")
     List<Object[]> findMemberIdentities(@Param("teamIds") Collection<Long> teamIds);
 
+    /**
+     * 7/24 izleme ekibi takımlarının AKTİF üyeleri (2026-10-04, {@code NocOperatorService}) — fotoğraf kolonu ve EAGER takım
+     * koleksiyonu YÜKLENMEZ (önbellek her ≤ 30 sn'de bir koşar). Üyelik {@code memberTeamIds} ile aynı: birincil takım VEYA
+     * çoklu üyelik. Satır başına bir üyelik eşleşmesi: {@code [Long id, String username, String displayName,
+     * String firstName, String lastName, Long primaryTeamId, Long membershipTeamId (null olabilir), String systemRole]}.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.teamId, tid, u.systemRole "
+         + "FROM AppUser u LEFT JOIN u.teamIds tid "
+         + "WHERE u.active = true AND (u.teamId IN :teamIds OR tid IN :teamIds)")
+    List<Object[]> findActiveMemberRowsOfTeams(@Param("teamIds") Collection<Long> teamIds);
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);

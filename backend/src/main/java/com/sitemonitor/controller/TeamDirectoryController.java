@@ -35,6 +35,10 @@ public class TeamDirectoryController {
     private final AppUserRepository userRepo;
     private final EscalationContactRepository contactRepo;
 
+    /** 7/24 izleme ekibi takımları (2026-10-04) — satırın "7/24" rozeti; isteğe bağlı (birim testte yok → hep false). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocOperatorService nocOperators;
+
     /** Tüm takımlar: [{id, name, active, email, leader_id, leader_display_name}] — ad→id çözümü için. */
     @GetMapping("/directory")
     public ResponseEntity<Map<String, Object>> directory() {
@@ -44,6 +48,8 @@ public class TeamDirectoryController {
         Map<Long, AppUser> leaders = new HashMap<>();
         if (!leaderIds.isEmpty()) for (AppUser u : userRepo.findAllById(leaderIds)) leaders.put(u.getId(), u);
         List<Map<String, Object>> out = new ArrayList<>();
+        Set<Long> nocTeams = new HashSet<>();
+        try { if (nocOperators != null) nocTeams.addAll(nocOperators.teamIds()); } catch (Exception ignored) { /* rozet yok */ }
         for (Team t : teams) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", t.getId());
@@ -53,6 +59,7 @@ public class TeamDirectoryController {
             m.put("leader_id", t.getLeaderId());
             m.put("manager_id", t.getManagerId());
             m.put("leader_display_name", t.getLeaderId() != null ? displayName(leaders.get(t.getLeaderId())) : null);
+            m.put("noc_team", nocTeams.contains(t.getId()));   // 7/24 izleme ekibi takımı mı (rozet)
             out.add(m);
         }
         return ResponseEntity.ok(Map.of("success", true, "data", out));

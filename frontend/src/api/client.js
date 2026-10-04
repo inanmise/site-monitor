@@ -713,6 +713,19 @@ export const api = {
     }),
     /** Arama listesi seçicisi: takım üyeleri [{ user_id, display_name, title, has_phone }]. */
     teamMembers: (teamId) => request(`/noc/teams/${encodeURIComponent(teamId)}/members`),
+    /**
+     * 7/24 KONSOLU (2026-10-04) — yalnız TÜM alarmları görebilene (7/24 operatörü / global görücü; diğerleri 403).
+     * params: { window: 1h|24h|7d, team_id, level, type, noc: sent|not_sent, called: yes|no, state: open|resolved, q,
+     * page (0 tabanlı), size, fresh } → { kpis, facets, items, total, page, size, window, generated_at, truncated, can_write }.
+     */
+    console: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '' && v !== false) qs.append(k, String(v)) })
+      const s = qs.toString()
+      return request(`/noc/console${s ? `?${s}` : ''}`)
+    },
+    /** "Ara" kartı: alarmın sahibi takımının arama listesi TELEFONLA + müdür + eskalasyon + talimat (yalnız arama kaydı girebilene). */
+    callSheet: (alertId) => request(`/noc/console/alerts/${encodeURIComponent(alertId)}/call-sheet`),
   },
 
   /**
@@ -744,6 +757,12 @@ export const api = {
       deleteGroup: (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
       /** → { sent, failed: [...] } */
       testGroup:   (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+      /** 7/24 izleme ekibi takımları (2026-10-04) → { team_ids, teams, operator_count, updated_at, updated_by_name, max_teams } */
+      getOperatorTeams: () => request('/admin/noc/operator-teams'),
+      /** Kaydetmeden önizleme → { teams: [{id, name, active, member_count}], user_count, users: [...], truncated } */
+      previewOperatorTeams: (ids) => request(`/admin/noc/operator-teams/preview?teamIds=${encodeURIComponent((ids || []).join(','))}`),
+      /** Seçimi baştan yazar (yalnız global yönetici) → güncel ayar görüntüsü */
+      saveOperatorTeams: (ids) => request('/admin/noc/operator-teams', { method: 'PUT', body: JSON.stringify({ teamIds: ids || [] }) }),
     },
     // Kişi-webhook (push) bildirim kanalı — yalnız admin
     userPush: {

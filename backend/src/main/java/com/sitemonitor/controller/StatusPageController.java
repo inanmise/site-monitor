@@ -39,12 +39,15 @@ public class StatusPageController {
     @GetMapping("/status-page")
     public ResponseEntity<Map<String, Object>> statusPage(@RequestParam(value = "fresh", required = false) String fresh,
                                                           HttpSession session) {
-        boolean global = SessionScope.isGlobalViewer(session);
+        // İzleme OKUMA kapsamı (2026-10-04): 7/24 operatörü global görücü gibi TÜM takımları görür. Bellek anahtarının
+        // "ALL" bayrağı da AYNI yüklemden — operatörün kurum geneli sonucu bir takım anahtarı altında saklanıp o takımın
+        // sıradan kullanıcılarına SUNULMASIN (anahtar yüklemi tam belirlemeli).
+        boolean global = SessionScope.seesAllMonitoring(session);
         boolean incidents = permissionService.allows(session, "incidents.view", "view");
         boolean maintenance = permissionService.allows(session, "maintenance.view", "view");
         String memoKey = memoKey(TtlMemo.scopeKey(global, SessionScope.viewTeamIds(session)), incidents, maintenance);
         StatusPageService.Viewer viewer = new StatusPageService.Viewer(
-                teamId -> SessionScope.canView(session, teamId),
+                teamId -> SessionScope.canViewMonitoring(session, teamId),
                 (teamId, createdByTeamId) -> incidents && IncidentController.canReadIncident(session, teamId, createdByTeamId),
                 (teamId, allMonitors) -> maintenance && MaintenanceController.canSeeWindow(session, teamId, allMonitors));
         Map<String, Object> data = statusPageService.view(memoKey, viewer, MonitoringOverviewController.isFresh(fresh));

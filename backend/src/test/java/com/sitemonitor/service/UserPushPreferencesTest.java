@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -261,7 +262,8 @@ class UserPushPreferencesTest {
         @Test
         @DisplayName("KRİTİK tavan muafiyeti: ayar KAPALI (vars.) → tavandaki kişi RATE_LIMITED; AÇIK → KRİTİK gider, YÜKSEK yine tavana takılır")
         void criticalBypass() {
-            when(deliveryRepo.countRecentForUser(anyString(), anyString())).thenReturn(999L);
+            // doReturn: arka plan kuyruk iş parçacığı (kickDrain) sahteyi çağırırken when(...) yarışı WrongTypeOfReturnValue verir
+            doReturn(999L).when(deliveryRepo).countRecentForUser(anyString(), anyString());
             event("CRITICAL");
             when(resolver.resolve(5L, "CRITICAL")).thenReturn(List.of(new UserPushRecipientResolver.Recipient("N00001", "A", null)));
             service.enqueueAlert(9L, "INITIAL", 5L, null);
@@ -318,7 +320,7 @@ class UserPushPreferencesTest {
             assertThat(store.get(0).getMessage()).startsWith("[ESCALATION · 15 min unacknowledged] HIGH: svc.example.com is not responding.");
 
             store.clear();
-            when(deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(9L, "ESC_STEP:77:HIGH", "N00030")).thenReturn(true);
+            doReturn(true).when(deliveryRepo).existsByAlertEventIdAndDedupeKeyAndUsername(9L, "ESC_STEP:77:HIGH", "N00030");   // doReturn: kickDrain yarışı
             assertThat(service.enqueueEscalationStep(e, contact(), 15)).isNull();
             assertThat(store).as("aynı (alarm, kişi, seviye) ikinci kez yazılmaz").isEmpty();
         }
@@ -351,7 +353,7 @@ class UserPushPreferencesTest {
             store.clear();
             when(resolver.resolveContact(any(), any(), any())).thenReturn(new UserPushRecipientResolver.ContactMatch(
                     new UserPushRecipientResolver.Recipient("N00030", "Otuz", null, "tr"), null));
-            when(deliveryRepo.countRecentForUser(anyString(), anyString())).thenReturn(999L);
+            doReturn(999L).when(deliveryRepo).countRecentForUser(anyString(), anyString());   // doReturn: kickDrain yarışı
             assertThat(service.enqueueEscalationStep(e, contact(), 15)).isEqualTo("RATE_LIMITED");
             when(appSettings.getBoolean(eq("site.monitor.userpush.critical-bypass-cap"), any(Boolean.class))).thenReturn(true);
             store.clear();

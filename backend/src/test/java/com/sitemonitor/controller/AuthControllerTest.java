@@ -1237,4 +1237,33 @@ class AuthControllerTest {
         verify(ldapProvisioning).provisionFromAd(eq("adaktif"), any(), any());
         verify(auditService, never()).recordInactiveLogin(any(), any(), any(), any(), any(), any(), any());
     }
+    @Test
+    @DisplayName("GET /api/me: 7/24 izleme ekibi takımı operatörü → noc_operator=true + noc_teams (ad ile); bayrak yoksa false + boş liste")
+    void me_exposesNocOperator() throws Exception {
+        MockHttpSession op = new MockHttpSession();
+        op.setAttribute("authenticated", Boolean.TRUE);
+        op.setAttribute("username", "nocuser");
+        op.setAttribute("systemRole", "USER");
+        op.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(4L)));
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        op.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, new java.util.ArrayList<>(java.util.List.of(4L)));
+        com.sitemonitor.model.Team t = new com.sitemonitor.model.Team(); t.setId(4L); t.setName("Takım NOC");
+        when(userService.findTeamById(4L)).thenReturn(java.util.Optional.of(t));
+        mvc.perform(get("/api/me").session(op))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_operator").value(true))
+                .andExpect(jsonPath("$.noc_teams[0].id").value(4))
+                .andExpect(jsonPath("$.noc_teams[0].name").value("Takım NOC"))
+                .andExpect(jsonPath("$.global_admin").value(false));
+
+        MockHttpSession plain = new MockHttpSession();
+        plain.setAttribute("authenticated", Boolean.TRUE);
+        plain.setAttribute("username", "plainuser");
+        plain.setAttribute("systemRole", "USER");
+        mvc.perform(get("/api/me").session(plain))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.noc_operator").value(false))
+                .andExpect(jsonPath("$.noc_teams").isEmpty())
+                .andExpect(jsonPath("$.noc_can_write").value(false));
+    }
 }

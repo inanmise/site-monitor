@@ -353,8 +353,10 @@ public class MonitoringController {
     }
 
     // Read-scope guard for history endpoints — takım-kapsamlı görüntüleme (BOLA/IDOR önler). İzin yoksa 403 gövdesi, aksi null.
+    // İZLEME OKUMA kapsamı (2026-10-04): 7/24 operatörü her takımın geçmişini/serisini okur — bu yardımcıyı yalnız GET
+    // uçları çağırır; bu sınıftaki yazma/çalıştırma kapıları canOperateTeam/canManage'tır ve operatörü TANIMAZ.
     private ResponseEntity<Map<String, Object>> denyIfNotViewable(HttpSession session, Long teamId) {
-        return SessionScope.canView(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
+        return SessionScope.canViewMonitoring(session, teamId) ? null : forbidden("Bu izlemeyi görüntüleme yetkiniz yok");
     }
 
     /**
@@ -427,7 +429,7 @@ public class MonitoringController {
 
         var last = changeLogRepo.findTopByResourceKindAndResourceIdOrderByCreatedAtDesc(resolved, id);
         if (last.isEmpty()) return ok(Map.of("changes", List.of(), "total", 0));
-        if (!SessionScope.canView(session, last.get().getTeamId())) {
+        if (!SessionScope.canViewMonitoring(session, last.get().getTeamId())) {
             // IDOR: yabancı takımın geçmişi 404 döner (403 "var ama giremezsin" bilgisini sızdırır).
             auditService.recordSecurityEvent("CHANGE_LOG_DENIED", request, session, "MONITOR_CHANGE",
                     resolved + ":" + id, "Yetkisiz geçmiş erişimi");
@@ -455,7 +457,7 @@ public class MonitoringController {
         if (resolved == null) return badRequest("Bilinmeyen kaynak türü: " + kind);
 
         return changeLogRepo.findByResourceKindAndResourceIdAndSeq(resolved, id, seq)
-                .filter(r -> SessionScope.canView(session, r.getTeamId()))
+                .filter(r -> SessionScope.canViewMonitoring(session, r.getTeamId()))
                 .map(r -> {
                     Map<String, Object> m = changeRow(r, true);
                     // Derin bağlantı (`ch_id`) ayrıntıyı bu uçtan açar — listedeki satırla AYNI silinmiş hükmünü taşımalı,
@@ -653,7 +655,7 @@ public class MonitoringController {
         // Kapsam DIŞI takım süzgeci: 403. Burada 404 kullanılmaz — takımın varlığı zaten
         // GET /teams ile bilinen bir şey, gizlenecek bir varlık yok (resourceChanges'teki
         // varlık-gizleme gerekçesi bu uçta geçerli değil).
-        if (teamId != null && !SessionScope.canView(session, teamId))
+        if (teamId != null && !SessionScope.canViewMonitoring(session, teamId))
             return forbidden("Bu takımın değişikliklerini görme yetkiniz yok");
 
         ChangeScope cs = changeScope(session, teamId);
@@ -726,7 +728,7 @@ public class MonitoringController {
             @RequestParam(required = false) String tz,
             HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (teamId != null && !SessionScope.canView(session, teamId))
+        if (teamId != null && !SessionScope.canViewMonitoring(session, teamId))
             return forbidden("Bu takımın değişikliklerini görme yetkiniz yok");
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -813,7 +815,7 @@ public class MonitoringController {
     private record ChangeScope(boolean all, TeamActorScope sc, TeamActorScope fl) {}
 
     private ChangeScope changeScope(HttpSession session, Long teamId) {
-        boolean all = SessionScope.isGlobalViewer(session);
+        boolean all = SessionScope.seesAllMonitoring(session);
         List<Long> view = SessionScope.viewTeamIds(session);
         if (!all && (view == null || view.isEmpty())) return null;
         // Kapsam (2026-09-25): izlemenin takımı VEYA değişikliği yapan ekip üyesi — takımı boş satırlar
@@ -1145,8 +1147,8 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> listGroups(
             @RequestParam(required = false) Long teamId, @RequestParam(required = false) String type, HttpSession session) {
         permissionService.require(session, "monitoring.group", "view");
-        List<Long> scope = SessionScope.viewTeamIds(session);   // null = global admin (tüm takımlar)
-        if (teamId != null && !SessionScope.isGlobalViewer(session) && (scope == null || !scope.contains(teamId)))
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);   // null = global admin / 7/24 operatörü (tüm takımlar)
+        if (teamId != null && !SessionScope.seesAllMonitoring(session) && (scope == null || !scope.contains(teamId)))
             return forbidden("Bu takımın gruplarını görme yetkiniz yok");
         return ok(monitoringGroupService.listForScope(scope, teamId, blank(type) ? null : type.trim()));
     }
@@ -1155,7 +1157,7 @@ public class MonitoringController {
     @GetMapping("/tags")
     public ResponseEntity<Map<String, Object>> listTags(@RequestParam Long teamId, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        if (!SessionScope.canView(session, teamId)) return forbidden("Bu takımın etiketlerini görme yetkiniz yok");
+        if (!SessionScope.canViewMonitoring(session, teamId)) return forbidden("Bu takımın etiketlerini görme yetkiniz yok");
         return ok(monitoringTags == null ? List.of() : monitoringTags.listForTeam(teamId));
     }
 
@@ -1360,7 +1362,7 @@ public class MonitoringController {
         body.put("success", true);
         body.put("data", result);
         body.put("scope", all ? com.sitemonitor.service.InventoryVisibility.SCOPE_ALL : com.sitemonitor.service.InventoryVisibility.SCOPE_MINE);
-        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabled());
+        body.put("visible_to_all", inventoryVisibility != null && inventoryVisibility.enabledFor(session));
         body.put("timestamp", ISO.format(Instant.now()));
         return ResponseEntity.ok(body);
     }
@@ -1617,8 +1619,8 @@ public class MonitoringController {
      */
     private boolean inventoryViewable(HttpSession session, CertificateInventory inv) {
         if (inv == null) return false;
-        if (SessionScope.canView(session, inv.getTeamId())) return true;
-        return inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId());
+        if (SessionScope.canViewMonitoring(session, inv.getTeamId())) return true;
+        return inv.getUgTeamId() != null && SessionScope.canViewMonitoring(session, inv.getUgTeamId());
     }
 
     /**
@@ -1735,7 +1737,7 @@ public class MonitoringController {
         }
         // Standalone (envanterden bağımsız) port monitörleri — envanter döngüsünde yok; takım görüşüne göre ekle.
         for (PortMonitor m : standaloneMonitors) {
-            if (!SessionScope.canView(session, m.getTeamId())) continue;
+            if (!SessionScope.canViewMonitoring(session, m.getTeamId())) continue;
             PortCheck latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost())));
         }
@@ -2194,7 +2196,7 @@ public class MonitoringController {
         }
         // Standalone (sertifikadan bağımsız) monitörler — envanter döngüsünde yok; takım görüş kapsamına göre ekle.
         for (DnsMonitor m : standaloneMonitors) {
-            if (!SessionScope.canView(session, m.getTeamId())) continue;
+            if (!SessionScope.canViewMonitoring(session, m.getTeamId())) continue;
             DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain())));
         }
@@ -2621,7 +2623,7 @@ public class MonitoringController {
         boolean admin = SessionScope.isGlobalAdmin(session);
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<KeywordMonitor> monitors = keywordMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(KeywordMonitor::getUrl).collect(Collectors.toSet()),
                 EscalationService.TYPE_KEYWORD);
@@ -3211,7 +3213,7 @@ public class MonitoringController {
         boolean admin = SessionScope.isGlobalAdmin(session);
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<HttpMonitor> monitors = httpMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         // TEK sorgu, iki tür: HTTP_DOWN (kart alarmı — eskisiyle aynı) + HTTP_SLOW (2026-10-01 yavaşlık rozeti).
         java.util.Set<String> urls = monitors.stream().map(HttpMonitor::getUrl).collect(Collectors.toSet());
         List<AlertEvent> open = urls.isEmpty() ? List.of() : alertEventRepo.findOpenByDomainIn(urls);
@@ -3721,7 +3723,7 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.read", "view");
         List<Map<String, Object>> rows = monitoringOutageService.activeConfirmations(
                 domain != null && !domain.isBlank() ? domain.trim() : null);
-        if (rows == null || rows.isEmpty() || SessionScope.isGlobalViewer(session)) return ok(rows == null ? List.of() : rows);
+        if (rows == null || rows.isEmpty() || SessionScope.seesAllMonitoring(session)) return ok(rows == null ? List.of() : rows);
         Map<String, Set<Long>> viewers;
         try {
             Set<String> keys = new HashSet<>();
@@ -3734,7 +3736,7 @@ public class MonitoringController {
         Map<String, Set<Long>> v = viewers;
         return ok(rows.stream()
                 .filter(r -> r.get("domain") != null && v.getOrDefault(r.get("domain").toString(), Set.of()).stream()
-                        .anyMatch(t -> SessionScope.canView(session, t)))
+                        .anyMatch(t -> SessionScope.canViewMonitoring(session, t)))
                 .toList());
     }
 
@@ -3748,7 +3750,7 @@ public class MonitoringController {
         Map<Long, String> teams = teamNameMap();
         // IDOR (H2): yalnız oturumun görüntüleyebildiği takımların monitörleri (global admin → hepsi).
         List<com.sitemonitor.model.PageMonitor> monitors = pageMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         Set<String> urls = monitors.stream().map(com.sitemonitor.model.PageMonitor::getUrl).collect(Collectors.toSet());
         Map<String, AlertEvent> down = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_DOWN);
         Map<String, AlertEvent> integ = openAlarmsByDomain(urls, EscalationService.TYPE_PAGE_INTEGRITY);
@@ -4010,7 +4012,7 @@ public class MonitoringController {
         Map<Long, String> teams = teamNameMap();
         // IDOR: yalnız oturumun görüntüleyebildiği takımların izlemeleri (global admin → hepsi).
         List<com.sitemonitor.model.PageSpeedMonitor> monitors = pageSpeedMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         Set<String> urls = monitors.stream().map(com.sitemonitor.model.PageSpeedMonitor::getUrl).collect(Collectors.toSet());
         Map<String, AlertEvent> down = openAlarmsByDomain(urls, EscalationService.TYPE_PAGESPEED_DOWN);
         Map<String, AlertEvent> slow = openAlarmsByDomain(urls, EscalationService.TYPE_PAGESPEED_SLOW);
@@ -4603,7 +4605,7 @@ public class MonitoringController {
                 .collect(Collectors.toMap(com.sitemonitor.model.ScriptedCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
         List<com.sitemonitor.model.ScriptedMonitor> monitors = scriptedMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         Set<String> names = monitors.stream().map(com.sitemonitor.model.ScriptedMonitor::getName).collect(Collectors.toSet());
         Map<String, AlertEvent> open = openAlarmsByDomain(names, EscalationService.TYPE_SCRIPTED_FAIL);
         // Yavas kosum alarmi kartta da gorunsun; FAIL (kesinti) varsa O oncelikli — iki rozet
@@ -5574,7 +5576,7 @@ public class MonitoringController {
         }
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId()))
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId()))
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
         return ok(withCheckFlag(session, result));
     }
@@ -5730,7 +5732,7 @@ public class MonitoringController {
             @RequestParam(defaultValue = "90") int days, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
-        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        if (mon == null || !SessionScope.canViewMonitoring(session, mon.getTeamId())) return notFound("Domain monitor not found");
         int d = Math.max(1, Math.min(days, 730));
         String to = ISO.format(java.time.Instant.now());
         String from = ISO.format(java.time.Instant.now().minus(java.time.Duration.ofDays(d)));
@@ -5774,7 +5776,7 @@ public class MonitoringController {
     public ResponseEntity<Map<String, Object>> domainReminders(@PathVariable Long id, HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
         DomainMonitor mon = domainMonitorRepo.findById(id).orElse(null);
-        if (mon == null || !SessionScope.canView(session, mon.getTeamId())) return notFound("Domain monitor not found");
+        if (mon == null || !SessionScope.canViewMonitoring(session, mon.getTeamId())) return notFound("Domain monitor not found");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("thresholds", DomainExpiryReminderService.parseThresholds(mon.getThresholdsCsv()));
         out.put("items", domainReminders == null ? List.of() : domainReminders.history(id));
@@ -5843,7 +5845,7 @@ public class MonitoringController {
         return domainMonitorRepo.findById(id).map(m -> {
             // IDOR: izin USER'a varsayilan acik ama kaynak TAKIMA ait — kapsam disina 404
             // (varlik sizdirmamak icin 403 degil; resourceChanges ile ayni gerekce).
-            if (!SessionScope.canView(session, m.getTeamId()))
+            if (!SessionScope.canViewMonitoring(session, m.getTeamId()))
                 return notFound("Domain monitor not found");
             if (live) {
                 // live=true SALT OKUMA DEGIL: dis RDAP/WHOIS sorgusu + persist + alarm
@@ -6006,7 +6008,7 @@ public class MonitoringController {
         Map<Long, String> teams = teamNameMap();
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
         List<PingMonitor> monitors = pingMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canView(session, m.getTeamId())).toList();
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
         Map<String, AlertEvent> alarms = openAlarmsByDomain(
                 monitors.stream().map(PingMonitor::getHost).collect(Collectors.toSet()),
                 EscalationService.TYPE_PING_DOWN);

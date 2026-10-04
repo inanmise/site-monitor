@@ -45,8 +45,10 @@ public class ForecastController {
     @GetMapping
     public ResponseEntity<Map<String, Object>> forecast(HttpSession session) {
         permissionService.require(session, "inventory.list", "view");
-        List<Long> scope = SessionScope.viewTeamIds(session);
-        Map<String, Object> data = forecastService.build(scope, teamId -> SessionScope.canView(session, teamId));
+        // İzleme OKUMA kapsamı (2026-10-04): 7/24 operatörü tüm envanterin yenileme tahminini görür; plan yazma uçları
+        // (POST/DELETE /{domain}/plan) canManage'ta kalır.
+        List<Long> scope = SessionScope.monitoringViewTeamIds(session);
+        Map<String, Object> data = forecastService.build(scope, teamId -> SessionScope.canViewMonitoring(session, teamId));
         data.put("environment", buildInfo.get().environment());   // /system/version ile AYNI kaynak (#4)
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }

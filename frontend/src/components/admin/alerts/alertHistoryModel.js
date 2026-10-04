@@ -19,6 +19,7 @@ import { stormPushTimelineItems } from './stormPushModel.js'
  *           varsayılanı (açık/tümü: açılış en yeni önce; kapalı: kapanış en yeni önce) — yön tek parametrede taşınır
  *           (ayrı `dir` anahtarı yok; sunucuya `sort` + `dir` olarak açılır).
  *   `alert` açılacak kayıt (tüketilir) · `page` / `ps` sayfalama (useServerPagination).
+ *   `noc`   `sent` = yalnız 7/24 ekibine iletilen alarmlar (2026-10-04; sunucuda …Noc sorgu ikizleri — alarmı gören HERKES süzer).
  */
 
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING']
@@ -72,8 +73,10 @@ export function toggleSort(sort, key, tab) {
 }
 
 /** Süzgeç varsayılanları — URL'e yalnız varsayılan-dışı değer yazılır (anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde). */
-export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '', src: '', sort: '' })
-export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range', src: 'src', sort: 'sort' }
+export const FILTER_DEFAULTS = Object.freeze({ type: '', q: '', level: '', team: '', ack: '', from: '', to: '', range: '', src: '', sort: '', noc: '' })
+export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ack: 'ack', from: 'from', to: 'to', range: 'range', src: 'src', sort: 'sort', noc: 'noc' }
+/** "7/24'e gidenler" süzgecinin tek değeri (URL `noc=sent`, sunucu parametresi aynı). */
+export const NOC_SENT = 'sent'
 
 /** Kategori süzgeci (URL `src`, 2026-09-30 — İzleme menüsü rozetleri): izleme türü → o türün TÜM alarm tipleri. */
 export const SRC_KEYS = Object.keys(MONITOR_ALERT_TYPES)
@@ -90,6 +93,7 @@ export function filtersFromUrl(read) {
   if (f.range && !RANGE_VALUES.includes(f.range)) f.range = ''   // `range` başka sayfalarda da kullanılıyor (7 / custom) — yalnız kipler
   if (f.src && !isSrcKey(f.src)) f.src = ''
   if (f.sort && !isSortValue(f.sort)) f.sort = ''               // `sort` başka sayfaların da anahtarı — yalnız beyaz liste
+  if (f.noc && f.noc !== NOC_SENT) f.noc = ''
   if (isPreset(f.from)) f.to = ''                                // hızlı dönem "şimdiye kadar"dır; bitiş taşımaz
   return f
 }
@@ -152,6 +156,7 @@ export function activeAlertFilters(filters, tab) {
   if (filters.ack) out.push({ key: 'ack', value: filters.ack, patch: { ack: '' } })
   if (filters.team) out.push({ key: 'team', value: filters.team, patch: { team: '' } })
   if (filters.q) out.push({ key: 'q', value: filters.q, patch: { q: '' } })
+  if (filters.noc === NOC_SENT) out.push({ key: 'noc', value: NOC_SENT, patch: { noc: '' } })
   const mode = rangeChip(filters, tab)
   if (mode) out.push({ key: 'range', value: mode, patch: { range: '' } })
   if (isPreset(filters.from)) out.push({ key: 'preset', value: filters.from, patch: { from: '', to: '' } })
@@ -208,6 +213,7 @@ export function listParams({ tab, filters, page, pageSize, domain, typesParam, n
   if (filters.level) params.level = filters.level
   if (filters.team) params.teamId = filters.team
   if (filters.ack) params.acknowledged = filters.ack === 'ack' ? 'true' : 'false'
+  if (filters.noc === NOC_SENT) params.noc = NOC_SENT
   return params
 }
 

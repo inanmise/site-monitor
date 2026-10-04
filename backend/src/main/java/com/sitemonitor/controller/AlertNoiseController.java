@@ -34,11 +34,11 @@ public class AlertNoiseController {
                                                      @RequestParam(required = false) Long team,
                                                      HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
-        if (team != null && !SessionScope.canView(session, team)) {
+        if (team != null && !SessionScope.canViewMonitoring(session, team)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("success", false,
                     "message", Msg.t("Bu takımı görüntüleme yetkiniz yok.", "You are not allowed to view this team.")));
         }
-        Map<String, Object> data = noiseService.build(days, team, teamId -> SessionScope.canView(session, teamId));
+        Map<String, Object> data = noiseService.build(days, team, teamId -> SessionScope.canViewMonitoring(session, teamId));
         data.put("my_team_ids", SessionScope.memberTeamIds(session));
         data.put("default_team_id", SessionScope.primaryTeamId(session));
         return ResponseEntity.ok(Map.of("success", true, "data", data));
@@ -54,7 +54,7 @@ public class AlertNoiseController {
                                                          @RequestParam(required = false) Long team,
                                                          HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
-        if (team != null && !SessionScope.canView(session, team)) {
+        if (team != null && !SessionScope.canViewMonitoring(session, team)) {
             return ResponseEntity.status(403).body(Map.of("success", false,
                     "message", Msg.t("Bu takımı görüntüleme yetkiniz yok.", "You are not allowed to view this team.")));
         }
@@ -63,7 +63,7 @@ public class AlertNoiseController {
                     "message", Msg.t("Geçersiz gün ya da saat.", "Invalid day or hour.")));
         }
         return ResponseEntity.ok(Map.of("success", true, "data",
-                noiseService.slot(days, team, teamId -> SessionScope.canView(session, teamId), dow, hour)));
+                noiseService.slot(days, team, teamId -> SessionScope.canViewMonitoring(session, teamId), dow, hour)));
     }
 
     /**
@@ -73,8 +73,8 @@ public class AlertNoiseController {
     @GetMapping("/alerts/team-stats")
     public ResponseEntity<Map<String, Object>> teamStats(HttpSession session) {
         permissionService.require(session, "alerts.read", "view");
-        boolean global = SessionScope.isGlobalViewer(session);
+        boolean global = SessionScope.seesAllMonitoring(session);   // + 7/24 operatörü (2026-10-04, salt okuma)
         return ResponseEntity.ok(Map.of("success", true,
-                "data", teamStatsService.build(teamId -> SessionScope.canView(session, teamId), global)));
+                "data", teamStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), global)));
     }
 }

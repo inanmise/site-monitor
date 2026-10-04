@@ -454,4 +454,27 @@ class MaintenanceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.targets.length()").value(3));
     }
+    // ── 7/24 izleme ekibi operatörü (2026-10-04): tüm pencereleri GÖRÜR, hiçbirini yönetemez ──────────────────
+
+    @Test
+    @DisplayName("7/24 operatörü: başka takımın bakım penceresini listede görür; düzenleme/silme 403")
+    void nocOperator_seesAllWindowsButCannotManage() throws Exception {
+        MockHttpSession op = teamAdminSession();
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        MaintenanceWindow mine = winOfTeam(5L);   mine.setId(1L);   mine.setName("Kendi takımım");
+        MaintenanceWindow other = winOfTeam(9L);  other.setId(2L);  other.setName("Baska takim");
+        when(repo.findAllByOrderByStartAtDesc()).thenReturn(List.of(mine, other));
+        when(maintenanceService.computeStatus(any(), any())).thenReturn("upcoming");
+        mvc.perform(get("/api/monitoring/maintenance").session(op))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2));
+
+        when(repo.findById(2L)).thenReturn(Optional.of(other));
+        mvc.perform(put("/api/monitoring/maintenance/2").session(op)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"startAt\":\"2026-01-01T10:00:00\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/monitoring/maintenance/2").session(op)).andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).deleteById(anyLong());
+    }
 }

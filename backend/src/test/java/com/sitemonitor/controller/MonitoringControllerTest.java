@@ -5179,4 +5179,56 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data[1].slow_alarm").value(false));
         verify(alertEventRepo, org.mockito.Mockito.times(1)).findOpenByDomainIn(any());
     }
+    // ══ 7/24 izleme ekibi operatörü (2026-10-04): izleme OKUMA kapsamı tüm takımlar, YAZMA aynen ══════════════════════
+
+    /** Takım 1 üyesi USER — 7/24 izleme ekibi takımında olduğu için operatör (rol değişmez). */
+    private MockHttpSession nocOperatorSession() {
+        MockHttpSession s = session("USER");
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<>(java.util.List.of(1L)));
+        s.setAttribute("manageTeamIds", new java.util.ArrayList<Long>());
+        s.setAttribute("memberTeamIds", new java.util.ArrayList<>(java.util.List.of(1L)));
+        s.setAttribute("teamId", 1L);
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        s.setAttribute(SessionScope.ATTR_NOC_TEAM_IDS, new java.util.ArrayList<>(java.util.List.of(1L)));
+        return s;
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka takımın izlemesini LİSTEDE görür (can_check=false); aynı kullanıcı operatör değilken görmez")
+    void nocOperator_listsForeignMonitorsReadOnly() throws Exception {
+        com.sitemonitor.model.PingMonitor m = new com.sitemonitor.model.PingMonitor();
+        m.setId(77L); m.setName("Yabancı"); m.setHost("foreign.example.com"); m.setActive(true); m.setTeamId(99L);
+        when(pingMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(m));
+        when(pingCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+
+        mvc.perform(get("/api/monitoring/ping").session(nocOperatorSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].id").value(77))
+                .andExpect(jsonPath("$.data[0].can_check").value(false));
+        mvc.perform(get("/api/monitoring/ping").session(sessionScoped(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+        // Etiket okuma (takım kapsamlı GET): operatör başka takımınkini okur, sıradan kullanıcı 403
+        mvc.perform(get("/api/monitoring/tags").param("teamId", "99").session(nocOperatorSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/monitoring/tags").param("teamId", "99").session(sessionScoped(1L))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka takımın izlemesinde Şimdi Kontrol Et / düzenle / sil 403 — yazma kapsamı genişlemez")
+    void nocOperator_cannotWriteForeignMonitors() throws Exception {
+        com.sitemonitor.model.PingMonitor m = new com.sitemonitor.model.PingMonitor();
+        m.setId(78L); m.setName("Yabancı"); m.setHost("foreign2.example.com"); m.setActive(true); m.setTeamId(99L);
+        when(pingMonitorRepo.findById(78L)).thenReturn(java.util.Optional.of(m));
+
+        mvc.perform(post("/api/monitoring/ping/78/check").session(nocOperatorSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(put("/api/monitoring/ping/78").session(nocOperatorSession())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"name\":\"x\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/monitoring/ping/78").session(nocOperatorSession()))
+                .andExpect(status().isForbidden());
+        verify(pingChecker, never()).check(any(), any(), anyInt(), anyInt());
+        verify(pingMonitorRepo, never()).save(any());
+    }
 }

@@ -26,7 +26,7 @@ public class GlobalSearchController {
 
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam(defaultValue = "") String q, HttpSession session) {
-        List<GlobalSearchService.Hit> hits = searchService.search(q, teamId -> SessionScope.canView(session, teamId));
+        List<GlobalSearchService.Hit> hits = searchService.search(q, teamId -> SessionScope.canViewMonitoring(session, teamId));   // izleme araması: + 7/24 operatörü (2026-10-04)
         List<Map<String, Object>> rows = hits.stream().map(h -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("kind", h.kind()); m.put("id", h.id()); m.put("label", h.label()); m.put("sub", h.sub());

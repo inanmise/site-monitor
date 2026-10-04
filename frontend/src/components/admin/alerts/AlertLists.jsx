@@ -24,7 +24,7 @@ import {
 import { cn } from '@/lib/utils'
 import {
   AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
-  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge,
+  RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge,
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
 import { NocCallIndicator } from './NocCallLog.jsx'
@@ -188,6 +188,7 @@ export function OpenAlertCard({
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />
         <StormBadge stormId={a.storm_id} />
+        <NocSentBadge sentAt={a.noc_sent_at} viaStorm={a.noc_via_storm} />
         {a.days_remaining != null && (
           <Badge variant="outline" className="rounded-full border-destructive/30 bg-destructive/10 font-bold text-destructive">{t('alh.days', a.days_remaining)}</Badge>
         )}
@@ -368,6 +369,7 @@ export function AlertRowsList({
                         <AlertLevelBadge level={a.alert_level} />
                         {all && <AlertStateBadge resolved={a.resolved} />}
                         <RepeatBadge count={a.repeat_count} />
+                        <NocSentBadge sentAt={a.noc_sent_at} viaStorm={a.noc_via_storm} />
                         <span className={cn(LAYER, 'ml-auto')}><KebabMenu items={menuItems(a)} label={t('alh.moreActions')} rowLabel={name} /></span>
                       </div>
                       <Button type="button" variant="ghost" data-alert-open="" onClick={() => onOpen(a)}
@@ -446,6 +448,7 @@ export function AlertRowsList({
                           <span className="line-clamp-2 font-semibold [overflow-wrap:anywhere]" title={a.domain}>{a.domain}</span>
                           <MaintenanceBadge target={a.domain} />
                           <RepeatBadge count={a.repeat_count} />
+                          <NocSentBadge sentAt={a.noc_sent_at} viaStorm={a.noc_via_storm} />
                         </div>
                         <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                           <AlertTypeChip type={a.alert_type} />

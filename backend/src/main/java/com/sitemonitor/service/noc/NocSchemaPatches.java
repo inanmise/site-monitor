@@ -37,6 +37,13 @@ public class NocSchemaPatches {
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_noc_call_team_user ON noc_team_call_list(team_id, user_id)",
             "CREATE INDEX IF NOT EXISTS idx_noc_call_team ON noc_team_call_list(team_id, position)");
 
+    /** {@code noc_settings} — 7/24 izleme ekibi takımları (2026-10-04). */
+    static final List<String[]> OPERATOR_COLUMNS = List.of(
+            new String[]{"operator_team_ids", "VARCHAR(2000)"},
+            new String[]{"operator_teams_updated_at", "VARCHAR(30)"},
+            new String[]{"operator_teams_updated_by", "VARCHAR(100)"},
+            new String[]{"operator_teams_updated_by_name", "VARCHAR(200)"});
+
     private final JdbcTemplate jdbc;
 
     /** @return bu koşuda EKLENEN kolon sayısı (0 = zaten güncel). */
@@ -46,6 +53,9 @@ public class NocSchemaPatches {
             added += addColumn(t, "noc_notify", "BOOLEAN");
             added += addColumn(t, "noc_group_ids", "VARCHAR(500)");
         }
+        // 7/24 izleme ekibi takımları (2026-10-04): tek satırlık yapılandırmaya eklenen kolonlar — hepsi NULLABLE
+        // (null = hiçbir takım seçilmedi; bugünkü davranış). Tablo hiç yoksa ddl-auto varlıktan kurar.
+        for (String[] c : OPERATOR_COLUMNS) added += addColumn("noc_settings", c[0], c[1]);
         for (String ddl : INDEXES) {
             try {
                 jdbc.execute(ddl);

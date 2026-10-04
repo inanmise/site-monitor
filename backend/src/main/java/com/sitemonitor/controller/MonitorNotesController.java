@@ -234,7 +234,7 @@ public class MonitorNotesController {
      */
     private boolean noteVisible(HttpSession session, MonitorNote n) {
         if (n.getTeamId() == null) return true;
-        return SessionScope.canView(session, n.getTeamId());
+        return SessionScope.canViewMonitoring(session, n.getTeamId());   // + 7/24 operatörü (2026-10-04, salt okuma)
     }
 
     private static String normType(String type) {

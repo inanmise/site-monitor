@@ -134,4 +134,23 @@ class TeamDirectoryControllerTest {
         assertThat(data.get(1).get("leader_display_name")).isNull();
         assertThat(data.get(0)).containsKeys("id", "name", "active", "email", "leader_id");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("directory: 7/24 izleme ekibi takımı satırı noc_team=true (rozet); servis yoksa / okunamazsa hepsi false")
+    void directory_marksNocTeams() {
+        when(teamRepo.findAll()).thenReturn(List.of(team(1, "Takım A", null), team(3, "Takım NOC", null)));
+        List<Map<String, Object>> plain = (List<Map<String, Object>>) controller.directory().getBody().get("data");
+        assertThat(plain).extracting(m -> m.get("noc_team")).containsExactly(false, false);
+
+        com.sitemonitor.service.noc.NocOperatorService ops = org.mockito.Mockito.mock(com.sitemonitor.service.noc.NocOperatorService.class);
+        when(ops.teamIds()).thenReturn(List.of(3L));
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "nocOperators", ops);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) controller.directory().getBody().get("data");
+        assertThat(rows).extracting(m -> m.get("noc_team")).containsExactly(false, true);
+
+        when(ops.teamIds()).thenThrow(new RuntimeException("db"));
+        List<Map<String, Object>> failed = (List<Map<String, Object>>) controller.directory().getBody().get("data");
+        assertThat(failed).extracting(m -> m.get("noc_team")).containsExactly(false, false);
+    }
 }

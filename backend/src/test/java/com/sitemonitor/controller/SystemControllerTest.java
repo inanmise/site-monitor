@@ -735,4 +735,17 @@ class SystemControllerTest {
         s.setAttribute("systemRole", "AUDIT");
         return s;
     }
+    @Test
+    @DisplayName("7/24 operatörü (2026-10-04) AUDIT DEĞİLDİR: denetçi/yönetici uçları (anomali onayı, zamanlayıcı kilidi, oturum sonlandırma) 403")
+    void nocOperator_cannotUseAuditOrAdminSystemEndpoints() throws Exception {
+        MockHttpSession op = userSession();
+        op.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        mvc.perform(post("/api/admin/system/user-activity/anomalies/5/ack").session(op)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/admin/system/scheduler-lock").session(op)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/system/terminate-session").session(op)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"username\":\"x\"}"))
+                .andExpect(status().isForbidden());
+    }
 }

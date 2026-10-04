@@ -3,6 +3,7 @@ package com.sitemonitor.service;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -173,5 +174,26 @@ class PermissionCatalogTest {
         assertThat(PermissionCatalog.defaultsFor("TEAM_ADMIN").get("noc_calls.write").get("edit")).isFalse();
         assertThat(PermissionCatalog.defaultsFor("USER").get("noc_calls.write").get("edit")).isFalse();
         assertThat(PermissionCatalog.defaultsFor("ADMIN").get("noc_calls.write").get("edit")).isTrue();
+    }
+    @Test
+    @DisplayName("2026-10-04: 7/24 izleme ekibi takımı operatörünün dinamik izinleri BİREBİR pinli — yalnız izleme OKUMA + arama kaydı")
+    void nocOperatorGrantsArePinned() {
+        assertThat(PermissionCatalog.NOC_OPERATOR_GRANTS).containsExactlyInAnyOrder(
+                "alerts.read:view", "monitoring.read:view", "inventory.list:view", "notes.read:view",
+                "incidents.view:view", "maintenance.view:view", "domain.registration.view:view",
+                "monitoring.group:view", "noc_calls.write:edit");
+        java.util.Set<String> known = new java.util.HashSet<>();
+        for (PermissionCatalog.Resource r : PermissionCatalog.ALL) for (String a : r.actions) known.add(r.key + ":" + a);
+        for (String g : PermissionCatalog.NOC_OPERATOR_GRANTS) {
+            assertThat(known).as("katalogda olmayan dinamik izin: %s", g).contains(g);
+            String action = g.substring(g.indexOf(':') + 1);
+            // Tek yazma istisnası arama kaydıdır; başka hiçbir edit/execute (onay/çözüm, izleme/envanter yazma) yok
+            if (!g.equals("noc_calls.write:edit")) assertThat(action).as(g).isEqualTo(PermissionCatalog.VIEW);
+        }
+        // Yönetim okumaları operatöre AÇILMAZ (bu bir AUDIT rolü değil)
+        for (String forbidden : List.of("audit_log.read:view", "system_health.read:view", "users.list:view",
+                "settings.database:view", "alerts.actions:execute", "monitoring.crud:edit", "monitoring.trigger:execute",
+                "inventory.crud:edit", "incidents.manage:edit", "maintenance.manage:edit", "sql_playground.execute:execute"))
+            assertThat(PermissionCatalog.NOC_OPERATOR_GRANTS).as(forbidden).doesNotContain(forbidden);
     }
 }

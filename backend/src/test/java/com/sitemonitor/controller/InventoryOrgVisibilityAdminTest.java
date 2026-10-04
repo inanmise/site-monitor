@@ -181,6 +181,26 @@ class InventoryOrgVisibilityAdminTest {
                 Arguments.of("scoped AD ADMIN", (Supplier<MockHttpSession>) InventoryOrgVisibilityAdminTest::scopedAdmin));
     }
 
+    /** 7/24 izleme ekibi takımı operatör bayrağı (2026-10-04) — okuma kapsamı genişler, YAZMA genişlemez. */
+    static MockHttpSession noc(MockHttpSession s) {
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        return s;
+    }
+
+    /** YAZMA testleri: takım kapsamlı roller + aynı rollerin 7/24 operatörü olan hâli (yazma reddi aynen geçerli olmalı). */
+    static Stream<Arguments> scopedWriters() {
+        return Stream.concat(scopedRoles(), Stream.of(
+                Arguments.of("USER + 7/24 operatörü", (Supplier<MockHttpSession>) () -> noc(user())),
+                Arguments.of("TEAM_ADMIN + 7/24 operatörü", (Supplier<MockHttpSession>) () -> noc(teamAdmin())),
+                Arguments.of("scoped AD ADMIN + 7/24 operatörü", (Supplier<MockHttpSession>) () -> noc(scopedAdmin()))));
+    }
+
+    static Stream<Arguments> managerWriters() {
+        return Stream.concat(managerRoles(), Stream.of(
+                Arguments.of("TEAM_ADMIN + 7/24 operatörü", (Supplier<MockHttpSession>) () -> noc(teamAdmin())),
+                Arguments.of("scoped AD ADMIN + 7/24 operatörü", (Supplier<MockHttpSession>) () -> noc(scopedAdmin()))));
+    }
+
     /** Yazma yetkisi olan iki takım-kapsamlı rol (TEAM_ADMIN + kapsamlı müdür). */
     static Stream<Arguments> managerRoles() {
         return Stream.of(
@@ -449,8 +469,8 @@ class InventoryOrgVisibilityAdminTest {
     // ══ YAZMA: her yol başka takımın kaydını reddeder (ayar AÇIK iken) ════════════════════════════
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("scopedRoles")
-    @DisplayName("PUT: başka takımın kaydı 403 (kayıt yazılmaz) — kendi takımının kaydı 200")
+    @MethodSource("scopedWriters")
+    @DisplayName("PUT: başka takımın kaydı 403 (kayıt yazılmaz) — kendi takımının kaydı 200 (7/24 operatörü dahil)")
     void update_foreignRejected_ownAllowed(String role, Supplier<MockHttpSession> session) throws Exception {
         String body = "{\"group_name\":\"Grup A\",\"tags\":\"prod\",\"domain\":\"%s\",\"port\":443,\"active\":true,\"team_id\":%d}";
         mvc.perform(put("/api/admin/inventory/2").session(session.get()).contentType(MediaType.APPLICATION_JSON)
@@ -467,8 +487,8 @@ class InventoryOrgVisibilityAdminTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("managerRoles")
-    @DisplayName("DELETE / restore / kalıcı sil: başka takımın kaydı 403 — kendi takımında 200")
+    @MethodSource("managerWriters")
+    @DisplayName("DELETE / restore / kalıcı sil: başka takımın kaydı 403 — kendi takımında 200 (7/24 operatörü dahil)")
     void deleteRestorePurge_foreignRejected(String role, Supplier<MockHttpSession> session) throws Exception {
         mvc.perform(delete("/api/admin/inventory/2").session(session.get())).andExpect(status().isForbidden());
         mvc.perform(post("/api/admin/inventory/3/restore").session(session.get())).andExpect(status().isForbidden());
@@ -485,8 +505,8 @@ class InventoryOrgVisibilityAdminTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("managerRoles")
-    @DisplayName("SY/UG aktarımı: takım kapsamlı roller için 403 (yalnız global admin aktarır)")
+    @MethodSource("managerWriters")
+    @DisplayName("SY/UG aktarımı: takım kapsamlı roller için 403 (yalnız global admin aktarır; 7/24 operatörü dahil)")
     void transfer_rejectedForScopedRoles(String role, Supplier<MockHttpSession> session) throws Exception {
         mvc.perform(post("/api/admin/inventory/2/transfer").session(session.get()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"team_id\":5}"))
@@ -505,8 +525,8 @@ class InventoryOrgVisibilityAdminTest {
      * da aynı kapıdan geçer.
      */
     @ParameterizedTest(name = "{0}")
-    @MethodSource("managerRoles")
-    @DisplayName("toplu işlem: yabancı kimlik ATLANIR (skipped), kendi kaydı işlenir — her kimlik ayrı denetlenir")
+    @MethodSource("managerWriters")
+    @DisplayName("toplu işlem: yabancı kimlik ATLANIR (skipped), kendi kaydı işlenir — her kimlik ayrı denetlenir (7/24 operatörü dahil)")
     void bulk_foreignIdSkipped_ownProcessed(String role, Supplier<MockHttpSession> session) throws Exception {
         mvc.perform(post("/api/admin/inventory/bulk").session(session.get()).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\":\"deactivate\",\"ids\":[2,1]}"))

@@ -28,4 +28,22 @@ public interface NocCallLogRepository extends JpaRepository<NocCallLog, Long> {
          + "                   AND (n.contactedAt > c.contactedAt "
          + "                        OR (n.contactedAt = c.contactedAt AND n.id > c.id)))")
     List<Object[]> summarizeByAlertIds(@Param("ids") Collection<Long> ids);
+
+    /**
+     * 7/24 konsolu (2026-10-04): uyarı başına EN SON arama kaydının TAM satırı (aranan, kanal, sonuç, arayan) — sayfa
+     * başına TEK sorgu. Sıra kuralı {@link #summarizeByAlertIds} ile aynı.
+     */
+    @Query("SELECT c FROM NocCallLog c "
+         + "WHERE c.alertId IN :ids "
+         + "  AND NOT EXISTS (SELECT 1 FROM NocCallLog n WHERE n.alertId = c.alertId "
+         + "                   AND (n.contactedAt > c.contactedAt "
+         + "                        OR (n.contactedAt = c.contactedAt AND n.id > c.id)))")
+    List<NocCallLog> findLatestByAlertIds(@Param("ids") Collection<Long> ids);
+
+    /** Uyarı başına arama sayısı — {@code [alertId, count]}; konsol KPI'sı ve satır sayacı. */
+    @Query("SELECT c.alertId, COUNT(c) FROM NocCallLog c WHERE c.alertId IN :ids GROUP BY c.alertId")
+    List<Object[]> countGroupedByAlertIds(@Param("ids") Collection<Long> ids);
+
+    /** "Son bir saatte arandı" KPI'sı — {@code contacted_at} sabit genişlikte UTC ISO (sözlüksel = zaman sırası). */
+    long countByContactedAtGreaterThanEqual(String since);
 }

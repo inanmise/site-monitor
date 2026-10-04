@@ -107,7 +107,7 @@ public class ActivityController {
         Optional<ActivityLog> found = repo.findById(id);
         // Sahiplik/izolasyon: bulunamazsa VEYA kaydın takımı görüntüleme kapsamında değilse → 404
         // (varlık sızıntısını önlemek için 403 yerine 404; başka takımın kaydı "yok" gibi davranır).
-        if (found.isEmpty() || !SessionScope.canView(session, found.get().getTeamId())) {
+        if (found.isEmpty() || !SessionScope.canViewMonitoring(session, found.get().getTeamId())) {   // + 7/24 operatörü (2026-10-04)
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "not_found"));
         }
         ActivityLog a = found.get();
@@ -131,7 +131,8 @@ public class ActivityController {
     private record Scope(boolean scoped, List<Long> list, boolean empty) {}
 
     private static Scope scope(HttpSession session) {
-        List<Long> view = SessionScope.isGlobalViewer(session) ? null : SessionScope.viewTeamIds(session);
+        // İzleme etkinlik akışı (2026-10-04): 7/24 operatörü tüm takımlarınkini okur.
+        List<Long> view = SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIds(session);
         boolean scoped = view != null;
         if (scoped && view.isEmpty()) return new Scope(true, List.of(-1L), true);   // kapsamsız → hiç kayıt
         return new Scope(scoped, scoped ? view : List.of(-1L), false);

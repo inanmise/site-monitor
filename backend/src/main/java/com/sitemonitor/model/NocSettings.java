@@ -48,4 +48,21 @@ public class NocSettings {
 
     @Column(name = "updated_by_name", length = 200)
     private String updatedByName;
+
+    /**
+     * 7/24 İZLEME EKİBİ TAKIMLARI (2026-10-04, kullanıcı isteği) — virgüllü takım kimlikleri; boş = hiçbiri. Bu takımların
+     * AKTİF üyeleri rolleri değişmeden "7/24 operatörü" olur (bkz. {@code NocOperatorService}). Yapılandırmanın geri kalanından
+     * AYRI künye taşır: tür/kural kaydı takım seçimini, takım seçimi tür/kural künyesini değiştirmez.
+     */
+    @Column(name = "operator_team_ids", length = 2000)
+    private String operatorTeamIds;
+
+    @Column(name = "operator_teams_updated_at", length = 30)
+    private String operatorTeamsUpdatedAt;
+
+    @Column(name = "operator_teams_updated_by", length = 100)
+    private String operatorTeamsUpdatedBy;
+
+    @Column(name = "operator_teams_updated_by_name", length = 200)
+    private String operatorTeamsUpdatedByName;
 }

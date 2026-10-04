@@ -111,6 +111,25 @@ public class AuthInterceptor implements HandlerInterceptor {
     /** Test kancası. */
     void setSystemMaintenance(com.sitemonitor.service.SystemMaintenanceService s) { this.systemMaintenance = s; }
 
+    /**
+     * 7/24 izleme ekibi operatör bayrağı (2026-10-04) — İSTEĞE BAĞLI (bakım servisiyle aynı gerekçe: dilim testlerinin
+     * bağlamı büyümesin). Her geçerli istekte oturum öznitelikleri ≤ 30 sn'lik önbellekle eşitlenir: takım listeden
+     * çıkarılınca ya da kullanıcı takımdan ayrılınca operatörlük yeniden giriş BEKLEMEDEN kalkar. Yoksa hiçbir şey olmaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.noc.NocOperatorService nocOperators;
+
+    /** Test kancası. */
+    void setNocOperators(com.sitemonitor.service.noc.NocOperatorService s) { this.nocOperators = s; }
+
+    private void syncNocOperator(HttpSession session) {
+        try {
+            if (nocOperators != null) nocOperators.sync(session);
+        } catch (Exception e) {
+            // Kapalı düşer: bayrak yazılamadıysa önceki değer kalır; okuma hatası bir isteği asla düşürmez.
+        }
+    }
+
     private boolean maintenanceActive() {
         try {
             return systemMaintenance != null && systemMaintenance.isActive();
@@ -160,6 +179,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                         clearRememberMeCookie(res);
                         return writeUnauthorized(res, "Session superseded");
                     }
+                    syncNocOperator(session);   // 7/24 operatörlüğü (2026-10-04) — oturum geçerli sayıldıktan SONRA
                     return enforceForcedPasswordChange(session, path, res);
                 } else if (Boolean.TRUE.equals(session.getAttribute(ATTR_INACTIVE))) {
                     // Pasif hesabın mezar taşı oturumu: hesap hâlâ pasifse aynı sinyal (çok sekme / eşzamanlı istek).
@@ -248,6 +268,7 @@ public class AuthInterceptor implements HandlerInterceptor {
                             user.getSystemRole(), clientIp, req.getHeader("User-Agent"),
                             newSession.getId(), true, null, null, 5, "REMEMBER_ME");
                 }
+                syncNocOperator(newSession);   // 7/24 operatörlüğü (populateSession de yazar; dilim testinde o mock'tur)
                 // Apply the forced-password-change gate to the restored session too,
                 // so the cookie path can't sidestep the modal for one request.
                 return enforceForcedPasswordChange(newSession, path, res);

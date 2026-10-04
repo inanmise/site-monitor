@@ -46,6 +46,7 @@ public class NocAdminController {
     private final NocMonitorDirectory directory;
     private final NocNotificationService notifications;
     private final AuditService auditService;
+    private final com.sitemonitor.service.noc.NocOperatorService nocOperators;   // 7/24 izleme ekibi takımları (2026-10-04)
 
     private ResponseEntity<Map<String, Object>> ok(Object data) {
         return ResponseEntity.ok(Map.of("success", true, "data", data, "timestamp", ISO.format(Instant.now())));
@@ -106,6 +107,58 @@ public class NocAdminController {
                         "disabled_types", saved.disabledTypeKeys()),
                 AuditDiff.diff(before, afterForDiff));
         return ok(after);
+    }
+
+    // ── 7/24 izleme ekibi takımları (2026-10-04) ─────────────────────────────
+
+    /**
+     * İşaretli takımlar + künye + etkin operatör sayısı. Okuma {@link #canRead} (global admin, kapsamlı müdür, AUDIT) —
+     * takım adları hassas değil; yazma yalnız global yönetici.
+     */
+    @GetMapping("/operator-teams")
+    public ResponseEntity<Map<String, Object>> getOperatorTeams(HttpSession session) {
+        requireRead(session);
+        return ok(nocOperators.settingsDto());
+    }
+
+    /**
+     * Seçim önizlemesi (kaydetmeden): takım başına aktif üye sayısı + etkilenecek aktif kullanıcılar (ad + 7/24 takımı).
+     * {@code teamIds} virgüllü. Pasif kullanıcı ve pasif takım sayılmaz. Ad/takım bilgisi kurum geneli takım rehberinde
+     * zaten herkese açık — telefon/e-posta YOK.
+     */
+    @GetMapping("/operator-teams/preview")
+    public ResponseEntity<Map<String, Object>> previewOperatorTeams(@RequestParam(name = "teamIds", required = false) String teamIds,
+                                                                    HttpSession session) {
+        requireRead(session);
+        return ok(nocOperators.preview(com.sitemonitor.service.noc.NocOperatorService.parseIds(teamIds)));
+    }
+
+    /**
+     * Gövde {@code { teamIds: [..] }} — seçimi BAŞTAN yazar (boş liste = hiçbir takım). Yalnız GLOBAL yönetici (kapsamlı
+     * müdür 403). Denetim: {@code NOC_TEAMS_UPDATE} + önce/sonra takım kimlikleri ve adları. Bu podda operatör önbelleği
+     * hemen düşer; öteki pod'lar en geç {@code site.monitor.noc.operator-cache-ms} sonra görür.
+     */
+    @PutMapping("/operator-teams")
+    public ResponseEntity<Map<String, Object>> putOperatorTeams(@RequestBody Map<String, Object> body, HttpSession session) {
+        requireGlobalAdmin(session);
+        if (body == null || !body.containsKey("teamIds"))
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("teamIds zorunlu", "teamIds is required"));
+        com.sitemonitor.service.noc.NocOperatorService.SaveResult r =
+                nocOperators.save(body.get("teamIds"), actor(session), actorName(session));
+        Map<String, Object> before = new LinkedHashMap<>();
+        before.put("team_ids", r.before());
+        before.put("team_names", r.before().stream().map(id -> r.names().getOrDefault(id, "#" + id)).toList());
+        Map<String, Object> after = new LinkedHashMap<>();
+        after.put("team_ids", r.after());
+        after.put("team_names", r.after().stream().map(id -> r.names().getOrDefault(id, "#" + id)).toList());
+        List<Long> added = r.after().stream().filter(id -> !r.before().contains(id)).toList();
+        List<Long> removed = r.before().stream().filter(id -> !r.after().contains(id)).toList();
+        auditService.recordAction("NOC_TEAMS_UPDATE", session, "NOC", "operator-teams",
+                com.sitemonitor.service.AuditDetail.of("count", r.after().size(),
+                        "added", added.stream().map(id -> r.names().getOrDefault(id, "#" + id)).toList(),
+                        "removed", removed.stream().map(id -> r.names().getOrDefault(id, "#" + id)).toList()),
+                AuditDiff.diff(before, after));
+        return ok(nocOperators.settingsDto());
     }
 
     // ── Gruplar ──────────────────────────────────────────────────────────────

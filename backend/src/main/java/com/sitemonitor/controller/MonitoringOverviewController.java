@@ -33,10 +33,11 @@ public class MonitoringOverviewController {
                                                         @RequestParam(value = "fresh", required = false) String fresh,
                                                         HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
-        boolean global = SessionScope.isGlobalViewer(session);
+        // 7/24 operatörü (2026-10-04) global görücü gibi tüm takımları görür — anahtar ve yüklem AYNI kaynaktan.
+        boolean global = SessionScope.seesAllMonitoring(session);
         // Bellek anahtarı canView yüklemini TAM belirler: global → hepsi; aksi halde yalnız görüş takımları.
         String scopeKey = com.sitemonitor.util.TtlMemo.scopeKey(global, SessionScope.viewTeamIds(session));
-        java.util.function.Predicate<Long> canView = teamId -> SessionScope.canView(session, teamId);
+        java.util.function.Predicate<Long> canView = teamId -> SessionScope.canViewMonitoring(session, teamId);
         Map<String, Object> data = isFresh(fresh)
                 ? overviewService.build(scopeKey, canView, global, hours, true)
                 : overviewService.build(scopeKey, canView, global, hours);

@@ -103,6 +103,17 @@ public class AuthController {
      * Giriş yöntemleri ayarları + kodla giriş (2026-10-02, kullanıcı isteği) — İSTEĞE BAĞLI: {@code @WebMvcTest} dilimlerinde
      * yok → LDAP girişi açık sayılır ve kod uçları "yöntem kapalı" döner (bugünkü davranış birebir).
      */
+    /**
+     * 7/24 izleme ekibi takımı → operatör bayrağı (2026-10-04). İsteğe bağlı: dilimli testte yokken oturumda bayrak hiç
+     * yazılmaz (bugünkü davranış). Giriş yanıtı ve {@code /me} {@code noc_operator}/{@code noc_teams} taşır.
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.noc.NocOperatorService nocOperators;
+
+    /** {@code noc_can_write} (arama kaydı) kuralının tek kaynağı — isteğe bağlı (dilimli test). */
+    @Autowired(required = false)
+    private com.sitemonitor.service.noc.NocCallLogService nocCallLogService;
+
     @Autowired(required = false)
     private com.sitemonitor.service.otp.LoginMethodsService loginMethods;
 
@@ -750,6 +761,7 @@ public class AuthController {
         // KAPALI — sekme yalnız açık takımlara (ve en az bir takım açıksa yönetici/denetçiye) çizilir.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): EK blok — açılışta şerit/pencere ilk yoklamayı beklemesin
+        putNoc(resp, session);  // 7/24 izleme ekibi (2026-10-04): menü/konsol/arama düğmeleri
         return ResponseEntity.ok(resp);
     }
 
@@ -938,8 +950,9 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("success", false, "error", "Not authenticated"));
         }
         String role = (String) session.getAttribute("systemRole");
+        // 7/24 operatörünün takım üyeliğinden gelen okuma izinleri de (2026-10-04) — arayüz menüleri buna göre açar.
         Map<String, Map<String, Boolean>> snapshot = permissionService != null
-            ? permissionService.snapshotForRole(role)
+            ? permissionService.snapshotForSession(session)
             : PermissionCatalog.defaultsFor(role);
         return ResponseEntity.ok(Map.of("success", true, "data", snapshot));
     }
@@ -1239,6 +1252,30 @@ public class AuthController {
                 Boolean.TRUE.equals(user.getMustChangePassword()));
         applyTeamScope(session, user, userService.computeViewTeamIds(user), userService.computeManageTeamIds(user),
                 userService.computeMemberTeamIds(user));
+        // 7/24 izleme ekibi operatörlüğü (2026-10-04): girişte de yazılır — giriş yanıtı noc_operator'ı taşısın. Sonraki
+        // isteklerde AuthInterceptor tazeler (takım listeden çıkarsa yeniden giriş beklemeden kalkar).
+        if (nocOperators != null) nocOperators.sync(session);
+    }
+
+    /**
+     * 7/24 izleme ekibi bloğu — {@code /me} ve giriş yanıtı (2026-10-04): {@code noc_operator} (takım üyeliğinden ya da
+     * eski AUDIT + {@code noc_calls.write} düzeninden — global yönetici operatör sayılmaz, zaten her şeyi yapar),
+     * {@code noc_teams} (üyesi olduğu 7/24 takımları, ad ile) ve {@code noc_can_write} (arama kaydı girebilir mi).
+     */
+    private void putNoc(Map<String, Object> resp, HttpSession session) {
+        boolean byTeam = SessionScope.isNocOperator(session);
+        boolean canWrite = nocCallLogService != null && nocCallLogService.canWrite(session);
+        resp.put("noc_operator", byTeam || (canWrite && !SessionScope.isGlobalAdmin(session)));
+        List<Long> ids = SessionScope.nocTeamIds(session);
+        List<Map<String, Object>> teams = new ArrayList<>();
+        for (Long id : ids) {   // operatörün 7/24 takımları — pratikte bir-iki takım
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("id", id);
+            t.put("name", userService.findTeamById(id).map(Team::getName).orElse(null));
+            teams.add(t);
+        }
+        resp.put("noc_teams", teams);
+        resp.put("noc_can_write", canWrite);
     }
 
     /** Oturumun TAKIM öznitelikleri (teamId/teamName/viewTeamIds/manageTeamIds/memberTeamIds) — giriş ve tazeleme ortak. */
@@ -1319,6 +1356,7 @@ public class AuthController {
         // Giriş yanıtına da konur: /me yalnız açılışta koşuyor — konmazsa sekme ancak F5'ten sonra görünürdü.
         resp.put("weekly_reports_visible", weeklyReportsVisible(resp, session));
         putMaintenance(resp);   // Sistem Bakım Modu (2026-10-02): global yönetici bakımda girince admin şeridi hemen görünsün
+        putNoc(resp, session);  // 7/24 izleme ekibi (2026-10-04): giriş yanıtı da taşır — menü F5 beklemesin
         return resp;
     }
 

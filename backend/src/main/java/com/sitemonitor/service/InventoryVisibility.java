@@ -50,8 +50,16 @@ public class InventoryVisibility {
      * İzin şartı, matristen envanter okuması kapatılmış bir rolün bu yoldan envanter görmesini engeller.
      */
     public boolean orgWideReader(HttpSession session) {
-        if (session == null || !enabled()) return false;
+        if (session == null) return false;
+        // 7/24 izleme ekibi operatörü (2026-10-04) ayardan BAĞIMSIZ tüm envanteri okur — yazma kapıları bu sınıfı sormaz.
+        if (SessionScope.isNocOperator(session)) return true;
+        if (!enabled()) return false;
         return permissionService.allows(session, "inventory.list", "view");
+    }
+
+    /** Arayüzün "Tüm takımlar" anahtarı bu oturumda anlamlı mı: ayar açık ya da oturum 7/24 operatörü. */
+    public boolean enabledFor(HttpSession session) {
+        return SessionScope.isNocOperator(session) || enabled();
     }
 
     /** {@code scope} parametresi org geneli okumaya dönüşüyor mu? {@code all} değilse ya da kapı kapalıysa false. */
@@ -78,8 +86,8 @@ public class InventoryVisibility {
      */
     public boolean canRead(HttpSession session, CertificateInventory inv) {
         if (inv == null) return false;
-        if (SessionScope.canView(session, inv.getTeamId())) return true;
-        if (inv.getUgTeamId() != null && SessionScope.canView(session, inv.getUgTeamId())) return true;
+        if (SessionScope.canViewMonitoring(session, inv.getTeamId())) return true;
+        if (inv.getUgTeamId() != null && SessionScope.canViewMonitoring(session, inv.getUgTeamId())) return true;
         return readableOrgWide(session, inv);
     }
 }

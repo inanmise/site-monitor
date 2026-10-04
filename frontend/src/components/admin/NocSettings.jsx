@@ -11,6 +11,7 @@ import { LoadingBlock } from '../ui/Progress.jsx'
 import ToneBadge from './ToneBadge.jsx'
 import NocGroupModal from './NocGroupModal.jsx'
 import NocGroupCard from '../noc/NocGroupCard.jsx'
+import NocOperatorTeams from './NocOperatorTeams.jsx'
 import { NOC_TYPE_ICON, NocSwitchRow, typeLabel } from '../noc/nocUi.jsx'
 import {
   MAX_INSTRUCTIONS, NOC_LEVELS, NOC_TYPES, configBody, normalizeConfig, sortGroups, testOutcome, unwrap,
@@ -28,6 +29,8 @@ import { cn } from '@/lib/utils'
  * Ayarlar → Bildirimler → **7/24 İzleme Ekibi** (`?sec=noc`, 2026-09-27; `.migration/noc/CONTRACT.md`).
  *
  * <p>Kurumsal 7/24 izleme ekibi (NOC) gece kesintisinde ilgili takımı TELEFONLA arar. Burada:
+ *  • <b>7/24 izleme ekibi takımları</b> (2026-10-04) — işaretlenen takımların aktif üyeleri 7/24 operatörü olur
+ *    (`NocOperatorTeams`: aranabilir çoklu takım seçici + önizleme; yalnız global yönetici kaydeder).
  *  • <b>Gruplar</b> — GLOBAL (takıma bağlı değil) ad + e-posta listesi; aktif / varsayılan. Kartlar; ekle/düzenle
  *    penceresi (çoklu e-posta çip girişi), test e-postası, silme onayı (seçen izleme sayısı söylenir). Grup işlemleri
  *    ANINDA yazılır (Platformlar bölümüyle aynı desen).
@@ -310,6 +313,10 @@ export default function NocSettings({ readOnly = false }) {
           )}
         </>
       )}
+
+      {/* ── 7/24 izleme ekibi takımları (2026-10-04): bu takımların üyeleri tüm izlemeleri okur, arama kaydı + not girer.
+          Kendi kayıt çubuğu var (tür/kural çubuğundan bağımsız) — o yüzden en altta, iki çubuk karışmasın. ── */}
+      <NocOperatorTeams readOnly={readOnly} />
 
       {modal && (
         <NocGroupModal open group={modal.group} onClose={() => setModal(null)}

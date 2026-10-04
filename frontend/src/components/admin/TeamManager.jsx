@@ -4,10 +4,11 @@ import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
-import { UsersRound, PenLine } from 'lucide-react'
+import { UsersRound, PenLine, Headset } from 'lucide-react'
 import UserEditModal from './UserEditModal.jsx'
 import TagInput from '../ui/TagInput.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
+import { useTeamDirectory } from '../ui/TeamDirectory.jsx'
 import TeamMembersModal from '../ui/TeamMembersModal.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import AdminChangeHistory from './AdminChangeHistory.jsx'
@@ -79,6 +80,8 @@ function WeeklySwitch({ on, disabled, onToggle, label, short }) {
 export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsChange, globalAdmin = false, currentUsername = null }) {
   const t = useT()
   const toast = useToast()
+  // 7/24 izleme ekibi takımı rozeti (2026-10-04): takım rehberinin `noc_team` bayrağı (sağlayıcı yoksa rozet yok)
+  const teamDir = useTeamDirectory()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
   const canManage = isAdmin || isTeamAdmin
@@ -491,6 +494,12 @@ export default function TeamManager({ systemRole, ownTeamId, myTeamIds, onTeamsC
                 <TableCell>
                   <strong><TeamBadge teamId={team.id} teamName={team.name} size={13}
                     onOpen={() => setMembersTeam(team)} title={t('team.expandMembers')} /></strong>
+                  {teamDir.byId.get(Number(team.id))?.noc_team && (
+                    <Badge variant="outline" data-slot="team-noc-badge" title={t('noc.ot.teamBadgeTip')}
+                      className="ml-1.5 gap-1 rounded-full border-sky-500/40 bg-sky-500/10 font-semibold text-sky-700 dark:text-sky-300">
+                      <Headset aria-hidden="true" className="size-3" />{t('noc.ot.teamBadge')}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="hidden md:table-cell">{team.email || '—'}</TableCell>
                 <TableCell className="hidden lg:table-cell">{userMap[team.leader_id] ?? <span className="text-destructive">{t('team.noLeader')}</span>}</TableCell>

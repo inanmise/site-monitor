@@ -1,5 +1,6 @@
 package com.sitemonitor.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import com.sitemonitor.model.IncidentRecord;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.HttpMetricsService;
@@ -454,5 +455,36 @@ class IncidentControllerTest {
                         .content("{\"title\":\"duzeltme\",\"team_id\":\"99\"}"))
                 .andExpect(status().isOk());
         verify(service).update(eq(1L), any(), any());
+    }
+    // -- 7/24 izleme ekibi operatörü (2026-10-04): olay kayıtlarını TÜM takımlar için okur, yazamaz -----------------
+
+    private MockHttpSession nocOperatorSession() {
+        MockHttpSession s = userSessionTeam(5L);
+        s.setAttribute(SessionScope.ATTR_NOC_OPERATOR, Boolean.TRUE);
+        return s;
+    }
+
+    @Test
+    @DisplayName("7/24 operatörü: başka takımın olay kaydını okur (sıradan üye 403); düzenleme/aktarma 403 — yazma sınırı KENDİ takımı")
+    void nocOperator_readsForeignIncidentButCannotWrite() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        allowManage();
+        IncidentRecord rec = sample();
+        rec.setTeamId(99L);
+        when(service.get(1L)).thenReturn(rec);
+
+        mvc.perform(get("/api/incidents/1").session(nocOperatorSession())).andExpect(status().isOk());
+        mvc.perform(get("/api/incidents/1").session(userSessionTeam(5L))).andExpect(status().isForbidden());
+
+        mvc.perform(put("/api/incidents/1").session(nocOperatorSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"OPEN\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/incidents/transfer").session(nocOperatorSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[1],\"team_id\":5,\"team_name\":\"Takim A\"}"))
+                .andExpect(status().isForbidden());
+        verify(service, never()).transfer(anyList(), any(), any(), any());
+        assertThat(IncidentController.canReadIncident(nocOperatorSession(), 99L, null)).isTrue();
+        assertThat(IncidentController.inOwnIncidentScope(nocOperatorSession(), 99L, null)).isFalse();
     }
 }

@@ -127,7 +127,7 @@ const MyAuditLog = lazy(() => import('./components/MyAuditLog'))
 const HelpPage = lazy(() => import('./components/HelpPage'))
 const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 const WarningsPage = lazy(() => import('./pages/WarningsPage'))   // Dikkat Gerektiren Sertifikalar (2026-09-27)
-const NocCoveragePage = lazy(() => import('./pages/NocCoveragePage'))   // 7/24 Kapsamı (2026-09-27)
+const NocPage = lazy(() => import('./pages/NocPage'))   // 7/24 Konsolu + Kapsamı (2026-09-27; konsol 2026-10-04)
 // Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
 const InventoryFormModalForDomain = lazy(() =>
   import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
@@ -216,6 +216,18 @@ function profileFrom(r) {
   }
 }
 
+/**
+ * 7/24 izleme ekibi bilgisi (2026-10-04) — /me ve giriş yanıtından: operatör mü (takım üyeliği ya da eski AUDIT + arama
+ * kaydı), üyesi olduğu 7/24 takımları, arama kaydı girebilir mi. Alan yoksa (eski sunucu) hepsi kapalı.
+ */
+function nocFrom(r) {
+  return {
+    operator: r?.noc_operator === true,
+    canWrite: r?.noc_can_write === true,
+    teams: Array.isArray(r?.noc_teams) ? r.noc_teams : [],
+  }
+}
+
 
 export default function App() {
   const { showConfirm } = useDialog()
@@ -228,6 +240,8 @@ export default function App() {
   const [globalAdmin, setGlobalAdmin] = useState(false)
   // Haftalık Raporlar modülü takım bazlı açılır (2026-09-16): sunucu /me + giriş yanıtında söyler.
   const [weeklyReportsVisible, setWeeklyReportsVisible] = useState(false)
+  // 7/24 izleme ekibi operatörlüğü (2026-10-04): 7/24 sekmesinde konsol görünümü + arama düğmeleri buna göre açılır.
+  const [noc, setNoc] = useState(() => nocFrom(null))
   // Kenar çubuğu açık/daraltılmış — shadcn SidebarProvider'a kontrollü verilir; eski anahtar ('sidebar-open')
   // korunur ki kullanıcının tercihi geçişte kaybolmasın. Hook, auth erken-return'lerinden ÖNCE (kural).
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -422,6 +436,7 @@ export default function App() {
         setSystemRole(res.system_role || 'USER')
         setGlobalAdmin(!!res.global_admin)
         setWeeklyReportsVisible(!!res.weekly_reports_visible)
+        setNoc(nocFrom(res))
         setTeamId(res.team_id ?? null)
         setTeamName(res.team_name ?? null)
         setMyTeamIds(Array.isArray(res.team_ids) ? res.team_ids : [])
@@ -1086,6 +1101,7 @@ export default function App() {
     setSystemRole(userData.system_role || 'USER')
     setGlobalAdmin(!!userData.global_admin)
     setWeeklyReportsVisible(!!userData.weekly_reports_visible)
+    setNoc(nocFrom(userData))
     setTeamId(userData.team_id ?? null)
     setTeamName(userData.team_name ?? null)
     setMyTeamIds(Array.isArray(userData.team_ids) ? userData.team_ids : [])
@@ -1719,7 +1735,8 @@ export default function App() {
                 takım arama listesi. Görüş kapsamı sunucuda (viewTeamIds); refreshKey = Pano damgası (5 dk döngüsü). */}
             {tab === 'noc' && (
               <div className="tab-content active">
-                <NocCoveragePage systemRole={systemRole} globalAdmin={globalAdmin} myTeamIds={myTeamIds} myTeams={myTeams}
+                <NocPage nocOperator={noc.operator} nocCanWrite={noc.canWrite} globalViewer={globalViewer}
+                  systemRole={systemRole} globalAdmin={globalAdmin} myTeamIds={myTeamIds} myTeams={myTeams}
                   userId={profile?.user_id ?? null} refreshKey={lastUpdate} />
               </div>
             )}
