@@ -36,7 +36,7 @@ COPY VERSION /app/VERSION
 RUN mvn package -DskipTests -q -Drevision="$(tr -d '[:space:]' < /app/VERSION)"
 
 # ── Stage 3: Runtime ─────────────────────────────────
-FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24@sha256:2ca9adf44f5c29d28ecd26cf92d75cc0c66b7f32bfd839a4439e363a8b428af8
+FROM eclipse-temurin:26-jre-alpine-3.24@sha256:9eedff2367194d11eddd6f14101b444945a708c986270cd5716b934596ba3a31
 WORKDIR /app
 
 # Debug/troubleshoot tools — pod içinden: curl (HTTP), bash (shell),
