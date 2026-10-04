@@ -52,7 +52,9 @@ public class AdminHistoryService {
             "USER", List.of("USER_CREATE", "USER_UPDATE", "USER_DELETE", "USER_BULK_UPDATE", "USER_PASSWORD_AUTO_RESET",
                     "USER_UNLOCK", "USER_ROLE_UNLOCK", "USER_TEAM_UNLOCK", "USER_ORG_ROLE_UNLOCK", "USER_FIELD_UNLOCK", "USER_TOUR_RESET",
                     "USER_LDAP_SYNC", "USER_LDAP_RESYNC",
-                    "ACCOUNT_LOCKED", "SELF_PASSWORD_CHANGE", "SESSION_TERMINATE"));
+                    "ACCOUNT_LOCKED", "SELF_PASSWORD_CHANGE", "SESSION_TERMINATE",
+                    // 2026-10-04: yöneticinin kişinin push susturmasını kaldırması kullanıcı geçmişinde görünür.
+                    "PUSH_SNOOZE_CLEAR"));
 
     static final int WINDOW_MAX = 2_000;
     static final int SIZE_MAX = 200;

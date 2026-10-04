@@ -245,6 +245,18 @@ export const api = {
     setPushOptOut: (optOut) => request('/me/push-opt-out', { method: 'POST', body: JSON.stringify({ opt_out: optOut }) }),
     // 2026-10-01: kişisel push sessiz saati — gövde { start, end, days[], min_level }; start+end boş = kaldır.
     setPushQuietHours: (body) => request('/me/push-quiet-hours', { method: 'POST', body: JSON.stringify(body) }),
+    // 2026-10-04: kişisel push tercihleri (seviye / aileler / dil), susturma, kendine test, push geçmişim — yalnız kendi
+    // kaydı (kimlik oturumdan). withStatus: 400 (alan hatası, `field`) ve 429 (test sınırı) ağ hatasından ayrılsın.
+    getPushPreferences: () => request('/me/push-preferences'),
+    savePushPreferences: (body) => request('/me/push-preferences', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    pushSnooze: (body) => request('/me/push-snooze', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
+    pushSelfTest: () => request('/me/push-test', { method: 'POST', withStatus: true }),
+    getPushHistory: (params = {}) => {
+      const qs = new URLSearchParams()
+      Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') qs.append(k, v) })
+      const s = qs.toString()
+      return request(`/me/push-history${s ? `?${s}` : ''}`)
+    },
     // 2026-10-02 (öneri 23): kişisel tercihler — yalnız oturumdaki kullanıcının belgesi. PUT kısmi: üst düzey anahtar
     // değiştirilir, `local` girdi bazında birleşir. withStatus: 4xx (doğrulama) ile ağ hatası ayrılsın (hooks/useUserPrefs).
     getPreferences: () => request('/me/preferences'),
@@ -1142,6 +1154,8 @@ export const api = {
     unlockUserTeams: (id) => request(`/admin/users/${id}/team-unlock`, { method: 'POST' }),   // takım kilidi (2026-09-18)
     // LDAP alan kilidi (2026-09-30): elle düzenlenen AD alanını AD yönetimine geri ver — yalnız global yönetici
     unlockUserField: (id, field) => request(`/admin/users/${id}/field-unlock`, { method: 'POST', body: JSON.stringify({ field }) }),
+    // 2026-10-04: kişinin etkin push susturmasını kaldır (kullanıcı detayı → Bildirimler; PUSH_SNOOZE_CLEAR denetimi)
+    clearUserPushSnooze: (id) => request(`/admin/users/${id}/push-snooze/clear`, { method: 'POST' }),
 
     // Cert transfer
     transferCert: (id, teamId) => request(`/admin/inventory/${id}/transfer`, {

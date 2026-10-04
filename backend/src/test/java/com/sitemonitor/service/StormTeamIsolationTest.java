@@ -110,7 +110,8 @@ class StormTeamIsolationTest {
             return Answers.RETURNS_DEFAULTS.answer(inv);
         });
         UserPushService push = mock(UserPushService.class, inv -> {
-            if (inv.getMethod().getName().equals("enqueueStormNotice")) {
+            // 2026-10-04 (öneri 5): StormService iki dilli aşırı yüklemeyi çağırır (her zaman 7 bağımsız değişken, eski kimlik null olabilir).
+            if (inv.getMethod().getName().equals("enqueueStormNotice") || inv.getMethod().getName().equals("enqueueStormNoticeLocalized")) {
                 Object[] a = inv.getArguments();
                 // 7 bağımsız değişkenli aşırı yükleme (O-3 taşıması): [fırtına, ESKİ fırtına, takım, …] → ortak düzene indir.
                 if (a.length == 7) { pushLegacyIds.add((Long) a[1]); a = new Object[]{a[0], a[2], a[3], a[4], a[5], a[6]}; }
@@ -271,8 +272,10 @@ class StormTeamIsolationTest {
     }
 
     private String pushMessageFor(long teamId) {
+        // 2026-10-04 (öneri 5): metin iki dilli taşınır — Türkçe metin (bugünkü) doğrulanır.
         return pushCalls.stream().filter(a -> Objects.equals(a[1], teamId))
-                .map(a -> String.valueOf(a[a.length - 1])).findFirst().orElse(null);
+                .map(a -> a[a.length - 1] instanceof UserPushService.LocalizedText l ? l.tr() : String.valueOf(a[a.length - 1]))
+                .findFirst().orElse(null);
     }
 
     // ── Testler ────────────────────────────────────────────────────────────────────────────

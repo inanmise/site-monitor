@@ -38,8 +38,8 @@ export default function StormSettings() {
   const [windowMin, setWindowMin] = useState(5)
   const [perGroup, setPerGroup] = useState(false)
   const [quietMin, setQuietMin] = useState(30)
-  // 2026-10-03 (kullanıcı kararı): push fırtınaya devredilmesin — varsayılan AÇIK (sunucu StormService.KEY_PUSH_INDIVIDUAL)
-  const [pushIndividual, setPushIndividual] = useState(true)
+  // 2026-10-03: push fırtınaya devredilmesin anahtarı — 2026-10-04 kullanıcı kararıyla varsayılan KAPALI (sunucu StormService.KEY_PUSH_INDIVIDUAL)
+  const [pushIndividual, setPushIndividual] = useState(false)
   const [total, setTotal] = useState(0)
 
   useEffect(() => { load() }, [])
@@ -62,7 +62,7 @@ export default function StormSettings() {
     setWindowMin(Number(d.window_minutes ?? 5))
     setPerGroup(!!d.per_group)
     setQuietMin(Number(d.quiet_minutes ?? 30))
-    setPushIndividual(d.push_individual !== false)   // alan yoksa (eski sunucu) varsayılan: açık
+    setPushIndividual(d.push_individual === true)   // alan yoksa (eski sunucu) varsayılan: kapalı (push fırtınaya devredilir)
     setTotal(Number(d.total_active_monitors ?? 0))
   }
 

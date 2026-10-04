@@ -200,6 +200,13 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     /** Müdür push eşlemesi (2026-09-13): MANAGER kademe kontağının e-postası → aktif uygulama kullanıcısı (küçük harf). */
     @Query("SELECT u FROM AppUser u WHERE u.active = true AND u.email IS NOT NULL AND LOWER(u.email) IN :emails")
     List<AppUser> findActiveByEmailsLower(@Param("emails") Collection<String> emails);
+
+    /**
+     * Eskalasyon adımı push'u (2026-10-04): kişinin e-postasıyla eşleşen TÜM kullanıcılar (aktif + pasif, küçük harf) —
+     * çağıran "tek aktif eşleşme / belirsiz / yalnız pasif / yok" ayrımını kendisi yapar. {@code email} küçük harf geçilir.
+     */
+    @Query("SELECT u FROM AppUser u WHERE u.email IS NOT NULL AND LOWER(u.email) = :email")
+    List<AppUser> findAllByEmailLower(@Param("email") String email);
     boolean existsByManagerId(Long managerId);
 
     /** Haftalık rapor PO bildirimi — kontağı olmayan takımlar için fallback. */

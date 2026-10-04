@@ -1251,6 +1251,39 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("POST /admin/users/{id}/push-snooze/clear (2026-10-04): global admin ve kişinin takımını yöneten kapsamlı yönetici susturmayı kaldırır (PUSH_SNOOZE_CLEAR); başka takımın yöneticisi / USER → 403")
+    void pushSnoozeClear_scopedAndAudited() throws Exception {
+        AppUser inTeam2 = new AppUser(); inTeam2.setId(81L); inTeam2.setUsername("snoozer"); inTeam2.setTeamId(2L); inTeam2.setActive(true);
+        inTeam2.setPushSnoozeUntil("2099-01-01T08:00:00");
+        AppUser inTeam9 = new AppUser(); inTeam9.setId(82L); inTeam9.setUsername("other"); inTeam9.setTeamId(9L); inTeam9.setActive(true);
+        inTeam9.setPushSnoozeUntil("2099-01-01T08:00:00");
+        when(userRepo.findById(81L)).thenReturn(Optional.of(inTeam2));
+        when(userRepo.findById(82L)).thenReturn(Optional.of(inTeam9));
+        when(userService.savePushSnooze(any(AppUser.class), any(), any())).thenAnswer(i -> {
+            AppUser u = i.getArgument(0);
+            u.setPushSnoozeUntil(i.getArgument(1));
+            return u;
+        });
+
+        mvc.perform(post("/api/admin/users/81/push-snooze/clear").session(teamAdminSession()))   // takım 2'nin yöneticisi
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.had_snooze").value(true));
+        assertThat(inTeam2.getPushSnoozeUntil()).as("susturma kaldırıldı").isNull();
+        verify(userService).savePushSnooze(org.mockito.ArgumentMatchers.argThat(u -> u.getId() == 81L), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+        verify(auditService).recordAction(eq("PUSH_SNOOZE_CLEAR"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("81"),
+                ArgumentMatchers.argThat(d -> d.contains("snoozer") && d.contains("\"had_snooze\":true")));
+
+        mvc.perform(post("/api/admin/users/82/push-snooze/clear").session(teamAdminSession()))   // takım 9 — kapsam dışı
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/users/81/push-snooze/clear").session(userSession()))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/users/82/push-snooze/clear").session(authSession()))       // global admin
+                .andExpect(status().isOk());
+        verify(userService, org.mockito.Mockito.times(2)).savePushSnooze(any(AppUser.class), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+    }
+
+    @Test
     @DisplayName("POST /admin/users/{id}/field-unlock: YALNIZ global admin (TEAM_ADMIN/USER → 403); 200 + USER_FIELD_UNLOCK denetimi; bilinmeyen alan → 400")
     void fieldUnlock_globalAdminOnly_andAudited() throws Exception {
         AppUser target = new AppUser(); target.setId(79L); target.setUsername("ldapuser"); target.setTeamId(2L); target.setActive(true);

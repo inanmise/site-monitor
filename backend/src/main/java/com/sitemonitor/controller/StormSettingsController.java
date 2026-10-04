@@ -50,7 +50,7 @@ public class StormSettingsController {
         data.put("per_group",       settingsService.getBoolean(StormService.KEY_PER_GROUP, false));
         data.put("quiet_minutes",   stormService.quietMinutes());   // 2026-09-30: fırtına ömür sınırı (kırpılmış efektif değer)
         // 2026-10-03: push fırtınaya devredilmesin (varsayılan true) — fırtına yalnız e-postayı gruplar.
-        data.put("push_individual", settingsService.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, true));
+        data.put("push_individual", settingsService.getBoolean(StormService.KEY_PUSH_INDIVIDUAL, false));
         // UI önizlemesi: yüzde → yaklaşık monitör sayısı gösterebilsin.
         data.put("total_active_monitors", stormService.totalActiveMonitors());
         data.put("effective_threshold",   stormService.computeThreshold());

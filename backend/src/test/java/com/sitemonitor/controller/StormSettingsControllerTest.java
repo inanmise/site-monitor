@@ -112,18 +112,18 @@ class StormSettingsControllerTest {
     @DisplayName("2026-10-03: GET push_individual döner (varsayılan true); PUT false kaydeder, gövdede yoksa anahtara DOKUNMAZ, true/false dışı → 400")
     void pushIndividual_roundTrip() throws Exception {
         when(settingsService.getBoolean(eq(StormService.KEY_PUSH_INDIVIDUAL), anyBoolean()))
-                .thenAnswer(i -> i.getArgument(1));   // kayıtlı değer yok → varsayılan
+                .thenAnswer(i -> i.getArgument(1));   // kayıtlı değer yok → varsayılan KAPALI (2026-10-04 kullanıcı kararı: push fırtınaya devredilir)
         mvc.perform(get("/api/monitoring/storm/settings").session(userSession("admin")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.push_individual").value(true));
+                .andExpect(jsonPath("$.data.push_individual").value(false));
 
         mvc.perform(put("/api/monitoring/storm/settings").session(userSession("admin"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"enabled\":true,\"threshold_unit\":\"COUNT\",\"threshold_value\":5,\"window_minutes\":5,\"per_group\":false,\"push_individual\":false}"))
+                        .content("{\"enabled\":true,\"threshold_unit\":\"COUNT\",\"threshold_value\":5,\"window_minutes\":5,\"per_group\":false,\"push_individual\":true}"))
                 .andExpect(status().isOk());
         org.mockito.Mockito.verify(settingsService).save(org.mockito.ArgumentMatchers.argThat(m ->
                 m != null && m.get("values") instanceof java.util.Map<?, ?> v
-                        && "false".equals(v.get(StormService.KEY_PUSH_INDIVIDUAL))), anyString());
+                        && "true".equals(v.get(StormService.KEY_PUSH_INDIVIDUAL))), anyString());
 
         org.mockito.Mockito.clearInvocations(settingsService);
         mvc.perform(put("/api/monitoring/storm/settings").session(userSession("admin"))

@@ -30,6 +30,7 @@ import lombok.NoArgsConstructor;
                 @Index(name = "idx_push_team", columnList = "team_id"),
                 @Index(name = "idx_push_monitor", columnList = "monitor_type, monitor_id"),
                 @Index(name = "idx_push_status", columnList = "status"),
+                @Index(name = "idx_push_overflow", columnList = "overflow_summary_id"),
         })
 @Data
 @NoArgsConstructor
@@ -44,7 +45,7 @@ public class UserPushDelivery {
     private Long alertEventId;
 
     /** OPEN / RE_ALERT / RESOLVE / RESEND / TEST. */
-    @Column(name = "push_trigger", nullable = false, length = 20)
+    @Column(name = "push_trigger", nullable = false, length = 40)
     private String trigger;
 
     /** UNIQUE kısıtın faz bileşeni — sınıf javadoc'undaki kurala göre üretilir. */
@@ -125,4 +126,14 @@ public class UserPushDelivery {
     /** Ham API yanıtının ilk ~500 karakteri — error alanını başarı yolunda kirletmemek için ayrı. */
     @Column(name = "raw_response", length = 600)
     private String rawResponse;
+    /**
+     * Saat tavanı özeti (2026-10-04, onaylı öneri 2): {@code RATE_LIMITED} satırı bir özet push'una katıldıysa o özet
+     * satırının kimliği. Durum {@code RATE_LIMITED} KALIR (günlük anlamı değişmez); kolon yalnız "özetlendi" bağıdır ve
+     * aynı satırın iki kez özetlenmesini engeller (koşullu UPDATE ile sahiplenilir). Sonradan eklenen kolon — NOT NULL değil.
+     */
+    @Column(name = "overflow_summary_id")
+    private Long overflowSummaryId;
+    /** Mesajın kurulduğu dil ({@code tr} / {@code en}, 2026-10-04); null = eski satır (tr). */
+    @Column(name = "push_lang", length = 5)
+    private String pushLang;
 }

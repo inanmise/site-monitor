@@ -697,6 +697,59 @@ export const PREFS = {
   },
 }
 
+/** Bildirim tercihlerim (2026-10-04) — susturma etkin (yarın 08:00, tarihli metin = en uzun), özel seviye, EN. */
+export function myPushPrefsMock() {
+  return {
+    min_level: 'HIGH', families: ['cert', 'http', 'dns', 'pagespeed', 'scripted'], lang: 'en',
+    snooze_until: iso(-20 * HOUR), snooze_active: true, snooze_critical: true, opt_out: false,
+    available_families: ['cert', 'domain', 'http', 'ping', 'port', 'dns', 'keyword', 'page', 'pagespeed', 'scripted'],
+    server_now: iso(0),
+  }
+}
+
+/** Push bildirimlerim (2026-10-04) — uzun hedef adları, her durum/neden, takım kararı, başka takım, özet satırı. */
+export function myPushHistoryMock() {
+  const long = 'raporlama-ve-analitik-platformu.ic-servisler.example.com'
+  const data = [
+    { id: 90, at: iso(5 * 60_000), trigger: 'OVERFLOW_SUMMARY', status: 'SENT', kind: 'sent', own: true, team_decision: false, visible: true, scope: 'own',
+      alert_level: 'CRITICAL', lang: 'en', target: 'Saat tavanı özeti · 14 bildirim', summarized_count: 14,
+      message: 'SiteMonitor: 14 notifications were held back by the hourly limit (3 critical, 11 warning). Latest: ' + long + ' - CRITICAL (14:05). Details in SiteMonitor.' },
+    { id: 89, at: iso(10 * 60_000), trigger: 'ESCALATION_STEP', status: 'SENT', kind: 'sent', own: true, team_decision: false, visible: true, scope: 'own',
+      alert_level: 'CRITICAL', monitor_type: 'http', lang: 'en', target: 'https://' + long + '/api/v2/odeme/durum', team_name: 'Kurumsal Ödeme Sistemleri ve Entegrasyon Takımı',
+      message: '[ESCALATION · 15 min unacknowledged] CRITICAL: https://' + long + ' is not responding. Started 14:05.' },
+    { id: 88, at: iso(20 * 60_000), trigger: 'OPEN', status: 'RATE_LIMITED', kind: 'not_sent', reason: 'RATE_LIMITED', own: true, team_decision: false, visible: true, scope: 'own',
+      alert_level: 'WARNING', monitor_type: 'pagespeed', lang: 'en', target: long, summarized_into: 90, team_name: 'Takım A', message: 'WARNING: ' + long + ' is slow.' },
+    { id: 87, at: iso(30 * 60_000), trigger: 'RE_ALERT', status: 'SKIPPED_AMBIGUOUS_USER', kind: 'not_sent', reason: 'SKIPPED_AMBIGUOUS_USER', own: true, team_decision: false, visible: true, scope: 'own',
+      alert_level: 'HIGH', monitor_type: 'dns', lang: 'tr', target: long, team_name: 'Takım A', message: 'YÜKSEK: ' + long + ' - DNS kaydı değişti.' },
+    { id: 86, at: iso(40 * 60_000), trigger: 'OPEN', status: 'SKIPPED_SYSTEM_MAINTENANCE', kind: 'not_sent', reason: 'SKIPPED_SYSTEM_MAINTENANCE', own: false, team_decision: true, visible: true, scope: 'team',
+      alert_level: 'HIGH', monitor_type: 'keyword', target: long, team_name: 'Takım A', message: null },
+    { id: 85, at: iso(26 * HOUR), trigger: 'OPEN', status: 'SENT', kind: 'sent', own: true, team_decision: false, visible: false, scope: 'other_team',
+      alert_level: 'HIGH', monitor_type: 'http', lang: 'tr', message: null, message_hidden: true },
+  ]
+  return { success: true, data, total: data.length, page: 0, size: 25, days: 7, filter: 'all', login_code_note: true,
+    kpis: { sent: 3, pending: 0, not_sent: 2, summarized: 1, team_decisions: 1,
+      not_sent_by_reason: { RATE_LIMITED: 1, SKIPPED_AMBIGUOUS_USER: 1 }, team_decisions_by_reason: { SKIPPED_SYSTEM_MAINTENANCE: 1 } } }
+}
+
+/** Ayarlar → Webhook Bildirimleri (2026-10-04): saat tavanı özeti, kritik muafiyeti, EN şablonları dolu. */
+export function userPushSettingsMock() {
+  return {
+    settings: {
+      'site.monitor.userpush.enabled': 'true', 'site.monitor.userpush.url': 'https://bildirim.ic-servisler.example.com/api/v1/push',
+      'site.monitor.userpush.title': 'Site Monitor', 'site.monitor.userpush.title.en': 'Site Monitor Alerts', 'site.monitor.userpush.headers': [],
+      'site.monitor.userpush.overflow-summary-enabled': 'true', 'site.monitor.userpush.overflow-summary-minutes': '15',
+      'site.monitor.userpush.critical-bypass-cap': 'true', 'site.monitor.escalation.step-push-enabled': 'true',
+    },
+    scopes: [],
+    defaults: {
+      templates: { down: '{seviye}: {ad} yanıt vermiyor. Başlangıç {baslangic}. {neden}', test: 'Deneme: SiteMonitor webhook testi - {saat}' },
+      templates_en: { down: '{seviye}: {ad} is not responding. Started {baslangic}. {neden}', test: 'Test: SiteMonitor webhook test - {saat}' },
+      placeholders: ['seviye', 'ad', 'hedef', 'neden', 'baslangic', 'saat'],
+    },
+    health: { enabled: true, circuit_open: false },
+  }
+}
+
 export async function mockApi(page, opts = {}) {
   const { role = 'ADMIN', globalAdmin = role === 'ADMIN', teamIds = [1], monitors = MONITORS, perms = null } = opts
   let prefsDoc = JSON.parse(JSON.stringify(opts.prefs ?? PREFS))
@@ -796,6 +849,17 @@ export async function mockApi(page, opts = {}) {
         members: [{ event_id: 300, domain: 'https://a.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL', team_id: 1, created_at: iso(-20), resolved: false, join_kind: 'TRIGGER', joined_at: iso(-20), announced_at: iso(-20), trigger: true },
                   { event_id: 301, domain: 'https://b.example.com', alert_type: 'HTTP_DOWN', alert_level: 'HIGH', team_id: 1, created_at: iso(-19), resolved: true, resolved_at: iso(-5), join_kind: 'PEER', joined_at: iso(-20), announced_at: iso(-20), left_at: iso(-5), leave_kind: 'RECOVERED', trigger: false }],
         members_total: 2, members_recovered: 1, members_down: 1, notifications: { initial: 7, realert: 0, resolve: 0, suppressed: 2, push: 3, push_members: 12, last_mail_at: iso(-20) } } }
+    } else if (p === '/api/me/push-preferences' || p === '/api/me/push-snooze') {
+      // Bildirim tercihlerim (2026-10-04): EN GENİŞ hâl — susturma etkin (yarın tarihli), özel seviye + dil EN, birkaç aile
+      body = { success: true, ...myPushPrefsMock() }
+    } else if (p === '/api/me/push-history') {
+      body = myPushHistoryMock()
+    } else if (p === '/api/admin/user-push/settings') {
+      body = { success: true, data: userPushSettingsMock() }
+    } else if (p === '/api/admin/user-push/stats') {
+      body = { success: true, data: { windows: {} } }
+    } else if (p === '/api/admin/user-push/deliveries') {
+      body = { success: true, data: { deliveries: [], total: 0, page: 0, size: 25 } }
     } else if (p === '/api/me/open-alerts') {
       // İzleme menüsü rozetleri (2026-09-30): HTTP 2 (1 kritik), Sentetik 3 uyarı
       body = { success: true, data: { visible: true, total: 5, sampled: false, tabs: {

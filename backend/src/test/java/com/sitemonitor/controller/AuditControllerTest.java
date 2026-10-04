@@ -456,7 +456,11 @@ class AuditControllerTest {
         when(teamRepo.findById(3L)).thenReturn(java.util.Optional.of(team));
         when(latestCheckRepo.findById("sha1.example.com")).thenReturn(java.util.Optional.of(lc("sha1.example.com", "SHA1withRSA", "RSA", 2048)));
         when(emailService.sendAlert(any(String[].class), anyString(), anyString(), anyString(), anyString(), anyString(), any(), any())).thenReturn("SENT");
-        when(userPushService.enqueueTeamNotice(eq(3L), eq("WEAK_ALGO"), eq("CRITICAL"), eq("sha1.example.com"), anyString(), anyString()))
+        // 2026-10-04 (öneri 5): iki dilli metin — Türkçe metin bugünküyle aynı, sertifika türüyle (eski 6 argümanlı yol).
+        when(userPushService.enqueueTeamNoticeLocalized(eq(3L), eq("WEAK_ALGO"), eq("CRITICAL"), eq("CERTIFICATE"), eq("sha1.example.com"),
+                org.mockito.ArgumentMatchers.argThat(m -> m != null && m.tr().startsWith("[Zayıf algoritma] sha1.example.com — ")
+                        && m.en().startsWith("[Weak algorithm] sha1.example.com — ")),
+                anyString(), any()))
                 .thenReturn(java.util.Map.of("queued", 2, "skipped", 0));
 
         mvc.perform(post("/api/admin/audit/weak-algorithms/sha1.example.com/notify").session(session("ADMIN")))

@@ -68,7 +68,8 @@ public class PushLogQueryService {
     public record Row(long id, Long alertEventId, String trigger, String monitorType, Long monitorId, String monitorName,
                       Long teamId, String teamName, String alertLevel, String username, String displayName, String title,
                       String status, Integer httpStatus, String error, Integer attempts, String createdAt, String sentAt,
-                      String batchId, String notificationId, String kind, String errorClass) {
+                      String batchId, String notificationId, String kind, String errorClass,
+                      Long overflowSummaryId, String pushLang) {
         /** Zaman: gönderildiyse sentAt, yoksa createdAt (kuyruk/başarısız). */
         String at() { return sentAt != null ? sentAt : createdAt; }
         Map<String, Object> toMap() {
@@ -81,6 +82,8 @@ public class PushLogQueryService {
             m.put("created_at", createdAt); m.put("sent_at", sentAt); m.put("at", at());
             m.put("batch_id", batchId); m.put("notification_id", notificationId);
             m.put("kind", kind); m.put("error_class", errorClass);
+            // 2026-10-04: saat tavanı özeti bağı (özetlenen satır → özet satırı) ve mesajın dili.
+            m.put("overflow_summary_id", overflowSummaryId); m.put("push_lang", pushLang);
             return m;
         }
     }
@@ -150,7 +153,10 @@ public class PushLogQueryService {
                     r[4] == null ? null : ((Number) r[4]).longValue(), (String) r[5], teamId, teamId == null ? null : teamNames.get(teamId),
                     (String) r[7], (String) r[8], (String) r[9], (String) r[10], status, http, (String) r[13],
                     r[14] == null ? null : ((Number) r[14]).intValue(), (String) r[15], (String) r[16], (String) r[17], (String) r[18],
-                    kindOf(status), classifyError(status, http, (String) r[13])));
+                    kindOf(status), classifyError(status, http, (String) r[13]),
+                    // Sona eklenen kolonlar (2026-10-04) — eski biçimli satır dizisinde yoksa null.
+                    r.length > 19 && r[19] != null ? ((Number) r[19]).longValue() : null,
+                    r.length > 20 ? (String) r[20] : null));
         }
         return out;
     }
@@ -158,7 +164,8 @@ public class PushLogQueryService {
     static Object[] rawOf(UserPushDelivery d) {
         return new Object[]{d.getId(), d.getAlertEventId(), d.getTrigger(), d.getMonitorType(), d.getMonitorId(), d.getMonitorName(),
                 d.getTeamId(), d.getAlertLevel(), d.getUsername(), d.getDisplayName(), d.getTitle(), d.getStatus(), d.getHttpStatus(),
-                d.getError(), d.getAttempts(), d.getCreatedAt(), d.getSentAt(), d.getBatchId(), d.getNotificationId()};
+                d.getError(), d.getAttempts(), d.getCreatedAt(), d.getSentAt(), d.getBatchId(), d.getNotificationId(),
+                d.getOverflowSummaryId(), d.getPushLang()};
     }
 
     // ── Süzgeç / sıralama ─────────────────────────────────────────────────────────────────────
@@ -344,6 +351,14 @@ public class PushLogQueryService {
         if (d.getBatchId() != null) for (UserPushDelivery b : deliveryRepo.findByBatchIdOrderByIdAsc(d.getBatchId()))
             if (scope.allows(b.getTeamId(), b.getUsername())) batch.add(enrich(java.util.Collections.singletonList(rawOf(b))).get(0).toMap());
         out.put("batch", batch);
+        // Saat tavanı özeti (2026-10-04): özet satırında kapsadığı satırlar (kapsam süzgeciyle), özetlenen satırda özetin
+        // kimliği zaten satırda (overflow_summary_id). İki yönlü bağ — "bu push neden gelmedi / özet neyi kapsıyor".
+        if (UserPushOverflowService.TRIGGER.equals(d.getTrigger()) && d.getId() != null) {
+            List<Map<String, Object>> summarized = new ArrayList<>();
+            for (UserPushDelivery b : deliveryRepo.findByOverflowSummaryIdOrderByIdAsc(d.getId()))
+                if (scope.allows(b.getTeamId(), b.getUsername())) summarized.add(enrich(java.util.Collections.singletonList(rawOf(b))).get(0).toMap());
+            out.put("summarized", summarized);
+        }
         return out;
     }
 

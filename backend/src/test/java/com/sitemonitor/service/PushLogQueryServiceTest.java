@@ -166,4 +166,30 @@ class PushLogQueryServiceTest {
         verify(userPushService).requeue(failed);
         verify(userPushService).requeue(blocked);
     }
+
+    @Test
+    @DisplayName("2026-10-04: özet ↔ özetlenen satır bağı iki yönlü — özet detayı kapsadığı satırları (kapsam süzgeçli), özetlenen satır özet kimliğini ve dili taşır")
+    void overflowSummaryLink() {
+        UserPushDelivery summary = new UserPushDelivery(); summary.setId(50L); summary.setUsername("u1"); summary.setStatus("SENT");
+        summary.setTrigger(UserPushOverflowService.TRIGGER); summary.setCreatedAt(at(1)); summary.setPushLang("en");
+        UserPushDelivery a = new UserPushDelivery(); a.setId(6L); a.setTeamId(2L); a.setUsername("u1"); a.setStatus("RATE_LIMITED");
+        a.setCreatedAt(at(10)); a.setOverflowSummaryId(50L);
+        UserPushDelivery b = new UserPushDelivery(); b.setId(7L); b.setTeamId(1L); b.setUsername("u1"); b.setStatus("RATE_LIMITED");
+        b.setCreatedAt(at(9)); b.setOverflowSummaryId(50L);
+        when(repo.findById(50L)).thenReturn(Optional.of(summary));
+        when(repo.findById(6L)).thenReturn(Optional.of(a));
+        when(repo.findByOverflowSummaryIdOrderByIdAsc(50L)).thenReturn(List.of(a, b));
+
+        Map<String, Object> out = svc.detail(50L, PushLogQueryService.Scope.all());
+        assertThat(out).containsEntry("push_lang", "en");
+        assertThat((List<Map<String, Object>>) out.get("summarized")).extracting(m -> m.get("id")).containsExactly(6L, 7L);
+        // Kapsamlı yönetici (takım 2) yalnız kendi takımının özetlenen satırını görür.
+        Map<String, Object> scoped = svc.detail(50L, new PushLogQueryService.Scope(false, Set.of(2L), "u1"));
+        assertThat((List<Map<String, Object>>) scoped.get("summarized")).hasSize(2);   // u1'in kendi satırları (kapsam: kendi satırı)
+        Map<String, Object> other = svc.detail(50L, new PushLogQueryService.Scope(false, Set.of(2L), "u1x"));
+        assertThat(other).as("özet satırı takımsız + başka kişinin → kapsam dışı").isNull();
+
+        assertThat(svc.detail(6L, PushLogQueryService.Scope.all())).containsEntry("overflow_summary_id", 50L);
+        assertThat(svc.detail(6L, PushLogQueryService.Scope.all())).doesNotContainKey("summarized");
+    }
 }

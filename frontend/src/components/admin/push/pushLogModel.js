@@ -5,7 +5,9 @@ import { readUrlParam } from '../../../hooks/useUrlQuerySync.js'
 export const RANGES = ['24h', '7d', '30d']
 export const STATUSES = ['SENT', 'FAILED', 'PENDING', 'BLOCKED', 'SKIPPED']
 /** Push tetikleyici sözlüğü (UserPushService): mevcut `userpush.trigger.*` etiketleri; bilinmeyen ham gösterilir. */
-export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'TEST', 'WEAK_ALGO', 'WEEKLY_REPORT']
+export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'TEST', 'WEAK_ALGO', 'WEEKLY_REPORT',
+  // 2026-10-04: fırtına / takım bildirimleri + saat tavanı özeti + eskalasyon adımı push'u
+  'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */

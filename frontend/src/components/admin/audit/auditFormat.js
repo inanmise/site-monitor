@@ -154,6 +154,11 @@ const SPECIAL = {
   USER_PASSWORD_AUTO_RESET: 'audit.ev.USER_PASSWORD_AUTO_RESET',
   USER_PUSH_OPT_OUT: 'audit.ev.USER_PUSH_OPT_OUT',
   USER_PUSH_QUIET_HOURS: 'audit.ev.USER_PUSH_QUIET_HOURS',
+  // Kişisel push tercihleri / susturma / kendine test; yöneticinin susturmayı kaldırması (2026-10-04)
+  PUSH_PREFS_UPDATE: 'audit.ev.PUSH_PREFS_UPDATE',
+  PUSH_SNOOZE: 'audit.ev.PUSH_SNOOZE',
+  PUSH_SELF_TEST: 'audit.ev.PUSH_SELF_TEST',
+  PUSH_SNOOZE_CLEAR: 'audit.ev.PUSH_SNOOZE_CLEAR',
   USER_PREFERENCES_UPDATE: 'audit.ev.USER_PREFERENCES_UPDATE',   // favoriler / açılış sekmesi / kayıtlı görünümler (2026-10-02)
   LOGIN_DISPUTED: 'audit.ev.LOGIN_DISPUTED',
   ISSUE_REPORT: 'audit.ev.ISSUE_REPORT',

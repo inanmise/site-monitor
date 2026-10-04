@@ -173,6 +173,30 @@ public class UserPushService {
     private int circuitCooldownSec() { return appSettings.getInt("site.monitor.userpush.circuit-cooldown-seconds", 300); }
     private int hourlyCap() { return appSettings.getInt("site.monitor.userpush.hourly-cap", 30); }
     /**
+     * Saat tavanı özeti (2026-10-04, onaylı öneri 2): tavana takılan push'lar kullanıcı başına TEK özet push'unda toplanır.
+     * Vars. AÇIK; kapalıyken {@code RATE_LIMITED} satırları bugünkü gibi yalnız günlükte kalır.
+     */
+    public boolean overflowSummaryEnabled() {
+        return appSettings.getBoolean("site.monitor.userpush.overflow-summary-enabled", true);
+    }
+    /** Özet aralığı (dk) — ilk özetlenmemiş taşmadan bu kadar sonra, kullanıcı başına bu aralıkta en çok BİR özet. 5–120. */
+    public int overflowSummaryMinutes() {
+        int v = appSettings.getInt("site.monitor.userpush.overflow-summary-minutes", 15);
+        return Math.min(120, Math.max(5, v));
+    }
+    /** KRİTİK alarm push'ları saat tavanına hiç takılmasın mı (vars. KAPALI = bugünkü davranış). */
+    public boolean criticalBypassCap() {
+        return appSettings.getBoolean("site.monitor.userpush.critical-bypass-cap", false);
+    }
+    /** Zamana bağlı eskalasyon adımı kişiye push da göndersin mi (vars. AÇIK; adım tanımlı değilse etkisiz). */
+    public boolean stepPushEnabled() {
+        return appSettings.getBoolean("site.monitor.escalation.step-push-enabled", true);
+    }
+    /** Alarm push'u bu seviyede saat tavanından muaf mı (yalnız ayar AÇIK + KRİTİK). */
+    boolean capBypass(String level) {
+        return "CRITICAL".equalsIgnoreCase(level == null ? "" : level.trim()) && criticalBypassCap();
+    }
+    /**
      * Mesaj tavanı — yönetici ayarı (vars. {@link #MAX_MESSAGE_CHARS}), <b>sunucuda kırpılır</b>.
      *
      * <p>Arayüz 80-320 aralığını dayatıyor ama {@code AppSettingsService.validate} yalnız TİP
@@ -180,7 +204,7 @@ public class UserPushService {
      * olurdu. Aynı sınıf bulgu DNS/Domain teyit-kurtarma alanlarında da çıkmıştı ve orada da
      * sunucu tarafı kırpmayla çözülmüştü — aynı karar burada da uygulanıyor.
      */
-    private int maxMessageChars() {
+    int maxMessageChars() {
         int raw = appSettings.getInt("site.monitor.userpush.max-message-chars", MAX_MESSAGE_CHARS);
         return Math.min(320, Math.max(80, raw));
     }
@@ -302,14 +326,17 @@ public class UserPushService {
         Set<String> excluded = excludeUsernames == null ? Set.of() : excludeUsernames;
         // RESOLVE: alıcı kümesi açılışta gerçekten push ALANLARDIR (seviye/grup/takım çözümlemesi
         // yeniden yapılmaz) — bkz. resolver.resolvePrior. Diğer fazlar takım+seviye ile çözülür.
+        // Kişisel aile süzgeci (2026-10-04) yalnız açılış/eskalasyon/tekrar/elle gönderimde; ÇÖZÜM muaf (resolvePrior).
         List<UserPushRecipientResolver.Recipient> recipients =
                 ("RESOLVE".equals(trigger) ? resolver.resolvePrior(priorSentUsernames(event))
-                                            : resolver.resolve(teamId, event.getAlertLevel()))
+                                            : UserPushRecipientResolver.withFamilies(
+                                                    resolver.resolve(teamId, event.getAlertLevel()), familyList(family)))
                 .stream().filter(r -> !excluded.contains(r.username())).toList();
         if (recipients.isEmpty()) { skipRow(event, trigger, "SKIPPED_NO_RECIPIENTS"); return; }
 
         String dedupeKey = dedupeKeyFor(trigger, event);
-        String message = buildMessage(event, trigger, ctx);
+        // Mesaj kişinin DİLİNDE (2026-10-04, öneri 5) — dil başına bir kez kurulur; Türkçe bugünküyle bayt bayt aynı.
+        Map<String, String> messages = new java.util.HashMap<>();
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
@@ -318,7 +345,8 @@ public class UserPushService {
         // olanlara gider" — sessiz saatten muaf olmasının nedeni aynı ("telefondaki alarm kapanmalı"). Tavana
         // takılan "DÜZELDİ" push'u ayakta olan izlemeyi telefonda "düştü" gösteriyordu. Alıcılar zaten açılışta
         // SENT olanlarla sınırlı (resolvePrior), yani çözüm push'u açılış sayısını aşamaz.
-        boolean capExempt = "RESOLVE".equals(trigger);
+        // KRİTİK alarm, "kritikler tavana takılmasın" ayarı açıksa muaf (2026-10-04, öneri 2; vars. KAPALI).
+        boolean capExempt = "RESOLVE".equals(trigger) || capBypass(event.getAlertLevel());
         int queued = 0;
         for (var r : recipients) {
             String status;
@@ -329,9 +357,11 @@ public class UserPushService {
             if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username()))
                 continue;   // faz zaten kayıtlı — sessiz erken çıkış (satır orada duruyor)
 
+            String lang = r.lang();
+            String message = messages.computeIfAbsent(lang, l -> buildMessage(event, trigger, ctx, l));
             UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, r.username(), r.displayName(),
-                    message, status, now);
-            d.setBatchId(batchId);
+                    message, status, now, lang);
+            d.setBatchId(batchIdFor(batchId, lang));
             try {
                 deliveryRepo.save(d);
                 if ("PENDING".equals(status)) queued++;
@@ -477,10 +507,11 @@ public class UserPushService {
 
         List<PushPreviewRow> rows = new ArrayList<>();
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
-        for (var r : resolver.resolve(teamId, event.getAlertLevel())) {
+        boolean capExempt = capBypass(event.getAlertLevel());
+        for (var r : UserPushRecipientResolver.withFamilies(resolver.resolve(teamId, event.getAlertLevel()), familyList(family))) {
             String status;
             if (r.skipReason() != null) status = r.skipReason();
-            else if (deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else if (!capExempt && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
             else status = "PENDING";   // devre kesici açıksa drainOutbox bekletir (N2) — satır kaybolmaz
             rows.add(new PushPreviewRow(r.username(), r.displayName(), status));
         }
@@ -490,6 +521,12 @@ public class UserPushService {
 
     /** Test gönderimi — gerçek istek, TEST satırı; dakikada 3 tavanı çağıran uç denetler. */
     public Map<String, Object> sendTest(List<String> usernames, String templateKey, String note) {
+        return sendTest(usernames, templateKey, note, PushI18n.TR);
+    }
+
+    /** Test gönderimi seçilen DİLİN şablonu ve başlığıyla (2026-10-04: şablon düzenleyicisinin TR / EN sekmeleri). */
+    public Map<String, Object> sendTest(List<String> usernames, String templateKey, String note, String lang) {
+        String lng = PushI18n.norm(lang);
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         Map<String, String> sample = new LinkedHashMap<>();
@@ -505,10 +542,15 @@ public class UserPushService {
         sample.put("baslangic", sampleClock);
         sample.put("bitis", sampleClock);
         sample.put("ip", "192.0.2.10"); sample.put("cn", "ornek.example.com");
+        if (PushI18n.isEn(lng)) {   // İngilizce örnek değerler (Türkçe örnek bugünküyle aynı kalır)
+            sample.put("ad", "Example monitor"); sample.put("neden", "test"); sample.put("metrik", "response time");
+            sample.put("ne", "certificate"); sample.put("degisen", "record"); sample.put("sure", "5 min");
+            sample.put("cn", "example.example.com");
+        }
         // Gercek gonderimle AYNI islem sirasi (pushSafe -> truncate): admin testte tam goren
         // ama gercek alarmda sessizce kesilen bir sablonu dogrulamis olmasin.
         String message = PushText.truncate(
-                PushText.pushSafe(fillTemplate(template(templateKey == null ? "test" : templateKey), sample)),
+                PushText.pushSafe(fillTemplate(template(templateKey == null ? "test" : templateKey, lng), sample)),
                 maxMessageChars());
         List<UserPushDelivery> rows = new ArrayList<>();
         for (String u : usernames) {
@@ -518,12 +560,13 @@ public class UserPushService {
             d.setDedupeKey("TEST:" + batchId);
             d.setUsername(u.trim());
             d.setDisplayName(u.trim());
-            d.setTitle(titleSetting());
+            d.setTitle(titleSetting(lng));
             d.setMessage(message);
             d.setStatus("PENDING");   // devre kesici açıksa drainOutbox bekletir (N2)
             d.setCreatedAt(now);
             d.setBatchId(batchId);
             d.setMonitorName(note);
+            d.setPushLang(lng);
             rows.add(deliveryRepo.save(d));
         }
         boolean queued = rows.stream().anyMatch(r -> "PENDING".equals(r.getStatus()));
@@ -558,6 +601,39 @@ public class UserPushService {
     public Map<String, Object> enqueueTeamNotice(Long teamId, String trigger, String alertLevel, String monitorType,
                                                  String monitorName, String message, String dedupeKey,
                                                  java.util.Set<String> excludeUsernames) {
+        return enqueueTeamNoticeLocalized(teamId, trigger, alertLevel, monitorType, monitorName, LocalizedText.of(message),
+                dedupeKey, excludeUsernames);
+    }
+
+    /**
+     * İki dilli metin (2026-10-04, öneri 5): push kişinin dilinde gider. {@code en} boşsa İngilizce alıcı da Türkçe metni
+     * alır (eski çağıranlar). Türkçe metin her zaman zorunlu ve bugünküyle aynıdır.
+     */
+    public record LocalizedText(String tr, String en) {
+        public static LocalizedText of(String tr) { return new LocalizedText(tr, null); }
+        public String forLang(String lang) {
+            return PushI18n.isEn(lang) && en != null && !en.isBlank() ? en : tr;
+        }
+    }
+
+    /** Takım bildirimi türü → izleme ailesi (kişisel aile süzgeci için); bilinmeyen tür = süzgeç yok. */
+    static List<String> noticeFamilies(String monitorType) {
+        if (monitorType == null) return null;
+        return switch (monitorType) {
+            case "DOMAIN" -> List.of("domain");
+            case "SCRIPTED" -> List.of("scripted");
+            case "CERTIFICATE" -> List.of("cert");
+            default -> null;
+        };
+    }
+
+    /**
+     * Takım bildirimi — iki dilli metinle (kişinin push diline göre, 2026-10-04). Ayrı ad bilinçli: aynı adlı aşırı yükleme
+     * {@code any()} eşleyicili sahte nesnelerde belirsizlik doğururdu.
+     */
+    public Map<String, Object> enqueueTeamNoticeLocalized(Long teamId, String trigger, String alertLevel, String monitorType,
+                                                          String monitorName, LocalizedText message, String dedupeKey,
+                                                          java.util.Set<String> excludeUsernames) {
         java.util.Set<String> excluded = new java.util.HashSet<>();
         for (String u : excludeUsernames == null ? java.util.Set.<String>of() : excludeUsernames)
             if (u != null) excluded.add(u.trim().toUpperCase(java.util.Locale.ROOT));
@@ -568,9 +644,11 @@ public class UserPushService {
         // Kişisel sessiz saat (2026-10-01) global sessiz saatin AYNASIDIR: global pencere takım bildirimlerini (haftalık rapor
         // onayı, zayıf algoritma raporu) susturmaz, kişisel pencere de susturmaz — kişi kararı burada "alıcı"ya döner
         // (opt-out'tan SONRA verildiği için başka bir red nedenini ezmez).
-        List<UserPushRecipientResolver.Recipient> recipients = resolver.resolve(teamId, alertLevel).stream()
-                .map(r -> UserPushRecipientResolver.SKIPPED_USER_QUIET_HOURS.equals(r.skipReason())
-                        ? new UserPushRecipientResolver.Recipient(r.username(), r.displayName(), null) : r)
+        // Kişisel tercihler (2026-10-04): seviye / susturma çözümde, aile burada (bildirimin türü biliniyorsa) — sessiz saat
+        // eşlemesinden ÖNCE (aile süzgeci sessiz saat nedenini ezer).
+        List<UserPushRecipientResolver.Recipient> recipients = UserPushRecipientResolver.withFamilies(
+                        resolver.resolve(teamId, alertLevel), noticeFamilies(monitorType)).stream()
+                .map(r -> UserPushRecipientResolver.SKIPPED_USER_QUIET_HOURS.equals(r.skipReason()) ? r.withSkip(null) : r)
                 .toList();
         if (recipients.isEmpty()) { out.put("reason", "SKIPPED_NO_RECIPIENTS"); return out; }
         return writeTeamRows(out, teamId, trigger, alertLevel, monitorType, monitorName, message, dedupeKey,
@@ -579,13 +657,13 @@ public class UserPushService {
 
     /** Olaysız takım satırlarını yazar — takım bildirimi ve fırtına push'u ortak (dedupe, opt-out, saat tavanı). */
     private Map<String, Object> writeTeamRows(Map<String, Object> out, Long teamId, String trigger, String alertLevel,
-                                              String monitorType, String monitorName, String message, String dedupeKey,
+                                              String monitorType, String monitorName, LocalizedText message, String dedupeKey,
                                               List<UserPushRecipientResolver.Recipient> recipients,
                                               java.util.Set<String> excluded, boolean capExempt) {
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
-        String text = PushText.truncate(PushText.pushSafe(message), maxMessageChars());
+        Map<String, String> texts = new java.util.HashMap<>();
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
         for (var r : recipients) {
@@ -604,11 +682,13 @@ public class UserPushService {
             d.setAlertLevel(alertLevel);
             d.setUsername(r.username());
             d.setDisplayName(r.displayName());
-            d.setTitle(titleSetting());
-            d.setMessage(text);
+            String lang = r.lang();
+            d.setTitle(titleSetting(lang));
+            d.setMessage(texts.computeIfAbsent(lang, l -> PushText.truncate(PushText.pushSafe(message.forLang(l)), maxMessageChars())));
             d.setStatus(status);
             d.setCreatedAt(now);
-            d.setBatchId(batchId);
+            d.setBatchId(batchIdFor(batchId, lang));
+            d.setPushLang(lang);
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(r.displayName() == null ? r.username() : r.displayName()); }
             else skipped++;
@@ -652,6 +732,12 @@ public class UserPushService {
      */
     public Map<String, Object> enqueueStormNotice(Long stormId, Long legacyStormId, Long teamId, String stormTrigger,
                                                   String alertLevel, List<AlertEvent> members, String message) {
+        return enqueueStormNoticeLocalized(stormId, legacyStormId, teamId, stormTrigger, alertLevel, members, LocalizedText.of(message));
+    }
+
+    /** {@link #enqueueStormNotice} — iki dilli metinle (2026-10-04, öneri 5); karar mantığı aynı. */
+    public Map<String, Object> enqueueStormNoticeLocalized(Long stormId, Long legacyStormId, Long teamId, String stormTrigger,
+                                                           String alertLevel, List<AlertEvent> members, LocalizedText message) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         try {
@@ -669,11 +755,15 @@ public class UserPushService {
             String block = resolve && prior.isEmpty() ? "SKIPPED_NO_PRIOR"
                     : stormBlockReason(stormTrigger, teamId, alertLevel, members);
             if (block == null) {
+                // Kişisel tercihler (2026-10-04): açılış/tekrarda seviye + susturma (çözüm) ve üyelerin aileleri (hiçbiri
+                // kişinin listesinde yoksa SKIPPED_USER_TYPE). Çözüm muaf (resolvePrior). Tercih yoksa liste bugünküyle aynı.
                 List<UserPushRecipientResolver.Recipient> recipients =
-                        resolve ? resolver.resolvePrior(prior) : resolver.resolve(teamId, alertLevel);
+                        resolve ? resolver.resolvePrior(prior)
+                                : UserPushRecipientResolver.withFamilies(resolver.resolve(teamId, alertLevel), memberFamilies(members));
                 if (!recipients.isEmpty())
                     return writeTeamRows(out, teamId, trigger, alertLevel, STORM_MONITOR_TYPE, STORM_MONITOR_NAME,
-                            message, dedupeKey, recipients, java.util.Set.of(), resolve);   // çözüm tavandan muaf
+                            message, dedupeKey, recipients, java.util.Set.of(),
+                            resolve || capBypass(alertLevel));   // çözüm tavandan muaf; KRİTİK, ayar açıksa muaf
                 block = "SKIPPED_NO_RECIPIENTS";
             }
             stormSkipRow(teamId, trigger, alertLevel, dedupeKey, block);
@@ -702,6 +792,17 @@ public class UserPushService {
         if (!list.isEmpty() && typeOn.stream().allMatch(UserPushService::pushDisabled)) return "SKIPPED_MONITOR_OFF";
         if (!"RESOLVE".equals(stormTrigger) && quietHoursBlock(level)) return "SKIPPED_QUIET_HOURS";
         return null;
+    }
+
+    /** Fırtına üyelerinin izleme aileleri (tekil, sıralı); bilinmeyen tür atlanır. Boş = aile bilinmiyor. */
+    static List<String> memberFamilies(List<AlertEvent> members) {
+        if (members == null) return null;
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (AlertEvent m : members) {
+            String f = m == null ? null : MonitorTypeCatalog.typeOfAlert(m.getAlertType());
+            if (f != null) out.add(f);
+        }
+        return out.isEmpty() ? null : new ArrayList<>(out);
     }
 
     /** İzlemenin push bayrağı KAPALI mı — olayın alarm-anı bağlamındaki {@code push_disabled} damgası. */
@@ -775,7 +876,15 @@ public class UserPushService {
     }
 
     /** Doğrudan alıcı (rol grubu çözümü YOK): kullanıcı adı + görünen ad + opt-out. */
-    public record DirectRecipient(String username, String displayName, boolean optOut) {}
+    public record DirectRecipient(String username, String displayName, boolean optOut, String lang) {
+        /** Eski üç alanlı biçim — push Türkçe (bugünkü davranış). */
+        public DirectRecipient(String username, String displayName, boolean optOut) {
+            this(username, displayName, optOut, PushI18n.TR);
+        }
+        public DirectRecipient {
+            lang = PushI18n.norm(lang);
+        }
+    }
 
     /**
      * Belirli kullanıcılara DOĞRUDAN bildirim (2026-09-13, haftalık rapor → müdür): alıcılar çağıran
@@ -784,6 +893,12 @@ public class UserPushService {
      */
     public Map<String, Object> enqueueDirect(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
                                              String monitorType, String monitorName, String message, String dedupeKey) {
+        return enqueueDirectLocalized(recipients, teamId, trigger, alertLevel, monitorType, monitorName, LocalizedText.of(message), dedupeKey);
+    }
+
+    /** {@link #enqueueDirect} — iki dilli metinle (kişinin push diline göre, 2026-10-04). */
+    public Map<String, Object> enqueueDirectLocalized(List<DirectRecipient> recipients, Long teamId, String trigger, String alertLevel,
+                                                      String monitorType, String monitorName, LocalizedText message, String dedupeKey) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("queued", 0); out.put("skipped", 0); out.put("recipients", List.of());
         if (!enabled()) { out.put("reason", "SKIPPED_DISABLED"); return out; }
@@ -791,7 +906,7 @@ public class UserPushService {
         String batchId = UUID.randomUUID().toString().substring(0, 8);
         String now = ISO.format(Instant.now());
         String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
-        String text = PushText.truncate(PushText.pushSafe(message), maxMessageChars());
+        Map<String, String> texts = new java.util.HashMap<>();
         int queued = 0, skipped = 0;
         List<String> names = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
@@ -813,11 +928,13 @@ public class UserPushService {
             d.setAlertLevel(alertLevel);
             d.setUsername(u);
             d.setDisplayName(r.displayName() == null ? u : r.displayName());
-            d.setTitle(titleSetting());
-            d.setMessage(text);
+            String lang = r.lang();
+            d.setTitle(titleSetting(lang));
+            d.setMessage(texts.computeIfAbsent(lang, l -> PushText.truncate(PushText.pushSafe(message.forLang(l)), maxMessageChars())));
             d.setStatus(status);
             d.setCreatedAt(now);
-            d.setBatchId(batchId);
+            d.setBatchId(batchIdFor(batchId, lang));
+            d.setPushLang(lang);
             try { deliveryRepo.save(d); } catch (Exception dup) { skipped++; continue; }
             if ("PENDING".equals(status)) { queued++; names.add(d.getDisplayName()); }
             else skipped++;
@@ -892,9 +1009,12 @@ public class UserPushService {
             // Çok pod güvenliği (2026-10-01, öneri 3): yalnız BU turun kiraladığı satırlar gönderilir.
             List<UserPushDelivery> pending = claim(due);
             if (pending.isEmpty()) return;   // başka bir pod aldı
-            Map<String, List<UserPushDelivery>> byBatch = new LinkedHashMap<>();
+            Map<List<String>, List<UserPushDelivery>> byBatch = new LinkedHashMap<>();
+            // Tek istek TEK mesaj taşır (gövde ilk satırın başlık + mesajı): aynı batch'te farklı metin (iki dil) olursa
+            // ayrı isteğe bölünür (2026-10-04, öneri 5). Dil başına ayrı batch kimliği zaten verilir; bu savunma katmanıdır.
             for (UserPushDelivery d : pending)
-                byBatch.computeIfAbsent(d.getBatchId() == null ? "solo-" + d.getId() : d.getBatchId(),
+                byBatch.computeIfAbsent(List.of(d.getBatchId() == null ? "solo-" + d.getId() : d.getBatchId(),
+                                String.valueOf(d.getTitle()), String.valueOf(d.getMessage())),
                         k -> new ArrayList<>()).add(d);
             // Bu turda işlenen satırları HARİÇ tut: fail() retry edilebilir hatada satırı PENDING
             // bırakıp 30/120 sn backoff PLANLIYOR, ama kuyruk-sonu taraması onları yeniden
@@ -1272,6 +1392,113 @@ public class UserPushService {
         }
     }
 
+    /**
+     * "Kendime test push'u gönder" (2026-10-04, öneri 4) — YALNIZ çağıranın kendi kimliğine, kendi push dilinde, işlemsel
+     * tekil gönderimle ({@link #sendDirect}): kişisel tercihler / sessiz saat / susturma / saat tavanı UYGULANMAZ (açık bir
+     * test isteğidir), teslimat satırı DOĞMAZ. Hız sınırı ve denetim çağıran uçta.
+     */
+    public DirectResult sendSelfTest(String username, String lang) {
+        String l = PushI18n.norm(lang);
+        return sendDirect(username, titleSetting(l), PushI18n.selfTest(Instant.now(), l));
+    }
+
+    /** Outbox'ı hemen boşalt (özet işi yeni satır yazınca) — tek worker'a iş atar, beklemez. */
+    void kickDrain() {
+        worker.execute(this::drainOutbox);
+    }
+
+    // ── Zamana bağlı eskalasyon adımı push'u (2026-10-04, onaylı öneri 6) ──────────────────────────────
+
+    /** Eskalasyon adımı push satırlarının tetiği. */
+    public static final String TRIGGER_ESCALATION_STEP = "ESCALATION_STEP";
+
+    /** Adım dedupe anahtarı — {@code alert_escalation_steps} sahiplenmesiyle aynı eksen: (alarm, kişi, seviye). */
+    static String stepDedupeKey(Long contactId, String level) {
+        String lvl = level == null || level.isBlank() ? "WARNING" : level.trim().toUpperCase(java.util.Locale.ROOT);
+        return "ESC_STEP:" + contactId + ":" + lvl;
+    }
+
+    /**
+     * Eskalasyon adımı gönderildiğinde kişiye PUSH (e-posta + webhook'un yanında). Kişi TEK aktif kullanıcıya çözülürse
+     * ({@link UserPushRecipientResolver#resolveContact}) satır yazılır; çözülemezse (yok / belirsiz / pasif) push gitmez ve
+     * neden sistem satırına yazılır. Kanal kuralları (sistem bakımı, tür/takım kapsamı, izleme bayrağı, global sessiz saat),
+     * kişisel tercihler (opt-out, aile, seviye, susturma — kritik istisnası, kişisel sessiz saat) ve saat tavanı (KRİTİK
+     * muafiyeti ayarıyla) aynen uygulanır. Takım yönlendirmesini adım servisi zaten verdi; burada yeniden sorulmaz.
+     * Hiçbir istisna yaymaz — adımın e-postası/webhook'u bundan etkilenmez.
+     *
+     * @return yazılan satırın durumu (PENDING / SKIPPED_* / RATE_LIMITED), kayıt yoksa null
+     */
+    public String enqueueEscalationStep(AlertEvent event, com.sitemonitor.model.EscalationContact contact, int delayMinutes) {
+        try {
+            if (!enabled() || !stepPushEnabled() || event == null || event.getId() == null || contact == null) return null;
+            String level = event.getAlertLevel();
+            String dedupeKey = stepDedupeKey(contact.getId(), level);
+            String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
+            Long teamId = contact.getTeamId() != null ? contact.getTeamId() : event.getTeamId();
+            String block = null;
+            if (systemMaintenanceMuted()) block = SystemMaintenanceService.PUSH_SKIPPED;
+            if (block == null) block = scopeBlockReason(teamId, family);
+            if (block == null && pushDisabled(event)) block = "SKIPPED_MONITOR_OFF";
+            if (block == null && quietHoursBlock(level)) block = "SKIPPED_QUIET_HOURS";
+            UserPushRecipientResolver.ContactMatch match = block == null
+                    ? resolver.resolveContact(contact, level, familyList(family)) : null;
+            if (block == null && match != null && match.skipReason() != null) block = match.skipReason();
+            if (block != null || match == null || match.recipient() == null) {
+                String reason = block == null ? UserPushRecipientResolver.SKIPPED_NO_USER_MATCH : block;
+                stepSkipRow(event, contact, teamId, family, dedupeKey, reason);
+                return reason;
+            }
+            UserPushRecipientResolver.Recipient r = match.recipient();
+            if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, r.username())) return null;
+            String since = ISO.format(Instant.now().minus(Duration.ofHours(1)));
+            String status;
+            if (r.skipReason() != null) status = r.skipReason();
+            else if (!capBypass(level) && deliveryRepo.countRecentForUser(r.username(), since) >= hourlyCap()) status = "RATE_LIMITED";
+            else status = "PENDING";
+            String lang = r.lang();
+            String message = PushText.truncate(PushText.pushSafe(PushI18n.escalationStepPrefix(delayMinutes, lang)
+                    + rawMessage(event, "ESCALATION", contextOf(event), lang)), maxMessageChars());
+            UserPushDelivery d = row(event, TRIGGER_ESCALATION_STEP, dedupeKey, teamId, family, r.username(), r.displayName(),
+                    message, status, ISO.format(Instant.now()), lang);
+            d.setBatchId("step-" + UUID.randomUUID().toString().substring(0, 8));
+            try {
+                deliveryRepo.save(d);
+            } catch (Exception dup) {
+                log.debug("user-push eskalasyon adımı dedupe (unique): olay={} kişi={}", event.getId(), contact.getId());
+                return null;
+            }
+            if ("PENDING".equals(status)) worker.execute(this::drainOutbox);
+            log.info("user-push eskalasyon adımı: olay #{} kişi #{} → {}", event.getId(), contact.getId(), status);
+            return status;
+        } catch (Exception e) {
+            log.warn("user-push eskalasyon adımı atlandı (adımın e-postası etkilenmedi): {}", e.toString());
+            return null;
+        }
+    }
+
+    /** Adım push'unun karar satırı (sistem sicili) — kişi başına (alarm, kişi, seviye) bir kez. Ad: kişi kimliği (isim değil). */
+    private void stepSkipRow(AlertEvent event, com.sitemonitor.model.EscalationContact contact, Long teamId, String family,
+                             String dedupeKey, String reason) {
+        try {
+            if (deliveryRepo.existsByAlertEventIdAndDedupeKeyAndUsername(event.getId(), dedupeKey, SYSTEM_USER)) return;
+            UserPushDelivery d = row(event, TRIGGER_ESCALATION_STEP, dedupeKey, teamId, family, SYSTEM_USER,
+                    "(eskalasyon kişisi #" + contact.getId() + ")", null, reason, ISO.format(Instant.now()));
+            deliveryRepo.save(d);
+        } catch (Exception ignored) { /* karar satırı yazılamadıysa adımın kendisi etkilenmez */ }
+    }
+
+    /** Olayın alarm-anı bağlamı (JSON) → harita; yoksa/bozuksa null (şablon yedek değerlerle dolar). */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> contextOf(AlertEvent event) {
+        String json = event == null ? null : event.getContextJson();
+        if (json == null || json.isBlank()) return null;
+        try {
+            return MAPPER.readValue(json, Map.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private String dedupeKeyFor(String trigger, AlertEvent event) {
         return switch (trigger) {
             case "RE_ALERT" -> "RE_ALERT:" + Instant.now().atZone(ZONE).toLocalDate();
@@ -1333,7 +1560,7 @@ public class UserPushService {
     /** Test kancası. */
     void setSystemMaintenance(SystemMaintenanceService s) { this.systemMaintenance = s; }
 
-    private boolean systemMaintenanceMuted() {
+    boolean systemMaintenanceMuted() {
         try {
             return systemMaintenance != null && systemMaintenance.notificationsMuted();
         } catch (Exception e) {
@@ -1352,6 +1579,25 @@ public class UserPushService {
                     ISO.format(Instant.now()));
             deliveryRepo.save(d);
         } catch (Exception ignored) { /* karar satırı yazılamadıysa gönderim mantığı etkilenmez */ }
+    }
+
+    /** Olayın tek ailesi → aile süzgeci girdisi (bilinmiyorsa null = süzgeç yok). */
+    static List<String> familyList(String family) {
+        return family == null || family.isBlank() ? null : List.of(family);
+    }
+
+    /** Toplu istek kimliği DİL başına ayrı: tek istek tek mesaj taşır, iki dil aynı isteğe girmez (2026-10-04). */
+    static String batchIdFor(String base, String lang) {
+        return PushI18n.isEn(lang) ? base + "-en" : base;
+    }
+
+    private UserPushDelivery row(AlertEvent event, String trigger, String dedupeKey, Long teamId,
+                                 String family, String username, String displayName,
+                                 String message, String status, String now, String lang) {
+        UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, username, displayName, message, status, now);
+        d.setPushLang(PushI18n.norm(lang));
+        d.setTitle(titleSetting(lang));
+        return d;
     }
 
     private UserPushDelivery row(AlertEvent event, String trigger, String dedupeKey, Long teamId,
@@ -1376,6 +1622,16 @@ public class UserPushService {
 
     private String titleSetting() {
         return appSettings.getString("site.monitor.userpush.title", "Site Monitor");
+    }
+
+    /**
+     * Dile göre başlık (2026-10-04): İngilizce için {@code site.monitor.userpush.title.en}; boşsa Türkçe başlık ayarı (çoğu
+     * kurumda başlık bir ürün adıdır, çevrilmez). Türkçe = {@link #titleSetting()} (bugünkü).
+     */
+    String titleSetting(String lang) {
+        if (!PushI18n.isEn(lang)) return titleSetting();
+        String en = appSettings.getString("site.monitor.userpush.title.en", "");
+        return en == null || en.isBlank() ? titleSetting() : en;
     }
 
     // ── Şablonlar (K6) ─────────────────────────────────────────────────────────────────────
@@ -1409,6 +1665,17 @@ public class UserPushService {
     String template(String key) {
         return appSettings.getString("site.monitor.userpush.template." + key,
                 DEFAULT_TEMPLATES.getOrDefault(key, DEFAULT_TEMPLATES.get("down")));
+    }
+
+    /**
+     * Dile göre şablon (2026-10-04, öneri 5): İngilizce için {@code site.monitor.userpush.template.<key>.en} (boşsa gömülü
+     * İngilizce varsayılan — {@link PushI18n#DEFAULT_TEMPLATES_EN}). Türkçe = {@link #template(String)} (bugünkü).
+     */
+    String template(String key, String lang) {
+        if (!PushI18n.isEn(lang)) return template(key);
+        String v = appSettings.getString("site.monitor.userpush.template." + key + ".en", "");
+        if (v != null && !v.isBlank()) return v;
+        return PushI18n.DEFAULT_TEMPLATES_EN.getOrDefault(key, PushI18n.DEFAULT_TEMPLATES_EN.get("down"));
     }
 
     /**
@@ -1448,9 +1715,24 @@ public class UserPushService {
     }
 
     String buildMessage(AlertEvent event, String trigger, Map<String, Object> ctx) {
+        return buildMessage(event, trigger, ctx, PushI18n.TR);
+    }
+
+    /**
+     * Alarm push metni — kişinin dilinde (2026-10-04). {@code tr} dalı bugünkü yardımcıları çağırır (bayt bayt aynı çıktı,
+     * {@code PushLanguageTest}); {@code en} şablonu, seviye sözcüğü, süre/tarih biçimi ve ölçü adlarını çevirir.
+     */
+    String buildMessage(AlertEvent event, String trigger, Map<String, Object> ctx, String lang) {
+        // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
+        // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
+        return PushText.truncate(PushText.pushSafe(rawMessage(event, trigger, ctx, lang)), maxMessageChars());
+    }
+
+    /** Doldurulmuş şablon — süzme/kırpma ÖNCESİ (eskalasyon adımı önek ekleyip kendisi kırpar). */
+    String rawMessage(AlertEvent event, String trigger, Map<String, Object> ctx, String lang) {
         // D-b14 (2026-09-29): TEK seviye sözlüğü (e-posta konusu/rozeti, ileti gövdesi, 7/24 postası ile aynı) —
         // eskiden INFO/LOW burada "UYARI", e-postada "BİLGİ" yazıyordu.
-        String levelTr = EscalationService.levelWordTr(event.getAlertLevel());
+        String levelTr = PushI18n.levelWord(event.getAlertLevel(), lang);
         Map<String, String> vals = new LinkedHashMap<>();
         vals.put("seviye", levelTr);
         vals.put("ad", nz(event.getDomain(), "-"));
@@ -1463,12 +1745,13 @@ public class UserPushService {
         // duration_ms), şablon ise metric/value/threshold arıyor. Eşleme sınırda yapılır; açık
         // anahtar yazan bir üretici olursa YİNE o kazanır (ctxStr önce ctx'e bakar).
         Map<String, String> slow = PushText.slowFields(ctx);
-        vals.put("metrik", ctxStr(ctx, "metric",    slow.getOrDefault("metric", "yanıt")));
+        vals.put("metrik", ctxStr(ctx, "metric",    slow.containsKey("metric")
+                ? PushI18n.metric(slow.get("metric"), lang) : PushI18n.defaultMetric(lang)));
         vals.put("deger",  ctxStr(ctx, "value",     slow.getOrDefault("value", "-")));
         vals.put("esik",   ctxStr(ctx, "threshold", slow.getOrDefault("threshold", "-")));
         // {ne}: NEYİN dolduğu (2026-09-18, kullanıcı bildirimi): eskiden sabit "süre" yazıyor, telefonda
         // "x.com - süre 18 gün içinde doluyor" sertifika mı alan adı kaydı mı belli olmuyordu.
-        vals.put("ne", expiringWhat(event.getAlertType()));
+        vals.put("ne", PushI18n.expiringWhat(event.getAlertType(), lang));
         // ÖNCE ctx, sonra event — dosyanın geri kalanındaki kural (bkz. metrik/deger/esik).
         // Eskiden YALNIZ event.getDaysRemaining() okunuyordu: o değer alarm açılırken/tırmanırken
         // yazılır, e-posta ise gönderim anında latest_check'ten TAZE değeri kullanır. İki kanal
@@ -1490,22 +1773,19 @@ public class UserPushService {
         // (latestToCertContext). Şablon yalnız expiry_date aradığı için sertifika süre-bitişi
         // push'larında tarih HER ZAMAN "-" çıkıyordu — kullanıcının gördüğü "(-)" buydu.
         vals.put("tarih", ctxStr(ctx, "expiry_date",
-                PushText.istDate(ctxStr(ctx, "not_after", null))));
+                PushI18n.date(ctxStr(ctx, "not_after", null), lang)));
         // {neden} ile AYNI çekirdek: seviye öneki ve adres tekrarı burada da kırpılır. İkizin
         // atlanması telefona "KRİTİK: x - UYARI: x DNS kaydı değişti değişti." düşürüyordu.
         vals.put("degisen", PushText.capitalize(
                 PushText.reasonOf(event.getMessage(), event.getDomain(), reasonMaxChars())));
         vals.put("ip", ctxStr(ctx, "resolved_ip", "-"));
         vals.put("cn", ctxStr(ctx, "subject", "-"));
-        vals.put("sure", durationSince(event.getCreatedAt()));
+        vals.put("sure", durationSince(event.getCreatedAt(), lang));
         vals.put("baslangic", PushText.istClock(event.getCreatedAt()));
         String nowClock = PushText.istClockNow(Instant.now());
         vals.put("saat", nowClock);
         vals.put("bitis", nowClock);   // çözüm tetiginde "şimdi" = normale dönüş anı
-        String msg = fillTemplate(template(templateKeyFor(event.getAlertType(), trigger)), vals);
-        // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
-        // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
-        return PushText.truncate(PushText.pushSafe(msg), maxMessageChars());
+        return fillTemplate(template(templateKeyFor(event.getAlertType(), trigger), lang), vals);
     }
 
     static String fillTemplate(String template, Map<String, String> vals) {
@@ -1550,9 +1830,9 @@ public class UserPushService {
      * telefonda "3 sa 5 dk" görünüyordu). (2) Birimler ürünün kendi standardından
      * ({@code incidentMeta.js}) sapıyordu ve gün sınırında saat bilgisi tamamen düşüyordu.
      */
-    private String durationSince(String createdAt) {
+    private String durationSince(String createdAt, String lang) {
         Instant start = PushText.parseStoredUtc(createdAt);
         if (start == null) return "-";
-        return PushText.compactDuration(Duration.between(start, Instant.now()));
+        return PushI18n.compactDuration(Duration.between(start, Instant.now()), lang);
     }
 }

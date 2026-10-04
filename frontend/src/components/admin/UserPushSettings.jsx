@@ -3,7 +3,7 @@ import {
   Save, Send, BellRing, Plus, Trash2, Copy, RefreshCw, Search as SearchIcon,
   Crown, UserCog, Briefcase, Globe, Network, Target, Radio, CalendarDays,
   ScanSearch, FlaskConical, Gauge, ShieldCheck, WifiOff, Timer, CalendarClock,
-  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2, ChevronDown,
+  ArrowLeftRight, CheckCircle2, OctagonPause, Check, Landmark, Building2, ChevronDown, TriangleAlert,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -34,6 +34,7 @@ import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { Switch } from '@/components/shadcn/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { Toggle } from '@/components/shadcn/toggle'
 import { cn } from '@/lib/utils'
 
@@ -58,16 +59,23 @@ import { cn } from '@/lib/utils'
  */
 
 const KEY = (k) => `site.monitor.userpush.${k}`
+/** Eskalasyon adımı push anahtarı (2026-10-04) — userpush önekli değil; ayar grubu userpush. */
+const STEP_PUSH_KEY = 'site.monitor.escalation.step-push-enabled'
 // 'cert' sunucuda VAR (UserPushService.DEFAULT_TEMPLATES) ama listede yoktu: sertifika
 // guvenlik alarminin {ip}/{cn} kanitini tasiyan sablon duzenlenemiyor, onizlenemiyor ve
 // test gonderiminde secilemiyordu.
-const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'cert', 'resolved', 'test']
+// 'degraded' (2026-10-04): sunucuda vardı ama ekranda yoktu — sayfa bütünlüğü / alan adı durumu push'u düzenlenemiyordu.
+const TEMPLATE_KEYS = ['down', 'slow', 'expiry', 'changed', 'cert', 'degraded', 'resolved', 'test']
 const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OPEN',
   'SKIPPED_TYPE_OFF', 'SKIPPED_TEAM_OFF', 'SKIPPED_MONITOR_OFF', 'SKIPPED_QUIET_HOURS',
   'SKIPPED_REALERT_OFF', 'SKIPPED_NO_RECIPIENTS', 'SKIPPED_USER_OPT_OUT', 'SKIPPED_NO_PRIOR',
   'SKIPPED_TEAM_QUIET', 'SKIPPED_USER_QUIET_HOURS',   // 2026-10-01: takım / kişisel sessiz saat
-  'SKIPPED_SYSTEM_MAINTENANCE']   // 2026-10-02: sistem bakımı
-const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST']   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
+  'SKIPPED_SYSTEM_MAINTENANCE',   // 2026-10-02: sistem bakımı
+  // 2026-10-04: kişisel tercihler + eskalasyon adımı kişi eşlemesi
+  'SKIPPED_USER_LEVEL', 'SKIPPED_USER_TYPE', 'SKIPPED_USER_SNOOZE', 'SKIPPED_USER_INACTIVE',
+  'SKIPPED_NO_USER_MATCH', 'SKIPPED_AMBIGUOUS_USER']
+const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
+  'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP']   // 2026-10-04   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [
@@ -338,6 +346,7 @@ const TEMPLATE_META = {
   expiry: { Icon: CalendarClock, tone: 'warn' },
   changed: { Icon: ArrowLeftRight, tone: 'info' },
   cert: { Icon: ShieldCheck, tone: 'danger' },
+  degraded: { Icon: TriangleAlert, tone: 'warn' },
   resolved: { Icon: CheckCircle2, tone: 'ok' },
   test: { Icon: FlaskConical, tone: 'info' },
 }
@@ -349,10 +358,15 @@ const PREVIEW_VALS = {
   tarih: '2026-12-31', degisen: 'kayıt', sure: '25 dk', saat: '14:03',
   baslangic: '13:38', bitis: '14:03', ip: '192.0.2.10', cn: 'ornek.example.com',
 }
+/** İngilizce önizleme örnekleri (2026-10-04) — sunucu İngilizce kurucularıyla aynı biçim (seviye, süre birimi). */
+const PREVIEW_VALS_EN = {
+  ...PREVIEW_VALS, seviye: 'CRITICAL', ad: 'Example monitor', neden: 'connection timed out', metrik: 'response time',
+  ne: 'SSL certificate', degisen: 'record', sure: '25 min', cn: 'example.example.com',
+}
 
-function preview(template) {
+function preview(template, lang = 'tr') {
   let out = template || ''
-  for (const [k, v] of Object.entries(PREVIEW_VALS)) out = out.replaceAll(`{${k}}`, v)
+  for (const [k, v] of Object.entries(lang === 'en' ? PREVIEW_VALS_EN : PREVIEW_VALS)) out = out.replaceAll(`{${k}}`, v)
   return out.replace(/\s{2,}/g, ' ').trim()
 }
 
@@ -434,6 +448,9 @@ export default function UserPushSettings() {
   // Test kartı
   const [testSicils, setTestSicils] = useState('')
   const [testTemplate, setTestTemplate] = useState('test')
+  // 2026-10-04 (öneri 5): şablon düzenleyicisinin dil sekmesi + test gönderiminin dili
+  const [tplLang, setTplLang] = useState('tr')
+  const [testLang, setTestLang] = useState('tr')
   const [testResult, setTestResult] = useState(null)
   const [testing, setTesting] = useState(false)
 
@@ -639,7 +656,8 @@ export default function UserPushSettings() {
     if (!usernames.length) { toast.error(t('userpush.testNeedSicil')); return }
     setTesting(true)
     try {
-      const res = await api.admin.userPush.sendTest({ usernames, template: testTemplate })
+      // Dil yalnız İngilizce seçiliyse gönderilir — Türkçe gövde bugünküyle aynı kalır.
+      const res = await api.admin.userPush.sendTest({ usernames, template: testTemplate, ...(testLang === 'en' ? { lang: 'en' } : {}) })
       if (res?.success) {
         setTestResult(res.data?.data ?? res.data)
         toast.success(t('userpush.testQueued'))
@@ -836,6 +854,21 @@ export default function UserPushSettings() {
             {numField('max-message-chars', 'userpush.maxMessageChars', 'help.set.site.monitor.userpush.max-message-chars', 80, 320, '200')}
             {numField('reason-max-chars', 'userpush.reasonMaxChars', 'help.set.site.monitor.userpush.reason-max-chars', 40, 280, '160')}
           </div>
+
+          {/* Saat tavanı özeti + kritik muafiyeti (2026-10-04, onaylı öneri 2) — tavanın hemen yanında */}
+          <div data-slot="userpush-overflow" className="mt-3.5 flex min-w-0 flex-col gap-2 rounded-lg border p-3">
+            <SubHead className="m-0">{t('userpush.overflowTitle')}</SubHead>
+            <ToggleRow checked={val('overflow-summary-enabled', 'true') !== 'false'}
+              onChange={(v) => setVal('overflow-summary-enabled', v ? 'true' : 'false')}
+              label={t('userpush.overflowEnabled')} helpKey="help.set.site.monitor.userpush.overflow-summary-enabled" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+              {numField('overflow-summary-minutes', 'userpush.overflowMinutes', 'help.set.site.monitor.userpush.overflow-summary-minutes', 5, 120, '15')}
+            </div>
+            <ToggleRow checked={val('critical-bypass-cap', 'false') === 'true'}
+              onChange={(v) => setVal('critical-bypass-cap', v ? 'true' : 'false')}
+              label={t('userpush.criticalBypass')} helpKey="help.set.site.monitor.userpush.critical-bypass-cap" />
+            <p className="m-0 text-xs text-muted-foreground">{t('userpush.overflowHint')}</p>
+          </div>
         </Section>
 
         {/* ── Unvan grupları — SEÇİLEBİLİR KARTLAR ── */}
@@ -926,7 +959,9 @@ export default function UserPushSettings() {
 
         {/* ── Sessiz saatler + tekrar kuralı ── */}
         <Section {...section('quiet')} title={t('userpush.quietTitle')} description={t('userpush.quietDesc')}>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-[repeat(3,minmax(140px,220px))]">
+          {/* 2026-10-04: 768 px tablette kenar çubuğuyla daralan kapta üç sabit sütun seviye seçicisini kabın dışına itiyordu
+              (sayfa 97 px yatay kayıyordu) — iki sütun, geniş ekranda üç; seçici sarar. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(140px,220px))]">
             <Field label={helpLabel(t('userpush.quietStart'), 'help.set.site.monitor.userpush.quiet-start')}>
               {({ id, describedBy }) => (
                 <Input id={id} aria-describedby={describedBy} type="time" value={val('quiet-start')}
@@ -942,7 +977,7 @@ export default function UserPushSettings() {
             <div className="flex flex-col gap-1.5">
               <span className="flex items-center text-sm font-semibold">{t('userpush.quietMinLevel')}
                 <HelpTip helpKey="help.set.site.monitor.userpush.quiet-min-level" label={t('userpush.quietMinLevel')} /></span>
-              <SegmentedControl value={val('quiet-min-level', 'CRITICAL')}
+              <SegmentedControl value={val('quiet-min-level', 'CRITICAL')} className="flex-wrap"
                 ariaLabel={t('userpush.quietMinLevel')}
                 onChange={(v) => setVal('quiet-min-level', v)}
                 options={[
@@ -961,6 +996,11 @@ export default function UserPushSettings() {
           <ToggleRow className="mt-3" checked={val('realert-enabled', 'true') !== 'false'}
             onChange={(v) => setVal('realert-enabled', v ? 'true' : 'false')}
             label={t('userpush.realertEnabled')} helpKey="help.set.site.monitor.userpush.realert-enabled" />
+          {/* Eskalasyon adımı push'u (2026-10-04, onaylı öneri 6) — anahtar escalation.* öneklidir (KEY() değil) */}
+          <ToggleRow className="mt-2" checked={(settings[STEP_PUSH_KEY] ?? 'true') !== 'false'}
+            onChange={(v) => setSettings((s) => ({ ...s, [STEP_PUSH_KEY]: v ? 'true' : 'false' }))}
+            label={t('userpush.stepPush')} helpKey="help.set.site.monitor.escalation.step-push-enabled" />
+          <p className="m-0 text-xs text-muted-foreground">{t('userpush.stepPushHint')}</p>
         </Section>
 
         {/* ── Haftalık rapor onayı (2026-09-13): takıma + müdüre push; e-posta ile aynı anda ── */}
@@ -981,34 +1021,63 @@ export default function UserPushSettings() {
           <p className="mb-2 text-xs break-all text-muted-foreground">
             {t('userpush.placeholders')}: {(defaults.placeholders || []).map((p) => `{${p}}`).join(' ')}
           </p>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-3">
-            {TEMPLATE_KEYS.map((k) => {
-              // HAM ayar okunur: val() kendi icinde `?? ''` uyguladigi icin hic kaydedilmemis
-              // bir sablonda BOS DIZE dondurur — `??` zinciri o zaman defaults dalina HIC
-              // gecmez ve temiz kurulumda kutular bos cizilirdi (2026-08-30 regresyonu).
-              // Ham deger: kaydedilmemis -> undefined (varsayilan gelir), kullanici sildi -> ''
-              // (bos KALIR). Iki durum ancak boyle ayrilabilir.
-              const saved = settings[KEY(`template.${k}`)]
-              const cur = saved ?? defaults.templates?.[k] ?? ''
-              const meta = TEMPLATE_META[k]
-              const MIcon = meta.Icon
-              const name = t(`userpush.template.${k}`)
-              return (
-                <Card key={k} className="gap-2 p-3 shadow-none">
-                  <div className="flex items-center gap-2">
-                    <span className={cn('inline-flex size-7 flex-none items-center justify-center rounded-lg', ICON_TONE[meta.tone])}>
-                      <MIcon size={15} aria-hidden="true" />
-                    </span>
-                    <CardTitle className="flex items-center text-[0.92em] font-bold">{name}
-                      <HelpTip helpKey={`help.set.site.monitor.userpush.template.${k}`} label={name} /></CardTitle>
-                  </div>
-                  <Input type="text" value={cur} maxLength={220} aria-label={name}
-                    onChange={(e) => setVal(`template.${k}`, e.target.value)} />
-                  <NotifPreview title={val('title', 'Site Monitor')} message={preview(cur)} tone={meta.tone} />
-                </Card>
-              )
-            })}
-          </div>
+          {/* TR / EN sekmeleri (2026-10-04, onaylı öneri 5): push dili İngilizce olan kişiye EN şablonu gider; iki dilin de
+              önizlemesi var. EN anahtarları `template.<k>.en`; boşsa gömülü İngilizce varsayılan (defaults.templates_en). */}
+          <Tabs value={tplLang} onValueChange={setTplLang} className="min-w-0 gap-3">
+            <TabsList aria-label={t('userpush.tplLangAria')} className="h-auto! w-full flex-row! sm:w-fit" data-slot="userpush-tpl-tabs">
+              {['tr', 'en'].map((l) => (
+                <TabsTrigger key={l} value={l} data-tab={l} className="min-h-10 w-auto! flex-1 justify-center! px-3 sm:min-h-8 sm:flex-none">
+                  {t(`userpush.tplLang.${l}`)}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {['tr', 'en'].map((l) => (
+              <TabsContent key={l} value={l} className="mt-0 flex min-w-0 flex-col gap-3" data-slot={`userpush-tpl-${l}`}>
+                {l === 'en' && (
+                  <>
+                    <p className="m-0 text-xs text-muted-foreground">{t('userpush.templatesEnHint')}</p>
+                    <Field label={helpLabel(t('userpush.titleEn'), 'help.set.site.monitor.userpush.title.en')} hint={t('userpush.titleEnHint')} className="mb-0 max-w-md">
+                      {({ id, describedBy }) => (
+                        <Input id={id} aria-describedby={describedBy} type="text" value={val('title.en')} placeholder={val('title', 'Site Monitor')}
+                          onChange={(e) => setVal('title.en', e.target.value)} />
+                      )}
+                    </Field>
+                  </>
+                )}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-3">
+                  {TEMPLATE_KEYS.map((k) => {
+                    // HAM ayar okunur: val() kendi icinde `?? ''` uyguladigi icin hic kaydedilmemis
+                    // bir sablonda BOS DIZE dondurur — `??` zinciri o zaman defaults dalina HIC
+                    // gecmez ve temiz kurulumda kutular bos cizilirdi (2026-08-30 regresyonu).
+                    // Ham deger: kaydedilmemis -> undefined (varsayilan gelir), kullanici sildi -> ''
+                    // (bos KALIR). Iki durum ancak boyle ayrilabilir.
+                    const sk = l === 'en' ? `template.${k}.en` : `template.${k}`
+                    const saved = settings[KEY(sk)]
+                    const def = l === 'en' ? defaults.templates_en?.[k] : defaults.templates?.[k]
+                    const cur = saved ?? def ?? ''
+                    const meta = TEMPLATE_META[k]
+                    const MIcon = meta.Icon
+                    const name = t(`userpush.template.${k}`)
+                    const title = l === 'en' ? (val('title.en') || val('title', 'Site Monitor')) : val('title', 'Site Monitor')
+                    return (
+                      <Card key={k} className="gap-2 p-3 shadow-none" data-template={k} data-lang={l}>
+                        <div className="flex items-center gap-2">
+                          <span className={cn('inline-flex size-7 flex-none items-center justify-center rounded-lg', ICON_TONE[meta.tone])}>
+                            <MIcon size={15} aria-hidden="true" />
+                          </span>
+                          <CardTitle className="flex items-center text-[0.92em] font-bold">{name}{l === 'en' && <Badge variant="secondary" className="ml-1.5 text-[0.7em]">EN</Badge>}
+                            <HelpTip helpKey={`help.set.site.monitor.userpush.${sk}`} label={name} /></CardTitle>
+                        </div>
+                        <Input type="text" value={cur} maxLength={220} aria-label={l === 'en' ? `${name} (${t('userpush.tplLang.en')})` : name}
+                          onChange={(e) => setVal(sk, e.target.value)} />
+                        <NotifPreview title={title} message={preview(cur, l)} tone={meta.tone} />
+                      </Card>
+                    )
+                  })}
+                </div>
+              </TabsContent>
+            ))}
+          </Tabs>
         </Section>
       </div>
 
@@ -1016,10 +1085,12 @@ export default function UserPushSettings() {
       <Section {...section('test')} title={t('userpush.testTitle')} description={t('userpush.testDesc')}>
         <TagInput label={t('userpush.testSicils')} value={testSicils} onChange={setTestSicils}
           placeholder="N00001" />
-        <div className="mt-2.5 flex items-center gap-2.5">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
           <SearchableSelect value={testTemplate} onChange={setTestTemplate}
             options={TEMPLATE_KEYS.map((k) => ({ value: k, label: t(`userpush.template.${k}`) }))}
             ariaLabel={t('userpush.testTemplateAria')} />
+          <SegmentedControl value={testLang} onChange={setTestLang} ariaLabel={t('userpush.testLang')} itemClassName="max-sm:min-h-10"
+            options={[{ value: 'tr', label: t('userpush.tplLang.tr') }, { value: 'en', label: t('userpush.tplLang.en') }]} />
           <Button type="button" variant="outline" onClick={sendTest} disabled={testing || !enabled}
             aria-busy={testing || undefined} title={!enabled ? t('userpush.disabledWarn') : undefined}>
             {testing ? <Spinner size={14} inline decorative /> : <Send size={14} />} {t('userpush.testSend')}
@@ -1028,7 +1099,7 @@ export default function UserPushSettings() {
         {testResult && (
           <Card className="mt-2.5 gap-2 px-3 py-2.5 shadow-none">
             <div>{t('userpush.testQueuedN', testResult.queued)}</div>
-            <NotifPreview title={val('title', 'Site Monitor')} message={testResult.message} tone="info" />
+            <NotifPreview title={testLang === 'en' ? (val('title.en') || val('title', 'Site Monitor')) : val('title', 'Site Monitor')} message={testResult.message} tone="info" />
           </Card>
         )}
       </Section>

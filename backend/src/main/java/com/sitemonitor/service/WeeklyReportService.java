@@ -647,6 +647,10 @@ public class WeeklyReportService {
             String who = r.getApprovedBy() == null ? "" : " Onaylayan: " + r.getApprovedBy() + ".";
             boolean sent = mailSent(mailStatus);
             String fail = " BAŞARISIZ (" + (mailStatus == null ? "-" : mailStatus) + ")";
+            // İngilizce eşler (2026-10-04, öneri 5) — push kişinin dilinde; Türkçe metinler bugünküyle aynı.
+            String headEn = "[Weekly report] " + (team != null && team.getName() != null ? team.getName() : "Team") + " " + r.getWeekLabel();
+            String whoEn = r.getApprovedBy() == null ? "" : " Approved by: " + r.getApprovedBy() + ".";
+            String failEn = " FAILED (" + (mailStatus == null ? "-" : mailStatus) + ")";
             String key = (resend ? "WR_RESENT:" : "WR_APPROVED:") + r.getId() + ":" + r.getVersion();
             String name = teamName + " " + r.getWeekLabel();
             // 1) Müdür — doğrudan (e-postanın alıcısı; Webhook ayarı: weekly.manager-enabled). ÖNCE gider:
@@ -656,8 +660,11 @@ public class WeeklyReportService {
                 String text = sent
                         ? head + (resend ? " size yeniden gönderildi." : " onaylandı; rapor e-postanıza gönderildi.") + who
                         : head + " onaylandı ama e-posta" + fail + ". Raporu uygulamadan görüntüleyin." + who;
-                Map<String, Object> res = userPushService.enqueueDirect(resolveManagerPushRecipients(team, r.getTeamId()), r.getTeamId(),
-                        "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key + ":MGR");
+                String textEn = sent
+                        ? headEn + (resend ? " was re-sent to you." : " was approved; the report was e-mailed to you.") + whoEn
+                        : headEn + " was approved but the e-mail" + failEn + ". View the report in the app." + whoEn;
+                Map<String, Object> res = userPushService.enqueueDirectLocalized(resolveManagerPushRecipients(team, r.getTeamId()), r.getTeamId(),
+                        "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, new UserPushService.LocalizedText(text, textEn), key + ":MGR");
                 if (res != null && res.get("usernames") instanceof List<?> us) for (Object u : us) if (u != null) notified.add(u.toString());
             }
             // 2) Takım üyeleri — rol grubu / asgari seviye kuralıyla (Webhook ayarı: weekly.team-enabled)
@@ -665,7 +672,11 @@ public class WeeklyReportService {
                 String text = sent
                         ? head + (resend ? " müdüre yeniden gönderildi." : " onaylandı ve müdüre gönderildi.") + who
                         : head + (resend ? " yeniden gönderim" : " onaylandı ama müdüre e-posta") + fail + " - Haftalık Raporlar'dan yeniden gönderin.";
-                userPushService.enqueueTeamNotice(r.getTeamId(), "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name, text, key, notified);
+                String textEn = sent
+                        ? headEn + (resend ? " was re-sent to the manager." : " was approved and sent to the manager.") + whoEn
+                        : headEn + (resend ? " re-send" : " was approved but the e-mail to the manager") + failEn + " - re-send it from Weekly Reports.";
+                userPushService.enqueueTeamNoticeLocalized(r.getTeamId(), "WEEKLY_REPORT", "WARNING", "WEEKLY_REPORT", name,
+                        new UserPushService.LocalizedText(text, textEn), key, notified);
             }
         } catch (Exception e) {
             log.warn("Haftalık rapor push'u kuyruğa alınamadı (id={}): {}", r.getId(), e.toString());
@@ -692,7 +703,7 @@ public class WeeklyReportService {
         List<UserPushService.DirectRecipient> out = new ArrayList<>();
         for (AppUser u : found.values()) {
             String dn = u.getDisplayName() != null && !u.getDisplayName().isBlank() ? u.getDisplayName() : u.getUsername();
-            out.add(new UserPushService.DirectRecipient(u.getUsername(), dn, Boolean.TRUE.equals(u.getPushOptOut())));
+            out.add(new UserPushService.DirectRecipient(u.getUsername(), dn, Boolean.TRUE.equals(u.getPushOptOut()), u.getPushLang()));
         }
         return out;
     }

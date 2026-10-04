@@ -180,7 +180,7 @@ export default function UserDetailPanel({ user, teams = [], isAdmin, globalAdmin
               <TeamsTab user={user} section={membership} teamIds={teamIds} teamMap={teamMap} />
             </TabsContent>
             <TabsContent value="notifications" className="mt-0">
-              <NotificationsTab user={user} isAdmin={!!isAdmin} push={push} contacts={contacts} teamMap={teamMap} />
+              <NotificationsTab user={user} isAdmin={!!isAdmin} push={push} contacts={contacts} teamMap={teamMap} onChanged={afterMutation} />
             </TabsContent>
             {isAdmin && (
               <TabsContent value="permissions" className="mt-0">

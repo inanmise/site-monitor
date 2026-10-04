@@ -1184,3 +1184,77 @@ for (const vp of VIEWPORTS_3) {
     expect(m2.offenders, `push düzenleyicisi (EN) @${vp.name}: taşan öğe`).toEqual([])
   })
 }
+
+// ── Kişisel push (2026-10-04, onaylı öneriler 2–6): Etkinliklerim'deki "Bildirim tercihlerim" kartı + "Push bildirimlerim"
+// bölümü ve Ayarlar → Webhook Bildirimleri'ndeki saat tavanı özeti / kritik muafiyeti / EN şablon sekmesi. Telefon, tablet
+// ve dizüstü (1280) boyunda: sayfa taşmaz, kart/liste ekrana sığar, dokunma hedefleri (telefonda) ≥ 40 px.
+const PUSH_VIEWPORTS = [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]
+for (const vp of PUSH_VIEWPORTS) {
+  test(`bildirim tercihlerim + push geçmişim @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=myactivity')
+    const prefs = page.locator('[data-slot="push-prefs"]')
+    await prefs.locator('[data-slot="push-snooze"]').waitFor({ timeout: 20_000 })
+    await prefs.scrollIntoViewIfNeeded()
+    await expect(prefs.locator('[data-slot="push-snooze-state"]')).toBeVisible()
+    const pb = await prefs.boundingBox()
+    expect(pb.x + pb.width, `tercih kartı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    const targets = [
+      ...await prefs.locator('[data-preset]').all(),
+      ...await prefs.locator('[data-family]').all(),
+      prefs.getByRole('button', { name: /Send me a test push|Kendime test/ }),
+    ]
+    for (const loc of targets) {
+      const b = await loc.boundingBox()
+      expect(b.x + b.width, `tercih kartı denetimi @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+      if (vp.width < 640) expect(b.height, `tercih kartı dokunma hedefi @${vp.name} (px)`).toBeGreaterThanOrEqual(39)
+    }
+
+    const hist = page.locator('[data-slot="push-history"]')
+    await hist.locator('[data-slot="ph-row"]').first().waitFor({ timeout: 20_000 })
+    await hist.scrollIntoViewIfNeeded()
+    // Dar kapta kart, geniş kapta tablo — telefonda her durumda kart
+    if (vp.width < 640) await expect(hist.getByTestId('ph-cards')).toBeVisible()
+    else if (vp.width >= 1280) await expect(hist.getByTestId('ph-table')).toBeVisible()
+    for (const loc of await hist.locator('[data-slot="ph-row"]').all()) {
+      const b = await loc.boundingBox()
+      expect(b.x + b.width, `push geçmişi satırı @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    }
+    if (vp.width < 640) {
+      for (const loc of await hist.getByRole('group').getByRole('button').all()) {
+        const b = await loc.boundingBox()
+        expect(b.height, `push geçmişi süzgeç/dönem düğmesi @${vp.name} (px)`).toBeGreaterThanOrEqual(39)
+      }
+    }
+    const m = await page.evaluate(measure)
+    expect(m.pageOverflow, `myactivity push @${vp.name}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    expect(m.offenders, `myactivity push @${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+  })
+
+  test(`webhook bildirimleri ayarı: saat tavanı özeti + EN şablon sekmesi @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await page.addInitScript(() => {
+      try { localStorage.setItem('sm.userpush.sections', JSON.stringify({ conn: true, quiet: true, templates: true, test: true })) } catch { /* yoksay */ }
+    })
+    await mockApi(page)
+    await page.goto('/?tab=settings&sec=userpush')
+    const overflow = page.locator('[data-slot="userpush-overflow"]')
+    await overflow.waitFor({ timeout: 20_000 })
+    await overflow.scrollIntoViewIfNeeded()
+    const ob = await overflow.boundingBox()
+    expect(ob.x + ob.width, `saat tavanı bloğu @${vp.name}: sağda taşıyor`).toBeLessThanOrEqual(vp.width + 1)
+    const tabs = page.locator('[data-slot="userpush-tpl-tabs"]')
+    await tabs.scrollIntoViewIfNeeded()
+    await tabs.getByRole('tab', { name: /English|İngilizce/ }).click()
+    await page.locator('[data-slot="userpush-tpl-en"]').waitFor({ timeout: 10_000 })
+    for (const loc of await tabs.getByRole('tab').all()) {
+      const b = await loc.boundingBox()
+      if (vp.width < 640) expect(b.height, `şablon dil sekmesi @${vp.name} (px)`).toBeGreaterThanOrEqual(39)
+    }
+    await page.waitForTimeout(300)
+    const m = await page.evaluate(measure)
+    expect(m.pageOverflow, `webhook ayarı @${vp.name}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    expect(m.offenders, `webhook ayarı @${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
+  })
+}

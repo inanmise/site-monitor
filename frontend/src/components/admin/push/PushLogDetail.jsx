@@ -1,4 +1,4 @@
-import { Webhook, ExternalLink, RotateCcw, Copy, ChevronLeft, ChevronRight, CircleDot, CheckCircle2, XCircle, Clock } from 'lucide-react'
+import { Webhook, ExternalLink, RotateCcw, Copy, ChevronLeft, ChevronRight, CircleDot, CheckCircle2, XCircle, Clock, Layers } from 'lucide-react'
 import { formatDate } from '../../../api/client'
 import { formatDuration } from '../../../utils/incidentMeta.js'
 import TeamBadge from '../../ui/TeamBadge.jsx'
@@ -7,8 +7,9 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import { useToast } from '../../ui/Toast.jsx'
 import { TriggerBadge, LevelBadge, TypeBadge, ErrorClassBadge, ChainList, MUTED_SM } from '../LogViewParts.jsx'
-import { PushStatusBadge } from './PushLogRows.jsx'
+import { PushStatusBadge, PushRowLinks } from './PushLogRows.jsx'
 import { triggerLabel, retryable, gapMs } from './pushLogModel.js'
+import { pushReasonLabel } from '../../../utils/pushPrefs.js'
 import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/shadcn/sheet'
@@ -116,6 +117,9 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
               {d.kind !== 'SENT' && errText && (
                 <AlertBanner tone={d.kind === 'FAILED' || d.kind === 'BLOCKED' ? 'danger' : 'warning'} className="mb-0"
                   title={d.kind === 'BLOCKED' ? t('pl.detail.blockedTitle') : d.kind === 'FAILED' ? t('pl.detail.failedTitle') : t('pl.detail.notSentTitle')}>
+                  {(d.kind === 'SKIPPED' || d.kind === 'BLOCKED') && d.status && (
+                    <span data-slot="pl-detail-reason" className="mb-1 block">{pushReasonLabel(d.status, t)}</span>
+                  )}
                   <code className="text-[0.85em] [overflow-wrap:anywhere]">{errText}</code>
                 </AlertBanner>
               )}
@@ -135,7 +139,7 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                     {d.alert_level && <LevelBadge level={d.alert_level} />}
                   </Field>
                   <Field label={t('pl.colTitle')}><span className="font-semibold break-words">{d.title || '—'}</span></Field>
-                  <Field label={t('health.emailDetailTrigger')}><TriggerBadge trigger={d.trigger}>{triggerLabel(d.trigger, t)}</TriggerBadge></Field>
+                  <Field label={t('health.emailDetailTrigger')}><TriggerBadge trigger={d.trigger}>{triggerLabel(d.trigger, t)}</TriggerBadge><PushRowLinks row={d} t={t} /></Field>
                   {(d.notification_id || d.batch_id) && (
                     <Field label={t('pl.colNotificationId')}>
                       <span className="font-mono text-xs break-all">{d.notification_id || '—'}</span>
@@ -158,6 +162,21 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
                 </section>
               )}
 
+              {/* Saat tavanı özeti (2026-10-04): özetin kapsadığı satırlar — satıra tıklamak o satırın ayrıntısını açar */}
+              {(d.summarized || []).length > 0 && (
+                <section data-slot="pl-summarized" aria-label={t('pl.summarizedTitle', d.summarized.length)} className="flex min-w-0 flex-col gap-1.5">
+                  <h4 className="m-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{t('pl.summarizedTitle', d.summarized.length)}</h4>
+                  <ChainList items={d.summarized} currentId={d.id} onPick={onPick} render={(c) => (
+                    <>
+                      <TypeBadge>{c.monitor_type || '—'}</TypeBadge>
+                      <span className="min-w-0 truncate">{c.monitor_name || '—'}</span>
+                      {c.alert_level && <LevelBadge level={c.alert_level} />}
+                      <span className={MUTED_SM}>{formatDate(c.created_at || c.at)}</span>
+                    </>
+                  )} />
+                </section>
+              )}
+
               <CopyBlock title={t('pl.message')} text={d.message || t('health.emailDetailNoBody')} t={t} toast={toast} />
               {d.raw_response && <CopyBlock title={t('pl.rawResponse')} text={d.raw_response} t={t} toast={toast} />}
             </>
@@ -168,6 +187,11 @@ export default function PushLogDetail({ open, detail, t, onClose, onPick, ids = 
           {d?.alert_event_id && (
             <Button type="button" variant="outline" onClick={() => onOpenAlert(d.alert_event_id)} className="pointer-coarse:h-10">
               <ExternalLink aria-hidden="true" />{t('sml.openAlert')}
+            </Button>
+          )}
+          {d?.overflow_summary_id && (
+            <Button type="button" variant="outline" data-slot="pl-open-summary" onClick={() => onPick(d.overflow_summary_id)} className="pointer-coarse:h-10">
+              <Layers aria-hidden="true" />{t('pl.openSummary')}
             </Button>
           )}
           {canRequeue && d && retryable(d) && (

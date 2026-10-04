@@ -605,8 +605,10 @@ class StormServiceTest {
         // StormService'in bağımlılık listesinde UserPushService HİÇ yoktu: ürünün en ciddi
         // olayında (12 monitör birden düştü) yalnız kişi-push'u kullanan kişi susuyordu.
         // 2026-09-28: kanal kapıları için ÜYELER de gider (tür/izleme bayrağı kararı UserPushService'te).
-        verify(push, times(1)).enqueueStormNotice(eq(299L), eq(7L), eq("INITIAL"), eq("CRITICAL"),
-                argThat(ms -> ms != null && ms.size() == 2), anyString());
+        // 2026-10-04 (öneri 5): iki dilli metin (eski fırtına kimliği yoksa null) — Türkçe metin bugünküyle aynı.
+        verify(push, times(1)).enqueueStormNoticeLocalized(eq(299L), isNull(), eq(7L), eq("INITIAL"), eq("CRITICAL"),
+                argThat(ms -> ms != null && ms.size() == 2),
+                argThat(m -> m != null && m.tr().startsWith("2 monitör birden erişilemez") && m.en().startsWith("2 monitors unreachable at once")));
     }
 
     @Test
@@ -623,7 +625,8 @@ class StormServiceTest {
 
         // P13 (2026-09-28): çözüm AÇILIŞ seviyesinde — "INFO" ile yeniden çözümlenince asgari seviyesi INFO'nun
         // üstündeki gruplar (yöneticiler) "N monitör düştü"yü alıp "düzeldi"yi hiç almıyordu.
-        verify(push, times(1)).enqueueStormNotice(eq(298L), eq(7L), eq("RESOLVE"), eq("CRITICAL"), any(), anyString());
+        verify(push, times(1)).enqueueStormNoticeLocalized(eq(298L), isNull(), eq(7L), eq("RESOLVE"), eq("CRITICAL"), any(),
+                argThat(m -> m != null && m.tr().startsWith("1 monitör kurtarıldı") && m.en().startsWith("1 monitors recovered")));
     }
 
     @Test
@@ -667,7 +670,7 @@ class StormServiceTest {
         verify(emailService, org.mockito.Mockito.never())
                 .buildStormAlertHtml(anyInt(), any(), any(), any(), any(), anyInt(), any());
         // Kanal bağımsızlığı: mail bastırması push'u SUSTURMAZ.
-        verify(push, times(1)).enqueueStormNotice(eq(301L), eq(7L), eq("INITIAL"), any(), any(), any());
+        verify(push, times(1)).enqueueStormNoticeLocalized(eq(301L), isNull(), eq(7L), eq("INITIAL"), any(), any(), any());
     }
 
     @Test
@@ -693,8 +696,8 @@ class StormServiceTest {
         // E-posta iki takıma da gider (bireysel e-posta da UG'ye gider) …
         verify(emailService, times(2)).buildStormAlertHtml(eq(1), any(), any(), any(), any(), anyInt(), any());
         // … push yalnız SY takımına: push çözümleyicisi SY takım-kapsamlıdır, bireysel push UG'ye hiç gitmez.
-        verify(push, times(1)).enqueueStormNotice(eq(320L), eq(7L), eq("INITIAL"), any(), any(), anyString());
-        verify(push, never()).enqueueStormNotice(anyLong(), eq(8L), any(), any(), any(), any());
+        verify(push, times(1)).enqueueStormNoticeLocalized(eq(320L), isNull(), eq(7L), eq("INITIAL"), any(), any(), any());
+        verify(push, never()).enqueueStormNoticeLocalized(anyLong(), any(), eq(8L), any(), any(), any(), any());
     }
 
     @Test
@@ -708,7 +711,7 @@ class StormServiceTest {
                 storm, "sendStormAlert", storm(321L),
                 java.util.List.of(down(1, EscalationService.TYPE_HTTP_DOWN, 7L)), "DAILY_REALERT");
 
-        verify(push, times(1)).enqueueStormNotice(eq(321L), eq(7L), eq("DAILY_REALERT"), eq("CRITICAL"), any(), anyString());
+        verify(push, times(1)).enqueueStormNoticeLocalized(eq(321L), isNull(), eq(7L), eq("DAILY_REALERT"), eq("CRITICAL"), any(), any());
     }
 
     @Test

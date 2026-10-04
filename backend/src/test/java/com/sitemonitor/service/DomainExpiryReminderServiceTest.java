@@ -53,7 +53,8 @@ class DomainExpiryReminderServiceTest {
         when(escalation.teamEmailsForMonitor(anyLong(), any())).thenReturn(List.of("team@example.com"));
         when(email.buildDomainExpiryReminderHtml(any(), any(), anyInt(), any(), anyInt(), any(), any(), any())).thenReturn("<html/>");
         when(email.sendHtml(any(), any(), any(), any(), any())).thenReturn("SENT");
-        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 2));
+        // 2026-10-04 (öneri 5): iki dilli metin — Türkçe metin bugünküyle aynı (aşağıdaki doğrulamalar tr() üzerinden).
+        when(push.enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 2));
     }
 
     private static DomainMonitor monitor(String thresholds) {
@@ -93,7 +94,9 @@ class DomainExpiryReminderServiceTest {
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
         verify(email).sendHtml(eq(new String[]{"team@example.com"}), isNull(), subject.capture(), eq("<html/>"), isNull());
         assertThat(subject.getValue()).contains("59 gün").contains("60 gün eşiği");
-        verify(push).enqueueTeamNotice(eq(1L), eq("DOMAIN_EXPIRY_REMINDER"), eq("INFO"), eq("DOMAIN"), eq("A"), contains("59 gün sonra"), eq("domain-reminder:7:2026-11-22T00:00:00Z:60"));
+        verify(push).enqueueTeamNoticeLocalized(eq(1L), eq("DOMAIN_EXPIRY_REMINDER"), eq("INFO"), eq("DOMAIN"), eq("A"),
+                argThat(txt -> txt.tr().contains("59 gün sonra") && txt.en().contains("expires in 59 days")),
+                eq("domain-reminder:7:2026-11-22T00:00:00Z:60"), any());
         verify(activityLog).recordLifecycle(eq("DOMAIN"), eq(7L), eq("A"), eq("a.example.com"), eq(1L), eq("EXPIRY_REMINDER"), eq("scheduler"), contains("eşik 60"));
 
         // Aynı bitiş, aynı eşik: ikinci tur sessiz
@@ -117,7 +120,7 @@ class DomainExpiryReminderServiceTest {
         // 3 gün eşiği geçilince yeni hatırlatma; seviye CRITICAL (≤7)
         DomainExpiryReminder r3 = svc.evaluate(m, result(2, "2026-09-27T00:00:00Z"));
         assertThat(r3.getThresholdDays()).isEqualTo(3);
-        verify(push).enqueueTeamNotice(eq(1L), eq("DOMAIN_EXPIRY_REMINDER"), eq("CRITICAL"), eq("DOMAIN"), eq("A"), anyString(), eq("domain-reminder:7:2026-09-27T00:00:00Z:3"));
+        verify(push).enqueueTeamNoticeLocalized(eq(1L), eq("DOMAIN_EXPIRY_REMINDER"), eq("CRITICAL"), eq("DOMAIN"), eq("A"), any(), eq("domain-reminder:7:2026-09-27T00:00:00Z:3"), any());
     }
 
     @Test
@@ -143,7 +146,7 @@ class DomainExpiryReminderServiceTest {
         assertThat(r.getStatus()).isEqualTo("SENT");
         assertThat(r.getRecipients()).isNull();
         verify(email, never()).sendHtml(any(), any(), any(), any(), any());
-        verify(push).enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any());
+        verify(push).enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any());
 
         DomainMonitor off = monitor("30"); off.setId(8L); off.setNotifyEmail(false); off.setNotifyWebhook(false);
         DomainExpiryReminder r2 = svc.evaluate(off, result(10, "2026-10-02T00:00:00Z"));

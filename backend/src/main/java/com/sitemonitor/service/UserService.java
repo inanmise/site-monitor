@@ -242,6 +242,26 @@ public class UserService {
         return userRepo.save(user);
     }
 
+    /**
+     * Kişisel bildirim tercihleri (2026-10-04, onaylı öneri 4/5) — kullanıcı YALNIZ kendi satırını yazar (çağıran uç oturumdan
+     * okur). Değerler {@code PushPreferences.normalize} çıktısıdır (null = tercih yok).
+     */
+    @Transactional
+    public AppUser savePushPreferences(AppUser user, String minLevel, String families, String lang) {
+        user.setPushMinLevel(minLevel);
+        user.setPushFamilies(families);
+        user.setPushLang(lang);
+        return userRepo.save(user);
+    }
+
+    /** Push susturma (2026-10-04): {@code until} UTC damga (null = kaldır), {@code critical} kritikler yine gelsin mi. */
+    @Transactional
+    public AppUser savePushSnooze(AppUser user, String until, Boolean critical) {
+        user.setPushSnoozeUntil(until);
+        if (critical != null) user.setPushSnoozeCritical(critical);
+        return userRepo.save(user);
+    }
+
     /** Takım sessiz saati (2026-10-01) — {@code cfg} doğrulanmış/normalize ({@link QuietHours#normalize}); NONE = kaldır. */
     @Transactional
     public Team updateTeamQuietHours(Long id, QuietHours.Config cfg) {

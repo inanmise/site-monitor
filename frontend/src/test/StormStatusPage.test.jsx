@@ -96,8 +96,8 @@ describe('Alarm Fırtınası sayfası (2026-09-30)', () => {
     expect(rule('floor')).toMatch(/below 2/)
     expect(rule('realert')).toMatch(/24 hours/)
     expect(rule('scope')).toMatch(/notification group/)
-    // 2026-10-03: alan yoksa (eski sunucu) push kuralı varsayılanı gösterir — alarm başına
-    expect(rule('push')).toMatch(/one per alert/i)
+    // 2026-10-04: alan yoksa (eski sunucu) push kuralı varsayılanı gösterir — toplu fırtına push'u (kullanıcı kararı)
+    expect(rule('push')).toMatch(/one summary storm push/i)
     expect(container.querySelector('[data-slot="sf-rules"]').getAttribute('data-enabled')).toBe('true')
   })
 

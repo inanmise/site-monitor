@@ -1290,8 +1290,9 @@ class WeeklyReportServiceTest {
         UserPushService push = mock(UserPushService.class);
         when(push.weeklyTeamEnabled()).thenReturn(true);
         when(push.weeklyManagerEnabled()).thenReturn(true);
-        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
-        when(push.enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+        // 2026-10-04 (öneri 5): iki dilli metin — Türkçe metin bugünküyle aynı (doğrulamalar tr() üzerinden), İngilizce eşi de var.
+        when(push.enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
+        when(push.enqueueDirectLocalized(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(Map.of("queued", 1));
         ReflectionTestUtils.setField(service, "userPushService", push);
         when(contactRepo.findByTeamIdAndRoleAndActiveTrue(2L, "MANAGER"))
                 .thenReturn(List.of(contact("MANAGER", "Ali Müdür", "mudur@test.com")));
@@ -1303,17 +1304,20 @@ class WeeklyReportServiceTest {
         WeeklyReport r = report(5L, 2L, "PENDING_APPROVAL");
         when(reportRepo.findById(5L)).thenReturn(Optional.of(r));
         service.approve(5L, PO_T2);
-        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<UserPushService.LocalizedText> msg = ArgumentCaptor.forClass(UserPushService.LocalizedText.class);
         ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+        verify(push).enqueueTeamNoticeLocalized(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
                 eq("TakimA " + r.getWeekLabel()), msg.capture(), key.capture(), any());
-        assertThat(msg.getValue()).startsWith("[Haftalık rapor] TakimA " + r.getWeekLabel())
+        assertThat(msg.getValue().tr()).startsWith("[Haftalık rapor] TakimA " + r.getWeekLabel())
                 .contains("onaylandı ve müdüre gönderildi").contains("Onaylayan: PO İki");
+        assertThat(msg.getValue().en()).startsWith("[Weekly report] TakimA " + r.getWeekLabel())
+                .contains("was approved and sent to the manager").contains("Approved by: PO İki");
         assertThat(key.getValue()).isEqualTo("WR_APPROVED:5:" + r.getVersion());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<UserPushService.DirectRecipient>> mgrs = ArgumentCaptor.forClass(List.class);
-        verify(push).enqueueDirect(mgrs.capture(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                eq("TakimA " + r.getWeekLabel()), contains("onaylandı; rapor e-postanıza gönderildi"), eq("WR_APPROVED:5:" + r.getVersion() + ":MGR"));
+        verify(push).enqueueDirectLocalized(mgrs.capture(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                eq("TakimA " + r.getWeekLabel()), argThat(m -> m.tr().contains("onaylandı; rapor e-postanıza gönderildi")),
+                eq("WR_APPROVED:5:" + r.getVersion() + ":MGR"));
         assertThat(mgrs.getValue()).extracting(UserPushService.DirectRecipient::username).containsExactly("M00050");
 
         // mail FAILED → takım "gönderildi" sanmasın
@@ -1321,17 +1325,18 @@ class WeeklyReportServiceTest {
         when(reportRepo.findById(6L)).thenReturn(Optional.of(r2));
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("FAILED: smtp down");
         service.approve(6L, PO_T2);
-        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                anyString(), contains("BAŞARISIZ (FAILED: smtp down)"), eq("WR_APPROVED:6:" + r2.getVersion()), any());
+        verify(push).enqueueTeamNoticeLocalized(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), argThat(m -> m.tr().contains("BAŞARISIZ (FAILED: smtp down)") && m.en().contains("FAILED (FAILED: smtp down)")),
+                eq("WR_APPROVED:6:" + r2.getVersion()), any());
         assertThat(r2.getStatus()).isEqualTo("APPROVED");
-        verify(push).enqueueDirect(any(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                anyString(), contains("Raporu uygulamadan görüntüleyin"), eq("WR_APPROVED:6:" + r2.getVersion() + ":MGR"));
+        verify(push).enqueueDirectLocalized(any(), eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), argThat(m -> m.tr().contains("Raporu uygulamadan görüntüleyin")), eq("WR_APPROVED:6:" + r2.getVersion() + ":MGR"));
 
         // yeniden gönderim: ayrı anahtar + "yeniden gönderildi"
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
         service.resend(5L, ADMIN);
-        verify(push).enqueueTeamNotice(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
-                anyString(), contains("müdüre yeniden gönderildi"), eq("WR_RESENT:5:" + r.getVersion()), any());
+        verify(push).enqueueTeamNoticeLocalized(eq(2L), eq("WEEKLY_REPORT"), eq("WARNING"), eq("WEEKLY_REPORT"),
+                anyString(), argThat(m -> m.tr().contains("müdüre yeniden gönderildi")), eq("WR_RESENT:5:" + r.getVersion()), any());
 
         // ayarlar kapalı → hiçbir kanal çağrılmaz
         when(push.weeklyTeamEnabled()).thenReturn(false);
@@ -1339,15 +1344,15 @@ class WeeklyReportServiceTest {
         WeeklyReport r9 = report(9L, 2L, "PENDING_APPROVAL");
         when(reportRepo.findById(9L)).thenReturn(Optional.of(r9));
         service.approve(9L, PO_T2);
-        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any());
-        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueDirect(any(), any(), any(), any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any());
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.times(3)).enqueueDirectLocalized(any(), any(), any(), any(), any(), any(), any(), any());
         when(push.weeklyTeamEnabled()).thenReturn(true);
         when(push.weeklyManagerEnabled()).thenReturn(true);
 
         // push patlarsa onay yine olur
         WeeklyReport r3 = report(7L, 2L, "PENDING_APPROVAL");
         when(reportRepo.findById(7L)).thenReturn(Optional.of(r3));
-        when(push.enqueueTeamNotice(any(), any(), any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("push down"));
+        when(push.enqueueTeamNoticeLocalized(any(), any(), any(), any(), any(), any(), any(), any())).thenThrow(new RuntimeException("push down"));
         assertThat(service.approve(7L, PO_T2)).containsKey("data");
         assertThat(r3.getStatus()).isEqualTo("APPROVED");
 

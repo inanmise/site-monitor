@@ -64,7 +64,7 @@ import java.util.Set;
  * bireysel alarmdan geniş kitleye (seviye yükseltmesiyle) gitmez ({@link #stormPushLevel}). 7/24 (NOC) izlemede açık
  * onayla (izleme başına {@code noc_notify}) kapsanan üyeler için ayrı kanaldır — kuralı değişmedi.
  *
- * <p><b>PUSH FIRTINAYA DEVREDİLMEZ (kullanıcı kararı 2026-10-03, {@link #KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK).</b> Fırtına
+ * <p><b>PUSH FIRTINAYA DEVREDİLMEYEBİLİR (2026-10-03, {@link #KEY_PUSH_INDIVIDUAL}; 2026-10-04 kullanıcı kararıyla varsayılan KAPALI = push fırtınaya devredilir; AÇIKKEN aşağıdaki kip).</b> Fırtına
  * yalnız e-postayı (ve webhook / 7-24 postasını) gruplar; kişi push'u her üye alarm için tek tek, alarmların açılış
  * sırasıyla gider ({@code EscalationService} fırtına dalı: açılış + seviye artışı; buradaki günlük tekrar: üye başına
  * hatırlatma). Toplu fırtına push'u yalnız ayar KAPALIYKEN üretilir (ya da ayar fırtına sürerken açıldıysa, önceden toplu
@@ -210,7 +210,7 @@ public class StormService {
     public static final String KEY_WINDOW    = "site.monitor.storm.window-minutes";
     public static final String KEY_PER_GROUP = "site.monitor.storm.per-group";
     /**
-     * Push fırtınaya DEVREDİLMESİN (2026-10-03, kullanıcı kararı; varsayılan AÇIK): fırtına yalnız E-POSTAYI gruplar —
+     * Push fırtınaya DEVREDİLMESİN (2026-10-03; 2026-10-04 kullanıcı kararıyla varsayılan KAPALI — açıkken): fırtına yalnız E-POSTAYI gruplar —
      * üye alarmların push'u alarm başına, açılış sırasıyla bireysel gider (açılış / seviye artışı / günlük hatırlatma /
      * çözüm); toplu fırtına push'u (açılış / tekrar) gönderilmez. KAPALI = 2026-10-02'ye kadarki davranış bayt bayt
      * ({@code SKIPPED_STORM} karar satırı + toplu fırtına push'u).
@@ -929,8 +929,8 @@ public class StormService {
     /** Grup bazlı kapsam (takım + bildirim grubu) açık mı — durum ekranı kuralları anlatır. */
     public boolean perGroup() { return appSettings.getBoolean(KEY_PER_GROUP, false); }
 
-    /** Push alarm başına mı gider ({@link #KEY_PUSH_INDIVIDUAL}, varsayılan AÇIK) — durum ekranı da aynı değeri gösterir. */
-    public boolean pushIndividual() { return appSettings.getBoolean(KEY_PUSH_INDIVIDUAL, true); }
+    /** Push alarm başına mı gider ({@link #KEY_PUSH_INDIVIDUAL}, varsayılan KAPALI, 2026-10-04) — durum ekranı da aynı değeri gösterir. */
+    public boolean pushIndividual() { return appSettings.getBoolean(KEY_PUSH_INDIVIDUAL, false); }
 
     /** Sayım penceresi (dk, 1–15) — durum ekranı aynı değeri gösterir. */
     public int windowMinutes() { return clamp(appSettings.getInt(KEY_WINDOW, 5), 1, 15); }
@@ -1136,8 +1136,9 @@ public class StormService {
                 // PUSH — e-postanın eşleniği. Kanal bağımsız: mail_disabled push'u susturmaz. Kanal kapıları
                 // (takım/tür/izleme bayrağı/sessiz saat/tekrar ayarı) ve günlük tekrar anahtarı UserPushService'te.
                 // Bireysel push kipinde (2026-10-03, varsayılan) toplu push yok: tekrar üye başına gider (enqueueStormPush).
-                enqueueStormPush(storm, d, trigger,
-                        count + " monitör birden erişilemez — " + label + " · kök-neden: " + rootCauseLabel);
+                enqueueStormPush(storm, d, trigger, new UserPushService.LocalizedText(
+                        count + " monitör birden erişilemez — " + label + " · kök-neden: " + rootCauseLabel,
+                        count + " monitors unreachable at once — " + label + " · root cause: " + rootCauseLabel));
 
                 // Webhook (Teams/Slack) — URL bazında dedup: aynı kanal iki kez mesaj almasın.
                 for (Map.Entry<String, String> w : d.webhooks().entrySet()) {
@@ -1198,7 +1199,7 @@ public class StormService {
      * takımına da gidiyordu; bireysel alarmda push almayan UG üyeleri toplu alarmda alıyordu. E-posta/webhook UG'ye
      * gitmeye devam eder (bireysel e-posta da gider).
      */
-    private void enqueueStormPush(AlertStorm storm, TeamDispatch d, String stormTrigger, String message) {
+    private void enqueueStormPush(AlertStorm storm, TeamDispatch d, String stormTrigger, UserPushService.LocalizedText message) {
         if (userPushService == null || d.teamId() == null || d.pushMembers().isEmpty()) return;
         // BİREYSEL PUSH KİPİ (2026-10-03, kullanıcı kararı: "push bildirimlerini alarm fırtınasına devretmeyelim"): fırtına
         // yalnız e-postayı gruplar. Açılış: üyelerin push'u alarm başına zaten gitti (EscalationService fırtına dalı;
@@ -1222,12 +1223,10 @@ public class StormService {
             if (!noticeSent) return;
         }
         try {
-            if (storm.getLegacyStormId() == null)
-                userPushService.enqueueStormNotice(storm.getId(), d.teamId(), stormTrigger, stormPushLevel(d.pushMembers()),
-                        d.pushMembers(), message);
-            else   // O-3 sessiz taşıma: açılış push'u eski fırtınayla gitti — çözüm onun alıcılarını da sayar (D-b6)
-                userPushService.enqueueStormNotice(storm.getId(), storm.getLegacyStormId(), d.teamId(), stormTrigger,
-                        stormPushLevel(d.pushMembers()), d.pushMembers(), message);
+            // İki dilli metin (2026-10-04, öneri 5): push kişinin dilinde; Türkçe metin bugünküyle aynı. Eski fırtına kimliği
+            // (O-3 sessiz taşıma: açılış push'u eski fırtınayla gitti — çözüm onun alıcılarını da sayar, D-b6) yoksa null.
+            userPushService.enqueueStormNoticeLocalized(storm.getId(), storm.getLegacyStormId(), d.teamId(), stormTrigger,
+                    stormPushLevel(d.pushMembers()), d.pushMembers(), message);
         } catch (Exception e) {
             log.warn("Storm push'u gönderilemedi (takım {}): {}", d.teamId(), e.toString());
         }
@@ -1343,9 +1342,11 @@ public class StormService {
                 logStormMail(new TeamDispatch(d.teamId(), d.teamName(), d.emails(), d.webhooks(), mineRecovered, List.of()),
                         storm, TRIGGER_STORM_RESOLVE, subject, html, mailStatus);
 
-                enqueueStormPush(storm, d, "RESOLVE",
+                enqueueStormPush(storm, d, "RESOLVE", new UserPushService.LocalizedText(
                         mineRecovered.size() + " monitör kurtarıldı — " + scopeLabel
-                                + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()));
+                                + (mineStillDown.isEmpty() ? "" : " · hâlâ erişilemeyen: " + mineStillDown.size()),
+                        mineRecovered.size() + " monitors recovered — " + scopeLabel
+                                + (mineStillDown.isEmpty() ? "" : " · still unreachable: " + mineStillDown.size())));
 
                 // Webhook (Teams/Slack) — açılışın AYNASI. Eskiden yalnız e-posta gidiyordu: aynı kişi
                 // Teams'te "🌩 12 monitör birden erişilemez" görüyor, "✅ fırtına sona erdi" mesajını
