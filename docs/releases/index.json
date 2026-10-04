@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T14:00:08Z",
+  "generatedAt": "2026-10-04T17:54:24Z",
   "repo": "inanmise/site-monitor",
-  "count": 705,
+  "count": 706,
   "releases": [
+    {
+      "version": "20.106.0",
+      "tag": "v20.106.0",
+      "releasedAt": "2026-10-04T17:54:18Z",
+      "commit": "0cd677e6b8fc3e3eaeed9f25bcd9cb5bfe06be2b",
+      "prevVersion": "20.105.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "0cd677e6",
+          "subject": "anahtar kelime izlemede hata teşhisi ve uçtan uca tanılama"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.105.0",
       "tag": "v20.105.0",

@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.106.0] — 2026-10-04
+
 ### Added
 - **Anahtar kelime izlemede hata teşhisi:** kontrol geçmişindeki başarısız satır artık nedenini söylüyor (kelime
   bulunamadı, HTTP hata kodu, zaman aşımı, DNS, TLS, vekil, okuma sınırı …) ve açılınca "Neden / Etkisi / Ne yapmalı",
@@ -2233,7 +2235,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.105.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.106.0...HEAD
+[20.106.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.106.0
 [20.105.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.105.0
 [20.104.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.104.0
 [20.103.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.103.0
