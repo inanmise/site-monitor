@@ -963,6 +963,10 @@ export const EN = {
   'branding.logoHint': 'Empty = bundled SiteMonitor logo. Large images are downscaled automatically (except SVG).',
   'branding.logoTypeErr': 'Only PNG, JPG or SVG files are allowed.',
   'branding.logoSizeErr': 'Logo must be at most 200 KB.',
+  'branding.usageSection': 'Sign-in Page Statistics',
+  'branding.usageSectionDesc': 'Usage statistics shown on the sign-in page before anyone signs in: healthy monitors, checks and alerts in the last 24 hours, teams, active users and users online. Only totals are shown — never names, domains or team names.',
+  'branding.usageEnabled': 'Show usage statistics',
+  'branding.usageOffHint': 'When off, the sign-in page shows only the number of monitored targets and the 7-day availability.',
   'branding.banner': 'Announcement Banner',
   'branding.bannerDesc': 'A global announcement shown at the top of every page — e.g. support email, wiki address, planned maintenance note. Users can dismiss it; updating the text shows it to everyone again.',
   'branding.bannerEnabled': 'Banner active',
@@ -2437,8 +2441,33 @@ export const EN = {
   'login.opsIncident':      'Incident Mgmt',
   'login.opsReport':        'Weekly Report',
   'login.opsMaintenance':   'Maintenance',
-  'login.domainsMonitored': 'domains monitored',
-  'login.uptime':           'system availability',
+  // Usage statistics (2026-10-04) — sign-in page tiles (components/login/UsageStats.jsx)
+  'login.usage.title':           'Usage statistics',
+  'login.usage.live':            'Refreshed every minute',
+  'login.usage.loading':         'Loading usage statistics…',
+  'login.usage.noData':          'no data',
+  'login.usage.healthy':         'Healthy monitors',
+  'login.usage.healthySub':      'of {0} active',
+  'login.usage.healthyTip':      'Active monitors whose last check passed, with no open alert and no overdue check. The same figure as “Healthy” on the Monitoring Overview.',
+  'login.usage.last24h':         'last 24 hours',
+  'login.usage.last7d':          'last 7 days',
+  'login.usage.checks':          'Checks',
+  'login.usage.checksSub':       'last 24 h · {0} failed',
+  'login.usage.checksTip':       'Checks run by the nine monitor types over the last 24 hours (certificate scans excluded). The second line shows the failed ones.',
+  'login.usage.alerts':          'Alerts',
+  'login.usage.alertsTip':       'Alerts opened over the last 24 hours, across every type including certificates.',
+  'login.usage.teams':           'Teams',
+  'login.usage.teamsTip':        'Active teams set up in SiteMonitor.',
+  'login.usage.users':           'Active users',
+  'login.usage.usersTip':        'User accounts in SiteMonitor that are active (deactivated accounts excluded).',
+  'login.usage.healthyRate':     '{0} healthy',
+  'login.usage.online':          'Online now',
+  'login.usage.onlineSub':       '{0} signed in (24 h)',
+  'login.usage.onlineTip':       'People who have SiteMonitor open right now. The second line counts the distinct users who signed in over the last 24 hours.',
+  'login.usage.availability':    'Availability',
+  'login.usage.availabilityTip': 'Share of successful availability checks over the last 7 days (maintenance windows excluded).',
+  'login.usage.monitored':       'Monitored targets',
+  'login.usage.monitoredTip':    'Number of active monitors.',
 
   // ── Landing (public marketing page) ──────────────────────────────────────
 
@@ -13564,6 +13593,8 @@ export const EN = {
     'What it does: The text shown in the announcement banner.\nBenefit: A short, clear notice heads off calls to the help desk.\nRecommended: One sentence, with the date and time spelled out. When the text changes, the banner reappears for people who had dismissed it.',
   'help.set.site.monitor.branding.banner-tone':
     'What it does: The visual tone of the announcement banner: INFO, WARNING or CRITICAL.\nBenefit: Urgency comes across from the colour, so not every notice carries the same weight.\nRecommended: INFO (the default) for planned notices, WARNING for upcoming maintenance, CRITICAL during a live outage. Leaving CRITICAL on permanently drains its meaning.',
+  'help.set.site.monitor.public-stats.usage-enabled':
+    'What it does: Turns on or off the usage statistics shown on the sign-in page before anyone signs in (healthy monitors, checks and alerts in the last 24 hours, teams, active users, users online).\nBenefit: People see the scale and health of the system before signing in; only totals are published, never names or domains.\nRecommended: true (the default). Set it to false if the sign-in page is reachable from outside your organisation and you do not want these figures shown; the page then shows only the monitored-target count and availability.',
   'help.set.site.monitor.branding.banner-version':
     'What it does: A version counter that increases automatically whenever the banner text changes, so the banner reappears for people who dismissed the previous one.\nBenefit: A new announcement still reaches users who dismissed the last one.\nRecommended: Do not edit it by hand — the system maintains it and it is hidden in the interface.',
   'help.set.site.monitor.branding.footer-text':

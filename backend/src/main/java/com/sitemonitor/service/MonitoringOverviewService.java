@@ -206,6 +206,56 @@ public class MonitoringOverviewService {
         return memo.get(key, ttl, false, () -> target.build(canViewTeam, seesAllAlerts, h));
     }
 
+    /** Kuruluş geneli özetin penceresi (sa) — İzleme Panosu'nun varsayılan penceresi; anahtar onunla AYNI olsun diye. */
+    public static final int ORG_SUMMARY_WINDOW_HOURS = 24;
+
+    /**
+     * Kuruluş geneli (KAPSAMSIZ) özet — giriş sayfası "Kullanım istatistikleri" (2026-10-04, kullanıcı bildirimi: pano
+     * 688 sağlıklı izleme gösterirken giriş sayfası fırtına paydasından 621 "izleme" gösteriyordu). Hesap ve bellek
+     * global görüntüleyicinin İzleme Panosu ile BİREBİR aynıdır: anahtar {@code TtlMemo.scopeKey(true, null)} +
+     * {@link #ORG_SUMMARY_WINDOW_HOURS} + tüm alarmlar ({@code StatusPageService} de bu anahtarı kullanır) — iki ekran
+     * aynı anda aynı sayıyı görür, ek hesap yapılmaz. Yalnız SAYILAR döner (satır, ad, hedef yok):
+     * {@code total, active, healthy, down, stale, unknown, paused, checks_window, failed_window, window_hours,
+     * generated_at}. {@code healthy} = {@link #healthyOf} (pano "Sağlıklı" kutusu ile aynı formül). Toplamlar
+     * okunamazsa {@code null}.
+     */
+    public Map<String, Object> orgSummary() {
+        // Proxy (self) üzerinden — bellekli build zaten @Transactional asıl hesabı self ile çağırıyor; çağrının da proxy'den
+        // geçmesi TransactionalSelfInvocationGuardTest'in aşırı yükleri ayırt edemeyen taramasını da netleştirir.
+        MonitoringOverviewService target = self != null ? self : this;
+        Map<String, Object> built = target.build(com.sitemonitor.util.TtlMemo.scopeKey(true, null), team -> true, true,
+                ORG_SUMMARY_WINDOW_HOURS);
+        if (built == null || !(built.get("totals") instanceof Map<?, ?> totals)) return null;
+        long active = num(totals.get("active"));
+        long down = num(totals.get("down"));
+        long stale = num(totals.get("stale"));
+        long unknown = num(totals.get("unknown"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", num(totals.get("total")));
+        out.put("active", active);
+        out.put("healthy", healthyOf(active, down, stale, unknown));
+        out.put("down", down);
+        out.put("stale", stale);
+        out.put("unknown", unknown);
+        out.put("paused", num(totals.get("paused")));
+        out.put("checks_window", num(totals.get("checks_window")));
+        out.put("failed_window", num(totals.get("failed_window")));
+        out.put("window_hours", built.get("window_hours"));
+        out.put("generated_at", built.get("generated_at"));
+        return out;
+    }
+
+    /**
+     * "Sağlıklı" izleme sayısı — İzleme Panosu KPI'ı ile AYNI formül ({@code MonitoringOverviewPage.jsx} "up" kutusu):
+     * aktif − düşük − gecikmiş − hiç kontrol edilmemiş. Üçü de aktif kümesinin alt kümesidir (duraklatılmış/silinmiş
+     * satır bu durumları almaz), sonuç durum "up" olan satır sayısıdır; savunma için tabanı 0.
+     */
+    public static long healthyOf(long active, long down, long stale, long unknown) {
+        return Math.max(0L, active - down - stale - unknown);
+    }
+
+    private static long num(Object v) { return v instanceof Number n ? n.longValue() : 0L; }
+
     /** Sayfa satırı ve tür özeti — {@code Map} olarak (Jackson snake_case ile doğrudan yanıt). Belleksiz hesaplama. */
     @Transactional(readOnly = true)
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean seesAllAlerts, int hours) {

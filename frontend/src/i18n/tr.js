@@ -964,6 +964,10 @@ export const TR = {
   'branding.logoHint': 'Boş = gömülü SiteMonitor logosu. Büyük görseller otomatik küçültülür (SVG hariç).',
   'branding.logoTypeErr': 'Yalnız PNG, JPG veya SVG yükleyebilirsiniz.',
   'branding.logoSizeErr': 'Logo en fazla 200 KB olabilir.',
+  'branding.usageSection': 'Giriş Sayfası İstatistikleri',
+  'branding.usageSectionDesc': 'Giriş sayfasında oturum açmadan görünen kullanım istatistikleri: sağlıklı izleme, son 24 saatte koşum ve alarm, takım, aktif ve çevrimiçi kullanıcı sayısı. Yalnız toplam sayılar gösterilir; ad, alan adı ya da takım adı gösterilmez.',
+  'branding.usageEnabled': 'Kullanım istatistiklerini göster',
+  'branding.usageOffHint': 'Kapalıyken giriş sayfası yalnız izlenen hedef sayısını ve 7 günlük erişilebilirliği gösterir.',
   'branding.banner': 'Duyuru Şeridi',
   'branding.bannerDesc': 'Tüm kullanıcılara sayfa üstünde gösterilen genel duyuru — ör. destek e-postası, wiki adresi, planlı bakım notu. Kullanıcı kapatabilir; metni güncellediğinizde herkese yeniden görünür.',
   'branding.bannerEnabled': 'Şerit aktif',
@@ -2439,8 +2443,33 @@ export const TR = {
   'login.opsIncident':      'Olay Yönetimi',
   'login.opsReport':        'Haftalık Rapor',
   'login.opsMaintenance':   'Bakım Penceresi',
-  'login.domainsMonitored': 'domain izleniyor',
-  'login.uptime':           'sistem erişilebilirliği',
+  // Kullanım istatistikleri (2026-10-04) — giriş sayfası kutucukları (components/login/UsageStats.jsx)
+  'login.usage.title':           'Kullanım istatistikleri',
+  'login.usage.live':            'Dakikada bir güncellenir',
+  'login.usage.loading':         'Kullanım istatistikleri yükleniyor…',
+  'login.usage.noData':          'veri yok',
+  'login.usage.healthy':         'Sağlıklı izleme',
+  'login.usage.healthySub':      '/ {0} aktif',
+  'login.usage.healthyTip':      'Aktif izlemelerden son kontrolü başarılı, açık alarmı olmayan ve kontrolü gecikmemiş olanlar. İzleme Panosu’ndaki “Sağlıklı” sayısıyla aynıdır.',
+  'login.usage.last24h':         'son 24 saat',
+  'login.usage.last7d':          'son 7 gün',
+  'login.usage.checks':          'Koşum',
+  'login.usage.checksSub':       'son 24 sa · {0} başarısız',
+  'login.usage.checksTip':       'Dokuz izleme türünün son 24 saatte yaptığı kontrol sayısı (sertifika taramaları hariç). Alt satır başarısız kontrolleri gösterir.',
+  'login.usage.alerts':          'Alarm',
+  'login.usage.alertsTip':       'Son 24 saatte açılan alarmlar — sertifika dahil tüm türler.',
+  'login.usage.teams':           'Takım',
+  'login.usage.teamsTip':        'SiteMonitor’de tanımlı aktif takım sayısı.',
+  'login.usage.users':           'Aktif kullanıcı',
+  'login.usage.usersTip':        'SiteMonitor’de tanımlı aktif kullanıcı hesabı sayısı (pasife alınmış hesaplar hariç).',
+  'login.usage.healthyRate':     'Sağlık oranı {0}',
+  'login.usage.online':          'Şu an çevrimiçi',
+  'login.usage.onlineSub':       'son 24 sa: {0} giriş',
+  'login.usage.onlineTip':       'Şu anda SiteMonitor’ü açık tutan kullanıcılar. Alt satır, son 24 saatte giriş yapan farklı kullanıcı sayısıdır.',
+  'login.usage.availability':    'Erişilebilirlik',
+  'login.usage.availabilityTip': 'Son 7 günün erişilebilirlik kontrollerinde başarılı oran (bakım pencereleri hariç).',
+  'login.usage.monitored':       'İzlenen hedef',
+  'login.usage.monitoredTip':    'Aktif izleme sayısı.',
 
   // ── Landing (public marketing sayfası) ───────────────────────────────────
 
@@ -13592,6 +13621,8 @@ export const TR = {
     'Ne işe yarar: Duyuru şeridinde gösterilen metin.\nFaydası: Kısa ve net bir duyuru, destek hattına gelen soruların önünü keser.\nÖnerilen değer: Tek cümle; tarihi ve saati açıkça yazın. Metin değişince şerit kapatmış kullanıcılara yeniden gösterilir.',
   'help.set.site.monitor.branding.banner-tone':
     'Ne işe yarar: Duyuru şeridinin görsel tonu: INFO (bilgi), WARNING (uyarı) ya da CRITICAL (kritik).\nFaydası: Aciliyet renkten anlaşılır; her duyuru aynı ağırlıkta görünmez.\nÖnerilen değer: Planlı duyurularda INFO (varsayılan), yaklaşan bakımda WARNING, süren kesintide CRITICAL. CRITICAL\'i sürekli açık bırakmak etkisini yitirir.',
+  'help.set.site.monitor.public-stats.usage-enabled':
+    'Ne işe yarar: Giriş sayfasında oturum açmadan görünen kullanım istatistiklerini (sağlıklı izleme, son 24 saatte koşum ve alarm, takım, aktif ve çevrimiçi kullanıcı) açar ya da kapatır.\nFaydası: Kullanıcılar sistemin ölçeğini ve sağlığını giriş yapmadan görür; yalnız toplam sayılar yayınlanır, ad ya da alan adı yayınlanmaz.\nÖnerilen değer: true (varsayılan). Giriş sayfası kurum dışından erişilebiliyorsa ve bu rakamların görünmesini istemiyorsanız false yapın; o zaman yalnız izlenen hedef sayısı ve erişilebilirlik görünür.',
   'help.set.site.monitor.branding.banner-version':
     'Ne işe yarar: Şerit metni her değiştiğinde otomatik artan sürüm sayacı; kapatmış kullanıcılara şeridin yeniden gösterilmesini sağlar.\nFaydası: Yeni bir duyuru, eskisini kapatmış kullanıcılara da ulaşır.\nÖnerilen değer: Elle değiştirmeyin — sistem yönetir ve arayüzde gizlidir.',
   'help.set.site.monitor.branding.footer-text':

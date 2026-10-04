@@ -379,6 +379,66 @@ class MonitoringOverviewServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("orgSummary (2026-10-04, giriş sayfası): global görüntüleyicinin pano toplamlarıyla AYNI; sağlıklı = aktif − düşük − gecikmiş − bilinmiyor = 'up' satır sayısı; kapsamsız (her takım + takımsız); bellek anahtarı panoyla ortak")
+    void orgSummary_equalsGlobalViewerTotals() {
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "cacheMs", 60_000L);
+        when(httpMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(
+                http(1, "https://up.example.com", 14L, true, 300),        // up
+                http(2, "https://down.example.com", 14L, true, 300),      // düşük
+                http(3, "https://stale.example.com", 14L, true, 300),     // gecikmiş
+                http(4, "https://paused.example.com", 14L, false, 300),   // duraklatılmış (aktif değil)
+                http(5, "https://new.example.com", 14L, true, 300),       // hiç kontrol yok
+                http(6, "https://other.example.com", 99L, true, 300),     // başka takım — up
+                http(7, "https://teamless.example.com", null, true, 300)));  // takımsız — up
+        when(httpCheckRepo.findLatestPerMonitor()).thenReturn(List.of(
+                httpCheck(1, true, ago(2)), httpCheck(2, false, ago(2)), httpCheck(3, true, ago(120)),
+                httpCheck(4, true, ago(2)), httpCheck(6, true, ago(1)), httpCheck(7, true, ago(1))));
+        when(httpCheckRepo.weeklyStatsByMonitor(anyCollection(), anyString(), anyString()))
+                .thenReturn(List.<Object[]>of(new Object[]{1L, 10L, 10L, 100.0, 10L}, new Object[]{2L, 8L, 3L, 100.0, 8L}));
+
+        // İzleme Panosu, global görüntüleyici: denetleyicinin kurduğu anahtar + yüklem + pencere.
+        Map<String, Object> page = svc.build(com.sitemonitor.util.TtlMemo.scopeKey(true, null), team -> true, true,
+                MonitoringOverviewService.ORG_SUMMARY_WINDOW_HOURS);
+        Map<String, Object> totals = (Map<String, Object>) page.get("totals");
+        Map<String, Object> org = svc.orgSummary();
+
+        long active = ((Number) totals.get("active")).longValue();
+        long expectedHealthy = active - ((Number) totals.get("down")).longValue()
+                - ((Number) totals.get("stale")).longValue() - ((Number) totals.get("unknown")).longValue();
+        long upRows = ((List<Map<String, Object>>) page.get("monitors")).stream().filter(r -> "up".equals(r.get("status"))).count();
+        assertThat(org).containsEntry("total", totals.get("total")).containsEntry("active", totals.get("active"))
+                .containsEntry("down", totals.get("down")).containsEntry("stale", totals.get("stale"))
+                .containsEntry("unknown", totals.get("unknown")).containsEntry("paused", totals.get("paused"))
+                .containsEntry("checks_window", totals.get("checks_window")).containsEntry("failed_window", totals.get("failed_window"))
+                .containsEntry("healthy", expectedHealthy).containsEntry("window_hours", 24);
+        assertThat(expectedHealthy).isEqualTo(upRows).isEqualTo(3L);     // 1, 6 (başka takım), 7 (takımsız)
+        assertThat(org).containsEntry("total", 7L).containsEntry("active", 6L).containsEntry("checks_window", 18L)
+                .containsEntry("failed_window", 5L);
+        // Kuruluş geneli özet YALNIZ sayı taşır — satır, ad, hedef, takım adı yok.
+        assertThat(org).doesNotContainKeys("monitors", "types", "totals");
+        assertThat(org.values()).noneMatch(v -> v instanceof String s && s.contains("example.com"));
+        // Ortak bellek: pano (global) + giriş sayfası tek hesap.
+        verify(httpMonitorRepo, times(1)).findAllByOrderByNameAsc();
+    }
+
+    @Test
+    @DisplayName("healthyOf: aktif − düşük − gecikmiş − bilinmiyor, tabanı 0")
+    void healthyOf_formula() {
+        assertThat(MonitoringOverviewService.healthyOf(702, 9, 3, 2)).isEqualTo(688L);
+        assertThat(MonitoringOverviewService.healthyOf(0, 0, 0, 0)).isZero();
+        assertThat(MonitoringOverviewService.healthyOf(2, 3, 0, 0)).isZero();
+    }
+
+    @Test
+    @DisplayName("orgSummary: toplamlar yoksa null (giriş sayfası '—' gösterir)")
+    void orgSummary_nullWhenNoTotals() {
+        MonitoringOverviewService spy = spy(svc);
+        doReturn(Map.of("generated_at", "x")).when(spy).build(anyString(), any(), anyBoolean(), anyInt());
+        assertThat(spy.orgSummary()).isNull();
+    }
+
+    @Test
     @DisplayName("isStale: aralığın 3 katı (en az 10 dk) geçtiyse eski; damga yoksa değil; aralıksız izlemede 3 saat")
     void staleRule() {
         Instant now = Instant.now();

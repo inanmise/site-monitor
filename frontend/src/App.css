@@ -437,12 +437,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .lp-chip--flag { border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); color: #fff; }
 .lp-chip-live { width: 6px; height: 6px; border-radius: 50%; background: var(--lp-accent); box-shadow: 0 0 0 3px rgba(74,222,128,.2); }
 
+/* Kullanım istatistikleri (2026-10-04) shadcn Card kutucukları — components/login/UsageStats.jsx (Tailwind); eski
+   .lp-stats / .lp-stat* kuralları kaldırıldı. */
 .lp-bottom { display: flex; flex-direction: column; gap: 20px; }
-.lp-stats { display: flex; align-items: center; gap: 24px; }
-.lp-stat { display: flex; flex-direction: column; gap: 2px; }
-.lp-stat-num { font-size: 1.75rem; line-height: 1.1; font-weight: 600; letter-spacing: -.02em; color: #fff; font-variant-numeric: tabular-nums; }
-.lp-stat-lbl { font-size: .75rem; color: var(--lp-fg-muted); }
-.lp-stat-sep { width: 1px; height: 36px; background: rgba(255,255,255,.1); }
 .lp-footer {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding-top: 16px; border-top: 1px solid rgba(255,255,255,.08);
@@ -526,13 +523,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   .lp-accent-dot, .lp-pillar { animation: none; }
 }
 
-/* Responsive — <1024px: tek sütun; sol panel başlık bandına iner (slogan kalır, vitrin gizli) */
+/* Responsive — <1024px: tek sütun; sol panel başlık bandına iner (slogan kalır, vitrin gizli). Kullanım istatistikleri
+   bu boyda formun ALTINDA ayrı bir satırda çizilir (Login.jsx, Tailwind lg:hidden) — panel kopyası lg altında gizli. */
 @media (max-width: 1023px) {
   .lp-root { grid-template-columns: 1fr; }
   .lp-left { border-right: none; border-bottom: 1px solid var(--border); }
   .lp-left-inner { padding: 28px 24px; gap: 20px; }
   .lp-headline { font-size: 1.75rem; }
-  .lp-bg, .lp-accent-dot, .lp-pillars, .lp-stats { display: none; }
+  .lp-bg, .lp-accent-dot, .lp-pillars { display: none; }
   .lp-right { padding: 40px 24px; }
 }
 

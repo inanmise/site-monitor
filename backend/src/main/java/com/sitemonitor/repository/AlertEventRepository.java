@@ -438,6 +438,13 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     //    (findFiltered/countFilteredByType alertType'a göre filtreler, alertLevel'a göre DEĞİL.)
     //    Her sorgu, findFiltered'daki takım-kapsam EXISTS yüklemini taşır (teamId + domain→envanter SY/UG).
 
+    /**
+     * {@code since}'ten beri AÇILAN alarm sayısı — tüm türler (sertifika + dokuz izleme türü), kapsamsız (giriş sayfası
+     * kullanım istatistikleri, 2026-10-04). Tek COUNT ({@code idx_ae_created_at}); satır taşınmaz.
+     */
+    @Query("SELECT COUNT(e) FROM AlertEvent e WHERE e.createdAt >= :since")
+    long countCreatedSince(@Param("since") String since);
+
     /** Verilen seviyede {@code asOf} anı itibarıyla AÇIK alarm sayısı (createdAt ≤ asOf, o an çözülmemiş) — takım kapsamlı.
      *  As-of semantiği geçmiş hafta için de yeniden hesaplanabilir → skor hafta-üstü delta'sı gerçek olur. */
     @Query("""

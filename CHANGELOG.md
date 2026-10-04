@@ -15,6 +15,25 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Giriş sayfasında "Kullanım istatistikleri":** sağlıklı izleme (İzleme Panosu ile aynı sayı, "/ N aktif" ve sağlık
+  oranı çubuğu), son 24 saatte koşum (başarısız sayısıyla) ve alarm, 7 günlük erişilebilirlik, takım, aktif kullanıcı ve
+  şu an çevrimiçi kullanıcı (son 24 saatte giriş yapan sayısıyla). Geniş ekranda tanıtım panelinde "Raporlama"
+  sütununun altında, telefonda ve tablette sayfanın en altında (formun altında); her kutucuğun açıklaması dokunarak da
+  açılır. Yalnız toplam sayılar — ad / alan adı yok.
+- Ayarlar → Marka → "Giriş Sayfası İstatistikleri" anahtarı (`site.monitor.public-stats.usage-enabled`, yalnız global
+  yönetici). Kapalıyken giriş sayfası yalnız izlenen hedef sayısını ve erişilebilirliği gösterir.
+
+### Fixed
+- Giriş sayfası ile İzleme Panosu arasındaki izleme sayısı farkı (621 / 688): giriş sayfası alarm fırtınası paydasını
+  gösteriyordu, artık panonun kendi hesabını kullanıyor.
+- Geniş ekranda giriş formu görünüm alanında ortalı ve sabit kalır; kısa dizüstü ekranlarda aşağı kaymaz.
+- Takım kapsamlı yönetici Marka sayfasında "Varsayılanlara dön" yaptığında yalnız global yöneticinin değiştirebildiği
+  anahtarlar artık gönderilmiyor (eskiden istek 403 ile düşerdi).
+
+### Changed
+- Giriş sayfası istatistik belleği 5 dakikadan 60 saniyeye indi (`PUBLIC_STATS_CACHE_MS`).
+
 ## [20.104.0] — 2026-10-04
 
 ### Added

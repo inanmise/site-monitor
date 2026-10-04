@@ -31,7 +31,8 @@ public class AuthInterceptor implements HandlerInterceptor {
             "/api/weekly-reports/approve-link/reject",
             // Branding (beyaz etiket) — login sayfası auth ÖNCESİ logo/başlık/renk okur; hassas veri yok.
             "/api/branding",
-            // Login hero istatistikleri — yalnız iki toplam sayı (hedef adedi + erişilebilirlik %), detay yok.
+            // Giriş sayfası istatistikleri — yalnız kuruluş geneli TOPLAM sayılar (izleme, 24 sa koşum/alarm, takım,
+            // aktif/çevrimiçi kullanıcı, erişilebilirlik %); ad/alan adı/takım adı/ayrıntı yok (2026-10-04, PublicStatsController).
             "/api/public-stats",
             // Login "sorun bildir" — kullanıcı giremediği için auth'suz; IP rate-limit + uzunluk sınırı içeride.
             "/api/login-help",
