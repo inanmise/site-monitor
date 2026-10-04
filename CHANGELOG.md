@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.102.0] — 2026-10-04
+
 ### Added
 - **Push saat tavanı özeti:** tavana takılan push'lar artık sessizce kaybolmaz — kişiye tek özet push'u gider ("14 bildirim
   gönderilmedi (3 kritik, 11 uyarı). Son: …"). Kişisel sessiz saat / susturma özeti erteler; kapatılmış push, pasif hesap
@@ -2167,7 +2169,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.101.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.102.0...HEAD
+[20.102.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.102.0
 [20.101.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.101.0
 [20.100.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.100.0
 [20.99.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.99.0
