@@ -17,6 +17,7 @@ import com.sitemonitor.service.page.HttpPhaseProbe;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -168,6 +169,15 @@ class PageSpeedDiagnosticsServiceTest {
                 .thenReturn(new ProxyPolicyService.Decision(viaProxy, "monitor", viaProxy, false));
     }
 
+    /** Testte kurulan servisler — her biri sanal iş parçacığı havuzu + gözcü iş parçacığı taşır; test sonunda kapanır. */
+    private final List<PageSpeedDiagnosticsService> created = new ArrayList<>();
+
+    @AfterEach
+    void closeServices() {
+        created.forEach(PageSpeedDiagnosticsService::shutdown);
+        created.clear();
+    }
+
     private PageSpeedDiagnosticsService service(Result direct, Result viaProxy, ProxySettings proxy) {
         PageSpeedCheckerService checker = mock(PageSpeedCheckerService.class);
         when(checker.effectiveUserAgent(any())).thenReturn(UA);
@@ -177,6 +187,7 @@ class PageSpeedDiagnosticsServiceTest {
         PageSpeedDiagnosticsService s = new PageSpeedDiagnosticsService(new SsrfGuard(settings), new TrustEvaluator(settings),
                 caAutoPin, proxy, policy, checker, cipher);
         s.env = k -> null;
+        created.add(s);
         return s;
     }
 

@@ -178,8 +178,13 @@ class PageDiagnosticsServiceTest {
         caAutoPin = mock(CaAutoPinService.class);
     }
 
+    /** Testte kurulan servisler — her biri sanal iş parçacığı havuzu + gözcü iş parçacığı taşır; test sonunda kapanır. */
+    private final List<PageDiagnosticsService> created = new ArrayList<>();
+
     @AfterEach
     void closeCore() {
+        created.forEach(PageDiagnosticsService::shutdown);
+        created.clear();
         if (core != null) core.shutdown();
     }
 
@@ -201,6 +206,7 @@ class PageDiagnosticsServiceTest {
         PageDiagnosticsService s = new PageDiagnosticsService(new SsrfGuard(settings), new TrustEvaluator(settings),
                 caAutoPin, proxy, policy, checker, settings);
         s.env = k -> null;
+        created.add(s);
         return s;
     }
 

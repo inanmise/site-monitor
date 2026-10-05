@@ -218,8 +218,11 @@
                          yani uygulama davranisi bu bayraktan ETKILENMEZ; etkilenen tek sey
                          testlerin ciplak now() cagrilaridir. -->
                     <!-- -Xmx1536m (2026-09-27): 73 @WebMvcTest bağlamı + yeni denetleyici testleri CI'da 1g ile "Java heap
-                         space" verdi; bağlam önbelleği ayrıca src/test/resources/spring.properties ile 12'ye sınırlı. -->
-                    <argLine>@{argLine} -Xmx1536m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
+                         space" verdi; bağlam önbelleği ayrıca src/test/resources/spring.properties ile 12'ye sınırlı.
+                         -Xmx2048m (2026-10-06): 20.108'in yeşil koşusu da sonlara doğru %93'teydi (1439/1536 MB); ~150
+                         yeni test + iki yeni @WebMvcTest bağlamıyla CI fork'u 4525. testte "Java heap space" ile düştü
+                         (test hatası yok). Runner belleği 2 GB fork'u rahat taşır. -->
+                    <argLine>@{argLine} -Xmx2048m -Xss512k -XX:+HeapDumpOnOutOfMemoryError -Duser.timezone=UTC</argLine>
                     <!-- Etiket süzgeci (2026-10-02): postgres etiketli entegrasyon testleri varsayılan koşumda dışarıda;
                          -Ppostgres-it bu iki özelliği ters çevirir (yukarıdaki <properties> notu). -->
                     <groups>${surefire.groups}</groups>
