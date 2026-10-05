@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-04T22:43:21Z",
+  "generatedAt": "2026-10-05T17:17:59Z",
   "repo": "inanmise/site-monitor",
-  "count": 707,
+  "count": 708,
   "releases": [
+    {
+      "version": "20.108.0",
+      "tag": "v20.108.0",
+      "releasedAt": "2026-10-05T17:17:52Z",
+      "commit": "20df362e2096cc7fb9795f680134edc5a7e52ac9",
+      "prevVersion": "20.107.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "20df362e",
+          "subject": "temalar (Blueprint, Parchment, Alloy, Obsidian, Slag, Crucible), tema yönetim sayfası ve hesapta saklanan tema seçimi"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.107.0",
       "tag": "v20.107.0",

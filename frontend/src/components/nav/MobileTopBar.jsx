@@ -3,6 +3,7 @@ import { useBranding } from '../../contexts/BrandingProvider.jsx'
 import BrandLogo from '../BrandLogo.jsx'
 import InboxBell from '../InboxBell.jsx'
 import OnlineUsersIndicator from './OnlineUsersIndicator.jsx'
+import ThemePicker from '../theme/ThemePicker.jsx'
 import { SidebarTrigger, useSidebar } from '@/components/shadcn/sidebar'
 import { Button } from '@/components/shadcn/button'
 import { Separator } from '@/components/shadcn/separator'
@@ -43,6 +44,8 @@ export default function MobileTopBar({ onTabChange, username }) {
         className="ml-auto size-10 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground [&_svg]:size-5">
         <Search aria-hidden="true" />
       </Button>
+      {/* Tema seçici (2026-10-05): telefonda kullanıcı menüsüne inmeden — yalnız AÇIK temalar, 40 px tetik */}
+      <ThemePicker className="hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
       {isMobile && (
         <span data-tour="nav-inbox" className="inline-flex">
           <InboxBell username={username} variant="icon" />

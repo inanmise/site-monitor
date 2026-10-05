@@ -53,7 +53,7 @@ function transformSelectedLines(state, api, fn) {
  */
 export default function MarkdownEditor({ value, onChange, editable = true, height = 200, uploadImage, makeUniqueCaption }) {
   const t = useT()
-  const { theme } = useTheme()
+  const { isDark } = useTheme()
   const toast = useToast()
   const fileRef = useRef(null)
   const caretRef = useRef(null)
@@ -164,7 +164,7 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
 
   if (!editable) {
     return (
-      <div className="show-markdown" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+      <div className="show-markdown" data-color-mode={isDark ? 'dark' : 'light'}>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{value || '—'}</ReactMarkdown>
       </div>
     )
@@ -172,7 +172,7 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
 
   return (
     <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
-      <div className="wr-editor" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+      <div className="wr-editor" data-color-mode={isDark ? 'dark' : 'light'}>
         <MDEditor
           value={value ?? ''}
           onChange={(v) => onChange(v ?? '')}

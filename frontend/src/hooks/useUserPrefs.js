@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import {
-  isSyncedLocalKey, readLocalSnapshot, planHydration, cleanServerLocal, MAX_LOCAL_VALUE,
+  isSyncedLocalKey, isSyncableValue, readLocalSnapshot, planHydration, cleanServerLocal, MAX_LOCAL_VALUE,
   normalizeFavorites, favKey, toggleFavorite as toggleFav, viewsFor as viewsOf, upsertView, renameView as renameV,
   deleteView as deleteV,
 } from './userPrefsModel.js'
@@ -105,7 +105,8 @@ export function createPrefsEngine({ storage, debounceMs = 1000, save, onSaved = 
   }
 
   function onWrite(key, value) {
-    if (suppress || disposed || !isSyncedLocalKey(key)) return
+    // Değer kuralı (2026-10-05): ör. bilinmeyen tema kimliği aynalanmaz (sunucu da yok sayar)
+    if (suppress || disposed || !isSyncedLocalKey(key) || !isSyncableValue(key, value)) return
     if (value != null && value.length > MAX_LOCAL_VALUE) return   // sınır üstü değer aynalanmaz (yerelde kalır)
     if (!ready) {
       // Ekranın açılışta AYNI değeri yeniden yazması kullanıcı değişikliği değildir — sunucunun değerini ezmesin.

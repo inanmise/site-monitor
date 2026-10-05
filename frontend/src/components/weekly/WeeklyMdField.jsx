@@ -69,7 +69,7 @@ function transformSelectedLines(state, editorApi, fn) {
 export function MdField({ value, onChange, editable, reportId, height = 220, label }) {
   const t = useT()
   const { lang } = useLanguage()
-  const { theme } = useTheme()
+  const { isDark } = useTheme()
   const toast = useToast()
   const fileRef = useRef(null)
   const caretRef = useRef(null) // kullanıcı textarea'da imleç hareket ettirince dolar; görsel buraya eklenir
@@ -190,7 +190,7 @@ export function MdField({ value, onChange, editable, reportId, height = 220, lab
 
   return (
     <div className="min-w-0" onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
-      <div data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+      <div data-color-mode={isDark ? 'dark' : 'light'}>
         <MDEditor
           value={value ?? ''}
           onChange={(v) => onChange(v ?? '')}
@@ -257,9 +257,9 @@ export function MdField({ value, onChange, editable, reportId, height = 220, lab
 /** Salt okunur Markdown gövdesi (`show-markdown` tipografisi); boşsa `empty` metni ya da "Not yok". */
 export function MarkdownView({ value, className, empty }) {
   const t = useT()
-  const { theme } = useTheme()
+  const { isDark } = useTheme()
   return (
-    <div className={cn('show-markdown min-w-0', className)} data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+    <div className={cn('show-markdown min-w-0', className)} data-color-mode={isDark ? 'dark' : 'light'}>
       {String(value ?? '').trim()
         ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
         : <p className="text-sm text-muted-foreground">{empty ?? t('wr.ed.noNotes')}</p>}

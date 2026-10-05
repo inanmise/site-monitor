@@ -219,9 +219,9 @@ const MD_COMPONENTS = { a: MarkdownLink }
 
 /** Notlar (değişiklik açıklaması) — markdown; bağlantılar güvenli. Test kancası `data-slot="inv-notes"`. */
 export function MarkdownNotes({ text }) {
-  const { theme } = useTheme()
+  const { isDark } = useTheme()
   return (
-    <div data-slot="inv-notes" className="show-markdown min-w-0 [overflow-wrap:anywhere]" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+    <div data-slot="inv-notes" className="show-markdown min-w-0 [overflow-wrap:anywhere]" data-color-mode={isDark ? 'dark' : 'light'}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{text}</ReactMarkdown>
     </div>
   )

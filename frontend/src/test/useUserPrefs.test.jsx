@@ -72,13 +72,14 @@ describe('useUserPrefsController — girişte taşıma ve sunucu önceliği', ()
   it('BOŞ sunucu + tarayıcıda tercih → yalnız beyaz listedekiler TEK PUT ile yüklenir; ikinci istek yok', async () => {
     localStorage.setItem('sidebar-open', 'false')
     localStorage.setItem('sm.pageSize.dashboard-certs', '25')
-    localStorage.setItem('site-monitor-theme', 'dark')      // dil/tema aynalanmaz
+    localStorage.setItem('site-monitor-theme', 'dark')      // 2026-10-05: tema ARTIK aynalanır (ürün kararı)
+    localStorage.setItem('site-monitor-lang', 'en')         // dil aynalanmaz
     localStorage.setItem('sm.palette.recent:ali', '[]')     // kişisel son kullanılanlar aynalanmaz
     const h = mount()
     await waitFor(() => expect(h.result.current.ready).toBe(true))
     await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(1))
     expect(api.me.savePreferences.mock.calls[0][0]).toEqual({
-      local: { 'sidebar-open': 'false', 'sm.pageSize.dashboard-certs': '25' },
+      local: { 'sidebar-open': 'false', 'sm.pageSize.dashboard-certs': '25', 'site-monitor-theme': 'dark' },
     })
     await settle()
     expect(api.me.savePreferences).toHaveBeenCalledTimes(1)

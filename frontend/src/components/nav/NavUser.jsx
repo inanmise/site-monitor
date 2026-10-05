@@ -1,11 +1,15 @@
 import { useRef, useState } from 'react'
 import {
   ChevronsUpDown, Users, MonitorSmartphone, Settings, Bug, Lock, Compass, Sun, Moon, Languages, LogOut, BookOpenText,
-  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard,
+  Clock, ShieldAlert, PanelLeftClose, PanelLeftOpen, Keyboard, Check,
 } from 'lucide-react'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { formatDate } from '../../api/client'
+import ThemeSwatch from '../theme/ThemeSwatch.jsx'
+import { ThemeRadioItems } from '../theme/ThemePicker.jsx'
+import { themeName } from '../theme/themeLabels.js'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { adSoyadInitials, avatarStyleFor } from '../ui/TeamMemberCards.jsx'
 import { SystemRoleBadge } from '../admin/ToneBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -119,7 +123,8 @@ export default function NavUser({
   const openedDialog = useRef(false)
   // langPending: seçilen dilin sözlüğü iniyor (İngilizce ayrı chunk) — dil denetiminde kısa meşgul göstergesi
   const { lang, toggle: toggleLang, pending: langPending } = useLanguage()
-  const { theme, toggle: toggleTheme } = useTheme()
+  // Tema (2026-10-05): yalnız yöneticinin AÇIK bıraktığı temalar; seçim kişinin tarayıcısında kalır.
+  const { theme, isDark, themes, setTheme } = useTheme()
   const { state: sidebarState, toggleSidebar } = useSidebar()
   const [sheetOpen, setSheetOpen] = useState(false)
   const role = roleLabel(t, systemRole)
@@ -133,7 +138,6 @@ export default function NavUser({
   const failed = Number(loginInfo?.failed_before_login ?? 0)
   const collapsed = sidebarState === 'collapsed'
 
-  const setTheme = (v) => { if (v && v !== theme) toggleTheme() }
   const setLang = (v) => { if (v && v !== lang) toggleLang() }
   /** Telefon sayfasından eylem: önce sayfa kapanır, sonra eylem (gezinme çekmeceyi Nav'da kapatır). */
   const pick = (fn) => () => { setSheetOpen(false); fn?.() }
@@ -223,12 +227,25 @@ export default function NavUser({
                 </div>
                 <div data-slot="user-menu-group" data-group="preferences">
                   <Caption>{t('nav.menuPreferences')}</Caption>
-                  {/* Tema / Dil: etkin seçenek görünür (ToggleGroup, SegmentedControl); değişim anında uygulanır, sayfa açık kalır */}
-                  <div className="flex min-h-11 items-center gap-3 px-2 py-1">
-                    <IconTile className="size-8">{theme === 'dark' ? <Moon /> : <Sun />}</IconTile>
-                    <span className="min-w-0 flex-1 text-[15px]">{t('nav.theme')}</span>
-                    <SegmentedControl ariaLabel={t('nav.theme')} value={theme} onChange={setTheme}
-                      options={[{ value: 'light', label: t('nav.themeLight'), icon: Sun }, { value: 'dark', label: t('nav.themeDark'), icon: Moon }]} />
+                  {/* Tema (2026-10-05): yalnız AÇIK temalar, renk örneği + ad; etkin olan işaretli. Dokunmatik 44 px hedef, iki
+                      sütun (telefonda tek bakışta hepsi). Değişim anında uygulanır, sayfa açık kalır. */}
+                  <div className="flex flex-col gap-1.5 px-2 py-1" data-slot="user-menu-themes">
+                    <div className="flex min-h-11 items-center gap-3">
+                      <IconTile className="size-8">{isDark ? <Moon /> : <Sun />}</IconTile>
+                      <span className="min-w-0 flex-1 text-[15px]">{t('nav.theme')}</span>
+                      <span className="truncate text-xs text-muted-foreground">{themeName(t, theme)}</span>
+                    </div>
+                    <ToggleGroup type="single" variant="outline" spacing={2} value={theme} aria-label={t('nav.theme')}
+                      onValueChange={(v) => v && setTheme(v)} className="grid w-full grid-cols-2 gap-1.5">
+                      {themes.map((th) => (
+                        <ToggleGroupItem key={th.id} value={th.id} data-slot="theme-option" data-theme-id={th.id}
+                          className="h-11 w-full justify-start gap-2 px-2 data-[state=on]:border-primary">
+                          <ThemeSwatch id={th.id} className="size-5" />
+                          <span className="min-w-0 flex-1 truncate text-left">{themeName(t, th.id)}</span>
+                          {th.id === theme && <Check aria-hidden="true" className="size-4 shrink-0 text-primary" />}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
                   </div>
                   <div className="flex min-h-11 items-center gap-3 px-2 py-1">
                     <IconTile className="size-8"><Languages /></IconTile>
@@ -291,18 +308,19 @@ export default function NavUser({
               <DropdownMenuSeparator />
               <DropdownMenuGroup data-slot="user-menu-group" data-group="preferences">
                 <GroupLabel>{t('nav.menuPreferences')}</GroupLabel>
-                {/* Tema / Dil: alt menüde radyo — etkin olan işaretli, geçerli değer satırda görünür */}
+                {/* Tema / Dil: alt menüde radyo — etkin olan işaretli, geçerli değer satırda görünür. Tema listesi (2026-10-05)
+                    yalnız yöneticinin AÇIK bıraktığı temalar: renk örneği + ad + şema (components/theme/ThemePicker). */}
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger className="h-9 gap-2.5 rounded-md px-1.5" data-slot="user-menu-theme">
-                    <IconTile>{theme === 'dark' ? <Moon /> : <Sun />}</IconTile>
+                    <IconTile>{isDark ? <Moon /> : <Sun />}</IconTile>
                     <span className="min-w-0 flex-1">{t('nav.theme')}</span>
-                    <span className="mr-1 text-xs text-muted-foreground">{theme === 'dark' ? t('nav.themeDark') : t('nav.themeLight')}</span>
+                    <span className="mr-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      <ThemeSwatch id={theme} className="size-4 rounded" />
+                      <span className="truncate">{themeName(t, theme)}</span>
+                    </span>
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="z-(--z-menu) min-w-40" sideOffset={6}>
-                    <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
-                      <Radio value="light">{t('nav.themeLight')}</Radio>
-                      <Radio value="dark">{t('nav.themeDark')}</Radio>
-                    </DropdownMenuRadioGroup>
+                  <DropdownMenuSubContent className="z-(--z-menu) w-64 max-w-[calc(100vw-1rem)] p-1" sideOffset={6} data-slot="theme-picker">
+                    <ThemeRadioItems />
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuSub>

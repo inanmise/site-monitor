@@ -154,6 +154,18 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-10-05: tema politikası (açık temalar + varsayılan) GLOBAL_ONLY; uç müdüre SALT OKUNUR açık, yazma global yöneticiye kapılı")
+    void themes_globalOnly_readOnlyForScoped() throws IOException {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                com.sitemonitor.service.ThemeCatalog.KEY_ENABLED,
+                com.sitemonitor.service.ThemeCatalog.KEY_DEFAULT);
+        String src = src("ThemeSettingsController");
+        // Okuma müdüre açık (sayfa salt okunur çizilir) — requireNotScopedAdmin YOK; yazma isGlobalAdmin ile kapılı.
+        assertThat(src).doesNotContain("SessionScope.requireNotScopedAdmin(")
+                .contains("SessionScope.isGlobalAdmin(session)");
+    }
+
+    @Test
     @DisplayName("2026-09-28: sistem geneli yüzeyler (Veri Saklama yazma uçları, Sorun Bildirimleri yönetimi) requireNotScopedAdmin TAŞIR")
     void systemWideSurfaces_keepGate() throws IOException {
         for (String c : List.of("RetentionAdminController", "LoginIssueController")) {

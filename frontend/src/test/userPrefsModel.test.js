@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   LOCAL_PREF_KEYS, isSyncedLocalKey, readLocalSnapshot, planHydration, normalizeFavorites, toggleFavorite, isFavorite,
   MAX_FAVORITES, upsertView, renameView, deleteView, viewsFor, MAX_VIEWS_PER_LIST, pickParams, sameParams,
-  resolveLandingTab, VIEW_SPECS, MONITOR_TYPES,
+  resolveLandingTab, VIEW_SPECS, MONITOR_TYPES, isSyncableValue, cleanServerLocal,
 } from '../hooks/userPrefsModel.js'
 import { PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from '../hooks/useUrlQuerySync.js'
 
@@ -22,12 +22,13 @@ function memStorage(init = {}) {
 }
 
 describe('userPrefsModel — beyaz liste', () => {
-  it('gerçek tercihler aynalanır; oturum, dil/tema, taslak, son kullanılanlar, tur ve bildirim kutusu aynalanmaz', () => {
+  // 2026-10-05 (ürün kararı): tema ARTIK aynalanır ("kullanıcının şema seçimlerini hatırlayalım") — dil hâlâ dışarıda.
+  it('gerçek tercihler (tema dahil) aynalanır; oturum, dil, taslak, son kullanılanlar, tur ve bildirim kutusu aynalanmaz', () => {
     for (const k of ['sidebar-open', 'today-panel-open', 'certtable-presets', 'sm.audit.savedViews', 'sm.pageSize.dashboard-certs',
-      'sm.checkRun.teams', 'sm.checkRun.teams.http', 'inventory-saved-views']) {
+      'sm.checkRun.teams', 'sm.checkRun.teams.http', 'inventory-saved-views', 'site-monitor-theme']) {
       expect(isSyncedLocalKey(k), k).toBe(true)
     }
-    for (const k of ['site-monitor-remembered-user', 'site-monitor-lang', 'site-monitor-theme', 'sm.session.active',
+    for (const k of ['site-monitor-remembered-user', 'site-monitor-lang', 'sm.session.active',
       'sm.storage.owner', 'sm.palette.recent:ali', 'sm.dexp.recent', 'wr.draft.12', 'sm.tour', 'inbox-seen:ali',
       'inbox-dismissed:ali', 'nav-section-open', 'sm.banner.dismissedVersion', 'sm.pageSize.', 'sm.pageSize.a b', '', null]) {
       expect(isSyncedLocalKey(k), String(k)).toBe(false)
@@ -39,9 +40,19 @@ describe('userPrefsModel — beyaz liste', () => {
   })
 
   it('anlık görüntü yalnız beyaz listedekileri okur', () => {
-    const s = memStorage({ 'sidebar-open': 'false', 'site-monitor-theme': 'dark', 'sm.pageSize.x': '25' })
+    const s = memStorage({ 'sidebar-open': 'false', 'site-monitor-lang': 'en', 'sm.pageSize.x': '25' })
     expect(readLocalSnapshot(s)).toEqual({ 'sidebar-open': 'false', 'sm.pageSize.x': '25' })
     expect(readLocalSnapshot(null)).toEqual({})
+  })
+
+  it('tema değeri doğrulanır: bilinen kimlik aynalanır, bilinmeyen değer ne yüklenir ne yerele yazılır', () => {
+    expect(isSyncableValue('site-monitor-theme', 'crucible')).toBe(true)
+    expect(isSyncableValue('site-monitor-theme', 'sepia')).toBe(false)
+    expect(isSyncableValue('site-monitor-theme', null)).toBe(true)          // silme her zaman geçer
+    expect(isSyncableValue('sidebar-open', 'anything')).toBe(true)          // kuralı olmayan anahtar
+    expect(readLocalSnapshot(memStorage({ 'site-monitor-theme': 'obsidian' }))).toEqual({ 'site-monitor-theme': 'obsidian' })
+    expect(readLocalSnapshot(memStorage({ 'site-monitor-theme': 'sepia' }))).toEqual({})
+    expect(cleanServerLocal({ 'site-monitor-theme': 'sepia', 'sidebar-open': 'true' })).toEqual({ 'sidebar-open': 'true' })
   })
 })
 
@@ -53,11 +64,12 @@ describe('userPrefsModel — girişteki birleştirme planı', () => {
   })
 
   it('sunucu KAZANIR: farklı/eksik değerler yerele yazılır; yalnız tarayıcıda olanlar yüklenir', () => {
+    // 2026-10-05: tema da sunucudan gelir (aynalanır); dil anahtarı beyaz liste dışı → yazılmaz
     const plan = planHydration(
-      { 'sidebar-open': 'true', 'today-panel-open': 'true', 'site-monitor-theme': 'dark' },
+      { 'sidebar-open': 'true', 'today-panel-open': 'true', 'site-monitor-theme': 'dark', 'site-monitor-lang': 'tr' },
       { 'sidebar-open': 'false', 'sm.pageSize.a': '25' },
     )
-    expect(plan.toWrite).toEqual({ 'sidebar-open': 'true', 'today-panel-open': 'true' })
+    expect(plan.toWrite).toEqual({ 'sidebar-open': 'true', 'today-panel-open': 'true', 'site-monitor-theme': 'dark' })
     expect(plan.toUpload).toEqual({ 'sm.pageSize.a': '25' })
   })
 

@@ -20,15 +20,21 @@
 /* Tailwind'e kaynak taraması: tüm JSX */
 @source "../";
 
-/* Koyu tema: uygulamanın ThemeProvider'ı <html data-theme="dark"> yazar (sınıf değil) */
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* Koyu ŞEMA (2026-10-05, temalar): ThemeProvider <html data-theme="<tema>" data-scheme="light|dark"> yazar (sınıf değil).
+   `dark:` yardımcıları temaya değil ŞEMAYA bağlıdır — koyu şemalı her tema (Koyu, Blueprint, Obsidian, Slag, Crucible)
+   mevcut koyu stillerin tamamını miras alır; ek temalar yalnız jetonlarını styles/themes.css'te ezer. */
+@custom-variant dark (&:where([data-scheme="dark"], [data-scheme="dark"] *));
 
 /*
  * shadcn jetonları — "nötr + marka mavisi" (kullanıcı kararı 2026-09-24): yüzeyler shadcn'in
  * nötr (zinc) skalası, ana renk marka mavisi. --primary/--border App.css ile ORTAK ad: ikisi de
  * zaten renk olarak kullanılıyordu (503 / binlerce kullanım) → değerler burada ve App.css'te aynı.
+ *
+ * Temalar (2026-10-05): açık jetonlar `[data-scheme="light"]` öğesinde de yeniden tanımlanır — koyu sayfadaki açık
+ * tema önizlemesi / renk örneği koyu değerleri miras almasın (sayfanın kendisi için davranış aynı).
+ * Kontrast kapısı: src/test/themeContrast.test.js (WCAG 2.1 — metin ≥ 4.5:1, odak halkası ≥ 3:1, sekiz tema).
  */
-:root {
+:root, [data-scheme="light"] {
   --radius: 0.625rem;
   --background: #ffffff;
   --foreground: #09090b;
@@ -47,7 +53,9 @@
   --destructive: #dc2626;
   --border: #e4e4e7;
   --input: #e4e4e7;
-  --ring: color-mix(in srgb, var(--primary) 55%, transparent);
+  /* Odak halkası (2026-10-05, tema kontrast kapısı): %55 → %80 — %55'te zemine karışınca 2.3:1 kalıyordu (WCAG metin dışı
+     öğe eşiği 3:1). Bileşenler halkayı yine `ring-ring/50` ile yumuşatır; çerçeve (`border-ring`) artık seçilir. */
+  --ring: color-mix(in srgb, var(--primary) 80%, transparent);
   --chart-1: #2563eb;
   --chart-2: #16a34a;
   --chart-3: #f59e0b;
@@ -65,14 +73,17 @@
   --sidebar-ring: var(--ring);
 }
 
-[data-theme="dark"] {
+[data-scheme="dark"] {
   --background: #09090b;
   --foreground: #fafafa;
   --card: #18181b;
   --card-foreground: #fafafa;
   --popover: #18181b;
   --popover-foreground: #fafafa;
-  --primary: var(--brand-primary, #3b82f6);
+  /* #2563eb (2026-10-05): sayfada zaten ETKİN olan değer — App.css'in `:root { --primary: … #2563eb }` bloğu bu dosyadan
+     sonra geldiği için eski #3b82f6 hiç uygulanmıyordu (aynı özgüllük, sonraki kazanır). Değer buraya taşındı ki koyu
+     önizleme öğesi (iç içe data-scheme="dark") sayfayla aynı rengi çizsin; görünüm değişmez. */
+  --primary: var(--brand-primary, #2563eb);
   --primary-foreground: #ffffff;
   --secondary: #27272a;
   --secondary-foreground: #fafafa;
@@ -83,6 +94,9 @@
   --destructive: #ef4444;
   --border: #27272a;
   --input: #3f3f46;
+  /* Odak halkası koyu zeminde (2026-10-05, tema kontrast kapısı): marka mavisi koyu zeminde yalnız 2.3–3.5:1 veriyordu;
+     beyazla açılır (≈ 6:1). Yarı saydam karışım yerine açık ton: halka koyu yüzeyde kaybolmaz. */
+  --ring: color-mix(in srgb, var(--primary) 75%, white);
   /* Koyu: panel zinc-900 (sayfa zinc-950'den ayrışır), vurgu zinc-800, kenar zinc-700 (metin zinc-300 ≈ 11:1). */
   --sidebar: #18181b;
   --sidebar-foreground: #d4d4d8;

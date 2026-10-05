@@ -184,7 +184,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                                              canManage = true, canWrite = false, canMoveTeam = false,
                                              canOpenSettings, onClose, onSaved, onRefresh, focus = null }) {
   const t = useT()
-  const { theme } = useTheme()
+  const { isDark } = useTheme()
   const toast = useToast()
   // Araç çubuğu "Panoya kopyala" komutu (2026-09-22): editörün API'sinden GÜNCEL metni alır (form state ile aynı);
   // boşken uyarır, "kopyalandı" yalanı söylemez.
@@ -800,7 +800,7 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
           <SectionHeader icon={NotebookPen} label={t('inv.drawerNotes')} />
           <FormField label={t('inv.formChangeDesc')} full>
             {({ id }) => (
-              <div className="md-editor-box" data-color-mode={theme === 'dark' ? 'dark' : 'light'}>
+              <div className="md-editor-box" data-color-mode={isDark ? 'dark' : 'light'}>
                 <MDEditor
                   value={form.change_description}
                   onChange={(v) => f('change_description', v ?? '')}

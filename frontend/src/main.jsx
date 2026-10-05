@@ -12,6 +12,7 @@ import { migrateStorageKeys } from './utils/migrateStorageKeys.js'
 import './styles/mdEditorStyles.js'   // Markdown editörü CSS'i — editör JS'i lazy olsa da kaskadda ESKİ yerinde (öneri 22)
 import './styles/globals.css'   // shadcn/ui + Tailwind (önce: App.css katmansız, üstüne biner)
 import './App.css'
+import './styles/themes.css'   // ek temalar (2026-10-05): YALNIZ jetonlar, şema kurallarından SONRA — sıra kaskadın parçası
 
 // Rename storage göçü — render'dan ÖNCE senkron: Theme/Lang provider'ları localStorage'ı
 // initializer'da okur; göç sonraya kalırsa kullanıcı tercihleri varsayılana dönmüş görünür.

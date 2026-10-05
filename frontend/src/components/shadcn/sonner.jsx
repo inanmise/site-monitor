@@ -23,11 +23,12 @@ const Toaster = ({
   style,
   ...props
 }) => {
-  const { theme } = useTheme()
+  // Şemaya bağlı (2026-10-05, temalar): koyu şemalı her tema Sonner'ın koyu tonlarını alır.
+  const { scheme } = useTheme()
 
   return (
     <Sonner
-      theme={theme === "dark" ? "dark" : "light"}
+      theme={scheme === "dark" ? "dark" : "light"}
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,

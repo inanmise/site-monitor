@@ -73,8 +73,18 @@ public class UserPreferencesService {
             Set.of("http", "ping", "port", "dns", "domain", "keyword", "page", "pagespeed", "scripted");
 
     /**
+     * Kullanıcının tema seçimi (2026-10-05, ürün kararı: "kullanıcının şema seçimlerini hatırlayalım, sonraki
+     * oturumlarında otomatik olarak o temada açalım") — ön yüz ThemeProvider'ın localStorage anahtarı. Değer
+     * {@link ThemeCatalog} kimliği olmalı; bilinmeyen değer SESSİZCE YOK SAYILIR (400 değil — aynı PUT'taki diğer tercihler
+     * düşmesin). Yöneticinin listeden kaldırdığı tema bilinen bir kimliktir → saklanır; istemci varsayılana düşer, tema
+     * yeniden açılınca kişinin seçimi geri gelir.
+     */
+    public static final String THEME_LOCAL_KEY = "site-monitor-theme";
+
+    /**
      * Sunucuda aynalanan localStorage anahtarları (TAM ad). Ön yüz {@code LOCAL_PREF_KEYS} ile birebir aynı — oturum,
-     * taslak, önbellek, tur durumu, dil/tema ve kişisel "son kullanılanlar" BİLİNÇLİ OLARAK yok.
+     * taslak, önbellek, tur durumu, dil ve kişisel "son kullanılanlar" BİLİNÇLİ OLARAK yok. Tema 2026-10-05'ten beri
+     * aynalanır ({@link #THEME_LOCAL_KEY}).
      */
     public static final List<String> LOCAL_KEYS = List.of(
             "sidebar-open", "today-panel-open",
@@ -87,7 +97,8 @@ public class UserPreferencesService {
             "renewal-view", "renewal-guide-platform",
             "sm.incidents.view", "incidents-banner-dismissed",
             "sm.warnings.view", "uptime-scope",
-            "sm.checkRun.teams");
+            "sm.checkRun.teams",
+            "site-monitor-theme");
 
     /** Önekli aileler (liste başına sayfa boyutu, izleme türü başına "Şimdi Kontrol Et" takım seçimi). */
     public static final List<String> LOCAL_PREFIXES = List.of("sm.pageSize.", "sm.checkRun.teams.");
@@ -289,6 +300,8 @@ public class UserPreferencesService {
             if (v == null) { out.remove(k); continue; }
             if (!(v instanceof String s)) throw bad("Tarayıcı tercihi metin olmalı: " + k, "A browser preference must be text: " + k);
             if (s.length() > MAX_LOCAL_VALUE) throw bad("Tarayıcı tercihi çok büyük: " + k, "Browser preference is too large: " + k);
+            // Tema: yalnız bilinen kimlik saklanır; bilinmeyen değer yok sayılır (mevcut değer korunur, istek reddedilmez).
+            if (THEME_LOCAL_KEY.equals(k) && !ThemeCatalog.isKnown(s)) continue;
             out.put(k, s);
         }
         return out;

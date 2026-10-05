@@ -262,6 +262,7 @@ public final class AuditEventCatalog {
             "TEMPLATE_DEMOTE",
             "TEMPLATE_PROMOTE",
             "TEMPLATE_UPDATE",
+            "THEME_SETTINGS_SAVE",        // Ayarlar → Görünüm → Temalar: açık temalar + varsayılan (2026-10-05)
             "THRESHOLD_CREATE",
             "THRESHOLD_UPDATE",
             "THRESHOLD_DELETE",

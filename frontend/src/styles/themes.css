@@ -1,0 +1,353 @@
+/*
+ * EK TEMALAR (2026-10-05, kullanıcı isteği: "blueprint, parchment, Alloy, Obsidian, slag, crucible gibi temalar seçilebilir
+ * olsun … dark ve light da ekstra temalar olsun").
+ *
+ * KASKAT SÖZLEŞMESİ — bu dosya main.jsx'te App.css'ten SONRA içe aktarılır:
+ *   globals.css  `:root, [data-scheme="light"]`  → shadcn açık jetonları
+ *                `[data-scheme="dark"]`          → shadcn koyu jetonları
+ *   App.css      `:root, [data-scheme="light"]`  → legacy açık jetonlar (--bg, --text …)
+ *                `[data-scheme="dark"] …`        → legacy koyu jetonlar + 130'dan fazla koyu kural
+ *   themes.css   `[data-theme="<id>"]`           → YALNIZ jetonlar (aynı özgüllük, sonra gelen kazanır)
+ * Koyu şemalı tema (Blueprint, Obsidian, Slag, Crucible) koyu kuralların tamamını ve `dark:` yardımcılarını miras alır;
+ * açık şemalı tema (Parchment, Alloy) açık tabanı. Burada SEÇİCİ KURALI YOK — yalnız değişken tanımları; yeni bir
+ * bileşen için tema-özel kural yazma, jeton kullan.
+ *
+ * Tema listesi: src/theme/themes.js (sunucu karşılığı ThemeCatalog.java). Kontrast kapısı: src/test/themeContrast.test.js
+ * — her tema için metin çiftleri ≥ 4.5:1, odak halkası ≥ 3:1, durum renkleri birbirinden ayırt edilebilir. Bir değeri
+ * değiştirince kapıyı koş. Ek temalar marka rengini (`--brand-primary`) KULLANMAZ: kendi vurgu rengi temanın kimliğidir
+ * ve kontrastı kapıyla güvence altındadır (beyaz etiket rengi Açık / Koyu temalarda geçerli).
+ */
+
+/* Tarayıcı denetimleri (kaydırma çubuğu, yerel seçim listesi, otomatik doldurma) şemayı izlesin. */
+[data-scheme="light"] { color-scheme: light; }
+[data-scheme="dark"] { color-scheme: dark; }
+
+/* ── Blueprint (koyu): derin teknik çizim lacivert zemin, berrak açık mavi/beyaz metin, camgöbeği vurgu ───────────── */
+[data-theme="blueprint"] {
+  --background: #0b2340;
+  --foreground: #e8f2ff;
+  --card: #102c4f;
+  --card-foreground: #e8f2ff;
+  --popover: #102c4f;
+  --popover-foreground: #e8f2ff;
+  --primary: #38d6f0;
+  --primary-foreground: #04223a;
+  --secondary: #17375f;
+  --secondary-foreground: #e8f2ff;
+  --muted: #153458;
+  --muted-foreground: #a3c4e6;
+  --accent: #1a3c66;
+  --accent-foreground: #f2f8ff;
+  --destructive: #ff7b7b;
+  --border: #24497a;
+  --input: #2c5689;
+  --ring: #5fe0f5;
+  --chart-1: #38d6f0;
+  --chart-2: #4ade80;
+  --chart-3: #fbbf24;
+  --chart-4: #ff7b7b;
+  --chart-5: #c4b5fd;
+  --sidebar: #0a1f3a;
+  --sidebar-foreground: #c9def7;
+  --sidebar-primary: #38d6f0;
+  --sidebar-primary-foreground: #04223a;
+  --sidebar-accent: #17375f;
+  --sidebar-accent-foreground: #f2f8ff;
+  --sidebar-border: #24497a;
+  --sidebar-ring: #5fe0f5;
+  /* legacy (App.css) */
+  --bg: #0b2340;
+  --text: #e8f2ff;
+  --text-light: #b7d2ef;
+  --text-muted: #8fb2d8;
+  --shadow: 0 1px 2px 0 rgb(0 8 20 / 0.45);
+  --bg-card: #102c4f;
+  --bg-surface: #17375f;
+  --bg-hover: rgba(125, 211, 252, .08);
+  --input-bg: #102c4f;
+  --input-text: #e8f2ff;
+  --ok: #4ade80;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #06b6d4;
+  --chart-grid: #24497a;
+  --chart-label: #8fb2d8;
+  --chart-dot-bg: #102c4f;
+  --sb-accent: #38d6f0;
+}
+
+/* ── Parchment (açık): sıcak, eskimiş kâğıt zemin, koyu sepya/kahve metin, bordo vurgu ─────────────────────────── */
+[data-theme="parchment"] {
+  --background: #f5edd9;
+  --foreground: #3b2a1a;
+  --card: #fbf6ea;
+  --card-foreground: #3b2a1a;
+  --popover: #fbf6ea;
+  --popover-foreground: #3b2a1a;
+  --primary: #8b2635;
+  --primary-foreground: #fbf6ea;
+  --secondary: #ebdfc3;
+  --secondary-foreground: #3b2a1a;
+  --muted: #ece2c9;
+  --muted-foreground: #6b5440;
+  --accent: #e9dcbe;
+  --accent-foreground: #3b2a1a;
+  --destructive: #b42318;
+  --border: #dccaa3;
+  --input: #cdb98f;
+  --ring: #8b2635;
+  --chart-1: #2c5f8a;
+  --chart-2: #3f7d3a;
+  --chart-3: #b7791f;
+  --chart-4: #b42318;
+  --chart-5: #7b4f9d;
+  --sidebar: #ede2c7;
+  --sidebar-foreground: #4a3626;
+  --sidebar-primary: #8b2635;
+  --sidebar-primary-foreground: #fbf6ea;
+  --sidebar-accent: #e0d1ad;
+  --sidebar-accent-foreground: #2e2013;
+  --sidebar-border: #d3bf96;
+  --sidebar-ring: #8b2635;
+  /* legacy (App.css) */
+  --bg: #f2e9d3;
+  --text: #3b2a1a;
+  --text-light: #5c4632;
+  --text-muted: #6b5440;
+  --shadow: 0 1px 2px 0 rgb(59 42 26 / 0.10);
+  --bg-card: #fbf6ea;
+  --bg-surface: #f2e9d3;
+  --bg-hover: #ece2c9;
+  --input-bg: #fffbf2;
+  --input-text: #3b2a1a;
+  --ok: #15803d;
+  --success: #15803d;
+  --warning: #a16207;
+  --danger: #b42318;
+  --info: #0e7490;
+  --chart-grid: #dccaa3;
+  --chart-label: #8a7258;
+  --chart-dot-bg: #fbf6ea;
+  --sb-accent: #8b2635;
+}
+
+/* ── Alloy (açık): fırçalanmış metal soğuk griler, grafit metin, çelik mavisi vurgu ────────────────────────────── */
+[data-theme="alloy"] {
+  --background: #eaeef2;
+  --foreground: #1f2933;
+  --card: #f6f8fa;
+  --card-foreground: #1f2933;
+  --popover: #f6f8fa;
+  --popover-foreground: #1f2933;
+  --primary: #3a6b96;
+  --primary-foreground: #ffffff;
+  --secondary: #dbe2e9;
+  --secondary-foreground: #1f2933;
+  --muted: #dfe5eb;
+  --muted-foreground: #52606d;
+  --accent: #d6dee6;
+  --accent-foreground: #1f2933;
+  --destructive: #b91c1c;
+  --border: #c7d0d9;
+  --input: #b6c2ce;
+  --ring: #3a6b96;
+  --chart-1: #3a6b96;
+  --chart-2: #2f8f5b;
+  --chart-3: #c98a16;
+  --chart-4: #c0392b;
+  --chart-5: #7a5ea8;
+  --sidebar: #dfe5eb;
+  --sidebar-foreground: #2d3a46;
+  --sidebar-primary: #3a6b96;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #cfd8e1;
+  --sidebar-accent-foreground: #17202a;
+  --sidebar-border: #bcc7d2;
+  --sidebar-ring: #3a6b96;
+  /* legacy (App.css) */
+  --bg: #e6ebf0;
+  --text: #1f2933;
+  --text-light: #3e4c59;
+  --text-muted: #52606d;
+  --shadow: 0 1px 2px 0 rgb(31 41 51 / 0.10);
+  --bg-card: #f6f8fa;
+  --bg-surface: #eef1f4;
+  --bg-hover: #e1e7ed;
+  --input-bg: #ffffff;
+  --input-text: #1f2933;
+  --ok: #15803d;
+  --success: #15803d;
+  --warning: #a16207;
+  --danger: #b91c1c;
+  --info: #0e7490;
+  --chart-grid: #c7d0d9;
+  --chart-label: #7b8794;
+  --chart-dot-bg: #f6f8fa;
+  --sb-accent: #3a6b96;
+}
+
+/* ── Obsidian (koyu): neredeyse siyah volkanik cam, soğuk kırık beyaz metin, mor vurgu ─────────────────────────── */
+[data-theme="obsidian"] {
+  --background: #0b0a10;
+  --foreground: #ecebf3;
+  --card: #15131d;
+  --card-foreground: #ecebf3;
+  --popover: #15131d;
+  --popover-foreground: #ecebf3;
+  --primary: #a78bfa;
+  --primary-foreground: #160f2e;
+  --secondary: #221f2e;
+  --secondary-foreground: #ecebf3;
+  --muted: #1f1c2a;
+  --muted-foreground: #a7a3b8;
+  --accent: #262035;
+  --accent-foreground: #f3f2f8;
+  --destructive: #f87171;
+  --border: #2a2638;
+  --input: #383250;
+  --ring: #b9a2fb;
+  --chart-1: #a78bfa;
+  --chart-2: #4ade80;
+  --chart-3: #fbbf24;
+  --chart-4: #f87171;
+  --chart-5: #67e8f9;
+  --sidebar: #100e17;
+  --sidebar-foreground: #cfcbe0;
+  --sidebar-primary: #a78bfa;
+  --sidebar-primary-foreground: #160f2e;
+  --sidebar-accent: #221f2e;
+  --sidebar-accent-foreground: #f3f2f8;
+  --sidebar-border: #2f2a40;
+  --sidebar-ring: #b9a2fb;
+  /* legacy (App.css) */
+  --bg: #0b0a10;
+  --text: #ecebf3;
+  --text-light: #b9b5c9;
+  --text-muted: #8f8aa3;
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --bg-card: #15131d;
+  --bg-surface: #221f2e;
+  --bg-hover: rgba(167, 139, 250, .08);
+  --input-bg: #15131d;
+  --input-text: #ecebf3;
+  --ok: #4ade80;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #06b6d4;
+  --chart-grid: #2f2a40;
+  --chart-label: #8f8aa3;
+  --chart-dot-bg: #15131d;
+  --sb-accent: #a78bfa;
+}
+
+/* ── Slag (koyu): endüstriyel kömür / kahve-gri, sıcak kırık beyaz metin, pas turuncusu vurgu ───────────────────── */
+[data-theme="slag"] {
+  --background: #1c1a18;
+  --foreground: #efe9e1;
+  --card: #26231f;
+  --card-foreground: #efe9e1;
+  --popover: #26231f;
+  --popover-foreground: #efe9e1;
+  --primary: #e0773a;
+  --primary-foreground: #1c1209;
+  --secondary: #322d28;
+  --secondary-foreground: #efe9e1;
+  --muted: #2e2a25;
+  --muted-foreground: #b3a99c;
+  --accent: #3a3029;
+  --accent-foreground: #f6f1ea;
+  --destructive: #f87171;
+  --border: #3a352f;
+  --input: #4a433b;
+  --ring: #ec9361;
+  --chart-1: #e0773a;
+  --chart-2: #4ade80;
+  --chart-3: #facc15;
+  --chart-4: #f87171;
+  --chart-5: #93c5fd;
+  --sidebar: #181614;
+  --sidebar-foreground: #d6cdc2;
+  --sidebar-primary: #e0773a;
+  --sidebar-primary-foreground: #1c1209;
+  --sidebar-accent: #2f2a25;
+  --sidebar-accent-foreground: #f6f1ea;
+  --sidebar-border: #3d3731;
+  --sidebar-ring: #ec9361;
+  /* legacy (App.css) */
+  --bg: #1c1a18;
+  --text: #efe9e1;
+  --text-light: #c5bbae;
+  --text-muted: #9c9285;
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.45);
+  --bg-card: #26231f;
+  --bg-surface: #322d28;
+  --bg-hover: rgba(224, 119, 58, .08);
+  --input-bg: #26231f;
+  --input-text: #efe9e1;
+  --ok: #4ade80;
+  --success: #16a34a;
+  --warning: #eab308;
+  --danger: #ef4444;
+  --info: #0ea5e9;
+  --chart-grid: #3d3731;
+  --chart-label: #9c9285;
+  --chart-dot-bg: #26231f;
+  --sb-accent: #e0773a;
+}
+
+/* ── Crucible (koyu): çok koyu kor zemin, sıcak açık metin, erimiş turuncu-kırmızı vurgu ───────────────────────── */
+[data-theme="crucible"] {
+  --background: #140b08;
+  --foreground: #fbeee6;
+  --card: #1f120d;
+  --card-foreground: #fbeee6;
+  --popover: #1f120d;
+  --popover-foreground: #fbeee6;
+  --primary: #ff6a2b;
+  --primary-foreground: #1a0a04;
+  --secondary: #2b1a13;
+  --secondary-foreground: #fbeee6;
+  --muted: #2a1912;
+  --muted-foreground: #c9ab9c;
+  --accent: #3a1f14;
+  --accent-foreground: #fff4ee;
+  --destructive: #fb7185;
+  --border: #3a2219;
+  --input: #4a2c20;
+  --ring: #ff8a57;
+  --chart-1: #ff6a2b;
+  --chart-2: #4ade80;
+  --chart-3: #fcd34d;
+  --chart-4: #fb7185;
+  --chart-5: #c4b5fd;
+  --sidebar: #1a0e0a;
+  --sidebar-foreground: #e9d3c6;
+  --sidebar-primary: #ff6a2b;
+  --sidebar-primary-foreground: #1a0a04;
+  --sidebar-accent: #2b1a13;
+  --sidebar-accent-foreground: #fff4ee;
+  --sidebar-border: #3d2419;
+  --sidebar-ring: #ff8a57;
+  /* legacy (App.css) */
+  --bg: #140b08;
+  --text: #fbeee6;
+  --text-light: #d9bcae;
+  --text-muted: #ad8f80;
+  --shadow: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --bg-card: #1f120d;
+  --bg-surface: #2b1a13;
+  --bg-hover: rgba(255, 106, 43, .08);
+  --input-bg: #1f120d;
+  --input-text: #fbeee6;
+  --ok: #4ade80;
+  --success: #16a34a;
+  --warning: #eab308;
+  --danger: #f43f5e;
+  --info: #0ea5e9;
+  --chart-grid: #3d2419;
+  --chart-label: #ad8f80;
+  --chart-dot-bg: #1f120d;
+  --sb-accent: #ff6a2b;
+}

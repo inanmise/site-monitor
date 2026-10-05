@@ -1,7 +1,11 @@
 /* `* { margin:0; padding:0; box-sizing:border-box }` styles/globals.css @layer base'e taşındı (shadcn):
    katmansız kalsaydı Tailwind'in her boşluk yardımcısını ezerdi. */
 
-:root {
+/* Temalar (2026-10-05): açık jetonlar `[data-scheme="light"]` öğesinde de YENİDEN tanımlanır — koyu sayfada açılan
+   açık tema önizlemesi (Ayarlar → Görünüm → Temalar, tema seçici renk örnekleri) koyu değerleri miras almasın. Sayfanın
+   kendisi için davranış aynı (html hem :root hem data-scheme taşır). Koyu kurallar `[data-scheme="dark"]`'a bağlıdır,
+   ek temaların jetonları styles/themes.css'te. */
+:root, [data-scheme="light"] {
   /* Branding (beyaz etiket): BrandingProvider primary-color ayarını --brand-primary olarak
      :root'a yazar; boşsa varsayılan mavi. (#2563eb hardcode'ları kapsam dışı — bilinçli.) */
   --primary: var(--brand-primary, #2563eb);
@@ -35,7 +39,7 @@
   --input-bg: #ffffff;
   --input-text: #09090b;
   --ok: #16a34a;
-  /* Login sol paneli — her temada KOYU kalır; [data-theme="dark"] altında YENİDEN TANIMLANMAZ */
+  /* Login sol paneli — her temada KOYU kalır; [data-scheme="dark"] altında YENİDEN TANIMLANMAZ */
   --lp-bg-1: #18181b;
   --lp-bg-2: #09090b;
   --lp-glow: rgba(59,130,246,0.10);
@@ -225,7 +229,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
    kutusu olarak çıkıyordu). Yeni kod AlertBanner kullanır; bu kural, sınıf adı yeniden
    yazılırsa aynı hatanın tekrarlanmaması için güvenlik ağı olarak duruyor. */
 .alert-msg--warn { background: #fff3cd; color: #856404; }
-[data-theme="dark"] .alert-msg--warn { background: #3a2e10; color: #fde68a; }
+[data-scheme="dark"] .alert-msg--warn { background: #3a2e10; color: #fde68a; }
 
 
 /* Form alanı (ui/Field). `.form-group` ve bağımsız `.hint` sınıfları 11 admin dosyasında
@@ -307,11 +311,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 .cert-card-mail-failure:hover { background: #fee2e2; border-color: #fca5a5; }
 .cert-card-mail-failure svg { color: #b91c1c; flex-shrink: 0; }
-[data-theme="dark"] .cert-card-mail-failure {
+[data-scheme="dark"] .cert-card-mail-failure {
   background: rgba(127,29,29,.28); color: #fecaca; border-color: #b91c1c;
 }
-[data-theme="dark"] .cert-card-mail-failure:hover { background: rgba(127,29,29,.45); }
-[data-theme="dark"] .cert-card-mail-failure svg { color: #fca5a5; }
+[data-scheme="dark"] .cert-card-mail-failure:hover { background: rgba(127,29,29,.45); }
+[data-scheme="dark"] .cert-card-mail-failure svg { color: #fca5a5; }
 
 /* Paylaşılan sertifika: çip artık düğme (2026-09-22) + pencere yerleşimi */
 .shc-table td, .shc-table th { vertical-align: middle; }
@@ -349,7 +353,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 /* ── Login — shadcn "authentication" düzeni (feature/shadcn-ui) ─────────────────────────
    Sol: koyu zinc tanıtım paneli — shadcn örneğindeki gibi HER temada koyu (--lp-* jetonları,
-   :root'ta; [data-theme="dark"] altında yeniden tanımlanmaz). Sağ: tema jetonlu form sütunu;
+   :root'ta; [data-scheme="dark"] altında yeniden tanımlanmaz). Sağ: tema jetonlu form sütunu;
    denetimler gerçek shadcn bileşenleri (Button/Input/Label/Badge/Alert/Dialog, Tailwind ile
    stillenir). Buradaki sınıflar yerleşimi ve testlerin yapısal sözleşmesini (Login.test.jsx:
    .lp-top/.lp-pillar/.lp-chip/.lp-help…) taşır; shadcn denetimlerinin rengine dokunmaz. */
@@ -638,7 +642,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
    <pre>'yi tamamen örter ve kutu BOŞ görünür — envanter "Değişiklik Açıklaması" vakası.
    Sızıntının İKİ kaynağı var ve ikisi de kütüphanenin (0,1,0) kurallarını yener:
      • `.form-grid label textarea`      (0,2,1) — editör bir <label> içindeyse
-     • `[data-theme="dark"] textarea`   (0,1,1) — koyu temada GLOBAL, <label> olmasa da
+     • `[data-scheme="dark"] textarea`   (0,1,1) — koyu temada GLOBAL, <label> olmasa da
    İkincisi yüzünden muafiyet global ve `!important` olmak ZORUNDA; yalnız formu düzeltmek
    koyu temada aynı hatayı bırakırdı. */
 .w-md-editor-text-input {
@@ -699,8 +703,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .la-incidents td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .la-badge.ok { background: rgba(22,163,74,.14); color: #16a34a; }
 .la-badge.active { background: rgba(220,38,38,.14); color: #dc2626; }
-[data-theme="dark"] .la-badge.ok { color: #86efac; }
-[data-theme="dark"] .la-badge.active { color: #fca5a5; }
+[data-scheme="dark"] .la-badge.ok { color: #86efac; }
+[data-scheme="dark"] .la-badge.active { color: #fca5a5; }
 
 /* ── Keyword / İçerik monitör formu (yeşil aksan — HTTP formunun klonu) ─────── */
 .kw-block-title { font-weight: 700; font-size: .9em; margin-bottom: 4px; color: var(--text, #18181b); }
@@ -837,14 +841,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .cert-note-icon-btn:hover { background: #f4f4f5; color: #3f3f46; }
 .cert-note-del-btn:hover  { background: #fee2e2; color: #b91c1c; }
 
-[data-theme="dark"] .cert-note-form        { background: #18181b; border-color: #3f3f46; }
-[data-theme="dark"] .cert-note-cat-select  { background: #18181b; border-color: #3f3f46; color: #e4e4e7; }
-[data-theme="dark"] .cert-note-error       { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
-[data-theme="dark"] .cert-note-filter-btn  { background: #27272a; border-color: #3f3f46; color: #d4d4d8; }
-[data-theme="dark"] .cert-note-filter-btn.active { background: #6366f1; color: #fff; }
-[data-theme="dark"] .cert-note-body        { color: #e4e4e7; }
-[data-theme="dark"] .cert-note-icon-btn    { color: #a1a1aa; }
-[data-theme="dark"] .cert-note-icon-btn:hover { background: #3f3f46; color: #e4e4e7; }
+[data-scheme="dark"] .cert-note-form        { background: #18181b; border-color: #3f3f46; }
+[data-scheme="dark"] .cert-note-cat-select  { background: #18181b; border-color: #3f3f46; color: #e4e4e7; }
+[data-scheme="dark"] .cert-note-error       { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
+[data-scheme="dark"] .cert-note-filter-btn  { background: #27272a; border-color: #3f3f46; color: #d4d4d8; }
+[data-scheme="dark"] .cert-note-filter-btn.active { background: #6366f1; color: #fff; }
+[data-scheme="dark"] .cert-note-body        { color: #e4e4e7; }
+[data-scheme="dark"] .cert-note-icon-btn    { color: #a1a1aa; }
+[data-scheme="dark"] .cert-note-icon-btn:hover { background: #3f3f46; color: #e4e4e7; }
 
 /* Note card header (badge + actions row) */
 .cert-note-card .cert-note-header {
@@ -923,26 +927,26 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .cert-note-history-eventRESTORE { color: #4338ca; }
 
 /* dark mode */
-[data-theme="dark"] .cert-note-meta { color: #a1a1aa; border-bottom-color: #3f3f46; }
-[data-theme="dark"] .cert-note-meta-item svg { color: #71717a; }
-[data-theme="dark"] .cert-note-author-strong { color: #e4e4e7; }
-[data-theme="dark"] .cert-note-author-username { color: #71717a; }
-[data-theme="dark"] .cert-note-card.cert-note-deleted { background: rgba(75,85,99,.15); }
-[data-theme="dark"] .cert-note-card.cert-note-deleted .cert-note-body { color: #a1a1aa; }
-[data-theme="dark"] .cert-note-deleted-banner { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
-[data-theme="dark"] .cert-note-restore-btn { color: #a5b4fc; }
-[data-theme="dark"] .cert-note-restore-btn:hover { background: rgba(67,56,202,.25); color: #c7d2fe; }
-[data-theme="dark"] .cert-note-history-btn { background: #27272a; border-color: #3f3f46; color: #d4d4d8; }
-[data-theme="dark"] .cert-note-history-btn:hover { border-color: #818cf8; color: #818cf8; }
-[data-theme="dark"] .cert-note-history-panel { background: #27272a; border-left-color: #818cf8; }
-[data-theme="dark"] .cert-note-history-title { color: #e4e4e7; }
-[data-theme="dark"] .cert-note-history-title svg { color: #818cf8; }
-[data-theme="dark"] .cert-note-history-item { border-top-color: #3f3f46; color: #d4d4d8; }
-[data-theme="dark"] .cert-note-history-body  { color: #e4e4e7; background: #09090b; border-color: #3f3f46; }
-[data-theme="dark"] .cert-note-history-eventCREATE  { color: #86efac; }
-[data-theme="dark"] .cert-note-history-eventEDIT    { color: #93c5fd; }
-[data-theme="dark"] .cert-note-history-eventDELETE  { color: #fca5a5; }
-[data-theme="dark"] .cert-note-history-eventRESTORE { color: #c4b5fd; }
+[data-scheme="dark"] .cert-note-meta { color: #a1a1aa; border-bottom-color: #3f3f46; }
+[data-scheme="dark"] .cert-note-meta-item svg { color: #71717a; }
+[data-scheme="dark"] .cert-note-author-strong { color: #e4e4e7; }
+[data-scheme="dark"] .cert-note-author-username { color: #71717a; }
+[data-scheme="dark"] .cert-note-card.cert-note-deleted { background: rgba(75,85,99,.15); }
+[data-scheme="dark"] .cert-note-card.cert-note-deleted .cert-note-body { color: #a1a1aa; }
+[data-scheme="dark"] .cert-note-deleted-banner { background: rgba(127,29,29,.25); color: #fecaca; border-color: #b91c1c; }
+[data-scheme="dark"] .cert-note-restore-btn { color: #a5b4fc; }
+[data-scheme="dark"] .cert-note-restore-btn:hover { background: rgba(67,56,202,.25); color: #c7d2fe; }
+[data-scheme="dark"] .cert-note-history-btn { background: #27272a; border-color: #3f3f46; color: #d4d4d8; }
+[data-scheme="dark"] .cert-note-history-btn:hover { border-color: #818cf8; color: #818cf8; }
+[data-scheme="dark"] .cert-note-history-panel { background: #27272a; border-left-color: #818cf8; }
+[data-scheme="dark"] .cert-note-history-title { color: #e4e4e7; }
+[data-scheme="dark"] .cert-note-history-title svg { color: #818cf8; }
+[data-scheme="dark"] .cert-note-history-item { border-top-color: #3f3f46; color: #d4d4d8; }
+[data-scheme="dark"] .cert-note-history-body  { color: #e4e4e7; background: #09090b; border-color: #3f3f46; }
+[data-scheme="dark"] .cert-note-history-eventCREATE  { color: #86efac; }
+[data-scheme="dark"] .cert-note-history-eventEDIT    { color: #93c5fd; }
+[data-scheme="dark"] .cert-note-history-eventDELETE  { color: #fca5a5; }
+[data-scheme="dark"] .cert-note-history-eventRESTORE { color: #c4b5fd; }
 
 /* ── Activity Log ───────────────────────────────────── */
 .activity-log { display: flex; flex-direction: column; gap: 12px; }
@@ -1075,7 +1079,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .badge          { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: .76em; font-weight: 600; white-space: nowrap; }
 
 /* ── Dark Mode ───────────────────────────────────────────── */
-[data-theme="dark"] {
+/* Koyu ŞEMA (2026-10-05): Koyu tema ve koyu şemalı ek temaların (Blueprint, Obsidian, Slag, Crucible) ortak tabanı;
+   ek temalar yalnız jetonlarını styles/themes.css'te ezer. */
+[data-scheme="dark"] {
   --bg: #09090b;
   --text: #fafafa;
   --text-light: #a1a1aa;
@@ -1096,57 +1102,57 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   --anomaly-muted:     #a1a1aa;
 }
 
-[data-theme="dark"] body { background: var(--bg); color: var(--text); }
-[data-theme="dark"] .app-layout { background: var(--bg); }
+[data-scheme="dark"] body { background: var(--bg); color: var(--text); }
+[data-scheme="dark"] .app-layout { background: var(--bg); }
 
 /* Stats panel */
-[data-theme="dark"] .stats-panel { background: var(--bg-card); }
-[data-theme="dark"] .stat-value { color: #e4e4e7; }
-[data-theme="dark"] .stats-filter-bar { background: #1a2940; border-color: #3f3f46; color: var(--text); }
+[data-scheme="dark"] .stats-panel { background: var(--bg-card); }
+[data-scheme="dark"] .stat-value { color: #e4e4e7; }
+[data-scheme="dark"] .stats-filter-bar { background: #1a2940; border-color: #3f3f46; color: var(--text); }
 
 /* Content & cards */
-[data-theme="dark"] .content { background: var(--bg-card); }
-[data-theme="dark"] .certificate-card.high { background: #1a1000; }
-[data-theme="dark"] .certificate-card.critical,
-[data-theme="dark"] .certificate-card.error { background: #200e0e; }
-[data-theme="dark"] .days-remaining.valid { background: #0c2318; color: #22c55e; }
-[data-theme="dark"] .days-remaining.warning  { background: #2a2200; color: #eab308; }
-[data-theme="dark"] .days-remaining.high     { background: #2a1400; color: #f97316; }
-[data-theme="dark"] .days-remaining.critical,
-[data-theme="dark"] .days-remaining.error    { background: #270c0c; color: #ef4444; }
+[data-scheme="dark"] .content { background: var(--bg-card); }
+[data-scheme="dark"] .certificate-card.high { background: #1a1000; }
+[data-scheme="dark"] .certificate-card.critical,
+[data-scheme="dark"] .certificate-card.error { background: #200e0e; }
+[data-scheme="dark"] .days-remaining.valid { background: #0c2318; color: #22c55e; }
+[data-scheme="dark"] .days-remaining.warning  { background: #2a2200; color: #eab308; }
+[data-scheme="dark"] .days-remaining.high     { background: #2a1400; color: #f97316; }
+[data-scheme="dark"] .days-remaining.critical,
+[data-scheme="dark"] .days-remaining.error    { background: #270c0c; color: #ef4444; }
 
 /* Tables */
-[data-theme="dark"] .certificates-table th { background: color-mix(in srgb, var(--muted) 55%, var(--bg-card)); }
-[data-theme="dark"] .certificates-table tr:hover td { background: var(--bg-hover); }
+[data-scheme="dark"] .certificates-table th { background: color-mix(in srgb, var(--muted) 55%, var(--bg-card)); }
+[data-scheme="dark"] .certificates-table tr:hover td { background: var(--bg-hover); }
 
 /* Login — sağ panel "sisli Ege" tasarımıyla HER temada aynı bilinçli koyu görünümde;
-   eski [data-theme="dark"] .lp-* override'ları kaldırıldı (yeni stili eziyorlardı). */
+   eski [data-scheme="dark"] .lp-* override'ları kaldırıldı (yeni stili eziyorlardı). */
 
 /* Inputs, selects */
 /* Yalnız LEGACY alanlar: shadcn Input/Textarea/NativeSelect (data-slot) kendi koyu tonunu Tailwind'den
    alır — katmansız bu kural onları ezip InputGroup içinde ayrı bir kutu çiziyordu. */
-[data-theme="dark"] input:not([type="checkbox"]):not([data-slot]),
-[data-theme="dark"] select:not([data-slot]),
-[data-theme="dark"] textarea:not([data-slot]) { background: var(--input-bg); color: var(--input-text); border-color: var(--input); }
+[data-scheme="dark"] input:not([type="checkbox"]):not([data-slot]),
+[data-scheme="dark"] select:not([data-slot]),
+[data-scheme="dark"] textarea:not([data-slot]) { background: var(--input-bg); color: var(--input-text); border-color: var(--input); }
 
 /* Modals */
-[data-theme="dark"] .modal-box         { background: var(--bg-card); }
-[data-theme="dark"] .modal-tab.active  { color: var(--text); border-bottom-color: var(--primary); }
-[data-theme="dark"] .modal-actions     { border-top-color: var(--border); }
+[data-scheme="dark"] .modal-box         { background: var(--bg-card); }
+[data-scheme="dark"] .modal-tab.active  { color: var(--text); border-bottom-color: var(--primary); }
+[data-scheme="dark"] .modal-actions     { border-top-color: var(--border); }
 
 
 /* Admin panel */
-[data-theme="dark"] .admin-tab-btn.active { color: var(--primary); }
-[data-theme="dark"] .alert-msg { background: #0c2318; color: #4ade80; }
-[data-theme="dark"] .alert-msg--err { background: #2d1519; color: #f87171; }
+[data-scheme="dark"] .admin-tab-btn.active { color: var(--primary); }
+[data-scheme="dark"] .alert-msg { background: #0c2318; color: #4ade80; }
+[data-scheme="dark"] .alert-msg--err { background: #2d1519; color: #f87171; }
 
 /* Column filter dropdown */
-[data-theme="dark"] .cf-menu { background: var(--bg-card); border-color: var(--border); }
-[data-theme="dark"] .cf-menu-title { color: #71717a; border-bottom-color: var(--border); }
-[data-theme="dark"] .cf-opt { color: var(--text); }
-[data-theme="dark"] .cf-opt:hover { background: var(--bg-surface); }
-[data-theme="dark"] .cf-opt-selected { background: #1a2940; }
-[data-theme="dark"] .cf-opt-selected:hover { background: #1e3358; }
+[data-scheme="dark"] .cf-menu { background: var(--bg-card); border-color: var(--border); }
+[data-scheme="dark"] .cf-menu-title { color: #71717a; border-bottom-color: var(--border); }
+[data-scheme="dark"] .cf-opt { color: var(--text); }
+[data-scheme="dark"] .cf-opt:hover { background: var(--bg-surface); }
+[data-scheme="dark"] .cf-opt-selected { background: #1a2940; }
+[data-scheme="dark"] .cf-opt-selected:hover { background: #1e3358; }
 
 /* Renewal */
 
@@ -1188,12 +1194,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 
 /* ── Metrics charts ───────────────────────────────────────────── */
-:root {
+:root, [data-scheme="light"] {
   --chart-grid:   #e4e4e7;
   --chart-label:  #a1a1aa;
   --chart-dot-bg: #fff;
 }
-[data-theme="dark"] {
+[data-scheme="dark"] {
   --chart-grid:   #3f3f46;
   --chart-label:  #71717a;
   --chart-dot-bg: #18181b;
@@ -1339,13 +1345,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 
 /* Dark-mode overrides */
-[data-theme="dark"] .chart-modal {
+[data-scheme="dark"] .chart-modal {
   box-shadow: 0 20px 60px rgba(0,0,0,.5);
 }
-[data-theme="dark"] .chart-stat-pill {
+[data-scheme="dark"] .chart-stat-pill {
   background: var(--bg-hover, #18181b);
 }
-[data-theme="dark"] .chart-modal-close:hover {
+[data-scheme="dark"] .chart-modal-close:hover {
   background: var(--bg-hover, #18181b);
 }
 
@@ -1411,11 +1417,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .dev-anomaly--geo-velocity,
 .dev-anomaly--brute-force,
 .dev-anomaly--rate-limited { background: rgba(220,38,38,.10);  color: #b91c1c; }
-[data-theme="dark"] .dev-anomaly--off-hours    { color: #fbbf24; }
-[data-theme="dark"] .dev-anomaly--unusual-ip,
-[data-theme="dark"] .dev-anomaly--geo-velocity,
-[data-theme="dark"] .dev-anomaly--brute-force,
-[data-theme="dark"] .dev-anomaly--rate-limited { color: #fca5a5; }
+[data-scheme="dark"] .dev-anomaly--off-hours    { color: #fbbf24; }
+[data-scheme="dark"] .dev-anomaly--unusual-ip,
+[data-scheme="dark"] .dev-anomaly--geo-velocity,
+[data-scheme="dark"] .dev-anomaly--brute-force,
+[data-scheme="dark"] .dev-anomaly--rate-limited { color: #fca5a5; }
 
 /* Başarısız denemeler — katlanır bölüm */
 .dev-collapse.is-open .dev-collapse-caret { transform: rotate(90deg); }
@@ -1504,9 +1510,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .audit-diff-from  { color: #dc2626; text-decoration: line-through; }
 .audit-diff-to    { color: #16a34a; }
 
-[data-theme="dark"] .audit-diff-table th { background: #422006; color: #fcd34d; border-color: #78350f; }
-[data-theme="dark"] .audit-diff-from { color: #fca5a5; }
-[data-theme="dark"] .audit-diff-to   { color: #86efac; }
+[data-scheme="dark"] .audit-diff-table th { background: #422006; color: #fcd34d; border-color: #78350f; }
+[data-scheme="dark"] .audit-diff-from { color: #fca5a5; }
+[data-scheme="dark"] .audit-diff-to   { color: #86efac; }
 
 /* ── Gelişmiş denetim konsolu: toolbar / presetler / bütünlük / drill-down ── */
 
@@ -1548,13 +1554,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .audit-pagination button:not(:disabled):hover { border-color: var(--primary, #2563eb); }
 
 /* Dark mode */
-[data-theme="dark"] .ev-login   { background: #052e16; color: #86efac; }
-[data-theme="dark"] .ev-failed  { background: #450a0a; color: #fca5a5; }
-[data-theme="dark"] .ev-logout  { background: #18181b; color: #a1a1aa; }
-[data-theme="dark"] .ev-delete  { background: #450a0a; color: #fca5a5; }
-[data-theme="dark"] .ev-create  { background: #172554; color: #93c5fd; }
-[data-theme="dark"] .ev-edit    { background: #422006; color: #fcd34d; }
-[data-theme="dark"] .ev-other   { background: #18181b; color: #a1a1aa; }
+[data-scheme="dark"] .ev-login   { background: #052e16; color: #86efac; }
+[data-scheme="dark"] .ev-failed  { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .ev-logout  { background: #18181b; color: #a1a1aa; }
+[data-scheme="dark"] .ev-delete  { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .ev-create  { background: #172554; color: #93c5fd; }
+[data-scheme="dark"] .ev-edit    { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .ev-other   { background: #18181b; color: #a1a1aa; }
 
 /* ═══ DENETİM — ANA-DETAY DÜZENİ (aud-*) ═══════════════════════════════════════
    Yeni sınıflar BİLEREK ayrı önek alıyor. `audit-*` ailesi üç ekran tarafından
@@ -1604,10 +1610,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .audit-event-badge.ev-system { background: #ede9fe; color: #5b21b6; }
 .audit-event-badge.ev-export { background: #ffedd5; color: #9a3412; }
 
-[data-theme="dark"] .audit-event-badge.ev-denied { background: #991b1b; color: #fee2e2; }
-[data-theme="dark"] .audit-event-badge.ev-test   { background: #0c4a6e; color: #bae6fd; }
-[data-theme="dark"] .audit-event-badge.ev-system { background: #4c1d95; color: #ddd6fe; }
-[data-theme="dark"] .audit-event-badge.ev-export { background: #7c2d12; color: #fed7aa; }
+[data-scheme="dark"] .audit-event-badge.ev-denied { background: #991b1b; color: #fee2e2; }
+[data-scheme="dark"] .audit-event-badge.ev-test   { background: #0c4a6e; color: #bae6fd; }
+[data-scheme="dark"] .audit-event-badge.ev-system { background: #4c1d95; color: #ddd6fe; }
+[data-scheme="dark"] .audit-event-badge.ev-export { background: #7c2d12; color: #fed7aa; }
 
 
 /* ═══════════════════════  YES/NO TOGGLE + FORM SECTIONS  ═════════════ */
@@ -1850,12 +1856,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .port-ep--lg .port-ep-proto--lead { font-size: 13.5px; }
 .port-ep-fam { font-family: 'Consolas', ui-monospace, monospace; font-size: 12px; font-weight: 700; color: var(--text);
   border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; line-height: 1.4; }
-[data-theme="dark"] .port-ep-proto--icmp { background: #164e63; color: #a5f3fc; }
-[data-theme="dark"] .port-ep-proto--tcp { background: #1e3a8a; color: #bfdbfe; }
-[data-theme="dark"] .port-ep-proto--tls { background: #14532d; color: #bbf7d0; }
-[data-theme="dark"] .port-ep-proto--http { background: #2e1065; color: #ddd6fe; }
-[data-theme="dark"] .port-ep-proto--banner { background: #422006; color: #fcd34d; }
-[data-theme="dark"] .port-ep-proto--udp { background: #431407; color: #fdba74; }
+[data-scheme="dark"] .port-ep-proto--icmp { background: #164e63; color: #a5f3fc; }
+[data-scheme="dark"] .port-ep-proto--tcp { background: #1e3a8a; color: #bfdbfe; }
+[data-scheme="dark"] .port-ep-proto--tls { background: #14532d; color: #bbf7d0; }
+[data-scheme="dark"] .port-ep-proto--http { background: #2e1065; color: #ddd6fe; }
+[data-scheme="dark"] .port-ep-proto--banner { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .port-ep-proto--udp { background: #431407; color: #fdba74; }
 
 /* ── Uptime Toolbar ── */
 .upt-toolbar {
@@ -1887,7 +1893,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* NO_CHECKS (koştu ama hiçbir şey doğrulanmadı) — arıza değil, yapılandırma kusuru.
    .upt-badge--warn / .upt-card--warn ile aynı amber aile (App.css:2734-2736). */
 .upt-rt-warn { color: #d97706; font-weight: 600; white-space: nowrap; }
-[data-theme="dark"] .upt-rt-warn { color: #fbbf24; }
+[data-scheme="dark"] .upt-rt-warn { color: #fbbf24; }
 
 /* "Nerede takıldı?" — isteğin faz kırılımı. Fazlar SIRALI okunur; ölçülmeyen ilk faz vurgulanır.
    Renkler token'lardan: sabit hex kullanılırsa karanlık tema kırılır (proje kuralı). */
@@ -2180,8 +2186,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .sc-ver-preview-body { padding: 12px; }
 .sc-ver-preview-body > .sc-diff-summary:first-child { margin-top: 0; }
 
-[data-theme="dark"] .sc-vt-dot { border-color: var(--bg-card); }
-[data-theme="dark"] .sc-ver-preview { background: var(--bg-card); }
+[data-scheme="dark"] .sc-vt-dot { border-color: var(--bg-card); }
+[data-scheme="dark"] .sc-ver-preview { background: var(--bg-card); }
 
 
 /* ── Kişi-webhook (push) bildirim ayarları ─────────────────────────────────────
@@ -2304,8 +2310,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .mon-badge-up      { background: #e8f5e9; color: #2e7d32; }
 .mon-badge-down    { background: #ffebee; color: #c62828; }
 .mon-badge-unknown { background: var(--bg-surface); color: var(--text-muted); border: 1px solid var(--border); }
-[data-theme="dark"] .mon-badge-up   { background: #1b2e1c; color: #81c784; }
-[data-theme="dark"] .mon-badge-down { background: #2d1519; color: #f87171; }
+[data-scheme="dark"] .mon-badge-up   { background: #1b2e1c; color: #81c784; }
+[data-scheme="dark"] .mon-badge-down { background: #2d1519; color: #f87171; }
 
 .mon-cell-name  { font-weight: 600; }
 .mon-cell-mono  { font-family: Consolas, monospace; font-size: 12px; }
@@ -2370,8 +2376,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .mon-btn-edit:hover  { border-color: var(--primary); color: var(--primary); }
 .mon-btn-del   { background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; padding: 3px 8px; }
 .mon-btn-del:hover   { background: #ffcdd2; }
-[data-theme="dark"] .mon-btn-check { background: #1b2e1c; color: #81c784; border-color: #2e7d32; }
-[data-theme="dark"] .mon-btn-del   { background: #2d1519; color: #f87171; border-color: #7f1d1d; }
+[data-scheme="dark"] .mon-btn-check { background: #1b2e1c; color: #81c784; border-color: #2e7d32; }
+[data-scheme="dark"] .mon-btn-del   { background: #2d1519; color: #f87171; border-color: #7f1d1d; }
 
 .mon-detail { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-top: 4px; }
 
@@ -2461,13 +2467,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   color: var(--text-light);
 }
 .dns-diff-when strong { color: var(--text); font-variant-numeric: tabular-nums; }
-[data-theme="dark"] .dns-diff-when { border-left-color: #fca5a5; }
+[data-scheme="dark"] .dns-diff-when { border-left-color: #fca5a5; }
 
 /* Response time trend chart */
 .dns-chart-tt-badge.changed { background: rgba(220,38,38,.12); color: #b91c1c; }
 .dns-chart-tt-badge.rotated { background: rgba(245,158,11,.14); color: #92400e; }
-[data-theme="dark"] .dns-chart-tt-badge.changed { color: #fca5a5; background: rgba(220,38,38,.22); }
-[data-theme="dark"] .dns-chart-tt-badge.rotated { color: #fbbf24; background: rgba(245,158,11,.24); }
+[data-scheme="dark"] .dns-chart-tt-badge.changed { color: #fca5a5; background: rgba(220,38,38,.22); }
+[data-scheme="dark"] .dns-chart-tt-badge.rotated { color: #fbbf24; background: rgba(245,158,11,.24); }
 
 .dns-history-value {
   max-width: 280px;
@@ -2541,8 +2547,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 .dns-diff-removed { background: rgba(220,38,38,.08); color: #b91c1c; }
 .dns-diff-added   { background: rgba(34,197,94,.10); color: #15803d; }
-[data-theme="dark"] .dns-diff-removed { background: rgba(220,38,38,.18); color: #fca5a5; }
-[data-theme="dark"] .dns-diff-added   { background: rgba(34,197,94,.18); color: #4ade80; }
+[data-scheme="dark"] .dns-diff-removed { background: rgba(220,38,38,.18); color: #fca5a5; }
+[data-scheme="dark"] .dns-diff-added   { background: rgba(34,197,94,.18); color: #4ade80; }
 .dns-diff-sign {
   font-weight: 700;
   min-width: 12px;
@@ -2648,7 +2654,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   .hlth-evidence { grid-template-columns: 1fr; padding-left: 12px; }
 }
 
-[data-theme="dark"] .hlth-row:nth-child(even) { background: color-mix(in srgb, #fff 3%, transparent); }
+[data-scheme="dark"] .hlth-row:nth-child(even) { background: color-mix(in srgb, #fff 3%, transparent); }
 
 
 /* CA Diversity Modal */
@@ -2815,7 +2821,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 /* Segmented control — tek aktif seçimli grup (eski btn-primary/secondary takasının rafine hali) */
 .seg-ctl-btn.active { background: var(--bg-card); color: var(--text); box-shadow: 0 1px 3px 0 rgb(0 0 0 / .1), 0 1px 2px -1px rgb(0 0 0 / .1); }
-[data-theme="dark"] .seg-ctl-btn.active { background: color-mix(in srgb, var(--input) 55%, var(--muted)); border-color: var(--input); }
+[data-scheme="dark"] .seg-ctl-btn.active { background: color-mix(in srgb, var(--input) 55%, var(--muted)); border-color: var(--input); }
 
 
 /* Kaynak sekmesi ust satiri: olcum secici solda, CSV sagda. Ihlal anlari eskiden
@@ -2930,8 +2936,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .today-delta { font-size: .72em; font-weight: 700; padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
 .today-delta.is-worse { background: #fee2e2; color: #991b1b; }
 .today-delta.is-better { background: #dcfce7; color: #166534; }
-[data-theme="dark"] .today-delta.is-worse { background: #450a0a; color: #fca5a5; }
-[data-theme="dark"] .today-delta.is-better { background: #052e16; color: #86efac; }
+[data-scheme="dark"] .today-delta.is-worse { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .today-delta.is-better { background: #052e16; color: #86efac; }
 .today-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 14px 10px; font-size: .84em; color: var(--text-light); }
 .today-recent-lbl { font-weight: 600; color: var(--text); }
 .today-recent-legend { margin-left: auto; font-size: .92em; }
@@ -2974,24 +2980,24 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* Sağlık bulgusu rozeti (Zayıf imza / Zincir kırık …) — kritik anahtarlar kırmızı */
 .today-finding { font-size: .74em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: #fef3c7; color: #92400e; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .today-finding.is-bad { background: #fee2e2; color: #991b1b; }
-[data-theme="dark"] .today-type--email { background: #1e3a8a; color: #bfdbfe; }
-[data-theme="dark"] .today-type--webhook { background: #2e1065; color: #ddd6fe; }
-[data-theme="dark"] .today-type--push { background: #431407; color: #fdba74; }
-[data-theme="dark"] .today-type--maint { background: #1e3a8a; color: #bfdbfe; }
-[data-theme="dark"] .today-type--soon { background: #312e81; color: #c7d2fe; }
-[data-theme="dark"] .today-finding { background: #422006; color: #fcd34d; }
-[data-theme="dark"] .today-finding.is-bad { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .today-type--email { background: #1e3a8a; color: #bfdbfe; }
+[data-scheme="dark"] .today-type--webhook { background: #2e1065; color: #ddd6fe; }
+[data-scheme="dark"] .today-type--push { background: #431407; color: #fdba74; }
+[data-scheme="dark"] .today-type--maint { background: #1e3a8a; color: #bfdbfe; }
+[data-scheme="dark"] .today-type--soon { background: #312e81; color: #c7d2fe; }
+[data-scheme="dark"] .today-finding { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .today-finding.is-bad { background: #450a0a; color: #fca5a5; }
 .today-status { font-size: .78em; font-weight: 600; padding: 1px 7px; border-radius: 6px; background: var(--bg-hover); }
 .today-status--approved { background: #dcfce7; color: #166534; }
 .today-status--pending_approval { background: #dbeafe; color: #1e40af; }
 .today-status--draft, .today-status--rejected, .today-status--missing { background: #fef3c7; color: #92400e; }
 .today-card-go { align-self: flex-end; margin-top: auto; background: none; border: 0; color: var(--primary); font: inherit; font-size: .82em; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
-[data-theme="dark"] .today-level--critical { background: #450a0a; color: #fca5a5; }
-[data-theme="dark"] .today-level--high { background: #431407; color: #fdba74; }
-[data-theme="dark"] .today-level--warning { background: #422006; color: #fcd34d; }
-[data-theme="dark"] .today-status--approved { background: #052e16; color: #86efac; }
-[data-theme="dark"] .today-status--pending_approval { background: #1e3a8a; color: #bfdbfe; }
-[data-theme="dark"] .today-status--draft, [data-theme="dark"] .today-status--rejected, [data-theme="dark"] .today-status--missing { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .today-level--critical { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .today-level--high { background: #431407; color: #fdba74; }
+[data-scheme="dark"] .today-level--warning { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .today-status--approved { background: #052e16; color: #86efac; }
+[data-scheme="dark"] .today-status--pending_approval { background: #1e3a8a; color: #bfdbfe; }
+[data-scheme="dark"] .today-status--draft, [data-scheme="dark"] .today-status--rejected, [data-scheme="dark"] .today-status--missing { background: #422006; color: #fcd34d; }
 
 /* ── Komut paleti (Ctrl+K, 2026-09-12 #1) ─────────────────────────────────────────────────── */
 /* Bildirim kutusu (.inbox / .inbox-selbar) 2026-09-26'da shadcn Popover/Sheet'e taşındı (components/inbox/*) — kuralları silindi. */
@@ -3014,9 +3020,9 @@ body:has(.app-main .sticky.bottom-0) [data-tour="help-fab"] { bottom: calc(88px 
 .alert-why-chip.is-ok { background: #dcfce7; color: #166534; }
 .alert-why-chip.is-warn { background: #fef3c7; color: #92400e; }
 .alert-why-chip.is-bad { background: #fee2e2; color: #991b1b; }
-[data-theme="dark"] .alert-why-chip.is-ok { background: #052e16; color: #86efac; }
-[data-theme="dark"] .alert-why-chip.is-warn { background: #422006; color: #fcd34d; }
-[data-theme="dark"] .alert-why-chip.is-bad { background: #450a0a; color: #fca5a5; }
+[data-scheme="dark"] .alert-why-chip.is-ok { background: #052e16; color: #86efac; }
+[data-scheme="dark"] .alert-why-chip.is-warn { background: #422006; color: #fcd34d; }
+[data-scheme="dark"] .alert-why-chip.is-bad { background: #450a0a; color: #fca5a5; }
 
 /* Toplu işlem çubuğu (izleme sayfaları, 2026-09-12 #13) */
 .bulkbar-field { display: inline-flex; align-items: center; gap: 4px; padding-left: 6px; border-left: 1px solid var(--border); }
@@ -3105,7 +3111,7 @@ body:has(.app-main .sticky.bottom-0) [data-tour="help-fab"] { bottom: calc(88px 
 .tour-check-ok { color: var(--success); }
 .tour-check-todo { color: var(--text-light); }
 /* Sistem Sağlığı: 7. KPI (tur) */
-[data-theme="dark"] .tour-mask { background: rgba(2, 6, 23, .7); }
+[data-scheme="dark"] .tour-mask { background: rgba(2, 6, 23, .7); }
 @media (prefers-reduced-motion: reduce) { .tour-ring, .tour-tip { transition: none; } }
 @media (max-width: 640px) {
   .tour-tip--sheet { left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto !important; max-height: 60vh; overflow: auto; }

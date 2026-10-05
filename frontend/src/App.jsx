@@ -16,6 +16,7 @@ import PaginationBar from './components/ui/PaginationBar.jsx'
 import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from './hooks/useUrlQuerySync.js'
 import { useUserPrefsController, UserPrefsContext } from './hooks/useUserPrefs.js'   // kişisel tercihler (2026-10-02, öneri 23)
 import { resolveLandingTab } from './hooks/userPrefsModel.js'
+import { useThemePrefSync } from './hooks/useThemePrefSync.js'   // tema seçimi sunucudan (2026-10-05)
 import { landingTabOptions } from './utils/landingTabs.js'
 import { installLeaveBeacon } from './utils/tabPresence.js'
 import { APPLY_VIEW_EVENT } from './utils/navigate.js'
@@ -34,6 +35,7 @@ import {
 import { claimPersonalStorage, clearPersonalStorage, storageOwner } from './utils/personalStorage.js'
 import Nav from './components/Nav'
 import MobileTopBar from './components/nav/MobileTopBar.jsx'
+import ThemePreviewBar from './components/theme/ThemePreviewBar.jsx'
 import BrandLogo from './components/BrandLogo.jsx'
 import { useStatusFavicon } from './hooks/useStatusFavicon.js'
 import { useCertDeepLink } from './hooks/useCertDeepLink.js'
@@ -546,6 +548,10 @@ export default function App() {
     if (!prefsCtl.hydratedKeys.includes('sidebar-open')) return
     try { setSidebarOpen(localStorage.getItem('sidebar-open') !== 'false') } catch { /* depolama yok */ }
   }, [prefsCtl.hydratedKeys])
+  // Tema (2026-10-05, ürün kararı: seçim sonraki oturumlarda hatırlanır): sunucudaki seçim localStorage'a yazıldıysa
+  // ThemeProvider onu HEMEN uygular (yeniden yükleme yok; yalnız okur → PUT döngüsü yok). Kapalı/bilinmeyen tema →
+  // yönetici varsayılanı; saklı seçim silinmez.
+  useThemePrefSync(prefsCtl.hydratedKeys)
 
   // Açılış sekmesi (öneri 23): YALNIZ adreste derin bağlantı yokken, tercihler yüklendikten sonra, girişte bir kez ve
   // kullanıcı bu arada başka sekmeye geçmediyse. Değer görünür sekmeler listesine karşı doğrulanır (bilinmeyen/yasak →
@@ -1457,6 +1463,9 @@ export default function App() {
           onOpenSettings={globalAdmin ? () => handleTabChange('settings', { sec: 'sysmaint' }) : undefined}
           style={inactivityH ? { marginTop: inactivityH } : undefined} />
         <AnnouncementBanner heroOnMount />
+        {/* Tema önizlemesi (2026-10-05, Ayarlar → Görünüm → Temalar): yalnız bu sekmede, kaydedilmemiş — her sayfada görünür
+            "önizlemeyi bitir" şeridi (yapışkan) */}
+        <ThemePreviewBar />
         {/* Yalnız şüpheli durumda (önceki girişten bu yana başarısız deneme varsa) görünür. */}
         <LastLoginNotice info={loginInfo} />
         <div className="app-body">

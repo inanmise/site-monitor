@@ -106,6 +106,28 @@ class BrandingControllerTest {
     }
 
     @Test
+    @DisplayName("Temalar (2026-10-05): public /api/branding açık temaları + varsayılanı taşır; yanıt no-store kalır")
+    void publicBranding_carriesThemes_noStore() throws Exception {
+        mvc.perform(get("/api/branding"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("public"))))
+                .andExpect(jsonPath("$.data.themes.enabled.length()").value(8))
+                .andExpect(jsonPath("$.data.themes.enabled[0]").value("light"))
+                .andExpect(jsonPath("$.data.themes.enabled[7]").value("crucible"))
+                .andExpect(jsonPath("$.data.themes.default").value("system"));
+
+        // Yönetici listeyi daralttı ve varsayılanı ek temaya çekti → uç bunu aynen (kanonik sırada) yayınlar.
+        when(settingsService.getString(eq("site.monitor.theme.enabled"), anyString())).thenReturn("slag,parchment");
+        when(settingsService.getString(eq("site.monitor.theme.default"), anyString())).thenReturn("slag");
+        mvc.perform(get("/api/branding"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.themes.enabled.length()").value(2))
+                .andExpect(jsonPath("$.data.themes.enabled[0]").value("parchment"))
+                .andExpect(jsonPath("$.data.themes.default").value("slag"));
+    }
+
+    @Test
     @DisplayName("Surum public ucta DONER ve AppVersion ile AYNI degerdir (tek dogruluk kaynagi)")
     void publicBranding_exposesAppVersion() throws Exception {
         String expected = com.sitemonitor.service.AppVersion.resolve(environment);

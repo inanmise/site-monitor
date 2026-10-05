@@ -6,6 +6,7 @@ import com.sitemonitor.service.AuditDetail;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
+import com.sitemonitor.service.ThemeCatalog;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
@@ -130,6 +131,10 @@ public class BrandingController {
         // çözdüğü için burada verilen değer her zaman günceldir. Bu uç zaten public ve login
         // sayfasınca çekiliyor → ne yeni uç ne de ek istek gerekti (60 sn cache yeterli).
         b.put("app_version",       com.sitemonitor.service.AppVersion.resolve(environment));
+        // Temalar (2026-10-05): yöneticinin açık bıraktığı temalar + varsayılan ({@code system} = işletim sistemine göre
+        // açık/koyu). Giriş sayfası ve ilk boyama hangi temaların serbest olduğunu buradan bilir; seçilen tema kapatılmışsa
+        // istemci varsayılana düşer. Hoşgörülü görünüm (ThemeCatalog.effective): uç hiçbir değerde hata vermez.
+        b.put("themes",            ThemeCatalog.publicView(settingsService));
         return ok(Map.of("data", b));
     }
 
