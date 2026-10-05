@@ -73,4 +73,15 @@ public class PageCheck {
 
     @Column(name = "checked_at")
     private String checkedAt;
+
+    // ── Hata teşhisi (2026-10-05): DOWN / CONFIG_ERROR / DEGRADED satırda dolu, NULL'lanabilir; ok/status ve alarm
+    // DEĞİŞMEDİ. DOWN'da neden ana sayfa çekiminin istisnasından (en kesin) sınıflandırılır.
+
+    /** Neden kodu ({@code CheckFailureReason}). */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, hedef, HTTP durumu, yol, zaman aşımı, kaynak sayaçları …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

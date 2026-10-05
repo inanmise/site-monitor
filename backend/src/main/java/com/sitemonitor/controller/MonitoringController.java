@@ -948,6 +948,19 @@ public class MonitoringController {
         return rows;
     }
 
+    /**
+     * Liste satırlarına {@code can_diagnose} (2026-10-05, ping / port / DNS uçtan uca tanılaması + alan adı "Sorun Tanıla"):
+     * {@code can_check} + {@code diagnostics.run/execute} — tanılama ucunun ({@code NetworkMonitorDiagnosticsController},
+     * alan adında {@code POST /api/admin/diagnostics/domain-expiry}) kapısıyla AYNI kural; HTTP/keyword listesiyle aynı
+     * desen. İzin istek başına BİR KEZ değerlendirilir, ek sorgu yok. EK alan.
+     */
+    private List<Map<String, Object>> withDiagnoseFlag(HttpSession session, List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = withCheckFlag(session, rows);
+        boolean diagPerm = permissionService.allows(session, "diagnostics.run", "execute");
+        for (Map<String, Object> row : out) row.put("can_diagnose", diagPerm && Boolean.TRUE.equals(row.get("can_check")));
+        return out;
+    }
+
     /** Serbest-form izleme (keyword/ping) üzerinde yazma/çalıştırma kapsamı:
      *  global admin → her takım; TEAM_ADMIN → yönetim kapsamındaki takımlar; USER → kendi takımı. */
     private boolean canOperateTeam(HttpSession session, Long teamId) {
@@ -1741,7 +1754,7 @@ public class MonitoringController {
             PortCheck latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichPort(m, latest, teamMap, teamById, portAlarms.get(m.getHost())));
         }
-        return ok(withCheckFlag(session, result));
+        return ok(withDiagnoseFlag(session, result));
     }
 
     @PostMapping("/port")
@@ -1939,6 +1952,9 @@ public class MonitoringController {
             check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
             check.setError((String) r.get("error"));
             check.setCheckedAt(now);
+            // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPort)
+            check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
+            check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
             portCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PORT_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
@@ -2200,7 +2216,7 @@ public class MonitoringController {
             DnsRecord latest = m.getId() != null ? latestByMonitor.get(m.getId()) : null;
             result.add(enrichDns(m, latest, teamMap, teamById, dnsAlarms.get(m.getDomain())));
         }
-        return ok(withCheckFlag(session, result));
+        return ok(withDiagnoseFlag(session, result));
     }
 
     /** DNS sayfasından STANDALONE (sertifikadan bağımsız) monitör oluşturur. monitoring.crud yetkili
@@ -2425,13 +2441,18 @@ public class MonitoringController {
         DnsMonitor mon = findLiveDns(id).orElse(null);
         if (mon == null) return notFound("DNS monitor not found");
         String effStatus = changedOnly ? "changed" : status;   // eski changedOnly paramı geriye-uyum sugar'ı
+        // Hata teşhisi (2026-10-05): DNS'te iki süzgeç — "changed" (Değişenler, eskisi gibi; sayaç counts.fail) ve "fail"
+        // (Başarısız sorgu: boş değer; sayaç counts.errors). Eskiden status=fail da "Değişenler"e düşüyordu.
+        boolean failedLookups = "fail".equalsIgnoreCase(effStatus);
         var src = new CheckHistoryService.Source<DnsRecord>() {
             public org.springframework.data.domain.Page<DnsRecord> page(String f, String t, boolean fail, org.springframework.data.domain.Pageable p) {
+                if (fail && failedLookups) return dnsRecordRepo.findFailedByMonitorIdBetween(id, f, t, p);
                 return fail ? dnsRecordRepo.findChangedByMonitorIdBetween(id, f, t, p)
                             : dnsRecordRepo.findByMonitorIdAndCheckedAtBetween(id, f, t, p);
             }
             public long total(String f, String t) { return dnsRecordRepo.countByMonitorIdAndCheckedAtBetween(id, f, t); }
             public long fail(String f, String t) { return dnsRecordRepo.countChangedByMonitorIdBetween(id, f, t); }
+            @Override public Long errors(String f, String t) { return dnsRecordRepo.countFailedByMonitorIdBetween(id, f, t); }
             public List<Object[]> histogram(String f, String t, int len) { return dnsRecordRepo.historyHistogram(id, f, t, len); }
             public List<Object[]> bounds() { return dnsRecordRepo.historyBounds(id); }
         };
@@ -2508,6 +2529,8 @@ public class MonitoringController {
             // ELLE kayıt (2026-09-29): geçmişte görünür, ama zamanlanmış değişiklik tespitinin TABANI olmaz — aksi hâlde
             // bu kontrolün gördüğü yeni değer sweep'in DNS_CHANGED algısını kalıcı olarak yutardı.
             record.setManual(true);
+            // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni — zamanlanmış turla AYNI yardımcı.
+            if (!dnsOk) DnsCheckerService.applyFailure(record, r);
             dnsRecordRepo.save(record);
             auditService.recordAction("MONITOR_TRIGGER", session, "DNS_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol
@@ -3779,7 +3802,8 @@ public class MonitoringController {
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPage(m, latest.get(m.getId()), teams,
                         down.getOrDefault(m.getUrl(), integ.get(m.getUrl())))).toList();
-        return ok(withCheckFlag(session, result));
+        // can_diagnose (2026-10-05, Sayfa Bütünlüğü uçtan uca tanılaması): can_check + diagnostics.run/execute
+        return ok(withDiagnoseFlag(session, result));
     }
 
     @PostMapping("/page")
@@ -4042,7 +4066,8 @@ public class MonitoringController {
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPageSpeed(m, latest.get(m.getId()), teams,
                         down.getOrDefault(m.getUrl(), slow.get(m.getUrl())), admin)).toList();
-        return ok(withCheckFlag(session, result));
+        // can_diagnose (2026-10-05, Sayfa Hızı uçtan uca tanılaması): can_check + diagnostics.run/execute
+        return ok(withDiagnoseFlag(session, result));
     }
 
     @PostMapping("/pagespeed")
@@ -5600,7 +5625,7 @@ public class MonitoringController {
         List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
                 .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId()))
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
-        return ok(withCheckFlag(session, result));
+        return ok(withDiagnoseFlag(session, result));
     }
 
     @PostMapping("/domain")
@@ -6036,7 +6061,7 @@ public class MonitoringController {
                 EscalationService.TYPE_PING_DOWN);
         List<Map<String, Object>> result = monitors.stream()
                 .map(m -> enrichPing(m, latest.get(m.getId()), teams, alarms.get(m.getHost()))).toList();
-        return ok(withCheckFlag(session, result));
+        return ok(withDiagnoseFlag(session, result));
     }
 
     @PostMapping("/ping")
@@ -6209,6 +6234,9 @@ public class MonitoringController {
             check.setPacketLoss(r.get("packet_loss") instanceof Number n ? n.intValue() : null);
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
+            // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPing)
+            check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
+            check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
             pingCheckRepo.save(check);
             auditService.recordAction("MONITOR_TRIGGER", session, "PING_MONITOR", String.valueOf(m.getId()), m.getName(), null);
             // ...ve ARDINDAN elle değerlendirme ASENKRON başlar (manual=true). 2026-09-29 ürün kararı: elle kontrol

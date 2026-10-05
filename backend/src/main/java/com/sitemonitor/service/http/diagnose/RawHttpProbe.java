@@ -98,20 +98,46 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
      * @param hardDeadline yolun mutlak son anı (epoch ms) — genel 60 sn tavanından türetilir
      * @param userAgent    gönderilecek User-Agent (izlemenin GERÇEK istemcisiyle aynı olmalı; HTTP: {@value #USER_AGENT})
      * @param captureBody  son yanıtın gövdesi TAM (tavana kadar) tutulsun — keyword tanılaması gövdede arar
+     * @param profile      sayfa çekirdeğinin istek profili (Sayfa Bütünlüğü / Sayfa Hızı tanılaması, 2026-10-05); null →
+     *                     HTTP/keyword davranışı AYNEN (çıktı değişmez)
      */
     public record Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                 boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
                 String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
-                String userAgent, boolean captureBody) {
+                String userAgent, boolean captureBody, Profile profile) {
         /** HTTP izlemesinin kurucusu (2026-10-02 sözleşmesi) — User-Agent HTTP izlemesininki, gövde yalnız JSON doğrulamasında. */
         public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
                     boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
                     String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline) {
             this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
-                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, USER_AGENT, false);
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, USER_AGENT, false, null);
+        }
+        /** Keyword izlemesinin kurucusu (2026-10-04 sözleşmesi) — profil yok. */
+        public Spec(String key, String route, String url, String method, String expectedStatus, int timeoutMs,
+                    boolean verifySsl, boolean followRedirects, HttpRequestOptions opts,
+                    String proxyHost, int proxyPort, String proxyAuthHeader, long hardDeadline,
+                    String userAgent, boolean captureBody) {
+            this(key, route, url, method, expectedStatus, timeoutMs, verifySsl, followRedirects, opts,
+                    proxyHost, proxyPort, proxyAuthHeader, hardDeadline, userAgent, captureBody, null);
         }
         public boolean viaProxy() { return "proxy".equals(route); }
+        int maxHops() { return profile != null ? Math.max(0, profile.maxRedirects()) : SafeRedirect.MAX_HOPS; }
     }
+
+    /**
+     * Sayfa çekirdeğinin ({@code PageFetchCore}) istek profili — Sayfa Bütünlüğü ve Sayfa Hızı uçtan uca tanılaması
+     * (2026-10-05). İzlemenin GERÇEK istemcisi HTTP izlemesinden farklı davranır; ham ölçüm aynısını göndermezse tanı
+     * başka bir isteği anlatır:
+     * <ul>
+     *   <li>{@code baseHeaders}: HER hop'ta gönderilen tarayıcı-benzeri başlıklar (Accept, Accept-Language, Accept-Encoding)
+     *       — izlemenin ek başlıkları bunları EZEMEZ (çağıran ek başlıkları önceden süzer);</li>
+     *   <li>{@code maxRedirects}: yönlendirme sınırı (çekirdek: 5);</li>
+     *   <li>{@code followDowngrade}: https→http yönlendirmesi takip edilir mi (çekirdek bilinçli olarak takip eder).</li>
+     * </ul>
+     * {@code Accept-Encoding} gönderildiğinde gövde telde sıkıştırılmış gelir: bayt sayısı TELDEKİ boyuttur (Sayfa Hızı
+     * ölçümüyle aynı), metin önizlemesi ise yalnız önizleme için açılır ({@code content_encoding} ayrıca yazılır).
+     */
+    public record Profile(Map<String, String> baseHeaders, int maxRedirects, boolean followDowngrade) {}
 
     /** Yolun terminal hatası: bulgu kodu + adlı parametreler + düştüğü adım + istisna. */
     public record Failure(String code, Map<String, Object> params, String step, Throwable error) {}
@@ -195,7 +221,9 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             String method = spec.method() == null ? "GET" : spec.method().trim().toUpperCase(Locale.ROOT);
             String originHost = base.getHost();
             URI current = base;
-            for (int hop = 0; hop <= SafeRedirect.MAX_HOPS; hop++) {
+            int maxHops = spec.maxHops();
+            boolean followDowngrade = spec.profile() != null && spec.profile().followDowngrade();
+            for (int hop = 0; hop <= maxHops; hop++) {
                 boolean origin = !spec.followRedirects()
                         || (originHost != null && originHost.equalsIgnoreCase(current.getHost()));
                 HopResult hr = runHop(hop, current, method, origin);
@@ -214,16 +242,16 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
                         && !originHost.equalsIgnoreCase(next.getHost()));
                 hr.hop.put("redirect", redirect);
                 // Takip edilemeyen hedef (şema dışı / host'suz / https→http düşürmesi) → 3xx OLDUĞU GİBİ son yanıttır.
-                if (next == null || SafeRedirect.isDowngrade(current, next)) {
+                if (next == null || (SafeRedirect.isDowngrade(current, next) && !followDowngrade)) {
                     transcript.add("* Redirect not followed (" + (next == null ? "unsupported Location" : "https→http downgrade") + ")");
                     break;
                 }
-                if (hop == SafeRedirect.MAX_HOPS) {
+                if (hop == maxHops) {
                     Map<String, Object> p = new LinkedHashMap<>();
-                    p.put("hops", SafeRedirect.MAX_HOPS);
+                    p.put("hops", maxHops);
                     failure = new Failure("REDIRECT_LOOP", p, "response",
-                            new IOException("çok fazla yönlendirme (" + SafeRedirect.MAX_HOPS + " hop aşıldı)"));
-                    transcript.add("* Too many redirects (" + SafeRedirect.MAX_HOPS + " hops)");
+                            new IOException("çok fazla yönlendirme (" + maxHops + " hop aşıldı)"));
+                    transcript.add("* Too many redirects (" + maxHops + " hops)");
                     break;
                 }
                 transcript.add("* Following redirect → " + SecretMask.maskUrlQuery(next.toString()));
@@ -579,6 +607,11 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             List<String[]> headers = new ArrayList<>();
             putHeader(headers, "Host", hostHeader(uri, https));
             putHeader(headers, "User-Agent", spec.userAgent() == null || spec.userAgent().isBlank() ? USER_AGENT : spec.userAgent());
+            if (spec.profile() != null && spec.profile().baseHeaders() != null) {   // sayfa çekirdeği: her hop'ta
+                for (Map.Entry<String, String> h : spec.profile().baseHeaders().entrySet()) {
+                    if (h.getKey() != null && h.getValue() != null) putHeader(headers, h.getKey(), h.getValue());
+                }
+            }
             if (extras) {
                 String auth = HttpRequestRules.basicAuthHeader(opts.basicAuthUser(), opts.basicAuthPass());
                 if (auth != null) putHeader(headers, "Authorization", auth);
@@ -729,11 +762,18 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             bodyMap.put("bytes", sink.total);
             bodyMap.put("complete", complete && !capped && bodyEx == null);
             bodyMap.put("content_type", contentType);
-            boolean text = isText(contentType, sink.preview.toByteArray());
+            // Sayfa çekirdeği profili Accept-Encoding gönderir → gövde telde sıkıştırılmış olabilir: sayım teldeki bayt,
+            // önizleme açılmış metin. Profil yoksa (HTTP/keyword) bu dal hiç çalışmaz — çıktı aynı.
+            String contentEncoding = spec.profile() != null ? firstValues.get("content-encoding") : null;
+            byte[] previewBytes = sink.preview.toByteArray();
+            if (contentEncoding != null) previewBytes = inflatePreview(previewBytes, contentEncoding);
+            boolean text = previewBytes != null && isText(contentType, previewBytes);
             bodyMap.put("text", text);
-            bodyMap.put("preview", text ? masker.maskBody(decode(sink.preview.toByteArray(), contentType)) : null);
-            bodyMap.put("preview_truncated", text && sink.total > PREVIEW_BYTES);
+            bodyMap.put("preview", text ? masker.maskBody(decode(previewBytes, contentType)) : null);
+            bodyMap.put("preview_truncated", text && (sink.total > PREVIEW_BYTES
+                    || (contentEncoding != null && previewBytes.length >= PREVIEW_BYTES)));
             bodyMap.put("download_ms", dl);
+            if (spec.profile() != null) bodyMap.put("content_encoding", contentEncoding);
             response.put("body", bodyMap);
             finalBody = wantFull ? sink.full.toByteArray() : null;
             finalBodyCapped = capped;
@@ -1111,6 +1151,37 @@ public final class RawHttpProbe {   // public (2026-10-04): keyword uçtan uca t
             if (b == 0 || (b < 0x20 && b != '\t' && b != '\n' && b != '\r' && b != 0x0c)) return false;
         }
         return true;
+    }
+
+    /**
+     * Sıkıştırılmış gövde önizlemesini YALNIZ gösterim için açar (sayfa çekirdeği profili, 2026-10-05). Önizleme ilk
+     * 32 KB'ta kesildiği için akış yarım olabilir — açılabilen kısım yeter. Açılan boyut {@link #PREVIEW_BYTES}'la sınırlı
+     * (sıkıştırma bombası önizlemeyi şişiremez). {@code identity}/boş → olduğu gibi; gzip/deflate dışı kodlama (br …)
+     * ya da hiç açılamayan akış → {@code null} (metin değil sayılır, anlamsız bayt ekrana basılmaz).
+     */
+    static byte[] inflatePreview(byte[] raw, String encoding) {
+        if (raw == null || raw.length == 0 || encoding == null) return raw;
+        String enc = encoding.trim().toLowerCase(Locale.ROOT);
+        if (enc.isEmpty() || "identity".equals(enc)) return raw;
+        boolean gzip = enc.contains("gzip");
+        if (!gzip && !enc.contains("deflate")) return null;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        java.util.zip.Inflater inflater = gzip ? null : new java.util.zip.Inflater(true);   // çekirdekle aynı (nowrap)
+        try (InputStream in = gzip
+                ? new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(raw))
+                : new java.util.zip.InflaterInputStream(new java.io.ByteArrayInputStream(raw), inflater)) {
+            byte[] buf = new byte[4096];
+            while (out.size() < PREVIEW_BYTES) {
+                int n = in.read(buf, 0, Math.min(buf.length, PREVIEW_BYTES - out.size()));
+                if (n <= 0) break;
+                out.write(buf, 0, n);
+            }
+        } catch (IOException | RuntimeException e) {
+            // yarım akış (önizleme kesildi) ya da bozuk kodlama — açılabilen kısım kalır
+        } finally {
+            if (inflater != null) inflater.end();
+        }
+        return out.size() > 0 ? out.toByteArray() : null;
     }
 
     static String decode(byte[] bytes, String contentType) {

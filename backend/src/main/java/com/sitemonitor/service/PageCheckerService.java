@@ -60,11 +60,48 @@ public class PageCheckerService {
     public record ResourceIssue(String resourceUrl, String resourceType, String sourcePage,
                                 String issueType, boolean firstParty, Integer httpStatus, Long durationMs) {}
 
+    /**
+     * @param failure ana sayfa alınamadığında (DOWN) / yapılandırma hatasında (CONFIG_ERROR) NEDEN (2026-10-05, hata
+     *                teşhisi) — çekimin istisnasından sınıflandırılır. Diğer durumlarda null. Yalnız üst veri.
+     */
     public record PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
                                   int totalResources, int brokenResources, int timeoutResources,
                                   int mixedContentCount,
                                   int pagesCrawled, String contentHash, Long bodyBytes, String error,
-                                  List<ResourceIssue> issues) {}
+                                  List<ResourceIssue> issues,
+                                  com.sitemonitor.service.failure.CheckFailure failure) {
+
+        /** Geriye uyum: nedensiz (testler ve sağlıklı/DEGRADED sonuçlar). */
+        public PageCheckResult(String status, boolean mainReachable, Integer httpStatus, long responseMs,
+                               int totalResources, int brokenResources, int timeoutResources,
+                               int mixedContentCount,
+                               int pagesCrawled, String contentHash, Long bodyBytes, String error,
+                               List<ResourceIssue> issues) {
+            this(status, mainReachable, httpStatus, responseMs, totalResources, brokenResources, timeoutResources,
+                    mixedContentCount, pagesCrawled, contentHash, bodyBytes, error, issues, null);
+        }
+    }
+
+    /**
+     * Ana sayfa alınamadı → NEDEN (2026-10-05): aktarım istisnasının sınıflandırması (engelleme / DNS / bağlantı / TLS /
+     * zaman aşımı / yönlendirme sınırı) varsa o; yoksa HTTP durum kodu; o da yoksa UNKNOWN. Asla fırlatmaz.
+     */
+    static com.sitemonitor.service.failure.CheckFailure mainFailure(PageFetchCore.Fetch main) {
+        try {
+            if (main == null) return com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.UNKNOWN);
+            if (main.failure() != null) return main.failure();
+            if (main.status() > 0) return com.sitemonitor.service.failure.CheckFailureClassifier.forHttpStatus(main.status(), null);
+            return com.sitemonitor.service.failure.CheckFailure.of(
+                    com.sitemonitor.service.failure.CheckFailureClassifier.fromMessage(main.error()));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Yapılandırma hatası (şemasız / host'suz URL) → CONFIG_ERROR nedeni. */
+    static com.sitemonitor.service.failure.CheckFailure configFailure() {
+        return com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR);
+    }
 
     // ── Giriş noktaları ──────────────────────────────────────────────────────
 
@@ -99,7 +136,7 @@ public class PageCheckerService {
         // host=null verdiği için sonuç DOWN oluyor ve takıma sahte "Sayfa yüklenemiyor" e-postası gidiyordu.
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
             return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
-                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of(), configFailure());
         }
         Excludes excludes = compileExcludes(excludePatterns);
         long deadline = System.currentTimeMillis() + Math.max(5, maxCheckSeconds) * 1000L;
@@ -121,7 +158,7 @@ public class PageCheckerService {
     private PageCheckResult testInternal(String url, int timeoutMs) {
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {        // check(...) ile aynı yapılandırma geçidi
             return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
-                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of(), configFailure());
         }
         return checkSinglePage(url, timeoutMs, 2000, 5, Excludes.EMPTY, System.currentTimeMillis() + 60_000L);
     }
@@ -141,7 +178,7 @@ public class PageCheckerService {
     public PageCheckResult scanMixedContent(String url, int timeoutMs) {
         if (!com.sitemonitor.util.MonitorUrls.isCheckable(url)) {
             return new PageCheckResult("CONFIG_ERROR", false, null, 0L, 0, 0, 0, 0, 0, null, null,
-                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of());
+                    com.sitemonitor.util.MonitorUrls.CONFIG_ERROR_MSG, List.of(), configFailure());
         }
         long start = System.currentTimeMillis();
         String rootHost = hostOf(url);
@@ -151,7 +188,7 @@ public class PageCheckerService {
             String err = main.error() != null ? main.error()
                     : (main.status() >= 400 ? "ana sayfa HTTP " + main.status() : "ana sayfa alınamadı");
             return new PageCheckResult("DOWN", false, main.status() == 0 ? null : main.status(), ms,
-                    0, 0, 0, 0, 1, null, null, err, List.of());
+                    0, 0, 0, 0, 1, null, null, err, List.of(), mainFailure(main));
         }
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
         List<Resource> resources = inventory(main.body(), url, url, rootHost, Excludes.EMPTY);
@@ -178,7 +215,7 @@ public class PageCheckerService {
             String err = main.error() != null ? main.error()
                     : (main.status() >= 400 ? "ana sayfa HTTP " + main.status() : "ana sayfa alınamadı");
             return new PageCheckResult("DOWN", false, main.status() == 0 ? null : main.status(), ms,
-                    0, 0, 0, 0, 1, null, null, err, List.of());
+                    0, 0, 0, 0, 1, null, null, err, List.of(), mainFailure(main));
         }
         boolean pageHttps = url.toLowerCase(Locale.ROOT).startsWith("https://");
         List<Resource> resources = inventory(main.body(), url, url, rootHost, excludes);
@@ -201,7 +238,7 @@ public class PageCheckerService {
             long ms = System.currentTimeMillis() - start;
             return new PageCheckResult("DOWN", false, first.status() == 0 ? null : first.status(), ms,
                     0, 0, 0, 0, 0, null, null,
-                    first.error() != null ? first.error() : "ana sayfa alınamadı", List.of());
+                    first.error() != null ? first.error() : "ana sayfa alınamadı", List.of(), mainFailure(first));
         }
 
         Deque<String[]> queue = new ArrayDeque<>();          // {url, depth}
@@ -539,6 +576,24 @@ public class PageCheckerService {
             for (String d : disallow) if (path.startsWith(d)) return true;
         } catch (Exception ignore) {}
         return false;
+    }
+
+    /** İzlemenin gönderdiği User-Agent — uçtan uca tanılamanın ham ölçümü AYNISINI gönderir (2026-10-05). */
+    public String effectiveUserAgent() {
+        return userAgent();
+    }
+
+    /**
+     * Bir sorun izlemenin ALARMINA sayılır mı — {@link #countsForAlarm} + izlemenin aç/kapa ayarları (mixed content,
+     * zaman aşımı, 3. taraf). TEK kopya: sweep ({@code SchedulerService}) ve uçtan uca tanılama (2026-10-05) aynı kuralı
+     * okur; ayrışırsa tanılama "izleme bunu alarm sayar" derken izleme saymazdı.
+     */
+    public static boolean issueAlarmWorthy(com.sitemonitor.model.PageMonitor m, ResourceIssue i) {
+        if (m == null || i == null) return false;
+        if (!countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) return false;
+        if ("MIXED_CONTENT".equals(i.issueType())) return !Boolean.FALSE.equals(m.getAlertMixedContent());
+        if ("TIMEOUT".equals(i.issueType()))       return !Boolean.FALSE.equals(m.getAlertTimeout());
+        return i.firstParty() || Boolean.TRUE.equals(m.getAlertThirdParty());
     }
 
     /** İstek User-Agent'ı — canlı config (F4); boş/null ise tarayıcı-uyumlu varsayılan. */

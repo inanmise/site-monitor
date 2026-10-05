@@ -34,7 +34,7 @@ public class PingCheckerService {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
     }
 
-    static List<String> buildPingArgs(String host, String ipVersion, int count, int timeoutSec) {
+    public static List<String> buildPingArgs(String host, String ipVersion, int count, int timeoutSec) {   // public: ping uçtan uca tanılaması (2026-10-05) aynı komutu kullanır
         List<String> a = new ArrayList<>();
         a.add("ping");
         if ("v4".equals(ipVersion)) a.add("-4");
@@ -74,6 +74,7 @@ public class PingCheckerService {
             result.put("up", false);
             result.put("na", true);
             result.put("error", "ICMP bu ortamda kullanılamıyor (yetki/binary)");
+            classify(result, true, null, out, host, ipVersion, count, timeoutMs);
             log.debug("Ping unavailable for {}: {}", host, firstLine(out));
             return result;
         }
@@ -89,8 +90,26 @@ public class PingCheckerService {
             result.put("error", loss != null
                     ? "Yanıt yok (%" + loss + " paket kaybı)"
                     : firstLine(out));
+            classify(result, false, loss, out, host, ipVersion, count, timeoutMs);
         }
         return result;
+    }
+
+    /**
+     * Hata teşhisi (2026-10-05): başarısız ping'in NEDENİ ({@code failure_reason} + {@code failure_detail}) — ICMP'nin
+     * pod'da kullanılamaması, ad çözümlenemedi, yol yok, tüm paketler kayıp. Yalnız ÜST VERİ: up/na/error değerleri
+     * yukarıda zaten belirlendi ve değişmez; sınıflandırma asla fırlatmaz.
+     */
+    private static void classify(Map<String, Object> result, boolean na, Integer loss, String out,
+                                 String host, String ipVersion, int count, int timeoutMs) {
+        try {
+            com.sitemonitor.service.failure.CheckFailureClassifier.forPing(na, loss, out)
+                    .with("target", host)
+                    .with("ip_version", ipVersion)
+                    .with("packets", Math.max(1, count))
+                    .with("timeout_ms", timeoutMs)
+                    .applyTo(result);
+        } catch (Exception ignore) { /* üst veri — kontrol sonucu olduğu gibi kalır */ }
     }
 
     private static Long parseAvgRtt(String out) {

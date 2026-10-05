@@ -7,6 +7,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
   formatDate:    (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
+  formatDateOnly: (s) => s ?? '',   // Kontrol Geçmişi gün ayırıcısı (hata teşhisi testi geçmişi açar)
   api: withApiFallback({
     monitoring: {
       listGroups:        vi.fn(() => Promise.resolve({ success: true, data: [] })),
@@ -502,5 +503,49 @@ describe('PageMonitorPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
     await waitFor(() => expect(api.monitoring.createPageMonitor).toHaveBeenCalled())
     expect(api.monitoring.createPageMonitor.mock.calls[0][0].timeoutMs).toBe(7500)
+  })
+})
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): DOWN satırı durumun altında neden (HTTP 503) + aç/kapa gösterir; açılınca
+ * panel HTTP durumunu ve ham hatayı yazar (eskiden geçmişte hata metni ve HTTP kodu HİÇ görünmüyordu). DEGRADED satırı
+ * kırık kaynak nedenini taşır; OK satırda hücre yok.
+ */
+describe('PageMonitorPage — kontrol geçmişi hata teşhisi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getPageMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.monitoring.getPageHistory.mockResolvedValue({ success: true, data: { checks: [], total: 0, down: 0 } })
+    api.monitoring.getPageIssues.mockResolvedValue({ success: true, data: [] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [] })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 31, monitor_id: 1, ok: false, status: 'DOWN', http_status: 503, response_ms: 210, total_resources: 0,
+          broken_resources: 0, timeout_count: 0, mixed_content_count: 0, error: 'ana sayfa HTTP 503',
+          checked_at: '2026-10-05T09:00:00', failure_reason: 'HTTP_STATUS',
+          failure_detail: JSON.stringify({ phase: 'RESPONSE', http_status: 503, target: 'www.example.com', via: 'direct', timeout_ms: 4000 }) },
+        { id: 30, monitor_id: 1, ok: false, status: 'DEGRADED', http_status: 200, total_resources: 12, broken_resources: 2,
+          timeout_count: 0, mixed_content_count: 0, checked_at: '2026-10-05T08:00:00' },
+        { id: 29, monitor_id: 1, ok: true, status: 'OK', http_status: 200, total_resources: 12, broken_resources: 0,
+          timeout_count: 0, mixed_content_count: 0, checked_at: '2026-10-05T07:00:00' },
+      ], counts: { total: 3, fail: 2 }, buckets: [], alerts: [],
+      range: { from: '2026-09-29T00:00:00', to: '2026-10-05T23:59:59' }, total: 3, page: 0, size: 50 } })
+  })
+
+  it('DOWN: "HTTP 503" nedeni + panelde HTTP durumu ve ham hata; DEGRADED: kırık kaynak nedeni (eski satır); OK: hücre yok', async () => {
+    render(<PageMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await findCard('https://www.example.com/'))
+    const detail = await screen.findByRole('dialog')
+    fireEvent.mouseDown(within(detail).getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
+    await waitFor(() => expect(detail.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(2))
+    const [down, degraded] = detail.querySelectorAll('[data-slot="chkfail-cell"]')
+    expect(down).toHaveAttribute('data-code', 'HTTP_STATUS')
+    expect(within(down).getByText(/^(Returned HTTP 503|HTTP 503 döndü)$/)).toBeInTheDocument()
+    expect(degraded).toHaveAttribute('data-code', 'RESOURCES_BROKEN')
+    expect(degraded).toHaveAttribute('data-legacy', 'true')
+    fireEvent.click(down.querySelector('[data-slot="chkfail-toggle"]'))
+    const panel = await within(detail).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="httpStatus"]').textContent).toBe('HTTP 503')
+    expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('ana sayfa HTTP 503')
   })
 })

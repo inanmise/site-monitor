@@ -12,6 +12,8 @@
  */
 
 import { KW_FINDING_SET, KW_HINT_SET } from '../../keyword/diagnose/keywordDiagCodes.js'
+import { PG_FINDING_SET, PS_FINDING_SET } from '../../page/diagnose/pageDiagCodes.js'
+import { CHECK_FAILURE_SET } from '../../checks/checkFailureCodes.js'
 
 /** Adım sırası — sözleşmedeki `steps[].key` sırası. Bilinmeyen anahtar sona eklenir (yeni adım düşmesin). */
 export const STEP_ORDER = ['dns', 'proxy_connect', 'tcp', 'proxy_tunnel', 'tls', 'request', 'response', 'body']
@@ -27,10 +29,15 @@ export const FINDING_CODES = [
   'JSON_ASSERTION_FAIL', 'PATH_DIFFERS', 'BOTH_PATHS_FAIL', 'CLIENT_MISMATCH',
 ]
 
-/** Değeri yol adı (proxy|direct) olan parametreler — metinde "Vekil"/"Doğrudan" diye yerelleşir. */
-const ROUTE_PARAMS = new Set(['route', 'failing_route', 'working_route'])
+/** Değeri yol adı (proxy|direct) olan parametreler — metinde "Vekil"/"Doğrudan" diye yerelleşir.
+ *  (slow_route / fast_route: Sayfa Hızı yol karşılaştırması, 2026-10-05 — HTTP bu adları üretmez.) */
+const ROUTE_PARAMS = new Set(['route', 'failing_route', 'working_route', 'slow_route', 'fast_route'])
 /** Değeri adım anahtarı olan parametreler — metinde adımın adı yazılır. */
 const STEP_PARAMS = new Set(['failed_step'])
+/** Sözleşme dışı ek adımlar (yalnız hüküm metninde) — Sayfa Bütünlüğü'nün "alt kaynaklar" adımı (2026-10-05). */
+const EXTRA_STEPS = new Set(['resources'])
+/** Değeri kontrol hata kodu olan parametreler (Sayfa Bütünlüğü / Hızı tanılaması, 2026-10-05) — `chkfail.<KOD>.short`. */
+const FAILURE_PARAMS = new Set(['failure'])
 
 /** Sunucunun izin verdiği zaman aşımı aralığı (sözleşme: izlemenin timeout_ms'i 1000..30000'e kısılır). */
 export const TIMEOUT_MIN = 1000
@@ -63,10 +70,10 @@ export function severityTone(severity, code) {
   return code === 'OK' ? 'success' : 'info'
 }
 
-/** Yol sonucu → ton. */
+/** Yol sonucu → ton. (`slow`: Sayfa Hızı — sayfa ölçüldü ama eşik aşıldı, 2026-10-05; HTTP üretmez.) */
 export function outcomeTone(outcome) {
   if (outcome === 'ok') return 'success'
-  if (outcome === 'warn') return 'warning'
+  if (outcome === 'warn' || outcome === 'slow') return 'warning'
   if (outcome === 'fail') return 'danger'
   return 'muted'
 }
@@ -125,7 +132,8 @@ export function localizeParams(params, t) {
   for (const [k, v] of Object.entries(params || {})) {
     if (v == null || v === '') { out[k] = '—'; continue }
     if (ROUTE_PARAMS.has(k)) out[k] = routeText(v, t)
-    else if (STEP_PARAMS.has(k)) out[k] = STEP_ORDER.includes(v) ? t(`httpdx.step.${v}`) : String(v)
+    else if (STEP_PARAMS.has(k)) out[k] = STEP_ORDER.includes(v) || EXTRA_STEPS.has(v) ? t(`httpdx.step.${v}`) : String(v)
+    else if (FAILURE_PARAMS.has(k) && CHECK_FAILURE_SET.has(v)) out[k] = interpolate(t(`chkfail.${v}.short`), params)
     else if (Array.isArray(v)) out[k] = v.join(', ')
     else if (typeof v === 'object') out[k] = JSON.stringify(v)
     else out[k] = String(v)
@@ -148,7 +156,11 @@ export function findingText(finding, t) {
   if (KW_HINT_SET.has(code)) {
     return { known: true, title: t(`kwhint.${code}.title`), body: interpolate(t(`kwhint.${code}.cause`), p) }
   }
-  const base = KW_FINDING_SET.has(code) ? `kwdx.finding.${code}` : `httpdx.finding.${code}`
+  // Sayfa Bütünlüğü / Sayfa Hızı tanılaması (2026-10-05): kendi ad alanları (pgdx / psdx) — kodlar çakışmaz (backend kapısı).
+  const base = KW_FINDING_SET.has(code) ? `kwdx.finding.${code}`
+    : PG_FINDING_SET.has(code) ? `pgdx.finding.${code}`
+      : PS_FINDING_SET.has(code) ? `psdx.finding.${code}`
+        : `httpdx.finding.${code}`
   const known = has(t, `${base}.title`)
   if (!known) {
     return {
@@ -317,7 +329,8 @@ export function daysTone(days) {
 export function clientAgrees(path) {
   const c = path?.client_check
   if (!c || typeof c.ok !== 'boolean' || !path?.outcome) return null
-  return c.ok === (path.outcome === 'ok')
+  // `slow` (Sayfa Hızı): sayfa ölçüldü — istemcinin "ok"u ulaşılabilirliktir, eşik kararı yolun sonucunda.
+  return c.ok === (path.outcome === 'ok' || path.outcome === 'slow')
 }
 
 /** HTTP tanılama ucunun yolu (son başarısız çağrı halkasında aranır). */
@@ -383,8 +396,8 @@ export function downloadJson(filename, obj) {
 /** Rapora konan gövde önizlemesi üst sınırı (karakter) — tam gövde JSON indirmede. */
 export const REPORT_BODY_MAX = 2000
 
-/** Biçim yazıcısı: Markdown ya da düz metin — aynı içerik, farklı işaretleme. */
-function writer(format) {
+/** Biçim yazıcısı: Markdown ya da düz metin — aynı içerik, farklı işaretleme (Ping/Port/DNS tanılama raporu da kullanır). */
+export function writer(format) {
   const md = format !== 'text'
   const L = []
   return {

@@ -160,6 +160,10 @@ class AdminControllerTest {
     @MockitoBean
     com.sitemonitor.service.SchedulerService schedulerService;
 
+    /** Bağımsız alan adı izlemeleri — alan adı tanılamasının kapsamı (2026-10-05). Stub yoksa boş liste (eski kural). */
+    @MockitoBean
+    com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
+
     @BeforeEach
     void setup() {
         when(userService.listTeams()).thenReturn(java.util.Collections.emptyList());
@@ -4158,5 +4162,108 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data[0].current_not_after").value("2026-12-31T23:59:59"))
                 .andExpect(jsonPath("$.data[1].not_after").value("2026-10-05T10:00:00"))
                 .andExpect(jsonPath("$.data[1].current_not_after").value("2026-10-05T10:00:00"));
+    }
+
+    // ── Tanılama erişim düzeltmeleri (2026-10-05) ──────────────────────────────────────────────
+
+    private static com.sitemonitor.model.DomainMonitor domainMonitor(String domain, Long teamId) {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(77L);
+        m.setDomain(domain);
+        m.setTeamId(teamId);
+        return m;
+    }
+
+    @Test
+    @DisplayName("domain-expiry (2026-10-05): USER kendi takımının BAĞIMSIZ alan adı izlemesini tanılar (envanterde olmasa da)")
+    void domainExpiry_userOwnDomainMonitor_allowed() throws Exception {
+        when(domainMonitorRepo.findByDomain("own-registry.example.test"))
+                .thenReturn(List.of(domainMonitor("own-registry.example.test", 2L)));
+        when(domainExpiryDiagnosticsService.diagnose("own-registry.example.test"))
+                .thenReturn(Map.of("domain", "own-registry.example.test", "source", "RDAP", "steps", List.of()));
+        mvc.perform(post("/api/admin/diagnostics/domain-expiry")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"own-registry.example.test\"}"))
+                .andExpect(status().isOk());
+        verify(domainExpiryDiagnosticsService).diagnose("own-registry.example.test");
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute"));
+    }
+
+    @Test
+    @DisplayName("domain-expiry (2026-10-05): başka takımın alan adı izlemesi / izlenmeyen alan adı → 403 (yetki genişlemez)")
+    void domainExpiry_otherTeamOrUnknown_forbidden() throws Exception {
+        when(domainMonitorRepo.findByDomain("other-team.example.test"))
+                .thenReturn(List.of(domainMonitor("other-team.example.test", 9L)));
+        mvc.perform(post("/api/admin/diagnostics/domain-expiry")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"other-team.example.test\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/admin/diagnostics/domain-expiry")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"nobody-monitors.example.test\"}"))
+                .andExpect(status().isForbidden());
+        verify(domainExpiryDiagnosticsService, never()).diagnose(ArgumentMatchers.anyString());
+    }
+
+    @Test
+    @DisplayName("Durum/Sertifika tanılaması (2026-10-05 doğrulama): USER yalnız kendi takımının envanter kaydında; başka takımınki 403")
+    void connectionDiagnostics_teamScopedInventory() throws Exception {
+        com.sitemonitor.model.CertificateInventory own = new com.sitemonitor.model.CertificateInventory();
+        own.setDomain("own-inventory.example.test");
+        own.setTeamId(2L);
+        com.sitemonitor.model.CertificateInventory other = new com.sitemonitor.model.CertificateInventory();
+        other.setDomain("other-inventory.example.test");
+        other.setTeamId(9L);
+        when(inventoryRepo.findByDomain("own-inventory.example.test")).thenReturn(Optional.of(own));
+        when(inventoryRepo.findByDomain("other-inventory.example.test")).thenReturn(Optional.of(other));
+        when(diagnosticsService.diagnose("own-inventory.example.test", 443)).thenReturn(Map.of(
+                "domain", "own-inventory.example.test", "port", 443, "combos", List.of(Map.of("id", "direct+browser", "status", "ok"))));
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"own-inventory.example.test\",\"port\":443}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"other-inventory.example.test\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+        verify(diagnosticsService, never()).diagnose("other-inventory.example.test", 443);
+        // İzin kapısı da çalışır: diagnostics.run reddedilirse kendi takımında bile 403
+        org.mockito.Mockito.doThrow(new SecurityException("izin yok"))
+                .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute"));
+        mvc.perform(post("/api/admin/diagnostics")
+                        .session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"own-inventory.example.test\",\"port\":443}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @DisplayName("tanılama geçmişi kaydı (2026-10-05): izleme tanılamaları (ping/port/DNS/HTTP/keyword) bu uçtan kimlikle bile açılmaz")
+    void diagnosticsHistoryDetail_refusesMonitorRuns() throws Exception {
+        for (String[] r : new String[][]{ {"11", "ping-monitor:4", "PING_DIAG"}, {"12", "port-monitor:4", "PORT_DIAG"},
+                {"13", "dns-monitor:4", "DNS_DIAG"}, {"14", "http-monitor:4", "HTTP_DIAG"}, {"15", "keyword-monitor:4", "KEYWORD_DIAG"},
+                {"17", "page-monitor:4", "PAGE_DIAG"}, {"18", "pagespeed-monitor:4", "PAGESPEED_DIAG"} }) {
+            com.sitemonitor.model.DiagnosticRun d = new com.sitemonitor.model.DiagnosticRun();
+            d.setId(Long.valueOf(r[0]));
+            d.setDomain(r[1]);
+            d.setRunType(r[2]);
+            d.setResultJson("{}");
+            when(diagnosticHistoryService.get(Long.valueOf(r[0]))).thenReturn(d);
+            mvc.perform(get("/api/admin/diagnostics/history/" + r[0]).session(authSession()))
+                    .andExpect(status().isNotFound());
+        }
+        com.sitemonitor.model.DiagnosticRun cert = new com.sitemonitor.model.DiagnosticRun();
+        cert.setId(16L);
+        cert.setDomain("example.com");
+        cert.setRunType("CONNECTION");
+        when(diagnosticHistoryService.get(16L)).thenReturn(cert);
+        mvc.perform(get("/api/admin/diagnostics/history/16").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.run_type").value("CONNECTION"));
     }
 }

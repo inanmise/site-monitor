@@ -857,7 +857,7 @@ public class AdminController {
             @RequestBody Map<String, Object> body, HttpSession session, HttpServletRequest request) {
         String domain = body.get("domain") != null ? body.get("domain").toString().trim() : null;
         domain = validateRegistryTarget(domain);
-        requireAdminOrMonitoredDomain(session, domain);
+        requireDomainExpiryScope(session, domain);
         requirePerm(session, "diagnostics.run", "execute");
         // Kullanıcı-başı hız sınırı (10/dk) — RDAP/WHOIS registry'lerini dövmemek için.
         Long uid = userIdFromSession(session);
@@ -981,6 +981,11 @@ public class AdminController {
     public ResponseEntity<Map<String, Object>> diagnosticsHistoryDetail(
             @PathVariable Long id, HttpSession session) {
         com.sitemonitor.model.DiagnosticRun d = diagnosticHistoryService.get(id);
+        // İzleme tanılamaları (HTTP / keyword / ping / port / DNS — anahtar "<tür>-monitor:<id>") kendi uçlarından,
+        // kendi takım kapsamıyla okunur; bu (sertifika/alan adı) geçmiş ucu onları kimliğiyle bile AÇMAZ (2026-10-05).
+        if (com.sitemonitor.service.diagnose.NetDiagnosticsHistory.isMonitorRun(d)) {
+            throw new java.util.NoSuchElementException("Diagnostic run not found: " + id);
+        }
         requireAdminOrMonitoredDomain(session, d.getDomain());
         requirePerm(session, "diagnostics.history", "view");
         Map<String, Object> m = new LinkedHashMap<>();
@@ -3905,6 +3910,30 @@ public class AdminController {
      *  veri gizlemek değil; tanılama çıktısı hedefin HERKESE açık yüzeyidir (TLS/DNS/HTTP el
      *  sıkışması), takıma özel yapılandırma içermez. İzolasyon istenirse buraya
      *  canView(inv.getTeamId()) eklenmeli. */
+    /**
+     * Bağımsız alan adı izlemeleri — {@link #requireDomainExpiryScope} için. Alan enjeksiyonu: {@code @RequiredArgsConstructor}
+     * imzası değişmez (dilimli test bağlamlarında yoksa yalnız envanter kuralı geçerli kalır).
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.DomainMonitorRepository domainMonitorRepo;
+
+    /**
+     * Alan adı süre bitişi tanılamasının kapsamı (2026-10-05, erişim düzeltmesi): envanter kuralı
+     * ({@link #requireAdminOrMonitoredDomain}) ARTI bağımsız alan adı izlemesi — kullanıcı o izlemenin takımını
+     * İŞLETEBİLİYORSA ({@link SessionScope#canOperateTeam}; liste satırının {@code can_check} / {@code can_diagnose}
+     * kuralı). Alan Adı sayfasındaki "Sorun Tanıla" eskiden yalnız ADMIN'e çiziliyordu; {@code diagnostics.run} izni olan
+     * takım üyesi kendi izlemesini tanılayabilir. Başka her şey eskisi gibi 403.
+     */
+    private void requireDomainExpiryScope(HttpSession session, String domain) {
+        if (domain != null && domainMonitorRepo != null) {
+            String d = domain.trim().toLowerCase(java.util.Locale.ROOT);
+            for (com.sitemonitor.model.DomainMonitor m : domainMonitorRepo.findByDomain(d)) {
+                if (m != null && SessionScope.canOperateTeam(session, m.getTeamId())) return;
+            }
+        }
+        requireAdminOrMonitoredDomain(session, domain);
+    }
+
     private void requireAdminOrMonitoredDomain(HttpSession session, String domain) {
         if (isAdminOrAudit(session)) return;
         // 2026-09-11: TEAM_ADMIN/USER da diagnostics.run alır → hedef yalnız KENDİ takımının envanter kaydı

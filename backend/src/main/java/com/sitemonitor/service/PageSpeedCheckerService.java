@@ -62,16 +62,26 @@ public class PageSpeedCheckerService {
                          long totalBytes, int requestCount, int failedCount, boolean capped,
                          boolean bytesTruncated,
                          List<String> breached, String error, List<Measured> resources,
-                         HttpPhaseProbe.Phases phases, int skippedLazy) {
+                         HttpPhaseProbe.Phases phases, int skippedLazy,
+                         com.sitemonitor.service.failure.CheckFailure failure) {
 
         public boolean reachable() { return "OK".equals(status) || "SLOW".equals(status); }
+
+        /** Nedensiz biçim (2026-10-05 öncesi tam imza) — ölçüm sonucu, test ve geriye uyum. */
+        public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
+                      long totalBytes, int requestCount, int failedCount, boolean capped,
+                      boolean bytesTruncated, List<String> breached, String error, List<Measured> resources,
+                      HttpPhaseProbe.Phases phases, int skippedLazy) {
+            this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount,
+                    capped, bytesTruncated, breached, error, resources, phases, skippedLazy, null);
+        }
 
         /** Eski çağrı biçimi (faz/lazy bilgisi olmadan) — test ve geriye uyum. */
         public Result(String status, Integer statusCode, long ttfbMs, long htmlMs, long totalMs,
                       long totalBytes, int requestCount, int failedCount, boolean capped,
                       boolean bytesTruncated, List<String> breached, String error, List<Measured> resources) {
             this(status, statusCode, ttfbMs, htmlMs, totalMs, totalBytes, requestCount, failedCount,
-                    capped, bytesTruncated, breached, error, resources, HttpPhaseProbe.NONE, 0);
+                    capped, bytesTruncated, breached, error, resources, HttpPhaseProbe.NONE, 0, null);
         }
     }
 
@@ -124,15 +134,55 @@ public class PageSpeedCheckerService {
                 null, viaProxyFor(draft));   // eşik değerlendirmesi yok
     }
 
+    /**
+     * Uçtan uca tanılama (2026-10-05): kayıtlı izlemenin ölçümü — {@link #check(PageSpeedMonitor)} ile AYNI yol (aynı
+     * başlıklar, eşik değerlendirmesi, envanter kuralı), yalnız yol (vekil/doğrudan) çağırandan gelir ve duvar-saati tavanı
+     * tanılamanın bütçesine kısılır. DB'ye hiçbir şey yazmaz (bu sınıf zaten yazmaz; kayıt sweep'te).
+     *
+     * @param viaProxy   ölçüm hangi yoldan (tanılama iki yolu da dener)
+     * @param maxSeconds duvar-saati tavanı (10 sn tabanı; izlemenin ayarından büyükse ayar geçerli)
+     */
+    public Result checkForDiagnostics(PageSpeedMonitor m, boolean viaProxy, int maxSeconds) {
+        String pass = decryptSecret(m.getBasicAuthPassEnc());
+        int cap = Math.max(10, Math.min(maxSeconds, maxCheckSeconds()));
+        return measure(m.getUrl(),
+                timeoutOf(m),
+                PageSpeedRules.clampConcurrency(m.getResourceConcurrency()),
+                effectiveUserAgent(m),
+                Boolean.TRUE.equals(m.getSendDnt()),
+                PageSpeedRules.exclusion(Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns()),
+                PageSpeedRules.basicAuthHeader(m.getBasicAuthUser(), pass),
+                PageSpeedRules.parseHeaders(decryptSecret(m.getCustomHeadersEnc())),
+                m, viaProxy, cap);
+    }
+
+    /** İzlemenin gönderdiği User-Agent (izleme ayarı, yoksa sistem varsayılanı) — tanılamanın ham ölçümü aynısını gönderir. */
+    public String effectiveUserAgent(PageSpeedMonitor m) {
+        return PageSpeedRules.userAgentOr(m == null ? null : m.getUserAgent(), defaultUserAgent());
+    }
+
+    /** İzlemenin istek zaman aşımı (boşsa sistem varsayılanı) — tanılama aynı değerden türetir. */
+    public int effectiveTimeoutMs(PageSpeedMonitor m) {
+        return timeoutOf(m);
+    }
+
     // ── Ölçüm ────────────────────────────────────────────────────────────────
 
     private Result measure(String url, int timeoutMs, int concurrency, String userAgent, boolean dnt,
                            Predicate<String> exclude, String basicAuth, Map<String, String> customHeaders,
                            PageSpeedMonitor thresholds, boolean viaProxy) {
+        return measure(url, timeoutMs, concurrency, userAgent, dnt, exclude, basicAuth, customHeaders, thresholds, viaProxy,
+                maxCheckSeconds());
+    }
+
+    private Result measure(String url, int timeoutMs, int concurrency, String userAgent, boolean dnt,
+                           Predicate<String> exclude, String basicAuth, Map<String, String> customHeaders,
+                           PageSpeedMonitor thresholds, boolean viaProxy, int maxSeconds) {
         // Yapılandırma hatası (şemasız/host'suz URL) kesinti DEĞİL: istek atılmaz ve alarm açılmaz.
         if (!MonitorUrls.isCheckable(url)) {
             return new Result("CONFIG_ERROR", null, 0, 0, 0, 0, 0, 0, false, false,
-                    List.of(), MonitorUrls.CONFIG_ERROR_MSG, List.of());
+                    List.of(), MonitorUrls.CONFIG_ERROR_MSG, List.of(), HttpPhaseProbe.NONE, 0,
+                    com.sitemonitor.service.failure.CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR));
         }
         // Faz kırılımı ÖNCE ölçülür (taze bağlantı): HttpClient havuzu ısındıktan sonra ölçmek
         // "sıcak" bir rakam verirdi ve karşılaştırılabilirliği bozardı. Prob ASIL ölçümün ön
@@ -144,7 +194,7 @@ public class PageSpeedCheckerService {
                 : phaseProbe.measure(url, timeoutMs);
 
         long start = System.currentTimeMillis();
-        long deadline = start + maxCheckSeconds() * 1000L;
+        long deadline = start + maxSeconds * 1000L;
         Map<String, String> headers = buildHeaders(dnt, basicAuth, customHeaders);
 
         PageFetchCore.FetchOptions htmlOpts = PageFetchCore.FetchOptions
@@ -156,7 +206,8 @@ public class PageSpeedCheckerService {
                     : (main.status() >= 400 ? "sayfa HTTP " + main.status() : "sayfa alınamadı");
             return new Result("DOWN", main.status() == 0 ? null : main.status(),
                     main.ttfbMs(), main.durationMs(), System.currentTimeMillis() - start,
-                    main.bytes(), 1, 1, false, false, List.of(), err, List.of(), phases, 0);
+                    main.bytes(), 1, 1, false, false, List.of(), err, List.of(), phases, 0,
+                    PageCheckerService.mainFailure(main));
         }
 
         String rootHost = PageFetchCore.hostOf(url);

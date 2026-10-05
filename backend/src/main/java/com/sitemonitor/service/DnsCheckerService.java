@@ -76,6 +76,8 @@ public class DnsCheckerService {
             result.put("response_ms", responseMs);
             if (!ok) {
                 result.put("error", rcode == Rcode.NOERROR ? "no answer" : Rcode.string(rcode));
+                classify(result, com.sitemonitor.service.failure.CheckFailureClassifier.forDnsRcode(rcode, safeRcode(rcode)),
+                        domain, recordType, responseMs, answers == null ? 0 : answers.size());
             }
         } catch (Exception e) {
             result.put("success", false);
@@ -83,9 +85,55 @@ public class DnsCheckerService {
             result.put("response_ms", (System.nanoTime() - start) / 1_000_000L);
             result.put("ttl", null);
             result.put("error", e.getMessage());
+            classify(result, com.sitemonitor.service.failure.CheckFailureClassifier.forDnsException(e),
+                    domain, recordType, (System.nanoTime() - start) / 1_000_000L, -1);
             log.debug("DNS check failed for {} {}: {}", recordType, domain, e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * Hata teşhisi (2026-10-05): başarısız sorgunun NEDENİ ({@code failure_reason} + {@code failure_detail}) — NXDOMAIN /
+     * SERVFAIL / REFUSED / kayıt yok / zaman aşımı. Eskiden bu bilgi kayda hiç yazılmıyordu (yalnız {@code value=''}).
+     * Yalnız ÜST VERİ: success/values/error değişmez; asla fırlatmaz.
+     *
+     * @param answerCount ANSWER bölümündeki kayıt sayısı (istenen türde değer yoksa ama CNAME vb. döndüyse ipucu); -1 = yok
+     */
+    private void classify(Map<String, Object> result, com.sitemonitor.service.failure.CheckFailure f,
+                          String domain, String recordType, long responseMs, int answerCount) {
+        try {
+            f.with("target", toHostname(domain))
+                    .with("record_type", recordType == null ? "A" : recordType.toUpperCase(Locale.ROOT))
+                    .with("response_ms", responseMs)
+                    .with("timeout_ms", Math.max(500, appSettings.getInt("site.monitor.dns.query-timeout-ms", 2000)));
+            if (answerCount > 0) f.with("other_answers", answerCount);
+            f.applyTo(result);
+        } catch (Exception ignore) { /* üst veri — kontrol sonucu olduğu gibi kalır */ }
+    }
+
+    private static String safeRcode(int rcode) {
+        try { return Rcode.string(rcode); } catch (Exception e) { return String.valueOf(rcode); }
+    }
+
+    /** Kayda yazılan hata metninin tavanı (kolon TEXT; satır başına yük küçük kalsın). */
+    static final int ERROR_MAX = 1000;
+
+    /**
+     * Başarısız sorgunun hata metni + nedenini {@link com.sitemonitor.model.DnsRecord}'a kopyalar — zamanlanmış tur ve
+     * "Şimdi kontrol et" AYNI yardımcıyı kullanır (iki yol ayrışmasın). Çağıran yalnız {@code success=false} iken çağırır;
+     * value / changed / rotated / manual alanlarına DOKUNMAZ (değişiklik tespiti ve tabanı aynen kalır). Asla fırlatmaz.
+     */
+    public static void applyFailure(com.sitemonitor.model.DnsRecord record, Map<String, Object> r) {
+        if (record == null || r == null) return;
+        try {
+            Object e = r.get("error");
+            String err = e == null ? null : String.valueOf(e).trim();
+            if (err != null && !err.isEmpty()) {
+                record.setError(err.length() <= ERROR_MAX ? err : err.substring(0, ERROR_MAX - 1) + "…");
+            }
+            record.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
+            record.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
+        } catch (Exception ignore) { /* üst veri — kayıt yine yazılır */ }
     }
 
     /**

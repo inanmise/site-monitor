@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
 import PingMonitorPage from '../components/PingMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -286,5 +286,39 @@ describe('PingMonitorPage', () => {
     expect(document.querySelector('.upt-grid')).toHaveAttribute('data-density', 'rich')
     expect(screen.getByRole('radio', { name: /^(Rich|Zengin)$/ })).toHaveAttribute('data-state', 'on')
     expect(document.querySelector('[data-slot="monitor-card-rich"]')).not.toBeNull()
+  })
+})
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): başarısız ping satırı ham hata yerine neden rozeti + tek satır + aç/kapa;
+ * açılınca satırın altında panel (Neden / Etkisi / Ne yapmalı, paket kaybı, ham hata). Başarılı satırda hücre yok.
+ */
+describe('PingMonitorPage — kontrol geçmişi hata teşhisi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getPingMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 11, monitor_id: 1, up: false, rtt_ms: null, packet_loss: 100, error: 'Yanıt yok (%100 paket kaybı)',
+          checked_at: '2026-10-05T09:00:00', failure_reason: 'ICMP_NO_REPLY',
+          failure_detail: JSON.stringify({ phase: 'ICMP', packet_loss: 100, packets: 4, target: '10.0.0.1', timeout_ms: 5000 }) },
+        { id: 10, monitor_id: 1, up: true, rtt_ms: 3, packet_loss: 0, checked_at: '2026-10-05T08:59:00' },
+      ], counts: { total: 2, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-10-05T00:00:00', to: '2026-10-05T23:59:59' }, total: 2, page: 0, size: 50 } })
+  })
+
+  it('başarısız satır: neden rozeti; aç → panel (paket kaybı + ham hata); başarılı satırda hücre yok', async () => {
+    render(<PingMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('10.0.0.1'))
+    const dialog = await screen.findByRole('dialog')
+    const cell = await waitFor(() => { const c = dialog.querySelector('[data-slot="chkfail-cell"]'); expect(c).not.toBeNull(); return c })
+    expect(dialog.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(1)
+    expect(cell).toHaveAttribute('data-code', 'ICMP_NO_REPLY')
+    expect(within(cell).getByText(/^(No ping reply|Ping yanıtı yok)$/)).toBeInTheDocument()
+    fireEvent.click(within(cell).getByRole('button', { name: /show details|ayrıntıyı göster/i }))
+    const panel = await within(dialog).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="packetLoss"]').textContent).toMatch(/100/)
+    expect(within(panel).getByText('Yanıt yok (%100 paket kaybı)')).toBeInTheDocument()
   })
 })

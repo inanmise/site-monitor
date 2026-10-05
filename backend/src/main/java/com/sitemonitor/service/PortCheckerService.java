@@ -1,6 +1,9 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.PortMonitor;
+import com.sitemonitor.service.failure.CheckFailure;
+import com.sitemonitor.service.failure.CheckFailureClassifier;
+import com.sitemonitor.service.failure.CheckFailureReason;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -124,6 +127,8 @@ public class PortCheckerService {
             result.put("open", false);
             result.put("response_ms", null);
             result.put("error", be.getMessage());
+            pend(result, CheckFailureClassifier.forException(be, false));
+            finishFailure(result, host, port, t, false, timeoutMs, ipVersion, null);
             return result;
         }
         if (proxied) {
@@ -137,15 +142,20 @@ public class PortCheckerService {
                 result.put("open", false);
                 result.put("response_ms", null);
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                CheckFailure f = CheckFailureClassifier.forException(e, true);
                 if (msg.startsWith("vekil tüneli reddetti")) {
                     // "port kapalı" DEĞİL: vekil bu porta tünel açmadı — izinli portlar mesajda
                     result.put("proxy_refused", true);
+                    List<Integer> allowed = proxyConnectPorts();
                     msg = msg + " — vekil bu porta tünel açmıyor olabilir (izinli: "
-                            + proxyConnectPorts().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")) + ")";
+                            + allowed.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", ")) + ")";
+                    f.with("proxy_refused", true).with("allowed_ports", allowed);
                 }
                 result.put("error", msg);
+                pend(result, f);
                 log.debug("Port check via proxy ({}) failed for {}:{}: {}", t, host, port, e.toString());
             }
+            finishFailure(result, host, port, t, true, timeoutMs, ipVersion, null);
             return result;
         }
         try {
@@ -165,9 +175,45 @@ public class PortCheckerService {
             result.put("open", false);
             result.put("response_ms", null);
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            pend(result, CheckFailureClassifier.forException(e, false));
             log.debug("Port check ({}) failed for {}:{}: {}", t, host, port, e.toString());
         }
+        finishFailure(result, host, port, t, false, timeoutMs, ipVersion, vetted);
         return result;
+    }
+
+    // ── Hata teşhisi (2026-10-05) ────────────────────────────────────────────────────────────
+
+    /** Kontrol yolunun bıraktığı (henüz bağlamsız) neden — {@link #finishFailure} sonuçtan SİLER, dışarı sızmaz. */
+    static final String PENDING_FAILURE = "__pending_failure";
+
+    private static void pend(Map<String, Object> result, CheckFailure f) {
+        if (f != null) result.put(PENDING_FAILURE, f);
+    }
+
+    /**
+     * Kapalı/başarısız sonucun NEDENİ ({@code failure_reason} + {@code failure_detail}): kontrol yolunun bıraktığı
+     * neden (istisna / HTTP kodu / banner / UDP) ya da yoksa hata metninden en yakın kod; ayrıntıya hedef, tür, yol
+     * (eskiden atılan {@code via}), zaman aşımı, IP sürümü ve çözümlenen IP'ler eklenir. Yalnız ÜST VERİ: open / error /
+     * proxy_refused değerleri değişmez; asla fırlatmaz. Açık sonuçta hiçbir şey yazılmaz.
+     */
+    private static void finishFailure(Map<String, Object> result, String host, int port, String type, boolean proxied,
+                                      int timeoutMs, String ipVersion, List<InetAddress> vetted) {
+        try {
+            Object pending = result.remove(PENDING_FAILURE);
+            if (Boolean.TRUE.equals(result.get("open"))) return;
+            CheckFailure f = pending instanceof CheckFailure cf ? cf
+                    : CheckFailure.of(CheckFailureClassifier.fromMessage(String.valueOf(result.getOrDefault("error", ""))));
+            f.with("target", host + ":" + port)
+                    .with("protocol", type)
+                    .withIfAbsent("via", proxied ? "proxy" : "direct")
+                    .with("timeout_ms", timeoutMs);
+            if (ipVersion != null && !ipVersion.isBlank() && !"auto".equalsIgnoreCase(ipVersion)) f.with("ip_version", ipVersion);
+            if (vetted != null && !proxied) f.with("resolved_ips", vetted.stream().map(InetAddress::getHostAddress).toList());
+            f.applyTo(result);
+        } catch (Exception ignore) {
+            result.remove(PENDING_FAILURE);   // üst veri — kontrol sonucu olduğu gibi kalır
+        }
     }
 
     // ── Vekil yolu (2026-09-24) ─────────────────────────────────────────────────────────────
@@ -222,7 +268,10 @@ public class PortCheckerService {
             boolean ok = httpStatusMatches(code, expect);
             result.put("open", ok);
             result.put("detail", "HTTP " + code + " · vekil üzerinden");
-            if (!ok) result.put("error", "HTTP " + code + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
+            if (!ok) {
+                result.put("error", "HTTP " + code + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
+                pend(result, CheckFailureClassifier.forHttpStatus(code, expect));
+            }
         } finally {
             if (s != tunnel) s.close();
         }
@@ -298,8 +347,11 @@ public class PortCheckerService {
         boolean ok = httpStatusMatches(code, expect);
         result.put("open", ok);
         result.put("detail", "HTTP " + code);
-        if (!ok) result.put("error", "HTTP " + code
-                + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
+        if (!ok) {
+            result.put("error", "HTTP " + code
+                    + (expect != null && !expect.isBlank() ? " (beklenen: " + expect.trim() + ")" : ""));
+            pend(result, CheckFailureClassifier.forHttpStatus(code, expect));
+        }
     }
 
     private void doBanner(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, String expect, Map<String, Object> result) throws Exception {
@@ -323,9 +375,15 @@ public class PortCheckerService {
         String shortB = banner.length() > 80 ? banner.substring(0, 80) + "…" : banner;
         result.put("open", ok);
         result.put("detail", shortB);
-        if (!ok) result.put("error", (expect != null && !expect.isBlank())
-                ? "Beklenen yanit yok: '" + expect.trim() + "' (gelen: " + (shortB.isEmpty() ? "bos" : shortB) + ")"
-                : "Banner alinamadi");
+        if (!ok) {
+            result.put("error", (expect != null && !expect.isBlank())
+                    ? "Beklenen yanit yok: '" + expect.trim() + "' (gelen: " + (shortB.isEmpty() ? "bos" : shortB) + ")"
+                    : "Banner alinamadi");
+            pend(result, CheckFailure.of(CheckFailureReason.BANNER_MISMATCH)
+                    .with("expected", expect == null ? null : expect.trim())
+                    .with("got", shortB)
+                    .with("bytes", Math.max(0, n)));
+        }
     }
 
     private void doUdp(InetAddress addr, List<InetAddress> vetted, int port, int timeoutMs, String send, Map<String, Object> result) throws Exception {
@@ -343,15 +401,17 @@ public class PortCheckerService {
             } catch (PortUnreachableException pue) {
                 result.put("open", false);
                 result.put("error", "UDP port erisilemez (ICMP unreachable)");
+                pend(result, CheckFailure.of(CheckFailureReason.CONNECT_REFUSED).with("udp", true));
             } catch (SocketTimeoutException ste) {
                 result.put("open", false);
                 result.put("error", "UDP yanit yok (timeout — acik/filtreli olabilir)");
+                pend(result, CheckFailure.of(CheckFailureReason.UDP_NO_REPLY).with("udp", true));
             }
         }
     }
 
     /** Beklenen kalıp: boş -> 2xx/3xx; "200" tam; "2xx" sınıf; "200-399" aralık; virgül/boşluk ile çoklu. */
-    static boolean httpStatusMatches(int code, String expect) {
+    public static boolean httpStatusMatches(int code, String expect) {   // public: port uçtan uca tanılaması (2026-10-05) aynı kuralı kullanır
         if (expect == null || expect.isBlank()) return code >= 200 && code < 400;
         for (String part : expect.split("[,\\s]+")) {
             String e = part.trim();

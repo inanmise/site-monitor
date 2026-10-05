@@ -37,4 +37,15 @@ public class PingCheck {
 
     @Column(name = "checked_at")
     private String checkedAt;
+
+    // ── Hata teşhisi (2026-10-05): YALNIZ başarısız kontrolde dolu, NULL'lanabilir; eski satırlar NULL kalır (arayüz
+    // "ayrıntı kaydedilmemiş" der). up/rtt/kayıp ve alarm kararı DEĞİŞMEDİ — sınıflandırma salt üst veridir.
+
+    /** Neden kodu ({@code CheckFailureReason}); ICMP'nin bu pod'da kullanılamadığı satır {@code ICMP_UNAVAILABLE}. */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, paket kaybı, ping çıktısının ilk satırı …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

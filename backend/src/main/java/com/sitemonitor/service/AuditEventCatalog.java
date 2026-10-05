@@ -101,6 +101,7 @@ public final class AuditEventCatalog {
             "DIAGNOSTICS_OPENSSL",
             "DIAGNOSTICS_PROXY_CA_CHAIN",
             "DIAGNOSTICS_RUN",
+            "DNS_DIAGNOSTICS_RUN",        // DNS izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "DOMAIN_ADD",
             "DOMAIN_AUTO_PURGE",
             "DOMAIN_BULK_ACTIVATE",
@@ -196,11 +197,15 @@ public final class AuditEventCatalog {
             "NOTIFICATION_GROUP_DELETE",
             "NOTIFICATION_GROUP_REASSIGN",
             "NOTIFICATION_GROUP_UPDATE",
+            "PAGE_DIAGNOSTICS_RUN",       // Sayfa Bütünlüğü izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
+            "PAGESPEED_DIAGNOSTICS_RUN",  // Sayfa Hızı izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "PERMISSION_RESET",
             "PERMISSION_UPDATE",
+            "PING_DIAGNOSTICS_RUN",       // Ping izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "PLATFORM_CREATE",
             "PLATFORM_DELETE",
             "PLATFORM_UPDATE",
+            "PORT_DIAGNOSTICS_RUN",       // Port izlemesinde uçtan uca tanılama çalıştırıldı (2026-10-05)
             "PUSH_PREFS_UPDATE",          // kişi push tercihlerini (seviye / aileler / dil) değiştirdi (2026-10-04)
             "PUSH_SELF_TEST",             // kişi kendine test push'u gönderdi (2026-10-04)
             "PUSH_SNOOZE",                // kişi push'u susturdu / susturmayı kaldırdı (2026-10-04)
@@ -364,6 +369,10 @@ public final class AuditEventCatalog {
         // HTTP uçtan uca tanılaması (2026-10-02) bir İZLEME eylemidir — DIAGNOSTICS_* (sertifika/alan adı tanılaması) değil.
         if (t.startsWith("HTTP_DIAGNOSTICS")) return MONITOR;
         if (t.startsWith("KEYWORD_DIAGNOSTICS")) return MONITOR;   // keyword uçtan uca tanılaması (2026-10-04) — aynı kural
+        // ping / port / DNS uçtan uca tanılaması (2026-10-05) — aynı kural (DNS_ önekinin genel kuralı yok, yine de açıkça)
+        if (t.startsWith("PING_DIAGNOSTICS") || t.startsWith("PORT_DIAGNOSTICS") || t.startsWith("DNS_DIAGNOSTICS")) return MONITOR;
+        // Sayfa Bütünlüğü / Sayfa Hızı uçtan uca tanılaması (2026-10-05) — aynı kural
+        if (t.startsWith("PAGE_DIAGNOSTICS") || t.startsWith("PAGESPEED_DIAGNOSTICS")) return MONITOR;
         if (t.startsWith("MONITOR_") || t.startsWith("THRESHOLD_")
                 || t.startsWith("SCRIPTED_DRAFT")) return MONITOR;
         if (t.startsWith("CERT_") || t.startsWith("DOMAIN_") || t.startsWith("DIAGNOSTICS_")) return CERTIFICATE;

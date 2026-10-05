@@ -15,6 +15,28 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Kontrol geçmişinde hata teşhisi (Ping, Port, DNS, Sayfa Bütünlüğü, Sayfa Hızı, Durum İzleme, Alan Adı, Sertifika):**
+  başarısız kontrolün NEDENİ artık kaydedilir (ICMP yok, NXDOMAIN / SERVFAIL / kayıt yok, bağlantı reddedildi, zaman
+  aşımı, vekil reddetti / port izinli değil, TLS el sıkışması / güven / ad uyuşmazlığı, HTTP hata kodu, banner
+  uyuşmazlığı, kırık / zaman aşımlı / güvensiz kaynak, kayıt sunucusu yanıt vermedi …). Başarısız satırda neden rozeti +
+  tek satır açıklama; açılınca "Neden / Etkisi / Ne yapmalı", kayıtlı ayrıntılar (aşama, yol, çözümlenen IP, yanıt kodu,
+  zaman aşımı) ve kopyalanabilir ham hata. Eski satırlar hata metninden en yakın nedenle, "ayrıntı kaydedilmemiş" notuyla.
+- **DNS geçmişinde başarısız sorgu görünür:** hata metni ilk kez saklanır; satır "Değişiklik Yok" yerine "Sorgu başarısız"
+  der, "Başarısız sorgu" sayacı ve süzgeci eklendi.
+- **Uçtan uca tanılama — Ping, Port, DNS, Sayfa Bütünlüğü, Sayfa Hızı:** ayrıntı başlığında ve başarısız geçmiş satırında.
+  Ping: DNS → ICMP → TCP canlılık (isteğe bağlı traceroute). Port: DNS → TCP → TLS / HTTP / banner / UDP, vekil varsa
+  doğrudan ↔ vekil karşılaştırması. DNS: her çözücü ve yetkili ad sunucusu ayrı ayrı (yanıt kodu, cevaplar, TTL, DNSSEC,
+  tutarsızlık). Sayfa Bütünlüğü / Sayfa Hızı: HTTP tanılamasının aynısı + kaynak sorunları / aşama süreleri eşiklerle.
+  Kontrol kaydı yazmaz, alarm üretmez; `diagnostics.run` + izlemeyi işletme yetkisi; kullanıcı ve izleme başına dakikada
+  6, aynı anda 4; geçmiş saklanır; denetim `PING|PORT|DNS|PAGE|PAGESPEED_DIAGNOSTICS_RUN`.
+
+### Changed
+- **⚠ Davranış:** Alan Adı "Sorun Tanıla", Durum İzleme ve sertifika penceresindeki tanılama artık rol (yönetici) yerine
+  `diagnostics.run` izni + takım yetkisiyle açılır; alan adı tanılaması envanterde olmayan, takımınıza ait bağımsız alan
+  adı izlemelerinde de çalışır.
+- Sayfa Hızı geçmişinde yapılandırma hatası (CONFIG_ERROR) artık "Down"dan ayrı gösterilir.
+
 ## [20.108.0] — 2026-10-05
 
 ### Added

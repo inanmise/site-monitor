@@ -98,6 +98,7 @@ public class DomainCheckerService {
         String reg = psl.registrableDomain(input);
         if (reg == null || reg.isBlank()) {
             Map<String, Object> out = unknownResult(input, "geçersiz/çözümlenemeyen domain", checkedAt);
+            classifyUnknown(out, "geçersiz/çözümlenemeyen domain", null, false, null, "NONE", timeoutMs);
             persist(monitorId, out, false, manual);
             return out;
         }
@@ -107,8 +108,15 @@ public class DomainCheckerService {
         // whois-enabled=false + tr-web-whois=true iken .tr domainleri UNKNOWN kalıyordu (2026-08 prod).
         // lookup() .tr-dışında socket bayrağını kendi içinde yeniden denetler; port-43 kapalıysa denenmez.
         Map<String, Object> info = rdap.lookup(reg, timeoutMs);
+        // Hata teşhisi (2026-10-05): RDAP sonucunun "herkese açık kayıt sunucusu var mı" bayrağı + WHOIS denemesinin
+        // hatası — yalnız veri gelmezse neden sınıflandırmasında kullanılır; seçim kuralı DEĞİŞMEDİ.
+        Object registryFlag = info.get("rdap_registry");
+        boolean whoisTried = false;
+        String whoisError = null;
         if ((info.get("error") != null || info.get("expiry_date") == null) && whois.anySourceEnabled()) {
             Map<String, Object> w = whois.lookup(reg);
+            whoisTried = true;
+            whoisError = w.get("error") instanceof String we ? we : null;
             if (w.get("expiry_date") != null && w.get("error") == null) info = w;
             else if (info.get("expiry_date") == null && w.get("expiry_date") != null) info = w;
         }
@@ -228,6 +236,10 @@ public class DomainCheckerService {
         out.put("blacklist_hits", bl.hits());
         out.put("error", info.get("error"));
         out.put("checked_at", checkedAt);
+        if (!hasData) {
+            classifyUnknown(out, info.get("error") instanceof String ie ? ie : null,
+                    registryFlag instanceof Boolean rb ? rb : null, whoisTried, whoisError, source, timeoutMs);
+        }
         // Taban dışı (elle / Kayıt sekmesi / yeniden ölçüm) satır "değişti"yi KALICILAŞTIRMAZ (D-b10, DNS D-9 deseni):
         // aynı değişiklik sonraki zamanlanmış turda da "değişti" olur → geçmiş grafiğinde iki gün / iki kayıt görünürdü.
         // Gördüğü fark yalnız yanıtta ({@code changed}/{@code change_detail}) döner.
@@ -264,10 +276,30 @@ public class DomainCheckerService {
             dc.setError((String) out.get("error"));
             dc.setCheckedAt((String) out.get("checked_at"));
             dc.setManual(manual);
+            // Hata teşhisi (2026-10-05): yalnız veri getirilemeyen (UNKNOWN) satırda dolu — classifyUnknown yazar.
+            dc.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(out));
+            dc.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(out));
             checkRepo.save(dc);
         } catch (Exception e) {
             log.warn("Domain kaydı yazılamadı: {} — {}", out.get("domain"), e.getMessage());
         }
+    }
+
+    /**
+     * Hata teşhisi (2026-10-05): veri getirilemeyen (UNKNOWN) kontrolün NEDENİ ({@code failure_reason} +
+     * {@code failure_detail}) — RDAP bulunamadı / erişilemedi / hız sınırı, herkese açık kayıt sunucusu yok, WHOIS
+     * erişilemedi, kaynak yanıt verdi ama bitiş tarihi yok, ya da ağ/TLS/vekil hatası. Yalnız ÜST VERİ: status, error,
+     * değişiklik tespiti ve alarm değişmez; asla fırlatmaz.
+     */
+    private static void classifyUnknown(Map<String, Object> out, String error, Boolean registryKnown, boolean whoisTried,
+                                        String whoisError, String source, Integer timeoutMs) {
+        try {
+            com.sitemonitor.service.failure.CheckFailureClassifier.forDomain(error, registryKnown, whoisTried, whoisError)
+                    .with("target", out.get("domain"))
+                    .with("source", source)
+                    .with("timeout_ms", timeoutMs)
+                    .applyTo(out);
+        } catch (Exception ignore) { /* üst veri — kontrol sonucu olduğu gibi kalır */ }
     }
 
     /** Çözülen IP'ler için reverse-DNS (PTR) — best-effort, en fazla ilk 8 IP; PTR yoksa (host==ip) atlanır. */

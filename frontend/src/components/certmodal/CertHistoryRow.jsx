@@ -8,6 +8,7 @@ import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { daysTone, isFailed, isWarning, techLine } from './certHistoryModel.js'
+import { CheckFailureBadge, CheckFailurePanel } from '../checks/CheckFailurePanel.jsx'
 
 /**
  * Sertifika Kontrol Geçmişi satır parçaları (2026-09-28 yeniden tasarım) — masaüstü tablo hücreleri, telefon kartı ve
@@ -142,7 +143,11 @@ export function CheckDetailCell({ item, open, onToggle, panelId, t }) {
     <span className="flex min-w-0 items-center gap-2">
       <span className="min-w-0 flex-1">
         {item?.error ? (
-          <span data-slot="cert-hist-error" className="block truncate text-destructive" title={item.error}>{item.error}</span>
+          <span className="flex min-w-0 flex-col items-start gap-0.5">
+            {/* Hata teşhisi (2026-10-05): ham sınıf kodu yerine okunur neden (sınıf + ileti + aşamadan) */}
+            {isFailed(item) && <CheckFailureBadge type="cert" check={item} className="text-[11px]" />}
+            <span data-slot="cert-hist-error" className="block max-w-full truncate text-destructive" title={item.error}>{item.error}</span>
+          </span>
         ) : (
           <span className="block truncate text-muted-foreground">{line || '—'}</span>
         )}
@@ -156,7 +161,7 @@ export function CheckDetailCell({ item, open, onToggle, panelId, t }) {
  * Açılır ayrıntı paneli: tam hata metni (kopyalanabilir) + o kontrolde okunan sertifika alanları + önceki kontrole göre
  * değişim notu. Yalnız VERİSİ olan alanlar çizilir (başarısız kontrolde sertifika alanları boştur).
  */
-export function CertCheckDetail({ id, item, cmp, t }) {
+export function CertCheckDetail({ id, item, cmp, t, onDiagnose }) {
   const label = rowLabelOf(item)
   const fields = [
     [t('certh.dCheckedAt'), formatDateSec(item.checked_at)],
@@ -189,6 +194,10 @@ export function CertCheckDetail({ id, item, cmp, t }) {
           {cmp.olderSerial ? t('certh.changedNoteSerial', cmp.olderSerial) : t('certh.changedNote')}
         </p>
       )}
+      {/* Hata teşhisi (2026-10-05): ham `error_class` kodu yerine Neden / Etkisi / Ne yapmalı + aşama + çözümlenen IP'ler
+          (kayda yeni yazılıyor; eski satırda "ayrıntı kaydedilmemiş" notu). Ham hata metni aşağıdaki bantta kalır. */}
+      {isFailed(item) && <CheckFailurePanel type="cert" check={item} showRaw={false} className="bg-background"
+        canDiagnose={!!onDiagnose} onDiagnose={onDiagnose} />}
       {item.error && (
         // Kopyala düğmesi AlertBanner'ın yan sütununda DEĞİL metnin altında: telefonda yan sütun uzun hata metnini
         // ~150 px'lik bir şeride sıkıştırıyordu (Playwright 390×844, 2026-09-28).
@@ -218,7 +227,7 @@ export function CertCheckDetail({ id, item, cmp, t }) {
  * Telefon kartı (< 768 px): üst satır saat + durum; ikinci satır kalan gün (büyük) + değişim, sağda bitiş; veren;
  * hata (iki satır); tam genişlikte 40 px ayrıntı düğmesi; açıkken ayrıntı paneli kartın içinde.
  */
-export function CertHistoryCard({ item, cmp, open, onToggle, panelId, t }) {
+export function CertHistoryCard({ item, cmp, open, onToggle, panelId, t, onDiagnose }) {
   const issuer = item.issuer_cn || item.issuer
   return (
     <Card data-slot="cert-hist-card" data-status={isFailed(item) ? 'fail' : 'ok'}
@@ -232,10 +241,11 @@ export function CertHistoryCard({ item, cmp, open, onToggle, panelId, t }) {
         {item.not_after && <span className="text-muted-foreground tabular-nums">{t('certh.expires', formatDateOnly(item.not_after))}</span>}
       </div>
       {issuer && <p className="m-0 truncate text-muted-foreground" title={issuer}>{issuer}</p>}
+      {isFailed(item) && <CheckFailureBadge type="cert" check={item} className="self-start text-[11px]" />}
       {item.error && <p data-slot="cert-hist-error" className="m-0 line-clamp-2 text-destructive [overflow-wrap:anywhere]">{item.error}</p>}
       <DetailToggle open={open} onToggle={onToggle} panelId={panelId} rowLabel={rowLabelOf(item)} t={t}
         className="h-10 w-full justify-between border px-3 text-foreground" />
-      {open && <CertCheckDetail id={panelId} item={item} cmp={cmp} t={t} />}
+      {open && <CertCheckDetail id={panelId} item={item} cmp={cmp} t={t} onDiagnose={onDiagnose} />}
     </Card>
   )
 }

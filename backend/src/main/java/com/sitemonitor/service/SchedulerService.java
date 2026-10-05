@@ -12,6 +12,7 @@ import com.sitemonitor.model.PageCheck;
 import com.sitemonitor.model.PageResourceIssue;
 import com.sitemonitor.model.PageSpeedCheck;
 import com.sitemonitor.model.PageSpeedResource;
+import com.sitemonitor.service.failure.CheckFailure;
 import com.sitemonitor.repository.AlertThresholdRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
 import com.sitemonitor.repository.DnsMonitorRepository;
@@ -1147,6 +1148,29 @@ public class SchedulerService {
         patch("ALTER TABLE keyword_results ADD COLUMN via VARCHAR(10)");
         patch("ALTER TABLE keyword_results ADD COLUMN hints VARCHAR(500)");
         patch("ALTER TABLE keyword_results ADD COLUMN excerpt TEXT");
+        // Kontrol hata teşhisi (2026-10-05): yedi izleme türünün geçmiş tablosuna neden kodu + kompakt JSON ayrıntı. Dolu
+        // tablolara SONRADAN eklenen, NULL'lanabilir, DEFAULT'suz kolonlar — eski satırlar NULL kalır ("ayrıntı
+        // kaydedilmemiş"), geçmişe uydurma değer yazılmaz. ddl-auto da ekler; açık patch proje kuralı (ALTER düşerse her
+        // kontrolün INSERT'i kolonsuz tabloya yazmaya çalışıp kayıt kaybolurdu). DNS'te hata metni de ilk kez saklanır.
+        // Literal satırlar BİLİNÇLİ (döngü değil): SchemaPatchPostgresTest yamaları kaynaktan okuyup kolonları doğrular.
+        patch("ALTER TABLE ping_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE ping_checks ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE port_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE port_checks ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE dns_records ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE dns_records ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE dns_records ADD COLUMN error TEXT");
+        patch("ALTER TABLE page_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE page_checks ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE uptime_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE uptime_checks ADD COLUMN failure_detail TEXT");
+        patch("ALTER TABLE domain_checks ADD COLUMN failure_reason VARCHAR(48)");
+        patch("ALTER TABLE domain_checks ADD COLUMN failure_detail TEXT");
+        // Sertifika geçmişi: checker'ın hesaplayıp attığı aşama + çözümlenen IP'ler (yalnız hatalı kontrolde dolu).
+        patch("ALTER TABLE certificate_checks ADD COLUMN error_stage VARCHAR(32)");
+        patch("ALTER TABLE certificate_checks ADD COLUMN resolved_ips TEXT");
         // İstek Gezgini durum kodu dağılımı (2026-09-28): dolu tabloya SONRADAN eklenen NULL'lanabilir kolon. ddl-auto
         // normalde ekler ama ona güvenilmez — ALTER düşerse her dakikanın saveAll'u kolonsuz tabloya yazmaya çalışır,
         // flushPending istisnayı yutar ve İstek Gezgini / top_endpoints KALICI boş kalırdı (2026-09-28c, B3).
@@ -3087,6 +3111,8 @@ public class SchedulerService {
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
             check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa uptime %'den hariç
+            check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız "down"da dolu
+            check.setFailureDetail(CheckFailure.detailOf(r));
             uptimeCheckRepo.save(check);
         } catch (Exception e) {
             log.warn("Uptime kaydı yazılamadı: {}:{} — {}", domain, port, e.getMessage());
@@ -3222,6 +3248,8 @@ public class SchedulerService {
             check.setResponseMs(r.get("response_ms") != null ? ((Number) r.get("response_ms")).longValue() : null);
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
+            check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız kapalıda dolu
+            check.setFailureDetail(CheckFailure.detailOf(r));
             portCheckRepo.save(check);
         } catch (Exception e) {
             log.warn("Port kaydı yazılamadı: {}:{} — {}", m.getHost(), m.getPort(), e.getMessage());
@@ -4204,6 +4232,67 @@ public class SchedulerService {
                 .filter(s -> !s.isBlank()).distinct().limit(INTEGRITY_RECHECK_MAX_PAGES).toList();
     }
 
+    /**
+     * Sayfa Bütünlüğü kontrolünün NEDENİ (2026-10-05, hata teşhisi): CONFIG_ERROR → yapılandırma; ana sayfa alınamadı →
+     * çekimin istisnasından sınıflandırılmış neden (yoksa HTTP kodu / metin); sayfa geldi ama kaynaklar sorunlu (DEGRADED
+     * ya da ok=false) → kırık / zaman aşımı / güvensiz kaynak. Sağlıklı satırda null. Yalnız ÜST VERİ — ok/status zaten
+     * belirlendi; asla fırlatmaz.
+     */
+    static CheckFailure pageFailure(PageCheckerService.PageCheckResult res, String pageStatus, boolean mainUp, boolean ok,
+                                    int broken, int timeouts, String url, boolean viaProxy, int timeoutMs) {
+        try {
+            if (res == null) return null;
+            CheckFailure f;
+            if ("CONFIG_ERROR".equals(pageStatus)) {
+                f = res.failure() != null ? res.failure()
+                        : CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR);
+            } else if (!mainUp) {
+                f = res.failure() != null ? res.failure()
+                        : res.httpStatus() != null && res.httpStatus() > 0
+                            ? com.sitemonitor.service.failure.CheckFailureClassifier.forHttpStatus(res.httpStatus(), null)
+                            : CheckFailure.of(com.sitemonitor.service.failure.CheckFailureClassifier.fromMessage(res.error()));
+                f.withIfAbsent("target", com.sitemonitor.service.page.PageFetchCore.hostOf(url))
+                        .withIfAbsent("via", viaProxy ? "proxy" : "direct")
+                        .withIfAbsent("timeout_ms", timeoutMs)
+                        .withIfAbsent("http_status", res.httpStatus());
+            } else if ("DEGRADED".equals(pageStatus) || !ok) {
+                f = com.sitemonitor.service.failure.CheckFailureClassifier.forPageResources(
+                        broken, timeouts, res.mixedContentCount(), res.totalResources());
+                if (f != null && res.pagesCrawled() > 1) f.with("pages_crawled", res.pagesCrawled());
+            } else {
+                return null;
+            }
+            return f;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Sayfa Hızı ölçümünün NEDENİ (2026-10-05): yalnız sayfa alınamadığında (DOWN) ya da yapılandırma hatasında
+     * (CONFIG_ERROR) — eşik aşımı (SLOW) bir kesinti değildir, neden yazılmaz. Asla fırlatmaz.
+     */
+    static CheckFailure pageSpeedFailure(PageSpeedCheckerService.Result res, String url, boolean viaProxy, Integer timeoutMs) {
+        try {
+            if (res == null || res.reachable()) return null;
+            boolean cfg = "CONFIG_ERROR".equals(res.status());
+            CheckFailure f = res.failure() != null ? res.failure()
+                    : cfg ? CheckFailure.of(com.sitemonitor.service.failure.CheckFailureReason.CONFIG_ERROR)
+                    : res.statusCode() != null && res.statusCode() > 0
+                        ? com.sitemonitor.service.failure.CheckFailureClassifier.forHttpStatus(res.statusCode(), null)
+                        : CheckFailure.of(com.sitemonitor.service.failure.CheckFailureClassifier.fromMessage(res.error()));
+            if (!cfg) {
+                f.withIfAbsent("target", com.sitemonitor.service.page.PageFetchCore.hostOf(url))
+                        .withIfAbsent("via", viaProxy ? "proxy" : "direct")
+                        .withIfAbsent("timeout_ms", timeoutMs)
+                        .withIfAbsent("http_status", res.statusCode());
+            }
+            return f;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static String pageIntegrityDetail(Map<String, Object> r) {
         Object broken = r.getOrDefault("broken_resources", 0);
         Object timeouts = r.getOrDefault("timeout_count", 0);
@@ -4221,12 +4310,13 @@ public class SchedulerService {
         int slow = m.getSlowResourceMs() != null ? m.getSlowResourceMs() : 2000;
         int conc = m.getResourceConcurrency() != null ? m.getResourceConcurrency() : 5;
         int maxCheckSec = appSettings.getInt("site.monitor.page.max-check-seconds", 120);   // wall-clock üst sınır (H1/M1)
+        boolean pageViaProxy = viaProxyFor(m.getUrl(), m.getUseProxy());
         PageCheckerService.PageCheckResult res = pageCheckerService.check(
                 m.getUrl(), effectiveMode, timeout, slow, conc,
                 m.getExcludePatterns(),
                 m.getCrawlDepth() != null ? m.getCrawlDepth() : 2,
                 m.getCrawlMaxPages() != null ? m.getCrawlMaxPages() : 50,
-                maxCheckSec, viaProxyFor(m.getUrl(), m.getUseProxy()));
+                maxCheckSec, pageViaProxy);
 
         // Alarm-uygunluk YALNIZ e-posta geçidi (tabloda her sorun görünür). countsForAlarm: BLOCKED/SLOW hiç,
         // LINK yalnız 404/410 (dış link 5xx/timeout alarm üretmez — Q1), yüklenen alt-kaynak broken/timeout.
@@ -4270,6 +4360,13 @@ public class SchedulerService {
             pc.setBodyBytes(res.bodyBytes());
             pc.setError(res.error());
             pc.setCheckedAt(ts);
+            // Hata teşhisi (2026-10-05): DOWN / CONFIG_ERROR / DEGRADED satırın nedeni — ok/status yukarıdaki gibi.
+            CheckFailure pf = pageFailure(res, pageStatus, mainUp, mainUp && !alarmWorthy, brokenCount, timeoutCount,
+                    m.getUrl(), pageViaProxy, timeout);
+            if (pf != null) {
+                pc.setFailureReason(pf.code());
+                pc.setFailureDetail(pf.json());
+            }
             pageCheckRepo.save(pc);
             if (!res.issues().isEmpty()) {
                 List<PageResourceIssue> rows = new ArrayList<>();
@@ -4362,10 +4459,8 @@ public class SchedulerService {
      * AYNI kuralı kullanır.
      */
     private static boolean issueAlarmWorthy(com.sitemonitor.model.PageMonitor m, PageCheckerService.ResourceIssue i) {
-        if (!PageCheckerService.countsForAlarm(i.issueType(), i.resourceType(), i.httpStatus())) return false;
-        if ("MIXED_CONTENT".equals(i.issueType())) return !Boolean.FALSE.equals(m.getAlertMixedContent());
-        if ("TIMEOUT".equals(i.issueType()))       return !Boolean.FALSE.equals(m.getAlertTimeout());
-        return i.firstParty() || Boolean.TRUE.equals(m.getAlertThirdParty());
+        // Kural tek kopya (2026-10-05): uçtan uca tanılama da aynısını okur.
+        return PageCheckerService.issueAlarmWorthy(m, i);
     }
 
     /**
@@ -4585,6 +4680,15 @@ public class SchedulerService {
                     res.phases().serverMs() != null ? res.phases().serverMs() : (int) res.ttfbMs(),
                     res.totalBytes(), res.requestCount()));
             pc.setErrorMessage(res.error());
+            // Hata teşhisi (2026-10-05): DOWN ile CONFIG_ERROR artık ayırt edilir (ikisi de ok=false); SLOW'da neden yok.
+            if (!reachable) {
+                CheckFailure psf = pageSpeedFailure(res, m.getUrl(), pageSpeedCheckerService.viaProxyFor(m),
+                        m.getTimeoutMs() != null && m.getTimeoutMs() > 0 ? m.getTimeoutMs() : null);
+                if (psf != null) {
+                    pc.setFailureReason(psf.code());
+                    pc.setFailureDetail(psf.json());
+                }
+            }
             pageSpeedCheckRepo.save(pc);
             writeResourceBreakdown(m, pc, res, ts, wasBreached);
         } catch (Exception e) {
@@ -5866,6 +5970,10 @@ public class SchedulerService {
             check.setPacketLoss(r.get("packet_loss") instanceof Number n ? n.intValue() : null);
             check.setError((String) r.get("error"));
             check.setCheckedAt(ISO.format(Instant.now()));
+            // Hata teşhisi (2026-10-05): ICMP'nin bu pod'da olmaması (na) artık ICMP_UNAVAILABLE olarak kalıcı — satır
+            // yine up=false (geçmiş/oran davranışı aynı), ama "hedef çöktü" ile karışmaz.
+            check.setFailureReason(CheckFailure.reasonOf(r));
+            check.setFailureDetail(CheckFailure.detailOf(r));
             pingCheckRepo.save(check);
             persistedAt = check.getCheckedAt();
         } catch (Exception e) {
@@ -5987,6 +6095,9 @@ public class SchedulerService {
                 record.setCheckedAt(now);
                 record.setTtl(r.get("ttl") instanceof Number tn ? tn.longValue() : null);
                 record.setResponseMs(r.get("response_ms") instanceof Number rn ? rn.longValue() : null);
+                // Hata teşhisi (2026-10-05): başarısız sorgunun hata metni + nedeni ilk kez saklanır. YALNIZ !success'te
+                // yazılır; value ('' = başarısız), changed/rotated ve değişiklik tabanı yukarıdaki gibi DEĞİŞMEDİ.
+                if (!success) DnsCheckerService.applyFailure(record, r);
                 dnsRecordRepo.save(record);
                 activityLog.recordCheck(ActivityLogService.DNS, m.getId(), m.getName(),
                         m.getDomain() + " " + m.getRecordType(), m.getTeamId(), false, "scheduler", r);

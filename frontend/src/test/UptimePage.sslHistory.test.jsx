@@ -184,8 +184,13 @@ describe('Uptime detayı — HTTP geçmişi dar kapta kart listesi', () => {
       expect(cards).toHaveLength(2)
       expect(within(cards[0]).getByText('ms')).toBeInTheDocument()             // sütun etiketi korunur
       expect(within(cards[1]).getByText('10004ms')).toBeInTheDocument()
-      expect(within(cards[1]).getByText('Connection timed out after 10000 ms')).toBeInTheDocument()
       expect(within(cards[1]).getByText(/^(Down|Kapalı|Erişilemiyor)$/)).toBeInTheDocument()
+      // Hata teşhisi (2026-10-05): ham hata metni yerine okunur neden rozeti; ham metin bilgi kaybı olmadan açılan
+      // panelin "Teknik ayrıntı" bloğunda (kopyalanabilir).
+      expect(within(cards[1]).getByText(/^(Connection timeout|Bağlantı zaman aşımı)$/)).toBeInTheDocument()
+      fireEvent.click(within(cards[1]).getByRole('button', { name: /show details|ayrıntıyı göster/i }))
+      const panel = await within(cards[1]).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+      expect(within(panel).getByText('Connection timed out after 10000 ms')).toBeInTheDocument()
     } finally { restore() }
   })
 

@@ -4939,6 +4939,102 @@ class MonitoringControllerTest {
         org.assertj.core.api.Assertions.assertThat(rec.getValue().getPreviousValue()).isEqualTo("5.6.7.8");
     }
 
+    // ── Kontrol hata teşhisi (2026-10-05): elle kontrol uçları checker'ın neden + ayrıntısını zamanlanmış turla AYNI
+    // biçimde kayda kopyalar; DNS geçmişinde "Başarısız sorgu" süzgeci + sayacı ("Değişenler" aynen kalır). ─────────────
+
+    @Test
+    @DisplayName("Hata teşhisi: POST /dns/{id}/check başarısız sorguda hata metni + nedeni kaydeder; value=''/changed=false/manual=true aynen")
+    void triggerDns_failureStoresErrorAndReason() throws Exception {
+        com.sitemonitor.model.DnsMonitor m = new com.sitemonitor.model.DnsMonitor();
+        m.setId(12L); m.setDomain("nx.example.test"); m.setRecordType("A"); m.setTeamId(1L); m.setStandalone(true); m.setActive(true);
+        when(dnsMonitorRepo.findById(12L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> r = new java.util.LinkedHashMap<>(java.util.Map.of("success", false, "values", List.of(), "error", "NXDOMAIN"));
+        com.sitemonitor.service.failure.CheckFailureClassifier.forDnsRcode(3, "NXDOMAIN").with("record_type", "A").applyTo(r);
+        when(dnsChecker.check("nx.example.test", "A")).thenReturn(r);
+        when(dnsRecordRepo.save(any(com.sitemonitor.model.DnsRecord.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/dns/12/check").session(session("ADMIN"))).andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsRecord> rec =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsRecord.class);
+        verify(dnsRecordRepo).save(rec.capture());
+        var saved = rec.getValue();
+        org.assertj.core.api.Assertions.assertThat(saved.getValue()).isEmpty();
+        org.assertj.core.api.Assertions.assertThat(saved.getChanged()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(saved.getManual()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(saved.getError()).isEqualTo("NXDOMAIN");
+        org.assertj.core.api.Assertions.assertThat(saved.getFailureReason()).isEqualTo("DNS_NXDOMAIN");
+        org.assertj.core.api.Assertions.assertThat(saved.getFailureDetail()).contains("\"rcode\":\"NXDOMAIN\"");
+        verify(dnsRecordRepo, never()).findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("Hata teşhisi: POST /port/{id}/check ve /ping/{id}/check checker'ın neden + ayrıntısını kayda kopyalar")
+    void triggerPortAndPing_copyFailure() throws Exception {
+        com.sitemonitor.model.PortMonitor pm = new com.sitemonitor.model.PortMonitor();
+        pm.setId(13L); pm.setName("db"); pm.setHost("db.example.test"); pm.setPort(5432); pm.setTeamId(1L); pm.setStandalone(true);
+        when(portMonitorRepo.findById(13L)).thenReturn(Optional.of(pm));
+        java.util.Map<String, Object> pr = new java.util.LinkedHashMap<>();
+        pr.put("open", false); pr.put("response_ms", null); pr.put("error", "Connection refused"); pr.put("via", "direct");
+        com.sitemonitor.service.failure.CheckFailureClassifier.forException(new java.net.ConnectException("Connection refused"), false)
+                .with("target", "db.example.test:5432").applyTo(pr);
+        when(portChecker.check(pm)).thenReturn(pr);
+        when(portCheckRepo.save(any(com.sitemonitor.model.PortCheck.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/port/13/check").session(session("ADMIN"))).andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PortCheck> pc =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PortCheck.class);
+        verify(portCheckRepo).save(pc.capture());
+        org.assertj.core.api.Assertions.assertThat(pc.getValue().getOpen()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(pc.getValue().getFailureReason()).isEqualTo("CONNECT_REFUSED");
+        org.assertj.core.api.Assertions.assertThat(pc.getValue().getFailureDetail()).contains("db.example.test:5432");
+
+        com.sitemonitor.model.PingMonitor gm = new com.sitemonitor.model.PingMonitor();
+        gm.setId(14L); gm.setName("gw"); gm.setHost("gw.example.test"); gm.setTeamId(1L);
+        when(pingMonitorRepo.findById(14L)).thenReturn(Optional.of(gm));
+        java.util.Map<String, Object> gr = new java.util.LinkedHashMap<>();
+        gr.put("up", false); gr.put("packet_loss", 100); gr.put("error", "Yanıt yok (%100 paket kaybı)");
+        com.sitemonitor.service.failure.CheckFailureClassifier.forPing(false, 100, "100% packet loss").applyTo(gr);
+        when(pingChecker.check(eq("gw.example.test"), any(), anyInt(), anyInt())).thenReturn(gr);
+        when(pingCheckRepo.save(any(com.sitemonitor.model.PingCheck.class))).thenAnswer(a -> a.getArgument(0));
+
+        mvc.perform(post("/api/monitoring/ping/14/check").session(session("ADMIN"))).andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.PingCheck> gc =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.PingCheck.class);
+        verify(pingCheckRepo).save(gc.capture());
+        org.assertj.core.api.Assertions.assertThat(gc.getValue().getUp()).isFalse();
+        org.assertj.core.api.Assertions.assertThat(gc.getValue().getFailureReason()).isEqualTo("ICMP_NO_REPLY");
+        org.assertj.core.api.Assertions.assertThat(gc.getValue().getFailureDetail()).contains("\"packet_loss\":100");
+    }
+
+    @Test
+    @DisplayName("Hata teşhisi: GET /dns/{id}/history status=fail başarısız-sorgu süzgecini koşar; status=changed eski süzgeç; counts.errors döner")
+    void dnsHistory_failedLookupFilter_andErrorsCount() throws Exception {
+        stubAllHistoryMonitors();
+        stubAllHistoryRepos();
+        var failRow = new com.sitemonitor.model.DnsRecord();
+        failRow.setMonitorId(1L); failRow.setValue(""); failRow.setError("SERVFAIL"); failRow.setFailureReason("DNS_SERVFAIL");
+        failRow.setCheckedAt("2026-10-05T10:00:00");
+        when(dnsRecordRepo.findFailedByMonitorIdBetween(anyLong(), anyString(), anyString(), any())).thenReturn(histPage(List.of(failRow), 1));
+        when(dnsRecordRepo.countByMonitorIdAndCheckedAtBetween(anyLong(), anyString(), anyString())).thenReturn(50L);
+        when(dnsRecordRepo.countChangedByMonitorIdBetween(anyLong(), anyString(), anyString())).thenReturn(2L);
+        when(dnsRecordRepo.countFailedByMonitorIdBetween(anyLong(), anyString(), anyString())).thenReturn(1L);
+
+        mvc.perform(get("/api/monitoring/dns/1/history").param("days", "7").param("status", "fail").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.counts.total").value(50))
+                .andExpect(jsonPath("$.data.counts.fail").value(2))       // "Değişenler" sayacı AYNEN
+                .andExpect(jsonPath("$.data.counts.errors").value(1))     // yeni: başarısız sorgu sayısı
+                .andExpect(jsonPath("$.data.items[0].error").value("SERVFAIL"))
+                .andExpect(jsonPath("$.data.items[0].failure_reason").value("DNS_SERVFAIL"));
+        verify(dnsRecordRepo, never()).findChangedByMonitorIdBetween(anyLong(), anyString(), anyString(), any());
+
+        mvc.perform(get("/api/monitoring/dns/1/history").param("days", "7").param("status", "changed").session(session("ADMIN")))
+                .andExpect(status().isOk());
+        verify(dnsRecordRepo).findChangedByMonitorIdBetween(anyLong(), anyString(), anyString(), any());
+    }
+
     @Test
     @DisplayName("D-10: elle k6 kotası doluysa POST /scripted/{id}/check skipped + skipped_code=MANUAL_POOL_BUSY döner (arayüz kendi dilinde söyler)")
     void triggerScripted_manualPoolBusy_hasCode() throws Exception {
@@ -5345,5 +5441,117 @@ class MonitoringControllerTest {
         mvc.perform(get("/api/monitoring/keyword").session(session("ADMIN")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].can_diagnose").value(false));
+    }
+
+    // ── Ping / Port / DNS / Alan adı liste satırı can_diagnose (2026-10-05) ───────────────────────
+
+    /** Kapsamlı müdür: takım 2'yi yönetir (işletir), 3'ü yalnız görür. */
+    private MockHttpSession mudurSession() {
+        MockHttpSession m = session("ADMIN");
+        m.setAttribute("viewTeamIds", List.of(2L, 3L));
+        m.setAttribute("manageTeamIds", List.of(2L));
+        m.setAttribute("teamId", 2L);
+        return m;
+    }
+
+    private void allowDiagnose(boolean allow) {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("diagnostics.run"), eq("execute")))
+                .thenReturn(allow);
+    }
+
+    private void assertCanDiagnose(String url) throws Exception {
+        allowDiagnose(false);
+        mvc.perform(get(url).session(mudurSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_check").value(true))
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(false))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(false));
+        allowDiagnose(true);
+        mvc.perform(get(url).session(mudurSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(true))
+                .andExpect(jsonPath("$.data[1].can_check").value(false))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(false));
+        mvc.perform(get(url).session(session("ADMIN")))
+                .andExpect(jsonPath("$.data[0].can_diagnose").value(true))
+                .andExpect(jsonPath("$.data[1].can_diagnose").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /ping: can_diagnose = can_check + diagnostics.run (2026-10-05)")
+    void listPing_canDiagnose() throws Exception {
+        com.sitemonitor.model.PingMonitor a = new com.sitemonitor.model.PingMonitor();
+        a.setId(1L); a.setName("a"); a.setHost("a.example.test"); a.setTeamId(2L); a.setActive(true);
+        com.sitemonitor.model.PingMonitor b = new com.sitemonitor.model.PingMonitor();
+        b.setId(2L); b.setName("b"); b.setHost("b.example.test"); b.setTeamId(3L); b.setActive(true);
+        when(pingMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+        when(pingCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/ping");
+    }
+
+    @Test
+    @DisplayName("GET /port: can_diagnose = can_check + diagnostics.run (bağımsız satırlar, 2026-10-05)")
+    void listPort_canDiagnose() throws Exception {
+        com.sitemonitor.model.PortMonitor a = new com.sitemonitor.model.PortMonitor();
+        a.setId(1L); a.setName("a"); a.setHost("a.example.test"); a.setPort(5432); a.setTeamId(2L); a.setStandalone(true); a.setActive(true);
+        com.sitemonitor.model.PortMonitor b = new com.sitemonitor.model.PortMonitor();
+        b.setId(2L); b.setName("b"); b.setHost("b.example.test"); b.setPort(22); b.setTeamId(3L); b.setStandalone(true); b.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(portMonitorRepo.findAll()).thenReturn(List.of());
+        when(portCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(portMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(a, b));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/port");
+    }
+
+    @Test
+    @DisplayName("GET /dns: can_diagnose = can_check + diagnostics.run (bağımsız satırlar, 2026-10-05)")
+    void listDns_canDiagnose() throws Exception {
+        com.sitemonitor.model.DnsMonitor a = new com.sitemonitor.model.DnsMonitor();
+        a.setId(1L); a.setName("a"); a.setDomain("a.example.test"); a.setRecordType("A"); a.setTeamId(2L); a.setStandalone(true); a.setActive(true);
+        com.sitemonitor.model.DnsMonitor b = new com.sitemonitor.model.DnsMonitor();
+        b.setId(2L); b.setName("b"); b.setDomain("b.example.test"); b.setRecordType("MX"); b.setTeamId(3L); b.setStandalone(true); b.setActive(true);
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of());
+        when(dnsMonitorRepo.findAll()).thenReturn(List.of());
+        when(dnsRecordRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(dnsMonitorRepo.findByStandaloneTrueAndDeletedAtIsNull()).thenReturn(List.of(a, b));
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/dns");
+    }
+
+    @Test
+    @DisplayName("GET /domain: can_diagnose = can_check + diagnostics.run — Alan Adı \"Sorun Tanıla\" erişimi (2026-10-05)")
+    void listDomain_canDiagnose() throws Exception {
+        com.sitemonitor.model.DomainMonitor a = new com.sitemonitor.model.DomainMonitor();
+        a.setId(1L); a.setName("a"); a.setDomain("a.example.test"); a.setTeamId(2L); a.setActive(true);
+        com.sitemonitor.model.DomainMonitor b = new com.sitemonitor.model.DomainMonitor();
+        b.setId(2L); b.setName("b"); b.setDomain("b.example.test"); b.setTeamId(3L); b.setActive(true);
+        when(domainMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/domain");
+    }
+
+    // ── Sayfa Bütünlüğü / Sayfa Hızı liste satırı can_diagnose (2026-10-05) ─────────────────────
+
+    @Test
+    @DisplayName("GET /page: can_diagnose = can_check + diagnostics.run — Sayfa Bütünlüğü uçtan uca tanılaması (2026-10-05)")
+    void listPage_canDiagnose() throws Exception {
+        when(pageMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(
+                pageMon(1L, "https://a.example.test/", 2L), pageMon(2L, "https://b.example.test/", 3L)));
+        when(pageCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/page");
+    }
+
+    @Test
+    @DisplayName("GET /pagespeed: can_diagnose = can_check + diagnostics.run — Sayfa Hızı uçtan uca tanılaması (2026-10-05)")
+    void listPageSpeed_canDiagnose() throws Exception {
+        when(pageSpeedMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(
+                psMon(1L, "https://a.example.test/", 2L), psMon(2L, "https://b.example.test/", 3L)));
+        when(pageSpeedCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection())).thenReturn(List.of());
+        assertCanDiagnose("/api/monitoring/pagespeed");
     }
 }

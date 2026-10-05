@@ -46,6 +46,9 @@ export default function CertCheckHistory({
   domain, reloadSignal = 0, listKey = 'cert-ssl-history', urlSync = true, live = true,
   presets = CERT_HISTORY_PRESETS, defaultPreset = CERT_HISTORY_DEFAULT,
   range = null, onRangeChange = null, cardsBelow = CERT_TABLE_MIN, runInHeader = true,
+  // Hata teşhisi paneli → "Bu kontrolü tanıla" (2026-10-05): verilirse başarısız satırın panelinde tanılama penceresini
+  // açar (CertificateModal / Uptime: diagnostics.run + kendi kaydı); verilmezse düğme hiç çizilmez (eski görünüm).
+  onDiagnose = undefined,
 }) {
   const t = useT()
   const baseId = useId()
@@ -75,14 +78,15 @@ export default function CertCheckHistory({
       <CheckCert item={c} t={t} />
       <CheckDetailCell item={c} open={isOpen} onToggle={() => toggle(k)} panelId={panelIdOf(k)} t={t} />
       {/* Sütun sayısını aşan hücre = satırın altında tam genişlik ek satır (CheckHistoryTab sözleşmesi). */}
-      {isOpen && <CertCheckDetail id={panelIdOf(k)} item={c} cmp={cmp} t={t} />}
+      {isOpen && <CertCheckDetail id={panelIdOf(k)} item={c} cmp={cmp} t={t} onDiagnose={onDiagnose} />}
     </>)
   }
 
   const renderCard = (c, rc) => {
     const k = keyOf(c)
     return (
-      <CertHistoryCard item={c} cmp={cmpOf(c, rc)} open={open.has(k)} onToggle={() => toggle(k)} panelId={panelIdOf(k)} t={t} />
+      <CertHistoryCard item={c} cmp={cmpOf(c, rc)} open={open.has(k)} onToggle={() => toggle(k)} panelId={panelIdOf(k)} t={t}
+        onDiagnose={onDiagnose} />
     )
   }
 

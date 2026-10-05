@@ -297,6 +297,8 @@ describe('DomainMonitorPage', () => {
 
   it('detay: kart başlığı düğmesi pencereyi açar, sekmeler Tabs; Tanıla penceresi detayın ÜSTÜNDE ayrı pencerede açılır', async () => {
     api.admin.runDomainExpiryDiagnostics.mockResolvedValue({ success: false, error: 'tanı ucu yanıt vermedi' })
+    // Sorun Tanıla 2026-10-05'ten beri rol değil satırın `can_diagnose` bayrağıyla çizilir
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{ ...monitor, can_diagnose: true }] })
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     fireEvent.click(await screen.findByRole('button', { name: /example\.com\.tr — (detayları aç|open details)/i }))
     const detail = await screen.findByRole('dialog')

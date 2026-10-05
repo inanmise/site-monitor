@@ -156,7 +156,7 @@ describe('DomainDetailHeader — bitiş bilinmiyor', () => {
   it('yönetici değilse Tanıla düğmesi yok, adım kime sorulacağını söyler', () => {
     renderHeader(unknown, { onCheck: vi.fn() })
     expect(screen.queryByRole('button', { name: /diagnose/i })).toBeNull()
-    expect(q('domain-detail-unknown').querySelector('[data-step="diagnoseAdmin"]')).toHaveTextContent('administrators only')
+    expect(q('domain-detail-unknown').querySelector('[data-step="diagnoseAdmin"]')).toHaveTextContent('diagnostics permission')
   })
 
   it('hiç kontrol yok + ilk kontrol koşuyor: "Running the first check…"; koşmuyorken "Not checked yet"', () => {

@@ -28,7 +28,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Plug, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot, Copy, Inbox } from 'lucide-react'
+import { Plug, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot, Copy, Inbox, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -42,6 +42,8 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import MonitorStatsSection from './MonitorStatsSection.jsx'
 import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGroupOrTagText } from '../utils/monitorFilters.js'
 import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
@@ -62,9 +64,12 @@ import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, InlineField, LabelSlot,
 } from './monitoring/MonitorForm.jsx'
 import { cn } from '@/lib/utils'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Uçtan uca tanılama penceresi (2026-10-05) — tembel: giriş paketi büyümez
+const NetDiagnoseDialog = lazy(() => import('./diagnose/NetDiagnoseDialog.jsx'))
 
 const INTERVALS = [
   { value: 30,    labelKey: 'port.iv30s' },
@@ -111,6 +116,9 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Uçtan uca tanılama (2026-10-05): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run). Liste
+  // satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla değiştirir, yanıtta bayrak olmayabilir.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -128,6 +136,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   const sla = useSla('port')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
   const [density, setDensity] = useCardDensity('port')
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -139,6 +149,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
+  // Uçtan uca tanılama penceresi (2026-10-05): { monitorId, runId, initialRunId } | null. Derin bağlantı
+  // ?monitor=<id>&ptdx=<no> YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz).
+  const [portDx, setPortDx] = useState(() => {
+    const runId = readUrlInt('ptdx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
   const [summary, setSummary] = useState({ total: 0, down: 0 })   // CheckHistoryTab onCounts besler
   const [modal, setModal] = useState(null)
   const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
@@ -242,9 +258,12 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     setSelected(m)
     setSummary({ total: 0, down: 0 })
     setDetailTab(deepLinkTab())
+    setPortDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
   }
 
-  function closeModal() { setSelected(null) }
+  function closeModal() { setSelected(null); setPortDx(null) }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setPortDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   function openNew() {
     setDupSource(null)
@@ -507,6 +526,8 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    ptdx: selected && portDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (portDx.runId ?? null) : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -810,6 +831,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               deleting={deleting === selected.id}
               deleteTitle={t('port.delete')}
               onClose={closeModal}>
+              {/* Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="ndx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('ndx.open')} aria-label={t('ndx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -838,18 +867,28 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               <CheckHistoryTab kind="port" monitorId={selected.id} listKey="port-history" reloadSignal={histReload}
                 columns={[t('port.colTime'), t('port.colStatus'), t('port.colResponse'), t('port.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                  <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
-                    {c.open ? t('port.statusOpen') : t('port.statusClosed')}
-                  </span>
-                  <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
-                  {c.error
-                    ? <span className="upt-rt-error">{c.error}</span>
-                    : c.open
-                      ? <span className="upt-rt-up">{t('port.detailOk')}</span>
-                      : <span className="upt-rt-ms">—</span>}
-                </>)} />
+                renderRow={(c) => {
+                  // Hata teşhisi (2026-10-05): kapalı satırda neden rozeti + tek satır + aç/kapa; açılınca satırın ALTINDA
+                  // tam genişlik panel (yol, vekil reddi, çözümlenen IP, HTTP kodu / banner, ham hata).
+                  const k = failureRowKey(c)
+                  const failed = c.open !== true
+                  const open = failed && failRows.isOpen(k)
+                  const when = formatDate(c.checked_at)
+                  const pid = failurePanelId('port', k)
+                  return (<>
+                    <span className="upt-rt-time">{when}</span>
+                    <span className={c.open ? 'upt-rt-up' : 'upt-rt-down'}>
+                      {c.open ? t('port.statusOpen') : t('port.statusClosed')}
+                    </span>
+                    <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
+                    {failed
+                      ? <CheckFailureCell type="port" check={c} monitor={selected} open={open} when={when} panelId={pid}
+                          onToggle={() => failRows.toggle(k)} />
+                      : <span className="upt-rt-up">{t('port.detailOk')}</span>}
+                    {open && <CheckFailurePanel type="port" check={c} monitor={selected} id={pid}
+                      canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => openDiagnose(selected)} />}
+                  </>)
+                }} />
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.host} types={alertTypesFor('port')} /></TabsContent>
@@ -873,6 +912,15 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
               </Suspense>
             </TabsContent>
           </DetailTabs>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-05) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {portDx && portDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <NetDiagnoseDialog type="port" monitor={selected} initialRunId={portDx.initialRunId}
+                onRunChange={(runId) => setPortDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setPortDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>
