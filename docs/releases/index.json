@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-05T17:17:59Z",
+  "generatedAt": "2026-10-05T23:45:33Z",
   "repo": "inanmise/site-monitor",
-  "count": 708,
+  "count": 709,
   "releases": [
+    {
+      "version": "20.109.0",
+      "tag": "v20.109.0",
+      "releasedAt": "2026-10-05T23:45:26Z",
+      "commit": "aa45cbb9e23d10cc7ff008ab8e021ad116dd4bf3",
+      "prevVersion": "20.108.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "aa45cbb9",
+          "subject": "CI backend test fork'u heap sınırını aştı — surefire -Xmx2048m, tanılama testleri servisleri kapatır"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "1cde450b",
+          "subject": "kontrol geçmişinde hata teşhisi (tüm izleme türleri) ve ping, port, dns, sayfa bütünlüğü, sayfa hızı için uçtan uca tanılama"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.108.0",
       "tag": "v20.108.0",

@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.109.0] — 2026-10-05
+
 ### Added
 - **Kontrol geçmişinde hata teşhisi (Ping, Port, DNS, Sayfa Bütünlüğü, Sayfa Hızı, Durum İzleme, Alan Adı, Sertifika):**
   başarısız kontrolün NEDENİ artık kaydedilir (ICMP yok, NXDOMAIN / SERVFAIL / kayıt yok, bağlantı reddedildi, zaman
@@ -2286,7 +2288,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.108.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.109.0...HEAD
+[20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0
 [20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0
 [20.107.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.107.0
 [20.106.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.106.0
