@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.108.0] — 2026-10-05
+
 ### Added
 - **Temalar:** Açık ve Koyu'ya ek olarak Blueprint, Parchment, Alloy, Obsidian, Slag ve Crucible. Kullanıcı menüsünde ve
   telefonda üst çubukta tema seçici; yalnız açık bırakılan temalar listelenir (renk örneği, açık/koyu ipucu, etkin işareti).
@@ -2262,7 +2264,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.107.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.108.0...HEAD
+[20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0
 [20.107.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.107.0
 [20.106.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.106.0
 [20.105.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.105.0
