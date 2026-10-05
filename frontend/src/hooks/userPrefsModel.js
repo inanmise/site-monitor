@@ -1,3 +1,5 @@
+import { isKnownTheme } from '../theme/themes.js'
+
 /**
  * Kişisel tercihler — SAF model (React yok; hooks/useUserPrefs.js bunu kullanır, birim testte doğrudan sınanır).
  * 2026-10-02, onaylı öneri 23: "Tarayıcıdaki mevcut tercihler ilk girişte sunucuya taşınır. Yeni seçenekleri kullanmayan
@@ -22,9 +24,13 @@
  *   <li>Görünüm seçimleri: `renewal-view`, `renewal-guide-platform`, `sm.incidents.view`, `incidents-banner-dismissed`,
  *       `sm.warnings.view`, `uptime-scope`.</li>
  *   <li>"Şimdi Kontrol Et" takım seçimi: `sm.checkRun.teams`, `sm.checkRun.teams.<tür>`.</li>
+ *   <li>Tema (2026-10-05, ürün kararı — "kullanıcının şema seçimlerini hatırlayalım"): `site-monitor-theme`. Değer bilinen
+ *       bir tema kimliği olmalı ({@link isSyncableValue}); girişte sunucu kazanır ve App.jsx ThemeProvider'a
+ *       `reloadChoice()` ile hemen uygular (yeniden yükleme yok). Giriş öncesi ve çıkıştan sonra cihazın değeri geçerli.</li>
  * </ul>
  * BİLİNÇLİ OLARAK DIŞARIDA: oturum/kimlik bayrakları (`site-monitor-remembered-user`, `sm.session.active`,
- * `sm.storage.owner`), dil ve tema (sağlayıcılar girişten ÖNCE okur — sunucudan yazmak ekranı yenilemeye dek ayrıştırırdı),
+ * `sm.storage.owner`), dil (sağlayıcı girişten ÖNCE okur ve EN sözlüğü ayrı parça — sunucudan yazmak ekranı yenilemeye
+ * dek ayrıştırırdı),
  * taslaklar (`wr.draft.*`), kişisel "son kullanılanlar" (`sm.palette.recent`, `sm.dexp.recent` — çıkışta silinir), tur
  * aynası (`sm.tour` — zaten sunucuda), sürüm/duyuru damgaları, bildirim kutusunun okundu/temizlendi kümeleri (`inbox-seen:`,
  * `inbox-dismissed:` — her açılışta yazılan, 500 kimliğe kadar büyüyen durum; belge sınırını zorlar ve her etkileşimde
@@ -45,7 +51,26 @@ export const LOCAL_PREF_KEYS = Object.freeze([
   'sm.incidents.view', 'incidents-banner-dismissed',
   'sm.warnings.view', 'uptime-scope',
   'sm.checkRun.teams',
+  // Tema (2026-10-05, ürün kararı): kişinin seçimi sonraki oturumlarda (başka cihazda da) aynı temayla açılır.
+  'site-monitor-theme',
 ])
+
+/** Tema tercihinin localStorage anahtarı — ThemeProvider (i18n/theme.jsx) ile aynı. */
+export const THEME_PREF_KEY = 'site-monitor-theme'
+
+/**
+ * Değer doğrulayıcıları: aynalanan bir anahtarın DEĞERİ de geçerli olmalı. Tema yalnız bilinen bir kimlik olabilir
+ * (sunucu `UserPreferencesService` bilinmeyeni yok sayar) — bilinmeyen değer ne yüklenir ne de sunucudan yerele yazılır.
+ */
+const VALUE_RULES = {
+  [THEME_PREF_KEY]: (v) => isKnownTheme(v),
+}
+
+/** Anahtar + değer birlikte aynalanabilir mi (beyaz liste + değer kuralı). */
+export function isSyncableValue(key, value) {
+  const rule = VALUE_RULES[key]
+  return !rule || value == null || rule(value)
+}
 
 export const LOCAL_PREF_PREFIXES = Object.freeze(['sm.pageSize.', 'sm.checkRun.teams.'])
 
@@ -77,18 +102,18 @@ export function readLocalSnapshot(storage) {
       const k = storage.key(i)
       if (!isSyncedLocalKey(k)) continue
       const v = storage.getItem(k)
-      if (typeof v === 'string' && v.length <= MAX_LOCAL_VALUE) out[k] = v
+      if (typeof v === 'string' && v.length <= MAX_LOCAL_VALUE && isSyncableValue(k, v)) out[k] = v
     }
   } catch { /* depo erişilemez — boş görüntü */ }
   return out
 }
 
-/** Sunucunun `local` bölümünden yalnız geçerli girdiler. */
+/** Sunucunun `local` bölümünden yalnız geçerli girdiler (bilinmeyen tema değeri dahil geçersiz değerler atılır). */
 export function cleanServerLocal(local) {
   const out = {}
   if (!local || typeof local !== 'object' || Array.isArray(local)) return out
   for (const [k, v] of Object.entries(local)) {
-    if (isSyncedLocalKey(k) && typeof v === 'string' && v.length <= MAX_LOCAL_VALUE) out[k] = v
+    if (isSyncedLocalKey(k) && typeof v === 'string' && v.length <= MAX_LOCAL_VALUE && isSyncableValue(k, v)) out[k] = v
   }
   return out
 }

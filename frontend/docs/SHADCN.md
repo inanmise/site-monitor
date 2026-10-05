@@ -132,18 +132,26 @@ Dosyalar: `frontend/src/styles/globals.css`, `frontend/src/App.css`, içe aktarm
   içindeki grafik/sparkline SVG'si `size-` içeren bir sınıf taşımalı (ör. `size-full h-auto` ya da
   `size-auto h-[22px] w-[72px]`).
 - Koyu temada legacy global alan kuralı shadcn'e dokunmasın diye daraltıldı:
-  `[data-theme="dark"] input:not([type="checkbox"]):not([data-slot])…` (`App.css:3843-3845`).
+  `[data-scheme="dark"] input:not([type="checkbox"]):not([data-slot])…` (`App.css:3843-3845`).
 - Düğme köprüsü: `:where([data-slot="button"][data-size="sm"]) { margin-right: 4px; }` (`App.css:78`) — eski
   `.btn-sm` aralığını korur. **Yeni kod aralığı kapsayıcıda `gap-*` ile verir.**
 - Tailwind kaynak taraması: `@source "../";` (tüm `src`). Animasyonlar: `@import "tw-animate-css"`.
 
-### 2.4 Koyu tema
+### 2.4 Koyu tema ve temalar (2026-10-05)
 
-- Uygulamanın ThemeProvider'ı (`src/i18n/theme.jsx:31`) `<html data-theme="dark|light">` yazar — **sınıf değil**.
-- Bu yüzden `globals.css`: `@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));`
-  (belgedeki varsayılan `.dark` sınıfı yerine). `dark:` yardımcıları bununla çalışır.
-- Koyu jetonlar `[data-theme="dark"] { … }` bloğunda. shadcn belgesindeki Vite `ThemeProvider` /
-  `ModeToggle` örneği (`classList.add("dark")`) **bu projede kullanılmaz**.
+- Uygulamanın ThemeProvider'ı (`src/i18n/theme.jsx`) `<html data-theme="<tema>" data-scheme="light|dark">` + `color-scheme`
+  yazar — **sınıf değil**. Sekiz tema: Açık, Koyu (temel) + Blueprint, Parchment, Alloy, Obsidian, Slag, Crucible
+  (`src/theme/themes.js`, sunucu karşılığı `ThemeCatalog.java`).
+- CSS temaya değil **ŞEMAYA** bağlıdır: `globals.css`: `@custom-variant dark (&:where([data-scheme="dark"], [data-scheme="dark"] *));`
+  (belgedeki varsayılan `.dark` sınıfı yerine). `dark:` yardımcıları ve App.css koyu kuralları bununla çalışır → koyu şemalı
+  her tema mevcut koyu stillerin tamamını miras alır.
+- Açık jetonlar `:root, [data-scheme="light"] { … }`, koyu jetonlar `[data-scheme="dark"] { … }` bloğunda; ek temalar
+  YALNIZ jetonlarını `src/styles/themes.css` `[data-theme="<id>"]` bloklarında ezer (main.jsx'te App.css'ten SONRA).
+  Yeni bileşen tema-özel kural yazmaz, jeton kullanır. Kontrast kapısı: `src/test/themeContrast.test.js`.
+- İç içe önizleme (`data-theme` + `data-scheme` taşıyan kap, ör. `components/theme/ThemePreview`, `ThemeSwatch`) içinde
+  `dark:` yardımcısı KULLANMA — şema varyantı sayfanın şemasına bakar; yalnız jeton sınıfları.
+- shadcn belgesindeki Vite `ThemeProvider` / `ModeToggle` örneği (`classList.add("dark")`) **bu projede kullanılmaz**;
+  JS'te koyu sorgusu `useTheme().isDark` / `scheme` (tema kimliği değil).
 
 ### 2.5 Katman (z-index) sözleşmesi — shadcn `z-50` burada YETMEZ
 
@@ -248,9 +256,9 @@ konsolda "Function components cannot be given refs".
    - Sabit İngilizce metinler (sr-only "Close", "Loading", "Toggle Sidebar", "Previous"/"Next", "More pages"…)
      → `t()` + TR/EN anahtarları `src/i18n/tr.js` ve `src/i18n/en.js` (2026-10-02'den beri ayrı dosyalar; EN lazy chunk).
    - `z-50` → yüzen içerik modal içinde de açılacaksa çağrı yerinde `z-(--z-menu)` (§2.5).
-   - CLI `globals.css`'e CSS değişkeni eklediyse: `.dark {…}` bloğunu `[data-theme="dark"]`'a taşı.
+   - CLI `globals.css`'e CSS değişkeni eklediyse: `.dark {…}` bloğunu `[data-scheme="dark"]`'a taşı.
      **Mevcut kalıntı:** `globals.css:148-157`'de `add sidebar`'ın bıraktığı `.dark { --sidebar…: hsl(…) }`
-     bloğu var; proje `.dark` sınıfı kullanmadığı için ölü kod (silinebilir ya da `[data-theme="dark"]`'a
+     bloğu var; proje `.dark` sınıfı kullanmadığı için ölü kod (silinebilir ya da `[data-scheme="dark"]`'a
      taşınabilir — koordinatörün kararı).
 4. **Kapılar:** `npx eslint <dosyalar>`, ilgili vitest dosyaları + `cssClasses.test.js`, `cssTokens.test.js`,
    `rowAccessibleNames.test.js`, `css-hygiene.test.jsx`, `progress-guard.test.jsx` (§8.6).
@@ -472,7 +480,7 @@ toggle `toggle-group.jsx`'in içinden dolaylı olarak kullanılıyor).
 Kural (belge): yüzey jetonu + `-foreground` çifti. `bg-primary text-primary-foreground`, `bg-card
 text-card-foreground`… Yüzey jetonunda "background" soneki yazılmaz.
 
-| Jeton | Açık | Koyu (`[data-theme="dark"]`) | Not |
+| Jeton | Açık | Koyu (`[data-scheme="dark"]`) | Not |
 |---|---|---|---|
 | `--radius` | 0.625rem | — | `--radius-sm/md/lg/xl` = `calc(var(--radius) - 4px / - 2px / 0 / + 4px)` (eski shadcn formülü; güncel belge çarpımsal ölçek ve 2xl–4xl kullanıyor) |
 | `--background` / `--foreground` | #ffffff / #09090b | #09090b / #fafafa | |
@@ -500,7 +508,7 @@ Belgedeki desen, projenin koyu tema seçicisine uyarlanmış hâli:
 ```css
 /* globals.css */
 :root              { --info: #2563eb; --info-foreground: #ffffff; }
-[data-theme="dark"]{ --info: #3b82f6; --info-foreground: #ffffff; }   /* .dark DEĞİL */
+[data-scheme="dark"]{ --info: #3b82f6; --info-foreground: #ffffff; }   /* .dark DEĞİL */
 
 @theme inline {
   --color-info: var(--info);
@@ -657,7 +665,7 @@ Tam kapı dizisi (seri, kaynak düzenlemeden): `.migration/PLAN.md` "Kapılar" b
 1. Kurulu mu? `src/components/shadcn/` (§4).
 2. `yes n | npx shadcn@4.21.0 add <ad>` (önce `--dry-run` ile ne yazacağını gör).
 3. §3.3 düzeltmeleri: `cn` içe aktarımı, `npm uninstall cn next-themes`, recharts aralığı, `"use client"`,
-   forwardRef, sabit İngilizce metinler, `z-50`, `.dark` → `[data-theme="dark"]`.
+   forwardRef, sabit İngilizce metinler, `z-50`, `.dark` → `[data-scheme="dark"]`.
 4. Yeni npm bağımlılığı geldiyse (vaul, embla, input-otp, react-resizable-panels, @tanstack/react-table…)
    kullanıcıya bildir.
 5. Bu belgede §3.1/§3.2/§3.4/§4'ü güncelle ("Kurulu", uyarlamalar, varyantlar).

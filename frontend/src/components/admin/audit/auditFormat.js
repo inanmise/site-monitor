@@ -196,6 +196,8 @@ const SPECIAL = {
   LOGIN_METHODS_PUSH_TEST: 'audit.ev.LOGIN_METHODS_PUSH_TEST',
   // 7/24 izleme ekibi takımları değişti (2026-10-04) — kimin TÜM izlemeleri göreceği; kural adı/eylem eşlemesine uymaz
   NOC_TEAMS_UPDATE: 'audit.ev.NOC_TEAMS_UPDATE',
+  // Ayarlar → Görünüm → Temalar: açık temalar + varsayılan (2026-10-05) — "THEME" kural sözlüğünde yok
+  THEME_SETTINGS_SAVE: 'audit.ev.THEME_SETTINGS_SAVE',
 }
 
 /**

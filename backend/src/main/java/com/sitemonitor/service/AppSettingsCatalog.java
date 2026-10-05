@@ -403,6 +403,12 @@ public final class AppSettingsCatalog {
         // çevrimiçi kullanıcı — yalnız toplam sayılar, PUBLIC /api/public-stats. Kapalıyken uç yalnız eski iki rakamı döner.
         // Marka sayfasında (giriş sayfası ayarlarının yanında) düzenlenir; kurulumun DIŞA açık yüzü → GLOBAL_ONLY.
         new Setting("site.monitor.public-stats.usage-enabled",   "branding",   Type.BOOL),
+        // ── Görünüm → Temalar (2026-10-05, kullanıcı isteği) — ThemeSettingsController yönetir (Genel Ayarlar'da GÖSTERİLMEZ,
+        //    grup GeneralSettings SKIP_GROUPS'ta); /api/branding "themes" alanıyla PUBLIC okunur. Kurallar ThemeCatalog.validate
+        //    (bilinen kimlik, en az bir tema, varsayılan açık, "system" Açık + Koyu ister) — AppSettingsService de uygular.
+        //    Anahtarlar LİTERAL yazılır (ThemeCatalog.KEY_* ile aynı): ön yüz etiket/yardım kapıları kataloğu dize olarak tarar.
+        new Setting("site.monitor.theme.enabled",                "appearance", Type.CSV),
+        new Setting("site.monitor.theme.default",                "appearance", Type.ENUM, ThemeCatalog.DEFAULT_OPTIONS),
         new Setting("logging.level.com.sitemonitor",             "logging",    Type.ENUM,
                     List.of("TRACE", "DEBUG", "INFO", "WARN", "ERROR")),
         // Yalnız mail gönderim logger'ı — uygulama geneli TRACE'e geçmeden ekrandan mail
@@ -513,6 +519,9 @@ public final class AppSettingsCatalog {
      *   <li>Giriş sayfası kullanım istatistikleri ({@code public-stats.usage-enabled}, 2026-10-04): OTURUMSUZ herkese
      *       açık uçta kurum geneli sayıların (izleme, koşum, alarm, takım, aktif/çevrimiçi kullanıcı) yayınlanması — kurulumun
      *       dışa açık yüzü; takım kapsamlı bir müdür kurum adına açıp kapatamaz.</li>
+     *   <li>Temalar ({@code theme.enabled}, {@code theme.default}, 2026-10-05): TÜM kullanıcıların (giriş sayfası dahil)
+     *       hangi temaları seçebileceğini ve seçimi olmayanın hangisini göreceğini belirler — kurum geneli görünüm
+     *       politikası; takım kapsamlı müdür Ayarlar → Görünüm → Temalar sayfasını SALT OKUNUR görür.</li>
      * </ul>
      * Zorlama TEK yerde: {@link AppSettingsService#save} (hangi denetleyici çağırırsa çağırsın);
      * {@code getCatalogForClient} kalemi {@code global_only}/{@code read_only} ile işaretler, UI kilitler.
@@ -569,7 +578,10 @@ public final class AppSettingsCatalog {
         "site.monitor.login.otp.push.message-en",
         // 2026-10-04: giriş sayfası kullanım istatistikleri — OTURUMSUZ herkese açık uçta kurum geneli kullanım
         // rakamlarını yayınlayıp yayınlamama kararı kurulumun tamamını bağlar; takım kapsamlı müdür açıp kapatamaz.
-        "site.monitor.public-stats.usage-enabled"
+        "site.monitor.public-stats.usage-enabled",
+        // 2026-10-05: temalar — kurum geneli görünüm politikası (açık temalar + varsayılan); müdür salt okunur görür.
+        "site.monitor.theme.enabled",
+        "site.monitor.theme.default"
     ));
 
     /**

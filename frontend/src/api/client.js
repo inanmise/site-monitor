@@ -377,6 +377,15 @@ export const api = {
     },
   },
 
+  /**
+   * Ayarlar → Görünüm → Temalar (2026-10-05): açık temalar + varsayılan. Okuma Ayarlar'a giren herkese (kapsamlı müdür
+   * `read_only: true`), kayıt YALNIZ global yönetici (403). Doğrulama hatası 400 + `field` (`enabled` / `default`).
+   */
+  themesAdmin: {
+    get: () => request('/admin/themes'),
+    save: (body) => request('/admin/themes', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+  },
+
   /** Ayarlar → Güvenlik → Giriş Yöntemleri — YALNIZ global yönetici (sunucu 403). Kayıt hatası 400 + `field`. */
   loginMethodsAdmin: {
     get: () => request('/admin/login-methods'),

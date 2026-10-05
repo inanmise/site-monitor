@@ -102,7 +102,8 @@ export function readPalette() {
   probe.style.display = 'none'
   document.body.appendChild(probe)
   try {
-    const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+    // Şemaya bağlı (2026-10-05, temalar): koyu şemalı her tema koyu dışa aktarım paletini alır.
+    const dark = document.documentElement.getAttribute('data-scheme') === 'dark'
     return {
       background: resolveVar(probe, '--background', LIGHT_PALETTE.background),
       card: resolveVar(probe, '--card', LIGHT_PALETTE.card),

@@ -217,6 +217,11 @@ public class AppSettingsService {
             else next.put(key, val);
         }
         validateCrossField(next);
+        // Tema politikası (2026-10-05): YALNIZ tema anahtarlarına dokunan kayıtta — depoda kalmış eski bir değer ilgisiz
+        // ayarların kaydını kilitlemesin. Hangi denetleyiciden gelirse gelsin aynı kural (ThemeCatalog.validate).
+        if (normalized.containsKey(ThemeCatalog.KEY_ENABLED) || normalized.containsKey(ThemeCatalog.KEY_DEFAULT)) {
+            validateThemes(next);
+        }
 
         for (Map.Entry<String, String> e : normalized.entrySet()) {
             String key = e.getKey();
@@ -245,6 +250,16 @@ public class AppSettingsService {
         if (core == null || max == null || queue == null) return;
         String problem = ExecutorTuningService.validate(core, max, queue);
         if (problem != null) throw new IllegalArgumentException(Msg.t("Görev havuzu: ", "Task pool: ") + problem);
+    }
+
+    /** Tema politikası: etkin liste + varsayılan birlikte geçerli olmalı (yeni override → Environment → katalog varsayılanı). */
+    private void validateThemes(Map<String, String> next) {
+        String enabledCsv = next.get(ThemeCatalog.KEY_ENABLED);
+        if (enabledCsv == null) enabledCsv = environment.getProperty(ThemeCatalog.KEY_ENABLED, ThemeCatalog.DEFAULT_ENABLED_CSV);
+        String def = next.get(ThemeCatalog.KEY_DEFAULT);
+        if (def == null) def = environment.getProperty(ThemeCatalog.KEY_DEFAULT, ThemeCatalog.SYSTEM);
+        ThemeCatalog.Problem p = ThemeCatalog.validate(ThemeCatalog.parseCsv(enabledCsv), def);
+        if (p != null) throw new IllegalArgumentException(Msg.t("Temalar: " + p.tr(), "Themes: " + p.en()));
     }
 
     /** Override → Environment sırasıyla tam sayı; hiçbiri yoksa ya da sayı değilse null. */
@@ -283,6 +298,14 @@ public class AppSettingsService {
         }
         // Tür bazlı yeniden uyarı sıklığı (2026-10-01): 0 (genel aralık) ya da 15–10080 dakika.
         if (ReAlertIntervals.isKey(s.key())) ReAlertIntervals.validate(s.key(), val);
+        // Açık temalar (2026-10-05): CSV'deki her kimlik katalogda olmalı (boş liste = varsayılana dön, yukarıda döndü).
+        if (ThemeCatalog.KEY_ENABLED.equals(s.key())) {
+            for (String id : ThemeCatalog.parseCsv(val)) {
+                if (!ThemeCatalog.isKnown(id)) {
+                    throw new IllegalArgumentException(Msg.t("Temalar: bilinmeyen tema: ", "Themes: unknown theme: ") + id);
+                }
+            }
+        }
         switch (s.type()) {
             case INT -> {
                 try { Integer.parseInt(val); }

@@ -15,6 +15,19 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **Temalar:** Açık ve Koyu'ya ek olarak Blueprint, Parchment, Alloy, Obsidian, Slag ve Crucible. Kullanıcı menüsünde ve
+  telefonda üst çubukta tema seçici; yalnız açık bırakılan temalar listelenir (renk örneği, açık/koyu ipucu, etkin işareti).
+- **Ayarlar → Görünüm → Temalar:** her tema için canlı önizlemeli kart, "Listede göster" (temayı listeden çıkarma),
+  varsayılan tema seçimi ("Sistem" = cihazın açık/koyu ayarı dahil) ve yalnız bu sekmede, kaydetmeden önizleme. Kayıt
+  yalnız global yöneticiye açık; kapsamlı müdür sayfayı salt okunur görür; denetim kaydı `THEME_SETTINGS_SAVE`.
+- **Tema seçimi hesapta saklanır:** sonraki oturumlar (başka cihazda da) aynı temayla açılır. Yönetici seçilen temayı
+  kaldırırsa varsayılan uygulanır; tema yeniden açılınca kişinin seçimi geri gelir. Giriş sayfası da tema ayarlarına uyar.
+
+### Changed
+- Koyu stiller artık temaya değil renk şemasına (`data-scheme`) bağlı; koyu şemalı temalar tüm koyu stilleri devralır.
+- Odak halkası Açık ve Koyu temalarda daha belirgin (WCAG 3:1); sekiz tema için otomatik kontrast kapısı.
+
 ## [20.107.0] — 2026-10-04
 
 ### Added

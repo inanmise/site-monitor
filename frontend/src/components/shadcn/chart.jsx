@@ -11,7 +11,8 @@ export * from "recharts"
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = {
   light: "",
-  dark: '[data-theme="dark"]'
+  // Şemaya bağlı (2026-10-05, temalar): koyu şemalı her tema (Koyu, Blueprint, Obsidian, Slag, Crucible)
+  dark: '[data-scheme="dark"]'
 }
 
 const INITIAL_DIMENSION = {

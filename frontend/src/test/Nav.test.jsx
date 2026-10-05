@@ -420,20 +420,33 @@ describe('Nav — kullanıcı menüsü (2026-09-27 yeniden tasarım)', () => {
     expect(onTabChange).toHaveBeenCalledWith('help')
   })
 
-  it('Tema alt menüsü: etkin seçenek işaretli; Koyu seçilince tema anında değişir, menü açık kalır', () => {
+  // 2026-10-05 (temalar): alt menü iki radyo yerine yöneticinin AÇIK bıraktığı temaları listeler — her satır renk örneği +
+  // ad + şema ipucu (erişilebilir ad "Koyu Koyu şema" gibi ad + şema), etkin olanda onay. Eski "^(Dark|Koyu)$" tam eşleşmesi
+  // bilinçli olarak "ad ile başlar"a çevrildi; seçim davranışı (anında uygula, menü açık kalsın) aynen korunur.
+  it('Tema alt menüsü: açık temalar listelenir, etkin seçenek işaretli; Koyu seçilince tema anında değişir, menü açık kalır', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     openUserMenu(container)
     const sub = menu().querySelector('[data-slot="user-menu-theme"]')
     expect(sub).toHaveTextContent(/Theme|Tema/)
     expect(sub).toHaveTextContent(/Light|Açık/)                  // geçerli değer satırda
     fireEvent.keyDown(sub, { key: 'ArrowRight' })
-    expect(screen.getByRole('menuitemradio', { name: /^(Light|Açık)$/ })).toHaveAttribute('aria-checked', 'true')
-    const dark = screen.getByRole('menuitemradio', { name: /^(Dark|Koyu)$/ })
+    const options = screen.getAllByRole('menuitemradio')
+    expect(options.map((o) => o.getAttribute('data-theme-id')))
+      .toEqual(['light', 'dark', 'blueprint', 'parchment', 'alloy', 'obsidian', 'slag', 'crucible'])
+    expect(screen.getByRole('menuitemradio', { name: /^(Light|Açık)\b/ })).toHaveAttribute('aria-checked', 'true')
+    const dark = screen.getByRole('menuitemradio', { name: /^(Dark|Koyu) / })
     expect(dark).toHaveAttribute('aria-checked', 'false')
+    expect(dark).toHaveTextContent(/Dark scheme|Koyu şema/)
     fireEvent.click(dark)
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    expect(document.documentElement.getAttribute('data-scheme')).toBe('dark')
     expect(menu()).toBeInTheDocument()                                              // menü açık kaldı
     expect(menu().querySelector('[data-slot="user-menu-theme"]')).toHaveTextContent(/Dark|Koyu/)
+    const crucible = screen.getByRole('menuitemradio', { name: /^Crucible/ })
+    fireEvent.click(crucible)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('crucible')
+    expect(crucible).toHaveAttribute('aria-checked', 'true')
+    expect(crucible.querySelector('[data-slot="theme-option-check"]')).not.toBeNull()
   })
 
   it('Dil alt menüsü: etkin dil işaretli (English); Türkçe seçilince arayüz Türkçeye geçer', () => {
@@ -602,8 +615,10 @@ describe('Nav — telefon (Sheet) ve mobil üst çubuk', () => {
     expect(within(sheet).getByText('ayse.yilmaz@example.com')).toBeInTheDocument()
     expect([...sheet.querySelectorAll('[data-slot="user-menu-group"]')].map((g) => g.getAttribute('data-group'))).toEqual(['account', 'help', 'preferences'])
     // Tema / dil bölümlü denetim (etkin olan basılı), Çıkış en altta ve yıkıcı
-    expect(within(sheet).getByRole('group', { name: /^(Theme|Tema)$/ })).toBeInTheDocument()
-    expect(within(sheet).getByRole('button', { name: /^(Light|Açık)$/ })).toHaveAttribute('aria-pressed', 'true')
+    // Tema (2026-10-05): iki düğmelik açık/koyu yerine AÇIK temaların radyo listesi (renk örneği + ad), etkin olan seçili
+    expect(within(sheet).getByRole('radiogroup', { name: /^(Theme|Tema)$/ })).toBeInTheDocument()
+    expect(within(sheet).getByRole('radio', { name: /^(Light|Açık)$/ })).toHaveAttribute('aria-checked', 'true')
+    expect(within(sheet).getAllByRole('radio').map((r) => r.getAttribute('data-theme-id'))).toHaveLength(8)
     expect(within(sheet).getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
     const rows = within(sheet).getAllByRole('button')
     expect(rows[rows.length - 1]).toHaveAccessibleName(/^(Log out|Çıkış Yap)$/)

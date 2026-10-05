@@ -1665,3 +1665,117 @@ for (const vp of VIEWPORTS_3) {
     })
   })
 }
+
+// ── Temalar (2026-10-05) ─────────────────────────────────────────────────────────────────────────────────────────────
+// Ayarlar → Görünüm → Temalar: telefon / tablet / dizüstü — yatay taşma yok, dokunma hedefleri ≥ 40 px, önizleme şeridi
+// taşmaz. Ardından SEKİZ temanın her birinde Pano + bir detay penceresi: taşma yok, gövde metni ve pencere başlığı zemine
+// karşı ≥ 4.5:1 (hesaplanmış stiller; renk tuvalde çözülür — oklch / color-mix sonuçları da doğru okunur).
+const THEME_IDS = ['light', 'dark', 'blueprint', 'parchment', 'alloy', 'obsidian', 'slag', 'crucible']
+const DARK_THEMES = new Set(['dark', 'blueprint', 'obsidian', 'slag', 'crucible'])
+
+/** Tarayıcıda: `sel` öğesinin metin rengi ile ATALARINDAN çözülen zemin rengi arasındaki WCAG kontrastı. */
+function textContrast(sel) {
+  const el = sel ? document.querySelector(sel) : document.body
+  if (!el) return { ratio: 0, missing: sel }
+  const cv = document.createElement('canvas')
+  cv.width = 1; cv.height = 1
+  const ctx = cv.getContext('2d', { willReadFrequently: true })
+  const rgba = (c) => {
+    ctx.clearRect(0, 0, 1, 1)
+    ctx.fillStyle = '#000'
+    ctx.fillStyle = c
+    ctx.fillRect(0, 0, 1, 1)
+    const d = ctx.getImageData(0, 0, 1, 1).data
+    return { r: d[0], g: d[1], b: d[2], a: d[3] / 255 }
+  }
+  const over = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a) })
+  const layers = []
+  for (let n = el; n; n = n.parentElement) {
+    const c = rgba(getComputedStyle(n).backgroundColor)
+    if (c.a > 0) { layers.push(c); if (c.a >= 0.999) break }
+  }
+  let bg = { r: 255, g: 255, b: 255 }
+  for (const c of layers.reverse()) bg = over(c, bg)
+  const fg = over(rgba(getComputedStyle(el).color), bg)
+  const lin = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4 }
+  const lum = (c) => 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+  const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a)
+  return { ratio: (hi + 0.05) / (lo + 0.05), fg, bg }
+}
+
+const THEME_PAGE_VIEWPORTS = [...VIEWPORTS, { name: 'desktop', width: 1280, height: 800 }]
+for (const vp of THEME_PAGE_VIEWPORTS) {
+  test(`ayarlar — Görünüm → Temalar @${vp.name} ${vp.width}×${vp.height}`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await mockApi(page)
+    await page.goto('/?tab=settings&sec=themes')
+    await page.locator('[data-testid="theme-settings"]').waitFor({ timeout: 20_000 })
+    await expect(page.locator('[data-slot="theme-card"]')).toHaveCount(8)
+    await page.waitForTimeout(600)
+    const key = `temalar @${vp.name}`
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `${key}: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `${key}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
+    // Dokunma hedefleri: anahtar ve radyo satırları, Önizle düğmeleri (telefonda "Varsayılana dön" de) ≥ 40 px
+    const targets = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll('[data-slot="theme-card"] [data-slot="theme-enabled-switch"], [data-slot="theme-card"] [data-slot="theme-default-radio"]')]
+        .map((e) => e.parentElement)
+      const btns = [...document.querySelectorAll('[data-slot="theme-preview-btn"]')]
+      if (window.innerWidth < 768) btns.push(document.querySelector('[data-slot="themes-reset"]'))
+      return [...rows, ...btns].filter(Boolean).map((e) => ({ slot: e.getAttribute('data-slot') || e.firstElementChild?.getAttribute('data-slot'), h: Math.round(e.getBoundingClientRect().height) }))
+    })
+    expect(targets.length, `${key}: hedef bulunamadı`).toBeGreaterThanOrEqual(8 * 3)
+    for (const tg of targets) expect(tg.h, `${key}: ${tg.slot} dokunma hedefi (px)`).toBeGreaterThanOrEqual(40)
+    // Önizle → tema yalnız bu sekmede uygulanır, şerit görünür ve taşmaz; bitir → geri döner
+    const before = await page.locator('html').getAttribute('data-theme')
+    await page.locator('[data-slot="theme-card"][data-theme-id="crucible"] [data-slot="theme-preview-btn"]').click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'crucible')
+    await expect(page.locator('html')).toHaveAttribute('data-scheme', 'dark')
+    const bar = page.locator('[data-slot="theme-preview-bar"]')
+    await expect(bar).toBeVisible()
+    const m2 = await page.evaluate(measure)
+    expect(m2.offenders, `${key} önizleme: ekran dışına taşan öğe`).toEqual([])
+    expect(m2.pageOverflow, `${key} önizleme: yatay taşma (px)`).toBeLessThanOrEqual(1)
+    const endH = await page.locator('[data-slot="theme-preview-end"]').boundingBox()
+    if (vp.width < 768) expect(endH.height, `${key}: önizlemeyi bitir hedefi (px)`).toBeGreaterThanOrEqual(40)
+    await page.locator('[data-slot="theme-preview-end"]').click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', before)
+    await expect(bar).toHaveCount(0)
+  })
+}
+
+for (const id of THEME_IDS) {
+  test(`tema taraması — ${id}: Pano + detay penceresi taşmaz, metin ≥ 4.5:1`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.addInitScript((tid) => { try { localStorage.setItem('site-monitor-theme', tid) } catch { /* yoksay */ } }, id)
+    await mockApi(page)
+    await page.goto('/?tab=dashboard')
+    await page.locator('.app-main').waitFor({ timeout: 20_000 })
+    await page.waitForTimeout(1200)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', id)
+    await expect(page.locator('html')).toHaveAttribute('data-scheme', DARK_THEMES.has(id) ? 'dark' : 'light')
+    const m = await page.evaluate(measure)
+    expect(m.offenders, `${id} pano: ekran dışına taşan öğe`).toEqual([])
+    expect(m.pageOverflow, `${id} pano: yatay taşma (px)`).toBeLessThanOrEqual(1)
+    const body = await page.evaluate(textContrast, null)
+    expect(body.ratio, `${id}: gövde metni / zemin kontrastı`).toBeGreaterThanOrEqual(4.5)
+    const title = await page.evaluate(textContrast, '[data-slot="page-title"]')
+    expect(title.ratio, `${id}: sayfa başlığı kontrastı`).toBeGreaterThanOrEqual(4.5)
+
+    // Detay penceresi (HTTP izleme kartı)
+    await page.goto('/?tab=http')
+    await page.locator('.upt-grid [data-slot="card"] [data-monitor-open]').first().click({ timeout: 20_000 })
+    const dlg = page.getByRole('dialog').first()
+    await dlg.waitFor()
+    await page.waitForTimeout(800)
+    const d = await page.evaluate(measure, '[role="dialog"]')
+    expect(d.offenders, `${id} detay: ekran dışına taşan öğe`).toEqual([])
+    const box = await dlg.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(391)
+    const dTitle = await page.evaluate(textContrast, '[role="dialog"] h2')
+    expect(dTitle.ratio, `${id}: pencere başlığı kontrastı`).toBeGreaterThanOrEqual(4.5)
+    const dBody = await page.evaluate(textContrast, '[role="dialog"]')
+    expect(dBody.ratio, `${id}: pencere metni kontrastı`).toBeGreaterThanOrEqual(4.5)
+  })
+}

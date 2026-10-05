@@ -203,8 +203,9 @@ class UserPreferencesServiceTest {
         assertThat(local).containsOnly(Map.entry("sm.pageSize.dashboard-certs", "25"), Map.entry("today-panel-open", "true"));
         assertThat(r.changed()).containsExactly("local");
 
-        assertThatThrownBy(() -> service.merge(1L, map("local", map("site-monitor-theme", "dark"))))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("site-monitor-theme");
+        // 2026-10-05: tema ARTIK aynalanıyor (ürün kararı) — dil hâlâ dışarıda (beyaz liste dışı örnek olarak dil anahtarı)
+        assertThatThrownBy(() -> service.merge(1L, map("local", map("site-monitor-lang", "en"))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("site-monitor-lang");
         assertThatThrownBy(() -> service.merge(1L, map("local", map("sm.pageSize.", "25"))))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.merge(1L, map("local", map("sidebar-open", true))))
@@ -212,6 +213,28 @@ class UserPreferencesServiceTest {
         assertThat(UserPreferencesService.isLocalKey("sm.checkRun.teams.http")).isTrue();
         assertThat(UserPreferencesService.isLocalKey("sm.palette.recent")).isFalse();
         assertThat(UserPreferencesService.isLocalKey("site-monitor-remembered-user")).isFalse();
+    }
+
+    @Test
+    @DisplayName("tema seçimi (2026-10-05) aynalanır: bilinen kimlik saklanır (kapalı tema da), bilinmeyen değer SESSİZCE yok sayılır")
+    void themeChoiceSyncedAndValidated() {
+        assertThat(UserPreferencesService.isLocalKey(UserPreferencesService.THEME_LOCAL_KEY)).isTrue();
+        var r = service.merge(1L, map("local", map("site-monitor-theme", "crucible", "sidebar-open", "false")));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> local = (Map<String, Object>) r.prefs().get("local");
+        assertThat(local).containsEntry("site-monitor-theme", "crucible");
+
+        // Bilinmeyen değer: istek reddedilmez (aynı PUT'taki diğer tercihler düşmesin), mevcut tema korunur
+        var r2 = service.merge(1L, map("local", map("site-monitor-theme", "sepia", "today-panel-open", "true")));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> local2 = (Map<String, Object>) r2.prefs().get("local");
+        assertThat(local2).containsEntry("site-monitor-theme", "crucible").containsEntry("today-panel-open", "true");
+
+        // null = sil (cihazda seçim kaldırıldı)
+        var r3 = service.merge(1L, map("local", map("site-monitor-theme", null)));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> local3 = (Map<String, Object>) r3.prefs().get("local");
+        assertThat(local3).doesNotContainKey("site-monitor-theme");
     }
 
     @Test

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { api } from '../api/client'
 import { setRuntimeVersion, currentVersion } from '../utils/appVersion.js'
+import { useTheme } from '../i18n/theme.jsx'
 
 // globalThis pin (2026-09-26): HMR çift-modül örneğinde sağlayıcı/hook ayrı context'e düşmesin (i18n/Sidebar/Toast deseni)
 const BrandingContext = (globalThis.__smBrandingCtx ??= createContext(null))
@@ -29,6 +30,13 @@ export function BrandingProvider({ children }) {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Tema politikası (2026-10-05): yöneticinin açık bıraktığı temalar + varsayılan aynı public yanıtta gelir — giriş
+  // sayfası da uyar. ThemeProvider bu sağlayıcının ÜSTÜNDE (main.jsx); politika yoksa (eski sunucu) dokunulmaz.
+  const { setPolicy } = useTheme()
+  useEffect(() => {
+    if (branding?.themes && typeof branding.themes === 'object') setPolicy(branding.themes)
+  }, [branding, setPolicy])
 
   useEffect(() => {
     if (!branding) return

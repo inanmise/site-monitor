@@ -83,7 +83,7 @@ function indexCerts(res) {
 export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, systemRole }) {
   const t = useT()
   const { toggle: toggleLang } = useLanguage()
-  const { theme, toggle: toggleTheme } = useTheme()
+  const { isDark, toggle: toggleTheme } = useTheme()
   const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -214,7 +214,7 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
       { id: 'add-domain', Icon: Globe, label: t('palette.act.addDomain'), run: () => { goTab('dashboard'); actOn('[data-tour="add-domain"] input', { focus: true }) } },
       { id: 'check-now', Icon: RefreshCw, label: t('app.checkNow'), run: () => { goTab('dashboard'); actOn('[data-tour="check-now"]') } },
       { id: 'report', Icon: Bug, label: t('nav.reportIssue'), run: () => setIssueOpen(true) },
-      { id: 'theme', Icon: theme === 'dark' ? Sun : Moon, label: theme === 'dark' ? t('nav.lightMode') : t('nav.darkMode'), run: toggleTheme },
+      { id: 'theme', Icon: isDark ? Sun : Moon, label: isDark ? t('nav.lightMode') : t('nav.darkMode'), run: toggleTheme },
       { id: 'lang', Icon: Languages, label: t('nav.langSwitch'), run: toggleLang },
       { id: 'help', Icon: LifeBuoy, label: t('nav.help'), run: () => dispatch('sm:help', {}) },
       { id: 'tour', Icon: Compass, label: t('tour.paletteCmd'), run: () => dispatch('sm:tour-start', { kind: 'main' }) },
@@ -224,7 +224,7 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
         run: () => { openerRef.current = null; dispatch(SHORTCUTS_EVENT) } },
     ].filter(Boolean)
     return list.filter((a) => matches(needle, a.label))
-  }, [t, needle, theme, toggleTheme, toggleLang, onTabChange, canCreateMonitor])
+  }, [t, needle, isDark, toggleTheme, toggleLang, onTabChange, canCreateMonitor])
 
   // Canlı gruplar: sunucu vuruşları (sertifika / izleme / takım) + kullanıcılar (dizin, istemcide süzülür).
   const liveGroups = useMemo(() => {

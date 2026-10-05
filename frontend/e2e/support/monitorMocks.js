@@ -813,6 +813,15 @@ export async function mockApi(page, opts = {}) {
     } else if (p === '/api/status-page') {
       // Kurum içi Durum Sayfası (2026-10-01): sorunlu + bakımdaki + sağlıklı takımlar, uzun adlar, açık/çözülen olay, bakım
       body = { success: true, data: statusPageMock() }
+    } else if (p === '/api/admin/themes') {
+      // Ayarlar → Görünüm → Temalar (2026-10-05): sekiz tema, altısı açık, varsayılan ek tema (en geniş hâl: kapalı kartlar,
+      // varsayılan rozeti, salt okunur değil). Kayıt aynı görünümü döner.
+      const ids = ['light', 'dark', 'blueprint', 'parchment', 'alloy', 'obsidian', 'slag', 'crucible']
+      body = { success: true, data: {
+        enabled: ['light', 'dark', 'blueprint', 'parchment', 'slag', 'crucible'], default: 'blueprint', read_only: role !== 'ADMIN' || !globalAdmin,
+        themes: ids.map((id) => ({ id, scheme: ['light', 'parchment', 'alloy'].includes(id) ? 'light' : 'dark' })),
+        defaults: { enabled: ids, default: 'system' },
+      } }
     } else if (p === '/api/monitoring/storm/settings') {
       // Ayarlar → Alarm Fırtınası (2026-10-03: push fırtınaya devredilmesin anahtarı dâhil, dolu değerlerle)
       body = { success: true, data: { enabled: true, threshold_unit: 'COUNT', threshold_value: 5, window_minutes: 5, per_group: false,

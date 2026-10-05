@@ -30,7 +30,8 @@ const read = (p) => fs.readFileSync(p, 'utf8')
  * gerekmez. Liste, bileşendeki SKIP_GROUPS ile birebir aynı olmak zorunda — testin kendisi
  * bunu aşağıda doğruluyor, yani ikisi ayrışırsa kapı kırılır.
  */
-const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods']
+// appearance (2026-10-05): Ayarlar → Görünüm → Temalar kendi sayfasında.
+const SKIP_GROUPS = ['branding', 'retention', 'userpush', 'storm', 'login-anomaly', 'login-methods', 'appearance']
 
 /** new Setting("key", "group", Type.X) → [{key, group}] */
 function catalogSettings() {

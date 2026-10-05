@@ -2,6 +2,7 @@ import { useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText,
   CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn,
+  SwatchBook,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -32,6 +33,7 @@ import UserPushSettings from './UserPushSettings'
 import NocSettings from './NocSettings.jsx'   // 7/24 İzleme Ekibi (2026-09-27)
 import SystemMaintenanceSettings from './SystemMaintenanceSettings.jsx'   // Sistem Bakım Modu (2026-10-02)
 import LoginMethodsSettings from './LoginMethodsSettings.jsx'   // Giriş Yöntemleri — kodla giriş + LDAP girişi (2026-10-02)
+import ThemeSettings from './ThemeSettings.jsx'   // Görünüm → Temalar (2026-10-05)
 import ToneBadge from './ToneBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
@@ -55,6 +57,11 @@ const GROUPS = [
     { id: 'platforms', labelKey: 'settings.navPlatforms', icon: Layers },
     // Sistem Bakım Modu (2026-10-02, kullanıcı kararı): SiteMonitor'ün kendisini bakıma alma — YALNIZ global yönetici
     { id: 'sysmaint', labelKey: 'settings.navSysMaint', icon: ServerCog },
+  ] },
+  // Görünüm → Temalar (2026-10-05, kullanıcı isteği): açık temalar + varsayılan; kapsamlı müdür SALT OKUNUR görür
+  // (anahtarlar GLOBAL_ONLY, sunucu read_only döner) — kilitli bölüm değil, önizleme herkese açık.
+  { id: 'appearance', labelKey: 'settings.grpAppearance', sections: [
+    { id: 'themes', labelKey: 'settings.navThemes', icon: SwatchBook },
   ] },
   { id: 'notifications', labelKey: 'settings.grpNotifications', sections: [
     { id: 'smtp', labelKey: 'settings.navSmtp', icon: Mail },
@@ -269,6 +276,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'monitorgroups' && <MonitorGroups />}
           {active === 'platforms' && <PlatformSettings />}
           {active === 'sysmaint' && <SystemMaintenanceSettings />}
+          {active === 'themes' && <ThemeSettings />}
           {active === 'smtp' && <SmtpSettings />}
           {active === 'weeklyavail' && <WeeklyAvailabilitySettings />}
           {active === 'weeklyreports' && <WeeklyReportAccessSettings />}
