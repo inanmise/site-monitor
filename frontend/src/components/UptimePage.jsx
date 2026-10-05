@@ -7,10 +7,15 @@ import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQueryS
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { domainDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
-import { AlertCircle, CheckCircle, Users, Inbox, FolderOpen } from 'lucide-react'
+import { AlertCircle, CheckCircle, Users, Inbox, FolderOpen, Stethoscope } from 'lucide-react'
+import { usePermissions } from '../contexts/PermissionsProvider.jsx'
+import MonitorModalActions from './ui/MonitorModalActions.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import CertCheckHistory from './certmodal/CertCheckHistory.jsx'
 import DiagnosticsModal from './admin/DiagnosticsModal.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
@@ -46,9 +51,14 @@ function writeStoredScope(v) { try { localStorage.setItem(SCOPE_KEY, v) } catch 
 
 function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
 
-export default function UptimePage({ systemRole }) {
+// `systemRole` artık okunmuyor (2026-10-05): Tanıla rol değil `diagnostics.run` iznine bağlı; çağıranlar prop'u geçmeye devam edebilir.
+export default function UptimePage() {
   const t = useT()
-  const isAdmin = systemRole === 'ADMIN'
+  // Tanılama (2026-10-05): rol değil izin — `diagnostics.run` (execute) olan kullanıcı KENDİ (yönetebildiği) kartını tanılar;
+  // başka takımın salt okunur kartında yok. Sunucu (/api/admin/diagnostics/*) aynı izni + takım kapsamlı envanteri zorlar.
+  const canRunDiagnostics = usePermissions().canExecute('diagnostics.run')
+  const canDiagnoseItem = (item) => !!item && canRunDiagnostics && item.can_manage !== false
+  const openDiag = (item) => { if (item) setDiag({ domain: item.domain, port: item.port || 443 }) }
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState(() => readUrlParam('stat', 'all'))
@@ -63,6 +73,8 @@ export default function UptimePage({ systemRole }) {
   const [visibleToAll, setVisibleToAll] = useState(false)
   const setScope = (v) => { const n = normalizeScope(v); setScopeRaw(n); writeStoredScope(n) }
   const [selected, setSelected]         = useState(null)
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
   const [diag, setDiag]                 = useState(null)   // { domain, port } → DiagnosticsModal
   const [dateFrom, setDateFrom]         = useState(todayStartDate)
   const [dateTo, setDateTo]             = useState(() => new Date())
@@ -116,7 +128,7 @@ export default function UptimePage({ systemRole }) {
     setDateTo(new Date())
   }
 
-  function closeModal() { setSelected(null) }
+  function closeModal() { setSelected(null); setDiag(null) }
 
   function applyDateRange(from, to) {
     setDateFrom(from)
@@ -372,10 +384,10 @@ export default function UptimePage({ systemRole }) {
                     )}
                   </MonitorCardMetrics>
                 </MonitorCardContent>
-                {(item.uptime_checked_at || item.ssl_checked_at || (isAdmin && !readOnly)) && (
-                  <MonitorCardFooter actions={isAdmin && !readOnly && (
-                    <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs pointer-coarse:h-10"
-                      onClick={(e) => { e.stopPropagation(); setDiag({ domain: item.domain, port: item.port || 443 }) }}>
+                {(item.uptime_checked_at || item.ssl_checked_at || canDiagnoseItem(item)) && (
+                  <MonitorCardFooter actions={canDiagnoseItem(item) && (
+                    <Button variant="outline" size="sm" data-slot="uptime-diagnose" className="h-7 px-2.5 text-xs pointer-coarse:h-10"
+                      onClick={(e) => { e.stopPropagation(); openDiag(item) }}>
                       {t('uptime.diagnose')}
                     </Button>
                   )}>
@@ -401,7 +413,18 @@ export default function UptimePage({ systemRole }) {
           subtitle={<span className="flex min-w-0 flex-wrap items-center gap-2">
             <MonitorCardTag className="text-xs">:{selected.port || 443}</MonitorCardTag>
             {selected.can_manage === false && <ReadOnlyBadge teamId={selected.team_id} teamName={selected.team_name} />}
-          </span>}>
+          </span>}
+          // Tanıla (2026-10-05): kartla aynı kapı (diagnostics.run + kendi kartı) — yoksa eylem grubu hiç çizilmez ve kabuk
+          // kendi X'ini kullanır (eski görünüm). Varsa eylem grubu kendi X'ini taşır.
+          actions={canDiagnoseItem(selected) ? (
+            <MonitorModalActions onClose={closeModal}>
+              <Button type="button" variant="outline" size="icon-sm" data-slot="uptime-diagnose-open"
+                className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                onClick={() => openDiag(selected)} title={t('uptime.diagnose')} aria-label={t('uptime.diagnose')}>
+                <Stethoscope size={13} aria-hidden="true" />
+              </Button>
+            </MonitorModalActions>
+          ) : undefined}>
           <DetailDivider className="mt-0" />
 
           {/* Summary metrics */}
@@ -445,14 +468,28 @@ export default function UptimePage({ systemRole }) {
                 range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
                 urlSync={false} gridClass="upt-uptime-rt-grid" cardsBelow={HTTP_TABLE_MIN}
                 columns={[t('uptime.dateFrom'), t('dns.status'), 'ms', '']}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDate(c.checked_at)}</span>
-                  <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
-                    {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
-                  </span>
-                  <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
-                  {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span> : <span />}
-                </>)} />
+                renderRow={(c) => {
+                  // Hata teşhisi (2026-10-05): "down" satırda neden rozeti + tek satır + aç/kapa; açılınca satırın ALTINDA
+                  // tam genişlik panel (yol: doğrudan / vekil, çözümlenen IP, zaman aşımı, ham hata).
+                  const k = failureRowKey(c)
+                  const failed = c.status !== 'up'
+                  const open = failed && failRows.isOpen(k)
+                  const when = formatDate(c.checked_at)
+                  const pid = failurePanelId('uptime', k)
+                  return (<>
+                    <span className="upt-rt-time">{when}</span>
+                    <span className={c.status === 'up' ? 'upt-rt-up' : 'upt-rt-down'}>
+                      {c.status === 'up' ? t('uptime.statusUp') : t('uptime.statusDown')}
+                    </span>
+                    <span className="upt-rt-ms">{c.response_ms != null ? `${c.response_ms}ms` : '—'}</span>
+                    {failed
+                      ? <CheckFailureCell type="uptime" check={c} monitor={selected} open={open} when={when} panelId={pid}
+                          onToggle={() => failRows.toggle(k)} />
+                      : <span />}
+                    {open && <CheckFailurePanel type="uptime" check={c} monitor={selected} id={pid}
+                      canDiagnose={canDiagnoseItem(selected)} onDiagnose={() => openDiag(selected)} />}
+                  </>)
+                }} />
             </div>
 
             <Separator orientation="vertical" className="mx-5 hidden self-stretch data-[orientation=vertical]:h-auto md:block" />
@@ -465,14 +502,20 @@ export default function UptimePage({ systemRole }) {
                   (~430 px) tablo yerine kart listesi (CertCheckHistory `cardsBelow`). */}
               <CertCheckHistory domain={selected.domain} listKey="uptime-ssl-history"
                 range={{ from: dateFrom, to: dateTo }} onRangeChange={applyDateRange}
-                urlSync={false} runInHeader={false} />
+                urlSync={false} runInHeader={false}
+                onDiagnose={canDiagnoseItem(selected) ? () => openDiag(selected) : undefined} />
             </div>
           </div>
+
+          {/* Tanılama detayın İÇİNDE (iç içe kabuk: detayın üstünde katmanlanır, Escape yalnız onu kapatır) */}
+          {diag && (
+            <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />
+          )}
         </MonitorDetailModal>
       )}
 
-      {/* ── Tanılama modalı (envanter ile ortak) — admin-only ── */}
-      {diag && (
+      {/* ── Tanılama modalı (envanter ile ortak) — karttan açılınca (detay kapalı) sayfa düzeyinde ── */}
+      {!selected && diag && (
         <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />
       )}
     </div>

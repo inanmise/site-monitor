@@ -28,10 +28,12 @@ import SegmentedControl from './ui/SegmentedControl.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, Gauge, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox, Copy } from 'lucide-react'
+import { Trash2, Gauge, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureBlock } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import { LoadingBlock } from './ui/Progress.jsx'
@@ -72,8 +74,11 @@ import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLi
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
 } from './monitoring/MonitorForm.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
+const PageSpeedDiagnoseDialog = lazy(() => import('./pagespeed/diagnose/PageSpeedDiagnoseDialog.jsx'))
 
 /** Kontrol aralığı seçenekleri. TABAN 5 dk: bir ölçüm onlarca istek demek — dakikalık ölçüm hem
  *  tek pod'u hem izlenen sistemi boğar. Sunucu da aynı tabanı uygular (form atlanabilir, uç atlanamaz). */
@@ -180,6 +185,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Uçtan uca tanılama (2026-10-05, keyword ile aynı kural): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check +
+  // diagnostics.run). Liste satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla DEĞİŞTİRİR ve o
+  // yanıtta bayrak yok — pencere koşu ortasında sökülmesin. (`monitors` aşağıda tanımlı; çağrı anında okunur.)
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -189,6 +198,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const sla = useSla('pagespeed')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   const week7 = useSla('pagespeed', 7)     // eşik üstü: bu hafta (2026-09-12, #15)
   const week14 = useSla('pagespeed', 14)   // eşik üstü: son 14 gün → geçen hafta = 14g − 7g
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
+  // Uçtan uca tanılama penceresi (2026-10-05): { monitorId, runId, initialRunId } | null. Derin bağlantı ?monitor=<id>&psdx=<no>
+  // YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz); `runId` gösterilen çalıştırmadır (URL'e yazılır).
+  const [speedDx, setSpeedDx] = useState(() => {
+    const runId = readUrlInt('psdx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -331,12 +348,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     resSeq.current++            // onceki izlemenin ucusan yaniti bu modali DOLDURMASIN
     setSelected(m); setResources([]); setResTotal(0); setBreaches([]); setResCheckId(null)
     setDetailTab(deepLinkTab()); setMetric('load')
+    setSpeedDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadResources(m.id)
   }
   function closeDetail() {
     resSeq.current++
-    setSelected(null); setResources([]); setResTotal(0); setBreaches([])
+    setSelected(null); setResources([]); setResTotal(0); setBreaches([]); setSpeedDx(null)
   }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setSpeedDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   async function refreshModal() {
     if (!selected) return
@@ -645,6 +665,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'resources' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    psdx: selected && speedDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (speedDx.runId ?? null) : null,
   })
 
   const statItems = [
@@ -1046,6 +1068,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               deleting={deleting === selected.id}
               deleteTitle={t('pspd.delete')}
               onClose={closeDetail}>
+              {/* Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında; paylaşılan eylem grubuna çocuk olarak */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="psdx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('psdx.open')} aria-label={t('psdx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -1183,9 +1213,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                 renderRow={(c) => {
                   // Eşik aşımı KESİNTİ DEĞİL: ok=true kalır, ihlal ayrı kolonda gelir.
                   const breached = typeof c.breached_metrics === 'string' && c.breached_metrics
-                  const st = c.ok === false ? 'DOWN' : breached ? 'SLOW' : 'OK'
+                  // Hata teşhisi (2026-10-05): DOWN ile CONFIG_ERROR ayrışır (sunucu nedeni); başarısız satırın KENDİ hata
+                  // satırı (altında tam genişlik): neden rozeti + tek satır + aç/kapa, açılınca panel (hata metni, HTTP kodu,
+                  // faz süreleri). Özet ara sütuna konmaz — tabloyu genişletip kabından taşırırdı (Sayfa Bütünlüğü ile aynı).
+                  const failed = c.ok === false
+                  const st = failed ? (c.failure_reason === 'CONFIG_ERROR' ? 'CONFIG_ERROR' : 'DOWN') : breached ? 'SLOW' : 'OK'
+                  const k = failureRowKey(c)
+                  const when = formatDateSec(c.checked_at)
                   return (<>
-                    <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                    <span className="upt-rt-time">{when}</span>
                     <span className={cn('font-semibold', statusText(st))}>
                       {statusLabel(st)}
                       {/* HANGİ eşik, kaçtı, kaç ölçüldü. Yalnız "Eşik aşıldı" demek kullanıcıyı
@@ -1196,6 +1232,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                     <span className="upt-rt-ms">{c.ttfb_ms != null ? `${c.ttfb_ms} ms` : '—'}</span>
                     <span className="upt-rt-ms">{formatBytes(c.total_bytes, c.bytes_truncated)}</span>
                     <span className="upt-rt-ms">{c.request_count ?? '—'}</span>
+                    {failed && (
+                      <CheckFailureBlock type="pagespeed" check={c} monitor={selected} open={failRows.isOpen(k)} when={when}
+                        panelId={failurePanelId('pagespeed', k)} onToggle={() => failRows.toggle(k)}
+                        canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => openDiagnose(selected)} />
+                    )}
                   </>)
                 }} />
             </TabsContent>
@@ -1218,6 +1259,15 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
               </Suspense>
             </TabsContent>
           </DetailTabs>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-05) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {speedDx && speedDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <PageSpeedDiagnoseDialog monitor={selected} initialRunId={speedDx.initialRunId}
+                onRunChange={(runId) => setSpeedDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setSpeedDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>

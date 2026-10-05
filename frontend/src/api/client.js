@@ -1437,6 +1437,19 @@ export const api = {
       ).toString()
       return request(`/monitoring/port/${id}/response-series${q ? `?${q}` : ''}`)
     },
+    // Port uçtan uca tanılama (2026-10-05) — gövdesiz POST; vekil tanımlıysa sunucu iki yolu da dener. 75 sn tavan, withStatus.
+    diagnosePort: async (id, _body, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/port/${id}/diagnose`, {
+          method: 'POST', withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    portDiagnoseHistory: (id) => request(`/monitoring/port/${id}/diagnose/history`, { withStatus: true }),
+    portDiagnoseRun: (id, runId) => request(`/monitoring/port/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
 
     // DNS
     // Canlı teyit zincirleri ("Teyit denemesi X/N") — detay modalları 30sn'de bir poll eder
@@ -1454,6 +1467,19 @@ export const api = {
     },
     getDnsDetails:     (id) => request(`/monitoring/dns/${id}/details`),
     testDnsMonitor:    (data) => request('/monitoring/dns/test', { method: 'POST', body: JSON.stringify(data) }),
+    // DNS uçtan uca tanılama (2026-10-05) — gövdesiz POST; çözücüler + yetkili ad sunucuları. 75 sn tavan, withStatus.
+    diagnoseDns: async (id, _body, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/dns/${id}/diagnose`, {
+          method: 'POST', withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    dnsDiagnoseHistory: (id) => request(`/monitoring/dns/${id}/diagnose/history`, { withStatus: true }),
+    dnsDiagnoseRun: (id, runId) => request(`/monitoring/dns/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
 
     // Keyword
     getKeywordMonitors:   () => request('/monitoring/keyword'),
@@ -1502,6 +1528,20 @@ export const api = {
       ).toString()
       return request(`/monitoring/page/${id}/issues${q ? `?${q}` : ''}`)
     },
+    // Sayfa Bütünlüğü uçtan uca tanılama (2026-10-05) — keyword tanılamasının aynası: 60 sn sunucu tavanı → istemci 75 sn
+    // bekler; withStatus: 429 / 403 / 404 pencerede ayırt edilsin.
+    diagnosePage: async (id, { compare = true } = {}, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/page/${id}/diagnose`, {
+          method: 'POST', body: JSON.stringify({ compare: compare !== false }), withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    pageDiagnoseHistory: (id) => request(`/monitoring/page/${id}/diagnose/history`, { withStatus: true }),
+    pageDiagnoseRun: (id, runId) => request(`/monitoring/page/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
 
     // Sayfa Hızı (Page Speed)
     getPageSpeedMonitors:   () => request('/monitoring/pagespeed'),
@@ -1522,6 +1562,19 @@ export const api = {
       ).toString()
       return request(`/monitoring/pagespeed/${id}/resources${q ? `?${q}` : ''}`)
     },
+    // Sayfa Hızı uçtan uca tanılama (2026-10-05) — Sayfa Bütünlüğü ile aynı sözleşme.
+    diagnosePageSpeed: async (id, { compare = true } = {}, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/pagespeed/${id}/diagnose`, {
+          method: 'POST', body: JSON.stringify({ compare: compare !== false }), withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    pageSpeedDiagnoseHistory: (id) => request(`/monitoring/pagespeed/${id}/diagnose/history`, { withStatus: true }),
+    pageSpeedDiagnoseRun: (id, runId) => request(`/monitoring/pagespeed/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
 
     // Senaryo İzleme (Scripted Check / k6) — 10. tür
     getScriptedMonitors:   () => request('/monitoring/scripted'),
@@ -1655,6 +1708,20 @@ export const api = {
       ).toString()
       return request(`/monitoring/ping/${id}/response-series${q ? `?${q}` : ''}`)
     },
+    // Ping uçtan uca tanılama (2026-10-05) — HTTP tanılamasının aynası: 60 sn sunucu tavanı → istemci 75 sn bekler;
+    // `traceroute: true` yol üzerindeki atlamaları da listeler (~20 sn ekler). withStatus: 429 / 403 / 404 ayırt edilsin.
+    diagnosePing: async (id, { traceroute = false } = {}, { signal } = {}) => {
+      const dl = deadlineSignal(signal, 75000)
+      try {
+        return await request(`/monitoring/ping/${id}/diagnose`, {
+          method: 'POST', body: JSON.stringify({ traceroute: traceroute === true }), withStatus: true, ...(dl.signal ? { signal: dl.signal } : {}),
+        })
+      } finally {
+        dl.done()
+      }
+    },
+    pingDiagnoseHistory: (id) => request(`/monitoring/ping/${id}/diagnose/history`, { withStatus: true }),
+    pingDiagnoseRun: (id, runId) => request(`/monitoring/ping/${id}/diagnose/history/${encodeURIComponent(runId)}`, { withStatus: true }),
 
     // Sertifika serisi: id yerine DOMAIN (cert domain-anahtarlı) → nokta içerdiği için encodeURIComponent
     // şart (historyPath'teki uptime-ssl ile aynı kural). İki seri döner: avg/p95 = ms, days = kalan gün.

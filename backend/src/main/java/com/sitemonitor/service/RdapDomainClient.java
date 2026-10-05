@@ -244,6 +244,12 @@ public class RdapDomainClient {
             else if (res == null) res = res2;
         }
         if (res == null) res = err("no rdap");
+        // Hata teşhisi (2026-10-05): TLD'nin herkese açık bir RDAP sunucusu var mı — bootstrap yüklüyken listede yoksa
+        // false (ör. .tr: sonuç WHOIS'e bağlı), bootstrap hiç yüklenemediyse bilinmiyor (anahtar yazılmaz). Yalnız üst veri.
+        Boolean registryRdap = base != null ? Boolean.TRUE : (bootstrap != null ? Boolean.FALSE : null);
+        if (registryRdap != null) {
+            try { res.put("rdap_registry", registryRdap); } catch (Exception ignore) { /* değişmez harita — teşhis düşer */ }
+        }
         recordOutcome(res, viaFallback);
         return res;
     }

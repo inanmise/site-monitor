@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useId, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useId, Fragment, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { api } from '../api/client'
 import { useT } from '../i18n/index.jsx'
@@ -59,6 +59,8 @@ import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
 } from './monitoring/MonitorForm.jsx'
 import { cn } from '@/lib/utils'
+// Uçtan uca tanılama penceresi (2026-10-05) — tembel: giriş paketi büyümez
+const NetDiagnoseDialog = lazy(() => import('./diagnose/NetDiagnoseDialog.jsx'))
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS']
 
 // Kaydirma cubugu icin sirali aralik seti. DNS'in tabani 30 sn olabilir (tek sorgu ucuz);
@@ -115,6 +117,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Silme SEMANTİĞİ hâlâ standalone'a göre ayrışır (standalone → gerçek silme; envanter-türevi →
   // pasifleştirme, envanter senkronu yeniden açabilir); ayrışan yalnız DAVRANIŞ, yetki değil.
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Uçtan uca tanılama (2026-10-05): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run). Liste
+  // satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla günceller, yanıtta bayrak olmayabilir.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -127,6 +132,22 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [detailMonitor, setDetailMonitor] = useState(null)
+  // Uçtan uca tanılama penceresi (2026-10-05): { monitorId, runId, initialRunId } | null. Derin bağlantı
+  // ?monitor=<id>&dndx=<no> YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz). Başka izlemenin
+  // detayı açılınca çizilmez (monitorId kapısı); detay kapanınca temizlenir.
+  const [dnsDx, setDnsDx] = useState(() => {
+    const runId = readUrlInt('dndx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
+  const closeDetail = () => { setDetailMonitor(null); setDnsDx(null) }
+  // Başka izlemenin detayı açılınca önceki pencerenin durumu düşer (derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde)
+  const detailId = detailMonitor?.id ?? null
+  useEffect(() => {
+    if (detailId == null) return
+    setDnsDx((cur) => (cur && cur.monitorId !== detailId ? null : cur))
+  }, [detailId])
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  const openDiagnose = (m) => { if (m) setDnsDx({ monitorId: m.id, runId: null, initialRunId: null }) }
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin (diğer sekiz türle aynı):
   // sekmenin kendi 30 sn'lik canlı yenilemesi 1. sayfa dışında ve özel aralıkta KAPALI.
   const [histReload, setHistReload] = useState(0)
@@ -527,6 +548,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   useUrlQuerySync({
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: detailMonitor?.id ?? null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    dndx: detailMonitor && dnsDx?.monitorId === detailMonitor.id && canDiagnoseRow(detailMonitor) ? (dnsDx.runId ?? null) : null,
     // Modal AÇIKKEN mtab/range'i DnsDetailModal yönetir (anahtarlar mapping'de olmaz → dokunulmaz);
     // modal kapanınca burada null'a düşer ve URL'den silinir (modal unmount'ta silme yapamaz).
     ...(detailMonitor ? {} : { mtab: null, range: null }),
@@ -815,7 +838,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       {/* Detay penceresi (DnsDetailModal → MonitorDetailModal / ui/ModalShell). Açıkken düzenleme formu
           ONUN İÇİNDE çizilir → form detay penceresinin üstünde katmanlanır. */}
       {detailMonitor && (
-        <DnsDetailModal monitor={detailMonitor} onClose={() => setDetailMonitor(null)} teamNames={teamNameById}
+        <DnsDetailModal monitor={detailMonitor} onClose={closeDetail} teamNames={teamNameById}
           status={statusKey(detailMonitor)} badge={statusBadge(detailMonitor)}
           canManage={canManageRow(detailMonitor)}
           running={isRunning(detailMonitor.id)}
@@ -826,7 +849,17 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           deleting={deleting === detailMonitor.id}
           onResume={canManageRow(detailMonitor) && !detailMonitor.active ? () => resume(detailMonitor) : undefined}
           resuming={isResuming(detailMonitor.id)}
+          // Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında (başlık düğmesi + geçmiş paneli)
+          canDiagnose={canDiagnoseRow(detailMonitor)} onDiagnose={() => openDiagnose(detailMonitor)}
           histReload={histReload}>
+          {/* Tanılama penceresi detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {dnsDx && dnsDx.monitorId === detailMonitor.id && canDiagnoseRow(detailMonitor) && (
+            <Suspense fallback={null}>
+              <NetDiagnoseDialog type="dns" monitor={detailMonitor} initialRunId={dnsDx.initialRunId}
+                onRunChange={(runId) => setDnsDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setDnsDx(null)} />
+            </Suspense>
+          )}
           {formModal}
         </DnsDetailModal>
       )}

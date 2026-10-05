@@ -113,7 +113,8 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
   })
 
   it('bitişi bilinmeyen izlemede yönetici başlıktan Sorun Tanıla açar (detayın üstünde ikinci pencere)', async () => {
-    const unknown = { ...monitor, status: 'UNKNOWN', days_remaining: null, expiry_date: null, error: 'RDAP: 404 Not Found' }
+    // Sorun Tanıla 2026-10-05'ten beri rol değil satırın `can_diagnose` bayrağıyla çizilir
+    const unknown = { ...monitor, status: 'UNKNOWN', days_remaining: null, expiry_date: null, error: 'RDAP: 404 Not Found', can_diagnose: true }
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [unknown] })
     api.admin.runDomainExpiryDiagnostics.mockResolvedValue({ success: false, error: 'tanı ucu yanıt vermedi' })
     await openFromCard()
@@ -129,5 +130,46 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
     fireEvent.click(await screen.findByRole('button', { name: /example\.com — (detayları aç|open details)/i }))
     await waitFor(() => expect(header()).not.toBeNull())
     expect(within(header()).queryByRole('button', { name: /plan renewal|check now|diagnose|edit plan/i })).toBeNull()
+  })
+})
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): veri getirilemeyen (UNKNOWN) satırın hatası artık registrar hücresinde
+ * kırpılıp SAKLANMAZ — satırın altında KENDİ satırı (neden rozeti + tek satır + aç/kapa); açılınca panel kaynak iletisini,
+ * RDAP HTTP durumunu ve WHOIS denemesini yazar. Veri gelen (OK/WARNING/CRITICAL) satırda blok yok.
+ */
+describe('DomainMonitorPage — kontrol geçmişi hata teşhisi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.monitoring.getDomainRegistration.mockResolvedValue({ success: true, data: monitor })
+    api.monitoring.getDomainReminders.mockResolvedValue({ success: true, data: { thresholds: [30, 7], items: [] } })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 51, monitor_id: 1, status: 'UNKNOWN', source: 'NONE', registrar: null, error: 'rdap http 404',
+          checked_at: hoursAgo(2), failure_reason: 'RDAP_NOT_FOUND',
+          failure_detail: JSON.stringify({ phase: 'REGISTRY', http_status: 404, message: 'rdap http 404', registry_rdap: true,
+            target: 'example.com', source: 'NONE' }) },
+        { id: 50, monitor_id: 1, status: 'WARNING', source: 'RDAP', registrar: 'Example Registrar Ltd.', days_remaining: 20,
+          expiry_date: day(20), checked_at: hoursAgo(26) },
+      ], counts: { total: 2, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-09-05T00:00:00', to: '2026-10-05T23:59:59' }, total: 2, page: 0, size: 50 } })
+  })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('UNKNOWN satırı kendi hata satırını taşır (registrar hücresinde ham hata YOK); aç → RDAP 404 ayrıntısı', async () => {
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={3} teamName="Takım A" />)
+    fireEvent.click(await screen.findByRole('button', { name: /example\.com — (detayları aç|open details)/i }))
+    const d = await screen.findByRole('dialog')
+    const block = await waitFor(() => { const b = d.querySelector('[data-slot="chkfail-block"]'); expect(b).not.toBeNull(); return b })
+    expect(d.querySelectorAll('[data-slot="chkfail-block"]')).toHaveLength(1)
+    expect(block.querySelector('[data-slot="chkfail-cell"]')).toHaveAttribute('data-code', 'RDAP_NOT_FOUND')
+    expect(within(d.querySelector('[data-slot="check-history"]')).queryByText('rdap http 404')).toBeNull()   // kırpılmış hücrede saklanmıyor
+    fireEvent.click(block.querySelector('[data-slot="chkfail-toggle"]'))
+    const panel = await within(d).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="httpStatus"]').textContent).toBe('HTTP 404')
+    expect(panel.querySelector('[data-key="registryRdap"]').textContent).toMatch(/^(Yes|Var)$/)
+    expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('rdap http 404')
   })
 })

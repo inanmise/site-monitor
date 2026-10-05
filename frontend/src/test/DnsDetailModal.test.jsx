@@ -131,3 +131,54 @@ describe('DnsDetailModal', () => {
     expect(onClose).toHaveBeenCalled()
   })
 })
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): başarısız DNS sorgusu ("" değer) artık "Değişiklik Yok" GÖRÜNMEZ — değer
+ * hücresinde "Sorgu başarısız" rozeti, durum hücresinde neden (rcode) + aç/kapa, açılınca panel. "Başarısız sorgu"
+ * kutucuğu sayacı (counts.errors) gösterir ve status=fail ile süzer; "Değişenler" süzgeci aynen kalır.
+ */
+describe('DnsDetailModal — başarısız sorgu teşhisi', () => {
+  const failedRow = {
+    id: 3, monitor_id: 7, record_type: 'A', value: '', changed: false, rotated: false, previous_value: null,
+    checked_at: '2026-08-02T01:37:00', ttl: null, response_ms: 41, error: 'SERVFAIL', failure_reason: 'DNS_SERVFAIL',
+    failure_detail: JSON.stringify({ phase: 'DNS', rcode: 'SERVFAIL', record_type: 'A', target: 'app.example.test', timeout_ms: 2000 }),
+  }
+  const failEnvelope = (items) => ({ success: true, data: {
+    items, counts: { total: items.length, fail: items.filter(r => r.changed || r.rotated).length, errors: items.filter(r => !r.value).length },
+    buckets: [], alerts: [], range: { from: '2026-08-01T00:00:00', to: '2026-08-02T23:59:59' },
+    total: items.length, page: 0, size: 50 } })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getDnsDetails.mockResolvedValue({ success: true, data: details })
+    api.monitoring.getCheckHistory.mockResolvedValue(failEnvelope([failedRow, ...historyRows]))
+  })
+
+  it('başarısız satır "Değişiklik Yok" demez: "Sorgu başarısız" + SERVFAIL nedeni; aç → rcode + kayıt türü + ham hata', async () => {
+    render(<DnsDetailModal monitor={monitor} onClose={() => {}} />)
+    const cell = await waitFor(() => { const c = document.querySelector('[data-slot="chkfail-cell"]'); expect(c).not.toBeNull(); return c })
+    expect(cell).toHaveAttribute('data-code', 'DNS_SERVFAIL')
+    expect(document.querySelectorAll('[data-change="failed"]')).toHaveLength(1)
+    // yalnız değişmeyen BAŞARILI satır "Değişiklik Yok" der (eskiden başarısız satır da diyordu)
+    expect(document.querySelectorAll('[data-change="none"]')).toHaveLength(1)
+    fireEvent.click(cell.querySelector('[data-slot="chkfail-toggle"]'))
+    const panel = await screen.findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="rcode"]').textContent).toBe('SERVFAIL')
+    expect(panel.querySelector('[data-key="recordType"]').textContent).toBe('A')
+    expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('SERVFAIL')
+  })
+
+  it('"Başarısız sorgu" kutucuğu sayacı gösterir ve status=fail ile süzer; "Değişenler" ayrı kalır', async () => {
+    render(<DnsDetailModal monitor={monitor} onClose={() => {}} />)
+    const tile = await screen.findByRole('button', { name: /failed lookups|başarısız sorgu/i })
+    expect(tile).toHaveAttribute('aria-pressed', 'false')
+    expect(tile.querySelector('[data-slot="hist-tile-value"]').textContent).toBe('1')
+    fireEvent.click(tile)
+    await waitFor(() => {
+      const calls = api.monitoring.getCheckHistory.mock.calls
+      expect(calls[calls.length - 1][2].status).toBe('fail')
+    })
+    expect(screen.getByRole('button', { name: /failed lookups|başarısız sorgu/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /değişenler|changed/i })).toHaveAttribute('aria-pressed', 'false')
+  })
+})

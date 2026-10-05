@@ -15,7 +15,7 @@ import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
-import { Trash2, Radio, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, Inbox, Copy } from 'lucide-react'
+import { Trash2, Radio, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, WifiOff, Siren, BellDot, PauseCircle, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
 import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
@@ -30,6 +30,8 @@ import PaginationBar from './ui/PaginationBar.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
 import { LoadingBlock } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 // recharts ağır — yalnız "Süre Grafiği" sekmesi açılınca yüklensin.
@@ -58,9 +60,13 @@ import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLi
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint,
 } from './monitoring/MonitorForm.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { cn } from '@/lib/utils'
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Uçtan uca tanılama penceresi (2026-10-05) — tembel: giriş paketi büyümez
+const NetDiagnoseDialog = lazy(() => import('./diagnose/NetDiagnoseDialog.jsx'))
 
 // Ortak kaydirma cubugu seti (bkz. IntervalSlider). Ping tek ICMP paketi kadar ucuz,
 // taban 30 sn kalir; ust sinir digerleriyle hizalandi.
@@ -99,6 +105,9 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))   // silme: TEAM_ADMIN/ADMIN
+  // Uçtan uca tanılama (2026-10-05): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run). Liste
+  // satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla değiştirir, yanıtta bayrak olmayabilir.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -108,6 +117,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Kart yoğunluğu (2026-09-27): Kompakt / Zengin — her açılış Zengin başlar; Kompakt seçimi yalnız sayfada kalındıkça
   // geçerli, KALICI DEĞİL (kullanıcı kararı: sayfa değişip dönünce ya da yenileyince yeniden Zengin)
   const [density, setDensity] = useCardDensity('ping')
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -146,6 +157,12 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
+  // Uçtan uca tanılama penceresi (2026-10-05): { monitorId, runId, initialRunId } | null. Derin bağlantı
+  // ?monitor=<id>&pgdx=<no> YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz).
+  const [pingDx, setPingDx] = useState(() => {
+    const runId = readUrlInt('pgdx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
 
   // Modal her açıldığında/değiştiğinde önceki test sonucunu temizle.
   useEffect(() => { setTestResult(null) }, [modal])
@@ -216,8 +233,13 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     onEdit: openEdit, canEdit: canManageRow, nocType: 'PING',   // open=noc: 7/24 Kapsamı "7/24 ayarını düzenle"
   })
 
-  function openDetail(m) { setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab()) }
-  function closeDetail() { setSelected(null) }
+  function openDetail(m) {
+    setSelected(m); setSummary({ total: 0, down: 0 }); setDetailTab(deepLinkTab())
+    setPingDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
+  }
+  function closeDetail() { setSelected(null); setPingDx(null) }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setPingDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   function openNew() {
     setDupSource(null)
@@ -483,6 +505,8 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    pgdx: selected && pingDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (pingDx.runId ?? null) : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -736,6 +760,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               deleting={deleting === selected.id}
               deleteTitle={t('ping.delete')}
               onClose={closeDetail}>
+              {/* Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="ndx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('ndx.open')} aria-label={t('ndx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -761,13 +793,26 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               <CheckHistoryTab kind="ping" monitorId={selected.id} listKey="ping-history" reloadSignal={histReload}
                 columns={[t('ping.colTime'), t('ping.colStatus'), t('ping.rtt'), t('ping.colDetail')]}
                 onCounts={(c) => setSummary({ total: c.total, down: c.fail })}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                  <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
-                  <span className="upt-rt-ms">{c.rtt_ms != null ? `${c.rtt_ms}ms` : '—'}</span>
-                  {c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
-                    : <span className="upt-rt-ms">{formatPercent(c.packet_loss)}</span>}
-                </>)} />
+                renderRow={(c) => {
+                  // Hata teşhisi (2026-10-05): başarısız satırda ham hata yerine neden rozeti + tek satır + aç/kapa;
+                  // açılınca satırın ALTINDA tam genişlik Neden / Etkisi / Ne yapmalı + kayıttaki ayrıntılar + ham hata.
+                  const k = failureRowKey(c)
+                  const open = !c.up && failRows.isOpen(k)
+                  const when = formatDateSec(c.checked_at)
+                  const pid = failurePanelId('ping', k)
+                  return (<>
+                    <span className="upt-rt-time">{when}</span>
+                    <span className={c.up ? 'upt-rt-up' : 'upt-rt-down'}>{c.up ? t('ping.statusUp') : t('ping.statusDown')}</span>
+                    <span className="upt-rt-ms">{c.rtt_ms != null ? `${c.rtt_ms}ms` : '—'}</span>
+                    {!c.up
+                      ? <CheckFailureCell type="ping" check={c} monitor={selected} open={open} when={when} panelId={pid}
+                          onToggle={() => failRows.toggle(k)} />
+                      : c.error ? <span className="upt-rt-error" title={c.error}>{c.error}</span>
+                        : <span className="upt-rt-ms">{formatPercent(c.packet_loss)}</span>}
+                    {open && <CheckFailurePanel type="ping" check={c} monitor={selected} id={pid}
+                      canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => openDiagnose(selected)} />}
+                  </>)
+                }} />
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.host} types={alertTypesFor('ping')} /></TabsContent>
@@ -791,6 +836,15 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
               </Suspense>
             </TabsContent>
           </DetailTabs>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-05) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {pingDx && pingDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <NetDiagnoseDialog type="ping" monitor={selected} initialRunId={pingDx.initialRunId}
+                onRunChange={(runId) => setPingDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setPingDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>

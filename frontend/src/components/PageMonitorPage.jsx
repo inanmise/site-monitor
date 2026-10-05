@@ -23,13 +23,16 @@ import IntervalSlider from './ui/IntervalSlider.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
 import TagInput from './ui/TagInput.jsx'
-import { Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox, Copy } from 'lucide-react'
+import { Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { useDialog } from './ui/Dialog.jsx'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureBlock } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
+import { isHealthy } from './checks/checkFailureModel.js'
 import { LoadingBlock, Spinner } from './ui/Progress.jsx'
 import StatusBlock from './ui/StatusBlock.jsx'
 import SimpleTooltip from './ui/SimpleTooltip.jsx'
@@ -65,8 +68,11 @@ import { MonitorDetailModal, DetailDivider, DetailSummary, DetailTabs, useDeepLi
 import {
   MonitorFormModal, FormNoTeamAlert, FormGrid, FormField, CheckField, FormSection, FormHint, LabelSlot,
 } from './monitoring/MonitorForm.jsx'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 const MonitorNotes = lazy(() => import('./MonitorNotes.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
+// Uçtan uca tanılama (2026-10-05) — tembel: giriş paketi büyümez
+const PageDiagnoseDialog = lazy(() => import('./page/diagnose/PageDiagnoseDialog.jsx'))
 
 const INTERVALS = [
   { value: 60,    labelKey: 'page.iv1m'  },
@@ -132,6 +138,10 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // Uçtan uca tanılama (2026-10-05, keyword ile aynı kural): YALNIZ sunucunun satır bayrağı `can_diagnose` (= can_check +
+  // diagnostics.run). Liste satırına da bakılır: "Şimdi kontrol et" açık detayın kopyasını tetik yanıtıyla DEĞİŞTİRİR ve o
+  // yanıtta bayrak yok — pencere koşu ortasında sökülmesin. (`monitors` aşağıda tanımlı; çağrı anında okunur.)
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim (2026-09-12, #13): kart kutucuğu; yalnız yönetebildiği satırlar seçilebilir
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -140,6 +150,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const sla = useSla('page')   // 30 günlük kullanılabilirlik / hedef (2026-09-12, #11)
   // Kart yoğunluğu (2026-09-27): her açılışta Zengin; Kompakt seçimi SAKLANMAZ (yalnız sayfada kalındıkça geçerli)
   const [density, setDensity] = useCardDensity('page')
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
+  // Uçtan uca tanılama penceresi (2026-10-05): { monitorId, runId, initialRunId } | null. Derin bağlantı ?monitor=<id>&pidx=<no>
+  // YALNIZ kayıtlı çalıştırmayı açar (canlı koşu asla kendiliğinden başlamaz); `runId` gösterilen çalıştırmadır (URL'e yazılır).
+  const [pageDx, setPageDx] = useState(() => {
+    const runId = readUrlInt('pidx', null), monitorId = readUrlInt('monitor', null)
+    return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
+  })
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -286,9 +304,12 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   }
   function openDetail(m) {
     setSelected(m); setIssues([]); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
+    setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
     loadIssues(m.id, 'all'); loadConfirmations(m.url)
   }
-  function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]) }
+  function closeDetail() { setSelected(null); setIssues([]); setConfirmations([]); setPageDx(null) }
+  /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
+  function openDiagnose(m) { if (m) setPageDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
   // Modal 30sn oto-yenileme (sessiz): sorunlar + canlı teyit durumu + kart metrikleri.
   // (Kontrol Geçmişi kendi 30sn canlı yenilemesini CheckHistoryTab içinde yapar.)
@@ -646,6 +667,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, proxyFilter, search, statFilter, pager }),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'issues' ? detailTab : null,
+    // Tanılama penceresinde gösterilen çalıştırma (2026-10-05) — bağlantı paylaşılınca KAYITLI sonuç açılır
+    pidx: selected && pageDx?.monitorId === selected.id && canDiagnoseRow(selected) ? (pageDx.runId ?? null) : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
   })
 
@@ -929,6 +952,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               deleting={deleting === selected.id}
               deleteTitle={t('page.delete')}
               onClose={closeDetail}>
+              {/* Uçtan uca tanılama (2026-10-05) — yalnız `can_diagnose` satırında; paylaşılan eylem grubuna çocuk olarak */}
+              {canDiagnoseRow(selected) && (
+                <Button type="button" variant="outline" size="icon-sm" data-slot="pgdx-open"
+                  className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+                  onClick={() => openDiagnose(selected)} title={t('pgdx.open')} aria-label={t('pgdx.open')}>
+                  <Stethoscope size={13} aria-hidden="true" />
+                </Button>
+              )}
               <CopyLinkButton iconOnly variant="outline" />
             </MonitorModalActions>
           }>
@@ -1056,15 +1087,29 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               <CheckHistoryTab kind="page" monitorId={selected.id} listKey="page-history" reloadSignal={histReload}
                 defaultPreset={7} gridClass="page-rt-grid"
                 columns={[t('page.colTime'), t('page.colStatus'), t('page.mBroken'), t('page.mTimeout'), t('page.mMixed')]}
-                renderRow={(c) => (<>
-                  <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
-                  <span className={cn('font-semibold', statusText(c.status))}>
-                    {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
-                      : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
-                  <span className="upt-rt-ms">{c.broken_resources ?? '—'}</span>
-                  <span className="upt-rt-ms">{c.timeout_count ?? '—'}</span>
-                  <span className="upt-rt-ms">{c.mixed_content_count ?? '—'}</span>
-                </>)} />
+                renderRow={(c) => {
+                  // Hata teşhisi (2026-10-05): DOWN / CONFIG_ERROR / DEGRADED satırın KENDİ hata satırı (satırın altında tam
+                  // genişlik): neden rozeti + tek satır + aç/kapa, açılınca Neden / Etkisi / Ne yapmalı paneli. Eskiden hata
+                  // metni ve HTTP kodu geçmişte HİÇ görünmüyordu. Özet ara sütuna konmaz: tablonun otomatik düzeninde sütunu
+                  // genişletip 768'de tabloyu (ve paneli) kabından taşırıyordu (e2e check-failure-history).
+                  const k = failureRowKey(c)
+                  const failed = !isHealthy('page', c)
+                  const when = formatDateSec(c.checked_at)
+                  return (<>
+                    <span className="upt-rt-time">{when}</span>
+                    <span className={cn('font-semibold', statusText(c.status))}>
+                      {c.status === 'OK' ? t('page.statusOk') : c.status === 'DEGRADED' ? t('page.statusDegraded')
+                        : c.status === 'CONFIG_ERROR' ? t('page.statusConfigError') : t('page.statusDown')}</span>
+                    <span className="upt-rt-ms">{c.broken_resources ?? '—'}</span>
+                    <span className="upt-rt-ms">{c.timeout_count ?? '—'}</span>
+                    <span className="upt-rt-ms">{c.mixed_content_count ?? '—'}</span>
+                    {failed && (
+                      <CheckFailureBlock type="page" check={c} monitor={selected} open={failRows.isOpen(k)} when={when}
+                        panelId={failurePanelId('page', k)} onToggle={() => failRows.toggle(k)}
+                        canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => openDiagnose(selected)} />
+                    )}
+                  </>)
+                }} />
             </TabsContent>
 
             <TabsContent value="alerts"><AlertHistory domain={selected.url} types={alertTypesFor('page')} /></TabsContent>
@@ -1082,6 +1127,15 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
               </Suspense>
             </TabsContent>
           </DetailTabs>
+
+          {/* Uçtan uca tanılama penceresi (2026-10-05) — detayın İÇİNDE: iç içe kabuk, Escape yalnız onu kapatır */}
+          {pageDx && pageDx.monitorId === selected.id && canDiagnoseRow(selected) && (
+            <Suspense fallback={null}>
+              <PageDiagnoseDialog monitor={selected} initialRunId={pageDx.initialRunId}
+                onRunChange={(runId) => setPageDx((cur) => (cur ? { ...cur, runId } : cur))}
+                onClose={() => setPageDx(null)} />
+            </Suspense>
+          )}
 
           {formModal}
         </MonitorDetailModal>

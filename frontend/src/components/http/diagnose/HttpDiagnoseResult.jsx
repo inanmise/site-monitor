@@ -66,7 +66,8 @@ export default function HttpDiagnoseResult({ data, stored = false, row = null, e
                     className="min-h-9 flex-none gap-1.5 px-3 py-1.5 whitespace-normal max-sm:w-full max-sm:justify-start pointer-coarse:min-h-10">
                     {p.route === 'proxy' ? <Waypoints aria-hidden="true" /> : <Route aria-hidden="true" />}
                     <span>{pathTitle(p.key, t)} · {routeText(p.route, t)}</span>
-                    <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', p.outcome === 'ok' ? 'bg-success' : 'bg-destructive')} />
+                    <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', p.outcome === 'ok' ? 'bg-success'
+                      : p.outcome === 'slow' ? 'bg-amber-500' : 'bg-destructive')} />
                   </TabsTrigger>
                 ))}
               </TabsList>

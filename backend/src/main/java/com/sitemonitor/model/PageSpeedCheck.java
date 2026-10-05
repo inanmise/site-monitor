@@ -106,4 +106,16 @@ public class PageSpeedCheck {
      */
     @Column(name = "breach_detail", columnDefinition = "TEXT")
     private String breachDetail;
+
+    // ── Hata teşhisi (2026-10-05): YALNIZ sayfanın alınamadığı (DOWN) ya da yapılandırma hatalı (CONFIG_ERROR) satırda
+    // dolu, NULL'lanabilir. İkisi eskiden aynı görünüyordu ({@code ok=false}); kod artık ayırır. ok ve alarm DEĞİŞMEDİ;
+    // eşik aşımı (SLOW) bir kesinti olmadığı için neden yazılmaz.
+
+    /** Neden kodu ({@code CheckFailureReason}). */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, hedef, HTTP durumu, yol, zaman aşımı …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

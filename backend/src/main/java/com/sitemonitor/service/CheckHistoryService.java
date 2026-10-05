@@ -73,6 +73,13 @@ public class CheckHistoryService {
         /** Bu monitörün EN ESKİ ve EN YENİ kaydı ([min, max]) — saklama şeffaflığı için.
          *  Varsayılan boş: uygulamayan kaynaklarda bilgi satırı gösterilmez (bozulmaz). */
         default List<Object[]> bounds() { return List.of(); }
+
+        /**
+         * İKİNCİ sayaç — {@code fail} sayacı başka bir şeyi sayan türlerde başarısız kontrol sayısı (2026-10-05, DNS:
+         * {@code fail} = değişen kayıt, bu = başarısız sorgu). {@code counts.errors} olarak döner; varsayılan null →
+         * anahtar hiç yazılmaz (diğer türlerin zarfı aynen kalır).
+         */
+        default Long errors(String from, String to) { return null; }
     }
 
     /** CSV kolonu: başlık + satırdan değer çıkaran fonksiyon. */
@@ -191,7 +198,16 @@ public class CheckHistoryService {
         out.put("page", r.page());
         out.put("size", r.size());
         out.put("total", page.getTotalElements());          // FİLTRELİ toplam — pagination bunun üstünden
-        out.put("counts", Map.of("total", totalAll, "fail", totalFail));
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("total", totalAll);
+        counts.put("fail", totalFail);
+        try {
+            Long errors = src.errors(r.from(), r.to());
+            if (errors != null) counts.put("errors", errors);
+        } catch (Exception e) {
+            log.debug("Kontrol Geçmişi ikinci sayaç okunamadı: {}", e.getMessage());   // degrade: anahtar yazılmaz
+        }
+        out.put("counts", counts);
         out.put("range", Map.of("from", r.from(), "to", r.to()));
         out.put("retention_days", r.retentionDays());
         out.put("oldest_at", oldestAt);

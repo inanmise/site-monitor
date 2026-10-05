@@ -46,11 +46,13 @@ public class UptimeHttpCheckerService {
             result.put("status", "down");
             result.put("response_ms", null);
             result.put("error", be.getMessage());
+            classify(result, be, false, host, port, timeoutMs, null);
             return result;
         }
         // Çok-A: DOĞRULANMIŞ IP'leri sırayla dene, ilk erişilebilende "up" (split-VIP host'ta yanlış
         // IP'ye düşüp Connection refused ile flapping olmasın). Host'u yeniden ÇÖZMEYİZ → DNS-rebind kapanır.
-        try (Socket socket = viaProxy && proxySettings != null
+        boolean proxied = viaProxy && proxySettings != null;
+        try (Socket socket = proxied
                 ? proxySettings.openConnectTunnel(host, port, timeoutMs)
                 : NetworkResolver.connectFirstReachable(vetted, port, timeoutMs)) {
             long ms = System.currentTimeMillis() - start;
@@ -60,8 +62,29 @@ public class UptimeHttpCheckerService {
             result.put("status", "down");
             result.put("response_ms", null);
             result.put("error", e.getMessage());
+            classify(result, e, proxied, host, port, timeoutMs, vetted);
             log.debug("Uptime check failed for {}:{}: {}", host, port, e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * Hata teşhisi (2026-10-05): "down" sonucun NEDENİ ({@code failure_reason} + {@code failure_detail}) — istisnanın
+     * kendisinden sınıflandırılır; ayrıntı eskiden atılan yolu (direct/proxy) ve çözümlenen IP'leri de taşır. Yalnız ÜST
+     * VERİ: status/error/response_ms değişmez; asla fırlatmaz.
+     */
+    private static void classify(Map<String, Object> result, Throwable t, boolean proxied, String host, int port,
+                                 int timeoutMs, List<InetAddress> vetted) {
+        try {
+            com.sitemonitor.service.failure.CheckFailure f =
+                    com.sitemonitor.service.failure.CheckFailureClassifier.forException(t, proxied)
+                            .with("target", host + ":" + port)
+                            .withIfAbsent("via", proxied ? "proxy" : "direct")
+                            .with("timeout_ms", timeoutMs);
+            if (vetted != null && !proxied) {
+                f.with("resolved_ips", vetted.stream().map(InetAddress::getHostAddress).toList());
+            }
+            f.applyTo(result);
+        } catch (Exception ignore) { /* üst veri — kontrol sonucu olduğu gibi kalır */ }
     }
 }

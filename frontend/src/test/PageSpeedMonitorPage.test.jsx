@@ -631,3 +631,49 @@ describe('PageSpeedMonitorPage — eşik üstü haftalık karşılaştırma (202
     expect(await screen.findByRole('tooltip')).toHaveTextContent(/Eşik üstü: bu hafta 3 · geçen hafta 5|Over budget: this week 3 · last week 5/)
   })
 })
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): sayfa alınamadığında (ok=false) durumun altında neden + aç/kapa; panel hata
+ * metnini, HTTP durumunu ve faz sürelerini yazar. Yapılandırma hatası artık "Kesinti" değil kendi etiketiyle görünür
+ * (sunucu nedeni). Eşik aşımı (SLOW) kesinti değildir — neden hücresi YOK.
+ */
+describe('PageSpeedMonitorPage — kontrol geçmişi hata teşhisi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: { resources: [], breaches: [] } })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 5, name: 'SY-A' }] })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 41, checked_at: '2026-10-05T09:00:00', ok: false, status_code: null, response_ms: 10000, ttfb_ms: 0,
+          dns_ms: 12, connect_ms: 30, tls_ms: null, error_message: 'request timed out', failure_reason: 'READ_TIMEOUT',
+          failure_detail: JSON.stringify({ phase: 'RESPONSE', target: 'x.com', via: 'direct', timeout_ms: 10000, exception: 'HttpTimeoutException' }) },
+        { id: 40, checked_at: '2026-10-05T08:00:00', ok: false, error_message: "yapılandırma hatası: URL'de geçerli bir host yok",
+          failure_reason: 'CONFIG_ERROR', failure_detail: JSON.stringify({ phase: 'POLICY' }) },
+        { id: 39, checked_at: '2026-10-05T07:00:00', ok: true, breached_metrics: 'LOAD', breach_detail: 'LOAD:3000>4100',
+          response_ms: 4100, ttfb_ms: 300, total_bytes: 1024, request_count: 9 },
+      ], counts: { total: 3, fail: 2 }, buckets: [], alerts: [],
+      range: { from: '2026-09-29T00:00:00', to: '2026-10-05T23:59:59' }, total: 3, page: 0, size: 50 } })
+  })
+
+  it('DOWN: zaman aşımı nedeni + panelde faz süreleri ve ham hata; CONFIG_ERROR kendi etiketiyle; SLOW satırda hücre yok', async () => {
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await cardTitle())
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /check history|kontrol geçmişi/i }), { button: 0 })
+    const dialog = screen.getByRole('dialog')
+    await waitFor(() => expect(dialog.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(2))
+    const [down, cfg] = dialog.querySelectorAll('[data-slot="chkfail-cell"]')
+    expect(down).toHaveAttribute('data-code', 'READ_TIMEOUT')
+    expect(cfg).toHaveAttribute('data-code', 'CONFIG_ERROR')
+    // CONFIG_ERROR satırı "Kesinti" değil yapılandırma etiketini taşır
+    const cfgRow = within(dialog).getByText('2026-10-05T08:00:00').closest('tr')
+    expect(cfgRow.textContent).toMatch(/Configuration error|Yapılandırma hatası/)
+    expect(cfgRow.textContent).not.toMatch(/Unmeasurable/)
+    fireEvent.click(down.querySelector('[data-slot="chkfail-toggle"]'))
+    const panel = await within(dialog).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="dnsMs"]').textContent).toBe('12 ms')
+    expect(panel.querySelector('[data-key="connectMs"]').textContent).toBe('30 ms')
+    expect(panel.querySelector('[data-key="timeoutMs"]').textContent).toBe('10000 ms')
+    expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('request timed out')
+  })
+})

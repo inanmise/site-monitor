@@ -71,4 +71,21 @@ public class DnsRecord {
      */
     @Column(name = "manual")
     private Boolean manual;
+
+    // ── Hata teşhisi (2026-10-05): başarısız sorgu eskiden yalnız {@code value=''} olarak yazılıyor, çözümleyicinin
+    // NXDOMAIN / SERVFAIL / yanıt yok / zaman aşımı bilgisi ATILIYORDU. Üçü de NULL'lanabilir ve YALNIZ başarısız
+    // sorguda dolu; başarı ölçütü ({@code value <> ''}), değişiklik tespiti tabanı
+    // ({@code DnsRecordRepository.findLatestScheduledSuccessful}) ve alarm kararı DEĞİŞMEDİ.
+
+    /** Çözümleyicinin hata metni (ör. {@code NXDOMAIN}, {@code no answer}, istisna iletisi). */
+    @Column(name = "error", columnDefinition = "TEXT")
+    private String error;
+
+    /** Neden kodu ({@code CheckFailureReason}). */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, rcode, kayıt türü, sorgu süresi / zaman aşımı …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

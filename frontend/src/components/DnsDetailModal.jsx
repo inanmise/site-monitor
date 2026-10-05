@@ -4,7 +4,11 @@ import { useT } from '../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
-import { Clock, Server, FileText, Route } from 'lucide-react'
+import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
+import { Clock, Server, FileText, Route, Stethoscope } from 'lucide-react'
+import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
+import { Button } from '@/components/shadcn/button'
 import AlertHistory from './admin/AlertHistory'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import MonitorNotes from './MonitorNotes.jsx'
@@ -81,6 +85,14 @@ export function DnsChangeBadge({ kind, className }) {
       </SimpleTooltip>
     )
   }
+  // Hata teşhisi (2026-10-05): başarısız sorgu "Değişiklik Yok" DEĞİLDİR — kendi durum rozeti (neden ayrı hücrede).
+  if (kind === 'failed') {
+    return (
+      <Badge variant="destructive" data-change="failed" className={cn('font-semibold', className)}>
+        {t('chkhist.dnsFailedBadge')}
+      </Badge>
+    )
+  }
   return (
     <Badge variant="secondary" data-change="none" className={cn('bg-success/15 text-success dark:bg-success/20', className)}>
       {t('dns.noChange')}
@@ -122,10 +134,15 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                                         running = false, onCheck, onEdit, onDuplicate, onDelete, deleting = false,
                                         // Duraklatılmış izlemede "Sürdür" (sayfanın useMonitorResume'u) — kartla aynı.
                                         onResume, resuming = false,
+                                        // Uçtan uca tanılama (2026-10-05): sayfa satırın `can_diagnose` bayrağına göre verir;
+                                        // verilmezse başlıkta düğme ve geçmiş panelinde "Bu kontrolü tanıla" çizilmez.
+                                        canDiagnose = false, onDiagnose,
                                         histReload = 0, children }) {
   const t = useT()
   const [details, setDetails] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
   // D12: monitör hızla değiştirilirse eskinin geç yanıtı yeni modalı doldurmasın.
   const monitorIdRef = useRef(null)
   monitorIdRef.current = monitor?.id ?? null
@@ -211,6 +228,13 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
           onDuplicate={onDuplicate}
           onDelete={onDelete} deleting={deleting} deleteTitle={t('dns.delete')}
           onClose={onClose} closeLabel={t('dns.close')}>
+          {canDiagnose && onDiagnose && (
+            <Button type="button" variant="outline" size="icon-sm" data-slot="ndx-open"
+              className={cn(MON_ACT, 'pointer-coarse:size-10', MON_ACT_TONE.edit)}
+              onClick={onDiagnose} title={t('ndx.open')} aria-label={t('ndx.open')}>
+              <Stethoscope size={13} aria-hidden="true" />
+            </Button>
+          )}
           <CopyLinkButton iconOnly variant="outline" />
         </MonitorModalActions>
       }>
@@ -323,8 +347,12 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
 
               {/* Recent history — paylaşılan Kontrol Geçmişi (filterMode=changed: "Değişenler" chip'i) */}
               <DnsSection icon={Clock} title={t('dns.recentChecks')}>
+                {/* Hata teşhisi (2026-10-05): başarısız sorgu ("" değer) artık "Değişiklik Yok" görünmez — değer hücresinde
+                    "Sorgu başarısız" rozeti, durum hücresinde neden + aç/kapa, açılınca satırın altında panel; ikinci süzgeç
+                    kutucuğu "Başarısız sorgu" (counts.errors, status=fail) — "Değişenler" süzgeci aynen kalır. */}
                 <CheckHistoryTab kind="dns" monitorId={monitor.id} listKey="dns-history" reloadSignal={histReload}
                   filterMode="changed" gridClass="dns-rt-grid"
+                  errorTile={{ label: t('chkhist.dnsFailTile'), hint: t('chkhist.dnsFailHint') }}
                   columns={[t('dns.lastCheck'), t('dns.currentValue'), t('dns.ttl'), t('dns.responseMs'), t('dns.status')]}
                   renderRow={(h) => {
                     const isChanged = h.changed
@@ -333,17 +361,31 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                     const showDiff = (isChanged || isRotated) && prevVal && prevVal !== h.value
                     const diff = showDiff ? computeDiff(prevVal, h.value) : null
                     const isExpectedFlip = isChanged && withinExpected(monitor.expected_value, h.value)
+                    const failed = !String(h.value ?? '').trim()
+                    const k = failureRowKey(h)
+                    const open = failed && failRows.isOpen(k)
+                    const when = formatDate(h.checked_at)
+                    const pid = failurePanelId('dns', k)
                     return (<>
-                      <span className="upt-rt-time">{formatDate(h.checked_at)}</span>
-                      <span className="dns-history-value" title={h.value || '—'}><code>{h.value || '—'}</code></span>
+                      <span className="upt-rt-time">{when}</span>
+                      {failed
+                        ? <span><DnsChangeBadge kind="failed" /></span>
+                        : <span className="dns-history-value" title={h.value || '—'}><code>{h.value || '—'}</code></span>}
                       <span className="upt-rt-ms">{h.ttl != null ? `${h.ttl}s` : '—'}</span>
                       <span className="upt-rt-ms">{h.response_ms != null ? `${h.response_ms}ms` : '—'}</span>
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        {isChanged && <DnsChangeBadge kind="changed" />}
-                        {isExpectedFlip && <DnsChangeBadge kind="expected" />}
-                        {isRotated && <DnsChangeBadge kind="rotated" />}
-                        {!isChanged && !isRotated && <DnsChangeBadge kind="none" />}
-                      </span>
+                      {failed ? (
+                        <CheckFailureCell type="dns" check={h} monitor={monitor} open={open} when={when} panelId={pid}
+                          onToggle={() => failRows.toggle(k)} />
+                      ) : (
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {isChanged && <DnsChangeBadge kind="changed" />}
+                          {isExpectedFlip && <DnsChangeBadge kind="expected" />}
+                          {isRotated && <DnsChangeBadge kind="rotated" />}
+                          {!isChanged && !isRotated && <DnsChangeBadge kind="none" />}
+                        </span>
+                      )}
+                      {open && <CheckFailurePanel type="dns" check={h} monitor={monitor} id={pid}
+                        canDiagnose={canDiagnose} onDiagnose={onDiagnose} />}
                       {showDiff && diff && (
                         <div className={isRotated ? 'dns-diff-cell dns-diff-row-rotated' : 'dns-diff-cell'}
                           style={{ gridColumn: '1 / -1' }}>

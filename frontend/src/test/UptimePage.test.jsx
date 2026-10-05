@@ -14,6 +14,13 @@ vi.mock('../api/client', () => ({
     },
   }),
 }))
+// "Tanıla" 2026-10-05'ten beri rol değil `diagnostics.run` (execute) iznine bağlı — bu dosyada izin VAR (kapı testleri:
+// UptimePage.diagnose.test.jsx).
+vi.mock('../contexts/PermissionsProvider.jsx', () => ({
+  usePermissions: () => ({
+    canView: () => true, canEdit: () => true, canExecute: (r) => r === 'diagnostics.run', perms: {}, refresh: () => {},
+  }),
+}))
 import { api } from '../api/client'
 
 /**

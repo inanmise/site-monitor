@@ -36,4 +36,15 @@ public class UptimeCheck {
     /** Kontrol anında domain bakım penceresindeyse true — uptime % / availability hesabından hariç tutulur. */
     @Column
     private Boolean maintenance = false;
+
+    // ── Hata teşhisi (2026-10-05): YALNIZ "down" kontrolde dolu, NULL'lanabilir; up/down kararı ve alarm DEĞİŞMEDİ.
+    // Ayrıntı checker'ın hesaplayıp eskiden attığı yolu (via: direct/proxy) da taşır.
+
+    /** Neden kodu ({@code CheckFailureReason}). */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, hedef, yol, zaman aşımı, çözümlenen IP'ler …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

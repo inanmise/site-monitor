@@ -110,6 +110,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   // Silme yetkisi backend'deki kapinin AYNISI: inventory.crud/edit (uc ayrica takim kapsami arar).
   // Yetkisi olmayana dugme HIC cizilmez — gorunup 403 vermek kullaniciyi bosuna umutlandirir.
   const canDeleteCert = !readOnly && perms.canEdit('inventory.crud')
+  // Tanıla (2026-10-05): rol (ADMIN/TEAM_ADMIN) değil `diagnostics.run` (execute) izni — sunucu (/api/admin/diagnostics/*)
+  // aynı izni + takım kapsamlı envanteri zorlar. Başka takımın (salt okunur) kaydında ve önizlemede yok. Kontrol geçmişindeki
+  // hata panelinin "Bu kontrolü tanıla" düğmesi de aynı kapıyla aynı pencereyi açar.
+  const canDiagnose = !readOnly && !previewMode && perms.canExecute('diagnostics.run')
   const [deleting, setDeleting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // Bağımlı sekmeler (Sağlık / Alarm / Envanter) kendi verilerini bir kez çekip tutuyor. Bu
@@ -338,8 +342,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {refreshing ? <Spinner size={12} inline decorative /> : <RefreshCw size={14} aria-hidden="true" />}
           </Button>
       )}
-      {!previewMode && isAdmin && (
-        <Button title={t('inv.diagnose')} type="button" variant="outline" size="icon-sm" className={act('edit')} onClick={() => setShowDiag(true)} aria-label={t('inv.diagnose')}>
+      {canDiagnose && (
+        <Button title={t('inv.diagnose')} type="button" variant="outline" size="icon-sm" className={act('edit')} data-slot="cert-diagnose" onClick={() => setShowDiag(true)} aria-label={t('inv.diagnose')}>
             <Stethoscope size={14} aria-hidden="true" />
           </Button>
       )}
@@ -486,7 +490,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {/* runInHeader: boş aralık açıklaması "başlıktaki Çalıştır"ı YALNIZ o düğme gerçekten varsa anar — salt okunur
                 pencerede / Çalıştır işleyicisi verilmeyen açılışta (mükerrer alan adı bandı) var olmayan düğmeye yönlendirmesin
                 (Ek 3/3). Düğmenin koşuluyla AYNI: !previewMode && !readOnly && onCheckNow (geçmiş sekmesi önizlemede yok). */}
-            <CertCheckHistory domain={domain} reloadSignal={reloadKey} runInHeader={!readOnly && !!onCheckNow} />
+            <CertCheckHistory domain={domain} reloadSignal={reloadKey} runInHeader={!readOnly && !!onCheckNow}
+              onDiagnose={canDiagnose ? () => setShowDiag(true) : undefined} />
           </TabsContent>
         )}
 

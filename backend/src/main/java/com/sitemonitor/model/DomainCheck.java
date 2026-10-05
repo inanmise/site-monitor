@@ -120,4 +120,15 @@ public class DomainCheck {
 
     @Column(name = "checked_at")
     private String checkedAt;
+
+    // ── Hata teşhisi (2026-10-05): YALNIZ veri getirilemeyen (UNKNOWN) kontrolde dolu, NULL'lanabilir. Durum, değişiklik
+    // tespiti ve alarm DEĞİŞMEDİ.
+
+    /** Neden kodu ({@code CheckFailureReason}): RDAP/WHOIS ailesi ya da ağ/TLS/vekil nedeni. */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, kaynak iletisi, RDAP HTTP durumu, WHOIS denemesi …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

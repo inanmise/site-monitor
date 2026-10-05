@@ -60,8 +60,16 @@ public class PageFetchCore {
     public static final int MAX_RESOURCES_PER_CHECK = 500;
     /** Bir CRAWL genelinde toplam azami kaynak — bellek + DB-insert patlamasını sınırlar. */
     public static final int MAX_TOTAL_RESOURCES = 1500;
-    /** Manuel redirect zinciri üst sınırı. */
-    private static final int MAX_REDIRECTS = 5;
+    /** Manuel redirect zinciri üst sınırı. (public: uçtan uca tanılamanın ham ölçümü aynı sınırı uygular, 2026-10-05) */
+    public static final int MAX_REDIRECTS = 5;
+
+    /**
+     * Her hop'ta gönderilen tarayıcı-benzeri başlıklar — TEK kopya: çekim ({@link #fetch}) ve Sayfa Bütünlüğü / Sayfa Hızı
+     * uçtan uca tanılamasının ham ölçümü (2026-10-05) aynı değerleri gönderir; ayrışırsa tanı başka bir isteği anlatır.
+     */
+    public static final String ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
+    public static final String ACCEPT_LANGUAGE = "tr,en;q=0.9";
+    public static final String ACCEPT_ENCODING = "gzip, deflate";
     /** Bayt SAYARKEN tek kaynaktan okunacak tavan: dev bir dosya (video/ISO) ölçümü kilitlemesin.
      *  Tavana ulaşılırsa sayım burada durur — "en az bu kadar" demektir, truncated bayrağı işaretler. */
     // 1024 tabanlı: arayüz boyutları KB/MB olarak 1024 tabanıyla gösteriyor; ondalık 10.000.000
@@ -100,9 +108,20 @@ public class PageFetchCore {
      * @param error       transport hatası mesajı (varsa)
      * @param blocked     SSRF muhafızı isteği ENGELLEDİ (dış istek hiç atılmadı)
      * @param truncated   bayt sayımı MAX_COUNT_BYTES tavanında kesildi
+     * @param failure     aktarım hatasının SINIFLANDIRMASI (2026-10-05, hata teşhisi) — istisnanın kendisinden, yakalandığı
+     *                    yerde; engelleme / yönlendirme sınırı da dahil. Başarılı (HTTP yanıtı gelen) çekimde null. Yalnız
+     *                    üst veri: status/error/blocked anlamı DEĞİŞMEDİ.
      */
     public record Fetch(int status, long ttfbMs, long durationMs, long bytes, byte[] body,
-                        String error, boolean blocked, boolean truncated) {}
+                        String error, boolean blocked, boolean truncated,
+                        com.sitemonitor.service.failure.CheckFailure failure) {
+
+        /** Geriye uyum: sınıflandırmasız (yanıt gelen çekim). */
+        public Fetch(int status, long ttfbMs, long durationMs, long bytes, byte[] body,
+                     String error, boolean blocked, boolean truncated) {
+            this(status, ttfbMs, durationMs, bytes, body, error, blocked, truncated, null);
+        }
+    }
 
     /** HTML'den çıkarılmış tek bir alt kaynak. */
     public record Resource(String url, String type, String sourcePage) {}
@@ -223,20 +242,21 @@ public class PageFetchCore {
                     ssrfGuard.validate(host);
                     guardMs += System.currentTimeMillis() - g0;
                 } catch (SsrfGuard.BlockedException be) {
-                    return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, be.getMessage(), true, false);
+                    return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, be.getMessage(), true, false,
+                            classified(be, opts, current));
                 }
                 HttpRequest.Builder rb = HttpRequest.newBuilder()
                         .uri(URI.create(current))
                         .timeout(Duration.ofMillis(Math.max(1000, opts.timeoutMs())))
                         // Tarayıcı-benzeri header seti: katı sunucular Accept/Accept-Language yoksa 406/403 döner.
                         .header("User-Agent", opts.userAgent())
-                        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-                        .header("Accept-Language", "tr,en;q=0.9")
+                        .header("Accept", ACCEPT)
+                        .header("Accept-Language", ACCEPT_LANGUAGE)
                         // Java HttpClient bu basligi KENDILIGINDEN EKLEMEZ ve otomatik ACMAZ.
                         // Gondermeyince sunucu sikistirmasiz yaniyor: arayuz "transfer boyutu"
                         // diyordu ama olculen sey acilmis boyuttu (44.6 MB ↔ tarayicida 6.1 MB).
                         // Artik telde ne gidiyorsa o sayiliyor; govde YALNIZ ayristirmak icin aciliyor.
-                        .header("Accept-Encoding", "gzip, deflate");
+                        .header("Accept-Encoding", ACCEPT_ENCODING);
                 if (originHost.equalsIgnoreCase(host)) applyExtraHeaders(rb, opts.extraHeaders());
                 HttpRequest req = "HEAD".equals(m)
                         ? rb.method("HEAD", HttpRequest.BodyPublishers.noBody()).build()
@@ -298,10 +318,43 @@ public class PageFetchCore {
                 }
                 return new Fetch(sc, ttfb, System.currentTimeMillis() - start, count, body, null, false, truncated);
             }
-            return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, "çok fazla yönlendirme", false, false);
+            return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, "çok fazla yönlendirme", false, false,
+                    redirectLimit(opts, current));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, msg, false, false);
+            return new Fetch(0, 0L, System.currentTimeMillis() - start, 0L, null, msg, false, false,
+                    classified(e, opts, current));
+        }
+    }
+
+    /**
+     * Aktarım hatasının sınıflandırması (2026-10-05, hata teşhisi) — istisnanın KENDİSİNDEN, yakalandığı yerde (metinden
+     * tahminden daha kesin). Ayrıntıya yalnız host, yol ve zaman aşımı eklenir (tam URL değil: sorgu dizgisi sır taşıyabilir).
+     * Asla fırlatmaz; sınıflandırılamazsa null (Fetch eskisi gibi kalır).
+     */
+    private static com.sitemonitor.service.failure.CheckFailure classified(Throwable t, FetchOptions opts, String url) {
+        try {
+            boolean proxy = opts != null && opts.viaProxy();
+            return com.sitemonitor.service.failure.CheckFailureClassifier.forException(t, proxy)
+                    .with("target", hostOf(url))
+                    .withIfAbsent("via", proxy ? "proxy" : "direct")
+                    .with("timeout_ms", opts == null ? null : Math.max(1000, opts.timeoutMs()));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Yönlendirme zinciri {@link #MAX_REDIRECTS}'i aştı — istisnasız yol. */
+    private static com.sitemonitor.service.failure.CheckFailure redirectLimit(FetchOptions opts, String url) {
+        try {
+            boolean proxy = opts != null && opts.viaProxy();
+            return com.sitemonitor.service.failure.CheckFailure
+                    .of(com.sitemonitor.service.failure.CheckFailureReason.REDIRECT_LIMIT)
+                    .with("target", hostOf(url))
+                    .with("via", proxy ? "proxy" : "direct")
+                    .with("max_redirects", MAX_REDIRECTS);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -385,6 +438,11 @@ public class PageFetchCore {
      *  satırlar sessizce atılır — başlık enjeksiyonu kapanır. */
     private static final Set<String> RESERVED_HEADERS =
             Set.of("user-agent", "accept", "accept-language", "host", "content-length", "connection");
+
+    /** Ek başlık bu adla gönderilebilir mi (çekirdeğin kendi başlıklarını ezemez) — tanılamanın ham ölçümü de uygular. */
+    public static boolean isReservedHeader(String name) {
+        return name != null && RESERVED_HEADERS.contains(name.trim().toLowerCase(Locale.ROOT));
+    }
 
     private static void applyExtraHeaders(HttpRequest.Builder rb, Map<String, String> extra) {
         if (extra == null || extra.isEmpty()) return;

@@ -93,4 +93,15 @@ public class CertificateCheck {
     /** Kontrol anında domain bakım penceresindeyse true — dashboard uptime % hesabından hariç tutulur. */
     @Column
     private Boolean maintenance = false;
+
+    // ── Hata teşhisi (2026-10-05): checker bu ikisini her bağlantı hatasında hesaplıyor ama geçmişe YAZILMIYORDU —
+    // geçmiş satırı yalnız ham hata + sınıf kodunu gösteriyordu. YALNIZ hatalı kontrolde dolu, NULL'lanabilir.
+
+    /** Kontrolün düştüğü aşama: {@code dns} | {@code tcp-connect} | {@code proxy-connect} | {@code tls-handshake} | {@code cert-ok}. */
+    @Column(length = 32)
+    private String errorStage;
+
+    /** Kontrol anında çözümlenen IP'ler (virgülle). */
+    @Column(columnDefinition = "TEXT")
+    private String resolvedIps;
 }

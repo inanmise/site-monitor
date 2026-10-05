@@ -474,3 +474,37 @@ describe('CertCheckHistory — kontrollü aralık (Uptime) ve dar kap (çekmece 
     }
   })
 })
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): başarısız sertifika kontrolü ham `error_class` kodu yerine okunur neden
+ * rozeti taşır; ayrıntı paneli Neden / Etkisi / Ne yapmalı + kayda YENİ yazılan aşama ve çözümlenen IP'leri gösterir.
+ * Eski satır (aşama kaydı yok) "ayrıntı kaydedilmemiş" notunu alır; ham hata bandı ve kopyalama aynen kalır.
+ */
+describe('CertCheckHistory — hata teşhisi', () => {
+  const C_NET = check(6, 0.5, {
+    status: 'error', days_remaining: null, not_before: null, not_after: null, issuer: null, issuer_cn: null, subject: null,
+    serial_number: null, fingerprint: null, tls_version: null, cipher_suite: null, error: 'Connection timeout after 6s',
+    error_class: 'NETWORK', error_stage: 'tcp-connect', resolved_ips: '192.0.2.10,192.0.2.11', response_ms: 6012,
+  })
+
+  it('satır: okunur neden rozeti (aşamadan); ayrıntı: aşama + IP + Neden/Etkisi/Ne yapmalı; eski satırda not', async () => {
+    wire({ main: envelope({ items: [C_NET, C_FAILED], total: 2 }) })
+    renderIt()
+    await screen.findByText('Connection timeout after 6s')
+    const badges = [...document.querySelectorAll('[data-slot="chkfail-badge"]')]
+    expect(badges.map((b) => b.getAttribute('data-code'))).toEqual(['CONNECT_TIMEOUT', 'TLS_TRUST'])
+    expect(badges[0].textContent).toBe('Connection timeout')
+
+    fireEvent.click(screen.getAllByRole('button', { name: / — Details$/ })[0])
+    const detail = await screen.findByRole('region', { name: /details of the check/i })
+    const panel = within(detail).getByRole('region', { name: /failure detail/i })
+    expect(panel.querySelector('[data-key="errorStage"]').textContent).toBe('TCP connection')
+    expect(panel.querySelector('[data-key="resolvedIps"]').textContent).toBe('192.0.2.10, 192.0.2.11')
+    expect(panel.querySelector('[data-slot="chkfail-why"]').textContent).toContain('6000 ms')
+    expect(panel.querySelector('[data-slot="chkfail-legacy"]')).toBeNull()
+    expect(panel.querySelector('[data-slot="chkfail-technical"]')).toBeNull()   // ham hata bandı ayrıntıda zaten var
+
+    fireEvent.click(screen.getAllByRole('button', { name: / — Details$/ })[0])
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="chkfail-legacy"]')).toHaveLength(1))
+  })
+})

@@ -26,6 +26,7 @@ import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 const mk = (id, tag) => ({
   id, name: tag, domain: `${tag}.example.com`, team_id: 5, team_name: 'SY-A', group_name: 'G', tags: 'prod', status: 'OK', source: 'RDAP',
   days_remaining: 120, expiry_date: '2027-08-13', active: true, interval_seconds: 86400, checked_at: '2026-07-10T00:00:00',
+  can_diagnose: true,   // Sorun Tanıla 2026-10-05'ten beri satır bayrağıyla çizilir
 })
 const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r }); return { p, resolve } }
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)))

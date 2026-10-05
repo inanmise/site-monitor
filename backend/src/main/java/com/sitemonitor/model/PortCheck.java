@@ -30,4 +30,15 @@ public class PortCheck {
     private String checkedAt;
 
     private String error;
+
+    // ── Hata teşhisi (2026-10-05): YALNIZ kapalı/başarısız kontrolde dolu, NULL'lanabilir; açık/kapalı kararı ve alarm
+    // DEĞİŞMEDİ. Ayrıntı checker'ın hesaplayıp eskiden attığı yolu (via) ve vekil reddini (proxy_refused) de taşır.
+
+    /** Neden kodu ({@code CheckFailureReason}). */
+    @Column(name = "failure_reason", length = 48)
+    private String failureReason;
+
+    /** Kompakt JSON ayrıntı (evre, hedef, yol, zaman aşımı, çözümlenen IP'ler, vekil reddi …), ≤ 4000 karakter. */
+    @Column(name = "failure_detail", columnDefinition = "TEXT")
+    private String failureDetail;
 }

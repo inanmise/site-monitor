@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, fillGroupAndTags } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within, fillGroupAndTags } from './test-utils.jsx'
 import PortMonitorPage from '../components/PortMonitorPage.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -407,5 +407,42 @@ describe('PortMonitorPage — değişiklik nedeni', () => {
     await waitFor(() => expect(totalText()).toBe('0'))
     expect(container.querySelector('[data-slot="stats-toggle"]')).not.toBeNull()
     expect(container.querySelector('[data-slot="stats-panel"]')).not.toBeNull()
+  })
+})
+
+/**
+ * Kontrol geçmişi hata teşhisi (2026-10-05): kapalı port satırında ham hata yerine neden rozeti + tek satır + aç/kapa;
+ * açılınca satırın altında panel (yol, vekil reddi, izinli portlar, ham hata). Açık satırda hücre yok.
+ */
+describe('PortMonitorPage — kontrol geçmişi hata teşhisi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.monitoring.getPortMonitors.mockResolvedValue({ success: true, data: [monitor] })
+    api.admin.getTeams.mockResolvedValue({ success: true, data: [{ id: 3, name: 'SY-A' }] })
+    api.monitoring.getCheckHistory.mockResolvedValue({ success: true, data: {
+      items: [
+        { id: 21, monitor_id: 1, open: false, response_ms: null, checked_at: '2026-10-05T09:00:00',
+          error: 'vekil tüneli reddetti: HTTP/1.1 403 Forbidden — vekil bu porta tünel açmıyor olabilir (izinli: 443, 8443)',
+          failure_reason: 'PROXY_REFUSED',
+          failure_detail: JSON.stringify({ phase: 'CONNECT', via: 'proxy', proxy_status: 403, proxy_refused: true,
+            allowed_ports: [443, 8443], target: '10.0.0.1:25', protocol: 'TCP', timeout_ms: 5000 }) },
+        { id: 20, monitor_id: 1, open: true, response_ms: 3, checked_at: '2026-10-05T08:59:00' },
+      ], counts: { total: 2, fail: 1 }, buckets: [], alerts: [],
+      range: { from: '2026-10-05T00:00:00', to: '2026-10-05T23:59:59' }, total: 2, page: 0, size: 50 } })
+  })
+
+  it('kapalı satır: vekil reddi nedeni; aç → panel (yol + vekil yanıtı + izinli portlar + ham hata); açık satırda hücre yok', async () => {
+    render(<PortMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    fireEvent.click(await screen.findByText('10.0.0.1'))
+    const dialog = await screen.findByRole('dialog')
+    const cell = await waitFor(() => { const c = dialog.querySelector('[data-slot="chkfail-cell"]'); expect(c).not.toBeNull(); return c })
+    expect(dialog.querySelectorAll('[data-slot="chkfail-cell"]')).toHaveLength(1)
+    expect(cell).toHaveAttribute('data-code', 'PROXY_REFUSED')
+    fireEvent.click(within(cell).getByRole('button', { name: /show details|ayrıntıyı göster/i }))
+    const panel = await within(dialog).findByRole('region', { name: /failure detail|hata ayrıntısı/i })
+    expect(panel.querySelector('[data-key="via"]').textContent).toMatch(/proxy|vekil/i)
+    expect(panel.querySelector('[data-key="proxyStatus"]').textContent).toBe('HTTP 403')
+    expect(panel.querySelector('[data-key="allowedPorts"]').textContent).toBe('443, 8443')
+    expect(panel.querySelector('[data-slot="chkfail-technical"]').textContent).toContain('vekil tüneli reddetti')
   })
 })

@@ -191,13 +191,14 @@ export default function HttpDiagnoseDialog({ monitor, initialRunId = null, onClo
         </div>
       )}
       footer={<>
-        <Button type="button" variant="secondary" onClick={onClose}>{t('httpdx.close')}</Button>
+        {/* Dokunmatikte 40 px (2026-10-05, mweb kapısı — Ping/Port/DNS penceresiyle aynı) */}
+        <Button type="button" variant="secondary" className="pointer-coarse:h-10" onClick={onClose}>{t('httpdx.close')}</Button>
         {running ? (
-          <Button type="button" variant="outline" data-slot="httpdx-cancel" onClick={cancel}>
+          <Button type="button" variant="outline" data-slot="httpdx-cancel" className="pointer-coarse:h-10" onClick={cancel}>
             <X aria-hidden="true" /> {t('httpdx.cancel')}
           </Button>
         ) : (
-          <Button type="button" data-slot="httpdx-run" onClick={run} disabled={st.phase === 'loading'}>
+          <Button type="button" data-slot="httpdx-run" className="pointer-coarse:h-10" onClick={run} disabled={st.phase === 'loading'}>
             {st.phase === 'start' ? <Play aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
             {st.phase === 'start' ? t('httpdx.run') : t('httpdx.rerun')}
           </Button>

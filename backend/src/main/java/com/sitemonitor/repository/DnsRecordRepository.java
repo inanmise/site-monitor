@@ -25,6 +25,16 @@ public interface DnsRecordRepository extends JpaRepository<DnsRecord, Long> {
          + "AND (r.changed = true OR r.rotated = true)")
     long countChangedByMonitorIdBetween(@Param("id") Long id, @Param("from") String from, @Param("to") String to);
 
+    // ── Hata teşhisi (2026-10-05): "Başarısız sorgu" süzgeci + sayacı. Başarısızlık ölçütü DEĞİŞMEDİ: boş değer
+    // (çözümleme başarısız) — responseSeriesRaw ve weeklyStatsByMonitor ile aynı kural. "Değişenler" süzgeci aynen kalır.
+    @Query("SELECT r FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.value IS NULL OR r.value = '')")
+    org.springframework.data.domain.Page<DnsRecord> findFailedByMonitorIdBetween(@Param("id") Long id,
+            @Param("from") String from, @Param("to") String to, Pageable p);
+    @Query("SELECT COUNT(r) FROM DnsRecord r WHERE r.monitorId = :id AND r.checkedAt >= :from AND r.checkedAt <= :to "
+         + "AND (r.value IS NULL OR r.value = '')")
+    long countFailedByMonitorIdBetween(@Param("id") Long id, @Param("from") String from, @Param("to") String to);
+
     /** Yoğunluk şeridi: [bucketKey, toplam, değişen] — substr prefix kovası (dakika 16 / saat 13 / gün 10).
      *  NATIVE + TÜRETİLMİŞ TABLO: JPQL'de :len SELECT/GROUP BY'da AYRI placeholder'lara bağlanıyor,
      *  Postgres ifade eşitliğini kanıtlayamayıp 42803 atıyordu (2026-08 test ortamı). Alt sorguda

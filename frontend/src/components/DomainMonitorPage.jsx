@@ -32,6 +32,9 @@ import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
 import DomainRegistrationTab from './DomainRegistrationTab.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
+import { CheckFailureBlock } from './checks/CheckFailurePanel.jsx'
+import useFailureRows, { failurePanelId, failureRowKey } from './checks/useFailureRows.js'
+import { isHealthy } from './checks/checkFailureModel.js'
 import DomainExpiryTrace from './DomainExpiryTrace.jsx'
 import DomainExpiryTrend from './DomainExpiryTrend.jsx'
 import { LoadingBlock } from './ui/Progress.jsx'
@@ -149,10 +152,17 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // ama çalıştıramadığı başka takım satırını "Şimdi Kontrol Et (N)" sayısına katmaz, toplu koşumda 403 yemez).
   const canCheckRow = (m) => canManageRow(m) && m?.can_check !== false
   const canDeleteRow = (m) => isAdmin || (isTeamAdmin && isOwnTeam(m))
+  // "Sorun Tanıla" (2026-10-05): rol değil sunucunun satır bayrağı `can_diagnose` (= can_check + diagnostics.run) — tanılama
+  // ucu artık kullanıcının işletebildiği takımın alan adı izlemesini de kabul ediyor. Liste satırına da bakılır ("Şimdi
+  // kontrol et" açık detayın kopyasını tetik yanıtıyla değiştirir, yanıtta bayrak olmayabilir). Formdaki (kaydedilmemiş alan
+  // adı) Sorun Tanıla bilinçli olarak yalnız admin: rastgele alan adında uç 403 döner.
+  const canDiagnoseRow = (m) => !!m && (m.can_diagnose === true || monitors.some((x) => x.id === m.id && x.can_diagnose === true))
   // Toplu seçim — dokuz izleme sayfasının STANDARDI (2026-09-26 kullanıcı bildirimi: Alan Adı sayfasında kart sol üstten
   // seçilemiyor, toplu Duraklat/Sürdür/takım/grup/sil yoktu). Yalnız yönetebildiği satırlar seçilebilir (Http ile aynı).
   const [bulkSel, setBulkSel] = useState(() => new Set())
   const toggleBulk = (id) => setBulkSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
+  // Kontrol geçmişi hata teşhisi (2026-10-05): açık hata panelleri (satır anahtarıyla)
+  const failRows = useFailureRows()
   const [monitors, setMonitors] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
@@ -961,7 +971,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           <DomainDetailHeader monitor={selected} running={isRunning(selected.id)}
             onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
             onPlanRenewal={canManageRow(selected) ? () => setPlanRow(selected) : undefined}
-            onDiagnose={isAdmin ? () => diagnose(selected) : undefined} />
+            onDiagnose={canDiagnoseRow(selected) ? () => diagnose(selected) : undefined} />
           <DetailDivider />
           <DetailTabs value={detailTab} onValueChange={setDetailTab} className="mt-0"
             countsFor={{ kind: 'domain', monitorId: selected.id, notesType: 'DOMAIN', notesTarget: selected.domain, openAlerts: selected.active_alarm ? 1 : 0 }}
@@ -971,9 +981,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               // orası "hedef ayakta mıydı", burası "ayarları kim değiştirdi".
               ['changes', t('chg.tab')]]}>
             <TabsContent value="control">
-              {isAdmin && (
+              {canDiagnoseRow(selected) && (
                 <div className="mb-2 flex justify-end">
-                  <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => diagnose(selected)}>
+                  <Button type="button" variant="secondary" size="sm" data-slot="dexp-open" className="pointer-coarse:h-10" onClick={() => diagnose(selected)}>
                     <ShieldAlert size={13} />{t('dexp.diagnose')}
                   </Button>
                 </div>
@@ -988,16 +998,27 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 renderRow={(c) => {
                   const cDays = c.days_remaining
                   const cIps = (Array.isArray(c.resolved_ips) ? c.resolved_ips : String(c.resolved_ips ?? '').split(',')).map(s => String(s).trim()).filter(Boolean)
+                  // Hata teşhisi (2026-10-05): veri getirilemeyen (UNKNOWN) satırın hatası artık registrar hücresinde kırpılıp
+                  // SAKLANMAZ — satırın altında KENDİ satırı: neden rozeti + tek satır + aç/kapa, açılınca tam panel.
+                  const failed = !isHealthy('domain', c)
+                  const k = failureRowKey(c)
+                  const open = failed && failRows.isOpen(k)
+                  const when = formatDateSec(c.checked_at)
                   return (<>
-                    <span className="upt-rt-time">{formatDateSec(c.checked_at)}</span>
+                    <span className="upt-rt-time">{when}</span>
                     <span>{sourceTag(c.source, c.whois_provider) || '—'}</span>
                     <span>{fmtExpiry(c.expiry_date)}</span>
                     <span className={cn('font-semibold', daysTone(cDays))}>{cDays ?? '—'}</span>
                     <span className={cn('font-semibold', STATUS_TEXT[statusCls(c.status)])}>{statusLabel(c.status)}{c.changed ? ' ⚑' : ''}</span>
                     {/* Çözülen IP ayrı sütun değil: 7. sütun tabloyu kırıyordu; IP registrar hücresinin tooltip'inde (Domain Kaydı sekmesinde tam liste) */}
                     <span className="truncate" title={[c.registrar, cIps.length ? 'IP: ' + cIps.join(', ') : null].filter(Boolean).join(' · ')}>
-                      {c.registrar || (c.error ? c.error : '—')}{cIps.length ? <span className="font-normal text-muted-foreground"> · {cIps.length} IP</span> : null}
+                      {c.registrar || '—'}{cIps.length ? <span className="font-normal text-muted-foreground"> · {cIps.length} IP</span> : null}
                     </span>
+                    {failed && (
+                      <CheckFailureBlock type="domain" check={c} monitor={selected} open={open} when={when}
+                        panelId={failurePanelId('domain', k)} onToggle={() => failRows.toggle(k)}
+                        canDiagnose={canDiagnoseRow(selected)} onDiagnose={() => diagnose(selected)} />
+                    )}
                   </>)
                 }} />
             </TabsContent>

@@ -173,6 +173,13 @@ const SPECIAL = {
   SESSION_ENDED_INACTIVE: 'audit.ev.SESSION_ENDED_INACTIVE',
   HTTP_DIAGNOSTICS_RUN: 'audit.ev.HTTP_DIAGNOSTICS_RUN',
   KEYWORD_DIAGNOSTICS_RUN: 'audit.ev.KEYWORD_DIAGNOSTICS_RUN',   // keyword uçtan uca tanılama (2026-10-04)
+  // Ping / Port / DNS uçtan uca tanılama (2026-10-05)
+  PING_DIAGNOSTICS_RUN: 'audit.ev.PING_DIAGNOSTICS_RUN',
+  PORT_DIAGNOSTICS_RUN: 'audit.ev.PORT_DIAGNOSTICS_RUN',
+  DNS_DIAGNOSTICS_RUN: 'audit.ev.DNS_DIAGNOSTICS_RUN',
+  // Sayfa Bütünlüğü / Sayfa Hızı uçtan uca tanılama (2026-10-05)
+  PAGE_DIAGNOSTICS_RUN: 'audit.ev.PAGE_DIAGNOSTICS_RUN',
+  PAGESPEED_DIAGNOSTICS_RUN: 'audit.ev.PAGESPEED_DIAGNOSTICS_RUN',
   // Sistem Bakım Modu (2026-10-02): planla / hemen bakıma al / düzenle / başladı / uzat / hemen bitir / bitti / iptal /
   // duyuru e-postası + bakım başlayınca kesilen oturum — kural adı/eylem eşlemesine uymaz
   SYSTEM_MAINTENANCE_SCHEDULED: 'audit.ev.SYSTEM_MAINTENANCE_SCHEDULED',

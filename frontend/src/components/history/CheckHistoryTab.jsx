@@ -1,6 +1,6 @@
 import { Children, Fragment, isValidElement, useEffect, useMemo, useState } from 'react'
 import {
-  Activity, BellOff, BellRing, Calendar, ChevronDown, CircleCheck, Download, ExternalLink, Inbox, Siren, TriangleAlert,
+  Activity, BellOff, BellRing, Calendar, ChevronDown, CircleCheck, CircleX, Download, ExternalLink, Inbox, Siren, TriangleAlert,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { formatRatePercent } from '../../i18n/dateLocale.js'
@@ -179,6 +179,9 @@ export default function CheckHistoryTab({
   // bu bileşen 9 izleme sayfasında ortak, diğerlerinin davranışı bit düzeyinde aynı kalmalı.
   groupIdenticalErrors = false,
   rowSignature = null,                       // (item) => string|null ; null ⇒ o satır gruplanmaz
+  // ── İkinci süzgeç kutucuğu (OPT-IN, 2026-10-05 hata teşhisi) — yalnız filterMode='changed' (DNS): ikinci sayaç
+  // (counts.errors = başarısız sorgu) + status=fail süzgeci. Verilmezse çıktı bit düzeyinde aynı.
+  errorTile = null,                          // { label, hint } | null
 }) {
   const t = useT()
   const isMobile = useIsMobile()
@@ -308,15 +311,23 @@ export default function CheckHistoryTab({
   const statusValue = h.status === 'all' ? 'all' : 'fail'
   const filterable = filterMode !== 'none'
   const failLabel = t(filterMode === 'changed' ? 'hist.filterChanged' : 'hist.filterFail')
+  // İkinci süzgeç (DNS "Başarısız sorgu"): açıkken "Değişenler" kutucuğu yalnız KENDİ süzgecinde basılı görünür.
+  const withErrorTile = !!errorTile && changedMode && filterable
+  const errors = Number(h.counts.errors) || 0
+  const failPressed = withErrorTile ? h.status === filterMode : statusValue === 'fail'
   const tiles = (
     <div data-slot="hist-tiles" role={filterable ? 'group' : undefined} aria-label={filterable ? t('hist.filterLabel') : undefined}
-      className="grid grid-cols-2 gap-2 @xl/hist:grid-cols-4">
+      className={cn('grid grid-cols-2 gap-2', withErrorTile ? '@xl/hist:grid-cols-3 @4xl/hist:grid-cols-5' : '@xl/hist:grid-cols-4')}>
       <HistTile icon={Activity} label={t('hist.tileChecks')} value={total.toLocaleString()} tone="total"
         pressed={filterable ? statusValue === 'all' : undefined}
         onClick={filterable ? () => h.setStatus('all') : undefined} hint={filterable ? t('hist.filterAllHint') : undefined} />
       <HistTile icon={TriangleAlert} label={failLabel} value={fail.toLocaleString()} tone={fail > 0 ? (changedMode ? 'warning' : 'danger') : 'total'}
-        pressed={filterable ? statusValue === 'fail' : undefined}
+        pressed={filterable ? failPressed : undefined}
         onClick={filterable ? () => h.setStatus(filterMode) : undefined} hint={filterable ? t('hist.filterFailHint', failLabel) : undefined} />
+      {withErrorTile && (
+        <HistTile icon={CircleX} label={errorTile.label} value={errors.toLocaleString()} tone={errors > 0 ? 'danger' : 'total'}
+          pressed={h.status === 'fail'} onClick={() => h.setStatus('fail')} hint={errorTile.hint} />
+      )}
       <HistTile icon={CircleCheck} label={t('hist.tileAvailability')}
         value={formatRatePercent(availability)}
         tone={availability == null ? 'total' : availability >= 99.9 ? 'success' : availability >= 99 ? 'warning' : 'danger'}

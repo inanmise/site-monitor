@@ -129,6 +129,12 @@ public class CertificateService {
             check.setCheckedAt((String) result.get("checked_at"));
             check.setCreatedAt(now);
             check.setErrorClass((String) result.get("error_class"));
+            // Hata teşhisi (2026-10-05): checker'ın hesaplayıp eskiden attığı aşama + çözümlenen IP'ler — yalnız hatalı
+            // kontrolde (error_class dolu). Geçmiş satırı artık "nerede, hangi IP'ye giderken" sorusunu cevaplar.
+            if (result.get("error_class") != null) {
+                check.setErrorStage(errorStageOf(result.get("error_stage")));
+                check.setResolvedIps(resolvedIpsOf(result.get("resolved_ips")));
+            }
             check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa dashboard uptime %'den hariç
             checkRepo.save(check);
         } catch (Exception e) {
@@ -1155,5 +1161,26 @@ public class CertificateService {
         if (v == null) return null;
         if (v instanceof Boolean b) return b;
         return Boolean.parseBoolean(v.toString());
+    }
+
+    /** Hata aşaması — kolon VARCHAR(32); boş/uzun değer yazılmaz (kayıt asla bu yüzden düşmesin). */
+    static String errorStageOf(Object v) {
+        if (!(v instanceof String s) || s.isBlank()) return null;
+        String t = s.trim();
+        return t.length() <= 32 ? t : null;
+    }
+
+    /** Çözümlenen IP'ler → virgüllü metin (en fazla 16 adres, yalnız IP/host karakterleri); boşsa null. */
+    static String resolvedIpsOf(Object v) {
+        if (!(v instanceof java.util.Collection<?> c) || c.isEmpty()) return null;
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (Object o : c) {
+            if (o == null) continue;
+            String ip = o.toString().trim();
+            if (ip.isEmpty() || !ip.matches("[0-9A-Za-z.:%\\-\\[\\]]{1,64}")) continue;
+            out.add(ip);
+            if (out.size() >= 16) break;
+        }
+        return out.isEmpty() ? null : String.join(",", out);
     }
 }
