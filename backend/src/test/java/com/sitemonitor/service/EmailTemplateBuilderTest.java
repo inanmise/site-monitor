@@ -534,4 +534,32 @@ class EmailTemplateBuilderTest {
         assertThat(b.buildResolvedText("www.example.com", "CHAIN_BROKEN", "Kişi A", "2026-09-28T10:00:00"))
                 .contains("Site Monitor'de Görüntüle: https://sm.example.com/?tab=dashboard&domain=www.example.com&open=cert");
     }
+
+    // ── Elle yüklenen sertifika kaynağı (2026-10-06) ─────────────────────────────────────────────────────────────
+
+    private static final String MANUAL_LINE =
+            "Kaynak: Manuel yükleme (sürüm 2, dosya sunucu.pfx, yükleyen Kişi A, tarih 06.10.2026) — yenilemek için yeni sürümü yükleyin";
+
+    @Test
+    @DisplayName("manuel kaynak: HTML'de 'Sertifika Kaynağı' kartı, metinde aynı satır (parite)")
+    void manualSourceCard() {
+        var m = certMail(Map.of(EscalationService.CTX_MANUAL_SOURCE, MANUAL_LINE));
+        assertThat(b.buildHtml(m)).contains("Sertifika Kaynağı").contains("Manuel yükleme (sürüm 2, dosya sunucu.pfx");
+        assertThat(b.buildText(m)).contains("\n" + MANUAL_LINE + "\n");
+    }
+
+    @Test
+    @DisplayName("ağ sertifikası: anahtar yokken çıktı BİREBİR aynı — kart/satır eklenmez; satır yalnız eklemeyle farklılaşır")
+    void networkMailUnchanged() {
+        var base = certMail(Map.of("inv_ops", java.util.List.of("Netscaler")));
+        String html = b.buildHtml(base);
+        String text = b.buildText(base);
+        assertThat(html).doesNotContain("Sertifika Kaynağı");
+        assertThat(text).doesNotContain("Manuel yükleme");
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("inv_ops", java.util.List.of("Netscaler"));
+        extra.put(EscalationService.CTX_MANUAL_SOURCE, MANUAL_LINE);
+        String withSource = b.buildText(certMail(extra));
+        assertThat(withSource.replace("\n" + MANUAL_LINE + "\n", "")).isEqualTo(text);
+    }
 }

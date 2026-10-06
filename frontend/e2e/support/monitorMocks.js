@@ -286,6 +286,25 @@ export const INVENTORY = [
   invRow(12, { domain: 'auth.example.com', tier: 1, cert_days_remaining: 45, cert_not_after: invAt(45), domain_expiry: invAt(20).slice(0, 10), domain_registrar: 'Örnek Tescil Ltd.', jks_keystore: true }),
   invRow(13, { domain: 'docs.example.org', tier: 4, cert_days_remaining: 200, cert_not_after: invAt(200), use_proxy: true, check_interval_hours: 24, tls_mode: 'browser' }),
 ]
+/**
+ * Manuel (dosyadan yüklenen) sertifikalar (2026-10-06) — `GET /api/manual-certs` satırları: uzun takip adı, dolmuş,
+ * yakında biten, başka takımın (salt okunur) kaydı ve çok sürümlü kayıt (en geniş hâl: taşma ölçümü dolu veriyle).
+ */
+export const MANUAL_CERTS = [
+  { inventory_id: 77, domain: 'odeme-servisleri-keystore.cok-uzun-bir-takip-adi.example.test-manuel', team_id: 1, team_name: 'Takım A', tier: 1,
+    group_name: 'Ödeme Sistemleri', tags: 'prod,jks', active: true, status: 'warning', alert_level: 'expired', days_remaining: -4,
+    not_after: invAt(-4), issuer: 'Example Trust Services RSA Organization Validation Secure Server CA 2026', subject: 'CN=odeme.example.test, O=Example Ltd, C=TR',
+    versions_count: 3, can_manage: true,
+    current_version: { version: 3, fingerprint: 'AB'.repeat(32), uploaded_at: iso(3 * 24 * HOUR), uploaded_by_name: 'Kişi A', file_name: 'odeme-servisleri-keystore-2026-uretim-ortami.jks', file_format: 'JKS' } },
+  { inventory_id: 78, domain: 'truststore-root-ca.example.test', team_id: 1, team_name: 'Takım A', tier: 2, group_name: 'Altyapı', tags: 'truststore',
+    active: true, status: 'warning', alert_level: 'high', days_remaining: 12, not_after: invAt(12), issuer: 'Example Root CA', subject: 'CN=Example Root CA',
+    versions_count: 1, can_manage: true,
+    current_version: { version: 1, fingerprint: 'CD'.repeat(32), uploaded_at: iso(40 * 24 * HOUR), uploaded_by_name: 'Kişi B', file_name: 'truststore.jks', file_format: 'JKS' } },
+  { inventory_id: 79, domain: 'raporlama.example.test', team_id: 2, team_name: 'Takım B', tier: 3, group_name: 'Raporlama', tags: 'prod',
+    active: true, status: 'valid', alert_level: null, days_remaining: 210, not_after: invAt(210), issuer: 'Example CA', subject: 'CN=raporlama.example.test',
+    versions_count: 1, can_manage: false,
+    current_version: { version: 1, fingerprint: 'EF'.repeat(32), uploaded_at: iso(90 * 24 * HOUR), uploaded_by_name: 'Kişi C', file_name: 'raporlama.pem', file_format: 'PEM' } },
+]
 export const INVENTORY_HYGIENE = {
   total: 6, scanned: 13,
   groups: [
@@ -929,6 +948,8 @@ export async function mockApi(page, opts = {}) {
       const showDeleted = u.searchParams.get('showDeleted') === 'true'
       const rows = INVENTORY.filter((r) => (all || r.team_id !== 2) && (showDeleted || !r.deleted_at))
       body = { success: true, data: rows, scope: all ? 'all' : 'mine', visible_to_all: true }
+    } else if (p === '/api/manual-certs' && route.request().method() === 'GET') {
+      body = { success: true, data: MANUAL_CERTS }
     } else if (p === '/api/admin/inventory/hygiene') {
       body = { success: true, data: INVENTORY_HYGIENE }
     } else if (p === '/api/admin/inventory/by-domain') {

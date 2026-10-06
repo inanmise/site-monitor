@@ -20,6 +20,9 @@ public interface LatestCheckRepository extends JpaRepository<LatestCheck, String
     /** Aynı sertifikayı taşıyan alanlar (paylaşılan sertifika penceresi) — tüm tabloyu çekip elemenin yerine (2026-09-22). */
     List<LatestCheck> findByFingerprintIgnoreCase(String fingerprint);
 
+    /** Toplu parmak izi eşleşmesi (manuel sertifika analizi, 2026-10-06) — parmak izleri büyük harf saklanır. */
+    List<LatestCheck> findByFingerprintIn(java.util.Collection<String> fingerprints);
+
     /**
      * Zayıf algoritma adaylarını DB'de filtreler (tüm tabloyu çekmek yerine):
      * eski hash (MD2/MD5/SHA1) veya kısa anahtar (RSA/DSA < 2048, EC < 256).

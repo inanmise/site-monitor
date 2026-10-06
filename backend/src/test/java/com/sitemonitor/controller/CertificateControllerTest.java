@@ -94,6 +94,10 @@ class CertificateControllerTest {
     @MockitoBean
     com.sitemonitor.service.ExecutiveStatsService executiveStatsService;   // yönetici özeti (2026-09-12, #20)
 
+    /** Elle yüklenen sertifikanın çevrim-dışı değerlendirmesi (2026-10-06) — yalnız manuel kayıtta çağrılır. */
+    @MockitoBean
+    com.sitemonitor.service.manualcert.ManualCertificateEvaluationService manualCertEvaluation;
+
     // ── Auth guard ────────────────────────────────────────────────────────────
 
     @Test
@@ -1136,5 +1140,63 @@ class CertificateControllerTest {
         mvc.perform(get("/api/check/baska.example.com").session(nocOperatorSession()))
                 .andExpect(status().isForbidden());
         verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any());
+    }
+
+    // ── Elle yüklenen sertifika (2026-10-06) ─────────────────────────────────────────────────────────────────────
+
+    private static com.sitemonitor.model.CertificateInventory manualInv(String key, Long teamId) {
+        com.sitemonitor.model.CertificateInventory i = invOf(key, teamId);
+        i.setId(31L);
+        i.setCertSource(com.sitemonitor.model.CertificateInventory.SOURCE_MANUAL);
+        return i;
+    }
+
+    @Test
+    @DisplayName("manuel: /check ağa ÇIKMAZ — çevrim-dışı değerlendirme (yalnız kapanış), yanıt biçimi aynı")
+    void check_manualRow_offline() throws Exception {
+        when(inventoryRepo.findByDomain("api-takip")).thenReturn(java.util.Optional.of(manualInv("api-takip", null)));
+        when(manualCertEvaluation.evaluateNow(any(), eq("manual"))).thenReturn(new java.util.LinkedHashMap<>(
+                Map.of("domain", "api-takip", "status", "valid", "via", "upload")));
+        mvc.perform(get("/api/check/api-takip").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.via").value("upload"))
+                .andExpect(jsonPath("$.data.port").value(443));
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+        verify(certService, never()).saveResult(any());   // kayıt değerlendirme servisinin işi
+    }
+
+    @Test
+    @DisplayName("manuel: check-preview 409 MANUAL_CERT — canlı el sıkışma yok")
+    void checkPreview_manualRow_409() throws Exception {
+        when(inventoryRepo.findByDomain("api-takip")).thenReturn(java.util.Optional.of(manualInv("api-takip", null)));
+        mvc.perform(get("/api/check-preview/api-takip").session(authSession()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("MANUAL_CERT"))
+                .andExpect(jsonPath("$.error").isNotEmpty());
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    @DisplayName("manuel: sağlık tazeleme ağsız; uygulama katmanı yoklaması yok; ağa özgü satırlar NA + reason MANUAL")
+    void healthRefresh_manualRow() throws Exception {
+        // Ayrı ad: tazeleme soğuması (30 sn) denetleyici örneğinde tutulur — diğer testin alan adıyla çakışmasın.
+        com.sitemonitor.model.CertificateInventory inv = manualInv("manuel-takip", 5L);
+        when(inventoryRepo.findByDomain("manuel-takip")).thenReturn(java.util.Optional.of(inv));
+        com.sitemonitor.model.LatestCheck lc = latestOf();
+        lc.setDomain("manuel-takip");
+        lc.setVia("upload");
+        when(latestCheckRepo.findById("manuel-takip")).thenReturn(java.util.Optional.of(lc));
+        mvc.perform(post("/api/certificates/manuel-takip/health/refresh").session(teamSession(5L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rows[?(@.key=='protocol')].status").value("NA"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='protocol')].reason").value("MANUAL"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='sanMatch')].status").value("NA"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='expiry')].status").value("OK"))
+                .andExpect(jsonPath("$.data.rows[?(@.key=='expiry')].reason").isEmpty());
+        verify(manualCertEvaluation).evaluateNow(any(), eq("health-refresh"));
+        verify(checkerService, never()).check(anyString(), anyInt(), anyBoolean(), any(), any());
+        verify(appLayerProbe, never()).refresh(anyString(), anyInt(), anyBoolean());
     }
 }

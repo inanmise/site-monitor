@@ -70,6 +70,10 @@ class AuditCoverageTest {
               + "dönüştüğünde MONITOR_CREATE zaten yazılır. Silme (deleteScriptedDraft) denetleniyor.");
         EXEMPT.put("IncidentController#previewNotification",
                 "Yalnız HTML önizler: kaydetmez, göndermez, dış bağlantı açmaz — durum değişmiyor.");
+        EXEMPT.put("ManualCertificateController#analyze",
+                "Manuel sertifika dosyası ANALİZİ (2026-10-06): yalnız okur ve yanıtlar — veritabanına yazmaz, kayıt açmaz. "
+              + "POST yalnız çok parçalı dosya gövdesi taşıdığı için; oluşturma (CERT_MANUAL_UPLOAD) ve yenileme "
+              + "(CERT_MANUAL_RENEW) denetlenir. Hız sınırlı (dakikada 30).");
         EXEMPT.put("UserBulkDeactivationController#preview",
                 "Toplu pasife alma ÖNİZLEMESİ (2026-10-02): yalnız hedef listesini hesaplar, hiçbir kaydı değiştirmez. "
               + "POST yalnız ölçüt gövdesi taşıdığı için; uygulama (USER_BULK_DEACTIVATE) ve geri alma denetlenir.");

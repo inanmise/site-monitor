@@ -774,7 +774,7 @@ public class StormService {
         if (cachedTotal > 0 && nowMs - cachedTotalAt < 60_000) return cachedTotal;
         long total;
         try {
-            total = inventoryRepo.countByActiveTrue()
+            total = inventoryRepo.countNetworkActive()   // dosyadan yüklenen sertifikalar hariç (fırtına üyesi olamaz)
                     + httpRepo.countByActiveTrue()
                     + keywordRepo.countByActiveTrue()
                     + pingRepo.countByActiveTrue()
@@ -811,7 +811,7 @@ public class StormService {
         if (c != null && nowMs - c[1] < 60_000) return c[0];
         long total;
         try {
-            total = inventoryRepo.countByTeamIdAndActiveTrue(teamId)
+            total = inventoryRepo.countNetworkActiveByTeam(teamId)   // dosyadan yüklenen sertifikalar hariç
                     + httpRepo.countByTeamIdAndActiveTrue(teamId)
                     + keywordRepo.countByTeamIdAndActiveTrue(teamId)
                     + pingRepo.countByTeamIdAndActiveTrue(teamId)
@@ -878,7 +878,8 @@ public class StormService {
      * Kaynaklar ve kurallar {@code totalActiveMonitorsForTeam} ile birebir (Port/DNS yalnız bağımsız satır). 60 sn önbellek.
      */
     public static final String SQL_ACTIVE_BY_TEAM = "SELECT team_id, SUM(n) FROM ("
-            + "SELECT team_id, COUNT(*) AS n FROM certificate_inventory WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
+            + "SELECT team_id, COUNT(*) AS n FROM certificate_inventory WHERE active = true AND team_id IS NOT NULL"
+            + " AND (cert_source IS NULL OR cert_source <> 'MANUAL') GROUP BY team_id"
             + " UNION ALL SELECT team_id, COUNT(*) FROM http_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
             + " UNION ALL SELECT team_id, COUNT(*) FROM keyword_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"
             + " UNION ALL SELECT team_id, COUNT(*) FROM ping_monitors WHERE active = true AND team_id IS NOT NULL GROUP BY team_id"

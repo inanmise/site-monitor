@@ -3233,4 +3233,111 @@ class EscalationServiceTest {
         e.setCreatedAt(ISO.format(now.minus(3, ChronoUnit.DAYS)));
         assertThat(EscalationService.initialNotificationMissing(e, ISO.format(now))).isFalse();
     }
+
+    // ── Elle yüklenen sertifika (2026-10-06) ─────────────────────────────────────────────────────────────────────
+    // Takip adı bir host adı değil: HOSTNAME_MISMATCH manuel kayıtta HİÇ üretilmez (iki kapı: sonuçtaki manual işareti +
+    // envanter isManual). Süre eşikleri / kademeler ve güvenilmeyen CA kuralı ağ kaydıyla AYNI.
+
+    /** Süresi uzak, güvenilir ama takip adını KAPSAMAYAN manuel sertifika sonucu. */
+    private Map<String, Object> manualResult(String key, int days) {
+        Map<String, Object> r = new java.util.LinkedHashMap<>(okResult(key));
+        r.put("days_remaining", days);
+        r.put("warning", days <= 30);
+        r.put("status", days <= 30 ? "warning" : "valid");
+        r.put("san", List.of("api.example.test"));
+        r.put("trust_status", "TRUSTED");
+        r.put("manual", true);
+        r.put("via", "upload");
+        return r;
+    }
+
+    private static CertificateInventory manualInventory(String key) {
+        CertificateInventory i = new CertificateInventory();
+        i.setId(77L);
+        i.setDomain(key);
+        i.setTeamId(OWNER);
+        i.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        return i;
+    }
+
+    @Test
+    @DisplayName("manuel: takip adı SAN'da yok → HOSTNAME_MISMATCH alarmı YOK (ağ kaydında aynı sonuç alarm açar)")
+    void manualResult_neverRaisesHostnameMismatch() {
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        service.processResults(List.of(manualResult("api-takip", 300)));
+        verify(alertEventRepo, never()).save(any());
+
+        // Regresyon: AYNI sonuç ağ kaydından gelirse (işaret yok) davranış bugünkü gibi — alarm açılır.
+        Map<String, Object> network = manualResult("api-takip", 300);
+        network.remove("manual");
+        network.remove("via");
+        service.processResults(List.of(network));
+        assertThat(typeOfSavedAlert()).isEqualTo(EscalationService.TYPE_HOSTNAME_MISMATCH);
+    }
+
+    @Test
+    @DisplayName("manuel: ikinci kapı — sonuç işaretsiz olsa da envanter MANUAL ise HOSTNAME_MISMATCH açılmaz")
+    void manualInventory_secondGate() {
+        when(inventoryRepo.findByDomainIn(anyCollection())).thenReturn(List.of(manualInventory("api-takip")));
+        Map<String, Object> r = manualResult("api-takip", 300);
+        r.remove("manual");
+        service.processResults(List.of(r));
+        verify(alertEventRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("manuel: süre eşiği ve seviye ağ kaydıyla BİREBİR aynı (5 gün → KRİTİK EXPIRY)")
+    void manualResult_expiryLevelsIdentical() {
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString()))
+                .thenReturn(List.of(contact("po@example.com", "PO", "WARNING")));
+        service.processResults(List.of(manualResult("api-takip", 5)));
+        ArgumentCaptor<AlertEvent> cap = ArgumentCaptor.forClass(AlertEvent.class);
+        verify(alertEventRepo, atLeast(1)).save(cap.capture());
+        assertThat(cap.getAllValues()).extracting(AlertEvent::getAlertType).containsOnly("EXPIRY");
+        assertThat(cap.getAllValues().get(0).getAlertLevel()).isEqualTo("CRITICAL");
+    }
+
+    @Test
+    @DisplayName("manuel: güvenilmeyen CA kuralı ağ kaydıyla aynı (ayar açıksa UNTRUSTED_CA)")
+    void manualResult_untrustedCaSameRule() {
+        when(appSettings.getBoolean(eq(EscalationService.SETTING_ALERT_UNTRUSTED), anyBoolean())).thenReturn(true);
+        when(alertEventRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        Map<String, Object> r = manualResult("api-takip", 300);
+        r.put("trust_status", "UNTRUSTED");
+        service.processResults(List.of(r));
+        assertThat(typeOfSavedAlert()).isEqualTo(EscalationService.TYPE_UNTRUSTED_CA);
+    }
+
+    @Test
+    @DisplayName("e-posta bağlamı: manuel kayıtta 'Kaynak: Manuel yükleme …' satırı; ağ kaydında anahtar YOK")
+    void mailContext_manualSourceLine_onlyForManual() {
+        com.sitemonitor.repository.ManualCertificateVersionRepository versions =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.ManualCertificateVersionRepository.class);
+        com.sitemonitor.model.ManualCertificateVersion v = new com.sitemonitor.model.ManualCertificateVersion();
+        v.setVersion(3);
+        v.setFileName("sunucu.pfx");
+        v.setUploadedByName("Ayşe Yılmaz");
+        v.setUploadedAt("2026-10-06T08:15:00");
+        when(versions.findFirstByInventoryIdAndCurrentTrueOrderByVersionDesc(77L)).thenReturn(Optional.of(v));
+        ReflectionTestUtils.setField(service, "manualVersionRepo", versions);
+
+        CertificateInventory manualInv = manualInventory("api-takip");
+        manualInv.setTeamId(7L);
+        Map<String, Object> ctx = capturedCtx("api-takip", "EXPIRY", manualInv);
+        assertThat(ctx.get(EscalationService.CTX_MANUAL_SOURCE)).isEqualTo(
+                "Kaynak: Manuel yükleme (sürüm 3, dosya sunucu.pfx, yükleyen Ayşe Yılmaz, tarih 06.10.2026)"
+                        + " — yenilemek için yeni sürümü yükleyin");
+    }
+
+    @Test
+    @DisplayName("e-posta bağlamı: ağ kaydı BİREBİR aynı — manuel kaynak anahtarı eklenmez, sürüm deposu sorulmaz")
+    void mailContext_networkRowUnchanged() {
+        com.sitemonitor.repository.ManualCertificateVersionRepository versions =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.ManualCertificateVersionRepository.class);
+        ReflectionTestUtils.setField(service, "manualVersionRepo", versions);
+        Map<String, Object> ctx = capturedCtx("inv.example.com", "EXPIRY", inventoryWithOps());
+        assertThat(ctx).doesNotContainKey(EscalationService.CTX_MANUAL_SOURCE);
+        org.mockito.Mockito.verifyNoInteractions(versions);
+    }
 }

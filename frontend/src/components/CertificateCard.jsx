@@ -12,6 +12,8 @@ import {
 import {
   TONE_LABEL, certTone, nonStandardPort, planChipOf, reasonsOf, renewedDaysAgo, validityOf,
 } from './certcard/certCardModel.js'
+import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
+import { isManualCert } from './manualcert/manualCertModel.js'
 import { Card } from '@/components/shadcn/card'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -98,6 +100,10 @@ function CertificateCard({ cert, onClick, hasSilentAlert = false, hasMailFailure
               className="gap-1 border-destructive/40 bg-destructive/10 px-2 py-[3px] text-[11px] font-bold text-destructive dark:bg-destructive/20">
               {t('cert.sec.insecure')}
             </Badge>
+          )}
+          {/* Dosyadan yüklenen sertifika (2026-10-06) — yalnız manuel kayıtta; açıklaması dokununca açılır (örtünün üstünde) */}
+          {isManualCert(cert) && (
+            <ManualCertBadge version={cert.manual_version ?? null} uploadedAt={cert.manual_uploaded_at ?? null} rowLabel={domain} triggerClassName={CARD_LAYER} />
           )}
           {/* Sağ grup: 7/24 göstergesi (izleme kartlarıyla AYNI yer — sağ grubun başı; Zengin = hap, Kompakt = ikon + nokta)
               + katman. Gösterge örtünün üstünde (CARD_LAYER, tıklaması pencereyi açmaz); satır `noc_notify` taşımıyorsa

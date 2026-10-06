@@ -501,6 +501,29 @@ export const api = {
   confirmCertificateRenewal: (domain) =>
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
 
+  // Manuel (dosyadan yüklenen) sertifikalar (2026-10-06): ağ üzerinden erişilemeyen sertifika dosyadan yüklenir, süresi
+  // ağdakilerle AYNI kurallarla izlenir. Yükleme uçları çok parçalı (FormData: file | text, password, …) — Content-Type'ı
+  // tarayıcı belirler, X-Lang yine gider. Şifre YALNIZ gövdede taşınır; burada hiçbir yere yazılmaz ve loglanmaz (başarısız
+  // çağrı halkasına yalnız yol + durum düşer). withStatus: 400 alan hataları / 409 kodları / 429 sınırı ayırt edilsin.
+  manualCerts: {
+    /** Dosyayı çözümler — kayıt YAZMAZ (dakikada 30 sınırı). */
+    analyze: (formData) => request('/manual-certs/analyze', { method: 'POST', body: formData, withStatus: true }),
+    /** Tek kayıt: yükleme alanları + ref + domain (takip adı) + inventory (JSON) + note. */
+    create: (formData) => request('/manual-certs', { method: 'POST', body: formData, withStatus: true }),
+    /** Toplu (truststore): yükleme alanları + items [{ref, domain}] (en çok 20) + ortak inventory — hep ya da hiç. */
+    createBatch: (formData) => request('/manual-certs/batch', { method: 'POST', body: formData, withStatus: true }),
+    /** Yeni sürüm: yükleme alanları + ref + note + confirm (daha eski bitişli sürüm için). */
+    renew: (inventoryId, formData) =>
+      request(`/manual-certs/${encodeURIComponent(inventoryId)}/versions`, { method: 'POST', body: formData, withStatus: true }),
+    list: () => request('/manual-certs', { withStatus: true }),
+    get: (inventoryId) => request(`/manual-certs/${encodeURIComponent(inventoryId)}`, { withStatus: true }),
+    /** Şimdi yeniden değerlendir — ağsız; yalnız toparlanma (yeni alarm açmaz). */
+    evaluate: (inventoryId) => request(`/manual-certs/${encodeURIComponent(inventoryId)}/evaluate`, { method: 'POST' }),
+    /** Sürümün PUBLIC zinciri (PEM) — indirme bağlantısı; özel anahtar hiçbir zaman saklanmaz. */
+    pemUrl: (inventoryId, versionId) =>
+      `${BASE}/manual-certs/${encodeURIComponent(inventoryId)}/versions/${encodeURIComponent(versionId)}/pem`,
+  },
+
   getStats: () => request('/stats'),
   getExecutiveStats: () => request('/stats/executive'),   // yönetici özeti (2026-09-12, #20)
   getRecentChanges: (days = 7) => request(`/stats/changes?days=${days}`),   // "ne değişti" satırı (2026-09-12, #7)

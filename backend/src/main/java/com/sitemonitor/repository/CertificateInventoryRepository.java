@@ -16,8 +16,23 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     List<CertificateInventory> findByActiveTrueOrderByDomainAsc();
     /** Aktif envanterin alan adları (ham; normalizasyon çağıranda) — İzleme Panosu envanter-pasif kuralı (2026-10-01,
      *  performans: tam entity yerine tek sütun). */
-    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.active = true AND c.domain IS NOT NULL")
+    // 2026-10-06: elle yüklenen sertifika kayıtları (cert_source = MANUAL) HARİÇ — envanter türevi Port/DNS süpürmesi
+    // ağ hedefi olmayan bu kayıtları atlıyor (SchedulerService), pano kuralı süpürmeyi BİREBİR yansıtmalı.
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.active = true AND c.domain IS NOT NULL"
+            + " AND (c.certSource IS NULL OR c.certSource <> 'MANUAL')")
     List<String> findActiveDomains();
+
+    // ── Elle yüklenen sertifikalar (2026-10-06) ─────────────────────────────────────────────────
+    /** Kaynağa göre silinmemiş kayıtlar (manuel sertifika listesi). */
+    List<CertificateInventory> findByCertSourceAndDeletedAtIsNullOrderByDomainAsc(String certSource);
+    /** Kaynağa göre AKTİF kayıtlar (manuel sertifika çevrim-dışı süpürmesi). */
+    List<CertificateInventory> findByCertSourceAndActiveTrueOrderByDomainAsc(String certSource);
+    /**
+     * Verilen adlardan envanterde (silinmiş dahil) zaten bulunanlar — küçük harfle; takip adı önerisinin çakışma
+     * denetimi tek sorguda yapılır (satır başına sorgu yok). Çağıran boş koleksiyonla çağırmamalı.
+     */
+    @Query("SELECT LOWER(c.domain) FROM CertificateInventory c WHERE LOWER(c.domain) IN :keys")
+    List<String> findExistingDomainsLower(@Param("keys") Collection<String> keys);
     /** Aktif envanter (alan adı, SY takımı) çiftleri — alarm gürültü analizinin kapsam/takım eşlemesi (2026-10-01,
      *  performans: tam entity yerine iki sütun). Sütunlar: {@code [domain, teamId]}. */
     @Query("SELECT c.domain, c.teamId FROM CertificateInventory c WHERE c.active = true")
@@ -39,6 +54,20 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     long countByActiveTrue();
     /** Takım kapsamlı fırtına eşiği paydası (StormService, 2026-09-29) — yalnız o takımın aktif kayıtları. */
     long countByTeamIdAndActiveTrue(Long teamId);
+
+    /**
+     * Fırtına paydası (2026-10-06): AĞDAN denetlenen aktif kayıtlar — dosyadan yüklenen (cert_source = MANUAL) sertifikalar
+     * erişilebilirlik / port / DNS alarmı üretmez, fırtına üyesi olamaz; paydaya girerlerse yüzde eşiği sessizce büyürdü.
+     * Manuel satır yokken {@link #countByActiveTrue()} ile aynı sayı.
+     */
+    @Query("SELECT COUNT(i) FROM CertificateInventory i WHERE i.active = true"
+            + " AND (i.certSource IS NULL OR i.certSource <> 'MANUAL')")
+    long countNetworkActive();
+
+    /** {@link #countNetworkActive()}'in takım kapsamlı hâli — manuel satır yokken {@link #countByTeamIdAndActiveTrue} ile aynı. */
+    @Query("SELECT COUNT(i) FROM CertificateInventory i WHERE i.teamId = :teamId AND i.active = true"
+            + " AND (i.certSource IS NULL OR i.certSource <> 'MANUAL')")
+    long countNetworkActiveByTeam(@Param("teamId") Long teamId);
     /** Sahipsiz (takımsız) aktif alanlar — yapılandırma sağlığı kartı (2026-09-12). */
     long countByActiveTrueAndTeamIdIsNull();
 

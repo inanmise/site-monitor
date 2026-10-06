@@ -4,7 +4,6 @@ import jakarta.persistence.*;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -13,7 +12,11 @@ import lombok.NoArgsConstructor;
 @Table(name = "certificate_inventory")
 @Data
 @NoArgsConstructor
+@InventoryDomainKey   // biçim kuralı kaynağa göre (ağ kaydı: eski @Pattern'in AYNISI) — bkz. InventoryDomainKey
 public class CertificateInventory implements NocTarget {
+
+    /** {@link #certSource} değeri: elle yüklenen sertifika (dosyadan takip, 2026-10-06). */
+    public static final String SOURCE_MANUAL = "MANUAL";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -21,12 +24,37 @@ public class CertificateInventory implements NocTarget {
 
     @NotBlank(message = "Domain boş olamaz")
     @Size(max = 253, message = "Domain en fazla 253 karakter olabilir")
-    @Pattern(
-        regexp = "^(?!-)(?!.*--)(?:\\*\\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$",
-        message = "Geçersiz domain formatı"
-    )
     @Column(nullable = false, unique = true)
     private String domain;
+
+    /**
+     * Sertifikanın KAYNAĞI (2026-10-06, kullanıcı isteği: "elle yüklenen sertifikaları da takip et").
+     * {@code null} = ağdan kontrol edilen kayıt (bugünkü davranış, BİREBİR); {@code MANUAL} = dosyadan yüklenen
+     * sertifika — ağ kontrolü yapılmaz, çevrim-dışı değerlendirilir ({@code ManualCertificateEvaluationService}).
+     *
+     * <p>Yalnız sunucu yazar: istek gövdesinden OKUNMAZ (READ_ONLY) — ağ kaydı ekleme/düzenleme gövdesi bir kaydı
+     * manuele çeviremez (sürümsüz manuel kayıt oluşurdu). Ağ kaydında null → yanıta yazılmaz (NON_NULL).
+     */
+    @Column(name = "cert_source", length = 16)
+    @com.fasterxml.jackson.annotation.JsonProperty(value = "cert_source",
+            access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String certSource;
+
+    /** Elle yüklenen sertifika kaydı mı ({@code cert_source = MANUAL}). JSON'a yazılmaz. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isManual() {
+        return SOURCE_MANUAL.equals(certSource);
+    }
+
+    // ── Manuel sertifika özeti (yalnız okuma uçları doldurur; DB'de tutulmaz, ağ kaydında null → yazılmaz) ──
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Integer manualVersion;
+
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String manualUploadedAt;
 
     @Min(value = 1,     message = "Port 1 ile 65535 arasında olmalı")
     @Max(value = 65535, message = "Port 1 ile 65535 arasında olmalı")

@@ -55,6 +55,31 @@ public class CertificateController {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /** Elle yüklenen sertifikaların çevrim-dışı değerlendirmesi (2026-10-06) — isteğe bağlı (dilimli test bağlamında yok). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.manualcert.ManualCertificateEvaluationService manualCertEvaluation;
+
+    /** 409 {@code MANUAL_CERT}: ağa bağlanan uçlar (önizleme, tanılama) elle yüklenen sertifikada çalışmaz. */
+    static com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException manualCertConflict() {
+        return new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("MANUAL_CERT",
+                com.sitemonitor.util.Msg.t(
+                        "Bu sertifika dosyadan yüklendi; ağ üzerinden kontrol edilemez. Yenilemek için yeni sürümü yükleyin.",
+                        "This certificate was uploaded from a file and cannot be checked over the network. Upload a new version to renew it."));
+    }
+
+    /** {@code /check/{domain}} yanıtı, manuel kayıt için (ağsız değerlendirme; biçim ağ yanıtıyla aynı). */
+    private ResponseEntity<Map<String, Object>> manualCheckResponse(CertificateInventory inv, String runId) {
+        Map<String, Object> result = manualCertEvaluation == null ? null : manualCertEvaluation.evaluateNow(inv, runId);
+        if (result == null) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "code", "MANUAL_CERT",
+                    "error", com.sitemonitor.util.Msg.t("Manuel sertifikanın geçerli sürümü değerlendirilemedi.",
+                            "The current version of the manual certificate could not be evaluated.")));
+        }
+        Map<String, Object> data = new LinkedHashMap<>(result);
+        data.put("port", inv.getPort() != null ? inv.getPort() : 443);
+        return ok(Map.of("success", true, "data", data, "timestamp", now()));
+    }
+
     @GetMapping("/certificates")
     public ResponseEntity<Map<String, Object>> getCertificates(HttpSession session) {
         List<CertificateDto> data = certService.getAllLatestForTeams(SessionScope.monitoringViewTeamIds(session));   // 7/24 operatörü: tümü (2026-10-04)
@@ -245,6 +270,9 @@ public class CertificateController {
     @GetMapping("/check/{domain}")
     public ResponseEntity<Map<String, Object>> checkDomain(@PathVariable String domain, HttpSession session) {
         CertificateInventory inv = requireViewableDomain(session, domain);
+        // Elle yüklenen sertifika (2026-10-06): ağa ÇIKILMAZ — geçerli sürüm çevrim-dışı değerlendirilir, yalnız kapanış
+        // uzlaştırması (elle kontrol alarm açmaz). Yanıt biçimi aynı.
+        if (inv.isManual()) return manualCheckResponse(inv, "manual");
         boolean forceProxy = Boolean.TRUE.equals(inv.getUseProxy());
         String tlsOverride = inv.getTlsMode();
         // Envanterdeki GERÇEK port (zamanlayıcı da böyle yapıyor); 443'e sabitlemek 8443 gibi
@@ -343,6 +371,8 @@ public class CertificateController {
         // kaydında da açılır. Önizleme HİÇBİR ŞEY yazmaz (kayıt/önbellek/denetim yok); aynı el sıkışma envanterde
         // OLMAYAN her host için zaten herkese açık. Kalıcı "şimdi kontrol et" (/check) özgün kapıda kalır.
         if (inv.isPresent()) requireReadableDomain(session, domain);
+        // Elle yüklenen sertifikanın ağ adresi yok (takip adı) — canlı el sıkışma anlamsız (2026-10-06).
+        if (inv.isPresent() && inv.get().isManual()) throw manualCertConflict();
         boolean forceProxy = inv.map(ci -> Boolean.TRUE.equals(ci.getUseProxy())).orElse(false);
         String tlsOverride = inv.map(ci -> ci.getTlsMode()).orElse(null);
         int port = inv.map(CertificateInventory::getPort).filter(p -> p != null && p > 0).orElse(443);
@@ -625,6 +655,15 @@ public class CertificateController {
         }
         healthRefreshAt.put(domain, nowMs);
 
+        // Elle yüklenen sertifika (2026-10-06): ağ kontrolü ve uygulama katmanı yoklaması (HSTS/karışık içerik) YOK —
+        // geçerli sürüm çevrim-dışı değerlendirilir (yalnız kapanış uzlaştırması).
+        if (inv.isManual()) {
+            if (manualCertEvaluation != null) manualCertEvaluation.evaluateNow(inv, "health-refresh");
+            auditService.recordAction("CERT_HEALTH_REFRESH", session, "CERTIFICATE", domain,
+                    com.sitemonitor.service.AuditDetail.of("domain", domain, "caches_evicted", true, "source", "MANUAL"), null);
+            return certificateHealth(domain, session, request);
+        }
+
         int port = inv.getPort() != null ? inv.getPort() : 443;
         Map<String, Object> result = new LinkedHashMap<>(checkerService.check(
                 domain, port, Boolean.TRUE.equals(inv.getUseProxy()), inv.getTlsMode(),
@@ -770,6 +809,10 @@ public class CertificateController {
         m.put("action_key", r.actionKey());
         m.put("action_args", r.actionArgs());
         m.put("evidence", r.evidence());
+        // Elle yüklenen sertifikanın ağa özgü satırı (2026-10-06): NA + gerekçe. Ağ satırlarında anahtar YAZILMAZ.
+        if (r.evidence() != null && CertificateHealthService.NA_REASON_MANUAL.equals(r.evidence().get("reason"))) {
+            m.put("reason", CertificateHealthService.NA_REASON_MANUAL);
+        }
         return m;
     }
 }

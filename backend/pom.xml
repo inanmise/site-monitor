@@ -348,10 +348,19 @@
                                     <includes><include>com.sitemonitor.service.RdapDomainExpiryService</include></includes>
                                     <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit></limits>
                                 </rule>
+                                <!-- 2026-10-06: sertifika yaprağı ayrıştırma yardımcıları (iyi kapsanan, saf kod) dosyadan
+                                     yüklenen sertifikalarla paylaşılmak üzere CertificateFacts'e TAŞINDI. İki sınıfın toplam satır
+                                     kapsamı değişmedi (≈0.50); denetleyicide ağırlıkla ağ kodu kaldığı için oranı 0.42'ye düştü.
+                                     Eşik bugünkü orana mandallandı, taşınan kod kendi kuralıyla korunuyor. -->
                                 <rule>
                                     <element>CLASS</element>
                                     <includes><include>com.sitemonitor.service.CertificateCheckerService</include></includes>
-                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.47</minimum></limit></limits>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.42</minimum></limit></limits>
+                                </rule>
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes><include>com.sitemonitor.service.CertificateFacts</include></includes>
+                                    <limits><limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.85</minimum></limit></limits>
                                 </rule>
                                 <!-- Sentetik motorun kendisi: kullanıcı kodunu alt süreçte koşturan tek sınıf
                                      (sandbox, vekil/CA, maskeleme, sonuç sınıflama). Bundle kuralı bunun

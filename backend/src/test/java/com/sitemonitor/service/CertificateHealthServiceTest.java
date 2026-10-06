@@ -576,4 +576,35 @@ class CertificateHealthServiceTest {
             assertThat(r.actionKey()).doesNotContain(" ");
         }
     }
+
+    @Test
+    @DisplayName("manuel sertifika (2026-10-06): ağa özgü satırlar NA + gerekçe MANUAL; sertifika satırları değerlendirilir")
+    void manualCertificate_networkRowsNa() {
+        CertificateInventory manual = inv();
+        manual.setDomain("api-takip");
+        manual.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        LatestCheck lc = healthy();
+        lc.setDomain("api-takip");          // takip adı SAN'da yok — manuelde bu bir kusur DEĞİL
+        lc.setTlsVersion(null);
+        lc.setCipherSuite(null);
+        lc.setHstsStatus(null);
+        lc.setMixedContentStatus(null);
+        var result = service.evaluate(lc, manual, false);
+        assertThat(result.rows()).extracting(CertificateHealthService.HealthRow::key)
+                .containsExactlyElementsOf(CertificateHealthService.ROW_KEYS);   // sözleşme: her anahtar, aynı sıra
+        for (String key : java.util.List.of("sanMatch", "protocol", "cipher", "pfs", "hsts", "mixedContent")) {
+            var r = result.rows().stream().filter(x -> x.key().equals(key)).findFirst().orElseThrow();
+            assertThat(r.status()).as(key).isEqualTo(CertificateHealthRules.Status.NA);
+            assertThat(r.evidence()).as(key).containsEntry("reason", "MANUAL");
+        }
+        for (String key : java.util.List.of("expiry", "chain", "trust", "signature", "keySize", "revocation")) {
+            var r = result.rows().stream().filter(x -> x.key().equals(key)).findFirst().orElseThrow();
+            assertThat(r.status()).as(key).isEqualTo(CertificateHealthRules.Status.OK);
+        }
+        // Ağ kaydında aynı veri → ad kapsaması FAIL (bugünkü davranış).
+        CertificateInventory network = inv();
+        network.setDomain("api-takip");
+        var sanRow = service.evaluate(lc, network, false).rows().stream().filter(x -> x.key().equals("sanMatch")).findFirst().orElseThrow();
+        assertThat(sanRow.status()).isEqualTo(CertificateHealthRules.Status.FAIL);
+    }
 }

@@ -18,6 +18,8 @@ import { Button } from '@/components/shadcn/button'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { ActiveBadge, DeletedBadge, TierBadge } from './InventoryTable.jsx'
+import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
+import { isManualCert } from '../manualcert/manualCertModel.js'
 import {
   CHIP, ContactList, DetailSection, Fact, FactGrid, FlagBoard, LinkifiedText, MarkdownNotes, TONE, TimeAgo,
 } from './InventoryDetailParts.jsx'
@@ -34,7 +36,8 @@ const ICON_BTN = '-my-1 shrink-0 text-muted-foreground hover:text-primary pointe
 /** Alan adı araçları: kopyala + (joker değilse) siteyi yeni sekmede aç — dokunmatikte 40 px hedefler. */
 function DomainTools({ record }) {
   const t = useT()
-  const url = siteUrl(record)
+  // Manuel kayıtta alan "takip adı" — bir web adresi değil, "siteyi aç" bağlantısı verilmez (2026-10-06)
+  const url = isManualCert(record) ? null : siteUrl(record)
   return (
     <span className="inline-flex shrink-0 items-center">
       <CopyButton value={record.domain} label={t('inv.det.copyDomain')} copiedLabel={t('err.copied')} variant="ghost" buttonSize="icon-sm" className={ICON_BTN} />
@@ -147,6 +150,7 @@ function InventorySummary({ record, teamName, ugTeamName, platformName, compact,
           : <Badge variant="outline" data-slot="inv-tier" data-tier="none" className={cn(CHIP, TONE.warn)}>{t('inv.det.tierNone')}</Badge>}
         {!compact && !deleted && <ActiveBadge r={record} t={t} />}
         {!compact && deleted && <DeletedBadge r={record} t={t} />}
+        {isManualCert(record) && <ManualCertBadge version={record.manual_version ?? null} uploadedAt={record.manual_uploaded_at ?? null} rowLabel={record.domain} />}
         {platformName && <Badge variant="outline" data-slot="inv-platform-chip" className={cn(CHIP, TONE.muted)}><Server aria-hidden="true" />{platformName}</Badge>}
         {record.group_name && <Badge variant="outline" data-slot="inv-group-chip" className={cn(CHIP, TONE.muted)}><FolderOpen aria-hidden="true" />{record.group_name}</Badge>}
       </div>
@@ -213,6 +217,7 @@ export function InventoryDetails({ record, teamMap, platformNames, platformDescr
   const domainExpIn = daysFromNow(record.domain_expiry)
   const timeout = Number(record.timeout_seconds) || null
   const notifGroup = notificationGroupView(record)
+  const manual = isManualCert(record)
   return (
     <div data-slot="inv-details" className="@container flex min-w-0 flex-col gap-3">
       <InventorySummary record={record} teamName={teamName} ugTeamName={ugTeamName} platformName={platformName} compact={compact}
@@ -223,7 +228,10 @@ export function InventoryDetails({ record, teamMap, platformNames, platformDescr
         <DetailSection id="app" icon={AppWindow} title={t('inv.det.secApp')}>
           <FactGrid>
             {compact && <Fact label={t('inv.formDomain')} value={<DomainValue record={record} />} mono full />}
-            <Fact label={t('inv.formPort')} value={Number(record.port) || 443} />
+            {/* Manuel (dosyadan yüklenen) kayıtta ağ portu anlamsız → yerine kaynak: yüklenen dosya · sürüm (2026-10-06) */}
+            {manual
+              ? <Fact label={t('mcert.det.source')} value={t('mcert.det.sourceValue', record.manual_version ?? '—')} />
+              : <Fact label={t('inv.formPort')} value={Number(record.port) || 443} />}
             <Fact label={t('inv.formGroup')} value={record.group_name} />
             <Fact label={t('inv.formTags')} value={tags.length ? (
               <span className="flex flex-wrap gap-1">{tags.map((tag) => <Badge key={tag} variant="secondary" className="font-normal">{tag}</Badge>)}</span>
@@ -245,9 +253,9 @@ export function InventoryDetails({ record, teamMap, platformNames, platformDescr
           <FactGrid>
             <Fact label={t('inv.formPlatform')} value={platformName} hint={platformDesc || null} />
             <Fact label={t('inv.formPlatformDetail')} value={record.platform_detail ? <LinkifiedText text={record.platform_detail} /> : null} mono />
-            <Fact label={t('inv.formTlsMode')} value={t(tlsModeLabelKey(record.tls_mode))} />
-            <Fact label={t('inv.formInterval')} value={t(intervalLabelKey(record.check_interval_hours))} />
-            <Fact label={t('inv.formTimeout')} value={timeout ?? t('inv.det.timeoutGlobal')} />
+            {!manual && <Fact label={t('inv.formTlsMode')} value={t(tlsModeLabelKey(record.tls_mode))} />}
+            {!manual && <Fact label={t('inv.formInterval')} value={t(intervalLabelKey(record.check_interval_hours))} />}
+            {!manual && <Fact label={t('inv.formTimeout')} value={timeout ?? t('inv.det.timeoutGlobal')} />}
             {/* Alarm e-postalarının gideceği grup — sunucu adı çözer; kimlik var ama ad yoksa "bulunamadı" (silinmiş / başka
                 ekibin / görme yetkisi olmayan grup: sunucu üçünü ayırt ETTİRMEZ — grup ucunun 404 deseni) */}
             <Fact data-slot="inv-notif-group" data-state={notifGroup.kind} label={t('ng.selectorLabel')}

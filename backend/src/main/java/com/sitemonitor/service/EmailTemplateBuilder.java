@@ -218,6 +218,7 @@ public class EmailTemplateBuilder {
         d.keyValue("Ayrıntılar", detailRows(m));
         // Envanter bağlamı — "Önerilen Aksiyon"dan ÖNCE: okuyucu önce sertifikanın nerede durduğunu
         // (operasyonel bayraklar) ve takımın kendi yenileme sürecini görür, sonra genel adımları.
+        manualSourceSection(d, m);   // yalnız elle yüklenen sertifikada (ctx anahtarı yoksa hiçbir şey eklenmez)
         opsSection(d, m);
         contactsSection(d, m);
         changeDescSection(d, m);
@@ -279,6 +280,8 @@ public class EmailTemplateBuilder {
         sb.append('\n');
         for (Row r : detailRows(m)) sb.append(r.label()).append(": ").append(r.text()).append('\n');
         // HTML paritesi: envanter bölümleri metin sürümde de aynı sırayla yer alır.
+        String manualSrc = m.ctx() == null ? null : strCtx(m.ctx(), EscalationService.CTX_MANUAL_SOURCE);
+        if (manualSrc != null) sb.append('\n').append(manualSrc).append('\n');
         List<String> ops = opsLabels(m.ctx());
         if (!ops.isEmpty()) sb.append("\nOperasyonel Bilgiler: ").append(String.join(", ", ops)).append('\n');
         Map<String, String> contacts = contactMap(m.ctx());
@@ -710,6 +713,16 @@ public class EmailTemplateBuilder {
             if (o != null && !o.toString().isBlank()) out.add(o.toString());
         }
         return out;
+    }
+
+    /**
+     * SERTİFİKA KAYNAĞI — yalnız elle yüklenen sertifika (2026-10-06): sertifika sunucudan değil yüklenen DOSYADAN
+     * izleniyor; yenilemek yeni sürüm yüklemektir. Bağlam anahtarı yoksa (ağ kaydı) kart hiç eklenmez.
+     */
+    private static void manualSourceSection(MailDoc d, AlertMail m) {
+        String src = m.ctx() == null ? null : strCtx(m.ctx(), EscalationService.CTX_MANUAL_SOURCE);
+        if (src == null) return;
+        d.card("Sertifika Kaynağı", null, MailKit.paragraph(esc(src)), src);
     }
 
     /**

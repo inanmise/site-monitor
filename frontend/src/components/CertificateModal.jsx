@@ -4,7 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 import { useToast } from './ui/Toast.jsx'
 import { Trash2, Globe, X, Pencil, History, Stethoscope, Play, RefreshCw, StickyNote,
-  ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package, FileClock } from 'lucide-react'
+  ShieldCheck, ShieldX, HeartPulse, FileText, Bell, LineChart, Package, FileClock, Layers } from 'lucide-react'
 import AlertHistory from './admin/AlertHistory'
 import SslCheckerPanel from './SslCheckerPanel.jsx'
 import CertNotesTab from './certmodal/CertNotesTab.jsx'
@@ -30,6 +30,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-sel
 import { Separator } from '@/components/shadcn/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
+import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
+import { isManualCert } from './manualcert/manualCertModel.js'
 
 /** Medya sorgusu — yalnız DAVRANIŞ farkı için (sekme ipucu, etiket gizliyken); görünüm CSS'te (max-xl:sr-only). */
 function useMediaQuery(query) {
@@ -58,6 +60,8 @@ const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const CertHealthPanel = lazy(() => import('./CertHealthPanel.jsx'))
 // Değişiklik geçmişi (2026-10-05): envanter kaydının kim / ne zaman / ne değişti günlüğü — ilk açılışta yüklenir.
 const CertChangesTab = lazy(() => import('./certmodal/CertChangesTab.jsx'))
+// Manuel (dosyadan yüklenen) kayıt (2026-10-06): sürüm geçmişi + "Yeni sürüm yükle" — yalnız o kayıtlarda yüklenir.
+const ManualCertVersions = lazy(() => import('./manualcert/ManualCertVersions.jsx'))
 
 /** Başlık durum rozeti tonu (eski .modal-status-*). */
 const STATUS_TONE = {
@@ -76,7 +80,12 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
                                           onCheckNow, checking = false, onEdit, refreshSignal = 0, initialTab,
   // "Envanterde aç" (Envanter Bilgileri sekmesi) pencereden AYRILIR: varsayılan pencereyi kapatır. Pencereyi açan bir
   // form ise (mükerrer alan adı bandı) formu da kapatan işleyici verir — yoksa hedef kayıt formun arkasında açılırdı (Ek 3/4).
-  onLeave }) {
+  onLeave,
+  // Manuel (dosyadan yüklenen) sertifika (2026-10-06): canlı SSL sekmesi YOK (ağda adres yok), açılış sekmesi Detaylar;
+  // tanılama yok; "Çalıştır" = "Yeniden değerlendir" (sunucu ağsız değerlendirir); "Sürümler" sekmesi. Satırdan bilinmiyorsa
+  // (derin bağlantı) geçmiş satırının `cert_source`'undan ya da canlı kontrolün 409 MANUAL_CERT yanıtından anlaşılır.
+  // `manualMeta` = { version, uploadedAt } başlık rozetinin açıklaması. Ağ satırlarında hiçbiri verilmez — davranış aynı.
+  manual = false, manualMeta = null }) {
   const t = useT()
   // Escape: ModalShell (Radix katman yığını) — önizleme modunda kapalı (dismissOnEscape); eski useEscapeKey gereksiz.
   const toast = useToast()
@@ -91,6 +100,10 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
   domainRef.current = domain
   const initialTabRef = useRef(initialTab)   // açılış sekmesi (tablo satır menüsü); ref: domain effect'inin bağımlılığı olmasın
   initialTabRef.current = initialTab
+  const manualRef = useRef(manual)   // manuel kayıt açılışta Detaylar'da başlar (canlı SSL sekmesi yok)
+  manualRef.current = manual
+  // Canlı kontrolün 409 MANUAL_CERT yanıtı ya da geçmiş satırının `cert_source`'u (satır bilgisi olmadan açıldıysa)
+  const [manualDetected, setManualDetected] = useState(false)
   // Canlı SSL probe'unun tur sayacı. domainRef TEK BAŞINA yetmiyordu: uçuşan yanıt "artık
   // ekranda değilim" deyip sslLoading'i TEMİZLEMEDEN dönüyor, bayrak true kalıyordu. Modal
   // kalıcı mount'lu olduğu için o bayrak bir sonraki domain'e taşınıyor ve SSL sekmesi
@@ -207,10 +220,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     setRefreshing(false)
     lastCheckedRef.current = null   // yeni domain = yeni damga çizgisi; ilk yükleme "yeni kontrol" sayılmaz
     setNoc(null)   // önceki alanın 7/24 durumu yeni alanın başlığında görünmesin (kapanış dâhil)
+    setManualDetected(false)
     if (!domain) return
     setCertData(null)
     setSslData(null)
-    setActiveTab(initialTabRef.current || 'ssl')   // satır menüsünden doğrudan sekmeye (alarm/kontrol geçmişi)
+    setActiveTab(initialTabRef.current || (manualRef.current ? 'details' : 'ssl'))   // satır menüsünden doğrudan sekmeye (alarm/kontrol geçmişi)
 
     if (initialData) {
       setCertData(initialData)
@@ -244,16 +258,24 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
     const mySeq = ++sslSeq.current
     api.checkDomainPreview(reqDomain).then((res) => {
       if (mySeq !== sslSeq.current) return          // daha yeni bir tur var → bu yanıtı AT
+      // Manuel kayıt (dosyadan yüklenen): ağda adres yok → sunucu 409 MANUAL_CERT; pencere manuel kipe geçer, hata çizilmez.
+      if (res?.code === 'MANUAL_CERT') { setManualDetected(true); setSslLoading(false); return }
       if (res?.data) setSslData(res.data)
       else setSslError(res?.error || res?.message || '')
       setSslLoading(false)
     }).catch((e) => { if (mySeq === sslSeq.current) { setSslError(e?.message || ''); setSslLoading(false) } })
   }, [])
 
+  const isManual = !!manual || manualDetected || isManualCert(certData)
   useEffect(() => {
-    if (!domain || activeTab !== 'ssl' || sslData || sslLoading || sslError != null) return
+    if (!domain || isManual || activeTab !== 'ssl' || sslData || sslLoading || sslError != null) return
     probeSsl(domain)
-  }, [domain, activeTab, sslData, sslLoading, sslError, probeSsl])
+  }, [domain, isManual, activeTab, sslData, sslLoading, sslError, probeSsl])
+  // Manuel kayıtta SSL sekmesi yok — oradaysa (derin bağlantı / sonradan anlaşıldı) Detaylar'a geçilir.
+  // İşlevsel güncelleme: aynı turda domain etkisinin kurduğu açılış sekmesini (ör. `initialTab="versions"`) ezmesin.
+  useEffect(() => {
+    if (isManual && activeTab === 'ssl') setActiveTab((cur) => (cur === 'ssl' ? 'details' : cur))
+  }, [isManual, activeTab])
 
   // Sekme değişince kaydırılan gövde başa sarılır: pencere boyu SABİT (sekme içeriğine göre değişmez), önceki
   // sekmede aşağı kaydırılmış konum yeni sekmenin ortasından başlatıyordu.
@@ -296,9 +318,11 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
   // Sekme tanımları — TEK kaynak: sm+ sekme çubuğu ve telefon seçicisi aynı listeden çizilir (sıra = eski sıra).
   const tabDefs = [
-    { value: 'ssl', label: t('ssl.tab'), Icon: ShieldCheck },
+    !isManual && { value: 'ssl', label: t('ssl.tab'), Icon: ShieldCheck },
     !previewMode && { value: 'health', label: t('hlth.tab'), Icon: HeartPulse },
     { value: 'details', label: t('modal.detailsTab'), Icon: FileText, count: Array.isArray(d?.san) && d.san.length > 0 ? d.san.length : null },
+    // Manuel kayıt: sürüm geçmişi (güncel + önceki sürümler, PEM indir, yeni sürüm yükle)
+    isManual && !previewMode && { value: 'versions', label: t('mcert.versionsTab'), Icon: Layers },
     !previewMode && { value: 'history', label: t('hist.tab'), Icon: History },
     !previewMode && !readOnly && { value: 'alerts', label: t('modal.alertsTab'), Icon: Bell, count: tabCounts.alerts },
     !previewMode && { value: 'chart', label: t('modal.chartTab'), Icon: LineChart },
@@ -325,8 +349,8 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
       {/* "Kontrol ediliyor… N sn" şeridi — kartlardakiyle AYNI bileşen. */}
       {!previewMode && <CheckRunningStrip running={!!checking} />}
       {!previewMode && !readOnly && onCheckNow && (
-        <Button title={t('inv.runTitle', domain)} type="button" variant="outline" size="icon-sm" className={act('check')} onClick={handleCheckNow}
-            disabled={checking} aria-label={checking ? t('mon.checkRunning') : t('inv.run')}
+        <Button title={isManual ? t('mcert.reevaluateTitle', domain) : t('inv.runTitle', domain)} type="button" variant="outline" size="icon-sm" className={act('check')} onClick={handleCheckNow}
+            disabled={checking} aria-label={checking ? t('mon.checkRunning') : isManual ? t('mcert.reevaluate') : t('inv.run')}
             aria-busy={checking || undefined}>
             {checking ? <Spinner size={12} inline decorative /> : <Play size={14} aria-hidden="true" />}
           </Button>
@@ -342,7 +366,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
             {refreshing ? <Spinner size={12} inline decorative /> : <RefreshCw size={14} aria-hidden="true" />}
           </Button>
       )}
-      {canDiagnose && (
+      {canDiagnose && !isManual && (
         <Button title={t('inv.diagnose')} type="button" variant="outline" size="icon-sm" className={act('edit')} data-slot="cert-diagnose" onClick={() => setShowDiag(true)} aria-label={t('inv.diagnose')}>
             <Stethoscope size={14} aria-hidden="true" />
           </Button>
@@ -402,6 +426,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
               {t('cert.sec.insecure')}
             </Badge>
           )}
+          {isManual && <ManualCertBadge version={manualMeta?.version ?? null} uploadedAt={manualMeta?.uploadedAt ?? null} rowLabel={domain} />}
         </span>
         {readOnly && <ReadOnlyBadge className="w-full text-sm font-normal sm:w-auto" teamId={readOnlyTeam?.id} teamName={readOnlyTeam?.name} />}
       </span>}
@@ -458,7 +483,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
 
         {/* SSL Kontrol (2026-09-28 shadcn yeniden tasarım): hüküm + gruplu kontroller + zincir — SslCheckerPanel.
             "Yeniden kontrol et" eski sonucu ekranda tutar; ilk kontrol başarısızsa "Yeniden dene"li hata bloğu. */}
-        <TabsContent value="ssl">
+        {!isManual && <TabsContent value="ssl">
           {sslData ? (
             <SslCheckerPanel data={sslData} onRecheck={() => probeSsl(domain)} rechecking={sslLoading} recheckError={sslError} />
           ) : sslError != null ? (
@@ -471,7 +496,17 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
           ) : (
             <LoadingBlock label={t('sslv.loading')} fullWidth />
           )}
-        </TabsContent>
+        </TabsContent>}
+
+        {isManual && !previewMode && (
+          <TabsContent value="versions">
+            {/* Manuel kayıt (2026-10-06): sürümler — yeni sürüm yüklenince pencere verisi de tazelenir */}
+            <Suspense fallback={<LoadingBlock label={t('modal.loading')} fullWidth />}>
+              {/* key YALNIZ alan adı: tazeleme sayacıyla yeniden bağlansaydı açık yükleme sihirbazı (sonuç adımı) kapanırdı */}
+              <ManualCertVersions key={domain} domain={domain} readOnly={readOnly} onRenewed={() => refreshCert(false)} />
+            </Suspense>
+          </TabsContent>
+        )}
 
         {/* Sertifika Detayları (2026-09-28 shadcn + mobil web yeniden tasarım) — certmodal/CertDetailsPanel: hata bandı
             tepede, özet (durum + kalan gün + geçerlilik zaman çizelgesi), hızlı bakış karoları, Kimlik · Geçerlilik ·
@@ -491,7 +526,7 @@ export default function CertificateModal({ domain, alertLevel, onClose, initialD
                 pencerede / Çalıştır işleyicisi verilmeyen açılışta (mükerrer alan adı bandı) var olmayan düğmeye yönlendirmesin
                 (Ek 3/3). Düğmenin koşuluyla AYNI: !previewMode && !readOnly && onCheckNow (geçmiş sekmesi önizlemede yok). */}
             <CertCheckHistory domain={domain} reloadSignal={reloadKey} runInHeader={!readOnly && !!onCheckNow}
-              onDiagnose={canDiagnose ? () => setShowDiag(true) : undefined} />
+              onDiagnose={canDiagnose && !isManual ? () => setShowDiag(true) : undefined} />
           </TabsContent>
         )}
 

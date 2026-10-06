@@ -128,7 +128,7 @@ class StormServiceTest {
     }
 
     private void stubTotalMonitors(long inv, long http, long keyword, long ping, long domain, long port, long dns) {
-        when(inventoryRepo.countByActiveTrue()).thenReturn(inv);
+        when(inventoryRepo.countNetworkActive()).thenReturn(inv);
         when(httpRepo.countByActiveTrue()).thenReturn(http);
         when(keywordRepo.countByActiveTrue()).thenReturn(keyword);
         when(pingRepo.countByActiveTrue()).thenReturn(ping);
@@ -370,7 +370,7 @@ class StormServiceTest {
     void denominatorFailureFallsBackSafely() {
         when(appSettings.getString(eq(StormService.KEY_UNIT), anyString())).thenReturn("PERCENT");
         when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(50);
-        when(inventoryRepo.countByActiveTrue()).thenThrow(new RuntimeException("db yok"));
+        when(inventoryRepo.countNetworkActive()).thenThrow(new RuntimeException("db yok"));
 
         assertThat(storm.totalActiveMonitors()).isZero();
         assertThat(storm.computeThreshold()).isEqualTo(StormService.PERCENT_MIN_TARGETS);   // taban: az hedefte fırtına ilan edilmez
@@ -387,7 +387,7 @@ class StormServiceTest {
         assertThat(storm.totalActiveMonitors()).isEqualTo(7L);
         assertThat(storm.totalActiveMonitors()).isEqualTo(7L);
 
-        verify(inventoryRepo, org.mockito.Mockito.times(1)).countByActiveTrue();
+        verify(inventoryRepo, org.mockito.Mockito.times(1)).countNetworkActive();
         verify(scriptedRepo, org.mockito.Mockito.times(1)).countByActiveTrue();
     }
 
@@ -869,7 +869,7 @@ class StormServiceTest {
         when(appSettings.getInt(eq(StormService.KEY_VALUE), anyInt())).thenReturn(50);
         stubTotalMonitors(60, 10, 10, 10, 0, 5, 5);   // kuruluş: 100 izleme (ağırlık başka takımlarda)
         // Takım 7: on kaynağın HER BİRİNDE 1 izleme → 10. Bir kaynak unutulursa 9 çıkar ve kapı ADIYLA kırılır.
-        when(inventoryRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
+        when(inventoryRepo.countNetworkActiveByTeam(7L)).thenReturn(1L);
         when(httpRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
         when(keywordRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);
         when(pingRepo.countByTeamIdAndActiveTrue(7L)).thenReturn(1L);

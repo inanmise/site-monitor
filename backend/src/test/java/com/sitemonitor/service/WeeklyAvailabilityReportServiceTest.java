@@ -1172,4 +1172,20 @@ class WeeklyAvailabilityReportServiceTest {
         assertThat(cap.getValue().alarms().total()).isEqualTo(3);
         verify(outageReportService, times(1)).collect(any(), any(), any());
     }
+
+    @Test
+    @DisplayName("manuel sertifika (2026-10-06): ağ hedefi yok — erişilebilirlik raporuna satır olarak girmez")
+    void preview_excludesManualCertificateRows() {
+        Team t = team(5L, "Takim A", "takim@example.com");
+        when(teamRepo.findById(5L)).thenReturn(Optional.of(t));
+        CertificateInventory manual = inv("api-takip");
+        manual.setCertSource(CertificateInventory.SOURCE_MANUAL);
+        when(inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(5L))
+                .thenReturn(List.of(inv("a.com"), manual));
+        stubAllUp(120L);
+        when(contactRepo.findByTeamIdAndRoleAndActiveTrue(eq(5L), anyString())).thenReturn(List.of());
+
+        assertThat(service.preview(5L).domainCount()).isEqualTo(1);
+        verifyNoMailSent();
+    }
 }

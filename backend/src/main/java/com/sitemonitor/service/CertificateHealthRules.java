@@ -232,8 +232,21 @@ public final class CertificateHealthRules {
      * @return boş liste = bilinen bir güvenlik kusuru yok (kanıt yokluğu dahil)
      */
     public static List<String> securityFlags(String domain, java.util.List<String> san, String trustStatus) {
+        return securityFlags(domain, san, trustStatus, false);
+    }
+
+    /** {@code latest_checks.via} değeri: elle yüklenen sertifikanın çevrim-dışı değerlendirmesi (2026-10-06). */
+    public static final String VIA_UPLOAD = "upload";
+
+    /**
+     * @param manualSource elle yüklenen sertifika mı (2026-10-06). Envanter anahtarı bir HOST ADI değil, kullanıcının
+     *                     seçtiği takip adıdır — ad kapsaması ({@code HOSTNAME_MISMATCH}) anlamsızdır ve SORULMAZ.
+     *                     Güven bayrağı aynı kuralla kalır. Ağ kaydında {@code false}: sonuç birebir aynı.
+     */
+    public static List<String> securityFlags(String domain, java.util.List<String> san, String trustStatus,
+                                             boolean manualSource) {
         List<String> flags = new ArrayList<>(2);
-        if (sanCoverage(domain, san) == Status.FAIL) flags.add(FLAG_HOSTNAME_MISMATCH);
+        if (!manualSource && sanCoverage(domain, san) == Status.FAIL) flags.add(FLAG_HOSTNAME_MISMATCH);
         if (fromStatusLabel(trustStatus, "TRUSTED", "UNTRUSTED") == Status.FAIL) flags.add(FLAG_UNTRUSTED_CA);
         return flags;
     }

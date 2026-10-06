@@ -9,6 +9,8 @@ import ReadOnlyBadge from '../ui/ReadOnlyBadge.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { ActiveBadge, CertCell, ContactsCell, DeletedBadge, ExpiryCell, GroupChip, StatusDot, TagChip, TierBadge, platformLabel, rowMenuItems, tagList } from './InventoryTable.jsx'
+import ManualCertBadge from '../manualcert/ManualCertBadge.jsx'
+import { isManualCert } from '../manualcert/manualCertModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Card } from '@/components/shadcn/card'
@@ -77,6 +79,7 @@ export default function InventoryCardList({
                       {r.domain}
                     </Button>
                     {port !== 443 && <Badge variant="outline" className="px-1.5 font-mono text-[.72em] text-muted-foreground">:{port}</Badge>}
+                    {isManualCert(r) && <ManualCertBadge version={r.manual_version ?? null} uploadedAt={r.manual_uploaded_at ?? null} rowLabel={r.domain} />}
                     <TierBadge tier={r.tier} />
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">

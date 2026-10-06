@@ -538,8 +538,10 @@ public class SchedulerService {
 
     private boolean inventoryLive(String domain) {
         if (domain == null) return true;
+        // Elle yüklenen sertifika kaydı (2026-10-06) ağ izlemesi (erişilebilirlik, envanter türevi port/DNS) için "canlı
+        // hedef" değildir — teyit zinciri onun adına koşmaz.
         return inventoryRepo.findByDomain(domain)
-                .map(i -> Boolean.TRUE.equals(i.getActive()) && i.getDeletedAt() == null)
+                .map(i -> Boolean.TRUE.equals(i.getActive()) && i.getDeletedAt() == null && !i.isManual())
                 .orElse(false);
     }
 
@@ -662,6 +664,14 @@ public class SchedulerService {
         // Platform (2026-09-22): IIS/OpenShift/Kubernetes/Linux/… + serbest ayrıntı; ddl-auto da ekler, açık patch proje geleneği
         patch("ALTER TABLE certificate_inventory ADD COLUMN platform VARCHAR(20)");
         patch("ALTER TABLE certificate_inventory ADD COLUMN platform_detail VARCHAR(160)");
+        // Elle yüklenen sertifika takibi (2026-10-06): kaynak kolonu (NULL = ağ kaydı, bugünkü davranış; 'MANUAL' = dosyadan)
+        // + sürüm tablosunun indeksleri. Tablo ddl-auto ile kurulur; indeksler açık ve idempotent. Kayıt başına TEK geçerli
+        // sürüm kısmi tekil indeksle korunur (yenileme eski satırı önce düşürür, sonra yenisini ekler).
+        patch("ALTER TABLE certificate_inventory ADD COLUMN cert_source VARCHAR(16)");
+        patch("CREATE INDEX IF NOT EXISTS idx_mcv_inventory_current ON manual_certificate_versions(inventory_id, is_current)");
+        patch("CREATE INDEX IF NOT EXISTS idx_mcv_fingerprint ON manual_certificate_versions(fingerprint)");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcv_inventory_version ON manual_certificate_versions(inventory_id, version)");
+        patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcv_one_current ON manual_certificate_versions(inventory_id) WHERE is_current = true");
         patch("ALTER TABLE latest_checks ADD COLUMN via TEXT");
         patch("ALTER TABLE latest_checks ADD COLUMN tls_mode_used TEXT");
 
@@ -1910,9 +1920,11 @@ public class SchedulerService {
         List<Map<String, Object>> due = dueForScheduledSweep(loadDomainsFromInventory());
         if (due.isEmpty()) {
             log.warn("Hourly check: no domain due (inventory empty or all on longer intervals) — skipping");
-            return;
+        } else {
+            runCheckForDomains(due, true);
         }
-        runCheckForDomains(due, true);
+        // Elle yüklenen sertifikalar (2026-10-06): ağ turundan SONRA, ayrı adım + ayrı kilit (çevrim-dışı).
+        runManualCertificateStep(true, null);
     }
 
     /** Stale sweep: checks domains not checked within stale-minutes (configurable). */
@@ -1935,10 +1947,12 @@ public class SchedulerService {
 
         if (staleDomains.isEmpty()) {
             log.debug("Stale sweep: all active domains are fresh");
-            return;
+        } else {
+            log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), staleMin);
+            runCheckForDomains(staleDomains, false);   // stale alt-küme → evict etme, 300 sn TTL tazelesin
         }
-        log.info("Stale sweep: {} domain(s) not checked in {} min", staleDomains.size(), staleMin);
-        runCheckForDomains(staleDomains, false);   // stale alt-küme → evict etme, 300 sn TTL tazelesin
+        // Elle yüklenen sertifikalardan bayat olanlar (2026-10-06) — aynı tazelik + sıklık süzgeci, ayrı adım.
+        runManualCertificateStep(true, freshDomains);
     }
 
     /**
@@ -2346,9 +2360,61 @@ public class SchedulerService {
         List<Map<String, Object>> domains = loadDomainsFromInventory();
         if (domains.isEmpty()) {
             log.warn("No active domains in inventory — skipping check");
-            return;
+        } else {
+            runCheckForDomains(domains, true);   // tam sweep → cache evict
         }
-        runCheckForDomains(domains, true);   // tam sweep → cache evict
+        // Elle yüklenen sertifikalar (2026-10-06): tam tur — sıklık süzgeci yok (runCheck ile aynı kural).
+        runManualCertificateStep(false, null);
+    }
+
+    /** Manuel sertifika adımının dağıtık kilidi — yalnız bir pod değerlendirir (ağ turunun "cert-check" kilidinden ayrı). */
+    static final String MANUAL_CERT_LOCK = "manual-cert-sweep";
+
+    /** Elle yüklenen sertifikaların çevrim-dışı değerlendirmesi (2026-10-06) — isteğe bağlı (test bağlamında yok). */
+    @Autowired(required = false)
+    private com.sitemonitor.service.manualcert.ManualCertificateEvaluationService manualCertEvaluation;
+
+    /**
+     * Elle yüklenen sertifikaların zamanlanmış değerlendirme adımı. Ağ turundan BAĞIMSIZDIR: kendi kilidi
+     * ({@value #MANUAL_CERT_LOCK}), ağ kesintisi bastırması yok, ağ turunun metriklerine girmez. Manuel kayıt yoksa
+     * kilit bile alınmaz (yalnız tek bir okuma).
+     *
+     * @param dueOnly     alan başına sıklık süzgeci uygulanır mı ({@link #dueForScheduledSweep} ile aynı eşik)
+     * @param freshDomains bayat süpürmesi: bu kümede olan (taze) kayıtlar atlanır; null = süzgeç yok
+     */
+    void runManualCertificateStep(boolean dueOnly, Set<String> freshDomains) {
+        if (manualCertEvaluation == null) return;
+        try {
+            List<CertificateInventory> rows = manualCertEvaluation.activeManualRows();
+            if (rows.isEmpty()) return;
+            if (freshDomains != null) rows = rows.stream().filter(r -> !freshDomains.contains(r.getDomain())).toList();
+            if (dueOnly && !rows.isEmpty()) {
+                List<Map<String, Object>> asMaps = new ArrayList<>(rows.size());
+                Map<String, CertificateInventory> byDomain = new HashMap<>();
+                for (CertificateInventory r : rows) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("domain", r.getDomain());
+                    if (r.getCheckIntervalHours() != null) m.put("check_interval_hours", r.getCheckIntervalHours());
+                    asMaps.add(m);
+                    byDomain.put(r.getDomain(), r);
+                }
+                rows = dueForScheduledSweep(asMaps).stream().map(m -> byDomain.get((String) m.get("domain")))
+                        .filter(java.util.Objects::nonNull).toList();
+            }
+            if (rows.isEmpty()) return;
+            if (!tryAcquireSchedulerLock(MANUAL_CERT_LOCK, lockTtlMinutes)) {
+                log.debug("Manuel sertifika adımı — kilit başka instance'da, atlanıyor");
+                return;
+            }
+            try {
+                String runId = "upload-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+                manualCertEvaluation.evaluateScheduled(rows, runId);
+            } finally {
+                releaseSchedulerLock(MANUAL_CERT_LOCK);
+            }
+        } catch (Exception e) {
+            log.warn("Manuel sertifika değerlendirme adımı başarısız: {}", e.toString());
+        }
     }
 
     /**
@@ -2814,6 +2880,9 @@ public class SchedulerService {
         List<CertificateInventory> items = inventoryRepo.findByActiveTrueOrderByDomainAsc();
         List<Map<String, Object>> result = new ArrayList<>();
         for (CertificateInventory item : items) {
+            // Elle yüklenen sertifika (2026-10-06) ağ süpürmesine GİRMEZ: kendi çevrim-dışı adımı var
+            // (runManualCertificateStep). Ağ turu, kesinti aritmetiği ve metrikleri manuel kayıt yokken bugünküyle aynı.
+            if (item.isManual()) continue;
             // Map.of null DEĞER KABUL ETMEZ; zaman aşımı çoğu kayıtta boştur (global ayar
             // kullanılır) — o yüzden değiştirilebilir harita ve yalnız DOLU ise konur.
             Map<String, Object> row = new LinkedHashMap<>();
@@ -3055,6 +3124,7 @@ public class SchedulerService {
         // Faz 1: ağ kontrolleri certCheckExecutor'da paralel başlar (F1); Faz 2: sonuçlar sıralı işlenir.
         List<Map.Entry<CertificateInventory, java.util.function.Supplier<Map<String, Object>>>> started = new ArrayList<>();
         for (CertificateInventory inv : active) {
+            if (inv.isManual()) continue;   // elle yüklenen sertifika (2026-10-06): ağ hedefi yok → erişilebilirlik yoklanmaz
             int port = inv.getPort() != null ? inv.getPort() : 443;
             started.add(Map.entry(inv, startNetworkCheck(() -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv)))));
         }
@@ -3153,7 +3223,9 @@ public class SchedulerService {
         }
         if (monitors.isEmpty()) return;
         // Skip monitors whose host is no longer in active inventory (soft-deleted / inactive)
+        // Elle yüklenen sertifika kaydı (2026-10-06) bir ağ hedefi değildir → envanter türevi port izlemesine kapı açmaz.
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual())
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         int checked = 0, skipped = 0;
         // Envanteri pasifleşen monitör hiç kontrol edilmiyor → recovery de gelmiyor. Açık alarmı sessizce
@@ -6008,7 +6080,9 @@ public class SchedulerService {
         List<DnsMonitor> monitors = dnsMonitorRepo.findByActiveTrue();
         if (monitors.isEmpty()) return;
         // Skip monitors whose domain is no longer in active inventory (soft-deleted / inactive)
+        // Elle yüklenen sertifika kaydı (2026-10-06) bir ağ hedefi değildir → envanter türevi DNS izlemesine kapı açmaz.
         Set<String> activeDomains = inventoryRepo.findByActiveTrueOrderByDomainAsc().stream()
+                .filter(inv -> !inv.isManual())
                 .map(CertificateInventory::getDomain).collect(Collectors.toSet());
         String now = ISO.format(Instant.now());
         int checked = 0, skipped = 0;

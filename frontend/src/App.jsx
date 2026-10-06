@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { useVisibleInterval } from './hooks/useVisibleInterval'
-import { BarChart3, AlertOctagon, Inbox, CalendarDays, Plus, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
+import { BarChart3, AlertOctagon, Inbox, CalendarDays, Loader2, LayoutDashboard, RefreshCw, PlayCircle } from 'lucide-react'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { SidebarProvider, SidebarInset } from '@/components/shadcn/sidebar'
 
@@ -130,6 +130,11 @@ const HelpPage = lazy(() => import('./components/HelpPage'))
 const ExpiryForecastPage = lazy(() => import('./pages/ExpiryForecastPage'))
 const WarningsPage = lazy(() => import('./pages/WarningsPage'))   // Dikkat Gerektiren Sertifikalar (2026-09-27)
 const NocPage = lazy(() => import('./pages/NocPage'))   // 7/24 Konsolu + Kapsamı (2026-09-27; konsol 2026-10-04)
+// Manuel (dosyadan yüklenen) sertifikalar (2026-10-06): ayrı sayfa + yükleme sihirbazı; Pano/Envanter "Domain Ekle"nin
+// ikinci seçeneği "Dosyadan sertifika ekle" buraya `mc_upload=1` ile gelir.
+const ManualCertsPage = lazy(() => import('./components/manualcert/ManualCertsPage'))
+import AddCertSplitButton from './components/manualcert/AddCertSplitButton.jsx'
+import { isManualCert } from './components/manualcert/manualCertModel.js'
 // Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
 const InventoryFormModalForDomain = lazy(() =>
   import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
@@ -174,7 +179,7 @@ export const TAB_PARAMS_EVENT = 'sm:tab-params'
 export const NAVIGATE_EVENT = 'sm:navigate'
 
 const VALID_TABS = new Set([
-  'dashboard', 'all', 'domains', 'forecast', 'renewal', 'renewal-guide',
+  'dashboard', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
   'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'weeklyreports', 'incident-history',
   'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
@@ -1054,7 +1059,8 @@ export default function App() {
       checking: checkingDomain === cert.domain || refreshing,
       // 2026-09-18: USER kendi TAKIMININ kaydını düzenler/kopyalar (uç üyelik doğrular); silme yönetici işi.
       onEdit:      canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'edit' }) : undefined,
-      onDuplicate: canEditCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
+      // Manuel (dosyadan yüklenen) kayıt kopyalanmaz: kopya bir ağ adresi değil, sertifikası da yüklenmemiş bir kayıt olurdu.
+      onDuplicate: canEditCert(cert) && !isManualCert(cert) ? () => setInvForm({ domain: cert.domain, mode: 'duplicate' }) : undefined,
       // Kapı Düzenle/Kopyala ile AYNI: rol tabanlı. usePermissions BURADA çalışmaz —
       // PermissionsProvider App'in KENDİ içinde render ediliyor, App gövdesi context'in
       // ÜSTÜNDE kalır ve canEdit daima false döner (düğme hiç çizilmezdi). Yetkinin asıl
@@ -1498,10 +1504,11 @@ export default function App() {
                       : <><PlayCircle aria-hidden="true" />{t('app.checkNow')}</>}
                   </Button>
                   {canAddInventory && (
-                    <Button type="button" data-slot="dash-add-domain"
-                      onClick={() => { setPendingAddDomain(true); handleTabChange('domains') }}>
-                      <Plus aria-hidden="true" /> {t('inv.addBtn')}
-                    </Button>
+                    // Bölünmüş düğme (2026-10-06): ana düğme bugünkü "Domain Ekle" (envanter formu); ok menüsünde AYRI seçenek
+                    // "Dosyadan sertifika ekle" → Manuel Sertifikalar sayfası, yükleme sihirbazı açık.
+                    <AddCertSplitButton slot="dash-add-domain"
+                      onAddDomain={() => { setPendingAddDomain(true); handleTabChange('domains') }}
+                      onAddFromFile={() => handleTabChange('manualcerts', { mc_upload: '1' })} />
                   )}
                 </>
               )} />
@@ -1765,6 +1772,21 @@ export default function App() {
               </div>
             )}
 
+            {tab === 'manualcerts' && (
+              <div className="tab-content active">
+                {/* "Aç" pencereyi Pano'daki satırla açar (eylemler aynı); listede yoksa (yeni / başka takım) alan adıyla — salt okunur
+                    satır salt okunur pencerede. */}
+                <ManualCertsPage systemRole={systemRole} myTeams={myTeams} globalAdmin={globalAdmin} onInventoryChange={loadData}
+                  onOpenCert={(row) => {
+                    const c = certsRef.current.find((x) => x.domain === row.domain)
+                    const meta = { cert_source: 'MANUAL', manual_version: c?.manual_version ?? row.current_version?.version ?? null,
+                      manual_uploaded_at: c?.manual_uploaded_at ?? row.current_version?.uploaded_at ?? null }
+                    if (row.can_manage === false) setModalCert({ ...(c || {}), ...row, ...meta, _readOnly: true })
+                    else setModalCert(c ? { ...c, ...meta } : { domain: row.domain, team_id: row.team_id ?? null, ...meta })
+                  }} />
+              </div>
+            )}
+
             {tab === 'admin' && (
               <div className="tab-content active">
                 <PageHeader icon={TAB_META.admin.Icon} title={t('app.adminTitle')} description={t('app.adminDesc')} />
@@ -1904,6 +1926,7 @@ export default function App() {
       {/* Lazy (öneri 22) ama HER ZAMAN bağlı: kapalıyken null çizer; kendi sınırı — sekme sınırına bağlanmaz. */}
       <Suspense fallback={null}>
       <CertificateModal domain={modalCert?.domain} alertLevel={modalCert?.alert_level} initialData={modalCert?._preview ? modalCert : undefined} previewMode={!!modalCert?._preview} currentUser={user} currentUserRole={systemRole} onClose={() => setModalCert(null)} initialTab={modalCert?._tab}
+        manual={isManualCert(modalCert)} manualMeta={isManualCert(modalCert) ? { version: modalCert.manual_version ?? null, uploadedAt: modalCert.manual_uploaded_at ?? null } : null}
         refreshSignal={certModalRefresh}
         readOnly={!!modalCert?._readOnly}
         readOnlyTeam={modalCert?._readOnly ? { id: modalCert.team_id, name: modalCert.team_name } : null}

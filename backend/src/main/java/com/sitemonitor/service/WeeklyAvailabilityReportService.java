@@ -170,7 +170,7 @@ public class WeeklyAvailabilityReportService {
             if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) { skipDisabled++; continue; }
 
             List<CertificateInventory> domains =
-                    inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(team.getId());
+                    uptimeInventory(team.getId());
             if (domains.isEmpty()) { skipNoDomains++; continue; }
 
             if (!force) {
@@ -280,11 +280,22 @@ public class WeeklyAvailabilityReportService {
         return weeklyUptime(teamId, w, null);
     }
 
+    /**
+     * Takımın erişilebilirlik raporuna giren envanter satırları (aktif + silinmemiş). Elle yüklenen sertifika kayıtları
+     * (2026-10-06) HARİÇ: ağ hedefi yok, erişilebilirlik yoklanmaz — rapora "veri yok" satırı olarak girmesinler.
+     * Manuel kayıt yoksa liste bugünküyle aynı.
+     */
+    private List<CertificateInventory> uptimeInventory(Long teamId) {
+        List<CertificateInventory> all = inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+        if (all == null || all.stream().noneMatch(CertificateInventory::isManual)) return all;
+        return all.stream().filter(inv -> !inv.isManual()).toList();
+    }
+
     /** {@code tierOnly} verilirse yalnız o tier'daki (CertificateInventory.tier) domainler dahil — sağlık skoru
      *  tier-1 uptime'ı için. null → tüm aktif domainler. computeRow/summarize çekirdeği aynen kullanılır. */
     public AvailabilitySummary weeklyUptime(Long teamId, Window w, Integer tierOnly) {
         List<CertificateInventory> domains =
-                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+                uptimeInventory(teamId);
         Map<String, Integer> certDays = certDaysByDomain(domains);
         List<CertificateInventory> scope = tierOnly == null ? domains
                 : domains.stream().filter(inv -> tierOnly.equals(inv.getTier())).toList();
@@ -747,7 +758,7 @@ public class WeeklyAvailabilityReportService {
         int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
         Window w = windowForOffset(offset);
         List<CertificateInventory> domains =
-                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+                uptimeInventory(teamId);
         TeamReport report = buildTeamReport(team, w, domains);
         return new PreviewResult(report.html(), team.getName(), w.weekLabel(),
                 List.of(report.to()), List.of(report.cc()), domains.size(), report.to().length == 0);
@@ -759,7 +770,7 @@ public class WeeklyAvailabilityReportService {
                 .orElseThrow(() -> new IllegalArgumentException("Takım bulunamadı: " + teamId));
         Window w = lastFullWeekWindow();
         List<CertificateInventory> domains =
-                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+                uptimeInventory(teamId);
         TeamReport report = buildTeamReport(team, w, domains);
         String subject = "[Site Monitor][TEST] " + team.getName() + " — Haftalık Erişilebilirlik (" + w.weekLabel() + ")";
         String[] to = { email };
@@ -789,7 +800,7 @@ public class WeeklyAvailabilityReportService {
         int offset = weekOffset != null ? Math.max(0, Math.min(weekOffset, 8)) : 1;
         Window w = windowForOffset(offset);
         List<CertificateInventory> domains =
-                inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(teamId);
+                uptimeInventory(teamId);
         TeamReport report = buildTeamReport(team, w, domains);
         // buildTeamReport veriyi ZATEN topladı (gövdedeki ek bandı için) — yeniden toplamak
         // bütün alarm sorgularını ikinci kez koşturmak olurdu.
@@ -812,7 +823,7 @@ public class WeeklyAvailabilityReportService {
             // Kart "gerçek mail kitlesi"ni gösterir: takım anahtarı kapalıysa o takıma mail gitmiyor.
             if (!Boolean.TRUE.equals(team.getWeeklyAvailabilityEnabled())) continue;
             List<CertificateInventory> domains =
-                    inventoryRepo.findByTeamIdAndActiveTrueAndDeletedAtIsNullOrderByDomainAsc(team.getId());
+                    uptimeInventory(team.getId());
             if (domains.isEmpty()) continue; // gerçek mail kitlesi
             String[] to = resolveTo(team);
             String[] cc = resolveCc(team.getId(), to);

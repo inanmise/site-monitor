@@ -1,5 +1,5 @@
 import {
-  BellOff, Building2, CalendarCheck, CalendarClock, CalendarPlus, Copy, Globe, Info, KeyRound, Layers, Link2, Link2Off,
+  BellOff, Building2, CalendarCheck, CalendarClock, CalendarPlus, Copy, FileUp, Globe, Info, KeyRound, Layers, Link2, Link2Off,
   MailWarning, Network, Pencil, RefreshCw, Server, ShieldAlert, ShieldCheck, ShieldX, Trash2, WifiOff,
 } from 'lucide-react'
 import { formatDateSec } from '../../api/client'
@@ -240,10 +240,15 @@ export function CertIssuerLine({ cert, tone, isWeak }) {
   )
 }
 
-/** Takım · platform · kontrol yolu (Doğrudan/Proxy). Platform ayrıntısı yalnız zengin görünümde metin olarak. */
+/**
+ * Takım · platform · kontrol yolu (Doğrudan/Proxy; manuel kayıtta "Yüklenen dosya", 2026-10-06). Platform ayrıntısı yalnız
+ * zengin görünümde metin olarak.
+ */
 export function CertMeta({ cert, rich }) {
   const t = useT()
-  const viaLabel = cert.via === 'proxy' ? t('card.viaProxy') : t('card.viaDirect')
+  const upload = cert.via === 'upload'
+  const viaLabel = upload ? t('card.viaUpload') : cert.via === 'proxy' ? t('card.viaProxy') : t('card.viaDirect')
+  const ViaIcon = upload ? FileUp : cert.via === 'proxy' ? Network : Globe
   if (!cert.team_name && !cert.platform && !cert.via) return null
   return (
     <div data-slot="cert-meta" className="mb-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
@@ -266,9 +271,10 @@ export function CertMeta({ cert, rich }) {
         </Badge>
       )}
       {cert.via && (
-        <span data-slot="cert-via" title={t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}
+        <span data-slot="cert-via" data-via={upload ? 'upload' : undefined}
+          title={upload ? t('card.viaUploadTooltip') : t('card.viaTooltip', viaLabel, cert.tls_mode_used || '—')}
           className={cn(CARD_LAYER, 'inline-flex items-center gap-1 whitespace-nowrap')}>
-          {cert.via === 'proxy' ? <Network aria-hidden="true" className="size-3 shrink-0" /> : <Globe aria-hidden="true" className="size-3 shrink-0" />}
+          <ViaIcon aria-hidden="true" className="size-3 shrink-0" />
           {viaLabel}
         </span>
       )}
@@ -418,7 +424,9 @@ export function CertActions({ cert, plan, onCheckNow, onEdit, onDuplicate, onDel
         <span data-slot="cert-card-actions" className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
           <CheckRunningStrip running={!!checking} />
           {onCheckNow && (
-            <CheckNowButton running={!!checking} onClick={onCheckNow} title={t('app.checkNow')} rowLabel={cert.domain} className={TOUCH} />
+            // Manuel (dosyadan yüklenen) kayıt ağsız değerlendirilir → "Yeniden değerlendir" (2026-10-06); ağ kartı aynı.
+            <CheckNowButton running={!!checking} onClick={onCheckNow} title={cert.cert_source === 'MANUAL' ? t('mcert.reevaluate') : t('app.checkNow')}
+              rowLabel={cert.domain} className={TOUCH} />
           )}
           {onEdit && (
             <SimpleTooltip content={t('inv.edit')}>

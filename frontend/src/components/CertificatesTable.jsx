@@ -25,6 +25,8 @@ import { TABLE_COLUMNS, COLUMN_BY_KEY, STATUS_OPTIONS, EMPTY_FILTERS, LEVEL_TEXT
   readView, writeView, readPresets, writePresets, savePreset, readCols, writeCols, normalizeCols, csvColumnsFor,
   filtersFromUrl, toQuery, toUrlMapping, levelOf, trustOf, lifetimePct, isStale, relTime, shortFp } from './certtable/certTableModel.js'
 import { Button } from '@/components/shadcn/button'
+import ManualCertBadge from './manualcert/ManualCertBadge.jsx'
+import { isManualCert } from './manualcert/manualCertModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
@@ -409,6 +411,7 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
       case 'domain': return td((
         <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5 max-sm:justify-end">
           <strong className="max-sm:[overflow-wrap:anywhere]">{cert.domain}</strong>
+          {isManualCert(cert) && <ManualCertBadge version={cert.manual_version ?? null} uploadedAt={cert.manual_uploaded_at ?? null} rowLabel={cert.domain} />}
           {cert.tier && <Badge data-slot="cert-tier" className={cn('rounded px-1.5 text-[10.5px] font-extrabold', TIER_TONE[cert.tier] ?? TIER_TONE[4])}>T{cert.tier}</Badge>}
           {shared > 1 && sharedBtn(true)}
           {readOnly && <ReadOnlyBadge className="max-sm:w-full max-sm:justify-end" teamId={showTeam ? undefined : cert.team_id} teamName={showTeam ? undefined : cert.team_name} />}
@@ -455,7 +458,7 @@ function CertRow({ cert, cols, shared, selected, onToggle, onOpen, onCheckNow, c
       case 'signature': return td(cert.signature_algorithm || '—', mono)
       case 'port': return td(cert.port ?? 443)
       case 'tier': return td(cert.tier ? `T${cert.tier}` : '—')
-      case 'via': return td(cert.via === 'proxy' ? t('card.viaProxy') : cert.via ? t('card.viaDirect') : '—')
+      case 'via': return td(cert.via === 'upload' ? t('card.viaUpload') : cert.via === 'proxy' ? t('card.viaProxy') : cert.via ? t('card.viaDirect') : '—')
       case 'tls': return td(cert.tls_mode_used || '—', mono)
       case 'intermediate': return td(cert.intermediate_days_remaining ?? '—',
         cert.intermediate_days_remaining != null && cert.intermediate_days_remaining < (days ?? Infinity) ? 'font-bold text-amber-700 dark:text-amber-400' : undefined)

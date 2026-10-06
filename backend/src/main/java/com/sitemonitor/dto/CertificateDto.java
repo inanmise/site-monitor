@@ -211,6 +211,24 @@ public class CertificateDto {
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     private Boolean canManage;
 
+    /**
+     * Elle yüklenen sertifika (2026-10-06): {@code "MANUAL"}; ağdan kontrol edilen satırda null → YAZILMAZ (yanıt
+     * bugünküyle bayt bayt aynı kalır). Envanter satırını okuyan listeler ({@code getAllLatest}) doldurur.
+     */
+    @JsonProperty("cert_source")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String certSource;
+
+    /** İzlenen (geçerli) sürüm numarası — yalnız manuel satırda. */
+    @JsonProperty("manual_version")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Integer manualVersion;
+
+    /** Geçerli sürümün yüklenme anı — yalnız manuel satırda. */
+    @JsonProperty("manual_uploaded_at")
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private String manualUploadedAt;
+
     /** Sığ kopya + {@code can_manage}; önbellekteki paylaşılan nesneye DOKUNMAZ. */
     public CertificateDto withCanManage(boolean value) {
         CertificateDto copy = new CertificateDto();
@@ -255,8 +273,10 @@ public class CertificateDto {
         dto.via = c.getVia();
         dto.tlsModeUsed = c.getTlsModeUsed();
         // TEK hüküm çekirdeği: aynı kural sağlık satırlarını, rozeti ve alarmı besler.
+        // Elle yüklenen sertifikada (via=upload, 2026-10-06) takip adı bir host adı değildir → ad kapsaması sorulmaz.
         dto.securityFlags = com.sitemonitor.service.CertificateHealthRules.securityFlags(
-                c.getDomain(), sanList, c.getTrustStatus());
+                c.getDomain(), sanList, c.getTrustStatus(),
+                com.sitemonitor.service.CertificateHealthRules.VIA_UPLOAD.equals(c.getVia()));
         dto.secure = dto.securityFlags.isEmpty();
         return dto;
     }

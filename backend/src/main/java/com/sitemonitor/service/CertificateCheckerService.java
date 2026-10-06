@@ -8,11 +8,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import org.bouncycastle.asn1.ASN1OctetString;
-import org.bouncycastle.asn1.ASN1Primitive;
-import org.bouncycastle.asn1.x509.CertificatePolicies;
-import org.bouncycastle.asn1.x509.PolicyInformation;
-
 import javax.net.ssl.*;
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -22,9 +17,6 @@ import java.net.URI;
 import java.net.URL;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
-import java.security.interfaces.DSAKey;
-import java.security.interfaces.ECKey;
-import java.security.interfaces.RSAKey;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -120,21 +112,7 @@ public class CertificateCheckerService {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
-    private static final String OID_CERT_POLICIES = "2.5.29.32";
-    private static final String EV_OID            = "2.23.140.1.1";
-
-    private static final String[] KEY_USAGE_NAMES = {
-        "Digital Signature", "Non-Repudiation", "Key Encipherment", "Data Encipherment",
-        "Key Agreement", "Certificate Signing", "CRL Signing", "Encipher Only", "Decipher Only"
-    };
-
-    private static final Map<String, String> EKU_NAMES = Map.of(
-        "1.3.6.1.5.5.7.3.1", "TLS Web Server",
-        "1.3.6.1.5.5.7.3.2", "TLS Web Client",
-        "1.3.6.1.5.5.7.3.3", "Code Signing",
-        "1.3.6.1.5.5.7.3.4", "Email Protection",
-        "1.3.6.1.5.5.7.3.8", "Timestamping"
-    );
+    // Anahtar kullanımı / EKU adları ve sertifika politikası OID'leri CertificateFacts'e taşındı (2026-10-06).
 
     @Async("certCheckExecutor")
     public CompletableFuture<Map<String, Object>> checkAsync(String domain, int port) {
@@ -927,137 +905,16 @@ public class CertificateCheckerService {
         }
     }
 
+    /**
+     * Yaprak sertifikanın sonuç alanları. Gövde 2026-10-06'da {@link CertificateFacts#leafResult}'a TAŞINDI (saf taşıma —
+     * elle yüklenen sertifikaların çevrim-dışı değerlendirmesi aynı anahtarları üretmek zorunda); davranış aynı.
+     */
     private Map<String, Object> parseLeafCert(X509Certificate cert, String domain) {
         try {
-            Instant notBefore = cert.getNotBefore().toInstant();
-            Instant notAfter = cert.getNotAfter().toInstant();
-            Instant now = Instant.now();
-
-            // D5: '/' sıfıra doğru kırpar — 12 saat önce dolmuş sertifika -0.5 → 0 gün verir ve
-            // ilk ~24 saat "expired" yerine "0 gün kaldı" görünürdü. floorDiv negatifi korur
-            // (DomainCheckerService.daysUntil ile aynı kural).
-            long daysRemaining = Math.floorDiv(notAfter.toEpochMilli() - now.toEpochMilli(), 86_400_000L);
-            boolean warning = daysRemaining <= warningDays;
-
-            String subjectCn = extractCn(cert.getSubjectX500Principal().getName());
-            String issuerOrg = extractField(cert.getIssuerX500Principal().getName(), "O");
-            String issuerCn = extractCn(cert.getIssuerX500Principal().getName());
-            List<String> san = extractSan(cert);
-
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("domain", domain);
-            result.put("subject", subjectCn);
-            result.put("issuer", issuerOrg);
-            result.put("issuer_cn", issuerCn);
-            result.put("not_before", ISO.format(notBefore));
-            result.put("not_after", ISO.format(notAfter));
-            result.put("days_remaining", (int) daysRemaining);
-            result.put("warning", warning);
-            result.put("status", warning ? "warning" : "valid");
-            result.put("san", san);
-            result.put("checked_at", ISO.format(now));
-            // Extended certificate metadata
-            result.put("serial_number", cert.getSerialNumber().toString(16).toUpperCase());
-            result.put("signature_algorithm", cert.getSigAlgName());
-            result.put("public_key_algorithm", cert.getPublicKey().getAlgorithm());
-            result.put("public_key_size", getPublicKeySize(cert.getPublicKey()));
-            result.put("subject_dn", cert.getSubjectX500Principal().getName());
-            result.put("issuer_dn", cert.getIssuerX500Principal().getName());
-            result.put("key_usage", buildKeyUsageList(cert.getKeyUsage()));
-            result.put("ext_key_usage", buildExtKeyUsageList(cert));
-            result.put("is_ca", cert.getBasicConstraints() >= 0);
-            result.put("ocsp_url", chainValidator.extractOcspUrl(cert));
-            result.put("crl_url", chainValidator.extractCrlUrl(cert));
-            result.put("cert_type", determineCertType(cert, san));
-            return result;
+            return CertificateFacts.leafResult(cert, domain, warningDays, chainValidator, Instant.now());
         } catch (Exception e) {
             return error(domain, "Parse error: " + e.getMessage());
         }
-    }
-
-    private int getPublicKeySize(java.security.PublicKey key) {
-        if (key instanceof RSAKey rsa) return rsa.getModulus().bitLength();
-        if (key instanceof ECKey ec) return ec.getParams().getOrder().bitLength();
-        if (key instanceof DSAKey dsa) return dsa.getParams().getP().bitLength();
-        return -1;
-    }
-
-    private List<String> buildKeyUsageList(boolean[] ku) {
-        if (ku == null) return Collections.emptyList();
-        List<String> usages = new ArrayList<>();
-        for (int i = 0; i < Math.min(ku.length, KEY_USAGE_NAMES.length); i++) {
-            if (ku[i]) usages.add(KEY_USAGE_NAMES[i]);
-        }
-        return usages;
-    }
-
-    private List<String> buildExtKeyUsageList(X509Certificate cert) {
-        try {
-            List<String> eku = cert.getExtendedKeyUsage();
-            if (eku == null) return Collections.emptyList();
-            return eku.stream().map(oid -> EKU_NAMES.getOrDefault(oid, oid)).toList();
-        } catch (Exception e) { return Collections.emptyList(); }
-    }
-
-    private String extractCn(String dn) {
-        return Arrays.stream(dn.split(","))
-                .map(String::trim)
-                .filter(s -> s.startsWith("CN="))
-                .map(s -> s.substring(3))
-                .findFirst()
-                .orElse("Unknown");
-    }
-
-    private String extractField(String dn, String field) {
-        String prefix = field + "=";
-        return Arrays.stream(dn.split(","))
-                .map(String::trim)
-                .filter(s -> s.startsWith(prefix))
-                .map(s -> s.substring(prefix.length()))
-                .findFirst()
-                .orElse("Unknown");
-    }
-
-    private String determineCertType(X509Certificate cert, List<String> san) {
-        String org = extractField(cert.getSubjectX500Principal().getName(), "O");
-        boolean hasOrg = !"Unknown".equals(org);
-        boolean isEv = false;
-        try {
-            byte[] rawExt = cert.getExtensionValue(OID_CERT_POLICIES);
-            if (rawExt != null) {
-                byte[] extBytes = ASN1OctetString.getInstance(
-                    ASN1Primitive.fromByteArray(rawExt)).getOctets();
-                CertificatePolicies policies = CertificatePolicies.getInstance(
-                    ASN1Primitive.fromByteArray(extBytes));
-                for (PolicyInformation pi : policies.getPolicyInformation()) {
-                    if (EV_OID.equals(pi.getPolicyIdentifier().getId())) {
-                        isEv = true; break;
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-        String validation = isEv && hasOrg ? "Extended Validation (EV)"
-                          : hasOrg         ? "Organization Validated (OV)"
-                          :                  "Domain Validated (DV)";
-        String scope = san.stream().anyMatch(s -> s.startsWith("*.")) ? "Wildcard"
-                     : san.size() > 1                                  ? "Multi-Domain (SAN)"
-                     :                                                    "Single Domain";
-        return validation + " — " + scope;
-    }
-
-    private List<String> extractSan(X509Certificate cert) {
-        List<String> sans = new ArrayList<>();
-        try {
-            Collection<List<?>> altNames = cert.getSubjectAlternativeNames();
-            if (altNames != null) {
-                for (List<?> entry : altNames) {
-                    if (Integer.valueOf(2).equals(entry.get(0))) {
-                        sans.add((String) entry.get(1));
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-        return sans;
     }
 
     public String serializeSan(List<String> san) {

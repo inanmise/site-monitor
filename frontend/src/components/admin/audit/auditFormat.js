@@ -205,6 +205,9 @@ const SPECIAL = {
   NOC_TEAMS_UPDATE: 'audit.ev.NOC_TEAMS_UPDATE',
   // Ayarlar → Görünüm → Temalar: açık temalar + varsayılan (2026-10-05) — "THEME" kural sözlüğünde yok
   THEME_SETTINGS_SAVE: 'audit.ev.THEME_SETTINGS_SAVE',
+  // Manuel (dosyadan yüklenen) sertifika: ilk yükleme / yeni sürüm (2026-10-06) — "_UPLOAD"/"_RENEW" eylem sözlüğünde yok
+  CERT_MANUAL_UPLOAD: 'audit.ev.CERT_MANUAL_UPLOAD',
+  CERT_MANUAL_RENEW: 'audit.ev.CERT_MANUAL_RENEW',
 }
 
 /**

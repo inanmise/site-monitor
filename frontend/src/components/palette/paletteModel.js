@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, FileBadge, Boxes, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
+  LayoutDashboard, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
   Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow,
   TriangleAlert, Siren, Wrench, History, Headset,
   ChartPie, ShieldAlert, FileChartColumn, FileClock,
@@ -21,6 +21,7 @@ export const TAB_META = {
   dashboard:          { Icon: LayoutDashboard, section: null },
   all:                { Icon: FileBadge,     section: 'nav.groupCertificates' },
   domains:            { Icon: Boxes,         section: 'nav.groupCertificates' },
+  manualcerts:        { Icon: FileKey2,      section: 'nav.groupCertificates' },   // Manuel Sertifikalar (2026-10-06)
   uptime:             { Icon: MonitorCheck,  section: 'nav.groupCertificates' },
   forecast:           { Icon: CalendarRange, section: 'nav.groupCertificates' },
   renewal:            { Icon: RefreshCw,     section: 'nav.groupCertificates' },
