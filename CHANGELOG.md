@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.110.0] — 2026-10-06
+
 ### Added
 - **Dosyadan sertifika takibi (Manuel Sertifikalar):** ağ üzerinden erişilemeyen sertifikalar (OCP keystore/truststore
   JKS'leri, CA'dan gelen PEM'ler, zinciri tamamlanmış PFX'ler) dosya yüklenerek takibe alınır. Desteklenen biçimler:
@@ -2307,7 +2309,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.109.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.110.0...HEAD
+[20.110.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.110.0
 [20.109.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.109.0
 [20.108.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.108.0
 [20.107.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.107.0
